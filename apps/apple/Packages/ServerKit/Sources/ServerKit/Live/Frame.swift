@@ -4,6 +4,8 @@ public enum IncomingFrame: Sendable, Equatable {
     case event(ServerEvent)
     case ack(id: String, data: Data?)
     case error(id: String, code: String)
+    /// A known frame type whose fields did not decode. Log the type only, never the payload.
+    case malformed(type: String)
 }
 
 private struct RawFrame: Decodable {
@@ -35,7 +37,6 @@ private struct AnyJSON: Decodable {
     }
 }
 
-private struct Payload: Decodable { var payload: Base64URLData }
 private struct DeviceRevoked: Decodable { var deviceID: String }
 private struct CallRing: Decodable {
     var callID, fromAccountID, fromDeviceID: String
@@ -47,38 +48,39 @@ private struct CallSignal: Decodable { var callID, fromDeviceID: String; var pay
 private struct CallEnded: Decodable { var callID, reason: String }
 private struct ErrorData: Decodable { var code: String }
 
-/// Returns nil for unknown frame types and for frames that do not decode.
+/// Returns nil for unknown frame types and non-JSON text, `.malformed` for known types with bad fields.
 public func decodeFrame(_ text: String) -> IncomingFrame? {
     let decoder = ServerJSON.decoder()
     guard let raw = try? decoder.decode(RawFrame.self, from: Data(text.utf8)) else { return nil }
     let bytes = raw.data?.bytes ?? Data()
+    let bad = IncomingFrame.malformed(type: raw.type)
     func body<T: Decodable>(_ t: T.Type) -> T? { try? decoder.decode(t, from: bytes) }
     switch raw.type {
     case "inbox":
-        return body(InboxItem.self).map { .event(.inbox($0)) }
+        return body(InboxItem.self).map { .event(.inbox($0)) } ?? bad
     case "device.revoked":
-        return body(DeviceRevoked.self).map { .event(.deviceRevoked($0.deviceID)) }
+        return body(DeviceRevoked.self).map { .event(.deviceRevoked($0.deviceID)) } ?? bad
     case "call.ring":
         return body(CallRing.self).map {
             .event(.callRing(callID: $0.callID, fromAccountID: $0.fromAccountID,
                              fromDeviceID: $0.fromDeviceID, video: $0.video, payload: $0.payload.data))
-        }
+        } ?? bad
     case "call.answered":
         return body(CallAnswered.self).map {
             .event(.callAnswered(callID: $0.callID, deviceID: $0.deviceID, payload: $0.payload.data))
-        }
+        } ?? bad
     case "call.signal":
         return body(CallSignal.self).map {
             .event(.callSignal(callID: $0.callID, fromDeviceID: $0.fromDeviceID, payload: $0.payload.data))
-        }
+        } ?? bad
     case "call.ended":
-        return body(CallEnded.self).map { .event(.callEnded(callID: $0.callID, reason: $0.reason)) }
+        return body(CallEnded.self).map { .event(.callEnded(callID: $0.callID, reason: $0.reason)) } ?? bad
     case "ack":
-        guard let id = raw.id else { return nil }
+        guard let id = raw.id else { return bad }
         return .ack(id: id, data: raw.data?.bytes)
     case "error":
-        guard let id = raw.id else { return nil }
-        return .error(id: id, code: body(ErrorData.self)?.code ?? "unknown")
+        guard let id = raw.id, let e = body(ErrorData.self) else { return bad }
+        return .error(id: id, code: e.code)
     default:
         return nil
     }

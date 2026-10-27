@@ -47,6 +47,15 @@ final class LiveFrameTests: XCTestCase {
         XCTAssertNil(decodeFrame("not json"))
     }
 
+    func testKnownTypeWithBadFieldsIsMalformed() {
+        XCTAssertEqual(
+            decodeFrame(#"{"type":"call.ring","data":{"callID":"c","fromAccountID":"a","fromDeviceID":"d","video":true}}"#),
+            .malformed(type: "call.ring"))
+        XCTAssertEqual(decodeFrame(#"{"type":"call.ended"}"#), .malformed(type: "call.ended"))
+        XCTAssertEqual(decodeFrame(#"{"type":"ack"}"#), .malformed(type: "ack"))
+        XCTAssertEqual(decodeFrame(#"{"type":"error","data":{"code":"x"}}"#), .malformed(type: "error"))
+    }
+
     func testEncodesClientFrame() throws {
         let s = try encodeFrame(type: "call.hangup", id: "c1", data: ["callID": "x"])
         XCTAssertEqual(s, #"{"data":{"callID":"x"},"id":"c1","type":"call.hangup"}"#)
@@ -57,5 +66,10 @@ final class LiveFrameTests: XCTestCase {
         XCTAssertEqual((0..<8).map { _ in b.next() }, [1, 2, 4, 8, 16, 32, 60, 60])
         b.reset()
         XCTAssertEqual(b.next(), 1)
+    }
+
+    func testBackoffLowerBoundIsZero() {
+        var b = Backoff(random: { $0.lowerBound })
+        XCTAssertEqual((0..<4).map { _ in b.next() }, [0, 0, 0, 0])
     }
 }
