@@ -1,13 +1,13 @@
 package admin
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
-	"context"
 	"github.com/drag0n-flyer/myApp/server/internal/core"
 )
 
@@ -204,5 +204,49 @@ func TestGetNeedsNoCSRF(t *testing.T) {
 	r.Header.Del("Origin")
 	if w := serveReq(h, r); w.Code == 401 || w.Code == 403 {
 		t.Errorf("GET stopped by the guard: %d %s", w.Code, w.Body)
+	}
+}
+
+func TestMisdirectedResponseHasSecurityHeaders(t *testing.T) {
+	m, _ := newTestModule(t)
+	r := httptest.NewRequest("GET", "/admin/", nil)
+	r.Host = "evil.example"
+	w := serveReq(m.Handler(), r)
+	if w.Code != 421 {
+		t.Fatalf("code = %d", w.Code)
+	}
+	for _, k := range []string{"Content-Security-Policy", "X-Content-Type-Options", "X-Frame-Options", "Referrer-Policy"} {
+		if w.Header().Get(k) == "" {
+			t.Errorf("421 lacks %s", k)
+		}
+	}
+}
+
+func TestAPIGetNeedsSameOrigin(t *testing.T) {
+	m, _ := newTestModule(t)
+	h := m.Handler()
+	c := login(t, m, h)
+	for site, want403 := range map[string]bool{
+		"same-origin": false, "none": false, "": false,
+		"same-site": true, "cross-site": true, "bogus": true,
+	} {
+		r := req("GET", "/admin/api/session", "", c)
+		if site != "" {
+			r.Header.Set("Sec-Fetch-Site", site)
+		}
+		w := serveReq(h, r)
+		if want403 {
+			if w.Code != 403 || !strings.Contains(w.Body.String(), `"forbidden"`) {
+				t.Errorf("Sec-Fetch-Site %q = %d %s, want 403 forbidden", site, w.Code, w.Body)
+			}
+		} else if w.Code != 200 {
+			t.Errorf("Sec-Fetch-Site %q = %d, want 200", site, w.Code)
+		}
+	}
+	// Static files are not API requests.
+	r := req("GET", "/admin/", "", nil)
+	r.Header.Set("Sec-Fetch-Site", "cross-site")
+	if w := serveReq(h, r); w.Code == 403 {
+		t.Errorf("static page blocked: %d", w.Code)
 	}
 }

@@ -29,6 +29,11 @@ const (
 	auditKeep       = 365 * 24 * time.Hour
 )
 
+// BackgroundHeader marks a request the page sends on its own, such as the
+// overview's 30 s refresh. It is authenticated normally but does not reset
+// the idle timer; the absolute lifetime still applies.
+const BackgroundHeader = "X-Admin-Background"
+
 func notBuilt() error { return httpx.Err("internal", "not built") }
 
 // sessionState is what requireSession learned about the request's session. It
@@ -132,6 +137,12 @@ func (m *Module) login(w http.ResponseWriter, r *http.Request, _ Session) error 
 		id, _, err := m.redeemToken(ctx, tx, in.Token)
 		if err != nil {
 			return err
+		}
+		// A browser that signs in again gives up its previous session.
+		if old, cerr := r.Cookie(cookieName); cerr == nil && old.Value != "" && len(old.Value) <= 256 {
+			if _, err := tx.Exec(ctx, `delete from admin_sessions where id_hash = $1`, hashString(old.Value)); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.Exec(ctx,
 			`insert into admin_sessions (id_hash, token_id, csrf_hash, created_at, last_seen_at, expires_at)
@@ -241,6 +252,9 @@ func (m *Module) lookupSession(r *http.Request) (Session, *sessionState, error) 
 			return err
 		}
 		ok = true
+		if r.Header.Get(BackgroundHeader) != "" {
+			return nil // the page's own refresh does not count as activity
+		}
 		_, err = tx.Exec(ctx, `update admin_sessions set last_seen_at = $2 where id_hash = $1`, idHash, now)
 		return err
 	})

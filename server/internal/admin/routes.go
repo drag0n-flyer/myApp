@@ -6,8 +6,8 @@ import (
 	"github.com/drag0n-flyer/myApp/server/internal/httpx"
 )
 
-// Handler is the full chain: hostGuard, secureHeaders, then static files or
-// the API (requireSession, checkCSRF, handler). POST /admin/api/login skips
+// Handler is the full chain: secureHeaders (so a 421 has them too), hostGuard,
+// sameOriginAPI, then static files or the API (requireSession, checkCSRF, handler). POST /admin/api/login skips
 // the session and CSRF checks but not the header checks.
 func (m *Module) Handler() http.Handler {
 	mux := m.mux(func(h apiFunc, public bool) http.Handler {
@@ -16,7 +16,7 @@ func (m *Module) Handler() http.Handler {
 		}
 		return m.requireSession(m.checkCSRF(h))
 	})
-	return m.hostGuard(m.secureHeaders(mux))
+	return m.secureHeaders(m.hostGuard(sameOriginAPI(mux)))
 }
 
 // testHandler serves the same routes, running every request as s with no

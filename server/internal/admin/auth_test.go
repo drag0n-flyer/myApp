@@ -364,3 +364,86 @@ func TestCleanup(t *testing.T) {
 		t.Error("364-day audit row deleted")
 	}
 }
+
+func TestBackgroundRequestsKeepIdleTimerRunning(t *testing.T) {
+	m, f := newTestModule(t)
+	h := m.Handler()
+	c := login(t, m, h)
+	for i := 0; i < 2; i++ {
+		f.Clock.Advance(5 * time.Minute)
+		r := req("GET", "/admin/api/session", "", c)
+		r.Header.Set(BackgroundHeader, "1")
+		if w := serveReq(h, r); w.Code != 200 {
+			t.Fatalf("background at %d min = %d", (i+1)*5, w.Code)
+		}
+	}
+	f.Clock.Advance(10 * time.Minute)
+	// 20 minutes of background polling only: the session is idle.
+	if w := serveReq(h, req("GET", "/admin/api/session", "", c)); w.Code != 401 {
+		t.Fatalf("after 20 min of background only = %d, want 401", w.Code)
+	}
+}
+
+func TestNormalRequestResetsIdleTimer(t *testing.T) {
+	m, f := newTestModule(t)
+	h := m.Handler()
+	c := login(t, m, h)
+	f.Clock.Advance(10 * time.Minute)
+	if w := serveReq(h, req("GET", "/admin/api/session", "", c)); w.Code != 200 {
+		t.Fatalf("normal at 10 min = %d", w.Code)
+	}
+	f.Clock.Advance(10 * time.Minute)
+	r := req("GET", "/admin/api/session", "", c)
+	r.Header.Set(BackgroundHeader, "1")
+	if w := serveReq(h, r); w.Code != 200 {
+		t.Fatalf("background at 20 min = %d, want 200 (normal request at 10 min reset)", w.Code)
+	}
+	f.Clock.Advance(10 * time.Minute)
+	if w := serveReq(h, req("GET", "/admin/api/session", "", c)); w.Code != 401 {
+		t.Fatalf("at 30 min = %d, want 401", w.Code)
+	}
+}
+
+func TestBackgroundRequestsStillHitAbsoluteLimit(t *testing.T) {
+	m, f := newTestModule(t)
+	h := m.Handler()
+	c := login(t, m, h)
+	f.Clock.Advance(sessionLifetime + time.Minute)
+	r := req("GET", "/admin/api/session", "", c)
+	r.Header.Set(BackgroundHeader, "1")
+	if w := serveReq(h, r); w.Code != 401 {
+		t.Fatalf("background past 8 h = %d", w.Code)
+	}
+}
+
+func TestLoginEndsPreviousSessionOfBrowser(t *testing.T) {
+	m, _ := newTestModule(t)
+	h := m.Handler()
+	old := login(t, m, h)
+	other := login(t, m, h) // another browser keeps its session
+	_, token, err := m.createToken(context.Background(), "again", 15*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := serveReq(h, req("POST", "/admin/api/login", `{"token":"`+token+`"}`, old))
+	if w.Code != 204 {
+		t.Fatalf("re-login = %d %s", w.Code, w.Body)
+	}
+	fresh := cookieOf(t, w)
+	if w := serveReq(h, req("GET", "/admin/api/session", "", old)); w.Code != 401 {
+		t.Errorf("old session = %d, want 401", w.Code)
+	}
+	for name, c := range map[string]*http.Cookie{"fresh": fresh, "other": other} {
+		if w := serveReq(h, req("GET", "/admin/api/session", "", c)); w.Code != 200 {
+			t.Errorf("%s session = %d, want 200", name, w.Code)
+		}
+	}
+	// A failed re-login leaves the old session alone.
+	w = serveReq(h, req("POST", "/admin/api/login", `{"token":"adm_bad"}`, fresh))
+	if w.Code != 401 {
+		t.Fatalf("bad re-login = %d", w.Code)
+	}
+	if w := serveReq(h, req("GET", "/admin/api/session", "", fresh)); w.Code != 200 {
+		t.Errorf("session after failed re-login = %d", w.Code)
+	}
+}

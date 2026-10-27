@@ -78,6 +78,22 @@ func secureHeaders(next http.Handler) http.Handler {
 	})
 }
 
+// sameOriginAPI answers 403 to an API request whose Sec-Fetch-Site header is
+// present and is neither same-origin nor none, so a page on another localhost
+// port cannot make signed-in GETs. A missing header (CLI tools, old browsers)
+// is allowed.
+func sameOriginAPI(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/admin/api/") {
+			if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" && site != "none" {
+				httpx.WriteError(w, forbidden())
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // secureHeaders is the method form the skeleton's routes use.
 func (m *Module) secureHeaders(next http.Handler) http.Handler { return secureHeaders(next) }
 
