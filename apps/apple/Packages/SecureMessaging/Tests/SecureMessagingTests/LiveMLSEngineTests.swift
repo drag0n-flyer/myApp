@@ -7,6 +7,9 @@ private let alice = "acct-a/dev-1"
 private let bob = "acct-b/dev-1"
 private let alice2 = "acct-a/dev-2"
 
+/// `DispatchSemaphore.wait` is unavailable in async code; a plain function may call it.
+private func waitFor(_ semaphore: DispatchSemaphore) { semaphore.wait() }
+
 private func utf8(_ s: String) -> Data { Data(s.utf8) }
 
 private func tempDir() -> URL {
@@ -130,7 +133,7 @@ private func makeGroup(creator: any MLSEngine, joiners: [any MLSEngine]) async t
             }
         }
         thread.start()
-        acquired.wait()
+        waitFor(acquired)
         await #expect(throws: MLSError.busy) { _ = try await a.createGroup() }
         release.signal()
         // Once the holder lets go the engine works again.
