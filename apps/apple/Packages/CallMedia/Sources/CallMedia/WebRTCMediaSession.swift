@@ -26,13 +26,17 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
     private var videoSender: RTCRtpSender?
     private var capturer: RTCCameraVideoCapturer?
     private var sendProfile: AudioProfile?
-    private var statsAggregator = MediaStatsAggregator()
+    private var statsSampler: StatsSampler?
+    private var videoController: VideoController?
     private var closed = false
     private var monitor: Task<Void, Never>?
 
     /// Task M3 sets this to apply the noise suppression mode to the audio processing module.
     public var noiseSuppressionHandler: (@Sendable (NoiseSuppression) -> Void)?
     private let prewarm: Bool
+
+    /// Test hook: the audio RTP sender.
+    var audioSenderForTesting: RTCRtpSender? { lock.withLock { audioSender } }
 
     public init(prewarm: Bool = false) {
         self.prewarm = prewarm
@@ -86,6 +90,9 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
             self.pc = pc
             audioSource = aSource; audioTrack = aTrack; audioSender = aTransceiver?.sender
             videoSource = vSource; videoTrack = vTrack; videoSender = vSender; capturer = cap
+            if let vSource, let vTrack, let vSender, let cap {
+                videoController = VideoController(source: vSource, track: vTrack, sender: vSender, capturer: cap)
+            }
         }
     }
 
@@ -142,25 +149,8 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
     }
 
     public func setVideo(_ tier: VideoTier?) async {
-        let (track, sender, capturer) = lock.withLock { (videoTrack, videoSender, self.capturer) }
-        guard let track, let sender, let capturer else { return }
-        guard let tier else {
-            track.isEnabled = false
-            sender.track = nil   // no frames, so the peer sees the video stop
-            await withCheckedContinuation { (k: CheckedContinuation<Void, Never>) in
-                capturer.stopCapture { k.resume() }
-            }
-            return
-        }
-        let p = MediaLogic.videoParameters(tier)
-        let params = sender.parameters
-        for e in params.encodings { e.maxBitrateBps = NSNumber(value: p.maxBitrate); e.maxFramerate = NSNumber(value: p.fps) }
-        sender.parameters = params
-        track.isEnabled = true
-        sender.track = track
-        guard let device = Self.cameraDevice(),
-              let format = Self.closestFormat(device, height: p.height) else { return }
-        try? await capturer.startCapture(with: device, format: format, fps: p.fps)
+        guard let controller = lock.withLock({ videoController }) else { return }
+        await controller.setVideo(tier)
     }
 
     public func setMuted(_ on: Bool) async {
@@ -172,13 +162,11 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
     }
 
     public func stats() async -> MediaStats {
-        guard let pc = lock.withLock({ pc }) else { return MediaStats() }
-        let raw: [RawStat] = await withCheckedContinuation { k in
-            pc.statistics { report in
-                k.resume(returning: report.statistics.values.map(Self.flatten))
-            }
+        let sampler: StatsSampler? = lock.withLock {
+            if statsSampler == nil, let pc { statsSampler = StatsSampler(source: StatsReader(pc: pc)) }
+            return statsSampler
         }
-        return lock.withLock { statsAggregator.aggregate(raw) }
+        return await sampler?.sample() ?? MediaStats()
     }
 
     public func close() async {
@@ -189,7 +177,7 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
             let r = (self.pc, capturer)
             self.pc = nil; capturer = nil
             audioTrack = nil; audioSender = nil; audioSource = nil
-            videoTrack = nil; videoSender = nil; videoSource = nil
+            videoTrack = nil; videoSender = nil; videoSource = nil; videoController = nil; statsSampler = nil
             return r
         }
         if let cap { await withCheckedContinuation { (k: CheckedContinuation<Void, Never>) in cap.stopCapture { k.resume() } } }
@@ -227,28 +215,6 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
             }
         }
         lock.withLock { monitor = task }
-    }
-
-    private static func flatten(_ s: RTCStatistics) -> RawStat {
-        var nums: [String: Double] = [:], strs: [String: String] = [:]
-        for (k, v) in s.values {
-            if let n = v as? NSNumber { nums[k] = n.doubleValue }
-            else if let t = v as? String { strs[k] = t }
-        }
-        // `nominated` is a bool: NSNumber, handled above.
-        return RawStat(id: s.id, type: s.type, numbers: nums, strings: strs)
-    }
-
-    private static func cameraDevice() -> AVCaptureDevice? {
-        let devices = RTCCameraVideoCapturer.captureDevices()
-        return devices.first { $0.position == .front } ?? devices.first
-    }
-
-    private static func closestFormat(_ device: AVCaptureDevice, height: Int) -> AVCaptureDevice.Format? {
-        RTCCameraVideoCapturer.supportedFormats(for: device).min {
-            abs(Int(CMVideoFormatDescriptionGetDimensions($0.formatDescription).height) - height)
-                < abs(Int(CMVideoFormatDescriptionGetDimensions($1.formatDescription).height) - height)
-        }
     }
 
     private static func offer(_ pc: RTCPeerConnection, _ c: RTCMediaConstraints) async throws -> RTCSessionDescription {

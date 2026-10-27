@@ -29,10 +29,10 @@ public enum MediaLogic {
         max(0, min(bps, profile.maxAverageBitrate))
     }
 
-    /// Video tier -> (height, max bitrate bps, max fps), from `VideoLadder` (the plan's 100k/200k/300k caps).
-    public static func videoParameters(_ tier: VideoTier) -> (height: Int, maxBitrate: Int, fps: Int) {
-        let s = VideoLadder.spec(tier)
-        return (s.height, s.maxBps, s.fps)
+    /// Video tier -> size, max bitrate and fps, from the `VideoLadder` table (the plan's single source).
+    public static func videoParameters(_ tier: VideoTier) -> (width: Int, height: Int, maxBitrate: Int, fps: Int) {
+        let l = VideoLadder.spec(tier)
+        return (l.width, l.height, l.maxBps, l.fps)
     }
 }
 
@@ -83,6 +83,13 @@ public struct MediaStatsAggregator: Sendable {
                 if out.audioCodec == nil, let c = s.strings["codecId"], let codec = byId[c]?.strings["mimeType"] { out.audioCodec = codec }
             default: break
             }
+        }
+        // Transport totals (whole connection) win over the audio-only sums when present.
+        if let t = stats.first(where: { $0.type == "transport" }) {
+            if let v = t.numbers["bytesSent"] { out.bytesSent = Int64(v) }
+            if let v = t.numbers["bytesReceived"] { out.bytesReceived = Int64(v) }
+            if let v = t.numbers["packetsSent"] { out.packetsSent = Int64(v) }
+            if let v = t.numbers["packetsReceived"] { out.packetsReceived = Int64(v) }
         }
         let dRecv = received - lastReceived, dLost = max(0, lost - lastLost)
         if dRecv >= 0, dRecv + dLost > 0 { out.inboundLossFraction = dLost / (dRecv + dLost) }
