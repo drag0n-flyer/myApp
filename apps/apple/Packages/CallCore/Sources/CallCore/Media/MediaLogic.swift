@@ -1,4 +1,5 @@
 import Foundation
+import AppCore
 
 /// WebRTC-free logic used by CallMedia's `WebRTCMediaSession`, kept here so it runs in Linux tests.
 public enum MediaLogic {
