@@ -99,11 +99,26 @@ public struct NotificationProcessor: Sendable {
         }
     }
 
+    private struct LeaveForApp: Error {}
+
+    /// True for an MLS Welcome: MLSMessage framing (version 1, wire format 3) or the fake
+    /// engine's `{"fake":"welcome"}`.
+    static func isWelcome(_ payload: Data) -> Bool {
+        let b = [UInt8](payload.prefix(4))
+        if b == [0, 1, 0, 3] { return true }
+        guard let object = try? JSONSerialization.jsonObject(with: payload) as? [String: Any] else { return false }
+        return object["fake"] as? String == "welcome"
+    }
+
     // MARK: - Steps
 
     private func run(pushData: Data) async throws -> NotificationOutcome {
         let payload = try Padding.unpad(pushData)
         if payload.isEmpty { return try await syncAndShowNewest() }
+
+        // A Welcome needs the inbox item's server conversation ID to register the conversation,
+        // and the push does not carry it. Leave it for the full sync (never mark it processed here).
+        if Self.isWelcome(payload) { return try await syncAndShowNewest() }
 
         let hash = PortableSHA256.hash(payload)
         if try deps.repo.isProcessed(hash: hash) { return .drop }
@@ -112,6 +127,11 @@ public struct NotificationProcessor: Sendable {
             // Re-check under the lock: the app may have processed it while we waited.
             if try deps.repo.isProcessed(hash: hash) { return nil }
             let incoming = try await deps.mls.process(payload)
+            // No local conversation row: the app has not joined this group yet. Do not consume it.
+            if case .application(let group, _, _, _) = incoming,
+               try deps.repo.conversation(groupID: group.raw) == nil {
+                throw LeaveForApp()
+            }
             let result = try handler.apply(incoming, raw: rawRecord(for: incoming, payload: payload), db: deps.repo)
             try deps.repo.markProcessed(hash: hash)
             return (incoming, result) as (Incoming, AppliedIncoming)?
@@ -125,9 +145,10 @@ public struct NotificationProcessor: Sendable {
         _ = try await inbox.syncOnce(maxItems: 20)
         var newest: MessageRecord?
         for chat in try deps.repo.chats() {
-            guard let last = try deps.repo.messages(chatID: chat.id, before: nil, limit: 5).last(where: {
+            let recent = try deps.repo.messages(chatID: chat.id, before: nil, limit: 5).filter {
                 $0.senderAccount != "system" && $0.senderAccount != deps.me.accountID && !$0.deleted
-            }) else { continue }
+            }
+            guard let last = recent.max(by: { $0.sentAt < $1.sentAt }) else { continue }
             if last.receivedAt >= started, newest == nil || last.receivedAt > newest!.receivedAt { newest = last }
         }
         guard let newest else { return .fallback }

@@ -269,4 +269,53 @@ private struct Pair {
             pushData: padded(bundle.commit), deadline: Pair.deadline)
         #expect(outcome == .drop)
     }
+
+    @Test func testWelcomeAndFollowingMessageAreLeftForTheApp() async throws {
+        let server = FakeServer()
+        let ana = await makeDevice(server, account: "acc-ana", username: "ana")
+        let bob = await makeDevice(server, account: "acc-bob", username: "bob")
+        let group = try await ana.deps.mls.createGroup()
+        let bundle = try await ana.deps.mls.add(keyPackages: try await bob.deps.mls.makeKeyPackages(count: 1), to: group)
+        try await ana.deps.mls.commitAccepted(group)
+        let welcome = try #require(bundle.welcome)
+        let message = try await ana.deps.mls.encrypt(envelope("m1", .text("hi", replyTo: nil)), in: group).ciphertext
+
+        let inbox = FakeInbox()
+        let processor = NotificationProcessor(deps: bob.deps, handler: TestHandler(), inbox: inbox, conversations: NoConversations())
+        let first = await processor.process(pushData: padded(welcome), deadline: Pair.deadline)
+        let second = await processor.process(pushData: padded(message), deadline: Pair.deadline)
+        #expect(first == .fallback && second == .fallback)
+        #expect(try bob.deps.repo.isProcessed(hash: PortableSHA256.hash(welcome)) == false)
+        #expect(try bob.deps.repo.isProcessed(hash: PortableSHA256.hash(message)) == false)
+        #expect(inbox.recorded == [20])   // the welcome went to the inbox sync
+
+        // The app path still sees both: the welcome joins, then the message decrypts.
+        if case .joined = try await bob.deps.mls.process(welcome) {} else { Issue.record("expected joined") }
+        if case .application = try await bob.deps.mls.process(message) {} else { Issue.record("expected application") }
+    }
+
+    @Test func testApplicationForGroupWithoutConversationIsNotMarkedProcessed() async throws {
+        let pair = try await Pair()
+        try pair.bob.deps.repo.deleteChat(id: "acc-ana")   // removes the conversation row too
+        let data = try await pair.push(.text("hi", replyTo: nil))
+        let outcome = await pair.processor().process(pushData: data, deadline: Pair.deadline)
+        #expect(outcome == .fallback)
+        #expect(try pair.bob.deps.repo.isProcessed(hash: PortableSHA256.hash(try Padding.unpad(data))) == false)
+    }
+
+    @Test func testEmptyPayloadShowsNewestOfSeveral() async throws {
+        let pair = try await Pair()
+        let repo = pair.bob.deps.repo
+        pair.inbox.onSync = {
+            for (id, at) in [("old", 1_000.0), ("new", 2_000.0)] {
+                let t = testEpochDate.addingTimeInterval(at)
+                try repo.insertMessage(MessageRecord(
+                    id: id, chatID: "acc-ana", conversationID: nil, senderAccount: "acc-ana", senderDevice: nil,
+                    sentAt: t, receivedAt: testEpochDate, envelope: envelope(id, .text(id, replyTo: nil)),
+                    status: "delivered", replyTo: nil, editedAt: nil, deleted: false, undecryptable: false, folded: ""))
+            }
+        }
+        let outcome = await pair.processor().process(pushData: padded(Data()), deadline: Pair.deadline)
+        #expect(outcome == .show(title: "Ana", body: "new", threadID: "acc-ana"))
+    }
 }
