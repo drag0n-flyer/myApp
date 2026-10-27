@@ -121,8 +121,8 @@ Backups: `android:allowBackup="false"` and `dataExtractionRules` that exclude ev
 - **Same crate, same pin.** `:mls` uses `mlsffi` from `apps/apple/Packages/SecureMessaging/mlsffi` without moving it (planner's choice: moving it would disturb the iPhone build; owner to decide whether it moves to a neutral `crates/mlsffi` later).
 - **Bindings.** `uniffi-bindgen generate --library <libmlsffi.so> --language kotlin --config apps/android/mls/uniffi.toml` writes `org/example/app/mls/ffi/mlsffi.kt`. `uniffi.toml` sets `package_name = "org.example.app.mls.ffi"` and `cdylib_name = "mlsffi"`. The generated file is committed and CI fails on drift, as on iPhone.
 - **UniFFI Kotlin loads the library through JNA.** That adds JNA (`net.java.dev.jna:jna`, `@aar`), which needs owner approval.
-- **Cross-compilation** with `cargo-ndk` (a build tool): Rust targets `aarch64-linux-android` and `x86_64-linux-android`, `--platform 29`, release profile, output in `apps/android/mls/src/main/jniLibs/<abi>/libmlsffi.so` (not committed; CI and `scripts/build-mlsffi-android.sh` build it).
-- **ABIs** (planner's choice): `arm64-v8a` for devices and `x86_64` for emulators. `armeabi-v7a` is left out: every Android 10 phone with 64-bit hardware runs arm64 code, Play needs 64-bit anyway, and 32-bit-only Android 10 devices are low-end Go devices that would struggle with Deep PLC. Owner to decide if 32-bit phones matter.
+- **Cross-compilation** with `cargo-ndk` (a build tool): Rust targets `aarch64-linux-android`, `armv7-linux-androideabi` and `x86_64-linux-android`, `--platform 29`, release profile, output in `apps/android/mls/src/main/jniLibs/<abi>/libmlsffi.so` (not committed; CI and `scripts/build-mlsffi-android.sh` build it).
+- **ABIs** (owner decision, 2026-10-28): `arm64-v8a` and `armeabi-v7a` for devices, `x86_64` for emulators. 32-bit phones are supported. Gradle `ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }` in `:app`. Android's 16 KB page-size requirement applies to 64-bit ABIs only, so `scripts/check-16kb.sh` skips `armeabi-v7a` libraries (they keep 4 KB alignment). Low-end 32-bit devices may struggle with Deep PLC; the CPU threshold for Enhanced noise suppression (owner list item 10) covers them.
 - **16 KB pages.** Android 15 devices can use 16 KB memory pages, and Play requires 16 KB-aligned native libraries for new apps. NDK r28 and later align by default. CI checks every `.so` in the APK (`scripts/check-16kb.sh`, plan Task G4) and fails on a 4 KB segment alignment.
 - **JVM tests use a host build.** `cargo build --release` on Linux makes `libmlsffi.so` for the host, and the JVM tests of `:mls` load it with `jna.library.path`. The real MLS engine is therefore tested on every push without an emulator.
 - **`LiveMlsEngine`** implements `:contracts` `MlsEngine` (the Kotlin form of the roadmap's `MLSEngine`), maps `FfiException` cases one-to-one to `MlsException`, and runs each call on `Dispatchers.IO`. Identity is `"<accountID>/<deviceID>"`. The storage directory is `noBackupFilesDir/mls`.
@@ -137,11 +137,11 @@ Backups: `android:allowBackup="false"` and `dataExtractionRules` that exclude ev
 - **Same source, same Opus.** The Android build uses the pin in `tools/webrtc/VERSION` (today M156, `branch-heads/8078`) and the same `apply.sh`, so Opus 1.6 with Deep PLC, OSCE (LACE, NoLACE), BWE and decoder complexity 7 comes from patches `0001` and `0002`, which are C/C++ and platform-neutral.
 - **Built on Linux** (`ubuntu-24.04` runners), which is the only supported host for Android WebRTC builds and costs nothing extra in macOS minutes. `tools/webrtc/build-android.sh` runs `fetch --nohooks webrtc_android`, syncs with `--no-history`, runs `apply.sh`, applies the Android patches, and builds with `tools_webrtc/android/build_aar.py`.
 - **gn arguments** as on Apple: `rtc_use_h264=false` (no software H.264), `rtc_include_dav1d_in_internal_decoder_factory=false`, `rtc_opus_support_120ms_ptime=true`, `is_debug=false`, `symbol_level=1`.
-- **CPU features.** arm64: NEON only, no dot-product. The Snapdragon 835 is ARMv8.0 without dot-product instructions, the same reasoning as the iPhone XS on iOS. x86_64 (emulators): Opus's runtime-dispatched SIMD.
+- **CPU features.** armeabi-v7a: NEON where the build enables it, no dot-product. arm64: NEON only, no dot-product. The Snapdragon 835 is ARMv8.0 without dot-product instructions, the same reasoning as the iPhone XS on iOS. x86_64 (emulators): Opus's runtime-dispatched SIMD.
 - **Android patches**, owner review:
   - `0005-android-opus-info.patch`: Java class `org.webrtc.OpusInfo` with `static native int decoderComplexity()`, `static native boolean hasDeepPlc()`, `static native boolean hasOsce()`, `static native int maxPacketMs()`. It is the Android form of `RTCOpusInfo`, so a smoke test proves the neural features are compiled into the AAR.
   - `0006-android-capture-post-processing.patch`: a writable capture hook for RNNoise, after echo cancellation (`webrtc::CustomProcessing` passed to `AudioProcessingBuilder().SetCapturePostProcessing`), exposed as Java `org.webrtc.AudioCapturePostProcessing` with a native-pointer factory so audio frames never cross JNI into Java. If the pinned branch already has an equivalent (for example an `ExternalAudioProcessingFactory`), the task uses it and records a `Ruling:` instead.
-- **Output:** one `libwebrtc.aar` with `arm64-v8a` and `x86_64`, released as a GitHub release asset tagged `webrtc-android-m<milestone>.<n>`, with a `.sha256`. The `:webrtc` module downloads it by URL and checks the hash (the Android form of `WebRTCBinary`). The license file from `generate_licenses.py` ships with it; the build fails if it names a GNU license.
+- **Output:** one `libwebrtc.aar` with `arm64-v8a`, `armeabi-v7a` and `x86_64`, released as a GitHub release asset tagged `webrtc-android-m<milestone>.<n>`, with a `.sha256`. The `:webrtc` module downloads it by URL and checks the hash (the Android form of `WebRTCBinary`). The license file from `generate_licenses.py` ships with it; the build fails if it names a GNU license.
 - **Field trial.** `PeerConnectionFactory.initialize(...setFieldTrials("WebRTC-Audio-OpusGeneratePlc/Enabled/"))`, the name from `FIELD_TRIAL_OPUS_PLC` in `VERSION`. Without it Deep PLC is built in but never used.
 - **Security cadence:** the Android AAR is rebuilt whenever the Apple build moves to a new pin (plan 3's `UPDATING.md`).
 
@@ -343,7 +343,7 @@ Shared vectors read directly from `docs/protocol/test-vectors/`: `push-padding.j
 3. One Keystore wrapping key, StrongBox first, not auth-bound (section 5).
 4. OkHttp and kotlinx.serialization (section 6); socket only while visible or in a call.
 5. HPKE through three new `mlsffi` exports instead of a Kotlin crypto library (section 7).
-6. ABIs `arm64-v8a` and `x86_64`; no `armeabi-v7a`.
+6. ABIs `arm64-v8a`, `armeabi-v7a` and `x86_64` (owner decision, 2026-10-28).
 7. WebRTC's AEC3 and noise suppression instead of hardware effects; Enhanced = RNNoise (section 8.2).
 8. Self-managed Telecom `ConnectionService` with a fallback (section 8.3).
 9. FCM payload over 2048 bytes replaced by the empty payload at the gateway; call TTL 45 s; message TTL 1 day.
@@ -361,7 +361,7 @@ Shared vectors read directly from `docs/protocol/test-vectors/`: `push-padding.j
 3. Passkeys on any server with an assetlinks file, unlike the iPhone rule.
 4. HPKE in `mlsffi` (no new dependency) or Google Tink.
 5. Whether `mlsffi` should encrypt its state files on Android.
-6. `armeabi-v7a` (32-bit phones) support.
+6. ~~`armeabi-v7a` (32-bit phones) support.~~ Resolved 2026-10-28: supported (see section 3, ABIs).
 7. A sender-set `quiet` flag for receipts, edits, deletes and reactions (FCM quota), which tells the server which messages are quiet.
 8. An opt-in "keep connected" mode for phones with no push at all.
 9. Asking for the battery-optimisation exemption instead of a hint.

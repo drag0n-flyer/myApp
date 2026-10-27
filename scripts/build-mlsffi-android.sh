@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cross-builds the Rust mlsffi crate for Android (arm64-v8a, x86_64) and regenerates the
+# Cross-builds the Rust mlsffi crate for Android (arm64-v8a, armeabi-v7a, x86_64) and regenerates the
 # Kotlin bindings. Usage: build-mlsffi-android.sh [--host-only]
 #   --host-only  skip the NDK build; build the host libmlsffi.so (for JVM tests) and bindings only.
 # The NDK build needs ANDROID_NDK_HOME (see scripts/android-setup.sh) and cargo-ndk.
@@ -27,10 +27,10 @@ built=()
 
 if [ "$host_only" -eq 0 ]; then
     : "${ANDROID_NDK_HOME:?ANDROID_NDK_HOME is not set (source scripts/android-setup.sh output)}"
-    rustup target add aarch64-linux-android x86_64-linux-android
-    cargo ndk -t arm64-v8a -t x86_64 --platform 29 \
+    rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+    cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 --platform 29 \
         -o "$MLS/src/main/jniLibs" build --release --lib --locked
-    for abi in arm64-v8a x86_64; do
+    for abi in arm64-v8a armeabi-v7a x86_64; do
         built+=("$MLS/src/main/jniLibs/$abi/libmlsffi.so")
     done
 fi
