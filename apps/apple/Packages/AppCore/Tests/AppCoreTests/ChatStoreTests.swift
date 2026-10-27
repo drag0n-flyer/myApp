@@ -74,3 +74,12 @@ func msg(_ c: MessageContent) -> Message {
     #expect(s.chat(id: chat.id)?.lastMessage?.content == .text("Hello"))
     #expect(s.chat(id: chat.id)?.lastMessage?.status == .sent)
 }
+
+@Test func ensureChatCreatesOnce() {
+    let s = SampleChatStore()
+    let neha = s.addContact(username: "neha")!
+    let id = s.ensureChat(with: neha.id)
+    #expect(s.chat(id: id)?.isRequest == false)
+    #expect(s.ensureChat(with: neha.id) == id)
+    #expect(s.ensureChat(with: "riya") == "chat-riya")
+}

@@ -98,6 +98,12 @@ final class AppModel {
         return chatStore.addContact(username: username)
     }
 
+    /// The chat with this contact, created if needed.
+    func openChat(with contactID: String) -> String {
+        defer { revision += 1 }
+        return chatStore.ensureChat(with: contactID)
+    }
+
     func chatID(for contactID: String) -> String? {
         _ = revision
         return (chatStore.chats(in: .all) + chatStore.messageRequests).first { $0.contactID == contactID }?.id

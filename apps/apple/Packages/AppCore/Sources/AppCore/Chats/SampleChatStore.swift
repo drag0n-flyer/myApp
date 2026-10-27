@@ -101,6 +101,12 @@ public final class SampleChatStore: ChatStore {
         return contact
     }
 
+    public func ensureChat(with contactID: String) -> String {
+        if let existing = allChats.first(where: { $0.contactID == contactID }) { return existing.id }
+        guard let contact = contact(id: contactID) else { return "chat-\(contactID)" }
+        return chatIDCreatingRequestIfNeeded(for: contact)
+    }
+
     // MARK: - Private
 
     private var requestSenders: [String: Contact] = [:]

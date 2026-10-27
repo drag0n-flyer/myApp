@@ -24,4 +24,6 @@ public protocol ChatStore: AnyObject {
     func markRead(chatID: String)
     func incomingCall(from contact: Contact, video: Bool) -> IncomingCallDecision
     func addContact(username: String) -> Contact?
+    /// The chat with this contact, created empty if there is none yet.
+    func ensureChat(with contactID: String) -> String
 }
