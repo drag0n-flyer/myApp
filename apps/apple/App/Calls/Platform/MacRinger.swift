@@ -7,7 +7,7 @@ import UserNotifications
 /// What the Mac ring needs from the call engine. `AppModel` conforms for now; `LiveCallEngine` takes over later.
 /// All calls arrive on the main actor.
 @MainActor
-protocol MacRingHandling: AnyObject {
+protocol MacRingHandling: AnyObject, Sendable {
     /// Shows or clears the in-app incoming-call banner.
     func macRingSetCaller(_ caller: Contact?)
     /// `caller` is nil when the app was launched by the notification (the engine knows the call by `callID`).

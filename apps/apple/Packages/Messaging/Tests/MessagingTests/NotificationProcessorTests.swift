@@ -175,7 +175,7 @@ private struct NSEPair {
             try? lock.withLock(timeout: .seconds(1)) { acquired.signal(); Thread.sleep(forTimeInterval: 3) }
         }
         holder.start()
-        await Task.detached { acquired.wait() }.value
+        await Task.detached { blockUntilSignaled(acquired) }.value
         let started = ContinuousClock.now
         let outcome = await pair.processor().process(pushData: data, deadline: NSEPair.deadline)
         #expect(outcome == .fallback)
@@ -358,3 +358,6 @@ private struct NSEPair {
         #expect(pair.inbox.recorded.isEmpty)
     }
 }
+
+/// `DispatchSemaphore.wait` is unavailable in async code; a synchronous function may call it.
+private func blockUntilSignaled(_ semaphore: DispatchSemaphore) { semaphore.wait() }
