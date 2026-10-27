@@ -15,19 +15,37 @@ enum PendingActions {
         var messages: [ReportedMessage]
     }
 
-    /// Only one run at a time: two overlapping runs would both send the same entry.
-    private static let gate = Gate()
-
-    private final class Gate: @unchecked Sendable {
+    /// Only one run at a time per store: two overlapping runs would both send the same entry. A run requested
+    /// while another is in flight is not dropped: the running one goes round again (`leave()` returns true), so
+    /// an entry written after it read the table is still sent. Each `LiveChatStore` owns one gate; a shared
+    /// global gate made unrelated stores skip each other's runs.
+    final class Gate: @unchecked Sendable {
         private let lock = NSLock()
         private var busy = false
-        func enter() -> Bool { lock.withLock { if busy { return false }; busy = true; return true } }
-        func leave() { lock.withLock { busy = false } }
+        private var again = false
+        func enter() -> Bool {
+            lock.withLock {
+                if busy { again = true; return false }
+                busy = true
+                return true
+            }
+        }
+        /// True when another run was requested meanwhile: the caller stays the running one and loops.
+        func leave() -> Bool {
+            lock.withLock {
+                if again { again = false; return true }
+                busy = false
+                return false
+            }
+        }
     }
 
-    static func run(repo: Repository, server: ServerClient) async {
+    static func run(repo: Repository, server: ServerClient, gate: Gate) async {
         guard gate.enter() else { return }
-        defer { gate.leave() }
+        repeat { await runOnce(repo: repo, server: server) } while gate.leave()
+    }
+
+    private static func runOnce(repo: Repository, server: ServerClient) async {
         let blocks = ((try? repo.entries(prefix: blockPrefix)) ?? [:]).filter { !$0.value.isEmpty }
         for key in blocks.keys.sorted() {
             do { try await server.block(accountID: String(key.dropFirst(blockPrefix.count))) } catch { continue }

@@ -33,6 +33,8 @@ final class AppModel {
     private var connection: LiveConnection?
     private let sessions: SessionStore?
     private var messaging: LiveMessaging?
+    /// The wipe of the last signed-out account; the next sign-in waits for it, so it never opens half-deleted data.
+    private var wipeTask: Task<Void, Never>?
     private var liveTasks: [Task<Void, Never>] = []
     private var apnsToken: Data?
     private var registrar: PushRegistrar?
@@ -252,7 +254,12 @@ final class AppModel {
 
     private func resetToWelcome() {
         // The live store belongs to the signed-out account. The sample store stands in until the next sign-in.
-        if messaging != nil {
+        if let old = messaging {
+            // The account's database, media and MLS storage go with the session (no data stays for the next account).
+            wipeTask = Task { [previous = wipeTask] in
+                await previous?.value
+                try? await old.sync.wipeLocalData()
+            }
             messaging = nil
             let sample = SampleChatStore()
             sample.onChange = { [weak self] in self?.revision += 1 }
@@ -280,7 +287,7 @@ final class AppModel {
     /// Call after any sign-in succeeds: loads devices, starts the live connection and registers for push.
     func didSignIn() async {
         await refreshDevices()
-        installLiveStore()
+        await installLiveStore()
         await startLive()
         await syncInbox()
         await registerForPushIfAllowed()
@@ -299,7 +306,9 @@ final class AppModel {
 
     /// Swaps the sample store for the real one when this device is signed in and the messaging stack could be
     /// built. One escrow key provider is shared inside `LiveMessaging.make`.
-    private func installLiveStore() {
+    private func installLiveStore() async {
+        await wipeTask?.value
+        wipeTask = nil
         guard !isSampleData, messaging == nil, let session = sessions?.current, let client = live?.client,
               let built = LiveMessaging.make(
                 session: session, client: client, network: network, settings: settings.autoDownload) else { return }

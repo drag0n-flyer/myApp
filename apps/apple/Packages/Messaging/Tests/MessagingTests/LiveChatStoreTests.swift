@@ -429,9 +429,9 @@ private func text(_ message: Message?) -> String? {
         store.block(contactID: "acc-bob")
         #expect(store.chats(in: .all).isEmpty)   // local state applies at once
         await store.settle()
-        #expect(await rig.server.requests().filter { $0.hasPrefix("PUT /v1/blocks") }.isEmpty)
-        #expect(await rig.server.submittedReports().isEmpty)
-
+        // Whether the background runs have already retried past the injected failures depends on how they
+        // interleave (a request made during a run makes it go round again), so only the end state is fixed:
+        // each request reaches the server exactly once.
         await store.flushOutbox()
         await store.flushOutbox()
         #expect(await rig.server.requests().filter { $0 == "PUT /v1/blocks/acc-bob" }.count == 1)

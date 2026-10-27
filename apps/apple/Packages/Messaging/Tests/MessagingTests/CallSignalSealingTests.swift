@@ -12,11 +12,13 @@ private struct Peer {
     let device: TestDevice
     let inbox: InboxProcessor
     let store: LiveChatStore
+    let manager: ConversationManager
 
     init(_ device: TestDevice) {
         self.device = device
         let deps = device.deps
         let conversations = ConversationManager(deps: deps, escrowKey: { Data(repeating: 7, count: 32) })
+        manager = conversations
         let outbox = Outbox(deps: deps, conversations: conversations)
         inbox = InboxProcessor(
             deps: deps, conversations: conversations, handler: IncomingHandler(me: deps.me, now: deps.now, log: { _ in }),
@@ -28,6 +30,19 @@ private struct Peer {
         let device = await makeDevice(server, account: "acc-\(name)", username: name)
         _ = try await device.deps.server.uploadKeyPackages(try await device.deps.mls.makeKeyPackages(count: 3))
         return Peer(device)
+    }
+}
+
+private final class CommitBox: @unchecked Sendable { var commit = Data() }
+
+private func postAddCommit(
+    _ manager: ConversationManager, serverID: String, group: GroupID, mls: MLSEngine, keyPackage: [Data],
+    addDevice: String, box: CommitBox
+) async throws -> UInt64 {
+    try await manager.postCommitWithRetry(serverID: serverID, group: group, addDevices: [addDevice], removeDevices: []) {
+        let bundle = try await mls.add(keyPackages: keyPackage, to: group)
+        box.commit = bundle.commit
+        return bundle
     }
 }
 
@@ -89,6 +104,49 @@ private let offer = CallSignalPayload(kind: .offer, callID: "c1", sdp: "v=0…",
         #expect(try await bob.store.open(sealed, from: "acc-ana") == offer)
         // Nothing was stored as a message in either chat.
         #expect(try ana.device.deps.repo.messages(chatID: "acc-bob", before: nil, limit: 10).isEmpty)
+    }
+
+    @Test func commitThroughCallChannelIsRejectedAndReconciledByInbox() async throws {
+        let server = FakeServer()
+        let ana = try await Peer.make(server, "ana")
+        let bob = try await Peer.make(server, "bob")
+        _ = try await ana.store.seal(offer, to: "acc-bob")   // creates the conversation
+        _ = try await bob.inbox.syncOnce()
+        // Ana gets a second device only now, so the commit that adds it is new to bob.
+        let anaPhone = try await Peer.make(server, "ana")   // a second device of ana's account
+        let conversation = try #require(try ana.device.deps.repo.preferredConversation(chatID: "acc-bob"))
+        let group = GroupID(raw: conversation.groupID)
+        let keyPackage = try await anaPhone.device.deps.mls.makeKeyPackages(count: 1)
+        let box = CommitBox()
+        let epoch = try await postAddCommit(
+            ana.manager, serverID: conversation.serverID, group: group, mls: ana.device.deps.mls,
+            keyPackage: keyPackage, addDevice: anaPhone.device.deviceID, box: box)
+        let sent = box.commit
+        // A commit is not a call payload: the sealer refuses it and writes nothing to the database.
+        await #expect(throws: CallSealError.undecryptable) { try await bob.store.open(sent, from: "acc-ana") }
+        // The normal inbox path reconciles it: stored epoch and group agree.
+        _ = try await bob.inbox.syncOnce()
+        let after = try #require(try bob.device.deps.repo.conversation(serverID: conversation.serverID))
+        #expect(after.epoch == Int64(epoch))
+        #expect(try await bob.device.deps.mls.epoch(of: GroupID(raw: after.groupID)) == epoch)
+        let members = try await bob.device.deps.mls.members(of: GroupID(raw: after.groupID))
+        #expect(members.contains("acc-ana/\(anaPhone.device.deviceID)"))
+    }
+
+    @Test func textThroughCallChannelIsRejectedButStillStoredByInbox() async throws {
+        let server = FakeServer()
+        let ana = try await Peer.make(server, "ana")
+        let bob = try await Peer.make(server, "bob")
+        _ = try await ana.store.seal(offer, to: "acc-bob")
+        _ = try await bob.inbox.syncOnce()
+        _ = await ana.store.addContact(username: "bob")
+        ana.store.send(.text("hello"), in: "acc-bob")
+        await ana.store.settle()
+        // Bob gets the text bytes through the call channel by mistake: rejected, but not lost.
+        let item = try #require(try await bob.device.deps.server.inbox(after: nil, limit: 50).items.last)
+        await #expect(throws: CallSealError.undecryptable) { try await bob.store.open(item.payload, from: "acc-ana") }
+        _ = try await bob.inbox.syncOnce()
+        #expect(try bob.device.deps.repo.messages(chatID: "acc-ana", before: nil, limit: 10).count == 1)
     }
 
     @Test func recordCallLocalOnly() async throws {

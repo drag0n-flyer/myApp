@@ -33,6 +33,10 @@ public actor InboxProcessor {
     private var beforeLock: (@Sendable (RawInboxRecord) async -> Void)?
     /// Welcomes that `mls.process` accepted but whose rows are not stored yet (retried without a second `process`).
     private var pendingJoins: [Int64: Incoming] = [:]
+    /// Results of `mls.process` that another path (the call sealer) already obtained for a payload that is not its
+    /// to handle, by payload hash. `process` uses them instead of calling `mls.process` a second time, which
+    /// the engine would reject as a duplicate and leave the stored epoch behind.
+    private var adopted: [Data: Incoming] = [:]
     private var held: Set<Section> = []
     private var waiters: [Section: [CheckedContinuation<Void, Never>]] = [:]
 
@@ -48,6 +52,11 @@ public actor InboxProcessor {
 
     /// Test hook: runs after the cheap pre-checks and before the process lock is taken.
     func setBeforeLockHook(_ hook: (@Sendable (RawInboxRecord) async -> Void)?) { beforeLock = hook }
+
+    /// Hands over an MLS result that was produced outside the inbox pipeline (a commit, Welcome or non-call
+    /// message that arrived on the call channel). The item itself still comes from the server inbox; when
+    /// it is processed, this result is applied through the normal path (rows, epoch, device lines).
+    func adopt(_ incoming: Incoming, forPayloadHash hash: Data) { adopted[hash] = incoming }
 
     // MARK: Sync
 
@@ -261,7 +270,7 @@ public actor InboxProcessor {
                     return nil
                 }
                 let incoming: Incoming
-                if let accepted = pendingJoins[raw.cursor] {
+                if let accepted = pendingJoins[raw.cursor] ?? adopted[hash] {
                     incoming = accepted
                 } else {
                     do {
@@ -317,6 +326,7 @@ public actor InboxProcessor {
                     return result
                 }
             }
+            adopted[hash] = nil
             return (.done, applied)
         } catch {
             return (.stop, nil)

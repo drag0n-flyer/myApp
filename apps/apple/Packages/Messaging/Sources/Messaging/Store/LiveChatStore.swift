@@ -21,7 +21,7 @@ public final class LiveChatStore: ChatStore {
 
     let deps: MessagingDeps
     private let outbox: Outbox
-    private let inbox: InboxProcessor
+    let inbox: InboxProcessor
     let conversations: ConversationManaging
     private let attachments: AttachmentService?
     private var repo: Repository { deps.repo }
@@ -31,6 +31,7 @@ public final class LiveChatStore: ChatStore {
     private var allChats: [Chat] = []
     private var customFolders: [ChatFolder] = []
     private var tasks: [UUID: Task<Void, Never>] = [:]
+    private let pendingGate = PendingActions.Gate()
 
     public init(
         deps: MessagingDeps, outbox: Outbox, inbox: InboxProcessor, conversations: ConversationManaging,
@@ -63,14 +64,14 @@ public final class LiveChatStore: ChatStore {
     /// The push-driven `InboxProcessor.run(events:)` has no change callback: call `refresh()` after it reports.
     public func syncInbox() async {
         _ = try? await inbox.syncOnce()
-        await PendingActions.run(repo: repo, server: deps.server)
+        await PendingActions.run(repo: repo, server: deps.server, gate: pendingGate)
         refresh()
     }
 
     /// Sends what is queued, then refreshes.
     public func flushOutbox() async {
         try? await outbox.flush()
-        await PendingActions.run(repo: repo, server: deps.server)
+        await PendingActions.run(repo: repo, server: deps.server, gate: pendingGate)
         refresh()
     }
 
@@ -403,8 +404,8 @@ public final class LiveChatStore: ChatStore {
 
     /// Sends block and report requests that are still pending, in the background.
     private func kickPending() {
-        let repo = repo, server = deps.server
-        background { await PendingActions.run(repo: repo, server: server) }
+        let repo = repo, server = deps.server, gate = pendingGate
+        background { await PendingActions.run(repo: repo, server: server, gate: gate) }
     }
 
     public func markRead(chatID: String) {

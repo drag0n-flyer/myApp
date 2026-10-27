@@ -39,26 +39,42 @@ extension LiveChatStore {
     /// message (`"<accountID>/<deviceID>"`, the part before the slash), never from anything outside the
     /// ciphertext. Every failure is `CallSealError.undecryptable`.
     ///
-    /// Only an application message with a `callsig` body is accepted. The payload hash is marked processed,
-    /// so the same bytes never open twice (and the notification extension never processes them again).
+    /// The call channel accepts call payloads only. `mls.process` has already advanced the group by the time
+    /// the result is known, so a commit, Welcome or other content that arrives here is not applied to the
+    /// database here and its hash is not marked processed. It goes to the inbox pipeline instead
+    /// (`InboxProcessor.adopt`, then `syncOnce`), which stores it like any inbox item, and the call fails.
+    /// A call payload's hash is marked processed, so the same bytes never open twice.
+    ///
+    /// TODO(M7, encryption core): an engine-level "application messages only" check before decrypting plugs in
+    /// at the `mls.process(data)` call below. Then a non-application message is refused without touching group
+    /// state and the hand-over to the inbox is no longer needed.
     nonisolated public func openRecoveringSender(
         _ data: Data
     ) async throws -> (payload: CallSignalPayload, senderAccountID: String) {
         let hash = PortableSHA256.hash(data)
         let repo = deps.repo
         let mls = deps.mls
-        let result: (CallSignalPayload, String)?
+        enum Opened { case call(CallSignalPayload, String), notACall(Incoming), replay }
+        let opened: Opened
         do {
-            result = try await deps.lock.withAsyncLock(timeout: Self.callLockTimeout) { () async throws -> (CallSignalPayload, String)? in
-                if try repo.isProcessed(hash: hash) { return nil }
-                let incoming = try await mls.process(data)
-                try repo.markProcessed(hash: hash)
+            opened = try await deps.lock.withAsyncLock(timeout: Self.callLockTimeout) { () async throws -> Opened in
+                if try repo.isProcessed(hash: hash) { return .replay }
+                let incoming = try await mls.process(data)   // M7: application-only check goes before this call
                 guard case .application(_, let sender, let plaintext, _) = incoming,
-                      case .callSignal(let payload) = ContentEnvelope.decode(plaintext).body else { return nil }
-                return (payload, String(sender.split(separator: "/", maxSplits: 1).first ?? ""))
+                      case .callSignal(let payload) = ContentEnvelope.decode(plaintext).body else { return .notACall(incoming) }
+                try repo.markProcessed(hash: hash)
+                return .call(payload, String(sender.split(separator: "/", maxSplits: 1).first ?? ""))
             }
         } catch { throw CallSealError.undecryptable }
-        guard let result, !result.1.isEmpty else { throw CallSealError.undecryptable }
-        return (result.0, result.1)
+        switch opened {
+        case .call(let payload, let account) where !account.isEmpty:
+            return (payload, account)
+        case .notACall(let incoming):
+            await inbox.adopt(incoming, forPayloadHash: hash)
+            _ = try? await inbox.syncOnce()
+            throw CallSealError.undecryptable
+        default:
+            throw CallSealError.undecryptable
+        }
     }
 }

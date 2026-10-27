@@ -23,6 +23,8 @@ final class SharedValue<Value: Sendable>: @unchecked Sendable {
 struct LiveMessaging {
     let store: LiveChatStore
     let inbox: InboxProcessor
+    /// Wipes this account's local data at sign-out (`wipeLocalData`).
+    let sync: DeviceSync
     let network: SharedValue<NetworkType>
     let autoDownload: SharedValue<AutoDownloadSettings>
 
@@ -54,13 +56,18 @@ struct LiveMessaging {
             deps: deps, conversations: conversations, handler: IncomingHandler(me: deps.me, now: now), controls: outbox)
         syncHook.set { _ = try await inbox.syncOnce() }
 
+        // Sign-out removes the database rows, the media and the MLS storage in the app-group container.
+        let sync = DeviceSync(
+            deps: deps, conversations: conversations,
+            wipeMLS: { try MessagingLocations.removeMLSStorage(in: container) })
+
         let networkBox = SharedValue(network)
         let settingsBox = SharedValue(settings)
         let attachments = AttachmentService(
             deps: deps, outbox: outbox, network: { networkBox.value }, settings: { settingsBox.value })
         let store = LiveChatStore(
             deps: deps, outbox: outbox, inbox: inbox, conversations: conversations, attachments: attachments)
-        return LiveMessaging(store: store, inbox: inbox, network: networkBox, autoDownload: settingsBox)
+        return LiveMessaging(store: store, inbox: inbox, sync: sync, network: networkBox, autoDownload: settingsBox)
     }
 
     /// MERGE(M5): the real engine, `makeMLSEngine(identity:storage:)` (plan 4), keeping its group state in the
@@ -68,7 +75,7 @@ struct LiveMessaging {
     /// nil and the app keeps the sample store. It never returns `FakeMLSEngine`: that has no cryptography.
     private static func makeEngine(container: URL, accountID: String, deviceID: String) -> MLSEngine? {
         #if canImport(MLSFFIBindings)
-        return try? makeMLSEngine(identity: "\(accountID)/\(deviceID)", storage: container.appendingPathComponent("mls"))
+        return try? makeMLSEngine(identity: "\(accountID)/\(deviceID)", storage: MessagingLocations.mlsURL(in: container))
         #else
         return nil
         #endif
