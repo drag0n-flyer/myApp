@@ -19,6 +19,7 @@ type Config struct {
 	PushGatewayURL, PushKeyFile, PushServerID, EscrowKeyFile                       string
 	AppleAppIDs                                                                    []string
 	TrustProxy                                                                     bool
+	LabMode                                                                        bool // APP_LAB_MODE=1: lab-only session command; never on a real server
 }
 
 // Policy is the operator policy file, with defaults from DefaultPolicy.
@@ -106,6 +107,8 @@ func Load(getenv func(string) string, readFile func(string) ([]byte, error)) (Co
 		}
 		c.TrustProxy = b
 	}
+
+	c.LabMode = getenv("APP_LAB_MODE") == "1"
 
 	p := DefaultPolicy()
 	if path := getenv("APP_POLICY_FILE"); path != "" {
