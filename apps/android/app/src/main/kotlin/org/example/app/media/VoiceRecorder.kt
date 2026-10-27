@@ -29,8 +29,7 @@ class VoiceRecorder(
 ) {
     private class Session(val record: AudioRecord, val codec: MediaCodec) {
         @Volatile var stopRequested = false
-        @Volatile var cancelled = false
-        @Volatile var result: StopResult? = null
+        val slot = NoteSlot()
         lateinit var thread: Thread
         val packets = ArrayList<ByteArray>()
         var preSkip = VoiceNoteFinisher.DEFAULT_PRE_SKIP
@@ -38,7 +37,7 @@ class VoiceRecorder(
 
     private var session: Session? = null
 
-    val isRecording: Boolean get() = session?.let { it.result == null } == true
+    val isRecording: Boolean get() = session?.let { it.slot.result == null } == true
 
     fun start(): StartResult {
         if (session != null) return StartResult.Failed(VoiceFailure.Microphone)
@@ -88,16 +87,20 @@ class VoiceRecorder(
         session = null
         s.stopRequested = true
         s.thread.join(JOIN_MILLIS)
-        if (s.thread.isAlive) { s.cancelled = true; s.thread.interrupt(); return StopResult.Failed(VoiceFailure.Encoder) }
-        return s.result ?: StopResult.Failed(VoiceFailure.Encoder)
+        if (s.thread.isAlive) {
+            // Whatever the thread produces later is deleted, never left behind.
+            s.slot.abandon(); s.thread.interrupt(); return StopResult.Failed(VoiceFailure.Encoder)
+        }
+        return s.slot.result ?: StopResult.Failed(VoiceFailure.Encoder)
     }
 
     /** Stops and throws the recording away. */
     fun cancel() {
         val s = session ?: return
         session = null
-        s.cancelled = true
         s.stopRequested = true
+        // Deletes a note the auto-stop already finished, and one that is still being written.
+        s.slot.abandon()
         s.thread.join(JOIN_MILLIS)
     }
 
@@ -108,7 +111,7 @@ class VoiceRecorder(
         val info = MediaCodec.BufferInfo()
         try {
             while (!s.stopRequested && !Thread.currentThread().isInterrupted) {
-                if (samples >= MAX_SAMPLES) { onLimitReached?.invoke(); break }
+                if (samples >= VoiceNoteFinisher.MAX_CAPTURE_SAMPLES) { onLimitReached?.invoke(); break }
                 val n = s.record.read(buf, 0, buf.size)
                 if (n < 0) { failure = VoiceFailure.Microphone; break }
                 if (n == 0) continue
@@ -124,11 +127,9 @@ class VoiceRecorder(
             runCatching { s.codec.stop() }
             runCatching { s.codec.release() }
         }
-        s.result = when {
-            s.cancelled -> StopResult.Failed(VoiceFailure.Microphone)
-            failure != null -> StopResult.Failed(failure)
-            else -> VoiceNoteFinisher.finish(s.packets, s.preSkip, outputDir)
-        }
+        s.slot.offer(
+            if (failure != null) StopResult.Failed(failure) else VoiceNoteFinisher.finish(s.packets, s.preSkip, outputDir),
+        )
     }
 
     /** Queues one input buffer (or end of stream), draining encoded packets so the encoder never stalls. */
@@ -180,7 +181,6 @@ class VoiceRecorder(
         const val RATE = MediaPlan.Voice.SAMPLE_RATE
         /** 20 ms of 16-bit mono: one Opus frame. */
         const val FRAME_BYTES = RATE / 50 * 2
-        const val MAX_SAMPLES = (MediaPlan.Voice.MAX_DURATION * RATE).toLong()
         const val JOIN_MILLIS = 5_000L
     }
 }

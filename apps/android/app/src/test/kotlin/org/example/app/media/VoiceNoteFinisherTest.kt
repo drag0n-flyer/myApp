@@ -79,10 +79,67 @@ class VoiceNoteFinisherTest {
         } finally { d.deleteRecursively() }
     }
 
+    @Test fun recorderCapLeavesRoomForTheEncoderToAddFramesAndStaysValid() {
+        // The recorder stops at MAX_CAPTURE_SAMPLES (16 kHz); the encoder may add a look-ahead frame or two at the end.
+        val captureFrames = VoiceNoteFinisher.MAX_CAPTURE_SAMPLES / 320
+        val d = dir()
+        try {
+            val ok = assertIs<StopResult.Success>(VoiceNoteFinisher.finish(frames(captureFrames.toInt() + 2), 312, d))
+            assertEquals(1_800.0, ok.recording.durationSeconds, 0.1)
+        } finally { d.deleteRecursively() }
+    }
+
+    @Test fun preSkipIsReadFromAndroidsAopusHdrCodecConfig() {
+        // C2SoftOpusEnc csd-0: "AOPUSHDR", u64 length, then an OpusHead of 19 bytes (pre-skip 0x0138 = 312).
+        val head = "OpusHead".toByteArray() + byteArrayOf(1, 1, 0x38, 0x01, 0x80.toByte(), 0x3E, 0, 0, 0, 0, 0)
+        val csd = "AOPUSHDR".toByteArray() + java.nio.ByteBuffer.allocate(8).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            .putLong(head.size.toLong()).array() + head
+        assertEquals(0x138, VoiceNoteFinisher.preSkipFromOpusHead(csd))
+        val other = csd.copyOf().also { it[8 + 8 + 10] = 0x40; it[8 + 8 + 11] = 0 }
+        assertEquals(0x40, VoiceNoteFinisher.preSkipFromOpusHead(other))
+        // A wrapper whose length runs past the buffer, or another tag, falls back.
+        val truncated = csd.copyOf(20)
+        assertEquals(VoiceNoteFinisher.DEFAULT_PRE_SKIP, VoiceNoteFinisher.preSkipFromOpusHead(truncated))
+    }
+
     @Test fun preSkipIsParsedFromTheEncodersOpusHead() {
         val head = "OpusHead".toByteArray() + byteArrayOf(1, 1, 0x38, 0x01, 0x80.toByte(), 0x3E, 0, 0, 0, 0, 0)
         assertEquals(0x138, VoiceNoteFinisher.preSkipFromOpusHead(head))
         assertEquals(VoiceNoteFinisher.DEFAULT_PRE_SKIP, VoiceNoteFinisher.preSkipFromOpusHead(byteArrayOf(1, 2, 3)))
         assertEquals(VoiceNoteFinisher.DEFAULT_PRE_SKIP, VoiceNoteFinisher.preSkipFromOpusHead(null))
+    }
+
+    private fun note(d: File) = assertIs<StopResult.Success>(VoiceNoteFinisher.finish(frames(100), 312, d))
+
+    @Test fun abandoningAfterTheNoteIsReadyDeletesTheFile() {
+        val d = dir()
+        try {
+            val slot = NoteSlot()
+            val ok = note(d)
+            slot.offer(ok)
+            slot.abandon()                     // cancel() after the 30-minute auto-stop
+            assertEquals(emptyList(), d.list()!!.toList())
+        } finally { d.deleteRecursively() }
+    }
+
+    @Test fun abandoningBeforeTheNoteIsReadyDeletesItWhenItArrives() {
+        val d = dir()
+        try {
+            val slot = NoteSlot()
+            slot.abandon()                     // stop() gave up waiting while the thread was inside finish
+            slot.offer(note(d))
+            assertEquals(emptyList(), d.list()!!.toList())
+        } finally { d.deleteRecursively() }
+    }
+
+    @Test fun aNoteThatIsNotAbandonedIsKept() {
+        val d = dir()
+        try {
+            val slot = NoteSlot()
+            val ok = note(d)
+            slot.offer(ok)
+            assertEquals(ok, slot.result)
+            assertEquals(1, d.list()!!.size)
+        } finally { d.deleteRecursively() }
     }
 }

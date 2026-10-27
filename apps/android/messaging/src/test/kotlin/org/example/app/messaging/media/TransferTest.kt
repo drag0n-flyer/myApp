@@ -60,6 +60,8 @@ private class FakeServer : DeliveryApi {
 }
 
 class TransferTest {
+    private fun blobName(att: org.example.app.messaging.content.Att) =
+        "${att.id}-${att.dg.joinToString("") { "%02x".format(it) }}.enc"
     private fun tmp() = File.createTempFile("xfer", "").also { it.delete(); it.mkdirs() }
     private fun downloader(server: DeliveryApi, dir: File, max: Long = Downloader.DEFAULT_MAX_BYTES) =
         Downloader(server, File(dir, "dl"), File(dir, "open"), max)
@@ -78,9 +80,9 @@ class TransferTest {
             assertEquals(emptyList(), File(dir, "tmp").list()!!.toList(), "upload temp removed")
             val dl = downloader(server, dir)
             val blob = dl.download(att)
-            assertEquals("up1.enc", blob.name)
+            assertEquals(blobName(att), blob.name)
             assertContentEquals(server.blobs["up1"]!!, blob.readBytes(), "the stored file is the ciphertext")
-            assertEquals(listOf("up1.enc"), File(dir, "dl").list()!!.toList(), "no part file, no plaintext")
+            assertEquals(listOf(blobName(att)), File(dir, "dl").list()!!.toList(), "no part file, no plaintext")
             assertFalse(File(dir, "open").exists() && File(dir, "open").list()!!.isNotEmpty())
             val opened = dl.open(att)
             assertTrue(opened.file.absolutePath.startsWith(File(dir, "open").absolutePath))
@@ -88,7 +90,7 @@ class TransferTest {
             opened.close()
             assertFalse(opened.file.exists(), "plaintext deleted on close")
             assertEquals(emptyList(), File(dir, "open").list()!!.toList())
-            assertEquals(listOf("up1.enc"), File(dir, "dl").list()!!.toList())
+            assertEquals(listOf(blobName(att)), File(dir, "dl").list()!!.toList())
         } finally { dir.deleteRecursively() }
     }
 
@@ -110,7 +112,7 @@ class TransferTest {
             // A new process starts: nothing from the old one may stay.
             downloader(server, dir).sweepOpen()
             assertEquals(emptyList(), File(dir, "open").list()!!.toList())
-            assertTrue(File(dir, "dl/up1.enc").exists(), "the encrypted blob is not swept")
+            assertTrue(File(dir, "dl/${blobName(att)}").exists(), "the encrypted blob is not swept")
             c.close()
         } finally { dir.deleteRecursively() }
     }
@@ -123,7 +125,7 @@ class TransferTest {
             val dl = downloader(server, dir)
             server.cutAfter = 70_000
             assertFailsWith<IncompleteDownloadException> { dl.download(att) }
-            assertFalse(File(dir, "dl/up1.enc").exists())
+            assertFalse(File(dir, "dl/${blobName(att)}").exists())
             server.cutAfter = null
             dl.download(att)
             assertEquals(listOf(0L, 70_000L), server.fromBytes)
@@ -236,9 +238,77 @@ class TransferTest {
             assertEquals(1, server.downloads.get(), "one transfer for eight callers")
             for (r in results) assertContentEquals(src.readBytes(), r.file.readBytes())
             assertEquals(1, results.map { it.file }.toSet().size, "one shared plaintext file")
-            assertEquals(listOf("up1.enc"), File(dir, "dl").list()!!.toList())
+            assertEquals(listOf(blobName(att)), File(dir, "dl").list()!!.toList())
             results.forEach { it.close() }
             assertEquals(emptyList(), File(dir, "open").list()!!.toList())
+        } finally { dir.deleteRecursively() }
+    }
+
+    @Test fun forgedMessageWithSameIdAndWrongKeyCannotDeleteTheVerifiedBlob() = runBlocking {
+        val dir = tmp()
+        try {
+            val server = FakeServer()
+            val (src, att) = upload(server, dir, ByteArray(1000) { 1 })
+            val dl = downloader(server, dir)
+            dl.open(att).close()
+            val forged = org.example.app.messaging.content.Att(att.id, ByteArray(32) { 9 }, att.dg, att.sz, att.csz)
+            assertFailsWith<AttachmentException.Authentication> { dl.open(forged) }
+            assertTrue(File(dir, "dl/${blobName(att)}").exists(), "the verified blob stays")
+            dl.open(att).use { assertContentEquals(src.readBytes(), it.file.readBytes()) }
+            assertEquals(1, server.downloads.get(), "no second transfer")
+        } finally { dir.deleteRecursively() }
+    }
+
+    @Test fun forgedMessageWithSameIdAndOtherDigestOrSizeNeitherReusesNorDeletesTheBlob() = runBlocking {
+        val dir = tmp()
+        try {
+            val server = FakeServer()
+            val (src, att) = upload(server, dir, ByteArray(1000) { 1 })
+            val dl = downloader(server, dir)
+            dl.download(att)
+            val badDigest = org.example.app.messaging.content.Att(att.id, att.key, ByteArray(32) { 5 }, att.sz, att.csz)
+            assertFailsWith<AttachmentException.Digest> { dl.open(badDigest) }
+            val otherSize = org.example.app.messaging.content.Att(
+                att.id, att.key, att.dg, att.sz + 16, AttachmentCipher.sealedSize(att.sz + 16))
+            runCatching { dl.open(otherSize) }
+            assertTrue(File(dir, "dl/${blobName(att)}").exists(), "the verified blob stays")
+            dl.open(att).use { assertContentEquals(src.readBytes(), it.file.readBytes()) }
+        } finally { dir.deleteRecursively() }
+    }
+
+    @Test fun clearedCacheWhileShownDoesNotLetAStaleCloseDeleteTheOtherViewersFile() = runBlocking {
+        val dir = tmp()
+        try {
+            val server = FakeServer()
+            val (src, att) = upload(server, dir, ByteArray(1000) { 2 })
+            val dl = downloader(server, dir)
+            val a = dl.open(att)
+            a.file.delete()                      // the OS cleared the cache under a shown item
+            val b = dl.open(att)
+            assertContentEquals(src.readBytes(), b.file.readBytes())
+            a.close()
+            assertTrue(b.file.exists(), "the second viewer still shows its file")
+            b.close()
+            assertFalse(b.file.exists())
+        } finally { dir.deleteRecursively() }
+    }
+
+    @Test fun sweepSkipsFilesThatAreCurrentlyOpen() = runBlocking {
+        val dir = tmp()
+        try {
+            val server = FakeServer()
+            val (_, att) = upload(server, dir, ByteArray(1000) { 2 })
+            val dl = downloader(server, dir)
+            val a = dl.open(att)
+            File(dir, "open/orphan.part").writeBytes(byteArrayOf(1))
+            dl.sweepOpen()
+            assertTrue(a.file.exists(), "an open file is not swept")
+            assertFalse(File(dir, "open/orphan.part").exists())
+            val b = dl.open(att)
+            a.close()
+            assertTrue(b.file.exists())
+            b.close()
+            assertFalse(b.file.exists())
         } finally { dir.deleteRecursively() }
     }
 }

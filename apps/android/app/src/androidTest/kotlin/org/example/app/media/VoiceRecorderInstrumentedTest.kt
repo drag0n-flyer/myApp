@@ -16,7 +16,7 @@ import org.junit.runner.RunWith
 
 /**
  * Records about one second on a real device or emulator with the AudioRecord + MediaCodec Opus path and validates
- * the file with the rules a receiver applies. Runs on the emulator CI job.
+ * the file with the rules a receiver applies. Runs once the emulator CI job (task G3) lands; until then it only compiles.
  */
 @RunWith(AndroidJUnit4::class)
 class VoiceRecorderInstrumentedTest {
@@ -38,6 +38,7 @@ class VoiceRecorderInstrumentedTest {
         assertEquals(1, stream.channels)
         assertTrue(stream.packets.isNotEmpty())
         assertEquals(16_000L, stream.inputSampleRate)
+        assertEquals(312, stream.preSkip, "libopus look-ahead at 48 kHz, read from the encoder or the default")
         assertEquals(listOf(ok.recording.file.name), dir.list()!!.toList())
     }
 

@@ -10,6 +10,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.int
@@ -160,6 +161,14 @@ class AttachmentCipherTest {
         assertEquals(32, ba.key.size)
         assertFalse(ba.key.contentEquals(bb.key))
         assertFalse(a.toByteArray().contentEquals(b.toByteArray()))
+    }
+
+    @Test fun noPublicEncryptTakesAKey() {
+        val publicEncrypts = AttachmentCipher::class.java.methods.filter { (it.name == "encrypt" || it.name.startsWith("encryptWith")) && !it.name.contains('$') }
+        assertTrue(publicEncrypts.isNotEmpty())
+        for (m in publicEncrypts) {
+            assertFalse(m.parameterTypes.any { it == ByteArray::class.java }, "public ${m.name} must not take a key")
+        }
     }
 
     @Test fun negativeFirstIndexIsRejected() {

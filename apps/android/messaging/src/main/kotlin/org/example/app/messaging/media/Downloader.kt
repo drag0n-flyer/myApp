@@ -4,6 +4,7 @@ import java.io.Closeable
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.Dispatchers
@@ -32,10 +33,10 @@ class OpenedAttachment internal constructor(val file: File, private val onClose:
 /**
  * Downloads and opens attachments (Design 4, 7, 9).
  *
- * - [download] fetches the ciphertext in `Range` continuation into `<id>.enc.part` inside [blobDir] and keeps it
+ * - [download] fetches the ciphertext in `Range` continuation into `<id>-<digest hex>.enc.part` inside [blobDir] and keeps it
  *   when the transfer stops, so the next call resumes. A complete file whose SHA-256 matches `att.dg` is renamed
- *   to `<id>.enc` and stays there, encrypted with the attachment key (the key lives only in the message).
- * - [open] decrypts `<id>.enc` into [openDir] and returns an [OpenedAttachment]; closing it deletes the plaintext.
+ *   to `<id>-<digest hex>.enc` and stays there, encrypted with the attachment key (the key lives only in the message).
+ * - [open] decrypts the blob into [openDir] and returns an [OpenedAttachment]; closing it deletes the plaintext.
  *   [sweepOpen] removes whatever a killed process left in [openDir]; call it once at app start.
  * - Calls for the same attachment id are serialized, so an auto-download and a tap fetch it once and share one
  *   plaintext file. Use one instance per process.
@@ -59,38 +60,43 @@ class Downloader(
     /** Downloads when needed, then decrypts into [openDir]. Close the result when the item is no longer shown. */
     suspend fun open(att: Att): OpenedAttachment = withContext(Dispatchers.IO) {
         checkId(att.id)
+        // The plaintext file is named for the id, the digest and the key, so a message with another key never
+        // shares (or deletes) the file that another message shows.
+        val name = "${att.id}-${hex(att.dg)}-${hex(MessageDigest.getInstance("SHA-256").digest(att.key)).take(16)}"
         lock(att.id).withLock {
             val blob = ensureBlob(att)
-            val plain = File(openDir, att.id)
+            val plain = File(openDir, name)
             val shared = synchronized(viewers) {
-                val n = viewers[att.id] ?: 0
-                if (n > 0 && plain.exists()) { viewers[att.id] = n + 1; true } else false
+                val n = viewers[name] ?: 0
+                if (n > 0 && plain.exists()) { viewers[name] = n + 1; true } else false
             }
             if (!shared) {
                 openDir.mkdirs()
-                try {
-                    AttachmentCipher.decrypt(blob, plain, att.key, att.dg)
-                } catch (e: AttachmentException) {
-                    // The blob matched the digest but does not decrypt with this key: it can never work.
-                    blob.delete()
-                    throw e
-                }
-                synchronized(viewers) { viewers[att.id] = 1 }
+                // The blob passed its digest check, so a failure here is the message's fault (wrong key); the blob
+                // may belong to the real message and is never deleted on this path.
+                AttachmentCipher.decrypt(blob, plain, att.key, att.dg)
+                // Count up, never reset: a handle opened before the file was cleared still holds a count.
+                synchronized(viewers) { viewers[name] = (viewers[name] ?: 0) + 1 }
             }
             OpenedAttachment(plain) {
                 synchronized(viewers) {
-                    val left = (viewers[att.id] ?: 1) - 1
-                    if (left <= 0) { viewers.remove(att.id); plain.delete() } else viewers[att.id] = left
+                    val left = (viewers[name] ?: 1) - 1
+                    if (left <= 0) { viewers.remove(name); plain.delete() } else viewers[name] = left
                 }
             }
         }
     }
 
-    /** Deletes every file in [openDir]. For app start, when nothing can be shown yet. */
+    /**
+     * Deletes the files in [openDir] that no viewer shows (leftovers of a killed process, temp files). Safe to call
+     * while items are shown; call it at app start.
+     */
     fun sweepOpen() {
-        synchronized(viewers) { viewers.clear() }
-        openDir.listFiles()?.forEach { it.deleteRecursively() }
+        val shown = synchronized(viewers) { viewers.keys.toSet() }
+        openDir.listFiles()?.forEach { if (it.name !in shown) it.deleteRecursively() }
     }
+
+    private fun hex(b: ByteArray) = b.joinToString("") { "%02x".format(it) }
 
     private fun lock(id: String) = locks.computeIfAbsent(id) { Mutex() }
 
@@ -109,10 +115,12 @@ class Downloader(
     private suspend fun ensureBlob(att: Att): File {
         checkSizes(att)
         blobDir.mkdirs()
-        val blob = File(blobDir, "${att.id}.enc")
+        // Keyed by id and digest: a blob is reused only for a message with the same digest, and a message with other
+        // values never touches it (it can only fetch and verify its own file).
+        val stem = "${att.id}-${hex(att.dg)}"
+        val blob = File(blobDir, "$stem.enc")
         if (blob.length() == att.csz) return blob
-        blob.delete()
-        val part = File(blobDir, "${att.id}.enc.part")
+        val part = File(blobDir, "$stem.enc.part")
         if (part.length() > att.csz) part.delete()
         try {
             try {
