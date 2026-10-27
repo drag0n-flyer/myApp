@@ -1,0 +1,12 @@
+# Reverse proxy for the push gateway: automatic HTTPS, no access log.
+{
+	admin off
+}
+
+{$PUSH_HOST} {
+	header Strict-Transport-Security "max-age=31536000"
+	log {
+		output discard
+	}
+	reverse_proxy pushgw:8081
+}

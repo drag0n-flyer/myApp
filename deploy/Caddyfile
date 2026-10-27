@@ -1,0 +1,18 @@
+# Reverse proxy for the app server. Caddy gets and renews the TLS certificate
+# by itself (automatic HTTPS) and passes WebSocket upgrades (/v1/ws) through.
+# Start it with: docker compose --profile caddy up -d
+{
+	# Nobody needs the admin API of the proxy.
+	admin off
+}
+
+{$APP_HOST} {
+	header Strict-Transport-Security "max-age=31536000"
+
+	# No access log: the server design (section 8) keeps client addresses out of logs.
+	log {
+		output discard
+	}
+
+	reverse_proxy appserver:8080
+}
