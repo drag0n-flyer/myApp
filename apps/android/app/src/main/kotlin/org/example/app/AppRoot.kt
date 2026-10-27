@@ -27,6 +27,14 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import androidx.compose.foundation.layout.Box
+import org.example.app.core.calls.CallPhase
+import org.example.app.core.calls.SimulatedCallEngine
+import org.example.app.ui.call.CallScreen
+import org.example.app.ui.call.CallViewModel
+import org.example.app.ui.call.IncomingCallScreen
+import org.example.app.ui.calls.CallHistoryScreen
+import org.example.app.ui.calls.CallHistoryViewModel
 import org.example.app.ui.chat.ChatScreen
 import org.example.app.ui.chat.ChatViewModel
 import org.example.app.ui.chatinfo.ChatInfoScreen
@@ -73,6 +81,18 @@ fun AppRoot(graph: AppGraph) {
     AppTheme {
         val nav = rememberNavController()
         val idArg = listOf(navArgument("id") { type = NavType.StringType })
+        val context = LocalContext.current
+        val debuggable = (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+        val callVm = viewModel<CallViewModel>(
+            factory = factory {
+                CallViewModel(
+                    graph.callEngine, graph.chatStore, graph.serverPolicy, { graph.settingsStore.settings.value.call },
+                    simulator = graph.callEngine as? SimulatedCallEngine, showSimulator = debuggable,
+                )
+            },
+        )
+        val call by callVm.call.collectAsState()
+        Box {
         NavHost(nav, startDestination = MAIN) {
             composable(MAIN) {
                 MainTabs { tab ->
@@ -81,6 +101,9 @@ fun AppRoot(graph: AppGraph) {
                             factory = factory { ChatListViewModel(graph.chatStore, graph.serverPolicy, graph.settingsStore.settings, graph.network) },
                         )
                         ChatListScreen(vm, onOpenChat = { nav.navigate("chat/$it") }, onOpenRequests = { nav.navigate(REQUESTS) }, onNewChat = {})
+                    } else if (tab == MainTab.Calls) {
+                        val vm = viewModel<CallHistoryViewModel>(factory = factory { CallHistoryViewModel(graph.chatStore) })
+                        CallHistoryScreen(vm, onCall = callVm::start)
                     } else if (tab == MainTab.Contacts) {
                         val context = LocalContext.current
                         val invite = "https://${graph.serverPolicy.host}/invite/${SampleAccountService.SAMPLE_INVITE_CODE}"
@@ -132,7 +155,7 @@ fun AppRoot(graph: AppGraph) {
                     vm, myId = graph.chatStore.me.id,
                     onBack = { nav.popBackStack() },
                     onOpenInfo = { nav.navigate("chatinfo/$id") },
-                    onCall = {},
+                    onCall = { video -> callVm.start(id, video) },
                 )
             }
             composable(INFO, idArg) { entry ->
@@ -140,11 +163,17 @@ fun AppRoot(graph: AppGraph) {
                 ChatInfoScreen(
                     graph.chatStore, id,
                     onBack = { nav.popBackStack() },
-                    onCall = {},
+                    onCall = { video -> callVm.start(id, video) },
                     onSearch = {},
                     onBlocked = { nav.popBackStack(MAIN, inclusive = false) },
                 )
             }
+        }
+        when {
+            call == null -> {}
+            call?.phase == CallPhase.Incoming -> IncomingCallScreen(callVm)
+            else -> CallScreen(callVm)
+        }
         }
     }
 }

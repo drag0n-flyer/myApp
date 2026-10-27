@@ -45,18 +45,8 @@ data class CallState(
 ) {
     val isEnded: Boolean get() = phase is CallPhase.Ended
 
-    /** "04:12", or "1:02:05" past an hour. */
-    val elapsedText: String
-        get() {
-            val total = elapsed.toInt()
-            val h = total / 3600
-            val m = (total % 3600) / 60
-            val s = total % 60
-            fun two(n: Int) = if (n < 10) "0$n" else "$n"
-            return if (h > 0) "$h:${two(m)}:${two(s)}" else "${two(m)}:${two(s)}"
-        }
-
-    val dataUsedText: String get() = DataFormat.used(bytesUsed)
+    /** Whole seconds on the call clock; the UI formats it. */
+    val elapsedSeconds: Long get() = elapsed.toLong()
 }
 
 /** Runs calls. `SimulatedCallEngine` now; the WebRTC engine after Phase 0. `state` is null when there is no call. */
