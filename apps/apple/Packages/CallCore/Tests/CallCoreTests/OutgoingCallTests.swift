@@ -50,7 +50,7 @@ private func published(_ fx: [CallEffect]) -> CallState? {
         var (m, _, _) = started()
         let ceiling = DataModePolicy.ceiling(server: server, settings: ctx().settings.call, network: .mobile, inCall: nil)
         answered(&m)
-        let fx = m.handle(.remote(offer()))
+        let fx = m.handle(.remote(offer(), fromDeviceID: "d1"))
         #expect(fx.contains(.acceptOffer(sdp: sdp(), send: .for(m.state!.effectiveMode), receive: .for(ceiling))))
         let fx2 = m.handle(.localAnswer(sdp("sha-256 11:22")))
         #expect(fx2.contains(.sendSignal(CallSignalPayload(kind: .answer, callID: "c1", sdp: sdp("sha-256 11:22"),
@@ -62,7 +62,7 @@ private func published(_ fx: [CallEffect]) -> CallState? {
         answered(&m)
         var bad = offer()
         bad.dtlsFingerprint = "sha-256 00:00"
-        let fx = m.handle(.remote(bad))
+        let fx = m.handle(.remote(bad, fromDeviceID: "d1"))
         #expect(m.state?.phase == .ended(.failed))
         #expect(fx.contains(.closeMedia) && fx.contains(.sendHangup))
         #expect(!fx.contains { if case .acceptOffer = $0 { true } else { false } })
@@ -71,14 +71,14 @@ private func published(_ fx: [CallEffect]) -> CallState? {
     @Test func peerCeilingLimitsSendMode() {
         var (m, _, _) = started()
         answered(&m)
-        let fx = m.handle(.remote(offer(ceiling: .dataSaver)))
+        let fx = m.handle(.remote(offer(ceiling: .dataSaver), fromDeviceID: "d1"))
         #expect(fx.contains { if case .acceptOffer(_, let send, _) = $0 { send.mode == .dataSaver } else { false } })
     }
 
     @Test func iceConnectedGoesActive() {
         var (m, _, _) = started()
         answered(&m)
-        _ = m.handle(.remote(offer()))
+        _ = m.handle(.remote(offer(), fromDeviceID: "d1"))
         _ = m.handle(.localAnswer(sdp()))
         _ = m.handle(.media(.iceState(.connected)))
         #expect(m.state?.phase == .active)
@@ -109,7 +109,7 @@ private func published(_ fx: [CallEffect]) -> CallState? {
         // Before call.answered: buffered.
         #expect(m.handle(.media(.localCandidate(cand))).isEmpty)
         answered(&m)
-        _ = m.handle(.remote(offer()))
+        _ = m.handle(.remote(offer(), fromDeviceID: "d1"))
         let fx = m.handle(.localAnswer(sdp()))
         let candidateSignal = CallEffect.sendSignal(CallSignalPayload(kind: .candidate, callID: "c1", candidate: cand))
         #expect(fx.contains(candidateSignal))
@@ -140,7 +140,7 @@ private func published(_ fx: [CallEffect]) -> CallState? {
     @Test func elapsedCountsFromActive() {
         var (m, clock, _) = started()
         answered(&m)
-        _ = m.handle(.remote(offer()))
+        _ = m.handle(.remote(offer(), fromDeviceID: "d1"))
         _ = m.handle(.localAnswer(sdp()))
         clock.advance(3)
         _ = m.handle(.tick)
@@ -154,7 +154,7 @@ private func published(_ fx: [CallEffect]) -> CallState? {
     @Test func hangupAfterActiveRecordsDuration() {
         var (m, clock, _) = started(video: true, context: ctx(network: .wifi))
         answered(&m)
-        _ = m.handle(.remote(offer()))
+        _ = m.handle(.remote(offer(), fromDeviceID: "d1"))
         _ = m.handle(.localAnswer(sdp()))
         _ = m.handle(.media(.iceState(.connected)))
         clock.advance(7)
@@ -169,7 +169,7 @@ private func published(_ fx: [CallEffect]) -> CallState? {
     @Test func disconnectShowsReconnectingThenRecovers() {
         var (m, clock, _) = started()
         answered(&m)
-        _ = m.handle(.remote(offer()))
+        _ = m.handle(.remote(offer(), fromDeviceID: "d1"))
         _ = m.handle(.localAnswer(sdp()))
         _ = m.handle(.media(.iceState(.connected)))
         _ = m.handle(.media(.iceState(.disconnected)))
@@ -184,7 +184,7 @@ private func published(_ fx: [CallEffect]) -> CallState? {
     @Test func connectionLostAfter30s() {
         var (m, clock, _) = started()
         answered(&m)
-        _ = m.handle(.remote(offer()))
+        _ = m.handle(.remote(offer(), fromDeviceID: "d1"))
         _ = m.handle(.localAnswer(sdp()))
         _ = m.handle(.media(.iceState(.connected)))
         _ = m.handle(.media(.iceState(.disconnected)))
@@ -197,7 +197,7 @@ private func published(_ fx: [CallEffect]) -> CallState? {
     @Test func statsDriveAdaptorAndBytes() {
         var (m, _, _) = started(video: true, context: ctx(network: .wifi))
         answered(&m)
-        _ = m.handle(.remote(offer()))
+        _ = m.handle(.remote(offer(), fromDeviceID: "d1"))
         _ = m.handle(.localAnswer(sdp()))
         _ = m.handle(.media(.iceState(.connected)))
         let fx = m.handle(.stats(MediaStats(availableOutgoingBitrate: 20_000, bytesSent: 1000, bytesReceived: 500,
@@ -220,7 +220,108 @@ private func published(_ fx: [CallEffect]) -> CallState? {
     @Test func remoteRejectedEndsCall() {
         var (m, _, _) = started()
         answered(&m)
-        let fx = m.handle(.remoteRejected(.wrongSender))
+        let fx = m.handle(.remoteRejected(.wrongSender, fromDeviceID: "d1"))
         #expect(m.state?.phase == .ended(.failed) && fx.contains(.sendHangup))
+    }
+
+    // MARK: - Fix round 1
+
+    private func activeMachine() -> (CallSessionMachine, ManualClock) {
+        var (m, clock, _) = started()
+        answered(&m)
+        _ = m.handle(.remote(offer(), fromDeviceID: "d1"))
+        _ = m.handle(.localAnswer(sdp()))
+        _ = m.handle(.media(.iceState(.connected)))
+        return (m, clock)
+    }
+    private func renegotiating(_ m: inout CallSessionMachine, _ clock: ManualClock) {
+        _ = m.handle(.media(.iceState(.disconnected)))
+        clock.advance(2.5)
+        _ = m.handle(.tick)
+        _ = m.handle(.localOffer(sdp()))
+    }
+    private func reAnswer(_ f: String, sdpFP: String? = nil) -> CallSignalPayload {
+        CallSignalPayload(kind: .renegotiateAnswer, callID: "c1", sdp: sdp(sdpFP ?? f), dtlsFingerprint: f)
+    }
+
+    @Test func renegotiateAnswerAccepted() {
+        var (m, clock) = activeMachine()
+        renegotiating(&m, clock)
+        let fx = m.handle(.remote(reAnswer(fp), fromDeviceID: "d1"))
+        #expect(fx.contains { if case .acceptAnswer = $0 { true } else { false } })
+        // Only one answer per outstanding renegotiate.
+        #expect(m.handle(.remote(reAnswer(fp), fromDeviceID: "d1")).isEmpty)
+    }
+
+    @Test func renegotiateAnswerFromOtherDeviceIgnored() {
+        var (m, clock) = activeMachine()
+        renegotiating(&m, clock)
+        #expect(m.handle(.remote(reAnswer(fp), fromDeviceID: "d2")).isEmpty)
+        #expect(m.state?.isEnded == false)
+    }
+
+    @Test func renegotiateAnswerWithoutOutstandingIgnored() {
+        var (m, _) = activeMachine()
+        #expect(m.handle(.remote(reAnswer(fp), fromDeviceID: "d1")).isEmpty)
+        #expect(m.state?.isEnded == false)
+    }
+
+    @Test func renegotiateAnswerFingerprintNotMatchingSdpEnds() {
+        var (m, clock) = activeMachine()
+        renegotiating(&m, clock)
+        let fx = m.handle(.remote(reAnswer(fp, sdpFP: "sha-256 99:99"), fromDeviceID: "d1"))
+        #expect(m.state?.phase == .ended(.failed) && fx.contains(.sendHangup))
+    }
+
+    @Test func renegotiateAnswerFingerprintNotPinnedEnds() {
+        var (m, clock) = activeMachine()
+        renegotiating(&m, clock)
+        let other = "sha-256 77:77"   // consistent with its own SDP, but not the pinned one
+        let fx = m.handle(.remote(reAnswer(other), fromDeviceID: "d1"))
+        #expect(m.state?.phase == .ended(.failed) && fx.contains(.sendHangup))
+        #expect(!fx.contains { if case .acceptAnswer = $0 { true } else { false } })
+    }
+
+    @Test func modeChangeOnlyFromAnsweringDevice() {
+        var (m, _) = activeMachine()
+        let mc = CallSignalPayload(kind: .modeChange, callID: "c1", ceiling: .ultraLow)
+        #expect(m.handle(.remote(mc, fromDeviceID: "d2")).isEmpty)
+        #expect(!m.handle(.remote(mc, fromDeviceID: "d1")).isEmpty)
+        #expect(m.state?.effectiveMode == .ultraLow)
+    }
+
+    @Test func remoteRejectedOnlyFromAnsweringDevice() {
+        var (m, _, _) = started()
+        #expect(m.handle(.remoteRejected(.undecryptable, fromDeviceID: "d1")).isEmpty)   // before answered
+        answered(&m)
+        #expect(m.handle(.remoteRejected(.undecryptable, fromDeviceID: "d2")).isEmpty)
+        #expect(m.state?.isEnded == false)
+        _ = m.handle(.remoteRejected(.undecryptable, fromDeviceID: "d1"))
+        #expect(m.state?.phase == .ended(.failed))
+    }
+
+    @Test func recoverBeforeActiveStartsClock() {
+        var (m, clock, _) = started()
+        answered(&m)
+        _ = m.handle(.remote(offer(), fromDeviceID: "d1"))
+        _ = m.handle(.localAnswer(sdp()))
+        _ = m.handle(.media(.iceState(.disconnected)))     // never was active
+        _ = m.handle(.media(.iceState(.connected)))        // recovered
+        #expect(m.state?.phase == .active)
+        clock.advance(4)
+        _ = m.handle(.tick)
+        #expect(m.state?.elapsed == 4)
+        let fx = m.handle(.hangup)
+        #expect(fx.contains(.recordHistory(.audio(duration: 4), outgoing: true)))
+    }
+
+    @Test func endClearsBuffers() {
+        var (m, _, _) = started()
+        _ = m.handle(.media(.localCandidate(cand)))
+        _ = m.handle(.remote(CallSignalPayload(kind: .candidate, callID: "c1", candidate: cand), fromDeviceID: "d1"))
+        answered(&m)
+        #expect(m.hasBufferedState)
+        _ = m.handle(.hangup)
+        #expect(!m.hasBufferedState)
     }
 }

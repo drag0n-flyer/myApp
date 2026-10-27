@@ -16,6 +16,8 @@ public struct CallSessionMachine: Sendable {
 
     private var answeringDevice: String?
     private var remoteDescriptionSet = false
+    private var pinnedFingerprint: String?
+    private var renegotiateOutstanding = false
     private var answerSent = false
     private var pendingLocalCandidates: [IceCandidate] = []
     /// Remote candidates received before we can use them, by sending device.
@@ -41,7 +43,9 @@ public struct CallSessionMachine: Sendable {
         case .setSpeaker(let on): return live { $0.isSpeakerOn = on } ?? []
         case .server(let e): return server(e)
         case .remote(let p, let device): return remote(p, device)
-        case .remoteRejected: return end(.failed, notifyServer: true)
+        case .remoteRejected(_, let device):
+            guard let answering = answeringDevice, device == answering else { return [] }
+            return end(.failed, notifyServer: true)
         case .media(let e): return media(e)
         case .localOffer(let sdp): return localOffer(sdp)
         case .localAnswer(let sdp): return localAnswer(sdp)
@@ -66,6 +70,7 @@ public struct CallSessionMachine: Sendable {
         outgoing = true
         peerCeiling = nil
         answeringDevice = nil; remoteDescriptionSet = false; answerSent = false
+        pinnedFingerprint = nil; renegotiateOutstanding = false
         pendingLocalCandidates = []; earlyRemoteCandidates = [:]
         activeSince = nil; everActive = false; lastSentMode = nil; lastSentTier = nil
         reconnect = ReconnectPolicy(isCaller: true)
@@ -102,27 +107,28 @@ public struct CallSessionMachine: Sendable {
         }
     }
 
-    private mutating func remote(_ p: CallSignalPayload, _ device: String?) -> [CallEffect] {
+    private mutating func remote(_ p: CallSignalPayload, _ device: String) -> [CallEffect] {
         guard p.callID == callID, isLive else { return [] }
         switch p.kind {
         case .candidate:
             guard let c = p.candidate else { return [] }
             guard let answering = answeringDevice else {
-                earlyRemoteCandidates[device ?? "", default: []].append(c)   // before call.answered: per device
+                earlyRemoteCandidates[device, default: []].append(c)   // before call.answered: per device
                 return []
             }
-            if let device, device != answering { return [] }
+            guard device == answering else { return [] }
             if remoteDescriptionSet { return [.addCandidate(c)] }
             earlyRemoteCandidates[answering, default: []].append(c)
             return []
         case .offer:
-            guard let answering = answeringDevice, !remoteDescriptionSet, device == nil || device == answering else { return [] }
+            guard let answering = answeringDevice, !remoteDescriptionSet, device == answering else { return [] }
             guard let sdp = p.sdp, let claimed = p.dtlsFingerprint,
                   SDPMunger.fingerprint(in: sdp) == claimed else {
                 return end(.failed, notifyServer: true)
             }
             if let c = p.ceiling { setPeerCeiling(c) }
             remoteDescriptionSet = true
+            pinnedFingerprint = claimed
             var fx: [CallEffect] = [.acceptOffer(sdp: sdp, send: .for(state?.effectiveMode ?? ownCeiling),
                                                 receive: .for(ownCeiling))]
             for c in earlyRemoteCandidates.removeValue(forKey: answering) ?? [] { fx.append(.addCandidate(c)) }
@@ -130,9 +136,16 @@ public struct CallSessionMachine: Sendable {
             fx.append(.publish(state))
             return fx
         case .renegotiateAnswer:
-            guard remoteDescriptionSet, let sdp = p.sdp else { return [] }
+            guard device == answeringDevice, remoteDescriptionSet, renegotiateOutstanding, let sdp = p.sdp else { return [] }
+            // The fingerprint must match the SDP and the one pinned from the original offer.
+            guard let claimed = p.dtlsFingerprint, SDPMunger.fingerprint(in: sdp) == claimed,
+                  claimed == pinnedFingerprint else {
+                return end(.failed, notifyServer: true)
+            }
+            renegotiateOutstanding = false
             return [.acceptAnswer(sdp: sdp, send: .for(state?.effectiveMode ?? ownCeiling))]
         case .modeChange:
+            guard device == answeringDevice else { return [] }
             if let c = p.ceiling { setPeerCeiling(c) }
             return [.publish(state)]
         case .ring, .answer, .renegotiate:
@@ -153,6 +166,7 @@ public struct CallSessionMachine: Sendable {
     private mutating func localOffer(_ sdp: String) -> [CallEffect] {
         // An ICE-restart offer from this side.
         guard isLive, answerSent else { return [] }
+        renegotiateOutstanding = true
         return [.sendSignal(CallSignalPayload(kind: .renegotiate, callID: callID, sdp: sdp, ceiling: ownCeiling))]
     }
 
@@ -190,6 +204,7 @@ public struct CallSessionMachine: Sendable {
             case .requestRestart:
                 break   // callee path: task S2
             case .recovered:
+                markActive()
                 update { $0.phase = .active; $0.banner = nil }
                 fx.append(.publish(state))
             case .giveUp:
@@ -268,6 +283,10 @@ public struct CallSessionMachine: Sendable {
 
     // MARK: - Helpers
 
+    var hasBufferedState: Bool {
+        !pendingLocalCandidates.isEmpty || !earlyRemoteCandidates.isEmpty || answeringDevice != nil
+    }
+
     private var isLive: Bool { state.map { !$0.isEnded } ?? false }
 
     private mutating func setPeerCeiling(_ c: DataMode) {
@@ -308,6 +327,11 @@ public struct CallSessionMachine: Sendable {
         } else {
             summary = outgoing ? .audio(duration: 0) : (s.isVideoCall ? .missedVideo : .missedAudio)
         }
+        pendingLocalCandidates = []
+        earlyRemoteCandidates = [:]
+        answeringDevice = nil
+        pinnedFingerprint = nil
+        renegotiateOutstanding = false
         var fx: [CallEffect] = []
         if notifyServer { fx.append(.sendHangup) }
         fx += [.closeMedia, .recordHistory(summary, outgoing: outgoing), .publish(state)]

@@ -18,9 +18,10 @@ public enum CallInput: Sendable {
     case answer(video: Bool), decline, hangup
     case setPreference(ModePreference), setVideo(Bool), setMuted(Bool), setSpeaker(Bool)
     case server(CallServerEvent)                 // events with payloads only after `remote`
-    /// An opened payload from the expected contact. `fromDeviceID` is the server-reported sender device, when known.
-    case remote(CallSignalPayload, fromDeviceID: String? = nil)
-    case remoteRejected(CallSealError)
+    /// An opened payload from the expected contact. `fromDeviceID` is the server-reported sender device.
+    case remote(CallSignalPayload, fromDeviceID: String)
+    /// A payload from `fromDeviceID` that failed to open. Only the answering device can end the call this way.
+    case remoteRejected(CallSealError, fromDeviceID: String)
     case media(MediaEvent)
     case localOffer(String)
     case localAnswer(String)
