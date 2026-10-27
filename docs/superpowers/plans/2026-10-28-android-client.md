@@ -209,7 +209,7 @@ data class IceCandidate(val sdp: String, val sdpMid: String? = null, val sdpMLin
 @kotlinx.serialization.Serializable
 data class CallSignalPayload(val kind: Kind, val callID: String, val video: Boolean? = null, val sdp: String? = null,
     val dtlsFingerprint: String? = null, val candidate: IceCandidate? = null,
-    val ceiling: DataMode? = null /* wire: Int 0..3 today, string accepted; owner to decide */, val videoOn: Boolean? = null) {
+    val ceiling: DataMode? = null /* wire: string per calls.md (resolved 2026-10-28) */, val videoOn: Boolean? = null) {
     enum class Kind { ring, offer, answer, candidate, renegotiate, renegotiateAnswer, modeChange }
 }
 sealed class CallSealException : Exception() { object WrongSender; object Undecryptable }
@@ -260,11 +260,11 @@ object PushPadding {                                                      // imp
 - [ ] **Step 1: Failing tests.**
   - `groupIdEqualityByContent`: `GroupId(byteArrayOf(1,2)) == GroupId(byteArrayOf(1,2))`, equal hash codes.
   - `unpadsEverySharedVector`: every case of `docs/protocol/test-vectors/push-padding.json` (read by relative path from the repo root) unpads to `payloadHex`; a 3071-byte payload case unpads to empty; a non-bucket length, a too-long length field and a non-zero padding byte return `null`.
-  - `callsigCeilingDecodesIntAndString`: `{"kind":"offer","callID":"c1","ceiling":2}` and `{"kind":"offer","callID":"c1","ceiling":"balanced"}` both decode to `ceiling == DataMode.Balanced`; encoding writes `"ceiling":2`.
+  - `callsigCeilingIsString`: `{"kind":"offer","callID":"c1","ceiling":"balanced"}` decodes to `ceiling == DataMode.Balanced`; encoding writes `"ceiling":"balanced"`; an unknown string or an integer is rejected (resolved 2026-10-28: string per calls.md).
   - `fakeEngineRoundTrip`: two `FakeMlsEngine`s, `createGroup` + `add` + `process(welcome)` gives `Joined`; `encrypt` then `process` gives `Application` with the sender identity.
   - `backupIsDisabled` (Robolectric): the merged manifest has `allowBackup == false`.
 - [ ] **Step 2:** `./gradlew test` → FAIL (types missing).
-- [ ] **Step 3: Implement.** `CallSignalPayload.ceiling` uses a custom `KSerializer<DataMode>` that writes the ordinal and reads an int or the camel-case name (`ultraLow`, `dataSaver`, `balanced`, `high`).
+- [ ] **Step 3: Implement.** `CallSignalPayload.ceiling` uses a custom `KSerializer<DataMode>` that writes and reads the camel-case name (`ultraLow`, `dataSaver`, `balanced`, `high`) and rejects anything else.
 - [ ] **Step 4:** `./gradlew test assembleDebug` → PASS.
 - [ ] **Step 5: Commit** `feat(android): Gradle scaffold, version catalog, contracts`.
 
@@ -518,7 +518,7 @@ If plan 4's `member_keys` export is still missing, add `Engine::member_keys(grou
 
 **Interfaces — Produces:** `sealed interface ContentEnvelope` with `Text(t, r?)`, `Photo(a, w, h, th?, r?)`, `Voice(a, dur, r?)`, `File(a, name, mime, r?)`, `Edit(target, t)`, `Delete(target)`, `React(target, e)`, `Receipt(s, ids)`, `CallSig(p: CallSignalPayload)`, `Mode(m)`, `Unknown(raw)`; common `v`, `id`, `at`; `ContentCodec.encode/decode`; `Att(id, key, dg, sz, csz)` with standard base64; `LinkSnapshot` with plan 7's fields (`settings` kept as opaque bytes); `SafetyNumber.compute(memberKeys, accountA, accountB): List<String>` (12 groups).
 
-- [ ] **Step 1: Failing tests:** `decodesEverySwiftContentFixture` (every case of `docs/protocol/test-vectors/content-v1.json` decodes and re-encodes to the same JSON object); `encodesCallsigLikeSwift` (the `callsig` case's `ceiling` stays `2`); `unknownKindIsUnknown` and `v2IsUnknown`; `textOver4096Rejected`; `safetyMatchesVector` (`safety-v1.json`); `linkSnapshotDecodesSwiftShape`.
+- [ ] **Step 1: Failing tests:** `decodesEverySwiftContentFixture` (every case of `docs/protocol/test-vectors/content-v1.json` decodes and re-encodes to the same JSON object); `encodesCallsigLikeSwift` (the `callsig` case's `ceiling` is `"balanced"`); `unknownKindIsUnknown` and `v2IsUnknown`; `textOver4096Rejected`; `safetyMatchesVector` (`safety-v1.json`); `linkSnapshotDecodesSwiftShape`.
 - [ ] **Step 2:** `./gradlew :messaging:test` → FAIL. **Step 3: Implement.** **Step 4:** PASS.
 - [ ] **Step 5: Commit** `feat(android-messaging): content envelope and safety numbers`.
 

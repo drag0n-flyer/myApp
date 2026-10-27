@@ -18,6 +18,6 @@ Shared test vectors for the Go server, the Swift apps and the Android app. Every
 
 Encodings: `digestB64` is standard base64 with padding, the encoding of `dg` in a `MessageBody`. `sealedB64` is base64url without padding.
 
-## Owner to decide: the type of `ceiling` in a call signal
+## The type of `ceiling` in a call signal
 
-The [calls](../calls.md#what-payload-holds) spec says the `ceiling` field of a `callsig` payload is a string (`ultraLow`, `dataSaver`, `balanced` or `high`). The Swift app sends an integer instead (`"ceiling":2` for `balanced`, see the `callsig` case in `content-v1.json`). The two disagree. No file was changed to resolve it. `content-v1.json` shows what the Swift app sends today, and the Android app must match the vector until the owner decides which side moves.
+Resolved 2026-10-28: string per [calls](../calls.md#what-payload-holds) (`ultraLow`, `dataSaver`, `balanced` or `high`). The `callsig` case in `content-v1.json` carries `"ceiling":"balanced"`.

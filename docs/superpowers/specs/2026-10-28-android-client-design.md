@@ -368,7 +368,7 @@ Shared vectors read directly from `docs/protocol/test-vectors/`: `push-padding.j
 10. A CPU threshold for hiding Enhanced noise suppression after the OnePlus 5 measurement.
 11. Moving `mlsffi` to a neutral path later.
 12. A `foss` build flavor without Firebase (for F-Droid), later.
-13. The `ceiling` encoding in call payloads: [calls](../../protocol/calls.md) says a string (`"balanced"`), but the Swift `DataMode` is an `Int` enum and encodes `2` (see `content-v1.json`, case `callsig`). Android decodes both and, until decided, encodes the integer that the iPhone sends today.
+13. The `ceiling` encoding in call payloads: resolved 2026-10-28: string per [calls](../../protocol/calls.md) (`"balanced"`); the Swift app was changed to match.
 14. The voice-message format. The iPhone records Opus in CAF; Android's recorder writes Opus in Ogg (API 29) and its players cannot read CAF. One shared container (and who converts) is needed before voice messages work across platforms.
 15. The Play data safety answers and the web page for account deletion.
 16. Whether a self-hosted runner should automate Android↔iPhone media tests.
