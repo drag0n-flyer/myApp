@@ -1,0 +1,3 @@
+.build/
+# Model weights are large (78 MB); fetched by scripts/fetch-model.sh, see VENDOR.md
+Sources/CRNNoise/rnnoise_data.c
