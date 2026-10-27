@@ -1,0 +1,11 @@
+# Link checker settings. Offline runs (pull requests) pass --offline on the command line.
+exclude = [
+  '^https?://localhost',
+  '^https?://127\.0\.0\.1',
+  '^https?://chat\.example\.org',
+  '^https?://([a-z0-9-]+\.)*example\.org',
+]
+include_fragments = true
+max_retries = 2
+timeout = 30
+accept = ["200..=299", "429"]
