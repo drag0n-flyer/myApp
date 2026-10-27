@@ -19,6 +19,19 @@ You need a Linux host with Docker and the compose plugin, a DNS name pointing at
 
 The server policy (invite requirement, call quality limits, retention, upload limits, abuse contact) is a JSON file named by `APP_POLICY_FILE`; see section 5 of the design for the fields and defaults.
 
+## Security contact and legal pages
+
+`APP_DOCS_DIR` names a directory (mounted into the container) from which the server serves four files, read on every request, so you can edit them without a restart:
+
+| URL | File |
+|---|---|
+| `/.well-known/security.txt` | `security.txt` |
+| `/legal/privacy` | `privacy.html` |
+| `/legal/terms` | `terms.html` |
+| `/legal/disclosure` | `disclosure.html` |
+
+A missing directory or file gives 404. Start `security.txt` from `deploy/docs/security.txt.example`: set your own `Contact`, host name, and an `Expires` date less than a year ahead. The server does not check the date, so put a reminder in your calendar to renew it before it passes (RFC 9116 treats an expired file as stale). The privacy and terms pages are drafts that need a lawyer's review before use.
+
 ## Reverse proxy
 
 The server speaks plain HTTP on `127.0.0.1:8080`. A reverse proxy terminates TLS. The `/v1/ws` endpoint is a WebSocket, so the proxy must pass the upgrade through. Caddy does this by default:

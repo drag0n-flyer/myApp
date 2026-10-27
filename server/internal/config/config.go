@@ -18,6 +18,7 @@ type Config struct {
 	Relays                                                                         []Relay
 	PushGatewayURL, PushKeyFile, PushServerID, EscrowKeyFile                       string
 	AppleAppIDs                                                                    []string
+	DocsDir                                                                        string // APP_DOCS_DIR: operator security.txt and legal pages; empty serves none
 	TrustProxy                                                                     bool
 	LabMode                                                                        bool // APP_LAB_MODE=1: lab-only session command; never on a real server
 }
@@ -100,6 +101,7 @@ func Load(getenv func(string) string, readFile func(string) ([]byte, error)) (Co
 	c.PushServerID = getenv("APP_PUSH_SERVER_ID")
 	c.EscrowKeyFile = getenv("APP_ESCROW_KEY_FILE")
 	c.AppleAppIDs = splitList(getenv("APP_APPLE_APP_IDS"))
+	c.DocsDir = getenv("APP_DOCS_DIR")
 	if v := getenv("APP_TRUST_PROXY"); v != "" {
 		b, err := strconv.ParseBool(v)
 		if err != nil {
