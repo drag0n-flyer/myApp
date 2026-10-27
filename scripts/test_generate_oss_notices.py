@@ -78,9 +78,16 @@ class CrateEntry(unittest.TestCase):
         self.assertEqual(entry["authors"], "A <a@x>")
 
     def test_no_file_means_no_own_text(self):
-        entry = load().crate_entry(pkg("c", repository="https://example.org/c"))
+        with tempfile.TemporaryDirectory() as d:
+            entry = load().crate_entry(pkg("c", manifest=str(Path(d) / "Cargo.toml"),
+                                           repository="https://example.org/c"))
         self.assertEqual(entry["own_texts"], [])
         self.assertEqual(entry["repository"], "https://example.org/c")
+
+    def test_missing_crate_source_is_an_error(self):
+        # A missing source dir would silently drop the crate's own notice.
+        with self.assertRaises(SystemExit):
+            load().crate_entry(pkg("c", manifest="/nonexistent/Cargo.toml"))
 
 
 class Book(unittest.TestCase):

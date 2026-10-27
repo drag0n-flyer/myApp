@@ -68,9 +68,10 @@ def load_canonical(directory=CANONICAL_DIR):
 
 def crate_entry(package):
     crate_dir = Path(package["manifest_path"]).parent
-    files = []
-    if crate_dir.is_dir():
-        files = sorted(f for f in crate_dir.iterdir() if f.is_file() and LICENSE_FILE.match(f.name))
+    if not crate_dir.is_dir():
+        sys.exit(f"generate-oss-notices: source of {package['name']} {package['version']} not found at "
+                 f"{crate_dir}; run `cargo fetch --locked` in mlsffi first")
+    files = sorted(f for f in crate_dir.iterdir() if f.is_file() and LICENSE_FILE.match(f.name))
     return {"name": package["name"], "version": package["version"],
             "license": package.get("license") or "unknown",
             "authors": ", ".join(package.get("authors") or []),
