@@ -127,6 +127,9 @@ func (m *Module) handleReport(w http.ResponseWriter, r *http.Request, s Session)
 	if err != nil {
 		return err
 	}
+	if m.src.Reports == nil {
+		return m.unavailable("reports")
+	}
 	if err := m.src.Reports.MarkReportHandled(ctx, rep.ID, s.TokenID); err != nil {
 		return orNotFound(err, "report")
 	}

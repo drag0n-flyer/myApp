@@ -67,3 +67,18 @@ func TestAdminDeleteAccountModule(t *testing.T) {
 		t.Fatalf("other account: %d %v", n, err)
 	}
 }
+
+type ghostVerifier struct{ p core.Principal }
+
+func (g ghostVerifier) Verify(context.Context, string) (core.Principal, error) { return g.p, nil }
+
+// A second DELETE /v1/me that races the first finds no account row. It still
+// answers 204, as it did before the delete code was shared with the dashboard.
+func TestDeleteMeAlreadyGone(t *testing.T) {
+	d, _ := testkit.NewDeps(t)
+	m := identity.New(d)
+	c := testkit.Serve(t, d, m, testkit.WithVerifier(ghostVerifier{core.Principal{AccountID: core.NewID(), DeviceID: core.NewID()}}))
+	if r := c.DoToken("any", "DELETE", "/v1/me", nil); r.Status != 204 {
+		t.Fatalf("delete of a gone account: %s", r)
+	}
+}

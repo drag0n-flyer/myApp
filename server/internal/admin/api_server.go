@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -73,7 +74,7 @@ func (m *Module) serverInfo(w http.ResponseWriter, r *http.Request, s Session) e
 		if err != nil {
 			m.d.Log.Debug("admin: server info document unavailable")
 		} else {
-			info = json.RawMessage(doc)
+			info = publicInfo(doc)
 		}
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{
@@ -82,4 +83,26 @@ func (m *Module) serverInfo(w http.ResponseWriter, r *http.Request, s Session) e
 		"settings": m.settings(),
 	})
 	return nil
+}
+
+// publicInfo is the GET /v1/server document with the push gateway shown the way
+// settings.pushGateway shows it: no user-info, query or fragment. The public
+// endpoint itself is unchanged. A document that does not parse is dropped.
+func publicInfo(doc []byte) json.RawMessage {
+	dec := json.NewDecoder(bytes.NewReader(doc))
+	dec.UseNumber()
+	var obj map[string]any
+	if err := dec.Decode(&obj); err != nil || obj == nil {
+		return json.RawMessage("null")
+	}
+	if p, ok := obj["push"].(map[string]any); ok {
+		if gw, ok := p["gateway"].(string); ok {
+			p["gateway"] = gatewayDisplay(gw)
+		}
+	}
+	b, err := json.Marshal(obj)
+	if err != nil {
+		return json.RawMessage("null")
+	}
+	return b
 }

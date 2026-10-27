@@ -1,12 +1,20 @@
 package admin
 
 import (
+	"bytes"
+	"crypto/ecdh"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -28,6 +36,38 @@ func variants(b []byte) []string {
 	}
 }
 
+// writeKeyFiles writes a real escrow key and a real VAPID key to temporary
+// files, so the public server document renders.
+func writeKeyFiles(t *testing.T) (escrowPath, vapidPath string) {
+	t.Helper()
+	priv, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	escrowPath = filepath.Join(dir, "escrow.pem")
+	if err := os.WriteFile(escrowPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := push.WriteVAPIDKey(&buf, k); err != nil {
+		t.Fatal(err)
+	}
+	vapidPath = filepath.Join(dir, "vapid.pem")
+	if err := os.WriteFile(vapidPath, buf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return escrowPath, vapidPath
+}
+
 func randBytes(t *testing.T, n int) []byte {
 	t.Helper()
 	b := make([]byte, n)
@@ -39,17 +79,18 @@ func randBytes(t *testing.T, n int) []byte {
 
 // TestNoSecretsInResponses seeds one of everything the dashboard must never
 // show and checks the body of every GET endpoint of design section 7 that
-// lane B builds. GET /session (lane A) and GET /audit (lane C) are in the list
+// lane B builds. GET /session and GET /audit (both lane A) are in the list
 // too, but a status other than 200 is tolerated for them until those lanes
 // are merged: they are checked for leaks whenever they answer.
 func TestNoSecretsInResponses(t *testing.T) {
+	escrowPath, vapidPath := writeKeyFiles(t)
 	d, f := testkit.NewDeps(t, func(d *core.Deps) {
 		c := &d.Config
 		c.SMTPURL = "smtp://u:SMTPPASS@h"
 		c.DatabaseURL = "postgres://app:DBPASS@db/app"
 		c.TURNSecret = "TURNSECRET"
-		c.PushKeyFile, c.EscrowKeyFile, c.VapidKeyFile = "/secrets/push.pem", "/secrets/escrow.key", "/secrets/vapid.pem"
-		c.PushGatewayURL, c.PushServerID = "https://u:GWPASS@push.example.org", "srv-1"
+		c.PushKeyFile, c.EscrowKeyFile, c.VapidKeyFile = "/secrets/push.pem", escrowPath, vapidPath
+		c.PushGatewayURL, c.PushServerID = "https://u:GWPASS@push.example.org/base?token=GWQUERY#GWFRAG", "srv-1"
 	})
 	id := identity.New(d)
 	m := New(d, Sources{
@@ -92,7 +133,7 @@ func TestNoSecretsInResponses(t *testing.T) {
 		"invite code":   {inviteCode, inviteCode[6:]},
 		"admin token":   append([]string{adminToken}, variants(adminHash[:])...),
 		"client IP":     {"203.0.113", "198.51.100"},
-		"config secret": {"SMTPPASS", "DBPASS", "TURNSECRET", "GWPASS", "/secrets/"},
+		"config secret": {"SMTPPASS", "DBPASS", "TURNSECRET", "GWPASS", "GWQUERY", "GWFRAG", "/secrets/", escrowPath, vapidPath},
 	}
 
 	get := func(path string) *httptest.ResponseRecorder {
@@ -140,8 +181,18 @@ func TestNoSecretsInResponses(t *testing.T) {
 			}
 		}
 	}
+	// The info document must really be there, or its part is not scanned.
+	rec := get("/admin/api/server")
+	var srv struct{ Info map[string]any }
+	decodeBody(t, rec, &srv)
+	if srv.Info == nil {
+		t.Fatalf("info is null, so it was not scanned: %s", rec.Body.String())
+	}
+	if gw, _ := srv.Info["push"].(map[string]any)["gateway"].(string); gw != "https://push.example.org/base" {
+		t.Errorf("info.push.gateway = %q", gw)
+	}
 	// The full code is shown once, by create, and by nothing else.
-	rec := call(t, m, "POST", "/admin/api/invites", map[string]int{})
+	rec = call(t, m, "POST", "/admin/api/invites", map[string]int{})
 	if !strings.Contains(rec.Body.String(), `"code"`) {
 		t.Errorf("create answer lacks the code: %s", rec.Body.String())
 	}

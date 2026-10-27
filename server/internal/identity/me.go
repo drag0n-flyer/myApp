@@ -39,7 +39,8 @@ func (m *Module) me(w http.ResponseWriter, r *http.Request) error {
 // deleteAccountHandler answers DELETE /v1/me.
 func (m *Module) deleteAccountHandler(w http.ResponseWriter, r *http.Request) error {
 	p := httpx.PrincipalFrom(r.Context())
-	if err := m.deleteAccount(r.Context(), p.AccountID); err != nil {
+	// An account that is already gone (a second, racing delete) is success.
+	if err := m.deleteAccount(r.Context(), p.AccountID); err != nil && !errors.Is(err, core.ErrNotFound) {
 		return err
 	}
 	w.WriteHeader(http.StatusNoContent)

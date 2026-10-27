@@ -18,7 +18,7 @@ func newAccountEnv(t *testing.T) (*Module, core.Deps, *testkit.Fakes) {
 	return New(d, Sources{Started: d.Now(), Identity: identity.New(d)}), d, f
 }
 
-func count(t *testing.T, d core.Deps, sql string, args ...any) (n int) {
+func rowCount(t *testing.T, d core.Deps, sql string, args ...any) (n int) {
 	t.Helper()
 	if err := d.DB.QueryRow(context.Background(), sql, args...).Scan(&n); err != nil {
 		t.Fatalf("%s: %v", sql, err)
@@ -38,7 +38,7 @@ func TestAdminRevokeDevice(t *testing.T) {
 	if rec.Code != 404 || errCode(rec) != "not_found" {
 		t.Fatalf("other account's device: %d %s", rec.Code, rec.Body.String())
 	}
-	if count(t, d, `select count(*) from devices where id = $1`, eve.DeviceID) != 1 || len(f.Live.Disconnected) != 0 ||
+	if rowCount(t, d, `select count(*) from devices where id = $1`, eve.DeviceID) != 1 || len(f.Live.Disconnected) != 0 ||
 		auditCount(t, d, "device.revoke") != 0 {
 		t.Fatal("a refused revoke changed something")
 	}
@@ -54,7 +54,7 @@ func TestAdminRevokeDevice(t *testing.T) {
 	if len(ev) != 1 || ev[0].Type != "device.revoked" || ev[0].Data.(map[string]string)["deviceID"] != mac.DeviceID {
 		t.Fatalf("events %+v", ev)
 	}
-	if count(t, d, `select count(*) from sessions where device_id = $1`, mac.DeviceID) != 0 {
+	if rowCount(t, d, `select count(*) from sessions where device_id = $1`, mac.DeviceID) != 0 {
 		t.Fatal("session row remains")
 	}
 	var target, detail string
@@ -95,7 +95,7 @@ func TestAdminDeleteAccount(t *testing.T) {
 			t.Errorf("%v: %d %s", bad, rec.Code, rec.Body.String())
 		}
 	}
-	if count(t, d, `select count(*) from accounts where id = $1`, bob.AccountID) != 1 || auditCount(t, d, "account.delete") != 0 ||
+	if rowCount(t, d, `select count(*) from accounts where id = $1`, bob.AccountID) != 1 || auditCount(t, d, "account.delete") != 0 ||
 		len(f.Live.Disconnected) != 0 {
 		t.Fatal("a refused delete changed something")
 	}
@@ -121,11 +121,11 @@ func TestAdminDeleteAccount(t *testing.T) {
 			want, args = 1, []any{bob.AccountID}
 			sql = strings.Replace(sql, "target = $1", "target = $1", 1)
 		}
-		if n := count(t, d, sql, args...); n != want {
+		if n := rowCount(t, d, sql, args...); n != want {
 			t.Errorf("%s = %d, want %d", sql, n, want)
 		}
 	}
-	if count(t, d, `select count(*) from accounts where id = $1`, eve.AccountID) != 1 {
+	if rowCount(t, d, `select count(*) from accounts where id = $1`, eve.AccountID) != 1 {
 		t.Error("other account deleted")
 	}
 	if len(f.Live.Disconnected) != 2 {
@@ -244,7 +244,7 @@ func TestAccountView(t *testing.T) {
 	if err := d.DB.QueryRow(context.Background(), `select target, detail::text, actor from admin_audit where action = 'account.view'`).Scan(&target, &detail, &actor); err != nil {
 		t.Fatal(err)
 	}
-	if target != ana.AccountID || detail != "{}" || actor != "dashboard" || count(t, d, `select count(*) from admin_audit where action='account.view'`) != 1 {
+	if target != ana.AccountID || detail != "{}" || actor != "dashboard" || rowCount(t, d, `select count(*) from admin_audit where action='account.view'`) != 1 {
 		t.Errorf("audit %q %q %q", target, detail, actor)
 	}
 	for _, id := range []string{core.NewID(), "nope"} {
@@ -252,7 +252,7 @@ func TestAccountView(t *testing.T) {
 			t.Errorf("%s: %d", id, rec.Code)
 		}
 	}
-	if count(t, d, `select count(*) from admin_audit where action='account.view'`) != 1 {
+	if rowCount(t, d, `select count(*) from admin_audit where action='account.view'`) != 1 {
 		t.Error("a missing account was audited")
 	}
 }

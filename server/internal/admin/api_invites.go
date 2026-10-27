@@ -50,6 +50,13 @@ func (m *Module) logAction(ctx context.Context, s Session, action, target string
 	return nil
 }
 
+// unavailable is the answer of a write handler whose module is not wired:
+// 500 "internal" (the design's table has no closer code), and a log line.
+func (m *Module) unavailable(what string) error {
+	m.d.Log.Error("admin: module not wired", "module", what)
+	return httpx.Err("internal", "internal error")
+}
+
 // orNotFound turns core.ErrNotFound into the API's not_found.
 func orNotFound(err error, what string) error {
 	if errors.Is(err, core.ErrNotFound) {
@@ -168,12 +175,25 @@ func (m *Module) createInvite(w http.ResponseWriter, r *http.Request, s Session)
 		return httpx.Err("bad_request", "days must be between 1 and 90")
 	}
 	ttl := time.Duration(days) * 24 * time.Hour
-	expires := m.d.Now().Add(ttl)
-	id, code, err := m.src.Identity.CreateInviteID(r.Context(), uses, ttl)
+	if m.src.Identity == nil {
+		return m.unavailable("identity")
+	}
+	ctx := r.Context()
+	// The invite and its audit row go in together: no audit, no invite.
+	tx, err := m.d.DB.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if err := m.logAction(r.Context(), s, "invite.create", id, map[string]any{"uses": uses, "days": days}); err != nil {
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
+	id, code, expires, err := m.src.Identity.CreateInviteIn(ctx, tx, uses, ttl)
+	if err != nil {
+		return err
+	}
+	if err := m.audit(ctx, tx, Entry{Actor: "dashboard", TokenID: s.TokenID, Action: "invite.create", Target: id, Detail: map[string]any{"uses": uses, "days": days}}); err != nil {
+		m.d.Log.Error("admin audit write failed", "action", "invite.create", "target", id)
+		return httpx.Err("internal", "internal error")
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{
@@ -184,6 +204,9 @@ func (m *Module) createInvite(w http.ResponseWriter, r *http.Request, s Session)
 
 // revokeInvite answers POST /admin/api/invites/{id}/revoke.
 func (m *Module) revokeInvite(w http.ResponseWriter, r *http.Request, s Session) error {
+	if m.src.Identity == nil {
+		return m.unavailable("identity")
+	}
 	id := r.PathValue("id")
 	if err := m.src.Identity.RevokeInvite(r.Context(), id); err != nil {
 		return orNotFound(err, "invite")

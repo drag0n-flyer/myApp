@@ -144,6 +144,9 @@ func (m *Module) revokeDevice(w http.ResponseWriter, r *http.Request, s Session)
 	if !ok {
 		return httpx.Err("not_found", "device not found")
 	}
+	if m.src.Identity == nil {
+		return m.unavailable("identity")
+	}
 	if err := m.src.Identity.AdminRevokeDevice(ctx, deviceID); err != nil {
 		return orNotFound(err, "device")
 	}
@@ -184,6 +187,9 @@ func (m *Module) deleteAccount(w http.ResponseWriter, r *http.Request, s Session
 	}
 	if in.ConfirmUsername != username {
 		return httpx.Err("bad_request", "confirmUsername does not match the account")
+	}
+	if m.src.Identity == nil {
+		return m.unavailable("identity")
 	}
 	if err := m.src.Identity.AdminDeleteAccount(ctx, id); err != nil {
 		return orNotFound(err, "account")

@@ -14,17 +14,27 @@ import (
 
 // CreateInviteID is CreateInvite that also returns the invite's ID.
 func (m *Module) CreateInviteID(ctx context.Context, uses int, ttl time.Duration) (id, code string, err error) {
+	id, code, _, err = m.CreateInviteIn(ctx, m.d.DB, uses, ttl)
+	return id, code, err
+}
+
+// CreateInviteIn creates an invite with q, which is the pool or a transaction,
+// and returns the stored expiry along with the ID and code.
+func (m *Module) CreateInviteIn(ctx context.Context, q interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, uses int, ttl time.Duration) (id, code string, expires time.Time, err error) {
 	if uses < 1 || ttl <= 0 {
-		return "", "", fmt.Errorf("invite needs at least one use and a positive lifetime")
+		return "", "", time.Time{}, fmt.Errorf("invite needs at least one use and a positive lifetime")
 	}
 	code = NewInviteCode()
-	err = m.d.DB.QueryRow(ctx,
-		`insert into invites (code, uses_left, expires_at, created_at) values ($1, $2, $3, $4) returning id::text`,
-		code, uses, m.d.Now().Add(ttl), m.d.Now()).Scan(&id)
+	now := m.d.Now()
+	err = q.QueryRow(ctx,
+		`insert into invites (code, uses_left, expires_at, created_at) values ($1, $2, $3, $4) returning id::text, expires_at`,
+		code, uses, now.Add(ttl), now).Scan(&id, &expires)
 	if err != nil {
-		return "", "", err
+		return "", "", time.Time{}, err
 	}
-	return id, code, nil
+	return id, code, expires, nil
 }
 
 // RevokeInvite ends an invite: no uses left, and revoked_at set once. An
