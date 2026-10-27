@@ -14,7 +14,8 @@ struct CallsAudioView: View {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(title(mode)).foregroundStyle(.primary)
-                                Text(subtitle(mode)).font(.caption).foregroundStyle(.secondary)
+                                Text(isUnavailable(mode) ? "Not available on this device yet" : subtitle(mode))
+                                    .font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
                             if model.settings.noiseSuppression == mode {
@@ -24,6 +25,7 @@ struct CallsAudioView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .disabled(isUnavailable(mode))
                     .accessibilityAddTraits(model.settings.noiseSuppression == mode ? .isSelected : [])
                     .accessibilityIdentifier("audio.noise.\(mode.rawValue)")
                 }
@@ -55,6 +57,11 @@ struct CallsAudioView: View {
 
     private static var isVoiceIsolationOn: Bool {
         AVCaptureDevice.activeMicrophoneMode == .voiceIsolation
+    }
+
+    /// "Enhanced" needs the capture hook from the media build (`MediaCapabilities`).
+    private func isUnavailable(_ mode: NoiseSuppression) -> Bool {
+        mode == .enhanced && !MediaCapabilities.enhancedNoiseSuppression
     }
 
     private func title(_ mode: NoiseSuppression) -> LocalizedStringKey {

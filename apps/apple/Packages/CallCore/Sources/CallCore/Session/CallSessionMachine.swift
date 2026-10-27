@@ -68,6 +68,7 @@ public struct CallSessionMachine: Sendable {
         case .localOffer(let sdp): return localOffer(sdp)
         case .localAnswer(let sdp): return localAnswer(sdp)
         case .stats(let s): return stats(s)
+        case .localFailure: return localFailure()
         case .pathChanged: return reconnectActions(reconnect.pathChanged(at: clock.now))
         case .tick: return tick()
         case .contextChanged(let c): return contextChanged(c)
@@ -220,10 +221,15 @@ public struct CallSessionMachine: Sendable {
             fx.append(.publish(state))
             return fx
         case .answer:
-            guard !outgoing, answerSent, !remoteDescriptionSet, device == answeringDevice, let answering = answeringDevice else { return [] }
+            // A push-woken callee never saw the WebSocket ring, so it has no caller device yet (empty): it binds to the
+            // device whose answer arrives. The payload was opened as sent by the caller's account.
+            guard !outgoing, answerSent, !remoteDescriptionSet, let bound = answeringDevice,
+                  device == bound || bound.isEmpty else { return [] }
             guard let sdp = p.sdp, let claimed = p.dtlsFingerprint, FingerprintCheck.isValid(sdp: sdp, claimed: claimed) else {
                 return end(.failed, notifyServer: true)
             }
+            let answering = device
+            answeringDevice = device
             if let c = p.ceiling { setPeerCeiling(c) }
             remoteDescriptionSet = true
             pinnedFingerprint = claimed
@@ -468,6 +474,14 @@ public struct CallSessionMachine: Sendable {
         if ownCeiling != before { fx += modeChangeSignal() }
         fx.append(.publish(state))
         return fx + renegotiationIfNeeded()
+    }
+
+    /// A ringing callee failing on its own must not decline: that would end the call on the caller and every
+    /// other device. Once answered, or when calling, the peer is told.
+    private mutating func localFailure() -> [CallEffect] {
+        guard isLive else { return [] }
+        let ringingCallee = !outgoing && state?.phase == .incoming
+        return end(.failed, notifyServer: !ringingCallee)
     }
 
     private mutating func hangup() -> [CallEffect] {

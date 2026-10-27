@@ -12,6 +12,17 @@
         }
       }
     },
+    "%@ can now read your new messages. If this wasn't you, remove it in Settings > Linked devices." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ can now read your new messages. If this wasn't you, remove it in Settings > Linked devices."
+          }
+        }
+      }
+    },
     "%@ removed a device" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -19,6 +30,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@ removed a device"
+          }
+        }
+      }
+    },
+    "Accept" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Accept"
+          }
+        }
+      }
+    },
+    "Answer" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Answer"
           }
         }
       }
@@ -45,6 +78,28 @@
         }
       }
     },
+    "Attach" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Attach"
+          }
+        }
+      }
+    },
+    "Call info" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Call info"
+          }
+        }
+      }
+    },
     "Can't reach the server. Check your connection and try again." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -67,6 +122,17 @@
         }
       }
     },
+    "Cancel recording" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel recording"
+          }
+        }
+      }
+    },
     "Change" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -78,6 +144,17 @@
         }
       }
     },
+    "Compare these numbers with %@. If they match, your chat is safe." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Compare these numbers with %@. If they match, your chat is safe."
+          }
+        }
+      }
+    },
     "Confirm to approve this new device." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -85,6 +162,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Confirm to approve this new device."
+          }
+        }
+      }
+    },
+    "Connection" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connection"
           }
         }
       }
@@ -122,6 +210,39 @@
         }
       }
     },
+    "Data used" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Data used"
+          }
+        }
+      }
+    },
+    "Decline" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Decline"
+          }
+        }
+      }
+    },
+    "Delay" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delay"
+          }
+        }
+      }
+    },
     "Delete your account? Your messages on this device are erased and can't be recovered." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -140,6 +261,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Device"
+          }
+        }
+      }
+    },
+    "Direct" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Direct"
           }
         }
       }
@@ -177,6 +309,28 @@
         }
       }
     },
+    "For the clearest voice, turn on Voice Isolation" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "For the clearest voice, turn on Voice Isolation"
+          }
+        }
+      }
+    },
+    "If the numbers change, someone added or changed a device. Compare them again." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "If the numbers change, someone added or changed a device. Compare them again."
+          }
+        }
+      }
+    },
     "Incoming call" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -184,6 +338,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Incoming call"
+          }
+        }
+      }
+    },
+    "Incoming video call" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Incoming video call"
           }
         }
       }
@@ -221,6 +386,17 @@
         }
       }
     },
+    "Marked as verified" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Marked as verified"
+          }
+        }
+      }
+    },
     "Messages in this chat are paused. Open chat info for details." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -228,6 +404,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Messages in this chat are paused. Open chat info for details."
+          }
+        }
+      }
+    },
+    "Microphone access is off" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Microphone access is off"
+          }
+        }
+      }
+    },
+    "Missed call" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Missed call"
+          }
+        }
+      }
+    },
+    "New device added" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New device added"
+          }
+        }
+      }
+    },
+    "Not available on this device yet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not available on this device yet"
           }
         }
       }
@@ -298,6 +518,50 @@
         }
       }
     },
+    "Quality" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Quality"
+          }
+        }
+      }
+    },
+    "Record voice message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Record voice message"
+          }
+        }
+      }
+    },
+    "Report" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Report"
+          }
+        }
+      }
+    },
+    "Report this chat?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Report this chat?"
+          }
+        }
+      }
+    },
     "Safety number changed" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -316,6 +580,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Scan invite QR code"
+          }
+        }
+      }
+    },
+    "Send a message first to see the safety number." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send a message first to see the safety number."
           }
         }
       }
@@ -349,6 +624,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Something went wrong on the server. Try again later."
+          }
+        }
+      }
+    },
+    "Sound lost" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sound lost"
+          }
+        }
+      }
+    },
+    "Stop and send voice message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stop and send voice message"
           }
         }
       }
@@ -393,6 +690,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "That username is taken."
+          }
+        }
+      }
+    },
+    "The last 10 messages will be sent to the server admin." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The last 10 messages will be sent to the server admin."
+          }
+        }
+      }
+    },
+    "The server's settings for this chat don't match the ones it started with. Sending is paused to keep your messages private." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The server's settings for this chat don't match the ones it started with. Sending is paused to keep your messages private."
           }
         }
       }
@@ -463,6 +782,17 @@
         }
       }
     },
+    "Through your server" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Through your server"
+          }
+        }
+      }
+    },
     "Too many tries. Try again in %lld min." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -481,6 +811,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Too many tries. Try again later."
+          }
+        }
+      }
+    },
+    "Turn it on in Settings to record voice messages." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Turn it on in Settings to record voice messages."
           }
         }
       }
@@ -540,6 +881,28 @@
         }
       }
     },
+    "Verified" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verified"
+          }
+        }
+      }
+    },
+    "Verify" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verify"
+          }
+        }
+      }
+    },
     "You added a new device" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -569,259 +932,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "iPhone"
-          }
-        }
-      }
-    },
-    "Attach": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Attach"
-          }
-        }
-      }
-    },
-    "Record voice message": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Record voice message"
-          }
-        }
-      }
-    },
-    "Cancel recording": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Cancel recording"
-          }
-        }
-      }
-    },
-    "Stop and send voice message": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Stop and send voice message"
-          }
-        }
-      }
-    },
-    "Microphone access is off": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Microphone access is off"
-          }
-        }
-      }
-    },
-    "Turn it on in Settings to record voice messages.": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Turn it on in Settings to record voice messages."
-          }
-        }
-      }
-    },
-    "Answer": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Answer"
-          }
-        }
-      }
-    },
-    "Accept": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Accept"
-          }
-        }
-      }
-    },
-    "Decline": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Decline"
-          }
-        }
-      }
-    },
-    "Missed call": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Missed call"
-          }
-        }
-      }
-    },
-    "Incoming video call": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Incoming video call"
-          }
-        }
-      }
-    },
-    "Report this chat?" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Report this chat?"
-          }
-        }
-      }
-    },
-    "The last 10 messages will be sent to the server admin." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The last 10 messages will be sent to the server admin."
-          }
-        }
-      }
-    },
-    "Report" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Report"
-          }
-        }
-      }
-    },
-    "Marked as verified" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Marked as verified"
-          }
-        }
-      }
-    },
-    "If the numbers change, someone added or changed a device. Compare them again." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "If the numbers change, someone added or changed a device. Compare them again."
-          }
-        }
-      }
-    },
-    "Send a message first to see the safety number." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Send a message first to see the safety number."
-          }
-        }
-      }
-    },
-    "Verified" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Verified"
-          }
-        }
-      }
-    },
-    "The server's settings for this chat don't match the ones it started with. Sending is paused to keep your messages private." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "The server's settings for this chat don't match the ones it started with. Sending is paused to keep your messages private."
-          }
-        }
-      }
-    },
-    "New device added" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "New device added"
-          }
-        }
-      }
-    },
-    "%@ can now read your new messages. If this wasn't you, remove it in Settings > Linked devices." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%@ can now read your new messages. If this wasn't you, remove it in Settings > Linked devices."
-          }
-        }
-      }
-    },
-    "Compare these numbers with %@. If they match, your chat is safe." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Compare these numbers with %@. If they match, your chat is safe."
-          }
-        }
-      }
-    },
-    "Verify" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Verify"
           }
         }
       }

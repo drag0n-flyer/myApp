@@ -1,10 +1,13 @@
 import AppCore
+import AVFoundation
 import SwiftUI
 
 /// In-app call screen: audio or video, network and data pills, banners, controls.
 struct CallView: View {
     @Bindable var model: AppModel
     @State private var showingDataSheet = false
+    @State private var showingInfoSheet = false
+    @State private var voiceIsolationOn = CallView.isVoiceIsolationOn
 
     var body: some View {
         ZStack {
@@ -27,23 +30,38 @@ struct CallView: View {
                     }
                     Spacer()
                     #if DEBUG
-                    SimulateMenu(model: model).padding(.bottom, 8)
+                    if model.isSampleData { SimulateMenu(model: model).padding(.bottom, 8) }
                     #endif
+                    if showsVoiceIsolationHint { VoiceIsolationHint().padding(.bottom, 8) }
                     CallControlsView(call: call, model: model, showData: { showingDataSheet = true })
                 }
                 .padding(.horizontal, 14)
                 .padding(.bottom, 12)
                 .animation(.default, value: call.banner)
+                Button { showingInfoSheet = true } label: {
+                    Image(systemName: "info.circle")
+                        .font(.title3)
+                        .padding(10)
+                        .glassBackground(in: Circle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.white)
+                .padding(.trailing, 14)
+                .padding(.top, 6)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                .accessibilityLabel("Call info")
+                .accessibilityIdentifier("call.info")
             }
         }
         .environment(\.colorScheme, .dark)
         .task {
-            guard !model.isUITesting else { return }
+            guard model.isSampleData, !model.isUITesting else { return }   // the sample engine needs a clock; the live one has its own
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
-                model.calls.advance(by: 1)
+                model.sampleCalls.advance(by: 1)
             }
         }
+        .onAppear { voiceIsolationOn = Self.isVoiceIsolationOn }
         .task(id: model.activeCall?.isEnded) {
             // UI tests keep the ended call on screen so they can read the final banner.
             guard model.activeCall?.isEnded == true, !model.isUITesting else { return }
@@ -54,7 +72,18 @@ struct CallView: View {
             DataModeSheet(model: model)
                 .presentationDetents([.medium, .large])
         }
+        .sheet(isPresented: $showingInfoSheet) {
+            CallInfoSheet(model: model)
+                .presentationDetents([.medium])
+        }
     }
+
+    /// Standard and Enhanced both gain from Apple's Voice Isolation; only the user can switch it on.
+    private var showsVoiceIsolationHint: Bool {
+        model.settings.noiseSuppression != .off && !voiceIsolationOn
+    }
+
+    private static var isVoiceIsolationOn: Bool { AVCaptureDevice.activeMicrophoneMode == .voiceIsolation }
 
     /// "Auto · Data saver" when automatic, otherwise the mode in use.
     private func modeText(_ call: CallState) -> String {
@@ -159,6 +188,25 @@ private struct VideoStage: View {
     }
 }
 
+/// Opens the system microphone menu; the app cannot switch Voice Isolation on itself.
+private struct VoiceIsolationHint: View {
+    var body: some View {
+        Button {
+            AVCaptureDevice.showSystemUserInterface(.microphoneModes)
+        } label: {
+            Label("For the clearest voice, turn on Voice Isolation", systemImage: "waveform.badge.mic")
+                .font(.footnote)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 6)
+                .glassBackground(in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.white)
+        .accessibilityLabel("For the clearest voice, turn on Voice Isolation")
+        .accessibilityIdentifier("call.voiceisolation")
+    }
+}
+
 struct CallPill<Content: View>: View {
     @ViewBuilder let content: Content
 
@@ -192,11 +240,11 @@ private struct SimulateMenu: View {
 
     var body: some View {
         Menu {
-            Button("Good") { model.calls.simulate(.good) }
-            Button("Weak") { model.calls.simulate(.weak) }
-            Button("Very weak") { model.calls.simulate(.veryWeak) }
-            Button("Lost") { model.calls.simulate(.lost) }
-            Button("Advance 10 s") { model.calls.advance(by: 10) }
+            Button("Good") { model.sampleCalls.simulate(.good) }
+            Button("Weak") { model.sampleCalls.simulate(.weak) }
+            Button("Very weak") { model.sampleCalls.simulate(.veryWeak) }
+            Button("Lost") { model.sampleCalls.simulate(.lost) }
+            Button("Advance 10 s") { model.sampleCalls.advance(by: 10) }
         } label: {
             Label("Simulate", systemImage: "wand.and.stars")
                 .font(.caption)
