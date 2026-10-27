@@ -153,7 +153,7 @@ fun AppRoot(
                 AddContactScreen(graph.chatStore, onBack = { nav.popBackStack() }, onAdded = { nav.popBackStack() })
             }
             composable(SettingsPage.Server.route) { ServerScreen(graph.serverPolicy.host, onBack = { nav.popBackStack() }) }
-            composable(SettingsPage.LinkedDevices.route) { LinkedDevicesScreen(graph.accountService, onBack = { nav.popBackStack() }) }
+            composable(SettingsPage.LinkedDevices.route) { LinkedDevicesScreen(graph.accountService, onBack = { nav.popBackStack() }, onLinkDevice = { nav.navigate(LINK_SCAN) }) }
             composable(SettingsPage.Privacy.route) { PrivacyScreen(graph.settingsStore, graph.chatStore, onBack = { nav.popBackStack() }) }
             composable(SettingsPage.DataStorage.route) { DataStorageScreen(graph.settingsStore, graph.serverPolicy, onBack = { nav.popBackStack() }) }
             composable(SettingsPage.ChatFolders.route) { ChatFoldersScreen(graph.chatStore, onBack = { nav.popBackStack() }) }

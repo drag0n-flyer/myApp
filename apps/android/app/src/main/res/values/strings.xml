@@ -365,6 +365,7 @@
     <string name="device_android">Android</string>
     <string name="devices_remove">Remove %1$s</string>
     <string name="devices_remove_title">Remove this device?</string>
+    <string name="devices_link">Link a device</string>
     <string name="devices_footer">Remove a device you no longer use.</string>
 
     <!-- Chat folders -->
