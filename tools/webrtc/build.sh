@@ -89,6 +89,8 @@ export PATH="$workdir/depot_tools:$PATH"
 if [ ! -d "$workdir/depot_tools" ]; then
   step "clone depot_tools"
   git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git "$workdir/depot_tools"
+  # Downloads depot_tools' own Python and CIPD client (DEPOT_TOOLS_UPDATE=0 skips this).
+  "$workdir/depot_tools/ensure_bootstrap"
 fi
 
 # 2. fetch
