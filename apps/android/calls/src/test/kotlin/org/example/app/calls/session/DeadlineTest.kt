@@ -96,10 +96,23 @@ class DeadlineTest {
         assertTrue(CallEffect.End(CallEndReason.Failed) in fx)
     }
 
-    @Test fun ringingCalleeIsNotEndedLocally() {
+    @Test fun unansweredRingingCalleeEndsMissedWithoutTellingServer() {
         val (m, clock) = callee(answer = false)
-        tickAfter(m, clock, 600.0)
+        tickAfter(m, clock, 49.9)
         assertEquals(CallPhase.Incoming, m.state?.phase)
+        val fx = tickAfter(m, clock, 0.1)
+        assertEquals(CallPhase.Ended(CallEndReason.Missed), m.state?.phase)
+        assertTrue(CallEffect.End(CallEndReason.Missed) in fx)
+        assertFalse(fx.sendsFrame(CallFrame.HANGUP))
+        assertFalse(fx.sendsFrame(CallFrame.DECLINE))
+    }
+
+    @Test fun answeringJustBeforeRingDeadlineIsNotMissed() {
+        val (m, clock) = callee(answer = false)
+        tickAfter(m, clock, 49.0)
+        m.handle(CallEvent.Answer(false))
+        tickAfter(m, clock, 5.0)
+        assertEquals(CallPhase.Connecting, m.state?.phase)
     }
 
     @Test fun replayedRingForEndedCallDoesNothing() {

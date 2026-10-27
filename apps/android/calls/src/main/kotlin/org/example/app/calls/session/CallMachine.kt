@@ -103,7 +103,7 @@ class CallMachine(context: CallContext, private val sealer: CallSignalSealer, pr
     /** Remote candidates received before we can use them, by sending device. */
     private val earlyRemoteCandidates = LinkedHashMap<String, MutableList<IceCandidate>>()
     private var activeSince: Long? = null
-    private var ringingSince: Long? = null     // caller: when the ring went out
+    private var ringingSince: Long? = null     // when the ring went out (caller) or came in (callee)
     private var setupSince: Long? = null       // caller: call.answered; callee: the user answered
     /** Calls that ended on this device, so a replayed ring for one of them does nothing. */
     private val endedCalls = LinkedHashSet<String>()
@@ -230,6 +230,7 @@ class CallMachine(context: CallContext, private val sealer: CallSignalSealer, pr
         if (isLive || id in endedCalls) return emptyList()
         if (ring.kind != Kind.ring || ring.callID != id) return emptyList()
         resetCall(id, contact.id, isOutgoing = false)
+        ringingSince = clock.nowMs()
         answeringDevice = device              // bound to the caller's device from the ring; empty after a push
         peerCeiling = ring.ceiling
         val video = ring.video ?: false
@@ -577,7 +578,7 @@ class CallMachine(context: CallContext, private val sealer: CallSignalSealer, pr
         return fx
     }
 
-    /** A caller's unanswered ring, or any call that is answered but never connects, ends here. */
+    /** An unanswered ring (either side), or any call that is answered but never connects, ends here. */
     private fun deadline(): List<CallEffect>? {
         val now = clock.nowMs()
         val phase = state?.phase
@@ -588,6 +589,10 @@ class CallMachine(context: CallContext, private val sealer: CallSignalSealer, pr
         val rang = ringingSince
         if (outgoing && setup == null && phase == CallPhase.Ringing && rang != null && now - rang >= RING_DEADLINE_MS) {
             return end(CallEndReason.Missed, notifyServer = true)   // cancels the ring
+        }
+        // A callee whose "call.ended missed" was lost: give up locally. The server owns the missed state, so send nothing.
+        if (!outgoing && phase == CallPhase.Incoming && rang != null && now - rang >= RING_DEADLINE_MS) {
+            return end(CallEndReason.Missed, notifyServer = false)
         }
         return null
     }
