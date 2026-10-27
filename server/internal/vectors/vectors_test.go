@@ -15,6 +15,7 @@ import (
 	"flag"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -48,6 +49,26 @@ func seq(start byte, n int) []byte {
 
 func suite() Suite {
 	return Suite{KEM: "DHKEM(X25519, HKDF-SHA256)", KDF: "HKDF-SHA256", AEAD: "ChaCha20Poly1305"}
+}
+
+// lowOrderKeysHex lists the X25519 small-order public keys: u = 0, 1, p-1 and
+// the two points of order 8, each with the non-canonical encodings (top bit
+// set, or u + p when that fits in 255 bits). RFC 7748 section 7.
+var lowOrderKeysHex = []string{
+	"0000000000000000000000000000000000000000000000000000000000000000",
+	"0000000000000000000000000000000000000000000000000000000000000080",
+	"edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+	"edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+	"0100000000000000000000000000000000000000000000000000000000000000",
+	"0100000000000000000000000000000000000000000000000000000000000080",
+	"eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+	"eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+	"e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800",
+	"e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b880",
+	"5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157",
+	"5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f11d7",
+	"ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+	"ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
 }
 
 func hpkePriv(t testing.TB, raw []byte) hpke.PrivateKey {
@@ -276,6 +297,7 @@ func genSealed(t *testing.T, name, info string, keyStart byte, plaintexts []stri
 		{"truncated by one byte", b64.EncodeToString(first[:len(first)-1]), info},
 		{"shorter than the encapsulated key", b64.EncodeToString(first[:31]), info},
 	}
+	f.LowOrderRecipientKeysHex = lowOrderKeysHex
 	write(t, name, f)
 }
 
@@ -455,6 +477,23 @@ func checkSealed(t *testing.T, name, wantInfo string, open func(hpke.PrivateKey,
 			if _, err := open(priv, unb64(t, n.SealedB64)); err == nil {
 				t.Errorf("negative %q opened by the server function", n.Name)
 			}
+		}
+	}
+	// Go refuses to seal to a small-order recipient key, and the file lists them all.
+	if !slices.Equal(f.LowOrderRecipientKeysHex, lowOrderKeysHex) {
+		t.Fatal("lowOrderRecipientKeysHex is missing or stale; run with -update")
+	}
+	for _, h := range f.LowOrderRecipientKeysHex {
+		raw, err := ecdh.X25519().NewPublicKey(unhex(t, h))
+		if err != nil {
+			t.Fatalf("%s: %v", h, err)
+		}
+		pub, err := hpke.NewDHKEMPublicKey(raw)
+		if err != nil {
+			t.Fatalf("%s: %v", h, err)
+		}
+		if _, err := seal(pub, []byte(f.Cases[0].PlaintextJSON)); err == nil {
+			t.Errorf("Go sealed to low-order key %s", h)
 		}
 	}
 	// A wrong recipient key must not open any case.

@@ -905,6 +905,60 @@ public func FfiConverterTypeEncrypted_lower(_ value: Encrypted) -> RustBuffer {
 }
 
 
+public struct HpkeKeyPair: Equatable, Hashable {
+    public var privateKey: Data
+    public var publicKey: Data
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(privateKey: Data, publicKey: Data) {
+        self.privateKey = privateKey
+        self.publicKey = publicKey
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension HpkeKeyPair: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeHpkeKeyPair: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> HpkeKeyPair {
+        return
+            try HpkeKeyPair(
+                privateKey: FfiConverterData.read(from: &buf), 
+                publicKey: FfiConverterData.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: HpkeKeyPair, into buf: inout [UInt8]) {
+        FfiConverterData.write(value.privateKey, into: &buf)
+        FfiConverterData.write(value.publicKey, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHpkeKeyPair_lift(_ buf: RustBuffer) throws -> HpkeKeyPair {
+    return try FfiConverterTypeHpkeKeyPair.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHpkeKeyPair_lower(_ value: HpkeKeyPair) -> RustBuffer {
+    return FfiConverterTypeHpkeKeyPair.lower(value)
+}
+
+
 public struct SignatureKeypair: Equatable, Hashable {
     public var publicKey: Data
     public var secretKey: Data
@@ -1263,6 +1317,37 @@ public func generateSignatureKeypair()throws  -> SignatureKeypair  {
     )
 })
 }
+public func hpkeGenerateKeypair()throws  -> HpkeKeyPair  {
+    return try  FfiConverterTypeHpkeKeyPair_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+    uniffi_mlsffi_fn_func_hpke_generate_keypair($0
+    )
+})
+}
+/**
+ * `sealed` is `enc ‖ ct`. Input shorter than the encapsulated key is `Malformed`.
+ */
+public func hpkeOpen(privateKey: Data, publicKey: Data, info: Data, sealed: Data)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+    uniffi_mlsffi_fn_func_hpke_open(
+        FfiConverterData.lower(privateKey),
+        FfiConverterData.lower(publicKey),
+        FfiConverterData.lower(info),
+        FfiConverterData.lower(sealed),$0
+    )
+})
+}
+/**
+ * Returns `enc ‖ ct`.
+ */
+public func hpkeSeal(recipientPublicKey: Data, info: Data, plaintext: Data)throws  -> Data  {
+    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+    uniffi_mlsffi_fn_func_hpke_seal(
+        FfiConverterData.lower(recipientPublicKey),
+        FfiConverterData.lower(info),
+        FfiConverterData.lower(plaintext),$0
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -1280,6 +1365,15 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.contractVersionMismatch
     }
     if (uniffi_mlsffi_checksum_func_generate_signature_keypair() != 1271) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_mlsffi_checksum_func_hpke_generate_keypair() != 5294) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_mlsffi_checksum_func_hpke_open() != 35405) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_mlsffi_checksum_func_hpke_seal() != 15243) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_mlsffi_checksum_method_engine_add() != 64762) {

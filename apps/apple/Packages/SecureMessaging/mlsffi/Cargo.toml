@@ -21,3 +21,7 @@ mls-rs-crypto-rustcrypto = { git = "https://github.com/awslabs/mls-rs", rev = "3
 zeroize = "1"
 uniffi = { version = "0.31", features = ["cli"] }
 
+
+[dev-dependencies]
+# Test vectors are JSON. Already in Cargo.lock (via uniffi's tree); no new crate.
+serde_json = "1"
