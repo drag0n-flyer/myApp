@@ -1,5 +1,6 @@
 import XCTest
 
+@MainActor
 final class LaunchTests: XCTestCase {
     override func setUp() { continueAfterFailure = false }
 

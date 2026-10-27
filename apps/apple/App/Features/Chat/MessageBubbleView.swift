@@ -130,6 +130,8 @@ private struct VoiceMessageView: View {
 
 /// Photo or file: a blurred placeholder with its size until downloaded.
 private struct MediaView: View {
+    @ScaledMetric(relativeTo: .body) private var mediaWidth: CGFloat = 200
+    @ScaledMetric(relativeTo: .body) private var mediaHeight: CGFloat = 130
     let label: String
     let symbol: String
     let isShown: Bool
@@ -141,14 +143,14 @@ private struct MediaView: View {
             RoundedRectangle(cornerRadius: 12)
                 .fill(LinearGradient(colors: [.blue.opacity(0.5), .purple.opacity(0.4), .orange.opacity(0.4)],
                                      startPoint: .topLeading, endPoint: .bottomTrailing))
-                .frame(width: 200, height: 130)
+                .frame(width: mediaWidth).frame(minHeight: mediaHeight)
                 .overlay { Image(systemName: symbol).font(.largeTitle).foregroundStyle(.white.opacity(0.8)) }
                 .accessibilityLabel(Text(label))
         } else {
             Button(action: download) {
                 RoundedRectangle(cornerRadius: 12)
                     .fill(LinearGradient(colors: [.gray.opacity(0.5), .gray.opacity(0.3)], startPoint: .top, endPoint: .bottom))
-                    .frame(width: 200, height: 130)
+                    .frame(width: mediaWidth).frame(minHeight: mediaHeight)
                     .blur(radius: 2)
                     .overlay {
                         VStack(spacing: 6) {

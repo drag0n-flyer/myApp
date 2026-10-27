@@ -13,7 +13,11 @@ struct CallView: View {
                 if call.isVideoCall && call.isVideoOn {
                     VideoStage()
                 } else {
-                    AudioStage(call: call, modeText: modeText(call))
+                    ScrollView {
+                        AudioStage(call: call, modeText: modeText(call))
+                            .padding(.bottom, 260)
+                    }
+                    .scrollBounceBehavior(.basedOnSize)
                 }
                 VStack(spacing: 0) {
                     if let banner = call.banner {
@@ -34,6 +38,7 @@ struct CallView: View {
         }
         .environment(\.colorScheme, .dark)
         .task {
+            guard !model.isUITesting else { return }
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
                 model.calls.advance(by: 1)
@@ -108,7 +113,8 @@ private struct AudioStage: View {
                 .accessibilityIdentifier("call.used")
         }
         .foregroundStyle(.white)
-        .frame(maxHeight: .infinity, alignment: .top)
+        .multilineTextAlignment(.center)
+        .frame(maxWidth: .infinity)
         .padding(.top, 60)
     }
 }
@@ -188,12 +194,22 @@ private struct SimulateMenu: View {
 /// The Mac call window.
 struct MacCallWindow: View {
     @Bindable var model: AppModel
+    @Environment(\.dismissWindow) private var dismissWindow
 
     var body: some View {
-        if model.activeCall != nil {
-            CallView(model: model)
-        } else {
-            ContentUnavailableView("No call", systemImage: "phone")
+        Group {
+            if model.activeCall != nil {
+                CallView(model: model)
+            } else {
+                ContentUnavailableView("No call", systemImage: "phone")
+            }
+        }
+        .onChange(of: model.activeCall == nil) { _, noCall in
+            if noCall { dismissWindow(id: "call") }
+        }
+        .onDisappear {
+            if model.activeCall?.isEnded == false { model.calls.end() }
+            model.dismissEndedCall()
         }
     }
 }

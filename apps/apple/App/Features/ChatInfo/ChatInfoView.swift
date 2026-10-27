@@ -25,7 +25,7 @@ struct ChatInfoView: View {
                             action("Audio", "phone") { model.startCall(contactID: contact.id, video: false) }
                             action("Video", "video") { model.startCall(contactID: contact.id, video: true) }
                             action(muted ? "Unmute" : "Mute", muted ? "bell.slash" : "bell") { muted.toggle() }
-                            action("Search", "magnifyingglass") { model.searchText = contact.displayName }
+                            action("Search", "magnifyingglass") { model.searchChats(for: contact.displayName) }
                         }
                         .padding(.top, 6)
                     }

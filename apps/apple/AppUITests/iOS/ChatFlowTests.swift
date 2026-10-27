@@ -1,5 +1,6 @@
 import XCTest
 
+@MainActor
 final class ChatFlowTests: XCTestCase {
     override func setUp() { continueAfterFailure = false }
 

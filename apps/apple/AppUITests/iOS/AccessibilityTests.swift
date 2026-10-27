@@ -1,5 +1,6 @@
 import XCTest
 
+@MainActor
 final class AccessibilityTests: XCTestCase {
     override func setUp() { continueAfterFailure = false }
 
@@ -22,14 +23,19 @@ final class AccessibilityTests: XCTestCase {
 
     // Review Focus 2
     func testRTLAndLongNames() {
-        let app = XCUIApplication.launched(extra: ["-AppleLanguages", "(ar)", "-AppleLocale", "ar"])
+        let app = XCUIApplication.launched(extra: ["-AppleLanguages", "(ar)", "-AppleLocale", "ar",
+                                                   "-AppleTextDirection", "YES", "-NSForceRightToLeftWritingDirection", "YES"])
         for id in ["chatlist.row.chat-maryam", "chatlist.row.chat-ananth", "chatlist.row.chat-priya"] {
             let row = app.element(id)
             if !row.exists { app.swipeUp() }
             XCTAssertTrue(row.waitToExist(), id)
             XCTAssertTrue(row.isHittable, id)
         }
-        XCTAssertEqual(app.tabBars.buttons.count, 4)
+        for title in ["Contacts", "Calls", "Chats", "Settings"] {
+            XCTAssertTrue(app.tab(title).exists, title)
+        }
+        XCTAssertGreaterThan(app.tab("Contacts").frame.minX, app.tab("Settings").frame.minX,
+                             "Tabs mirror in right-to-left: Contacts sits on the right")
     }
 
     func testEveryButtonHasLabel() {

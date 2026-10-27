@@ -1,5 +1,6 @@
 import XCTest
 
+@MainActor
 final class MacLayoutTests: XCTestCase {
     override func setUp() { continueAfterFailure = false }
 

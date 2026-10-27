@@ -37,7 +37,7 @@ struct ChatListView: View {
                             .accessibilityIdentifier("chatlist.compose")
                     }
                 }
-                .modifier(OptionalSearch(isOn: showsSearchField, text: $model.searchText))
+                .modifier(OptionalSearch(isOn: showsSearchField, text: $model.chatListQuery))
                 .navigationDestination(for: ChatRoute.self) { route in
                     ChatDestination(route: route, model: model) { path.append($0) }
                 }
@@ -64,7 +64,7 @@ struct SearchView: View {
     var body: some View {
         NavigationStack(path: $path) {
             List {
-                let chats = model.searchText.isEmpty ? [] : model.chats(in: .all)
+                let chats = model.searchText.isEmpty ? [] : model.chats(in: .all, matching: model.searchText)
                 ForEach(chats) { chat in
                     Button { path.append(.chat(id: chat.id)) } label: {
                         ChatRowView(chat: chat, name: model.contact(id: chat.contactID)?.displayName ?? "")
@@ -146,7 +146,7 @@ struct ChatListContent: View {
                 .accessibilityIdentifier("chatlist.requests")
             }
 
-            ForEach(model.chats(in: model.selectedFolder)) { chat in
+            ForEach(model.chats(in: model.selectedFolder, matching: model.chatListQuery)) { chat in
                 Button { open(.chat(id: chat.id)) } label: {
                     ChatRowView(chat: chat, name: model.contact(id: chat.contactID)?.displayName ?? "")
                 }

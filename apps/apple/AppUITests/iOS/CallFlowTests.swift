@@ -1,5 +1,6 @@
 import XCTest
 
+@MainActor
 final class CallFlowTests: XCTestCase {
     override func setUp() { continueAfterFailure = false }
 
@@ -30,12 +31,17 @@ final class CallFlowTests: XCTestCase {
         startAudioCall(app)
         app.element("call.simulate").tap()
         app.buttons["Lost"].tap()
-        XCTAssertEqual(app.element("call.banner").label, "Reconnecting…")
+        XCTAssertTrue(waitForLabel(app.element("call.banner"), "Reconnecting…"))
         for _ in 0..<3 {
             app.element("call.simulate").tap()
             app.buttons["Advance 10 s"].tap()
         }
-        XCTAssertEqual(app.element("call.banner").label, "Call ended: connection lost")
+        XCTAssertTrue(waitForLabel(app.element("call.banner"), "Call ended: connection lost"))
+    }
+
+    private func waitForLabel(_ element: XCUIElement, _ label: String) -> Bool {
+        let match = expectation(for: NSPredicate(format: "label == %@", label), evaluatedWith: element)
+        return XCTWaiter().wait(for: [match], timeout: 5) == .completed
     }
 
     func testCallHistoryMissedFilter() {

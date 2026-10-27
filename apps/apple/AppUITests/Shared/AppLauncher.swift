@@ -1,5 +1,6 @@
 import XCTest
 
+@MainActor
 extension XCUIApplication {
     /// Launches the app with UI-test launch arguments (see `LaunchOptions` in the app).
     static func launched(skipOnboarding: Bool = true, network: String = "mobile", extra: [String] = []) -> XCUIApplication {
@@ -21,6 +22,7 @@ extension XCUIApplication {
     }
 }
 
+@MainActor
 extension XCUIElement {
     @discardableResult
     func waitToExist(_ timeout: TimeInterval = 5) -> Bool { waitForExistence(timeout: timeout) }

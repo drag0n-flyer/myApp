@@ -13,11 +13,14 @@ struct ChatRowView: View {
         HStack(alignment: .center, spacing: 11) {
             Avatar(name: name)
             VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .firstTextBaseline) {
+                let nameLayout = typeSize.isAccessibilitySize
+                    ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2))
+                    : AnyLayout(HStackLayout(alignment: .firstTextBaseline))
+                nameLayout {
                     Text(name)
                         .font(.headline)
-                        .lineLimit(typeSize.isAccessibilitySize ? 2 : 1)
-                    Spacer(minLength: 6)
+                        .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
+                    if !typeSize.isAccessibilitySize { Spacer(minLength: 6) }
                     Text(time)
                         .font(.caption)
                         .foregroundStyle(chat.unreadCount > 0 ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))

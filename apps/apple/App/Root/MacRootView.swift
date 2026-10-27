@@ -89,7 +89,7 @@ struct MacRootView: View {
         case .folder, nil:
             ChatListContent(model: model, selectedChatID: selectedChatID, open: open)
                 .navigationTitle(model.selectedFolder.name)
-                .searchable(text: $model.searchText, placement: .toolbar)
+                .searchable(text: $model.chatListQuery, placement: .toolbar)
         }
     }
 

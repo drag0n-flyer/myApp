@@ -1,5 +1,6 @@
 import XCTest
 
+@MainActor
 final class OnboardingTests: XCTestCase {
     override func setUp() { continueAfterFailure = false }
 

@@ -89,3 +89,19 @@ let riya = Contact(id: "riya", displayName: "Riya", username: "riya")
     e.advance(by: 3_724)
     #expect(e.state?.elapsedText == "1:02:05")
 }
+
+@Test func endedCallStaysEndedAfterSettingsChange() {
+    let e = engine()
+    e.start(with: riya, video: false)
+    e.advance(by: 1)
+    e.end()
+    var fired = false
+    e.onChange = { _ in fired = true }
+    var s = CallSettings()
+    s.mobileDataLimit = .high
+    e.settings = s
+    e.setNetwork(.wifi)
+    #expect(!fired)
+    e.reset()
+    #expect(e.state == nil)
+}

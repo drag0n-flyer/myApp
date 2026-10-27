@@ -48,6 +48,9 @@ public final class SimulatedCallEngine: CallEngine {
         update { $0.phase = .ended(.hungUp); $0.banner = nil }
     }
 
+    /// Forgets a finished call so later setting changes don't bring it back.
+    public func reset() { state = nil }
+
     public func setNetwork(_ type: NetworkType) {
         network = type
         update { $0.network = type }
@@ -112,7 +115,8 @@ public final class SimulatedCallEngine: CallEngine {
     }
 
     private func update(_ change: (inout CallState) -> Void) {
-        guard var s = state else { return }
+        // A finished call is frozen: later setting or network changes must not re-publish it.
+        guard var s = state, !s.isEnded else { return }
         change(&s)
         s.effectiveMode = DataModePolicy.effective(server: server, settings: settings, network: network,
                                                    inCall: s.inCallPreference, sustainable: sustainable)

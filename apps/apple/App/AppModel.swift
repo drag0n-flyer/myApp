@@ -27,7 +27,10 @@ final class AppModel {
     var onboarding: OnboardingFlow
     var selectedTab: AppTab = .chats
     var selectedFolder: ChatFolder = .all
+    /// Text in the iOS 26 search tab.
     var searchText = ""
+    /// Filter typed into the chat list's own search field (iOS 17–25, Mac).
+    var chatListQuery = ""
     /// Chat opened from outside the chat list (Mac sidebar, Contacts, Calls).
     var openChatID: String?
     private(set) var activeCall: CallState?
@@ -72,8 +75,13 @@ final class AppModel {
 
     func chats(in folder: ChatFolder) -> [Chat] {
         _ = revision
-        let chats = chatStore.chats(in: folder)
-        let query = searchText.trimmingCharacters(in: .whitespaces)
+        return chatStore.chats(in: folder)
+    }
+
+    /// Chats in a folder whose name or messages match `query`.
+    func chats(in folder: ChatFolder, matching query: String) -> [Chat] {
+        let chats = chats(in: folder)
+        let query = query.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else { return chats }
         return chats.filter { chat in
             let name = chatStore.contact(id: chat.contactID)?.displayName ?? ""
@@ -111,6 +119,19 @@ final class AppModel {
     func chatID(for contactID: String) -> String? {
         _ = revision
         return (chatStore.chats(in: .all) + chatStore.messageRequests).first { $0.contactID == contactID }?.id
+    }
+
+    /// Opens search for `text`: the search tab on iOS 26, otherwise the chat list's own field.
+    func searchChats(for text: String) {
+        #if os(iOS)
+        if #available(iOS 26, *) {
+            searchText = text
+            selectedTab = .search
+            return
+        }
+        #endif
+        chatListQuery = text
+        selectedTab = .chats
     }
 
     // MARK: - Folders
@@ -160,7 +181,9 @@ final class AppModel {
     }
 
     func dismissEndedCall() {
-        if activeCall?.isEnded == true { activeCall = nil }
+        guard activeCall?.isEnded == true else { return }
+        calls.reset()
+        activeCall = nil
     }
 
     // MARK: - Links
