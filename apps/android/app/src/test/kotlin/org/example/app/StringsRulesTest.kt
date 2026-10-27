@@ -97,4 +97,37 @@ class StringsRulesTest {
         val defined = entries().map { it.first }.toSet()
         assertEquals(emptyList(), emitted.filter { it !in defined })
     }
+
+    /** Source lines that build a display string for data amounts or the call clock. */
+    private fun coreDisplayStringHits(dir: File): List<String> {
+        val patterns = listOf(
+            Regex("\"[^\"\\n]*(\\bKB\\b|\\bMB\\b|≈|per 10 min|\\bused\\b)[^\"\\n]*\""),
+            Regex("\\b(elapsedText|dataUsedText)\\b"),
+            Regex("fun (used|estimate)\\("),
+        )
+        return kotlinFiles(dir).filter { f -> f.readText().let { text -> patterns.any { it.containsMatchIn(text) } } }.map { it.name }
+    }
+
+    @Test
+    fun coreReturnsNoDisplayStringsForDataOrClock() {
+        assertEquals(emptyList(), coreDisplayStringHits(coreSrc))
+    }
+
+    @Test
+    fun coreDisplayStringGuardCatchesPlantedStrings() {
+        val scratch = kotlin.io.path.createTempDirectory("core-text-guard").toFile()
+        try {
+            val plants = mapOf(
+                "A.kt" to "val t = \"${'$'}n MB\"",
+                "B.kt" to "val t = \"≈ x\"",
+                "C.kt" to "val t = \"~2 MB per 10 min\"",
+                "D.kt" to "val elapsedText: String = \"\"",
+            )
+            for ((name, body) in plants) File(scratch, name).writeText("package x\n$body\n")
+            File(scratch, "Clean.kt").writeText("package x\nval ok = \"mode_ultra_low\"\n")
+            assertEquals(plants.keys, coreDisplayStringHits(scratch).toSet())
+        } finally {
+            scratch.deleteRecursively()
+        }
+    }
 }

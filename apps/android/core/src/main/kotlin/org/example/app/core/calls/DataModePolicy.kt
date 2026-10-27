@@ -8,7 +8,8 @@ data class DataSheetOption(
     val preference: ModePreference,
     val titleKey: String,
     val subtitleKey: String?,
-    val estimate: String?,
+    /** Estimated audio data per 10 minutes in MB; null for Auto. */
+    val estimateMB: Int?,
     val noteKey: String?,
     val isEnabled: Boolean,
     val isSelected: Boolean,
@@ -56,7 +57,7 @@ object DataModePolicy {
             }
             DataSheetOption(
                 ModePreference.Fixed(mode), DataModeInfo.titleKey(mode), DataModeInfo.subtitleKey(mode),
-                DataFormat.estimate(mode), note, enabled, selected == ModePreference.Fixed(mode),
+                mode.estimatedMBPer10Minutes, note, enabled, selected == ModePreference.Fixed(mode),
             )
         }
         return listOf(auto) + modes

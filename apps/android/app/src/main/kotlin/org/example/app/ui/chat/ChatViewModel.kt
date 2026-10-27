@@ -29,7 +29,7 @@ class ChatViewModel(
     private val store: ChatStore,
     val chatId: String,
     private val network: NetworkType,
-    private val autoDownload: AutoDownloadSettings,
+    private val autoDownload: () -> AutoDownloadSettings,
 ) : ViewModel() {
     // Only this chat matters: other chats changing must not recompute anything.
     val state: StateFlow<ChatState> =
@@ -70,5 +70,5 @@ class ChatViewModel(
     fun download(messageId: String) = store.download(messageId, chatId)
 
     /** Photos and files wait for a tap when the rules say not to download on this network. */
-    fun autoDownloads(kind: MediaKind): Boolean = AutoDownloadPolicy.shouldDownload(kind, network, autoDownload)
+    fun autoDownloads(kind: MediaKind): Boolean = AutoDownloadPolicy.shouldDownload(kind, network, autoDownload())
 }

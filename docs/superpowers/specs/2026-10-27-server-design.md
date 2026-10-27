@@ -8,7 +8,7 @@ This document is the contract the five build lanes share. If code and this docum
 
 **In:** accounts (username, email for recovery), invite-only sign-up, passkey sign-in with email-code backup, devices, device linking and revocation, account deletion, the MLS Delivery Service for 1:1 conversations, offline inbox and sync, server-readable mode, encrypted attachments, user lookup and opt-in email discovery, blocking and reporting, WebSocket live events, 1:1 call signaling, TURN credentials with relay health checks, the push gateway (a separate binary) and the server's push sender, the server info document, Docker Compose deployment, and an admin CLI.
 
-**Out (later phases):** federation, groups with more than two accounts, the SFU, S3 object storage (attachments use a local directory behind an interface), phone-number discovery, encrypted backups, multiple server nodes, an admin web UI, and Android push.
+**Out (later phases):** federation, groups with more than two accounts, the SFU, S3 object storage (attachments use a local directory behind an interface), phone-number discovery, encrypted backups, multiple server nodes, an admin web UI (see the [admin dashboard design](2026-10-28-admin-dashboard-design.md)), and Android push.
 
 ## 2. Decisions I made — owner to confirm
 
@@ -96,7 +96,8 @@ Environment variables (`APP_` prefix). Required ones are marked ★.
 |---|---|---|
 | `APP_HOST` ★ | — | Public host name, e.g. `chat.example.org`; also the WebAuthn RP ID |
 | `APP_LISTEN` | `:8080` | Public HTTP listener (TLS is terminated by the reverse proxy) |
-| `APP_ADMIN_LISTEN` | `127.0.0.1:9090` | `/healthz`, `/readyz`, `/debug/vars` |
+| `APP_ADMIN_LISTEN` | `127.0.0.1:9090` | `/healthz`, `/readyz`, `/debug/vars` and the admin dashboard (`/admin/`) |
+| `APP_ADMIN_HOSTS` | empty | Comma list of extra `Host` names the admin listener accepts, for an operator's own HTTPS proxy |
 | `APP_DATABASE_URL` ★ | — | Postgres URL |
 | `APP_DATA_DIR` | `/var/lib/appserver` | Attachments directory root |
 | `APP_POLICY_FILE` | — | JSON policy file; defaults below if unset |

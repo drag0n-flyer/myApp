@@ -12,7 +12,7 @@ class SampleAccountServiceTest {
     @Test fun signUpHappyPath() = runTest {
         service.connect("home.example.org")
         assertTrue(service.redeemInvite(SampleAccountService.SAMPLE_INVITE_CODE))
-        service.startSignUp("newperson", "a@b.co")
+        service.startSignUp("New Person", "newperson", "a@b.co")
         service.verifyEmail(SampleAccountService.SAMPLE_EMAIL_CODE)
         service.finishSignUp()
         assertTrue(service.isSignedIn)
@@ -23,8 +23,8 @@ class SampleAccountServiceTest {
         assertEquals(UsernameCheck.Invalid, service.checkUsername("Ab"))
         assertEquals(UsernameCheck.Available, service.checkUsername("fresh_name"))
         assertEquals(AccountError.InviteInvalid, assertFailsWith<AccountError> { service.redeemInvite("ZZZZZ-ZZZZ2") })
-        assertEquals(AccountError.UsernameTaken, assertFailsWith<AccountError> { service.startSignUp("riya", "a@b.co") })
-        assertEquals(AccountError.InvalidEmail, assertFailsWith<AccountError> { service.startSignUp("fresh", "nope") })
+        assertEquals(AccountError.UsernameTaken, assertFailsWith<AccountError> { service.startSignUp("Riya", "riya", "a@b.co") })
+        assertEquals(AccountError.InvalidEmail, assertFailsWith<AccountError> { service.startSignUp("Fresh", "fresh", "nope") })
         assertEquals(AccountError.CodeInvalid, assertFailsWith<AccountError> { service.verifyEmail("000000") })
         assertEquals(AccountError.TooManyAttempts(30), AccountError.TooManyAttempts(30))
     }
@@ -54,5 +54,19 @@ class SampleAccountServiceTest {
         service.finishSignUp()
         service.signOutLocally()
         assertEquals(false, service.isSignedIn)
+    }
+
+    @Test fun signUpStoresTheNameAndPasskeyFinishRegistersOne() = runTest {
+        service.startSignUp("New Person", "newperson", "a@b.co")
+        assertEquals("New Person", service.displayName)
+        service.finishSignUp()
+        assertTrue(service.passkeyRegistered)
+    }
+
+    @Test fun emailCodeFinishSignsInWithoutAPasskey() = runTest {
+        service.startSignUp("New Person", "newperson", "a@b.co")
+        service.finishSignUpWithEmailCode()
+        assertTrue(service.isSignedIn)
+        assertEquals(false, service.passkeyRegistered)
     }
 }

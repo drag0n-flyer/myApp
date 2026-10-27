@@ -13,7 +13,7 @@ import org.example.app.core.calls.NetworkType
 import org.example.app.core.chats.ChatFolder
 import org.example.app.core.chats.ChatStore
 import org.example.app.core.chats.MessagePreview
-import org.example.app.core.settings.CallSettings
+import org.example.app.core.settings.UserSettings
 import org.example.app.core.settings.ServerPolicy
 
 data class FolderChip(val folder: ChatFolder, val unreadCount: Int)
@@ -39,13 +39,13 @@ data class ChatListState(
 class ChatListViewModel(
     private val store: ChatStore,
     private val server: ServerPolicy,
-    private val settings: CallSettings,
+    private val settings: StateFlow<UserSettings>,
     private val network: NetworkType,
 ) : ViewModel() {
     private val selected = MutableStateFlow(ChatFolder.All.id)
 
     val state: StateFlow<ChatListState> =
-        combine(store.chats, store.requests, store.folders, selected) { _, requests, folders, selectedId ->
+        combine(store.chats, store.requests, store.folders, selected, settings) { _, requests, folders, selectedId, user ->
             val folder = folders.firstOrNull { it.id == selectedId } ?: ChatFolder.All
             ChatListState(
                 folders = folders.map { FolderChip(it, if (it.kind == ChatFolder.Kind.Unread) store.unreadChatCount() else 0) },
@@ -56,11 +56,11 @@ class ChatListViewModel(
                     ChatRowModel(chat.id, store.contact(chat.contactId)?.displayName ?: chat.contactId, last?.preview, last?.sentAt, chat.unreadCount)
                 },
                 serverHost = server.host,
-                modeKey = DataModePolicy.stripLabelKey(server, settings, network),
+                modeKey = DataModePolicy.stripLabelKey(server, user.call, network),
             )
         }.stateIn(viewModelScope, SharingStarted.Eagerly, initial())
 
-    private fun initial() = ChatListState(emptyList(), ChatFolder.All.id, 0, emptyList(), server.host, DataModePolicy.stripLabelKey(server, settings, network))
+    private fun initial() = ChatListState(emptyList(), ChatFolder.All.id, 0, emptyList(), server.host, DataModePolicy.stripLabelKey(server, settings.value.call, network))
 
     fun select(folderId: String) { selected.value = folderId }
 
