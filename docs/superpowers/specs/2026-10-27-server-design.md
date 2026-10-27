@@ -252,9 +252,9 @@ Server endpoints: `PUT /v1/push/tokens/{kind}` (kind `alert` or `voip`) `{sealed
 **Padding:** the body is a 2-byte big-endian length, then the payload, then zeros up to the smallest bucket of 256, 512, 1024, 2048 or 3072 bytes. A payload over 3070 bytes is replaced by an empty one, and the device then fetches its inbox.
 
 **Server → gateway:**
-- The request is `POST {gateway}/v1/push` with body `{handle:b64, kind:"message"|"call", data:b64}`.
+- The request is `POST {gateway}/v1/push` with body `{handle:b64, kind:"message"|"call", data:b64, nonce?:string}`, where `b64` is standard base64 with padding, not base64url. Decision 3 covers client-facing fields only.
 - It carries three headers: `X-Server-ID`, `X-Timestamp` (Unix seconds) and `X-Signature`.
-- `X-Signature` is base64 Ed25519 over `"v1\n"+method+"\n"+path+"\n"+timestamp+"\n"+hex(sha256(body))`.
+- `X-Signature` is standard base64 (with padding) Ed25519 over `"v1\n"+method+"\n"+path+"\n"+timestamp+"\n"+hex(sha256(body))`.
 - If the gateway answers `410`, the server deletes that handle.
 
 **Gateway (`cmd/pushgw`):**

@@ -69,6 +69,11 @@ func TestPadBuckets(t *testing.T) {
 	if _, err := Unpad([]byte{0xff, 0xff, 1}); err == nil {
 		t.Error("bad length accepted")
 	}
+	dirty := Pad([]byte("hi"))
+	dirty[255] = 1
+	if _, err := Unpad(dirty); err == nil {
+		t.Error("non-zero padding byte accepted")
+	}
 }
 
 func TestSigningString(t *testing.T) {
