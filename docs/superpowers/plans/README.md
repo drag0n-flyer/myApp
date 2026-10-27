@@ -16,6 +16,7 @@ All plans needed to reach the GOAL.md Phase 1 exit: an invite-only private beta.
 | 8 | [Client calling](2026-10-27-client-calling.md) | 1 | 3, 4, 6 | up to 4 lanes | CallKit/PushKit, media keys |
 | 9 | [Security, docs, release](2026-10-27-security-docs-release.md) | 1 (beta gate) | 2, 7, 8 for final checks | 1 + owner | all |
 | 10 | [Android client](2026-10-28-android-client.md) ([design](../specs/2026-10-28-android-client-design.md)) | 1 (in parallel, owner decision 2026-10-28) | 2 (spec; lanes B1, F1, F2 change it), 3 (pin and scripts), 4 (`mlsffi`), 7 (vectors, envelope) | 7 lanes + 1 integration (about 7 at once) | auth, keys, MLS use, push and gateway, WebRTC build, Telecom |
+| 11 | [Admin dashboard](2026-10-28-admin-dashboard.md) ([design](../specs/2026-10-28-admin-dashboard-design.md)) | 1 (owner request 2026-10-28) | 2 | 1 foundation → 3 lanes → 1 | authentication (admin login, sessions, CSRF), identity revoke and delete |
 
 ## Running order (at most 5 coding agents at once)
 
