@@ -32,6 +32,8 @@ final class AppModel {
     var openChatID: String?
     private(set) var activeCall: CallState?
     var pendingInvite: InviteLink?
+    /// Mac only: a contact who is ringing (macOS has no CallKit).
+    var incomingCaller: Contact?
     let isUITesting: Bool
 
     /// Bumped after every store change so views that read store data refresh.
