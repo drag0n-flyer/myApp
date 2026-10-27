@@ -19,6 +19,7 @@ target/
 # Go server
 server/bin/
 /bin/
+/data/
 server/run/
 *.test
 *.out
