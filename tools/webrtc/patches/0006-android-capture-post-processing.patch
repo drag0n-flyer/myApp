@@ -83,10 +83,10 @@ index 2522e5a..56f8b3c 100644
        "api/org/webrtc/EncodedImage.java",
 diff --git a/sdk/android/api/org/webrtc/AudioCapturePostProcessing.java b/sdk/android/api/org/webrtc/AudioCapturePostProcessing.java
 new file mode 100644
-index 0000000..4182d5c
+index 0000000..fa6d603
 --- /dev/null
 +++ b/sdk/android/api/org/webrtc/AudioCapturePostProcessing.java
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,83 @@
 +/*
 + *  Application patch (tools/webrtc/patches/0006): a writable hook on captured
 + *  audio. The upstream Java SDK has no way to edit it. The Android form of
@@ -102,7 +102,8 @@ index 0000000..4182d5c
 + *  `nativeProcessor` is the address of that struct. createNative reads the
 + *  struct and from then on the audio processing module owns `context` and calls
 + *  `destroy` when it is freed. If createNative is never called, the caller still
-+ *  owns the context.
++ *  owns the context. The object is single use (a second createNative or selfTest
++ *  throws IllegalStateException), so a context cannot be destroyed twice.
 + */
 +
 +package org.webrtc;
@@ -110,9 +111,16 @@ index 0000000..4182d5c
 +import org.jni_zero.NativeMethods;
 +
 +public class AudioCapturePostProcessing implements AudioProcessingFactory {
-+  private final long nativeProcessor;
++  // Zeroed by the first take; guarded by `this`.
++  private long nativeProcessor;
 +
-+  /** @param nativeProcessor address of an AppAudioCaptureProcessor, not 0 */
++  /**
++   * Single use: the processor is consumed by the first createNative or selfTest, and a second one
++   * throws IllegalStateException. The AppAudioCaptureProcessor struct must stay valid until that
++   * call returns (it is read then, not here).
++   *
++   * @param nativeProcessor address of an AppAudioCaptureProcessor, not 0
++   */
 +  public AudioCapturePostProcessing(long nativeProcessor) {
 +    if (nativeProcessor == 0) {
 +      throw new IllegalArgumentException("nativeProcessor must not be 0");
@@ -125,20 +133,35 @@ index 0000000..4182d5c
 +    return true;
 +  }
 +
++  private synchronized long take() {
++    if (nativeProcessor == 0) {
++      throw new IllegalStateException("AudioCapturePostProcessing is single use and was already used");
++    }
++    long handle = nativeProcessor;
++    nativeProcessor = 0;
++    return handle;
++  }
++
 +  @Override
 +  public long createNative(long webrtcEnvRef) {
-+    return AudioCapturePostProcessingJni.get().create(webrtcEnvRef, nativeProcessor);
++    return AudioCapturePostProcessingJni.get().create(webrtcEnvRef, take());
 +  }
 +
 +  /**
 +   * Test hook: runs one 10 ms 48 kHz mono frame of constant 0.5 through an audio processing
-+   * module built with the processor and every built-in stage off, and returns the output samples
-+   * (empty if processing failed). With `nativeProcessor` 0 a built-in processor that halves the
-+   * samples is used, so the result is 480 samples of 0.25. A real processor is consumed, as in
-+   * createNative.
++   * module built with this processor and every built-in stage off, and returns the output samples
++   * (empty if processing failed). Consumes the processor, as createNative does.
 +   */
-+  public static float[] selfTest(long nativeProcessor) {
-+    return AudioCapturePostProcessingJni.get().selfTest(nativeProcessor);
++  public float[] selfTest() {
++    return AudioCapturePostProcessingJni.get().selfTest(take());
++  }
++
++  /**
++   * Like selfTest, with a built-in processor that halves the samples: the result is 480 samples
++   * of 0.25. Proves the hook is compiled in without any native processor.
++   */
++  public static float[] selfTestBuiltin() {
++    return AudioCapturePostProcessingJni.get().selfTest(0);
 +  }
 +
 +  @NativeMethods
@@ -149,10 +172,10 @@ index 0000000..4182d5c
 +}
 diff --git a/sdk/android/src/jni/app/audio_capture_post_processing.cc b/sdk/android/src/jni/app/audio_capture_post_processing.cc
 new file mode 100644
-index 0000000..27aa747
+index 0000000..0aa2c61
 --- /dev/null
 +++ b/sdk/android/src/jni/app/audio_capture_post_processing.cc
-@@ -0,0 +1,164 @@
+@@ -0,0 +1,175 @@
 +/*
 + *  Application patch (tools/webrtc/patches/0006). See
 + *  api/org/webrtc/AudioCapturePostProcessing.java and audio_capture_processor.h.
@@ -234,7 +257,18 @@ index 0000000..27aa747
 +  bool initialized_ = false;
 +};
 +
-+// The processor `selfTest(0)` uses: halves every sample.
++jni_zero::ScopedJavaLocalRef<jfloatArray> ToJavaFloatArray(JNIEnv* env,
++                                                           const float* data,
++                                                           size_t size) {
++  jfloatArray array = env->NewFloatArray(static_cast<jsize>(size));
++  RTC_CHECK(array != nullptr) << "NewFloatArray failed";
++  if (size > 0) {
++    env->SetFloatArrayRegion(array, 0, static_cast<jsize>(size), data);
++  }
++  return jni_zero::AdoptRef(env, array);
++}
++
++// The processor `selfTestBuiltin` uses: halves every sample.
 +void HalveProcess(void*, float* const* channels, size_t num_frames, size_t num_channels) {
 +  for (size_t c = 0; c < num_channels; ++c) {
 +    for (size_t i = 0; i < num_frames; ++i) {
@@ -297,7 +331,7 @@ index 0000000..27aa747
 +
 +  scoped_refptr<AudioProcessing> apm = Build(CreateEnvironment(), *processor, config);
 +  if (!apm) {
-+    return jni_zero::ToJavaFloatArray(env, static_cast<const float*>(nullptr), 0);
++    return ToJavaFloatArray(env, nullptr, 0);
 +  }
 +
 +  constexpr int kRateHz = 48000;
@@ -308,9 +342,9 @@ index 0000000..27aa747
 +  float* dest[1] = {out.data()};
 +  const StreamConfig stream(kRateHz, /*num_channels=*/1);
 +  if (apm->ProcessStream(src, stream, stream, dest) != AudioProcessing::kNoError) {
-+    return jni_zero::ToJavaFloatArray(env, static_cast<const float*>(nullptr), 0);
++    return ToJavaFloatArray(env, nullptr, 0);
 +  }
-+  return jni_zero::ToJavaFloatArray(env, out.data(), out.size());
++  return ToJavaFloatArray(env, out.data(), out.size());
 +}
 +
 +}  // namespace jni
@@ -319,10 +353,10 @@ index 0000000..27aa747
 +DEFINE_JNI(AudioCapturePostProcessing)
 diff --git a/sdk/android/src/jni/app/audio_capture_processor.h b/sdk/android/src/jni/app/audio_capture_processor.h
 new file mode 100644
-index 0000000..c860695
+index 0000000..80a091f
 --- /dev/null
 +++ b/sdk/android/src/jni/app/audio_capture_processor.h
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,59 @@
 +/*
 + *  Application patch (tools/webrtc/patches/0006): the C interface a native
 + *  library implements to edit captured audio. It is plain C so that a separate
@@ -332,6 +366,11 @@ index 0000000..c860695
 + *  The app passes the address of an AppAudioCaptureProcessor to the Java class
 + *  org.webrtc.AudioCapturePostProcessing as a long. Audio frames stay in native
 + *  memory: nothing is copied to Java.
++ *
++ *  The struct must stay valid until createNative (or selfTest) returns: it is
++ *  read then, not when the Java object is made. It is copied, so it may be freed
++ *  afterwards. From then on WebRTC owns `context` and calls `destroy` once. The
++ *  Java object is single use, so one struct is never consumed twice.
 + */
 +
 +#ifndef SDK_ANDROID_SRC_JNI_APP_AUDIO_CAPTURE_PROCESSOR_H_

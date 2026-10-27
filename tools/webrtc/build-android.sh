@@ -3,10 +3,18 @@
 # Linux (CI: ubuntu-24.04), the only supported host for Android WebRTC builds.
 #
 # Usage:
-#   sh tools/webrtc/build-android.sh <abi> <workdir>
+#   sh tools/webrtc/build-android.sh <abi>
 #   sh tools/webrtc/build-android.sh --print-gn-args <abi>    # no checkout needed
 #
 # ABIs: arm64-v8a x86_64
+#
+# <workdir> is $WEBRTC_WORKDIR, or ./webrtc-android when that is not set.
+#
+# Ruling (design 8.1 names tools_webrtc/android/build_aar.py): this script runs
+# gn and ninja itself with the gn arguments build_aar.py uses at the pin, plus
+# ours. build_aar.py builds a fat AAR in one go and cannot build one ABI per
+# job, and package-android.sh assembles the AAR from the per-ABI outputs
+# (reproducibly, with the license check). The libraries are the same.
 #
 # Steps:
 #   1. clone depot_tools into <workdir>
@@ -16,7 +24,7 @@
 #      0005, 0006; the Objective-C patches 0003 and 0004 are not applied)
 #   5. gn gen src/out/android/<abi>, then build //sdk/android:libjingle_peerconnection_so
 #      and //sdk/android:libwebrtc (the Java classes jar)
-#   6. copy the results to <workdir>/out/android/<abi>/:
+#   6. copy the results to <workdir>/out/android/<abi>/ (the plan's out/android/<abi>):
 #        libjingle_peerconnection_so.so
 #        libwebrtc.jar
 #      and, once, to <workdir>/out/android/:
@@ -35,7 +43,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 . "$here/VERSION"
 
 usage() {
-  echo "usage: sh tools/webrtc/build-android.sh <abi> <workdir>" >&2
+  echo "usage: sh tools/webrtc/build-android.sh <abi>   (workdir: \$WEBRTC_WORKDIR, default ./webrtc-android)" >&2
   echo "       sh tools/webrtc/build-android.sh --print-gn-args <abi>" >&2
   echo "abis: arm64-v8a x86_64" >&2
   exit 1
@@ -74,12 +82,12 @@ if [ "${1-}" = "--print-gn-args" ]; then
   exit 0
 fi
 
-[ "$#" -eq 2 ] || usage
+[ "$#" -eq 1 ] || usage
 abi=$1
 check_abi "$abi"
 [ "${APP_UNAME:-$(uname -s)}" = "Linux" ] || { echo "error: building the Android library needs Linux" >&2; exit 1; }
-mkdir -p "$2"
-workdir=$(cd "$2" && pwd)
+mkdir -p "${WEBRTC_WORKDIR:-webrtc-android}"
+workdir=$(cd "${WEBRTC_WORKDIR:-webrtc-android}" && pwd)
 
 step() { echo "=== $(date -u +%H:%M:%S) $*"; }
 

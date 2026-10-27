@@ -56,12 +56,14 @@ g() { git -c user.name=test -c user.email=test@example.com -c commit.gpgsign=fal
 
 # --- build-android.sh ---
 expect_exit "build-android: no arguments" 1 sh "$here/build-android.sh"
-expect_exit "build-android: unknown ABI" 1 sh "$here/build-android.sh" armeabi-v7a "$work/w"
+expect_exit "build-android: unknown ABI" 1 env WEBRTC_WORKDIR="$work/w" sh "$here/build-android.sh" armeabi-v7a
 check "build-android: unknown ABI is named" out_has "unknown ABI 'armeabi-v7a'"
 expect_exit "build-android: unknown ABI (gn args)" 1 sh "$here/build-android.sh" --print-gn-args x86
 expect_exit "build-android: gn args need an ABI" 1 sh "$here/build-android.sh" --print-gn-args
-expect_exit "build-android: a build needs Linux" 1 env APP_UNAME=Darwin sh "$here/build-android.sh" arm64-v8a "$work/w"
+expect_exit "build-android: a build needs Linux" 1 env APP_UNAME=Darwin WEBRTC_WORKDIR="$work/w" sh "$here/build-android.sh" arm64-v8a
 check "build-android: says Linux" out_has "needs Linux"
+expect_exit "build-android: a second argument is rejected" 1 sh "$here/build-android.sh" arm64-v8a "$work/w"
+check "build-android: no workdir directory made on a bad call" test ! -e "$work/w"
 
 for abi in arm64-v8a x86_64; do
   expect_exit "build-android: gn args for $abi" 0 sh "$here/build-android.sh" --print-gn-args "$abi"
@@ -79,6 +81,10 @@ check "build-android: x86_64 is target_cpu x64" has 'target_cpu="x64"' "$work/ar
 # The pinned Apple-only argument must not leak in.
 check "build-android: no app_opus_plc_trial" sh -c '! grep -q app_opus_plc_trial "$1" "$2"' _ "$work/args-arm64-v8a.txt" "$work/args-x86_64.txt"
 check "build-android: no Apple arguments" sh -c '! grep -q "ios\|mac_\|enable_dsyms" "$1" "$2"' _ "$work/args-arm64-v8a.txt" "$work/args-x86_64.txt"
+# The whole line, exactly. An added or dropped argument fails here.
+common='target_os="android" is_debug=false is_component_build=false rtc_include_tests=false android_static_analysis="off" use_siso=true symbol_level=1 rtc_use_h264=false rtc_include_dav1d_in_internal_decoder_factory=false rtc_opus_support_120ms_ptime=true'
+check "build-android: arm64-v8a exact args" test "$(cat "$work/args-arm64-v8a.txt")" = "$common target_cpu=\"arm64\""
+check "build-android: x86_64 exact args" test "$(cat "$work/args-x86_64.txt")" = "$common target_cpu=\"x64\""
 # The exact gn arguments of the brief, in the exact form.
 for a in 'rtc_use_h264=false' 'rtc_include_dav1d_in_internal_decoder_factory=false' \
   'rtc_opus_support_120ms_ptime=true' 'is_debug=false' 'symbol_level=1' 'target_os="android"'; do
@@ -277,6 +283,11 @@ check "0005: Java library is in libwebrtc.jar" has '":app_opus_java",' "$a/BUILD
 check "0005: JNI library is linked into the .so" has '":app_opus_jni",' "$a/BUILD.gn"
 check "0005: depends on //third_party/opus" has '"//third_party/opus",' "$a/BUILD.gn"
 check "0006: AudioCapturePostProcessing implements AudioProcessingFactory" has 'class AudioCapturePostProcessing implements AudioProcessingFactory' "$a/api/org/webrtc/AudioCapturePostProcessing.java"
+check "0006: no jni_zero::ToJavaFloatArray (not in jni_zero at the pin)" sh -c '! grep -q "jni_zero::ToJavaFloatArray" "$1"' _ "$a/src/jni/app/audio_capture_post_processing.cc"
+check "0006: float array built with NewFloatArray and AdoptRef" sh -c 'grep -q "NewFloatArray" "$1" && grep -q "jni_zero::AdoptRef" "$1"' _ "$a/src/jni/app/audio_capture_post_processing.cc"
+check "0006: Java object is single use" sh -c 'grep -q "IllegalStateException" "$1" && grep -q "nativeProcessor = 0;" "$1"' _ "$a/api/org/webrtc/AudioCapturePostProcessing.java"
+check "0006: createNative and selfTest both take the handle" sh -c '[ "$(grep -c "take())" "$1")" -eq 2 ]' _ "$a/api/org/webrtc/AudioCapturePostProcessing.java"
+check "0006: header says the struct must stay valid" has "must stay valid until createNative" "$a/src/jni/app/audio_capture_processor.h"
 check "0006: C ABI header" test -f "$a/src/jni/app/audio_capture_processor.h"
 check "0006: uses SetCapturePostProcessing" has "SetCapturePostProcessing" "$a/src/jni/app/audio_capture_post_processing.cc"
 check "0006: JNI file ends with DEFINE_JNI" has '^DEFINE_JNI(AudioCapturePostProcessing)' "$a/src/jni/app/audio_capture_post_processing.cc"
