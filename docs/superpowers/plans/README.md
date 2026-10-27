@@ -117,7 +117,7 @@ public enum ServerEvent: Sendable, Equatable {
     case inbox(InboxItem), deviceRevoked(String)
     case callRing(callID: String, fromAccountID: String, fromDeviceID: String, video: Bool, payload: Data)
     case callAnswered(callID: String, deviceID: String, payload: Data)
-    case callSignal(callID: String, payload: Data)
+    case callSignal(callID: String, fromDeviceID: String, payload: Data)
     case callEnded(callID: String, reason: String)
 }
 public actor LiveConnection {         // the /v1/ws socket, with reconnects
