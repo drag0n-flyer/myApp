@@ -21,6 +21,9 @@ struct RootView: View {
             }
         }
         .preferredColorScheme(AppearanceChoice(rawValue: appearance)?.colorScheme)
+        .alert("This device was removed from your account.", isPresented: $model.deviceRemovedAlert) {
+            Button("OK", role: .cancel) {}
+        }
         #if os(iOS)
         .fullScreenCover(isPresented: isCallPresented) {
             CallView(model: model)

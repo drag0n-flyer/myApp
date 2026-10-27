@@ -8,12 +8,14 @@ struct JoinServerView: View {
     @State private var address = ""
     @State private var link = ""
     @State private var badLink = false
+    @State private var showingScanner = false
+    @State private var error: AccountError?
 
     var body: some View {
         OnboardingPage(title: "Join a server", message: "Your chats live on a server. Use ours, or join one you trust.") {
             VStack(alignment: .leading, spacing: 10) {
                 Button {
-                    model.onboarding.choose(.defaultServer, requiresInvite: model.account.defaultServer.requiresInvite)
+                    chooseDefault()
                 } label: {
                     defaultCard
                 }
@@ -27,8 +29,7 @@ struct JoinServerView: View {
                     .padding(.top, 10)
 
                 option("qrcode.viewfinder", .blue, "Scan invite QR code", "From a friend's phone or a printed card", id: "join.scan") {
-                    // Camera scanning comes with the real app; the sample uses a known invite.
-                    accept(URL(string: "https://\(model.account.defaultServer.host)/invite/\(SampleAccountService.sampleInviteCode)")!)
+                    showingScanner = true
                 }
                 option("link", .green, "Paste invite link", "Opened automatically if you tapped a link", id: "join.paste") {
                     link = ""
@@ -41,6 +42,7 @@ struct JoinServerView: View {
                 if badLink {
                     Text("That isn't an invite link.").font(.footnote).foregroundStyle(.red)
                 }
+                AccountErrorText(error: error)
             }
         } buttons: {
             EmptyView()
@@ -48,7 +50,22 @@ struct JoinServerView: View {
         .onAppear {
             if let invite = model.pendingInvite {
                 model.pendingInvite = nil
-                model.onboarding.choose(.invite(invite), requiresInvite: true)
+                join(invite)
+            }
+        }
+        .sheet(isPresented: $showingScanner) {
+            NavigationStack {
+                QRScannerView { text in
+                    showingScanner = false
+                    if let url = URL(string: text) { accept(url) } else { badLink = true }
+                }
+                .navigationTitle("Scan invite QR code")
+                #if os(iOS)
+                .navigationBarTitleDisplayMode(.inline)
+                #endif
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) { Button("Cancel") { showingScanner = false } }
+                }
             }
         }
         .alert("Paste invite link", isPresented: $askingLink) {
@@ -60,7 +77,7 @@ struct JoinServerView: View {
             TextField("chat.example.org", text: $address)
             Button("Continue") {
                 let host = address.trimmingCharacters(in: .whitespaces)
-                if !host.isEmpty { model.onboarding.choose(.address(host), requiresInvite: false) }
+                if !host.isEmpty { chooseAddress(host) }
             }
             Button("Cancel", role: .cancel) {}
         }
@@ -125,9 +142,41 @@ struct JoinServerView: View {
     private func accept(_ url: URL) {
         if let invite = InviteLink.parse(url) {
             badLink = false
-            model.onboarding.choose(.invite(invite), requiresInvite: true)
+            join(invite)
         } else {
             badLink = true
+        }
+    }
+
+    private func chooseDefault() {
+        Task {
+            do throws(AccountError) {
+                let policy = try await model.account.connect(host: model.account.defaultServer.host)
+                error = nil
+                model.onboarding.choose(.defaultServer, requiresInvite: policy.requiresInvite)
+            } catch { self.error = error }
+        }
+    }
+
+    private func chooseAddress(_ host: String) {
+        Task {
+            do throws(AccountError) {
+                let policy = try await model.account.connect(host: host)
+                error = nil
+                model.onboarding.choose(.address(host), requiresInvite: policy.requiresInvite)
+            } catch { self.error = error }
+        }
+    }
+
+    /// Connects to the invite's server and checks the code before moving on.
+    private func join(_ invite: InviteLink) {
+        Task {
+            do throws(AccountError) {
+                _ = try await model.account.connect(host: invite.host)
+                _ = try await model.account.redeemInvite(code: invite.code)
+                error = nil
+                model.onboarding.choose(.invite(invite), requiresInvite: true)
+            } catch { self.error = error }
         }
     }
 }

@@ -5,7 +5,7 @@ extension XCUIApplication {
     /// Launches the app with UI-test launch arguments (see `LaunchOptions` in the app).
     static func launched(skipOnboarding: Bool = true, network: String = "mobile", extra: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
-        var args = ["-uiTesting", "-network", network] + extra
+        var args = ["-uiTesting", "-sampleData", "-network", network] + extra
         if skipOnboarding { args.append("-skipOnboarding") }
         app.launchArguments = args
         app.launch()
