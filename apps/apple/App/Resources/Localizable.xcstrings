@@ -462,6 +462,94 @@
           }
         }
       }
+    },
+    "This message was deleted": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This message was deleted"
+          }
+        }
+      }
+    },
+    "Update %@ to see this message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Update %@ to see this message"
+          }
+        }
+      }
+    },
+    "%@ added a new device": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ added a new device"
+          }
+        }
+      }
+    },
+    "You added a new device": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "You added a new device"
+          }
+        }
+      }
+    },
+    "%@ removed a device": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ removed a device"
+          }
+        }
+      }
+    },
+    "You removed a device": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "You removed a device"
+          }
+        }
+      }
+    },
+    "Safety number changed": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Safety number changed"
+          }
+        }
+      }
+    },
+    "Messages in this chat are paused. Open chat info for details.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Messages in this chat are paused. Open chat info for details."
+          }
+        }
+      }
     }
   },
   "version": "1.0"

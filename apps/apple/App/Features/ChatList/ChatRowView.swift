@@ -64,10 +64,21 @@ struct PreviewText: View {
             if let symbol {
                 Image(systemName: symbol.name).foregroundStyle(symbol.color)
             }
-            Text(message?.previewText ?? "")
+            previewLabel
         }
         .font(.subheadline)
         .foregroundStyle(.secondary)
+    }
+
+    /// Localized text for the content kinds that carry fixed wording; everything else uses `previewText`.
+    @ViewBuilder
+    private var previewLabel: some View {
+        switch message?.content {
+        case .deleted: Text("This message was deleted").italic()
+        case .unsupported: Text("Update \(AppBrand.name) to see this message")
+        case .system(let event): SystemEventText(event: event)
+        default: Text(message?.previewText ?? "")
+        }
     }
 
     private var symbol: (name: String, color: Color)? {
@@ -78,7 +89,7 @@ struct PreviewText: View {
         case .call(.missedAudio), .call(.missedVideo): ("phone.arrow.down.left", .red)
         case .call(.audio): ("phone.fill", .secondary)
         case .call(.video): ("video.fill", .secondary)
-        case .text, nil: nil
+        case .text, .deleted, .unsupported, .system, nil: nil
         }
     }
 }

@@ -45,10 +45,12 @@ struct AddContactView: View {
 
     private func add() {
         let name = username.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "@"))
-        if model.addContact(username: name) != nil {
-            dismiss()
-        } else {
-            notFound = true
+        Task {
+            if await model.addContact(username: name) != nil {
+                dismiss()
+            } else {
+                notFound = true
+            }
         }
     }
 }

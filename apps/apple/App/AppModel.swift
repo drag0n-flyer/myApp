@@ -154,9 +154,9 @@ final class AppModel {
     func report(chatID: String) { chatStore.report(chatID: chatID); revision += 1 }
 
     @discardableResult
-    func addContact(username: String) -> Contact? {
+    func addContact(username: String) async -> Contact? {
         defer { revision += 1 }
-        return chatStore.addContact(username: username)
+        return await chatStore.addContact(username: username)
     }
 
     /// The chat with this contact, created if needed.

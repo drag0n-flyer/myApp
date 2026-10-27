@@ -1,0 +1,62 @@
+[
+ {
+  "name": "text",
+  "json": "{\"at\":1700000000000,\"id\":\"00000000-0000-4000-8000-000000000001\",\"k\":\"text\",\"t\":\"Hello 🙂\",\"v\":1}"
+ },
+ {
+  "name": "text_reply",
+  "json": "{\"at\":1700000000000,\"id\":\"00000000-0000-4000-8000-000000000001\",\"k\":\"text\",\"r\":\"00000000-0000-4000-8000-000000000000\",\"t\":\"re\",\"v\":1}"
+ },
+ {
+  "name": "photo",
+  "json": "{\"a\":{\"csz\":116,\"dg\":\"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=\",\"id\":\"att1\",\"key\":\"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=\",\"sz\":100},\"at\":1700000000000,\"h\":900,\"id\":\"00000000-0000-4000-8000-000000000001\",\"k\":\"photo\",\"r\":\"rr\",\"th\":\"/9h0aHVtYg==\",\"v\":1,\"w\":1600}"
+ },
+ {
+  "name": "photo_nothumb",
+  "json": "{\"a\":{\"csz\":116,\"dg\":\"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=\",\"id\":\"att1\",\"key\":\"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=\",\"sz\":100},\"at\":1700000000000,\"h\":20,\"id\":\"00000000-0000-4000-8000-000000000001\",\"k\":\"photo\",\"v\":1,\"w\":10}"
+ },
+ {
+  "name": "voice",
+  "json": "{\"a\":{\"csz\":116,\"dg\":\"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=\",\"id\":\"att1\",\"key\":\"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=\",\"sz\":100},\"at\":1700000000000,\"dur\":14.5,\"id\":\"00000000-0000-4000-8000-000000000001\",\"k\":\"voice\",\"v\":1}"
+ },
+ {
+  "name": "file",
+  "json": "{\"a\":{\"csz\":116,\"dg\":\"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=\",\"id\":\"att1\",\"key\":\"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=\",\"sz\":100},\"at\":1700000000000,\"id\":\"00000000-0000-4000-8000-000000000001\",\"k\":\"file\",\"mime\":\"application/pdf\",\"name\":\"Report.pdf\",\"r\":\"rr\",\"v\":1}"
+ },
+ {
+  "name": "edit",
+  "json": "{\"at\":1700000000000,\"id\":\"00000000-0000-4000-8000-000000000001\",\"k\":\"edit\",\"t\":\"fixed\",\"target\":\"t1\",\"v\":1}"
+ },
+ {
+  "name": "delete",
+  "json": "{\"at\":1700000000000,\"id\":\"00000000-0000-4000-8000-000000000001\",\"k\":\"delete\",\"target\":\"t1\",\"v\":1}"
+ },
+ {
+  "name": "react",
+  "json": "{\"at\":1700000000000,\"e\":\"👍\",\"id\":\"00000000-0000-4000-8000-000000000001\",\"k\":\"react\",\"target\":\"t1\",\"v\":1}"
+ },
+ {
+  "name": "react_remove",
+  "json": "{\"at\":1700000000000,\"e\":\"\",\"id\":\"00000000-0000-4000-8000-000000000001\",\"k\":\"react\",\"target\":\"t1\",\"v\":1}"
+ },
+ {
+  "name": "receipt_delivered",
+  "json": "{\"at\":1700000000000,\"id\":\"00000000-0000-4000-8000-000000000001\",\"ids\":[\"a\",\"b\"],\"k\":\"receipt\",\"s\":\"delivered\",\"v\":1}"
+ },
+ {
+  "name": "receipt_read",
+  "json": "{\"at\":1700000000000,\"id\":\"00000000-0000-4000-8000-000000000001\",\"ids\":[\"a\"],\"k\":\"receipt\",\"s\":\"read\",\"v\":1}"
+ },
+ {
+  "name": "callsig",
+  "json": "{\"at\":1700000000000,\"id\":\"00000000-0000-4000-8000-000000000001\",\"k\":\"callsig\",\"p\":{\"callID\":\"c1\",\"candidate\":{\"sdp\":\"candidate:1 1 udp 2130706431 1.2.3.4 5000 typ host\",\"sdpMLineIndex\":0,\"sdpMid\":\"0\"},\"ceiling\":2,\"dtlsFingerprint\":\"sha-256 AB:CD:EF\",\"kind\":\"offer\",\"sdp\":\"v=0\\r\\no=- 1 2 IN IP4 0.0.0.0\",\"video\":true,\"videoOn\":false},\"v\":1}"
+ },
+ {
+  "name": "mode",
+  "json": "{\"at\":1700000000000,\"id\":\"00000000-0000-4000-8000-000000000001\",\"k\":\"mode\",\"m\":\"e2ee\",\"v\":1}"
+ },
+ {
+  "name": "mode_server_readable",
+  "json": "{\"at\":1700000000000,\"id\":\"00000000-0000-4000-8000-000000000001\",\"k\":\"mode\",\"m\":\"server_readable\",\"v\":1}"
+ }
+]

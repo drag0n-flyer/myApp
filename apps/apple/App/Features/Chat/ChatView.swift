@@ -79,7 +79,7 @@ struct ChatView: View {
         case .photo: kind = .photo
         case .file: kind = .file
         case .voice: kind = .voice
-        case .text, .call: return true
+        case .text, .call, .deleted, .unsupported, .system: return true
         }
         return AutoDownloadPolicy.shouldDownload(kind, network: model.network, settings: model.settings.autoDownload)
     }
