@@ -296,10 +296,10 @@ fn pending_commit_survives_restart() {
 }
 
 #[test]
-fn commit_accepted_without_pending_is_an_error() {
+fn commit_accepted_without_pending_is_a_noop() {
     let alice = dev("acct-a/dev-1");
     let g = alice.create_group().unwrap();
-    assert!(alice.commit_accepted(g.clone()).is_err());
+    alice.commit_accepted(g.clone()).unwrap();
     assert_eq!(alice.epoch(g).unwrap(), 0);
 }
 
@@ -333,7 +333,7 @@ fn own_commit_echoed_back_applies_the_pending_commit() {
     assert!(!alice.has_pending_commit(g.clone()).unwrap());
 
     // The 200 may arrive after the echo: nothing is left to accept.
-    assert!(alice.commit_accepted(g.clone()).is_err());
+    alice.commit_accepted(g.clone()).unwrap();
     assert_eq!(alice.epoch(g.clone()).unwrap(), 2);
 
     // Everyone converges and keeps talking.
@@ -554,14 +554,12 @@ fn malformed_inputs_never_panic() {
     ));
 }
 
-/// Finding from M1 review: the epoch record is written before the group state.
-/// If the process dies in between, the stored max epoch id is one ahead of the
-/// stored state. mls-rs then refuses to process the same commit again
-/// (`InvalidEpoch`, reported as `Duplicate`), so the device cannot catch up from
-/// that commit; the group is stuck at the old epoch until the stray epoch record
-/// is removed. This pins that behaviour down so a later fix is a visible change.
+/// The epoch record is written before the group state. If the process dies in
+/// between, the stored max epoch id is one ahead of the stored state, and
+/// mls-rs would refuse every later commit (`InvalidEpoch`). The engine repairs
+/// this on load: epoch records at or above the current epoch are deleted.
 #[test]
-fn crash_between_epoch_insert_and_state_write() {
+fn crash_between_epoch_insert_and_state_write_recovers() {
     let (alice, bob, carol) = (
         dev("acct-a/dev-1"),
         dev("acct-b/dev-1"),
@@ -582,21 +580,172 @@ fn crash_between_epoch_insert_and_state_write() {
     // Simulate the crash: epoch-1 is on disk, the state is still epoch 1.
     std::fs::write(&state_path, &state_at_1).unwrap();
     assert!(stray_epoch.exists());
-    assert_eq!(bob.epoch(g.clone()).unwrap(), 1);
 
-    // Reading is unaffected, and the commit cannot be replayed.
-    let retry = bob.process(bundle.commit.clone());
-    assert!(matches!(retry, Err(FfiError::Duplicate)), "got {retry:?}");
-    assert_eq!(bob.epoch(g.clone()).unwrap(), 1);
-
-    // Removing the stray record (epochs at or above the current one are never
-    // valid history) makes the same commit process normally.
-    std::fs::remove_file(&stray_epoch).unwrap();
+    // The same commit processes normally, and the group carries on.
     assert!(matches!(
         bob.process(bundle.commit).unwrap(),
         Processed::Commit { new_epoch: 2, .. }
     ));
     say(&alice, &bob, &g, b"recovered");
+    // Bob's own next commit works too (it inserts the next epoch record).
+    let next = bob
+        .add(
+            g.clone(),
+            vec![dev("acct-d/dev-1").key_packages(1).unwrap().remove(0)],
+        )
+        .unwrap();
+    bob.commit_accepted(g.clone()).unwrap();
+    assert!(matches!(
+        alice.process(next.commit).unwrap(),
+        Processed::Commit { new_epoch: 3, .. }
+    ));
+}
+
+/// A device that was removed and later re-added gets a Welcome that replaces
+/// its state; epoch records from the old membership must not break later commits.
+#[test]
+fn removed_then_readded_device_keeps_working() {
+    let (alice, bob, carol) = (
+        dev("acct-a/dev-1"),
+        dev("acct-b/dev-1"),
+        dev("acct-c/dev-1"),
+    );
+    let g = group_of(&alice, &[&bob]);
+    let add_carol = alice
+        .add(g.clone(), vec![carol.key_packages(1).unwrap().remove(0)])
+        .unwrap();
+    alice.commit_accepted(g.clone()).unwrap();
+    bob.process(add_carol.commit).unwrap();
+    carol.process(add_carol.welcome.unwrap()).unwrap();
+
+    let removal = alice
+        .remove(g.clone(), vec!["acct-b/dev-1".into()])
+        .unwrap();
+    alice.commit_accepted(g.clone()).unwrap();
+    carol.process(removal.commit.clone()).unwrap();
+    assert!(matches!(
+        bob.process(removal.commit).unwrap(),
+        Processed::Commit {
+            removed_me: true,
+            ..
+        }
+    ));
+
+    let readd = alice
+        .add(g.clone(), vec![bob.key_packages(1).unwrap().remove(0)])
+        .unwrap();
+    alice.commit_accepted(g.clone()).unwrap();
+    carol.process(readd.commit).unwrap();
+    assert!(matches!(
+        bob.process(readd.welcome.unwrap()).unwrap(),
+        Processed::Joined { epoch: 4, .. }
+    ));
+    say(&alice, &bob, &g, b"welcome back");
+
+    // Bob commits, then receives a commit: both touch the epoch records.
+    let bob_commit = bob
+        .add(
+            g.clone(),
+            vec![dev("acct-d/dev-1").key_packages(1).unwrap().remove(0)],
+        )
+        .unwrap();
+    bob.commit_accepted(g.clone()).unwrap();
+    assert!(matches!(
+        alice.process(bob_commit.commit.clone()).unwrap(),
+        Processed::Commit { new_epoch: 5, .. }
+    ));
+    carol.process(bob_commit.commit).unwrap();
+    let alice_commit = alice
+        .add(
+            g.clone(),
+            vec![dev("acct-e/dev-1").key_packages(1).unwrap().remove(0)],
+        )
+        .unwrap();
+    alice.commit_accepted(g.clone()).unwrap();
+    assert!(matches!(
+        bob.process(alice_commit.commit).unwrap(),
+        Processed::Commit { new_epoch: 6, .. }
+    ));
+    say(&bob, &alice, &g, b"still in sync");
+}
+
+#[test]
+fn future_commit_is_an_epoch_gap_and_catching_up_works() {
+    let (alice, bob, carol, dave) = (
+        dev("acct-a/dev-1"),
+        dev("acct-b/dev-1"),
+        dev("acct-c/dev-1"),
+        dev("acct-d/dev-1"),
+    );
+    let g = group_of(&alice, &[&bob]);
+    let c1 = alice
+        .add(g.clone(), vec![carol.key_packages(1).unwrap().remove(0)])
+        .unwrap();
+    alice.commit_accepted(g.clone()).unwrap();
+    let c2 = alice
+        .add(g.clone(), vec![dave.key_packages(1).unwrap().remove(0)])
+        .unwrap();
+    alice.commit_accepted(g.clone()).unwrap();
+
+    let gap = bob.process(c2.commit.clone());
+    assert!(matches!(gap, Err(FfiError::EpochGap)), "got {gap:?}");
+    assert_eq!(bob.epoch(g.clone()).unwrap(), 1);
+    bob.process(c1.commit).unwrap();
+    bob.process(c2.commit).unwrap();
+    assert_eq!(bob.epoch(g.clone()).unwrap(), 3);
+    say(&alice, &bob, &g, b"caught up");
+}
+
+#[test]
+fn old_commit_and_own_echo_after_accepted_are_duplicates() {
+    let (alice, bob, carol) = (
+        dev("acct-a/dev-1"),
+        dev("acct-b/dev-1"),
+        dev("acct-c/dev-1"),
+    );
+    let g = group_of(&alice, &[&bob]);
+    let c = alice
+        .add(g.clone(), vec![carol.key_packages(1).unwrap().remove(0)])
+        .unwrap();
+    alice.commit_accepted(g.clone()).unwrap();
+    // The echo of our own commit arrives after commit_accepted.
+    let echo = alice.process(c.commit.clone());
+    assert!(matches!(echo, Err(FfiError::Duplicate)), "got {echo:?}");
+    assert_eq!(alice.epoch(g.clone()).unwrap(), 2);
+
+    // Bob applies the commit, then gets it delivered again.
+    bob.process(c.commit.clone()).unwrap();
+    let again = bob.process(c.commit);
+    assert!(matches!(again, Err(FfiError::Duplicate)), "got {again:?}");
+    assert_eq!(bob.epoch(g.clone()).unwrap(), 2);
+    say(&alice, &bob, &g, b"fine");
+}
+
+#[test]
+fn late_application_message_reports_the_epoch_it_was_sent_in() {
+    let (alice, bob, carol) = (
+        dev("acct-a/dev-1"),
+        dev("acct-b/dev-1"),
+        dev("acct-c/dev-1"),
+    );
+    let g = group_of(&alice, &[&bob]);
+    let late = alice.encrypt(g.clone(), b"late".to_vec()).unwrap();
+    assert_eq!(late.epoch, 1);
+    let c = alice
+        .add(g.clone(), vec![carol.key_packages(1).unwrap().remove(0)])
+        .unwrap();
+    alice.commit_accepted(g.clone()).unwrap();
+    bob.process(c.commit).unwrap();
+    assert_eq!(bob.epoch(g.clone()).unwrap(), 2);
+    match bob.process(late.ciphertext).unwrap() {
+        Processed::Application {
+            plaintext, epoch, ..
+        } => {
+            assert_eq!(plaintext, b"late");
+            assert_eq!(epoch, 1);
+        }
+        other => panic!("expected Application, got {other:?}"),
+    }
 }
 
 /// A write error after the durable state write (here: pruning an old epoch

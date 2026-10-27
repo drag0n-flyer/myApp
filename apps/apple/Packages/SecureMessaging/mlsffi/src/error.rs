@@ -8,6 +8,8 @@ pub enum FfiError {
     UnknownGroup,
     NotMember,
     Duplicate,
+    /// The message belongs to a later epoch than the stored group: a commit was missed.
+    EpochGap,
     PendingCommit,
     Storage(String),
     Crypto(String),
@@ -21,6 +23,7 @@ impl fmt::Display for FfiError {
             FfiError::UnknownGroup => write!(f, "unknown group"),
             FfiError::NotMember => write!(f, "not a member of the group"),
             FfiError::Duplicate => write!(f, "duplicate message"),
+            FfiError::EpochGap => write!(f, "message is from a later epoch than this device has"),
             FfiError::PendingCommit => write!(f, "a commit is already pending"),
             FfiError::Storage(m) => write!(f, "storage error: {m}"),
             FfiError::Crypto(m) => write!(f, "crypto error: {m}"),

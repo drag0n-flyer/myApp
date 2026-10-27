@@ -100,6 +100,17 @@ impl FileStorage {
         self.group_dir(group_id).join(format!("{EPOCH_PREFIX}{epoch_id}"))
     }
 
+    /// Epoch numbers stored for a group, ascending (used by the engine's repair step).
+    pub fn stored_epochs(&self, group_id: &[u8]) -> Result<Vec<u64>, FfiError> {
+        self.epoch_ids(group_id).map_err(|e| storage_err("list epochs", e))
+    }
+
+    /// Deletes one stored epoch record; not an error if it is absent.
+    pub fn delete_epoch(&self, group_id: &[u8], epoch_id: u64) -> Result<(), FfiError> {
+        remove_optional(&self.epoch_path(group_id, epoch_id))
+            .map_err(|e| storage_err("delete epoch", e))
+    }
+
     fn key_package_path(&self, id: &[u8]) -> PathBuf {
         self.root.join("keypackages").join(hex(id))
     }

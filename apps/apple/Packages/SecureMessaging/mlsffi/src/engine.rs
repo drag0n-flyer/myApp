@@ -171,8 +171,11 @@ fn map_mls(e: MlsError) -> FfiError {
         MlsError::SerializationError(_) => FfiError::Malformed,
         MlsError::GroupNotFound => FfiError::UnknownGroup,
         MlsError::MemberNotFound | MlsError::WelcomeKeyPackageNotFound => FfiError::NotMember,
-        MlsError::CantProcessMessageFromSelf | MlsError::KeyMissing(_) | MlsError::InvalidEpoch => {
-            FfiError::Duplicate
+        MlsError::CantProcessMessageFromSelf | MlsError::KeyMissing(_) => FfiError::Duplicate,
+        // Epoch ordering is decided in `process` before this point; an
+        // InvalidEpoch that gets here comes from the epoch repository, i.e. storage.
+        MlsError::InvalidEpoch => {
+            FfiError::Storage("epoch records out of step with group state".into())
         }
         MlsError::ExistingPendingCommit => FfiError::PendingCommit,
         MlsError::GroupStorageError(ref a) | MlsError::KeyPackageRepoError(ref a) => storage_any(a),
@@ -209,6 +212,7 @@ pub fn generate_signature_keypair() -> Result<SignatureKeypair, FfiError> {
 #[derive(uniffi::Object)]
 pub struct Engine {
     client: EngineClient,
+    storage: FileStorage,
     /// Serializes calls within this process (load, act, write must not
     /// interleave). Cross-process exclusion is the Swift side's `flock`.
     gate: Mutex<()>,
@@ -222,8 +226,33 @@ impl Engine {
     }
 
     /// Loads the group fresh from storage.
+    /// Runs the repair step first (see [`Engine::repair_epochs`]).
     fn load(&self, group_id: &[u8]) -> Result<EngineGroup, FfiError> {
-        self.client.load_group(group_id).map_err(map_mls)
+        let group = self.client.load_group(group_id).map_err(map_mls)?;
+        self.repair_epochs(group_id, group.current_epoch())?;
+        Ok(group)
+    }
+
+    /// mls-rs inserts the epoch being left with `id == max stored id + 1`, and
+    /// refuses anything else. Stored epoch records must therefore be exactly
+    /// the newest ones below the current epoch. They can drift from the group
+    /// state after a crash or failed write between the epoch records and the
+    /// state, or when a Welcome replaces the state of a group we were removed
+    /// from. Repair, on every load and after a join:
+    ///   1. delete records with id >= current epoch (never valid history);
+    ///   2. if the newest remaining id is not current - 1, delete them all
+    ///      (a gap cannot be used, and the old keys are for a stale history).
+    fn repair_epochs(&self, group_id: &[u8], current: u64) -> Result<(), FfiError> {
+        let mut ids = self.storage.stored_epochs(group_id)?;
+        while ids.last().is_some_and(|&id| id >= current) {
+            self.storage.delete_epoch(group_id, ids.pop().unwrap())?;
+        }
+        if ids.last().is_some_and(|&id| id + 1 != current) {
+            for id in ids {
+                self.storage.delete_epoch(group_id, id)?;
+            }
+        }
+        Ok(())
     }
 
     fn bundle(group: &EngineGroup, output: CommitOutput) -> Result<CommitBundle, FfiError> {
@@ -276,6 +305,7 @@ impl Engine {
             .signing_identity(signing_identity, secret, CIPHER_SUITE)
             .build();
         Ok(Arc::new(Self {
+            storage,
             client,
             gate: Mutex::new(()),
         }))
@@ -359,8 +389,10 @@ impl Engine {
     pub fn commit_accepted(&self, group_id: Vec<u8>) -> Result<(), FfiError> {
         let _g = self.lock();
         let mut group = self.load(&group_id)?;
+        // Nothing pending: our own commit's echo was already processed (or it
+        // was discarded). Idempotent, like `commit_rejected`.
         if !group.has_pending_commit() {
-            return Err(FfiError::Internal("no pending commit".into()));
+            return Ok(());
         }
         group.apply_pending_commit().map_err(map_mls)?;
         group.write_to_storage().map_err(map_mls)
@@ -405,6 +437,12 @@ impl Engine {
                     .client
                     .join_group(None, &message, None)
                     .map_err(map_mls)?;
+                // A Welcome replaces any earlier state for this group (for
+                // example after we were removed and then re-added): old epoch
+                // records belong to the old history. Delete them all first.
+                for id in self.storage.stored_epochs(group.group_id())? {
+                    self.storage.delete_epoch(group.group_id(), id)?;
+                }
                 // Also deletes the KeyPackage this Welcome consumed.
                 group.write_to_storage().map_err(map_mls)?;
                 Ok(Processed::Joined {
@@ -415,11 +453,26 @@ impl Engine {
             WireFormat::PrivateMessage | WireFormat::PublicMessage => {
                 let group_id = message.group_id().ok_or(FfiError::Malformed)?.to_vec();
                 let mut group = self.load(&group_id)?;
+                let message_epoch = message.epoch().ok_or(FfiError::Malformed)?;
+                if message_epoch > group.current_epoch() {
+                    // A commit was missed; the caller must resync.
+                    return Err(FfiError::EpochGap);
+                }
                 // A pending commit is deliberately not cleared here. mls-rs
                 // applies it when the message is our own commit echoed back,
                 // and drops it when it processes someone else's commit
                 // (the race was lost). Clearing first would break the echo.
-                let received = group.process_incoming_message(message).map_err(map_mls)?;
+                let received = match group.process_incoming_message(message) {
+                    Ok(received) => received,
+                    // An older message that cannot be handled is one we have
+                    // already moved past (e.g. a commit already applied).
+                    Err(MlsError::InvalidEpoch | MlsError::EpochNotFound)
+                        if message_epoch < group.current_epoch() =>
+                    {
+                        return Err(FfiError::Duplicate)
+                    }
+                    Err(e) => return Err(map_mls(e)),
+                };
                 let processed = match received {
                     ReceivedMessage::ApplicationMessage(app) => {
                         let sender = group
@@ -429,7 +482,8 @@ impl Engine {
                             group_id: group_id.clone(),
                             sender: identity_string(&sender.signing_identity)?,
                             plaintext: app.data().to_vec(),
-                            epoch: group.current_epoch(),
+                            // The epoch it was sent in, not ours.
+                            epoch: message_epoch,
                         }
                     }
                     ReceivedMessage::Commit(description) => Processed::Commit {
