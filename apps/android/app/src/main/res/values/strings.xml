@@ -219,7 +219,6 @@
     <string name="link_scan_title">Scan the code on your new device</string>
     <string name="link_confirm_title">Confirm it\'s you</string>
     <string name="link_confirm_subtitle">Approving a device needs your fingerprint or face.</string>
-    <string name="link_confirm_use_lock">Use screen lock</string>
     <string name="platform_iphone">iPhone</string>
     <string name="platform_mac">Mac</string>
     <string name="platform_android">Android</string>
