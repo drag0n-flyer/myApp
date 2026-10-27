@@ -1,7 +1,8 @@
 # Build and run the chat server on this machine, without Docker.
-# Settings come from .env (copy deploy/.env.example and edit); a variable set
-# in the shell wins over the file.
+# Settings come from .env (make env copies .env.example; then edit it); a
+# variable set in the shell wins over the file.
 #
+#   make env       create .env from .env.example (never overwrites)
 #   make build     build bin/appserver
 #   make run       start it in the background (log: server/run/appserver.log)
 #   make kill      stop it
@@ -14,19 +15,21 @@
 #   make db-stop   stop it (data is kept)
 #   make db-shell  open psql
 #   Then in .env: APP_DATABASE_URL=postgres://appserver:PASSWORD@127.0.0.1:5432/appserver?sslmode=disable
-#   Another port: make db DB_PORT=5433. The server creates its tables itself on start.
+#   The port comes from APP_DATABASE_URL (or make db DB_PORT=5433). The server creates its tables itself on start.
 #
 # Listen address: APP_LISTEN in .env, or for one run:
 #   make run BIND=0.0.0.0 PORT=8080   every network: other machines can connect
 #   make run BIND=127.0.0.1           this machine only
 
+.DEFAULT_GOAL := build
 ENV_FILE ?= .env
 BIN      := bin/appserver
 RUN_DIR  := server/run
 PID      := $(RUN_DIR)/appserver.pid
 LOG      := $(RUN_DIR)/appserver.log
 
-DB_PORT      ?= 5432
+# Port for make db: DB_PORT=..., else the port in APP_DATABASE_URL (127.0.0.1 only), else 5432.
+DB_PORT      ?= $(or $(shell sed -n 's|^APP_DATABASE_URL=.*@127\.0\.0\.1:\([0-9][0-9]*\)/.*|\1|p' "$(ENV_FILE)" 2>/dev/null | tail -1),5432)
 DB_CONTAINER ?= myapp-postgres
 DB_VOLUME    ?= myapp-pgdata
 
@@ -36,13 +39,16 @@ else ifdef PORT
 LISTEN_ENV := APP_LISTEN=:$(PORT)
 endif
 
-.PHONY: build run kill restart logs clean db db-stop db-shell
+env:
+	@if [ -f "$(ENV_FILE)" ]; then echo "$(ENV_FILE) already exists; not touching it."; else cp .env.example "$(ENV_FILE)" && chmod 600 "$(ENV_FILE)" && echo "Created $(ENV_FILE). Edit it: set the passwords and APP_HOST."; fi
+
+.PHONY: env build run kill restart logs clean db db-stop db-shell
 
 build:
 	cd server && go build -trimpath -o ../bin/appserver ./cmd/appserver
 
 run: build
-	@test -f "$(ENV_FILE)" || { echo "No $(ENV_FILE). Run: cp deploy/.env.example $(ENV_FILE), then edit it."; exit 1; }
+	@test -f "$(ENV_FILE)" || { echo "No $(ENV_FILE). Run: make env, then edit it."; exit 1; }
 	@if [ -f $(PID) ] && kill -0 $$(cat $(PID)) 2>/dev/null; then \
 		echo "Already running (pid $$(cat $(PID))). Use: make kill"; exit 1; fi
 	@mkdir -p $(RUN_DIR)

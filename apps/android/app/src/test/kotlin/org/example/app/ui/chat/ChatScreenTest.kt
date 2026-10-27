@@ -39,7 +39,7 @@ class ChatScreenTest {
     private val calls = mutableListOf<Boolean>()
 
     private fun launch(store: ChatStore, network: NetworkType = NetworkType.Wifi) {
-        val vm = ChatViewModel(store, "chat-riya", network, AutoDownloadSettings())
+        val vm = ChatViewModel(store, "chat-riya", network) { AutoDownloadSettings() }
         rule.setContent {
             AppTheme { ChatScreen(vm, myId = "me", onBack = { backs++ }, onOpenInfo = { infos++ }, onCall = { calls += it }) }
         }

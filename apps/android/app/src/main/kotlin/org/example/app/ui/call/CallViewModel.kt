@@ -25,10 +25,19 @@ class CallViewModel(
     private val engine: CallEngine,
     private val store: ChatStore,
     private val server: ServerPolicy,
-    private val settings: CallSettings,
+    private val settingsSource: () -> CallSettings,
     private val simulator: SimulatedCallEngine? = null,
     val showSimulator: Boolean = false,
 ) : ViewModel() {
+    /** For a fixed set of settings, as the tests use. */
+    constructor(
+        engine: CallEngine, store: ChatStore, server: ServerPolicy, settings: CallSettings,
+        simulator: SimulatedCallEngine? = null, showSimulator: Boolean = false,
+    ) : this(engine, store, server, { settings }, simulator, showSimulator)
+
+    /** Read on every use, so the call screens follow the settings store. */
+    private val settings: CallSettings get() = settingsSource()
+
     val call: StateFlow<CallState?> = engine.state
 
     private var outgoing = true
