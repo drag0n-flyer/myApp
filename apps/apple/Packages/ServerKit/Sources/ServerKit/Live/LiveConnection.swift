@@ -21,7 +21,7 @@ public actor LiveConnection {
     private var pending: [String: CheckedContinuation<Data?, Error>] = [:]
     private var timers: [String: Task<Void, Never>] = [:]
     private var sending: Set<String> = []
-    private var early: [String: Result<Data?, ServerError>] = [:]
+    private var early: [String: Result<Data?, Error>] = [:]
 
     private enum Outcome: Sendable { case closed(Int?), pingTimeout }
 
@@ -71,13 +71,18 @@ public actor LiveConnection {
         }
         sending.remove(id)
         if let r = early.removeValue(forKey: id) { return try r.get() }
-        return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Data?, Error>) in
-            pending[id] = cont
-            let clock = self.clock
-            timers[id] = Task {
-                try? await clock.sleep(for: .seconds(10))
-                if !Task.isCancelled { await self.expire(id) }
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Data?, Error>) in
+                if Task.isCancelled { cont.resume(throwing: CancellationError()); return }
+                pending[id] = cont
+                let clock = self.clock
+                timers[id] = Task {
+                    try? await clock.sleep(for: .seconds(10))
+                    if !Task.isCancelled { await self.expire(id) }
+                }
             }
+        } onCancel: {
+            Task { await self.cancelSend(id) }
         }
     }
 
@@ -103,6 +108,7 @@ public actor LiveConnection {
             guard isCurrent(id) else { return }
             setState(.connecting)
             var code: Int?
+            let generation = endpoint.generation
             do {
                 let ch = try await transport.connect(url: endpoint.url, headers: endpoint.headers)
                 guard isCurrent(id) else { await ch.close(code: 1000); return }
@@ -122,17 +128,22 @@ public actor LiveConnection {
                 if case .closed(let c) = outcome { code = c }
             } catch {
                 guard isCurrent(id) else { return }
+                if let e = error as? ServerError, e.status == 401 {
+                    finish(id, .revoked)
+                    await client.handleRevoked(generation: generation)
+                    return
+                }
             }
             switch code {
             case 4001:
                 return finish(id, .replaced)
             case 4003:
                 finish(id, .revoked)
-                await client.handleRevoked()
+                await client.handleRevoked(generation: generation)
                 return
             default: break
             }
-            if stable { backoff.reset() }
+            if stable { backoff.reset(); stable = false }
             let wait = backoff.next()
             setState(.waiting(seconds: wait))
             do { try await clock.sleep(for: .seconds(wait)) } catch { return }
@@ -172,6 +183,8 @@ public actor LiveConnection {
             group.addTask { (try? await ch.ping()) != nil }
             group.addTask {
                 try? await clock.sleep(for: .seconds(10))
+                // Close so a ping that ignores cancellation (a real socket) fails now, not at the TCP timeout.
+                if !Task.isCancelled { await ch.close(code: 1001) }
                 return false
             }
             let ok = await group.next() ?? false
@@ -191,13 +204,17 @@ public actor LiveConnection {
         }
     }
 
-    private func resolve(_ id: String, _ result: Result<Data?, ServerError>) {
+    private func resolve(_ id: String, _ result: Result<Data?, Error>) {
         if let c = pending.removeValue(forKey: id) {
             timers.removeValue(forKey: id)?.cancel()
-            c.resume(with: result.mapError { $0 as Error })
+            c.resume(with: result)
         } else if sending.contains(id) {
             early[id] = result
         }
+    }
+
+    private func cancelSend(_ id: String) {
+        resolve(id, .failure(CancellationError()))
     }
 
     private func expire(_ id: String) {
@@ -205,7 +222,7 @@ public actor LiveConnection {
     }
 
     private func failAllPending() {
-        for id in Array(pending.keys) { resolve(id, .failure(.network)) }
-        for id in sending { early[id] = .failure(.network) }
+        for id in Array(pending.keys) { resolve(id, .failure(ServerError.network)) }
+        for id in sending { early[id] = .failure(ServerError.network) }
     }
 }

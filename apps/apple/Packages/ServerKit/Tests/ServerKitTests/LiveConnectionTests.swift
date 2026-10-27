@@ -229,4 +229,46 @@ private func waitFor(_ cond: @Sendable () async -> Bool) async -> Bool {
         #expect(await rig.socket.clientCloseCode == 1000)
         #expect(await rig.transport.sockets.count == 1)
     }
+
+    @Test func handshake401IsTerminalAndSignsOut() async {
+        let rig = await Rig()
+        await rig.transport.failConnects(with: [ServerError(status: 401, code: "unauthorized")])
+        await rig.conn.start()
+        #expect(await rig.next(2) == [.connecting, .revoked])
+        #expect(await waitFor { await rig.unauthorized.set })
+        #expect(await rig.clock.waitForSleepers(0))
+        #expect(await rig.transport.sockets.isEmpty)
+    }
+
+    @Test func stableFlagClearedAfterReset() async {
+        let rig = await Rig()
+        await rig.startConnected()
+        rig.clock.advance(by: .seconds(30))
+        _ = await waitFor { await rig.socket.pingCount == 1 }
+        #expect(await rig.clock.waitForSleepers(1))
+        await rig.transport.failConnects(with: [ServerError.network, ServerError.network])
+        await rig.socket.serverCloses(code: 1006)
+        #expect(await rig.next(1) == [.waiting(seconds: 1)])
+        #expect(await rig.clock.waitForSleepers(1))
+        rig.clock.advance(by: .seconds(1))
+        #expect(await rig.next(2) == [.connecting, .waiting(seconds: 2)])
+        #expect(await rig.clock.waitForSleepers(1))
+        rig.clock.advance(by: .seconds(2))
+        #expect(await rig.next(2) == [.connecting, .waiting(seconds: 4)])
+        await rig.conn.stop()
+    }
+
+    @Test func sendHonoursCancellation() async {
+        let rig = await Rig()
+        await rig.startConnected()
+        let conn = rig.conn, socket = rig.socket
+        let t = Task { try await conn.send("call.status", StatusRequest(callID: "x")) }
+        #expect(await waitFor { await socket.sent.count == 1 })
+        #expect(await rig.clock.waitForSleepers(3))
+        t.cancel()
+        do { _ = try await t.value; Issue.record("expected cancellation") } catch {
+            #expect(error is CancellationError)
+        }
+        await conn.stop()
+    }
 }

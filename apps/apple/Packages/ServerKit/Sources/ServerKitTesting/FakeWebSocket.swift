@@ -98,13 +98,18 @@ public actor FakeWebSocketTransport: WebSocketTransport {
     public private(set) var sockets: [FakeWebSocket] = []
     public private(set) var requests: [(url: URL, headers: [String: String])] = []
     private var queue: [FakeWebSocket] = []
+    private var connectErrors: [any Error] = []
 
     public init() {}
+
+    /// The next `connect` calls throw these errors, in order, before any socket is handed out.
+    public func failConnects(with errors: [any Error]) { connectErrors += errors }
 
     public func enqueue(_ s: FakeWebSocket) { queue.append(s) }
 
     public func connect(url: URL, headers: [String: String]) async throws -> any WebSocketChannel {
         requests.append((url, headers))
+        if !connectErrors.isEmpty { throw connectErrors.removeFirst() }
         let s = queue.isEmpty ? FakeWebSocket() : queue.removeFirst()
         sockets.append(s)
         return s

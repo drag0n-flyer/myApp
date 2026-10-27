@@ -12,7 +12,12 @@ public struct URLSessionWebSocketTransport: WebSocketTransport {
         let channel = URLSessionWebSocketChannel(task: task)
         task.resume()
         // A pong only comes back once the handshake succeeded; a failed handshake throws here.
-        try await channel.ping()
+        do { try await channel.ping() } catch {
+            if (task.response as? HTTPURLResponse)?.statusCode == 401 {
+                throw ServerError(status: 401, code: "unauthorized")
+            }
+            throw error
+        }
         return channel
     }
 }
@@ -25,18 +30,26 @@ final class URLSessionWebSocketChannel: WebSocketChannel, @unchecked Sendable {
     func send(_ text: String) async throws { try await task.send(.string(text)) }
 
     func receive() async throws -> String {
-        switch try await task.receive() {
-        case .string(let s): return s
-        case .data(let d): return String(decoding: d, as: UTF8.self)
-        @unknown default: throw URLError(.cannotParseResponse)
+        try await withTaskCancellationHandler {
+            switch try await task.receive() {
+            case .string(let s): return s
+            case .data(let d): return String(decoding: d, as: UTF8.self)
+            @unknown default: throw URLError(.cannotParseResponse)
+            }
+        } onCancel: {
+            task.cancel(with: .goingAway, reason: nil)
         }
     }
 
     func ping() async throws {
-        try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
-            task.sendPing { error in
-                if let error { c.resume(throwing: error) } else { c.resume() }
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
+                task.sendPing { error in
+                    if let error { c.resume(throwing: error) } else { c.resume() }
+                }
             }
+        } onCancel: {
+            task.cancel(with: .goingAway, reason: nil)
         }
     }
 
