@@ -44,13 +44,15 @@ public protocol MLSEngine: Sendable {
     func members(of group: GroupID) async throws -> [String]   // added by plan 7's request
 }
 
-/// Engine errors. Rust's `FfiError` maps one-to-one onto the first five cases and the last
-/// three; `.busy` comes only from Swift (the cross-process lock timed out).
+/// Engine errors. Rust's `FfiError` maps one-to-one onto every case except `.busy`, which
+/// comes only from Swift (the cross-process lock timed out). `.epochGap` means the message
+/// belongs to a later epoch than this device has: a commit was missed, so resync.
 public enum MLSError: Error, Equatable, Sendable {
     case malformed
     case unknownGroup
     case notMember
     case duplicate
+    case epochGap
     case pendingCommit
     case busy
     case storage(String)
