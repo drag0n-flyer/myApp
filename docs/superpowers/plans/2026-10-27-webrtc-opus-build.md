@@ -72,7 +72,7 @@
   - adds the include directory `src/dnn`
   - forces floating point
 
-  The CMake equivalents in opus 1.6 are `OPUS_DEEP_PLC=ON` and `OPUS_OSCE=ON`, which define `ENABLE_DEEP_PLC`, `ENABLE_OSCE` and `ENABLE_OSCE_BWE`.
+  The CMake equivalents in opus 1.6 are `OPUS_DEEP_PLC=ON` and `OPUS_OSCE=ON`, which define `ENABLE_DEEP_PLC` and `ENABLE_OSCE`. They do not define `ENABLE_OSCE_BWE` (only `configure.ac` does), so the patch defines it by hand.
 
 **CPU features.**
 - On arm64, the build assumes NEON and dot-product instructions (`OPUS_ARM_PRESUME_NEON_INTR`, `OPUS_ARM_PRESUME_DOTPROD`, `-march=armv8.2-a+dotprod`, and no runtime detection map). This is safe because iOS 17 needs an A12 or newer chip, and every Mac with Apple silicon has dot-product.

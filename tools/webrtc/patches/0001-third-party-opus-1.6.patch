@@ -1,0 +1,153 @@
+diff --git opus/BUILD.gn opus/BUILD.gn
+index 9b1fb42..e27d444 100644
+--- opus/BUILD.gn
++++ opus/BUILD.gn
+@@ -5,6 +5,10 @@
+ import("//build/config/arm.gni")
+ import("//testing/test.gni")
+ 
++# deep_plc_sources, osce_sources, dnn_neon_sources, dnn_dotprod_sources.
++# Written by tools/webrtc/apply.sh from opus 1.6 (lpcnet_sources.mk).
++import("dnn_sources.gni")
++
+ # If ARM optimizations shall be used to accelerate performance.
+ use_opus_arm_optimization = current_cpu == "arm" || current_cpu == "arm64"
+ 
+@@ -20,15 +24,16 @@ config("opus_private_config") {
+     "OPUS_EXPORT=",
+     "ENABLE_HARDENING",
+ 
+-    # Prefer alloca() over variable length arrays which are often inefficient;
+-    # the opus code will automatically handle this correctly per-platform.
+-    "USE_ALLOCA",
+-    "HAVE_ALLOCA_H",
++    # Variable length arrays, not alloca() (libopus's own default). Opus 1.6
++    # declares a buffer in silk/dec_API.c with ALLOC() but no VARDECL() when
++    # ENABLE_OSCE_BWE is set, which compiles only in VAR_ARRAYS mode.
++    "VAR_ARRAYS",
+   ]
+ 
+   include_dirs = [
+     "src",
+     "src/celt",
++    "src/dnn",
+     "src/silk",
+     "src/silk/fixed",
+     "src/silk/float",
+@@ -60,6 +65,18 @@ config("opus_private_config") {
+     defines += [ "OPUS_WILL_BE_SLOW" ]
+   }
+ 
++  # Opus 1.6 neural features: Deep PLC, OSCE (LACE and NoLACE) and OSCE BWE.
++  # DRED stays off. libopus's CMake build defines ENABLE_OSCE but not
++  # ENABLE_OSCE_BWE (only configure.ac does), so it is listed here by hand.
++  # These features need the floating-point build, which this file already is:
++  # it lists only src/silk/float and never defines FIXED_POINT.
++  defines += [
++    "ENABLE_DEEP_PLC",
++    "ENABLE_OSCE",
++    "ENABLE_OSCE_BWE",
++    "PACKAGE_VERSION=\"1.6\"",
++  ]
++
+   if (use_opus_x86_optimization) {
+     defines += [
+       # Run Time CPU Detections (RTCD) is always enabled for x86.
+@@ -105,7 +122,16 @@ config("opus_private_config") {
+     ]
+ 
+     if (current_cpu == "arm64") {
+-      defines += [ "OPUS_ARM_PRESUME_AARCH64_NEON_INTR" ]
++      defines += [
++        "OPUS_ARM_PRESUME_AARCH64_NEON_INTR",
++
++        # The neural code uses dot-product instructions with no runtime
++        # detection (dnn/arm/dnn_arm.h). See ":opus_dotprod" below.
++        # OPUS_ARM_MAY_HAVE_NEON_INTR and OPUS_ARM_PRESUME_NEON_INTR are
++        # already defined above.
++        "OPUS_ARM_MAY_HAVE_DOTPROD",
++        "OPUS_ARM_PRESUME_DOTPROD",
++      ]
+     }
+   }
+ }
+@@ -148,6 +174,7 @@ if (use_opus_x86_optimization) {
+       "src/silk/x86/NSQ_sse4_1.c",
+       "src/silk/x86/VAD_sse4_1.c",
+       "src/silk/x86/VQ_WMat_EC_sse4_1.c",
++      "src/dnn/x86/nnet_sse4_1.c",
+     ]
+ 
+     configs -= [ "//build/config/compiler:chromium_code" ]
+@@ -167,6 +194,7 @@ if (use_opus_x86_optimization) {
+       "src/celt/x86/pitch_avx.c",
+       "src/silk/float/x86/inner_product_FLP_avx2.c",
+       "src/silk/x86/NSQ_del_dec_avx2.c",
++      "src/dnn/x86/nnet_avx2.c",
+     ]
+ 
+     configs -= [ "//build/config/compiler:chromium_code" ]
+@@ -189,6 +217,24 @@ if (use_opus_x86_optimization) {
+   }
+ }
+ 
++if (current_cpu == "arm64") {
++  # Dot-product kernels for the neural code. Every arm64 target we build
++  # (iOS A12 and newer, Apple silicon Macs) is assumed to have them, so the
++  # flag applies to these files only and there is no runtime check.
++  source_set("opus_dotprod") {
++    sources = dnn_dotprod_sources
++
++    configs -= [ "//build/config/compiler:chromium_code" ]
++    configs += [ "//build/config/compiler:no_chromium_code" ]
++    configs += [
++      ":opus_private_config",
++      ":opus_config",
++    ]
++
++    cflags = [ "-march=armv8.2-a+dotprod" ]
++  }
++}
++
+ # Note: Do not add any defines or include_dirs to this target, those should all
+ # go in the opus_private_config so they can be shared with intrinsic targets.
+ static_library("opus") {
+@@ -361,7 +407,6 @@ static_library("opus") {
+     "src/src/opus_projection_decoder.c",
+     "src/src/opus_projection_encoder.c",
+     "src/src/repacketizer.c",
+-    "src/src/tansig_table.h",
+   ]
+ 
+   # Silk floating-point
+@@ -414,6 +459,9 @@ static_library("opus") {
+     configs += [ "//build/config/compiler:optimize_speed" ]
+   }
+ 
++  # Deep PLC and OSCE.
++  sources += deep_plc_sources + osce_sources
++
+   deps = []
+ 
+   if (use_opus_x86_optimization) {
+@@ -431,6 +479,8 @@ static_library("opus") {
+       "src/silk/x86/SigProc_FIX_sse.h",
+       "src/silk/x86/main_sse.h",
+       "src/silk/x86/x86_silk_map.c",
++      "src/dnn/x86/nnet_sse2.c",
++      "src/dnn/x86/x86_dnn_map.c",
+     ]
+     deps += [
+       ":opus_avx2",
+@@ -462,6 +512,11 @@ static_library("opus") {
+       "src/silk/arm/macros_armv4.h",
+       "src/silk/arm/macros_armv5e.h",
+     ]
++
++    if (current_cpu == "arm64") {
++      sources += dnn_neon_sources
++      deps += [ ":opus_dotprod" ]
++    }
+   }
+ }
+ 
