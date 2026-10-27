@@ -10,6 +10,8 @@ on:
       - 'lychee.toml'
       - 'scripts/check-docs.sh'
       - 'scripts/check-threat-model.py'
+      - 'scripts/check-beta-gate.py'
+      - 'scripts/test_check_beta_gate.py'
       - '.github/workflows/docs.yml'
   pull_request:
     paths:
@@ -18,6 +20,8 @@ on:
       - 'lychee.toml'
       - 'scripts/check-docs.sh'
       - 'scripts/check-threat-model.py'
+      - 'scripts/check-beta-gate.py'
+      - 'scripts/test_check_beta_gate.py'
       - '.github/workflows/docs.yml'
   schedule:
     - cron: '0 6 * * 1'
@@ -46,6 +50,10 @@ jobs:
           mkdir -p "$RUNNER_TEMP/lychee"
           tar -xzf "$RUNNER_TEMP/$f" -C "$RUNNER_TEMP/lychee"
           echo "$RUNNER_TEMP/lychee" >> "$GITHUB_PATH"
+      - name: Beta gate checker tests and report (report only, never fails on open items)
+        run: |
+          python3 -m unittest scripts/test_check_beta_gate.py
+          python3 scripts/check-beta-gate.py --report
       - name: Document checks (offline)
         if: github.event_name != 'schedule'
         run: scripts/check-docs.sh docs GOAL.md AGENTS.md SECURITY.md
