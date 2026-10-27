@@ -730,3 +730,34 @@ func TestAttachmentVector(t *testing.T) {
 		}
 	}
 }
+
+// TestSwiftSealedOpensInGo opens the values the Swift apps sealed to the
+// published test keys. swift-sealed.json is written by the Swift tests
+// (WRITE_SWIFT_VECTORS=1, macOS CI) and is not committed, so the test skips
+// while it is absent.
+func TestSwiftSealedOpensInGo(t *testing.T) {
+	var s struct {
+		Handle SealedCase `json:"handle"`
+		Escrow SealedCase `json:"escrow"`
+	}
+	if err := Load("swift-sealed.json", &s); err != nil {
+		t.Skipf("swift-sealed.json not present: %v", err)
+	}
+	var h, e Sealed
+	load(t, fileHandle, &h)
+	load(t, fileEscrow, &e)
+	got, err := pushproto.OpenHandle(hpkePriv(t, unhex(t, h.RecipientPrivateKeyHex)), unb64(t, s.Handle.SealedB64))
+	if err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	if !bytes.Equal(canon(t, marshalHandle(got)), canon(t, []byte(s.Handle.PlaintextJSON))) {
+		t.Error("handle plaintext mismatch")
+	}
+	pt, err := delivery.OpenEscrow(hpkePriv(t, unhex(t, e.RecipientPrivateKeyHex)), unb64(t, s.Escrow.SealedB64))
+	if err != nil {
+		t.Fatalf("escrow: %v", err)
+	}
+	if !bytes.Equal(canon(t, pt), canon(t, []byte(s.Escrow.PlaintextJSON))) {
+		t.Error("escrow plaintext mismatch")
+	}
+}
