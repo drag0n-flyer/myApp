@@ -38,6 +38,10 @@ class RustLicenses(unittest.TestCase):
     def test_with_exception_uses_base_license(self):
         self.assertTrue(self.ok("Apache-2.0 WITH LLVM-exception"))
 
+    def test_unbalanced_parenthesis_fails(self):
+        self.assertFalse(self.ok("(MIT"))
+        self.assertFalse(self.ok("MIT OR (GPL-3.0-only"))
+
     def test_denied_and_unknown_fail(self):
         for expr in ("GPL-3.0-only", "AGPL-3.0-or-later", "LGPL-2.1-only", "BUSL-1.1", "SSPL-1.0", "Weird-1.0", ""):
             self.assertFalse(self.ok(expr), expr)

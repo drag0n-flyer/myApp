@@ -24,7 +24,7 @@ keywords = ["app_turn_secret"]
 
 [[rules.allowlists]]
 description = "Plan text that names the APP_TURN_SECRET= pattern in prose (reviewed, not a secret)"
-paths = ['''docs/superpowers/plans/2026-10-27-security-docs-release\.md''']
+paths = ['''^docs/superpowers/plans/2026-10-27-security-docs-release\.md$''']
 
 [[rules]]
 id = "app-smtp-url-credentials"
@@ -36,9 +36,7 @@ keywords = ["app_smtp_url"]
 [[allowlists]]
 description = "Published test keys and placeholder env files"
 paths = [
-  '''docs/protocol/test-vectors/.*''',
+  '''^docs/protocol/test-vectors/.*''',
   '''(^|/)\.env\.example$''',
-  # Go test compares against the public test-vector secret literal (reviewed).
-  '''server/internal/vectors/vectors_test\.go''',
 ]
 

@@ -1,0 +1,2 @@
+# Reviewed false positive: public test-vector secret literal compared in a Go test.
+f8132294f5c2f63ccb6caaf2ce01cc2e73f3dd8d:server/internal/vectors/vectors_test.go:generic-api-key:418

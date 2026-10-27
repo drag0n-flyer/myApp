@@ -65,8 +65,9 @@ def expression_allowed(expr):
         tok = take()
         if tok == "(":
             result = parse_or()
-            if peek() == ")":
-                take()
+            if peek() != ")":
+                raise ValueError("missing ')'")
+            take()
             return result
         ok = tok in ALLOWED
         if peek() == "WITH":
@@ -76,7 +77,7 @@ def expression_allowed(expr):
 
     try:
         result = parse_or()
-    except IndexError:
+    except (IndexError, ValueError):
         return False
     return result and pos == len(tokens)
 
@@ -90,7 +91,7 @@ def main():
         check=True, capture_output=True, text=True,
     ).stdout
     packages = json.loads(out)["packages"]
-    bad = [p for p in packages if not p.get("source") is None and not expression_allowed(p.get("license"))]
+    bad = [p for p in packages if p.get("source") is not None and not expression_allowed(p.get("license"))]
     for p in bad:
         print(f"{p['name']} {p['version']}: license '{p.get('license')}' is not allowed", file=sys.stderr)
     print(f"checked {len(packages)} crates, {len(bad)} problems")
