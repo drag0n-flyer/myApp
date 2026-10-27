@@ -76,8 +76,10 @@ public final class PushRegistrar {
         delegate.registry = registry
     }
 
-    fileprivate func didRegister(voipToken: Data) async {
-        _ = await register(token: voipToken, kind: .voip)
+    /// Seals and uploads the VoIP token (kind `voip`). Called by the app's `VoIPPushCenter`, which owns the PKPushRegistry.
+    @discardableResult
+    public func didRegister(voipToken: Data) async -> Bool {
+        await register(token: voipToken, kind: .voip)
     }
     #endif
 }
@@ -95,7 +97,7 @@ private final class VoIPDelegate: NSObject, PKPushRegistryDelegate, @unchecked S
 
     func pushRegistry(_ registry: PKPushRegistry, didUpdate pushCredentials: PKPushCredentials, for type: PKPushType) {
         let token = pushCredentials.token
-        Task { @MainActor [weak self] in await self?.registrar?.didRegister(voipToken: token) }
+        Task { @MainActor [weak self] in _ = await self?.registrar?.didRegister(voipToken: token) }
     }
 
     func pushRegistry(_ registry: PKPushRegistry, didReceiveIncomingPushWith payload: PKPushPayload,

@@ -48,7 +48,7 @@ targets:
         PushGatewayKey: $(PUSH_GATEWAY_KEY)
         APNSEnvironment: $(APNS_ENVIRONMENT)
         KeychainAccessGroup: $(AppIdentifierPrefix)org.example.app.shared
-        UIBackgroundModes: [remote-notification]
+        UIBackgroundModes: [voip, audio, remote-notification]
     settings:
       base:
         PRODUCT_NAME: App
