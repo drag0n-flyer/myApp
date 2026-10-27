@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"context"
 	"crypto/subtle"
 	"errors"
 	"fmt"
@@ -13,8 +14,10 @@ import (
 )
 
 // emailSignInStart answers POST /v1/signin/email/start. It always answers
-// 202 {}: for an unknown or malformed email, for a rate-limited one, and when
-// the mail could not be sent, so the answer does not reveal who has an account.
+// 202 {}, and does the same work before answering whether or not the email has
+// an account: the checks that do not depend on the account run here, and the
+// rest (account lookup, storing the code, sending the mail) runs detached, so
+// neither the answer nor its latency reveals who has an account.
 func (m *Module) emailSignInStart(w http.ResponseWriter, r *http.Request) error {
 	var in struct {
 		Email string `json:"email"`
@@ -22,26 +25,29 @@ func (m *Module) emailSignInStart(w http.ResponseWriter, r *http.Request) error 
 	if err := httpx.Decode(r, &in); err != nil {
 		return err
 	}
-	if err := m.sendSignInCode(r, in.Email); err != nil {
-		// Only the error's Go type is logged: its text may carry the address.
-		m.d.Log.Error("email sign-in code not sent", "errType", errType(err))
+	if emailLower, ok := NormalizeEmail(in.Email); ok {
+		allowed, _ := m.emailRate.Allow(emailLower)
+		if ipOK, _ := m.emailIPRate.Allow(m.ip(r)); allowed && ipOK {
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), signInSendTimeout)
+			m.bg.Add(1)
+			go func() {
+				defer m.bg.Done()
+				defer cancel()
+				if err := m.sendSignInCode(ctx, emailLower); err != nil {
+					// Only the error's Go type is logged: its text may carry the address.
+					m.d.Log.Error("email sign-in code not sent", "errType", fmt.Sprintf("%T", err))
+				}
+			}()
+		}
 	}
 	httpx.JSON(w, http.StatusAccepted, struct{}{})
 	return nil
 }
 
-func (m *Module) sendSignInCode(r *http.Request, email string) error {
-	ctx := r.Context()
-	emailLower, ok := NormalizeEmail(email)
-	if !ok {
-		return nil
-	}
-	if ok, _ := m.emailRate.Allow(emailLower); !ok {
-		return nil
-	}
-	if ok, _ := m.emailIPRate.Allow(m.ip(r)); !ok {
-		return nil
-	}
+const signInSendTimeout = 30 * time.Second
+
+// sendSignInCode emails a code to emailLower if it has an account.
+func (m *Module) sendSignInCode(ctx context.Context, emailLower string) error {
 	var known bool
 	if err := m.d.DB.QueryRow(ctx, `select exists (select 1 from accounts where email_lower = $1)`, emailLower).Scan(&known); err != nil {
 		return err
@@ -143,5 +149,3 @@ func (m *Module) emailSignInFinish(w http.ResponseWriter, r *http.Request) error
 	httpx.JSON(w, http.StatusOK, map[string]string{"accountID": accountID, "deviceID": deviceID, "sessionToken": token})
 	return nil
 }
-
-func errType(err error) string { return fmt.Sprintf("%T", err) }

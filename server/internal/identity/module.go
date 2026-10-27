@@ -5,6 +5,7 @@ package identity
 
 import (
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/velixio/myApp/server/internal/core"
@@ -19,6 +20,9 @@ type Module struct {
 	d            core.Deps
 	wa           *relyingParty // nil when the config is unusable; waErr says why
 	waErr        error
+	bg           sync.WaitGroup     // detached work, see emailSignInStart
+	linkRate     *ratelimit.Limiter // link start: 10/hour per IP
+	linkClaim    *ratelimit.Limiter // link claim: 60/min per link
 	optionsRate  *ratelimit.Limiter // passkey options: 30/min per IP
 	usernameRate *ratelimit.Limiter // 30/min per IP
 	inviteRate   *ratelimit.Limiter // 10/hour per IP
@@ -35,6 +39,8 @@ func New(d core.Deps) *Module {
 		d:            d,
 		wa:           wa,
 		waErr:        waErr,
+		linkRate:     ratelimit.New(10, time.Hour, d.Now),
+		linkClaim:    ratelimit.New(60, time.Minute, d.Now),
 		optionsRate:  ratelimit.New(30, time.Minute, d.Now),
 		usernameRate: ratelimit.New(30, time.Minute, d.Now),
 		inviteRate:   ratelimit.New(10, time.Hour, d.Now),
@@ -61,6 +67,10 @@ func (m *Module) Routes(r *httpx.Router) {
 	r.Authed("POST /v1/me/passkeys", m.mePasskeyAdd)
 	r.Public("POST /v1/signin/email/start", m.emailSignInStart)
 	r.Public("POST /v1/signin/email/finish", m.emailSignInFinish)
+	r.Public("POST /v1/link", httpx.Limited(m.linkRate, m.ip, m.linkStart))
+	r.Authed("POST /v1/link/{id}/info", m.linkInfo)
+	r.Authed("POST /v1/link/{id}/approve", m.linkApprove)
+	r.Public("POST /v1/link/{id}/claim", httpx.Limited(m.linkClaim, func(r *http.Request) string { return r.PathValue("id") }, m.linkClaimHandler))
 	r.Authed("GET /v1/me", m.me)
 	r.Authed("DELETE /v1/me", m.deleteAccount)
 	r.Authed("GET /v1/devices", m.listDevices)

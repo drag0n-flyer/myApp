@@ -3,8 +3,10 @@ package identity_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"regexp"
 	"testing"
+	"time"
 
 	"github.com/velixio/myApp/server/internal/core"
 	"github.com/velixio/myApp/server/internal/core/coretest"
@@ -14,7 +16,9 @@ import (
 
 func (e *signupEnv) emailStart(t *testing.T, email string) *testkit.Response {
 	t.Helper()
-	return e.c.Do(nil, "POST", "/v1/signin/email/start", map[string]string{"email": email})
+	r := e.c.Do(nil, "POST", "/v1/signin/email/start", map[string]string{"email": email})
+	e.m.WaitBackground()
+	return r
 }
 
 func (e *signupEnv) emailFinish(t *testing.T, email, code string) (*session, *testkit.Response) {
@@ -174,6 +178,7 @@ func TestMe(t *testing.T) {
 func TestDevicesList(t *testing.T) {
 	e := newSignupEnv(t)
 	d1, _ := e.signUp(t, "ana")
+	e.f.Clock.Advance(time.Second) // devices are listed by creation time
 	d2 := e.emailSignIn(t, "ana@example.org")
 	e.signUp(t, "bob")
 	r := e.c.DoToken(d2.SessionToken, "GET", "/v1/devices", nil)
@@ -218,8 +223,8 @@ func TestRevokeDevice(t *testing.T) {
 	if r := e.c.DoToken(d1.SessionToken, "DELETE", "/v1/devices/"+d2.DeviceID, nil); r.Status != 204 {
 		t.Fatalf("revoke: %s", r)
 	}
-	if _, err := e.m.Verify(context.Background(), d2.SessionToken); err == nil {
-		t.Fatal("revoked token still verifies")
+	if _, err := e.m.Verify(context.Background(), d2.SessionToken); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("revoked token: %v", err)
 	}
 	if got := e.f.Live.Disconnected; len(got) != 1 || got[0] != (coretest.Disconnect{DeviceID: d2.DeviceID, Code: 4003}) {
 		t.Fatalf("disconnected %+v", got)
@@ -271,8 +276,7 @@ func TestDeleteAccount(t *testing.T) {
 	if !out.Available {
 		t.Fatal("username not released")
 	}
-	if _, err := e.m.Verify(context.Background(), d1.SessionToken); err == nil {
-		t.Fatal("token of deleted account verifies")
+	if _, err := e.m.Verify(context.Background(), d1.SessionToken); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("token of deleted account: %v", err)
 	}
-	_ = core.ErrNotFound
 }
