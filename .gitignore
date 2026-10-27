@@ -1,2 +1,5 @@
 knowledge/
 .superpowers/
+apps/apple/*.xcodeproj
+.build/
+DerivedData/
