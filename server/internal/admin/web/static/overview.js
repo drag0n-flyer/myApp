@@ -63,9 +63,9 @@ function render(o) {
   root.setAttribute("aria-busy", "false");
 }
 
-async function load() {
+async function load(background) {
   try {
-    render(await api("GET", "/admin/api/overview"));
+    render(await api("GET", "/admin/api/overview", undefined, { background }));
     notice("");
   } catch (err) {
     fail(err);
@@ -73,10 +73,10 @@ async function load() {
 }
 
 await ready;
-await load();
+await load(false);
 window.setInterval(() => {
-  if (document.visibilityState === "visible") load();
+  if (document.visibilityState === "visible") load(true);
 }, 30000);
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") load();
+  if (document.visibilityState === "visible") load(true);
 });

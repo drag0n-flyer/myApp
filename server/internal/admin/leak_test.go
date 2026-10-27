@@ -79,9 +79,7 @@ func randBytes(t *testing.T, n int) []byte {
 
 // TestNoSecretsInResponses seeds one of everything the dashboard must never
 // show and checks the body of every GET endpoint of design section 7 that
-// lane B builds. GET /session and GET /audit (both lane A) are in the list
-// too, but a status other than 200 is tolerated for them until those lanes
-// are merged: they are checked for leaks whenever they answer.
+// the dashboard serves, including /session and /audit.
 func TestNoSecretsInResponses(t *testing.T) {
 	escrowPath, vapidPath := writeKeyFiles(t)
 	d, f := testkit.NewDeps(t, func(d *core.Deps) {
@@ -136,12 +134,21 @@ func TestNoSecretsInResponses(t *testing.T) {
 		"config secret": {"SMTPPASS", "DBPASS", "TURNSECRET", "GWPASS", "GWQUERY", "GWFRAG", "/secrets/", escrowPath, vapidPath},
 	}
 
+	// Reads go through the real handler chain with a real session, so
+	// /session works too; the admin token seeded above is the sign-in token.
+	h := m.Handler()
+	lw := serveReq(h, req("POST", "/admin/api/login", `{"token":"`+adminToken+`"}`, nil))
+	if lw.Code != http.StatusNoContent {
+		t.Fatalf("login = %d %s", lw.Code, lw.Body)
+	}
+	cookie := cookieOf(t, lw)
 	get := func(path string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest("GET", path, nil)
+		req := httptest.NewRequest("GET", "http://"+testHost+path, nil)
+		req.AddCookie(cookie)
 		req.RemoteAddr = "203.0.113.7:51234"
 		req.Header.Set("X-Forwarded-For", "198.51.100.9")
 		rec := httptest.NewRecorder()
-		m.testHandler(testSession).ServeHTTP(rec, req)
+		h.ServeHTTP(rec, req)
 		return rec
 	}
 	// Generate audit rows first, so the audit listing has something to show.
@@ -151,24 +158,23 @@ func TestNoSecretsInResponses(t *testing.T) {
 	call(t, m, "POST", "/admin/api/reports/"+reportID+"/handle", nil)
 
 	endpoints := []struct {
-		path     string
-		tolerate bool
+		path string
 	}{
-		{"/admin/api/overview", false},
-		{"/admin/api/invites", false},
-		{"/admin/api/invites?state=all", false},
-		{"/admin/api/accounts?q=leak", false},
-		{"/admin/api/accounts", false},
-		{"/admin/api/accounts/" + ana.AccountID, false},
-		{"/admin/api/reports?state=all", false},
-		{"/admin/api/reports/" + reportID, false},
-		{"/admin/api/server", false},
-		{"/admin/api/audit", true},
-		{"/admin/api/session", true},
+		{"/admin/api/overview"},
+		{"/admin/api/invites"},
+		{"/admin/api/invites?state=all"},
+		{"/admin/api/accounts?q=leak"},
+		{"/admin/api/accounts"},
+		{"/admin/api/accounts/" + ana.AccountID},
+		{"/admin/api/reports?state=all"},
+		{"/admin/api/reports/" + reportID},
+		{"/admin/api/server"},
+		{"/admin/api/audit"},
+		{"/admin/api/session"},
 	}
 	for _, ep := range endpoints {
 		rec := get(ep.path)
-		if rec.Code != http.StatusOK && !ep.tolerate {
+		if rec.Code != http.StatusOK {
 			t.Errorf("GET %s = %d %s", ep.path, rec.Code, rec.Body.String())
 			continue
 		}

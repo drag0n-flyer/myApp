@@ -213,7 +213,7 @@ func TestPagesAccessible(t *testing.T) {
 		if n := len(reMainTag.FindAllString(body, -1)); n != 1 || strings.Count(body, "<main") != 1 {
 			t.Errorf("%s: want exactly one <main id=\"main\">", name)
 		}
-		if !reSkipLink.MatchString(body) && !strings.Contains(body, `src="static/common.js"`) {
+		if !reSkipLink.MatchString(body) {
 			t.Errorf("%s: no skip link to #main", name)
 		}
 		if !reTitle.MatchString(body) {

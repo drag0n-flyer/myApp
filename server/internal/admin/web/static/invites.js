@@ -28,13 +28,9 @@ async function revoke(inv) {
   }
 }
 
-function visible() {
-  return showAll.checked ? rows : rows.filter((r) => r.state === "active");
-}
-
 function render() {
   clear(list);
-  const shown = visible();
+  const shown = rows;
   if (shown.length === 0) {
     list.appendChild(el("p", {}, showAll.checked ? "There are no invites." : "There are no active invites."));
   } else {
@@ -51,16 +47,13 @@ function render() {
   more.hidden = next === null;
 }
 
-// fetchPage loads one page. Without "Show all" it keeps going until it has
-// something to show, because the list is filtered here.
+// fetchPage loads one page; the server filters by state.
 async function fetchPage() {
-  let guard = 0;
-  do {
-    const data = await api("GET", "/admin/api/invites" + (next ? "?after=" + encodeURIComponent(next) : ""));
-    rows = rows.concat(data.invites || []);
-    next = data.next || null;
-    guard += 1;
-  } while (next !== null && visible().length === 0 && guard < 20);
+  const params = new URLSearchParams({ state: showAll.checked ? "all" : "active" });
+  if (next) params.set("after", next);
+  const data = await api("GET", "/admin/api/invites?" + params.toString());
+  rows = rows.concat(data.invites || []);
+  next = data.next || null;
 }
 
 async function reload() {
@@ -83,17 +76,7 @@ more.addEventListener("click", async () => {
   }
 });
 
-showAll.addEventListener("change", async () => {
-  render();
-  if (visible().length === 0 && next !== null) {
-    try {
-      await fetchPage();
-      render();
-    } catch (err) {
-      fail(err);
-    }
-  }
-});
+showAll.addEventListener("change", reload);
 
 document.getElementById("invite-form").addEventListener("submit", async (event) => {
   event.preventDefault();

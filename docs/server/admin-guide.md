@@ -150,7 +150,7 @@ What it shows:
 - Accounts: search by username, see devices, sign out a device, delete an account.
 - Reports: who reported whom and why, with counts of shared messages; mark a report handled.
 - Server: the loaded policy and non-secret settings, read-only.
-- Audit log: every action taken in the dashboard or with `admin` commands.
+- Audit log: every change made in the dashboard or with `admin` commands, and every account or report opened. Searches, the overview and the server page are not logged.
 
 What it never shows:
 - message or attachment content, or escrow plaintext (escrow export stays a command-line action);
@@ -168,12 +168,12 @@ Then open `http://localhost:9090/admin/`.
 
 How to sign in:
 1. On the server run `docker compose exec appserver /appserver admin token create --label laptop`.
-2. Paste the token into the login page once. It works one time only.
-3. A session ends after 15 minutes without use, and after 8 hours at most. For a lost laptop, run `docker compose exec appserver /appserver admin sessions end` to end every session.
+2. Paste the token into the login page once. It works one time only, and an unused token expires after 15 minutes (`--minutes N` changes this, at most 60).
+3. A session ends after 15 minutes without use, and after 8 hours at most. The overview's automatic refresh does not count as use. For a lost laptop, run `docker compose exec appserver /appserver admin sessions end` to end every session.
 
 Never publish port 9090. It must stay on `127.0.0.1`. Set `APP_ADMIN_HOSTS` only when you put your own HTTPS proxy in front of it, and give that proxy its own access control.
 
-Every action is written to the audit log and kept 365 days. The log holds IDs, not names or email addresses. Escrow export stays a command-line action.
+Every action is written to the audit log and kept 365 days. The log holds IDs and token labels, not names or email addresses. Escrow export stays a command-line action.
 
 ## What the operator can see
 

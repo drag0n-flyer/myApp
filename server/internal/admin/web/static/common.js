@@ -45,7 +45,8 @@ async function loadSession() {
 }
 
 // api calls the JSON API. On 401 it goes to the login page, unless
-// opts.stay is set. It throws ApiError for any other failure.
+// opts.stay is set. opts.background marks a refresh the page makes on its own,
+// which must not keep the session alive. It throws ApiError for any other failure.
 export async function api(method, path, body, opts) {
   const headers = { Accept: "application/json" };
   if (method !== "GET" && csrf === null && path !== "/admin/api/login") {
@@ -53,9 +54,10 @@ export async function api(method, path, body, opts) {
   }
   if (csrf !== null) headers["X-CSRF-Token"] = csrf;
   const init = { method, headers, credentials: "same-origin" };
-  if (body !== undefined) {
+  if (opts && opts.background) headers["X-Admin-Background"] = "1";
+  if (method !== "GET" && method !== "HEAD") {
     headers["Content-Type"] = "application/json";
-    init.body = JSON.stringify(body);
+    init.body = body === undefined ? "{}" : JSON.stringify(body);
   }
   let res;
   try {

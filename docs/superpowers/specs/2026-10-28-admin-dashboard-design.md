@@ -49,7 +49,7 @@ Values (all planner's choice):
 | Token lifetime if unused | `--minutes`, default 15, at most 60 |
 | `--label` | at most 64 characters, no control characters; shown in the audit log |
 | Session ID | 32 random bytes, base64url; the database stores only its SHA-256 |
-| Idle timeout | 15 minutes without a request |
+| Idle timeout | 15 minutes without a request. A request with the header `X-Admin-Background: 1` (the overview's 30-second refresh and its reload when the tab becomes visible again) does not reset the idle timer, so an open, unattended tab still signs out. The 8-hour limit applies to it too |
 | Absolute lifetime | 8 hours from login |
 | Cookie | `admin_session`, `Path=/admin`, `HttpOnly`, `SameSite=Strict`, no `Max-Age` (ends with the browser), `Secure` unless the request's `Host` is a loopback name (§2) |
 | Login rate limit | 5 per minute per client address, and 30 per hour for the whole server (`ratelimit.Limiter`, keyed by `httpx.ClientIP`; the address is never stored or logged) |
@@ -66,6 +66,7 @@ Expired tokens and sessions are deleted by the admin module's hourly `Run`.
   - `Sec-Fetch-Site`, when present, equal to `same-origin`;
   - `Origin`, when present, equal to `http(s)://<Host>`.
   The login request has no session yet, so it skips the token but keeps the other three checks. (planner's choice: synchronizer token plus header checks)
+- **Cross-port reads.** Every `/admin/api/` request, `GET` included, is refused with 403 when `Sec-Fetch-Site` is present and is neither `same-origin` nor `none`, so a page on another localhost port cannot make signed-in reads. An absent header (command-line tools, old browsers) is allowed.
 - **Response headers** on every `/admin` response:
 
   ```

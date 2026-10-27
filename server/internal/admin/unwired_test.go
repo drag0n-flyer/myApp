@@ -58,7 +58,8 @@ func TestInviteCreateAuditFailureLeavesNoInvite(t *testing.T) {
 
 // expiresAt in the answer is the stored value.
 func TestInviteCreateExpiresAtIsStored(t *testing.T) {
-	m, d, _, _ := newInviteEnv(t)
+	m, d, f, _ := newInviteEnv(t)
+	f.Clock.Advance(789 * time.Nanosecond)
 	rec := call(t, m, "POST", "/admin/api/invites", map[string]int{"days": 3})
 	var got struct {
 		ID        string
