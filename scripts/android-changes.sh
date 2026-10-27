@@ -2,7 +2,7 @@
 # Reads changed file paths on stdin, prints one "<module>=true|false" line per Android
 # module (and "all"), including modules that depend on a changed one.
 # A path outside apps/android/<module>/ that affects the build (root Gradle files,
-# the workflow, the Android scripts) marks everything changed.
+# the workflow, the Android scripts, the mlsffi crate) marks everything changed.
 set -euo pipefail
 
 MODULES=(contracts core net auth mls messaging store calls calls-android webrtc push app)
@@ -32,7 +32,7 @@ while IFS= read -r path; do
         *" $mod "*) changed[$mod]=1 ;;
         *) all=true ;;   # gradle/, other top-level directories
       esac ;;
-    apps/android/*|.github/workflows/android.yml|scripts/android-*.sh|scripts/check-16kb.sh) all=true ;;
+    apps/android/*|.github/workflows/android.yml|scripts/android-*.sh|scripts/build-mlsffi-android.sh|scripts/check-16kb.sh|apps/apple/Packages/SecureMessaging/mlsffi/*) all=true ;;
   esac
 done
 

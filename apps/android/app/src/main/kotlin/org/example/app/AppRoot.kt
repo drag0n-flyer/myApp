@@ -27,6 +27,14 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import androidx.compose.foundation.layout.Box
+import org.example.app.core.calls.CallPhase
+import org.example.app.core.calls.SimulatedCallEngine
+import org.example.app.ui.call.CallScreen
+import org.example.app.ui.call.CallViewModel
+import org.example.app.ui.call.IncomingCallScreen
+import org.example.app.ui.calls.CallHistoryScreen
+import org.example.app.ui.calls.CallHistoryViewModel
 import org.example.app.ui.chat.ChatScreen
 import org.example.app.ui.chat.ChatViewModel
 import org.example.app.ui.chatinfo.ChatInfoScreen
@@ -35,13 +43,23 @@ import org.example.app.ui.chatlist.ChatListViewModel
 import org.example.app.ui.nav.MainTab
 import org.example.app.ui.nav.MainTabs
 import org.example.app.ui.nav.TabPlaceholder
+import org.example.app.ui.onboarding.LinkApprovalFlow
+import org.example.app.ui.onboarding.LinkApprovalViewModel
+import org.example.app.ui.onboarding.OnboardingHost
+import org.example.app.ui.onboarding.OnboardingViewModel
 import org.example.app.ui.theme.AppTheme
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.createSavedStateHandle
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 
 private const val MAIN = "main"
 private const val CHAT = "chat/{id}"
 private const val INFO = "chatinfo/{id}"
+private const val ONBOARDING = "onboarding"
+/** The approving phone scans a new device's code (opened from Linked devices). */
+const val LINK_SCAN = "linkscan"
 private const val REQUESTS = "requests"
 private const val ADD_CONTACT = "addcontact"
 
@@ -69,11 +87,37 @@ private inline fun <reified T : ViewModel> factory(crossinline make: () -> T) = 
 }
 
 @Composable
-fun AppRoot(graph: AppGraph) {
+fun AppRoot(
+    graph: AppGraph,
+    // Sample mode goes straight to the chats; the live build starts with onboarding until signed in.
+    startWithOnboarding: Boolean = !graph.sampleData && !graph.accountService.isSignedIn,
+) {
     AppTheme {
         val nav = rememberNavController()
         val idArg = listOf(navArgument("id") { type = NavType.StringType })
-        NavHost(nav, startDestination = MAIN) {
+        val context = LocalContext.current
+        val debuggable = (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+        val callVm = viewModel<CallViewModel>(
+            factory = factory {
+                CallViewModel(
+                    graph.callEngine, graph.chatStore, graph.serverPolicy, { graph.settingsStore.settings.value.call },
+                    simulator = graph.callEngine as? SimulatedCallEngine, showSimulator = debuggable,
+                )
+            },
+        )
+        val call by callVm.call.collectAsState()
+        Box {
+        NavHost(nav, startDestination = if (startWithOnboarding) ONBOARDING else MAIN) {
+            composable(ONBOARDING) {
+                val vm = viewModel<OnboardingViewModel>(
+                    factory = viewModelFactory { initializer { OnboardingViewModel(graph.accountService, saved = createSavedStateHandle()) } },
+                )
+                OnboardingHost(vm, onFinished = { nav.navigate(MAIN) { popUpTo(ONBOARDING) { inclusive = true } } })
+            }
+            composable(LINK_SCAN) {
+                val vm = viewModel<LinkApprovalViewModel>(factory = factory { LinkApprovalViewModel(graph.accountService) })
+                LinkApprovalFlow(vm, onDone = { nav.popBackStack() })
+            }
             composable(MAIN) {
                 MainTabs { tab ->
                     if (tab == MainTab.Chats) {
@@ -81,6 +125,9 @@ fun AppRoot(graph: AppGraph) {
                             factory = factory { ChatListViewModel(graph.chatStore, graph.serverPolicy, graph.settingsStore.settings, graph.network) },
                         )
                         ChatListScreen(vm, onOpenChat = { nav.navigate("chat/$it") }, onOpenRequests = { nav.navigate(REQUESTS) }, onNewChat = {})
+                    } else if (tab == MainTab.Calls) {
+                        val vm = viewModel<CallHistoryViewModel>(factory = factory { CallHistoryViewModel(graph.chatStore) })
+                        CallHistoryScreen(vm, onCall = callVm::start)
                     } else if (tab == MainTab.Contacts) {
                         val context = LocalContext.current
                         val invite = "https://${graph.serverPolicy.host}/invite/${SampleAccountService.SAMPLE_INVITE_CODE}"
@@ -106,7 +153,7 @@ fun AppRoot(graph: AppGraph) {
                 AddContactScreen(graph.chatStore, onBack = { nav.popBackStack() }, onAdded = { nav.popBackStack() })
             }
             composable(SettingsPage.Server.route) { ServerScreen(graph.serverPolicy.host, onBack = { nav.popBackStack() }) }
-            composable(SettingsPage.LinkedDevices.route) { LinkedDevicesScreen(graph.accountService, onBack = { nav.popBackStack() }) }
+            composable(SettingsPage.LinkedDevices.route) { LinkedDevicesScreen(graph.accountService, onBack = { nav.popBackStack() }, onLinkDevice = { nav.navigate(LINK_SCAN) }) }
             composable(SettingsPage.Privacy.route) { PrivacyScreen(graph.settingsStore, graph.chatStore, onBack = { nav.popBackStack() }) }
             composable(SettingsPage.DataStorage.route) { DataStorageScreen(graph.settingsStore, graph.serverPolicy, onBack = { nav.popBackStack() }) }
             composable(SettingsPage.ChatFolders.route) { ChatFoldersScreen(graph.chatStore, onBack = { nav.popBackStack() }) }
@@ -132,7 +179,7 @@ fun AppRoot(graph: AppGraph) {
                     vm, myId = graph.chatStore.me.id,
                     onBack = { nav.popBackStack() },
                     onOpenInfo = { nav.navigate("chatinfo/$id") },
-                    onCall = {},
+                    onCall = { video -> callVm.start(id, video) },
                 )
             }
             composable(INFO, idArg) { entry ->
@@ -140,11 +187,17 @@ fun AppRoot(graph: AppGraph) {
                 ChatInfoScreen(
                     graph.chatStore, id,
                     onBack = { nav.popBackStack() },
-                    onCall = {},
+                    onCall = { video -> callVm.start(id, video) },
                     onSearch = {},
                     onBlocked = { nav.popBackStack(MAIN, inclusive = false) },
                 )
             }
+        }
+        when {
+            call == null -> {}
+            call?.phase == CallPhase.Incoming -> IncomingCallScreen(callVm)
+            else -> CallScreen(callVm)
+        }
         }
     }
 }

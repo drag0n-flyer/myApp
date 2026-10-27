@@ -159,3 +159,15 @@ func (p *Prober) Healthy() []config.Relay {
 	})
 	return out
 }
+
+// status lists every relay in configured order with its current state.
+func (p *Prober) status() []RelayStatus {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make([]RelayStatus, 0, len(p.relays))
+	for _, r := range p.relays {
+		s := p.state[r.Host]
+		out = append(out, RelayStatus{Host: r.Host, Region: r.Region, Healthy: !s.down, RTT: s.rtt})
+	}
+	return out
+}

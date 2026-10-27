@@ -1,6 +1,7 @@
 package org.example.app.ui.settings
 
 import android.text.format.DateUtils
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
@@ -33,9 +34,9 @@ private fun platformName(platform: DevicePlatform): Int = when (platform) {
     DevicePlatform.Android -> R.string.device_android
 }
 
-/** Loaded once when opened; no polling. Linking a new device is part of onboarding (task A8). */
+/** Loaded once when opened; no polling. "Link a device" opens the scan screen (task A8). */
 @Composable
-fun LinkedDevicesScreen(account: AccountService, onBack: () -> Unit, modifier: Modifier = Modifier, now: () -> Instant = Instant::now) {
+fun LinkedDevicesScreen(account: AccountService, onBack: () -> Unit, modifier: Modifier = Modifier, onLinkDevice: () -> Unit = {}, now: () -> Instant = Instant::now) {
     var devices by remember { mutableStateOf<List<DeviceInfo>>(emptyList()) }
     var removing by remember { mutableStateOf<DeviceInfo?>(null) }
     val scope = rememberCoroutineScope()
@@ -62,6 +63,13 @@ fun LinkedDevicesScreen(account: AccountService, onBack: () -> Unit, modifier: M
                         }
                     }
                 },
+            )
+        }
+        item {
+            val label = stringResource(R.string.devices_link)
+            ListItem(
+                headlineContent = { Text(label) },
+                modifier = Modifier.clickable(onClickLabel = label, onClick = onLinkDevice),
             )
         }
         item { FooterText(stringResource(R.string.devices_footer)) }
