@@ -68,7 +68,3 @@ func (m *Module) redeemToken(ctx context.Context, tx pgx.Tx, token string) (id, 
 	}
 	return id, label, err
 }
-
-// cleanup deletes unused expired tokens, expired sessions and audit entries
-// older than 365 days. Lane A (A2).
-func (m *Module) cleanup(ctx context.Context) error { return nil }
