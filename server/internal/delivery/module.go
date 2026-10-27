@@ -1,22 +1,31 @@
 // Package delivery is lane B: KeyPackages, conversations, commits, messages,
-// inbox and escrow. This file is a stub.
+// inbox and escrow.
 package delivery
 
 import (
 	"context"
+	"time"
 
 	"github.com/velixio/myApp/server/internal/core"
 	"github.com/velixio/myApp/server/internal/httpx"
+	"github.com/velixio/myApp/server/internal/ratelimit"
 )
 
 // Module is the delivery module.
-type Module struct{ d core.Deps }
+type Module struct {
+	d          core.Deps
+	claimLimit *ratelimit.Limiter // KeyPackage claims: 100/hour per account
+}
 
 // New returns the delivery module.
-func New(d core.Deps) *Module { return &Module{d: d} }
+func New(d core.Deps) *Module {
+	return &Module{d: d, claimLimit: ratelimit.New(100, time.Hour, d.Now)}
+}
 
 // Routes registers the delivery endpoints.
-func (m *Module) Routes(r *httpx.Router) {}
+func (m *Module) Routes(r *httpx.Router) {
+	m.keyPackageRoutes(r)
+}
 
 // Commands returns the admin CLI subcommands.
 func (m *Module) Commands() map[string]core.Command { return nil }
