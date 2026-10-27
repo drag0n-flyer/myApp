@@ -3,6 +3,7 @@ name: Apple apps
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: apple-${{ github.ref }}
