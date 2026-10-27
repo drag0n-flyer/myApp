@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Placeholder app icon</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5AB0FF"/>
+      <stop offset="1" stop-color="#0B57D0"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <g transform="translate(0 -9)">
+  <path fill="#FFFFFF" d="M322 232H702A130 130 0 0 1 832 362V562A130 130 0 0 1 702 692H478L300 810L328 692H322A130 130 0 0 1 192 562V362A130 130 0 0 1 322 232Z"/>
+  <g fill="#1260DD">
+    <rect x="356" y="402" width="72" height="120" rx="36"/>
+    <rect x="476" y="337" width="72" height="250" rx="36"/>
+    <rect x="596" y="377" width="72" height="170" rx="36"/>
+  </g>
+  </g>
+</svg>
