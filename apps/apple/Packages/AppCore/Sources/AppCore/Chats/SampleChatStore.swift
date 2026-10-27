@@ -130,6 +130,8 @@ public final class SampleChatStore: ChatStore {
         return hits
     }
 
+    public var supportsSafetyNumbers: Bool { true }
+
     public func safetyNumber(for chatID: String) -> SafetyNumber? {
         guard chat(id: chatID) != nil else { return nil }
         // Fixed fake digits derived from the chat ID; the real number comes from MLS keys.

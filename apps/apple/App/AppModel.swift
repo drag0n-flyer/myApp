@@ -129,6 +129,10 @@ final class AppModel {
         }
         self.onboarding = flow
         live?.onSignedOut = { [weak self] in self?.deviceWasRemoved() }
+        // A sign-out wipe that was cut short (kill, failure) is finished first; the sign-in below waits for it.
+        if !launch.sampleData {
+            wipeTask = Task { try? await LiveMessaging.finishPendingWipe() }
+        }
         if live?.isSignedIn == true { Task { await didSignIn() } }
         if let url = launch.openURL { handle(url: url) }
         chatStore.onChange = { [weak self] in self?.revision += 1 }
@@ -176,6 +180,8 @@ final class AppModel {
     func accept(requestID: String) { chatStore.accept(requestID: requestID); revision += 1 }
     func block(contactID: String) { chatStore.block(contactID: contactID); revision += 1 }
     func report(chatID: String) { chatStore.report(chatID: chatID); revision += 1 }
+    /// False until the engine gives real member keys; chat info then hides Verify and the Verified seal.
+    var supportsSafetyNumbers: Bool { _ = revision; return chatStore.supportsSafetyNumbers }
     func safetyNumber(for chatID: String) -> SafetyNumber? { _ = revision; return chatStore.safetyNumber(for: chatID) }
     func setVerified(_ verified: Bool, chatID: String) { chatStore.setVerified(verified, chatID: chatID); revision += 1 }
 
@@ -254,12 +260,25 @@ final class AppModel {
 
     private func resetToWelcome() {
         // The live store belongs to the signed-out account. The sample store stands in until the next sign-in.
-        if let old = messaging {
-            // The account's database, media and MLS storage go with the session (no data stays for the next account).
+        if !isSampleData, let container = LiveMessaging.container {
+            // Durable first: if the app is killed or a step fails, the next launch (or the next sign-in) wipes.
+            try? LocalAccountData.markWipePending(in: container)
+        }
+        if !isSampleData {
+            let old = messaging
             wipeTask = Task { [previous = wipeTask] in
                 await previous?.value
-                try? await old.sync.wipeLocalData()
+                // The old graph stops first: no event task, send or sync can write after the wipe.
+                await stopLive(force: true)
+                do {
+                    if let old { try await old.wipeAfterSignOut() } else { try await LiveMessaging.finishPendingWipe() }
+                } catch {
+                    // The pending marker stays; the next launch or sign-in retries before any data is opened.
+                    print("wipe_failed")
+                }
             }
+        }
+        if messaging != nil {
             messaging = nil
             let sample = SampleChatStore()
             sample.onChange = { [weak self] in self?.revision += 1 }
@@ -310,7 +329,7 @@ final class AppModel {
         await wipeTask?.value
         wipeTask = nil
         guard !isSampleData, messaging == nil, let session = sessions?.current, let client = live?.client,
-              let built = LiveMessaging.make(
+              let built = await LiveMessaging.make(
                 session: session, client: client, network: network, settings: settings.autoDownload) else { return }
         messaging = built
         built.store.onChange = { [weak self] in self?.revision += 1 }
@@ -347,10 +366,12 @@ final class AppModel {
         await connection?.start()
     }
 
-    private func stopLive() async {
+    private func stopLive(force: Bool = false) async {
         await connection?.stop()
-        if live?.isSignedIn != true {   // signed out: drop the connection and its listeners
-            liveTasks.forEach { $0.cancel() }
+        if force || live?.isSignedIn != true {   // signed out: drop the connection and its listeners
+            let tasks = liveTasks
+            tasks.forEach { $0.cancel() }
+            for task in tasks { await task.value }   // none can touch the store afterwards
             liveTasks = []
             connection = nil
         }

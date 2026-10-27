@@ -14,9 +14,10 @@ private struct Peer {
     let store: LiveChatStore
     let manager: ConversationManager
 
-    init(_ device: TestDevice) {
+    init(_ device: TestDevice, mls: MLSEngine? = nil) {
         self.device = device
-        let deps = device.deps
+        var deps = device.deps
+        if let mls { deps.mls = mls }
         let conversations = ConversationManager(deps: deps, escrowKey: { Data(repeating: 7, count: 32) })
         manager = conversations
         let outbox = Outbox(deps: deps, conversations: conversations)
@@ -26,10 +27,10 @@ private struct Peer {
         store = LiveChatStore(deps: deps, outbox: outbox, inbox: inbox, conversations: conversations, attachments: nil)
     }
 
-    static func make(_ server: FakeServer, _ name: String) async throws -> Peer {
+    static func make(_ server: FakeServer, _ name: String, spy: Bool = false) async throws -> Peer {
         let device = await makeDevice(server, account: "acc-\(name)", username: name)
         _ = try await device.deps.server.uploadKeyPackages(try await device.deps.mls.makeKeyPackages(count: 3))
-        return Peer(device)
+        return Peer(device, mls: spy ? SpyMLSEngine(device.deps.mls) : nil)
     }
 }
 
@@ -131,6 +132,40 @@ private let offer = CallSignalPayload(kind: .offer, callID: "c1", sdp: "v=0…",
         #expect(try await bob.device.deps.mls.epoch(of: GroupID(raw: after.groupID)) == epoch)
         let members = try await bob.device.deps.mls.members(of: GroupID(raw: after.groupID))
         #expect(members.contains("acc-ana/\(anaPhone.device.deviceID)"))
+    }
+
+    @Test func drainWaitingOnTheLockUsesTheAdoptedResult() async throws {
+        let server = FakeServer()
+        let ana = try await Peer.make(server, "ana")
+        let bob = try await Peer.make(server, "bob", spy: true)
+        let spy = try #require(bob.store.deps.mls as? SpyMLSEngine)
+        _ = try await ana.store.seal(offer, to: "acc-bob")
+        _ = try await bob.inbox.syncOnce()
+        let anaPhone = try await Peer.make(server, "ana")
+        let conversation = try #require(try ana.device.deps.repo.preferredConversation(chatID: "acc-bob"))
+        let group = GroupID(raw: conversation.groupID)
+        let keyPackage = try await anaPhone.device.deps.mls.makeKeyPackages(count: 1)
+        let box = CommitBox()
+        let epoch = try await postAddCommit(
+            ana.manager, serverID: conversation.serverID, group: group, mls: ana.device.deps.mls,
+            keyPackage: keyPackage, addDevice: anaPhone.device.deviceID, box: box)
+        let commit = box.commit
+
+        // The call path takes the lock and stops inside `process`; the inbox drain queues up behind it on the lock.
+        let hold = spy.hold(commit)
+        let call = Task { @MainActor in try? await bob.store.open(commit, from: "acc-ana") }
+        for await _ in hold.entered { break }
+        let drain = Task { @MainActor in try? await bob.inbox.syncOnce() }
+        try await Task.sleep(for: .milliseconds(300))
+        hold.release()
+        _ = await call.value
+        _ = await drain.value
+
+        // The drain used the adopted result: no second `process` for the payload, and the epoch moved.
+        #expect(spy.processed.filter { $0 == commit }.count == 1)
+        let stored = try #require(try bob.device.deps.repo.conversation(serverID: conversation.serverID))
+        #expect(stored.epoch == Int64(epoch))
+        #expect(try bob.device.deps.repo.messages(chatID: "acc-ana", before: nil, limit: 20).allSatisfy { !$0.undecryptable })
     }
 
     @Test func textThroughCallChannelIsRejectedButStillStoredByInbox() async throws {

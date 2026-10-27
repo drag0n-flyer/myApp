@@ -43,8 +43,12 @@ public final class FakeMLSEngine: MLSEngine, @unchecked Sendable {
     private let lock = NSLock()
     private var groups: [GroupID: GroupState] = [:]   // guarded by `lock`
 
-    public init(identity: String) {
+    /// `realMemberKeys: false` makes the fake behave like an engine that cannot give real member keys yet.
+    public let providesRealMemberKeys: Bool
+
+    public init(identity: String, realMemberKeys: Bool = true) {
         self.identity = identity
+        self.providesRealMemberKeys = realMemberKeys
     }
 
     // MARK: MLSEngine

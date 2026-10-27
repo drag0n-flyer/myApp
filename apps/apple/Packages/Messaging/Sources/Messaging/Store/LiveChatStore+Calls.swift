@@ -42,7 +42,7 @@ extension LiveChatStore {
     /// The call channel accepts call payloads only. `mls.process` has already advanced the group by the time
     /// the result is known, so a commit, Welcome or other content that arrives here is not applied to the
     /// database here and its hash is not marked processed. It goes to the inbox pipeline instead
-    /// (`InboxProcessor.adopt`, then `syncOnce`), which stores it like any inbox item, and the call fails.
+    /// (`InboxProcessor.adopt`, inside the lock section; then `syncOnce`), which stores it like any inbox item, and the call fails.
     /// A call payload's hash is marked processed, so the same bytes never open twice.
     ///
     /// TODO(M7, encryption core): an engine-level "application messages only" check before decrypting plugs in
@@ -54,14 +54,20 @@ extension LiveChatStore {
         let hash = PortableSHA256.hash(data)
         let repo = deps.repo
         let mls = deps.mls
-        enum Opened { case call(CallSignalPayload, String), notACall(Incoming), replay }
+        enum Opened { case call(CallSignalPayload, String), notACall, replay }
+        let inbox = inbox
         let opened: Opened
         do {
             opened = try await deps.lock.withAsyncLock(timeout: Self.callLockTimeout) { () async throws -> Opened in
                 if try repo.isProcessed(hash: hash) { return .replay }
                 let incoming = try await mls.process(data)   // M7: application-only check goes before this call
                 guard case .application(_, let sender, let plaintext, _) = incoming,
-                      case .callSignal(let payload) = ContentEnvelope.decode(plaintext).body else { return .notACall(incoming) }
+                      case .callSignal(let payload) = ContentEnvelope.decode(plaintext).body else {
+                    // Handed over inside the same lock section as the `process` that produced it: a drain waiting
+                    // on the lock must find it and never process the payload a second time.
+                    await inbox.adopt(incoming, forPayloadHash: hash)
+                    return .notACall
+                }
                 try repo.markProcessed(hash: hash)
                 return .call(payload, String(sender.split(separator: "/", maxSplits: 1).first ?? ""))
             }
@@ -69,8 +75,7 @@ extension LiveChatStore {
         switch opened {
         case .call(let payload, let account) where !account.isEmpty:
             return (payload, account)
-        case .notACall(let incoming):
-            await inbox.adopt(incoming, forPayloadHash: hash)
+        case .notACall:
             _ = try? await inbox.syncOnce()
             throw CallSealError.undecryptable
         default:

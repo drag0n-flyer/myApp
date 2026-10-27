@@ -37,7 +37,7 @@ public let testEpochDate = Date(timeIntervalSince1970: 1_700_000_000)
 /// `username` is registered for the account on first use.
 public func makeDevice(
     _ server: FakeServer, account: String, username: String,
-    now: @escaping @Sendable () -> Date = { testEpochDate }
+    now: @escaping @Sendable () -> Date = { testEpochDate }, realMemberKeys: Bool = true
 ) async -> TestDevice {
     let deviceID = await server.registerDevice(account: account, username: username)
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("messaging-test-\(UUID().uuidString)")
@@ -52,7 +52,7 @@ public func makeDevice(
     try! migrate(db)
     let notifier = RecordingDeviceNotifier()
     let deps = MessagingDeps(
-        me: (account, deviceID), server: client, mls: FakeMLSEngine(identity: "\(account)/\(deviceID)"),
+        me: (account, deviceID), server: client, mls: FakeMLSEngine(identity: "\(account)/\(deviceID)", realMemberKeys: realMemberKeys),
         repo: Repository(db: db, now: now), lock: ProcessLock(url: directory.appendingPathComponent("messaging.lock")),
         escrow: FakeEscrowSealer(), attachments: FakeAttachmentCipher(), notifier: notifier,
         mediaDirectory: media, now: now)

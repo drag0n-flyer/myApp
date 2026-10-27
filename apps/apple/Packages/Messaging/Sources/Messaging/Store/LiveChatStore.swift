@@ -32,6 +32,7 @@ public final class LiveChatStore: ChatStore {
     private var customFolders: [ChatFolder] = []
     private var tasks: [UUID: Task<Void, Never>] = [:]
     private let pendingGate = PendingActions.Gate()
+    private var closed = false
 
     public init(
         deps: MessagingDeps, outbox: Outbox, inbox: InboxProcessor, conversations: ConversationManaging,
@@ -63,6 +64,7 @@ public final class LiveChatStore: ChatStore {
     /// Fetches and processes the inbox, then refreshes. For pull-to-refresh and for the app's launch sync.
     /// The push-driven `InboxProcessor.run(events:)` has no change callback: call `refresh()` after it reports.
     public func syncInbox() async {
+        guard !closed else { return }
         _ = try? await inbox.syncOnce()
         await PendingActions.run(repo: repo, server: deps.server, gate: pendingGate)
         refresh()
@@ -70,6 +72,7 @@ public final class LiveChatStore: ChatStore {
 
     /// Sends what is queued, then refreshes.
     public func flushOutbox() async {
+        guard !closed else { return }
         try? await outbox.flush()
         await PendingActions.run(repo: repo, server: deps.server, gate: pendingGate)
         refresh()
@@ -81,7 +84,17 @@ public final class LiveChatStore: ChatStore {
         while let task = tasks.values.first { await task.value }
     }
 
+    /// Stops the store before its data is wiped (sign-out): later syncs, flushes and background work do nothing,
+    /// and every task started so far is cancelled and waited for, so none can write after the wipe.
+    public func shutdown() async {
+        closed = true
+        for task in tasks.values { task.cancel() }
+        await settle()
+        if let attachments { await attachments.setOnChange {} }
+    }
+
     private func background(_ work: @escaping @Sendable () async -> Void) {
+        guard !closed else { return }
         let id = UUID()
         tasks[id] = Task { [weak self] in
             await work()
@@ -112,7 +125,8 @@ public final class LiveChatStore: ChatStore {
     }
 
     private func map(_ records: [MessageRecord]) -> [Message] {
-        records.map { record in
+        let showSafety = supportsSafetyNumbers
+        return records.map { record in
             let plain = record.senderAccount != ChatMapping.systemSender && !record.id.hasPrefix(ChatMapping.callPrefix)
             return ChatMapping.message(
                 record,
@@ -120,6 +134,8 @@ public final class LiveChatStore: ChatStore {
                 reactions: plain && !record.deleted ? (try? repo.reactions(messageID: record.id)) ?? [] : [],
                 displayName: { [contactRows] in Self.name(of: contactRows[$0]) })
         }
+        // "Safety number changed" refers to a screen that is hidden while the numbers are not real.
+        .filter { showSafety || $0.content != .system(.safetyNumberChanged) }
     }
 
     private nonisolated static func name(of row: ContactRecord?) -> String? {
@@ -339,13 +355,19 @@ public final class LiveChatStore: ChatStore {
 
     // MARK: - Safety number
 
+    /// One flag, tied to the engine: safety numbers are shown only when the engine's member keys are real
+    /// (otherwise the number would not cover any key). TODO(M7): flips by itself when the engine reports it.
+    public var supportsSafetyNumbers: Bool { deps.mls.providesRealMemberKeys }
+
     public func safetyNumber(for chatID: String) -> SafetyNumber? {
+        guard supportsSafetyNumbers else { return nil }
         guard let row = (try? repo.safety(chatID: chatID)) ?? nil else { return nil }
         return SafetyNumber(groups: ChatMapping.groups(row.current), isVerified: row.verified == row.current)
     }
 
     /// Local only: nothing is sent.
     public func setVerified(_ verified: Bool, chatID: String) {
+        guard supportsSafetyNumbers else { return }
         guard let row = (try? repo.safety(chatID: chatID)) ?? nil else { return }
         try? repo.setVerified(chatID: chatID, verified ? row.current : nil)
         refresh()

@@ -50,12 +50,14 @@ struct ChatInfoView: View {
                             .accessibilityElement(children: .ignore)
                             .accessibilityLabel(Text(chat.encryption.infoText))
                             .accessibilityIdentifier("chatinfo.encryption")
-                        if model.safetyNumber(for: chatID)?.isVerified == true {
+                        if model.supportsSafetyNumbers, model.safetyNumber(for: chatID)?.isVerified == true {
                             Label("Verified", systemImage: "checkmark.seal")
                                 .accessibilityIdentifier("chatinfo.verified")
                         }
                     }
-                    Button("Verify", systemImage: "checkmark.shield") { showingVerify = true }
+                    if model.supportsSafetyNumbers {
+                        Button("Verify", systemImage: "checkmark.shield") { showingVerify = true }
+                    }
                 }
 
                 Section {
