@@ -8,18 +8,6 @@ public protocol EscrowSealer: Sendable {
     func seal(_ plaintext: Data, to recipientKey: Data) throws -> Data
 }
 
-public enum EscrowError: Error, Equatable, Sendable { case unavailable }
-
-/// Escrow sealing: HPKE (Curve25519, HKDF-SHA256, ChaCha20-Poly1305, `info = "escrow-v1"`),
-/// output `encapsulatedKey (32) || ciphertext`. Needs CryptoKit.
-///
-/// F2 declares the name and signature only; B1 implements it. Until then it fails closed.
-public enum Escrow {
-    public static func seal(_ plaintext: Data, serverKey: Data) throws -> Data {
-        throw EscrowError.unavailable
-    }
-}
-
 /// Chunked attachment encryption (Design 7). The real cipher is built in B2; tests use
 /// `FakeAttachmentCipher`.
 public protocol AttachmentCipher: Sendable {
@@ -36,7 +24,8 @@ public protocol ConversationManaging: Sendable {
 
 /// Sends a control envelope (receipt, reaction...) that is not stored. Lane B's `Outbox` implements it.
 public protocol ControlSender: Sendable {
-    func sendControl(_ body: ContentEnvelope.Body, chatID: String) async
+    /// Throws `OutboxError` when the message could not be sent (nothing is queued).
+    func sendControl(_ body: ContentEnvelope.Body, chatID: String) async throws
 }
 
 /// Shows "New device added" (Design 19). The app posts a local notification; the notification

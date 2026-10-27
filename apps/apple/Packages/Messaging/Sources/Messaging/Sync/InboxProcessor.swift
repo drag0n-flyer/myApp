@@ -135,7 +135,8 @@ public actor InboxProcessor {
         // Receipts are network calls, so they go after the lock and the gate are released.
         if let controls {
             for (chatID, ids) in newMessages.sorted(by: { $0.key < $1.key }) {
-                await controls.sendControl(.receipt(.delivered, ids: ids), chatID: chatID)
+                // Best effort: a lost delivered receipt only delays the tick.
+                try? await controls.sendControl(.receipt(.delivered, ids: ids), chatID: chatID)
             }
         }
     }
