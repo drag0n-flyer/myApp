@@ -25,6 +25,7 @@ type Module struct {
 	signupRate   *ratelimit.Limiter // sign-up start: 5/hour per IP
 	emailRate    *ratelimit.Limiter // email code send: 3/hour per email
 	emailIPRate  *ratelimit.Limiter // email code send: 10/hour per IP
+	emailTryRate *ratelimit.Limiter // email sign-in code tries: 5 per 10 minutes per email
 }
 
 // New returns the identity module.
@@ -40,6 +41,7 @@ func New(d core.Deps) *Module {
 		signupRate:   ratelimit.New(5, time.Hour, d.Now),
 		emailRate:    ratelimit.New(3, time.Hour, d.Now),
 		emailIPRate:  ratelimit.New(10, time.Hour, d.Now),
+		emailTryRate: ratelimit.New(5, 10*time.Minute, d.Now),
 	}
 }
 
@@ -57,7 +59,12 @@ func (m *Module) Routes(r *httpx.Router) {
 	r.Public("POST /v1/signin/passkey/finish", m.signinFinish)
 	r.Authed("POST /v1/me/passkeys/options", httpx.Limited(m.optionsRate, m.ip, m.mePasskeyOptions))
 	r.Authed("POST /v1/me/passkeys", m.mePasskeyAdd)
+	r.Public("POST /v1/signin/email/start", m.emailSignInStart)
+	r.Public("POST /v1/signin/email/finish", m.emailSignInFinish)
 	r.Authed("GET /v1/me", m.me)
+	r.Authed("DELETE /v1/me", m.deleteAccount)
+	r.Authed("GET /v1/devices", m.listDevices)
+	r.Authed("DELETE /v1/devices/{id}", m.revokeDevice)
 }
 
 // Commands returns the admin CLI subcommands, keyed like "invite create".

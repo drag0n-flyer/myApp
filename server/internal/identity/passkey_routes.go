@@ -348,10 +348,17 @@ func (m *Module) signinFinish(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
-	if _, err := tx.Exec(ctx,
-		`update passkeys set sign_count = $2, flags = $3, last_used_at = $4 where credential_id = $1`,
-		row.CredentialID, int64(row.SignCount), int16(row.Flags), m.d.Now()); err != nil {
+	// The counter never goes backwards, and the passkey must belong to the
+	// account the assertion named. If the passkey vanished meanwhile, no session.
+	tag, err := tx.Exec(ctx,
+		`update passkeys set sign_count = greatest(sign_count, $2), flags = $3, last_used_at = $4
+		 where credential_id = $1 and account_id = $5`,
+		row.CredentialID, int64(row.SignCount), int16(row.Flags), m.d.Now(), accountID)
+	if err != nil {
 		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fail
 	}
 	deviceID, token, err := m.issueSession(ctx, tx, accountID, in.DeviceName, in.Platform)
 	if err != nil {

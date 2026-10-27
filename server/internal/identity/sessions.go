@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
-	"net/http"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -91,27 +90,4 @@ func (m *Module) Verify(ctx context.Context, token string) (core.Principal, erro
 		}
 	}
 	return p, nil
-}
-
-// me answers GET /v1/me.
-func (m *Module) me(w http.ResponseWriter, r *http.Request) error {
-	p := httpx.PrincipalFrom(r.Context())
-	var out struct {
-		AccountID   string `json:"accountID"`
-		Username    string `json:"username"`
-		Email       string `json:"email"`
-		DisplayName string `json:"displayName"`
-		FindByEmail bool   `json:"findByEmail"`
-	}
-	err := m.d.DB.QueryRow(r.Context(),
-		`select id, username, email, display_name, find_by_email from accounts where id = $1`, p.AccountID).
-		Scan(&out.AccountID, &out.Username, &out.Email, &out.DisplayName, &out.FindByEmail)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return httpx.Err("not_found", "no such account")
-	}
-	if err != nil {
-		return err
-	}
-	httpx.JSON(w, http.StatusOK, out)
-	return nil
 }
