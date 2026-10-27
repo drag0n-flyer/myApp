@@ -14,6 +14,10 @@ packages:
     path: Packages/CallCore
   Messaging:
     path: Packages/Messaging
+  LocalStore:
+    path: Packages/LocalStore
+  SecureMessaging:
+    path: Packages/SecureMessaging
 settings:
   base:
     SWIFT_VERSION: '6.0'
@@ -23,6 +27,10 @@ settings:
     DEFAULT_SERVER_HOST: home.example.org
     PUSH_GATEWAY_URL: https://push.example.org
     PUSH_GATEWAY_KEY: ''
+    # Keep NotificationService/NSE-*-filtering.entitlements identical to the plain files plus the filtering key.
+    NSE_FILTERING: 'NO'
+    NSE_FILTERING_YES_SUFFIX: '-filtering'
+    NSE_FILTERING_NO_SUFFIX: ''
     MARKETING_VERSION: '0.1.0'
     CURRENT_PROJECT_VERSION: '1'
     GENERATE_INFOPLIST_FILE: 'YES'
@@ -69,6 +77,7 @@ targets:
       - package: CallCore
       - package: Messaging
         product: Messaging
+      - target: AppNSEiOS
   AppMac:
     type: application
     platform: macOS
@@ -99,6 +108,65 @@ targets:
       - package: CallCore
       - package: Messaging
         product: Messaging
+      - target: AppNSEMac
+  AppNSEiOS:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: NotificationService
+        excludes: ['*.entitlements']
+    info:
+      path: Generated/AppNSEiOS-Info.plist
+      properties:
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
+        KeychainAccessGroup: $(AppIdentifierPrefix)org.example.app.shared
+    settings:
+      base:
+        PRODUCT_NAME: NotificationService
+        PRODUCT_BUNDLE_IDENTIFIER: org.example.app.nse
+        CODE_SIGN_ENTITLEMENTS: NotificationService/NSE-iOS$(NSE_FILTERING_$(NSE_FILTERING)_SUFFIX).entitlements
+        TARGETED_DEVICE_FAMILY: '1'
+        SKIP_INSTALL: 'YES'
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: '$(inherited) NSE_FILTERING_$(NSE_FILTERING)'
+    dependencies:
+      - package: AppCore
+      - package: LocalStore
+        product: LocalStore
+      - package: ServerKit
+        product: ServerKit
+      - package: SecureMessaging
+        product: SecureMessaging
+  AppNSEMac:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: NotificationService
+        excludes: ['*.entitlements']
+    info:
+      path: Generated/AppNSEMac-Info.plist
+      properties:
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
+        KeychainAccessGroup: $(AppIdentifierPrefix)org.example.app.shared
+    settings:
+      base:
+        PRODUCT_NAME: NotificationService
+        PRODUCT_BUNDLE_IDENTIFIER: org.example.app.mac.nse
+        CODE_SIGN_ENTITLEMENTS: NotificationService/NSE-Mac$(NSE_FILTERING_$(NSE_FILTERING)_SUFFIX).entitlements
+        ENABLE_HARDENED_RUNTIME: 'YES'
+        SKIP_INSTALL: 'YES'
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: '$(inherited) NSE_FILTERING_$(NSE_FILTERING)'
+    dependencies:
+      - package: AppCore
+      - package: LocalStore
+        product: LocalStore
+      - package: ServerKit
+        product: ServerKit
+      - package: SecureMessaging
+        product: SecureMessaging
   AppiOSUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -111,6 +179,8 @@ targets:
         TEST_TARGET_NAME: AppiOS
     dependencies:
       - target: AppiOS
+      - package: SecureMessaging
+        product: SecureMessagingCore
   AppMacUITests:
     type: bundle.ui-testing
     platform: macOS
