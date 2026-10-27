@@ -60,8 +60,8 @@ public final class PasskeyAuthenticator: NSObject, PasskeyAuthenticating, ASAuth
     }
 
     /// Ignores callbacks from any controller other than the current one.
-    private func finish(_ controller: ASAuthorizationController, _ result: Result<Outcome, Error>) {
-        guard let current = pending, current.controller === controller else { return }
+    private func finish(_ controller: ObjectIdentifier, _ result: Result<Outcome, Error>) {
+        guard let current = pending, ObjectIdentifier(current.controller) == controller else { return }
         pending = nil
         current.continuation.resume(with: result)
     }
@@ -85,11 +85,11 @@ public final class PasskeyAuthenticator: NSObject, PasskeyAuthenticating, ASAuth
     nonisolated public func authorizationController(controller: ASAuthorizationController,
                                                     didCompleteWithAuthorization authorization: ASAuthorization) {
         let outcome = Self.outcome(from: authorization)
-        MainActor.assumeIsolated { finish(controller, outcome.map { .success($0) } ?? .failure(PasskeyFailure())) }
+        MainActor.assumeIsolated { finish(ObjectIdentifier(controller), outcome.map { .success($0) } ?? .failure(PasskeyFailure())) }
     }
 
     nonisolated public func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {
-        MainActor.assumeIsolated { finish(controller, .failure(error)) }
+        MainActor.assumeIsolated { finish(ObjectIdentifier(controller), .failure(error)) }
     }
 
     nonisolated public func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
