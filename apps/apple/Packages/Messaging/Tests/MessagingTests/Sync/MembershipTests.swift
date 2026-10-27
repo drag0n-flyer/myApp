@@ -1,5 +1,8 @@
 import AppCore
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import LocalStore
 import SecureMessagingCore
 import ServerKit
@@ -157,7 +160,7 @@ private struct Rig {
         // The two sides compute the same number from their own stored members.
         let members = try rig.bob1.repo.members(conversationID: rig.conversationIDs[0])
             .map { MemberKey(identity: $0.identity, signatureKey: $0.signatureKey) }
-        #expect(SafetyNumberCalc.compute(accountA: "acc-bob", accountB: "acc-ana", members: members).joined() == after)
+        #expect(try SafetyNumberCalc.compute(accountA: "acc-bob", accountB: "acc-ana", members: members).joined() == after)
     }
 
     @Test func verifiedLapsesWhenNumberChanges() async throws {
@@ -196,5 +199,61 @@ private struct Rig {
         let membership = Membership(deps: rig.ana1.device.deps)
         let change = try await membership.update(conversation: conversation, db: rig.ana1.repo)
         #expect(change == MembershipChange(added: [], removed: [], ownDevicesAdded: []))
+    }
+
+    /// The notice is persisted with the members. If the device list cannot be read, nothing is lost: the next
+    /// run posts it, once.
+    @Test func ownDeviceNoticeSurvivesFailedNameLookup() async throws {
+        let server = FakeServer()
+        let a1 = await makeDevice(server, account: "acc-ana", username: "ana")
+        let a2 = await makeDevice(server, account: "acc-ana", username: "ana")
+        let b1 = await makeDevice(server, account: "acc-bob", username: "bob")
+        for d in [a1, a2, b1] { try await keyPackages(d) }
+        let gate = FailGate()
+        var deps2 = a2.deps
+        deps2.server = ServerClient(
+            host: FakeServer.host,
+            session: SessionStore(storage: MemorySessionStorage(Session(
+                host: FakeServer.host, accountID: "acc-ana", deviceID: a2.deviceID, token: "test.acc-ana.\(a2.deviceID)"))),
+            transport: GateTransport(inner: await server.transport(for: a2), gate: gate))
+        let flaky = TestDevice(accountID: a2.accountID, deviceID: a2.deviceID, deps: deps2, notifier: a2.notifier, directory: a2.directory)
+        let n1 = Node.make(a1), n2 = Node.make(flaky)
+        _ = try await n1.conversations.create(with: "acc-bob")
+        try await n2.syncInbox()
+        let ana3 = try await {
+            let d = await makeDevice(server, account: "acc-ana", username: "ana")
+            try await keyPackages(d)
+            return d
+        }()
+        try await n1.sync.reconcileOwnDevices()
+
+        gate.set(true)  // the process "dies" between saving the members and showing the notice
+        try await n2.syncInbox()
+        #expect(await n2.device.notifier.added.isEmpty)
+        #expect(try n2.repo.get("notice.pending.\(ana3.deviceID)") == Data([1]))
+        #expect(try n2.repo.members(conversationID: try #require(try n2.repo.conversations(chatID: "acc-bob").first).serverID)
+            .contains { $0.identity == "acc-ana/\(ana3.deviceID)" })
+
+        gate.set(false)
+        try await n2.syncInbox()  // nothing new in the inbox; the pending marker is enough
+        #expect(await n2.device.notifier.added.map(\.deviceID) == [ana3.deviceID])
+        try await n2.syncInbox()
+        #expect(await n2.device.notifier.added.count == 1)
+    }
+}
+
+private final class FailGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var on = false
+    var failing: Bool { lock.withLock { on } }
+    func set(_ value: Bool) { lock.withLock { on = value } }
+}
+
+private struct GateTransport: HTTPTransport {
+    let inner: HTTPTransport
+    let gate: FailGate
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        if gate.failing, request.url?.path == "/v1/devices" { throw URLError(.notConnectedToInternet) }
+        return try await inner.send(request)
     }
 }

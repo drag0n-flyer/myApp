@@ -82,10 +82,16 @@ public struct IncomingHandler: Sendable {
         }
     }
 
+    static let pendingNoticePrefix = "notice.pending."
+    static func pendingNoticeKey(_ deviceID: String) -> String { pendingNoticePrefix + deviceID }
+
     /// Device lines and the safety number for the conversation of `raw` (Design 19, 20), after its epoch is stored.
     private func updateMembership(_ keys: [MemberKey]?, raw: RawInboxRecord, db: Repository) throws -> AppliedResult? {
         guard let keys, let conversation = try db.conversation(serverID: raw.conversationID) else { return nil }
         let change = try membership.apply(keys: keys, conversation: conversation, db: db)
+        // Written in the caller's transaction, with the new members and the deleted raw item: the notice
+        // survives a kill before it is shown. `InboxProcessor` clears the marker after posting it.
+        for id in change.ownDevicesAdded { try db.set(Self.pendingNoticeKey(id), Data([1])) }
         return change.ownDevicesAdded.isEmpty ? nil : .ownDeviceAdded(deviceIDs: change.ownDevicesAdded)
     }
 

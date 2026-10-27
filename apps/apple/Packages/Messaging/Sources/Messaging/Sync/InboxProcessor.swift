@@ -155,12 +155,10 @@ public actor InboxProcessor {
     public func drainRaw() async {
         await acquire(.drain)
         var newMessages: [String: [String]] = [:]
-        var newOwnDevices: [String] = []
         scan: while let items = try? deps.repo.rawItems(limit: Self.pageSize), !items.isEmpty {
             for raw in items {
                 let (step, applied) = await process(raw)
                 if step == .stop { break scan }
-                if case .ownDeviceAdded(let ids)? = applied { newOwnDevices += ids }
                 if case .stored(let message)? = applied, message.senderAccount != deps.me.accountID, !message.undecryptable {
                     newMessages[message.chatID, default: []].append(message.id)
                 }
@@ -168,7 +166,7 @@ public actor InboxProcessor {
         }
         release(.drain)
         // Network calls (device names, receipts) go after the lock and the gate are released.
-        await noticeOwnDevices(newOwnDevices)
+        await noticeOwnDevices()
         if let controls {
             for (chatID, ids) in newMessages.sorted(by: { $0.key < $1.key }) {
                 await controls.sendControl(.receipt(.delivered, ids: ids), chatID: chatID)
@@ -180,24 +178,31 @@ public actor InboxProcessor {
 
     static func noticeKey(_ deviceID: String) -> String { "notified.device.\(deviceID)" }
 
-    /// One "New device added" notice per device ID, ever (kv `notified.device.<id>`). The name comes from
-    /// `GET /v1/devices`, or "A new device" when it is unknown. The marker is written after the notice, so a
-    /// crash in between repeats the notice rather than losing it.
-    private func noticeOwnDevices(_ deviceIDs: [String]) async {
-        // Checking and claiming happen without a suspension point, so two drains cannot both claim an ID.
-        var todo: [String] = []
-        for id in deviceIDs where !todo.contains(id) && !noticesInFlight.contains(id) {
-            if let marker = try? deps.repo.get(Self.noticeKey(id)), !marker.isEmpty { continue }
-            noticesInFlight.insert(id)
-            todo.append(id)
-        }
+    /// One "New device added" notice per device ID, ever. The apply transaction wrote a pending marker
+    /// (`notice.pending.<id>`) per new own device, so every drain posts all pending notices, also ones whose
+    /// first attempt was cut short. The name comes from `GET /v1/devices`; when that fails the marker stays and
+    /// the next drain tries again. A device the server no longer lists gets "A new device". The pending
+    /// marker is cleared after the notice and the `notified.device.<id>` marker, so a kill in between repeats
+    /// the notice rather than losing it.
+    private func noticeOwnDevices() async {
+        let pending = ((try? deps.repo.entries(prefix: IncomingHandler.pendingNoticePrefix)) ?? [:])
+            .filter { !$0.value.isEmpty }
+            .map { String($0.key.dropFirst(IncomingHandler.pendingNoticePrefix.count)) }.sorted()
+        // Claiming happens without a suspension point, so two drains cannot both claim an ID.
+        let todo = pending.filter { noticesInFlight.insert($0).inserted }
         guard !todo.isEmpty else { return }
-        let devices = (try? await deps.server.devices()) ?? []
+        defer { for id in todo { noticesInFlight.remove(id) } }
+        let devices: [Device]
+        do { devices = try await deps.server.devices() } catch { return }
         for id in todo {
+            if let done = try? deps.repo.get(Self.noticeKey(id)), !done.isEmpty {
+                try? deps.repo.set(IncomingHandler.pendingNoticeKey(id), Data())
+                continue
+            }
             let name = devices.first { $0.id == id }?.name ?? ""
             await deps.notifier.ownDeviceAdded(deviceID: id, name: name.isEmpty ? "A new device" : name)
             try? deps.repo.set(Self.noticeKey(id), Data([1]))
-            noticesInFlight.remove(id)
+            try? deps.repo.set(IncomingHandler.pendingNoticeKey(id), Data())
         }
     }
 

@@ -13,6 +13,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -40,14 +41,22 @@ func key(seed byte) string {
 	return hex.EncodeToString(k)
 }
 
-func side(acct string, members []member) []byte {
+var errTooLong = errors.New("identity or key longer than 65535 bytes")
+
+func side(acct string, members []member) ([]byte, error) {
 	var mine []member
 	for _, m := range members {
 		if a, _, _ := strings.Cut(m.Identity, "/"); a == acct {
 			mine = append(mine, m)
 		}
 	}
-	sort.Slice(mine, func(i, j int) bool { return mine[i].Identity < mine[j].Identity })
+	// Identity bytes, then key bytes: equal identities still have one fixed order.
+	sort.SliceStable(mine, func(i, j int) bool {
+		if mine[i].Identity != mine[j].Identity {
+			return mine[i].Identity < mine[j].Identity
+		}
+		return mine[i].SignatureKey < mine[j].SignatureKey
+	})
 	var b bytes.Buffer
 	b.WriteString("safety-v1")
 	b.WriteByte(0)
@@ -58,13 +67,16 @@ func side(acct string, members []member) []byte {
 		if err != nil {
 			panic(err)
 		}
+		if len(m.Identity) > 0xffff || len(k) > 0xffff {
+			return nil, errTooLong // rejected, never wrapped
+		}
 		b.Write(binary.BigEndian.AppendUint16(nil, uint16(len(m.Identity))))
 		b.WriteString(m.Identity)
 		b.Write(binary.BigEndian.AppendUint16(nil, uint16(len(k))))
 		b.Write(k)
 	}
 	sum := sha256.Sum256(b.Bytes())
-	return sum[:]
+	return sum[:], nil
 }
 
 func groups(h []byte) []string {
@@ -79,11 +91,34 @@ func groups(h []byte) []string {
 	return out
 }
 
-func compute(a, b string, members []member) []string {
+func compute(a, b string, members []member) ([]string, error) {
 	if a > b {
 		a, b = b, a
 	}
-	return append(groups(side(a, members)), groups(side(b, members))...)
+	low, err := side(a, members)
+	if err != nil {
+		return nil, err
+	}
+	high, err := side(b, members)
+	if err != nil {
+		return nil, err
+	}
+	return append(groups(low), groups(high)...), nil
+}
+
+// selfCheck: 65536-byte identities and keys are rejected, 65535 is accepted.
+func selfCheck() {
+	big := hex.EncodeToString(make([]byte, 65536))
+	ok := hex.EncodeToString(make([]byte, 65535))
+	longID := "acc-ana/" + strings.Repeat("x", 65536)
+	for _, m := range []member{{"acc-bob/dev-9", big}, {longID, key(1)}} {
+		if _, err := compute("acc-ana", "acc-bob", []member{m}); !errors.Is(err, errTooLong) {
+			panic("oversized input not rejected")
+		}
+	}
+	if _, err := compute("acc-ana", "acc-bob", []member{{"acc-bob/dev-9", ok}}); err != nil {
+		panic("65535 bytes must be accepted")
+	}
 }
 
 func main() {
@@ -107,8 +142,13 @@ func main() {
 		{Name: "a third account is ignored", AccountA: "acc-ana", AccountB: "acc-bob", Members: withThird},
 		{Name: "identity byte order", AccountA: "acc-ana", AccountB: "acc-bob", Members: tenth},
 	}
+	selfCheck()
 	for i := range cases {
-		cases[i].Expected = compute(cases[i].AccountA, cases[i].AccountB, cases[i].Members)
+		var err error
+		cases[i].Expected, err = compute(cases[i].AccountA, cases[i].AccountB, cases[i].Members)
+		if err != nil {
+			panic(err)
+		}
 	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")

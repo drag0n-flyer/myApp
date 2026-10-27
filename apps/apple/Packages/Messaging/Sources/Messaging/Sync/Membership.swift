@@ -75,13 +75,13 @@ struct Membership: Sendable {
             func event(_ identity: String, added: Bool) -> SystemEvent {
                 let account = String(SafetyNumberCalc.account(of: identity))
                 // Others by account ID: the display name is resolved when the line is shown, never stored.
-                let name: String? = account == me.accountID ? nil : account
+                let name: String? = SafetyNumberCalc.isAccount(identity, me.accountID) ? nil : account
                 return added ? .deviceAdded(name: name) : .deviceRemoved(name: name)
             }
             for identity in new.subtracting(old).sorted() where identity != myIdentity {
                 change.added.append(identity)
                 lines.append(("add-\(identity)", event(identity, added: true)))
-                if SafetyNumberCalc.account(of: identity) == me.accountID {
+                if SafetyNumberCalc.isAccount(identity, me.accountID) {
                     change.ownDevicesAdded.append(String(identity.dropFirst(me.accountID.count + 1)))
                 }
             }
@@ -96,9 +96,10 @@ struct Membership: Sendable {
 
         // The chat's number follows its preferred conversation.
         if let preferred = try db.preferredConversation(chatID: conversation.chatID), preferred.serverID == conversation.serverID {
-            let number = SafetyNumberCalc.compute(accountA: me.accountID, accountB: conversation.chatID, members: keys).joined()
+            // An oversized identity or key gives no number (the stored one stays); never a wrapped one.
+            let number = try? SafetyNumberCalc.compute(accountA: me.accountID, accountB: conversation.chatID, members: keys).joined()
             let previous = try db.safety(chatID: conversation.chatID)?.current
-            if previous != number {
+            if let number, previous != number {
                 try db.setSafetyCurrent(chatID: conversation.chatID, number)
                 if previous != nil { lines.append(("safety", .safetyNumberChanged)) }
             }
