@@ -91,6 +91,10 @@ func serve(ctx context.Context, a *app.App, cfg config.Config, pool *pgxpool.Poo
 		return fmt.Errorf("migrate: %w", err)
 	}
 
+	if cfg.LabMode {
+		log.Warn("LAB MODE: sessions can be created without sign-in; never enable on a real server")
+	}
+
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 

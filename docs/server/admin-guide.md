@@ -128,3 +128,9 @@ The server can see:
 - attachment sizes and timing
 
 The gateway can see which server sends to which opaque handle, and when. Apple can see the push token, and the timing and size of pushes.
+
+## Lab mode
+
+`APP_LAB_MODE=1` turns on `appserver lab session --username <u> --device <name> --platform iphone|mac`. It creates a session for any username without passkey, email or invite, and prints `accountID deviceID token`. It exists only for the Call Lab (measuring call quality).
+
+**Warning: never set `APP_LAB_MODE` on a real server.** Anyone with shell access to the server can then sign in as any account, including existing ones. `serve` logs `LAB MODE: sessions can be created without sign-in; never enable on a real server` at start when it is on. Leave it unset, or set to anything other than `1`, for normal operation.

@@ -79,7 +79,10 @@ func (m *Module) Routes(r *httpx.Router) {
 
 // Commands returns the admin CLI subcommands, keyed like "invite create".
 func (m *Module) Commands() map[string]core.Command {
-	return map[string]core.Command{"invite create": m.inviteCreateCommand}
+	return map[string]core.Command{
+		"invite create": m.inviteCreateCommand,
+		"lab session":   m.labSessionCommand,
+	}
 }
 
 func (m *Module) usernameAvailable(w http.ResponseWriter, r *http.Request) error {

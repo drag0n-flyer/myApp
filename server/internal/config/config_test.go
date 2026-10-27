@@ -261,3 +261,19 @@ func TestLoadRejectsNonPositivePolicyNumbers(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadLabMode(t *testing.T) {
+	for val, want := range map[string]bool{"": false, "1": true, "0": false, "true": false} {
+		env := baseEnv()
+		if val != "" {
+			env["APP_LAB_MODE"] = val
+		}
+		cfg, _, err := Load(mapEnv(env), noFiles)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.LabMode != want {
+			t.Errorf("APP_LAB_MODE=%q: LabMode = %v, want %v", val, cfg.LabMode, want)
+		}
+	}
+}
