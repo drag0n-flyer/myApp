@@ -53,7 +53,8 @@ import CryptoKit
     @Test func plaintextIsWhatExportSnapshotWrites() throws {
         let v = try load()
         #expect(v.version == 1 && v.info == "link-v1" && !v.cases.isEmpty)
-        #expect(v.cases[0].plaintextJSON == (try Self.encoded(Self.snapshot())))
+        let expectedJSON = try Self.encoded(Self.snapshot())
+        #expect(v.cases[0].plaintextJSON == expectedJSON)
         for c in v.cases {
             let decoded = try JSONDecoder().decode(LinkSnapshot.self, from: Data(c.plaintextJSON.utf8))
             #expect(decoded.v == 1)
