@@ -160,31 +160,46 @@ func (m *Module) postCommit(w http.ResponseWriter, r *http.Request) error {
 		}
 
 		// 2. Snapshot the member devices present before this commit.
-		snapshot, err := queryStrings(ctx, tx,
-			`select device_id::text from conversation_devices where conversation_id = $1 order by device_id`, id)
+		snapshot, err := queryPairs(ctx, tx,
+			`select cd.device_id::text, d.account_id::text from conversation_devices cd
+			 join devices d on d.id = cd.device_id
+			 where cd.conversation_id = $1 order by cd.device_id`, id)
 		if err != nil {
 			return err
 		}
 
 		// 3. Apply adds and removes. Added devices must belong to the
-		// conversation's accounts.
+		// conversation's accounts. A device whose account blocked the sender
+		// is skipped silently: no welcome and no membership.
 		var added []string
 		if len(add) > 0 {
-			ok, err := queryStrings(ctx, tx,
-				`select d.id::text from devices d
+			ok, err := queryPairs(ctx, tx,
+				`select d.id::text, d.account_id::text from devices d
 				 join conversation_accounts ca on ca.account_id = d.account_id
-				 where ca.conversation_id = $1 and d.id::text = any($2)`, id, add)
+				 where ca.conversation_id = $1 and d.id::text = any($2) order by d.id`, id, add)
 			if err != nil {
 				return err
 			}
 			if len(ok) != len(add) {
 				return httpx.Err("forbidden", "a device does not belong to this conversation's accounts")
 			}
-			added, err = queryStrings(ctx, tx,
-				`insert into conversation_devices (conversation_id, device_id)
-				 select $1, unnest($2::uuid[]) on conflict do nothing returning device_id::text`, id, add)
+			blocked, err := m.blockers(ctx, ok, p.AccountID)
 			if err != nil {
 				return err
+			}
+			var allowed []string
+			for _, dv := range ok {
+				if !blocked[dv.account] {
+					allowed = append(allowed, dv.device)
+				}
+			}
+			if len(allowed) > 0 {
+				added, err = queryStrings(ctx, tx,
+					`insert into conversation_devices (conversation_id, device_id)
+					 select $1, unnest($2::uuid[]) on conflict do nothing returning device_id::text`, id, allowed)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if len(remove) > 0 {
@@ -194,13 +209,36 @@ func (m *Module) postCommit(w http.ResponseWriter, r *http.Request) error {
 			}
 		}
 
-		// 4. Deliver. The commit goes to the whole snapshot, sender included.
+		// 4. Deliver. Lock every recipient once, in sorted order, before any
+		// insert. The commit goes to the whole snapshot, sender included; a
+		// blocker still gets the row (the group must not desync) but no push.
 		// It carries the epoch it was made at; a welcome carries the new one.
+		snapBlocked, err := m.blockers(ctx, snapshot, p.AccountID)
+		if err != nil {
+			return err
+		}
+		var loud, quiet, lockIDs []string
+		for _, dv := range snapshot {
+			lockIDs = append(lockIDs, dv.device)
+			if snapBlocked[dv.account] {
+				quiet = append(quiet, dv.device)
+			} else {
+				loud = append(loud, dv.device)
+			}
+		}
+		lockIDs = append(lockIDs, added...)
+		if err := lockDevices(ctx, tx, lockIDs); err != nil {
+			return err
+		}
 		now := m.d.Now()
-		if err := m.deliver(ctx, tx, snapshot, InboxItem{
+		commitItem := InboxItem{
 			Kind: "commit", ConversationID: id, Epoch: in.Epoch,
 			SenderAccountID: p.AccountID, SenderDeviceID: p.DeviceID, Payload: commit, SentAt: now,
-		}); err != nil {
+		}
+		if err := m.deliver(ctx, tx, loud, commitItem); err != nil {
+			return err
+		}
+		if err := m.deliverPush(ctx, tx, quiet, commitItem, core.PushNone); err != nil {
 			return err
 		}
 		if welcome != nil && len(added) > 0 {
@@ -252,4 +290,41 @@ func queryStrings(ctx context.Context, tx pgx.Tx, sql string, args ...any) ([]st
 		out = append(out, s)
 	}
 	return out, rows.Err()
+}
+
+type devAcct struct{ device, account string }
+
+func queryPairs(ctx context.Context, tx pgx.Tx, sql string, args ...any) ([]devAcct, error) {
+	rows, err := tx.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []devAcct
+	for rows.Next() {
+		var d devAcct
+		if err := rows.Scan(&d.device, &d.account); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// blockers returns the accounts among devs that have blocked sender.
+func (m *Module) blockers(ctx context.Context, devs []devAcct, sender string) (map[string]bool, error) {
+	out := map[string]bool{}
+	checked := map[string]bool{}
+	for _, dv := range devs {
+		if checked[dv.account] || dv.account == sender {
+			continue
+		}
+		checked[dv.account] = true
+		b, err := m.d.Blocks.IsBlocked(ctx, dv.account, sender)
+		if err != nil {
+			return nil, err
+		}
+		out[dv.account] = b
+	}
+	return out, nil
 }

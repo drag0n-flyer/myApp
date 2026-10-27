@@ -202,7 +202,7 @@ func TestCommitAdvancesEpoch(t *testing.T) {
 			t.Fatalf("device %s inbox = %+v", p.DeviceID, got)
 		}
 	}
-	if got := w.inbox(t, w.ana1); len(got) != 1 || got[0].Kind != "commit" || got[0].Payload != "commit" {
+	if got := w.inbox(t, w.ana1); len(got) != 1 || got[0].Kind != "commit" || got[0].Payload != "commit" || got[0].Epoch != 0 {
 		t.Fatalf("ana1 inbox = %+v", got)
 	}
 	if c := w.getEpoch(t, id); c != 1 {
@@ -386,5 +386,52 @@ func TestInboxItemJSON(t *testing.T) {
 	b, _ = json.Marshal(delivery.InboxItem{Kind: "commit"})
 	if strings.Contains(string(b), `"seq"`) {
 		t.Fatalf("seq not omitted: %s", b)
+	}
+}
+
+func TestBlockedRecipientGetsNoWelcome(t *testing.T) {
+	w := newWorld(t)
+	id := w.newConvo(t)
+	w.f.Blocks.Block(w.bob1.AccountID, w.ana1.AccountID) // bob blocked ana
+	r := w.commit(t, w.ana1, id, 0, []string{w.bob1.DeviceID, w.bob2.DeviceID, w.ana2.DeviceID}, nil, true)
+	if r.Status != 200 {
+		t.Fatalf("commit must still succeed: %s", r)
+	}
+	for _, p := range []core.Principal{w.bob1, w.bob2} {
+		if got := w.inbox(t, p); len(got) != 0 {
+			t.Fatalf("blocker device got %+v", got)
+		}
+		if evs := w.f.Notify.Events(p.DeviceID); len(evs) != 0 {
+			t.Fatalf("blocker device notified: %+v", evs)
+		}
+		if r := w.c.Do(&p, "GET", "/v1/conversations/"+id, nil); r.Status != 404 {
+			t.Fatalf("blocker device was added: %s", r)
+		}
+	}
+	if got := kinds(w.inbox(t, w.ana2)); got != "welcome," {
+		t.Fatalf("ana2 = %s", got)
+	}
+}
+
+func TestBlockerGetsCommitWithoutPush(t *testing.T) {
+	w := newWorld(t)
+	id := w.joined(t)
+	w.f.Blocks.Block(w.bob1.AccountID, w.ana1.AccountID)
+	if r := w.commit(t, w.ana1, id, 1, nil, nil, false); r.Status != 200 {
+		t.Fatalf("commit: %s", r)
+	}
+	for _, p := range []core.Principal{w.bob1, w.bob2} {
+		if got := kinds(w.inbox(t, p)); got != "welcome,commit," {
+			t.Fatalf("%s inbox = %s", p.DeviceID, got)
+		}
+		evs := w.f.Notify.Events(p.DeviceID)
+		last := evs[len(evs)-1]
+		if last.Type != "inbox" || last.Push != core.PushNone || last.PushPayload != nil {
+			t.Fatalf("last event for blocker = %+v", last)
+		}
+	}
+	evs := w.f.Notify.Events(w.ana2.DeviceID)
+	if last := evs[len(evs)-1]; last.Push != core.PushMessage {
+		t.Fatalf("ana2 last event = %+v", last)
 	}
 }
