@@ -9,5 +9,6 @@ type RelayStatus struct {
 	RTT          time.Duration
 }
 
-// Relays lists every configured relay. Lane B (B1) fills it.
-func (m *Module) Relays() []RelayStatus { return nil }
+// Relays lists every configured relay in APP_RELAYS order with the prober's
+// current state. RTT is 0 until a probe has succeeded.
+func (m *Module) Relays() []RelayStatus { return m.prober.status() }

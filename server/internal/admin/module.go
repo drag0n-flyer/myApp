@@ -11,6 +11,7 @@ import (
 	"github.com/drag0n-flyer/myApp/server/internal/core"
 	"github.com/drag0n-flyer/myApp/server/internal/push"
 	"github.com/drag0n-flyer/myApp/server/internal/turn"
+	"github.com/jackc/pgx/v5"
 )
 
 // Session is the signed-in admin token behind a request.
@@ -20,7 +21,9 @@ type apiFunc func(w http.ResponseWriter, r *http.Request, s Session) error
 
 // Identity is what the dashboard asks of the identity module.
 type Identity interface {
-	CreateInviteID(ctx context.Context, uses int, ttl time.Duration) (id, code string, err error)
+	CreateInviteIn(ctx context.Context, q interface {
+		QueryRow(context.Context, string, ...any) pgx.Row
+	}, uses int, ttl time.Duration) (id, code string, expires time.Time, err error)
 	RevokeInvite(ctx context.Context, id string) error
 	AdminRevokeDevice(ctx context.Context, deviceID string) error
 	AdminDeleteAccount(ctx context.Context, accountID string) error
