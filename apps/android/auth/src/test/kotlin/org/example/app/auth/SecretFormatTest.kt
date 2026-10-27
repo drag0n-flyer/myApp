@@ -17,6 +17,8 @@ import kotlin.test.assertNull
 import javax.crypto.AEADBadTagException
 import java.io.IOException
 import kotlin.test.assertTrue
+import org.example.app.contracts.SecretStoreUnavailable
+import org.example.app.contracts.SecretsLost
 
 /**
  * A software AES key standing in for the Keystore. `lose()` models a clean "key is gone" answer; `fail` makes
@@ -31,14 +33,19 @@ private class FakeVault : WrappingKeyVault {
 
     private fun maybeFail() { if (fail) throw SecretStoreUnavailable("transient", null) }
 
+    @Volatile var encryptOverride: (() -> Cipher)? = null
+    @Volatile var decryptOverride: (() -> Cipher)? = null
+
     override fun encryptCipher(): Cipher {
         maybeFail()
+        encryptOverride?.let { return it() }
         val k = key ?: throw SecretStoreUnavailable("no key", null)
         return Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, k) }
     }
 
     override fun decryptCipher(nonce: ByteArray): Cipher {
         maybeFail()
+        decryptOverride?.let { return it() }
         val k = key ?: throw SecretsLost("no key")
         return Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.DECRYPT_MODE, k, GCMParameterSpec(128, nonce)) }
     }
@@ -307,6 +314,133 @@ class SecretFormatTest {
     fun teeFailureIsNotSwallowed() {
         assertFailsWith<java.security.ProviderException> {
             generateWithFallback<String>(generate = { throw java.security.ProviderException("x") }, cleanup = {})
+        }
+    }
+
+    @Test
+    fun strongBoxInvalidAlgorithmParameterFallsBackToTee() {
+        val tried = mutableListOf<Boolean>()
+        var cleaned = 0
+        val level = generateWithFallback(
+            generate = { sb -> tried += sb; if (sb) throw java.security.InvalidAlgorithmParameterException("no strongbox") else "key" },
+            cleanup = { cleaned++ },
+        )
+        assertEquals(listOf(true, false), tried)
+        assertEquals("tee", level.second)
+        assertEquals(1, cleaned)
+    }
+
+    @Test
+    fun syncDirectorySucceedsOnARealDirectory() {
+        assertTrue(syncDirectory(tmp()))
+    }
+
+    @Test
+    fun syncDirectoryIsBestEffortOnAMissingDirectory() {
+        assertFalse(syncDirectory(File(tmp(), "nope")))
+    }
+
+    /** A cipher that initialises and accepts AAD, then fails at `doFinal` like a keystore daemon would. */
+    private fun cipherFailingAtDoFinal(fault: Throwable, iv: ByteArray = ByteArray(12)): Cipher {
+        val spi = object : javax.crypto.CipherSpi() {
+            override fun engineSetMode(mode: String?) {}
+            override fun engineSetPadding(padding: String?) {}
+            override fun engineGetBlockSize() = 16
+            override fun engineGetOutputSize(inputLen: Int) = inputLen + 16
+            override fun engineGetIV() = iv
+            override fun engineUpdateAAD(src: ByteArray?, offset: Int, len: Int) {}
+            override fun engineUpdateAAD(src: java.nio.ByteBuffer?) {}
+            override fun engineGetParameters(): java.security.AlgorithmParameters? = null
+            override fun engineInit(opmode: Int, key: java.security.Key?, random: java.security.SecureRandom?) {}
+            override fun engineInit(opmode: Int, key: java.security.Key?, params: java.security.spec.AlgorithmParameterSpec?, random: java.security.SecureRandom?) {}
+            override fun engineInit(opmode: Int, key: java.security.Key?, params: java.security.AlgorithmParameters?, random: java.security.SecureRandom?) {}
+            override fun engineUpdate(input: ByteArray?, inputOffset: Int, inputLen: Int): ByteArray? = null
+            override fun engineUpdate(input: ByteArray?, inputOffset: Int, inputLen: Int, output: ByteArray?, outputOffset: Int) = 0
+            override fun engineDoFinal(input: ByteArray?, inputOffset: Int, inputLen: Int): ByteArray = throw fault
+            override fun engineDoFinal(input: ByteArray?, inputOffset: Int, inputLen: Int, output: ByteArray?, outputOffset: Int): Int = throw fault
+        }
+        val cipher = object : Cipher(spi, Cipher.getInstance("AES").provider, "AES/GCM/NoPadding") {}
+        cipher.init(Cipher.ENCRYPT_MODE, javax.crypto.spec.SecretKeySpec(ByteArray(16), "AES"))
+        return cipher
+    }
+
+    private fun faults() = listOf<Throwable>(
+        javax.crypto.IllegalBlockSizeException("pruned"),
+        java.security.ProviderException("INVALID_OPERATION_HANDLE"),
+        javax.crypto.BadPaddingException("other"),
+    )
+
+    @Test
+    fun keystoreSideDoFinalFailureOnLoadIsUnavailableAndKeepsEverything() {
+        for (fault in faults()) {
+            val dir = File(tmp(), "secrets")
+            val vault = FakeVault()
+            store(vault, dir).save("session", byteArrayOf(1))
+            val before = files(dir)
+            vault.decryptOverride = { cipherFailingAtDoFinal(fault) }
+            val ex = assertFailsWith<SecretStoreUnavailable>(fault.toString()) { store(vault, dir).load("session") }
+            assertTrue(ex.cause === fault)
+            assertEquals(before, files(dir))
+            assertEquals(0, vault.deleted)
+            vault.decryptOverride = null
+            assertContentEquals(byteArrayOf(1), store(vault, dir).load("session"))
+        }
+    }
+
+    @Test
+    fun keystoreSideDoFinalFailureOnSaveIsUnavailableAndWritesNothing() {
+        for (fault in faults()) {
+            val dir = File(tmp(), "secrets")
+            val vault = FakeVault()
+            val s = store(vault, dir)
+            s.save("session", byteArrayOf(1))
+            val before = files(dir)
+            vault.encryptOverride = { cipherFailingAtDoFinal(fault) }
+            val ex = assertFailsWith<SecretStoreUnavailable>(fault.toString()) { s.save("session", byteArrayOf(9)) }
+            assertTrue(ex.cause === fault)
+            assertEquals(before, files(dir))
+            assertEquals(0, vault.deleted)
+            vault.encryptOverride = null
+            assertContentEquals(byteArrayOf(1), s.load("session")) // cache not poisoned
+            assertContentEquals(byteArrayOf(1), store(vault, dir).load("session"))
+        }
+    }
+
+    @Test
+    fun badTagStaysACorruptItemNotUnavailable() {
+        val dir = File(tmp(), "secrets")
+        val vault = FakeVault()
+        store(vault, dir).save("session", byteArrayOf(1))
+        vault.decryptOverride = { cipherFailingAtDoFinal(AEADBadTagException("bad tag")) }
+        val ex = assertFailsWith<AEADBadTagException> { store(vault, dir).load("session") }
+        assertFalse((ex as Throwable) is SecretStoreUnavailable)
+        assertTrue(File(dir, "session").exists())
+    }
+
+    @Test
+    fun transientFailureAtAnyStepOfSaveChangesNothing() {
+        val steps = listOf<(FakeVault) -> Unit>(
+            { it.fail = true },
+            { it.encryptOverride = { throw SecretStoreUnavailable("busy", null) } },
+            { it.encryptOverride = { cipherFailingAtDoFinal(java.security.ProviderException("x")) } },
+        )
+        for (step in steps) {
+            val dir = File(tmp(), "secrets")
+            val vault = FakeVault()
+            val s = store(vault, dir)
+            s.save("session", byteArrayOf(1))
+            val before = files(dir)
+            val createdBefore = vault.created
+            step(vault)
+            assertFailsWith<SecretStoreUnavailable> { s.save("db.key", byteArrayOf(2)) }
+            assertFailsWith<SecretStoreUnavailable> { s.save("session", byteArrayOf(3)) }
+            assertEquals(before, files(dir), "no new file, no temp file")
+            assertEquals(createdBefore, vault.created)
+            assertEquals(0, vault.deleted)
+            vault.fail = false; vault.encryptOverride = null
+            assertContentEquals(byteArrayOf(1), s.load("session"))
+            assertNull(s.load("db.key"))
+            assertContentEquals(byteArrayOf(1), store(vault, dir).load("session"))
         }
     }
 

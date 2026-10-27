@@ -5,6 +5,7 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.KeyProperties
 import java.io.IOException
+import java.security.InvalidAlgorithmParameterException
 import java.security.ProviderException
 import java.security.GeneralSecurityException
 import javax.crypto.KeyGenerator
@@ -14,6 +15,8 @@ import javax.crypto.Cipher
 import javax.crypto.SecretKey
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
+import org.example.app.contracts.SecretStoreUnavailable
+import org.example.app.contracts.SecretsLost
 
 /**
  * The wrapping key in the Android Keystore, alias `app.secrets.v1`: AES-256-GCM, random nonces required,
@@ -24,7 +27,12 @@ import javax.crypto.spec.GCMParameterSpec
  * loss ([SecretsLost]). Every other failure, including a null key for an alias that exists and
  * [UnrecoverableKeyException], is [SecretStoreUnavailable]: retry later, delete nothing.
  */
-class KeystoreKey : WrappingKeyVault {
+class KeystoreKey internal constructor(
+    private val openKeyStore: () -> KeyStore,
+    private val generateKey: (strongBox: Boolean) -> SecretKey,
+) : WrappingKeyVault {
+    constructor() : this({ openAndroidKeyStore() }, { strongBox -> generateAndroidKey(strongBox) })
+
     @Volatile private var backingKind: String? = null
 
     /** `"strongbox"`, `"tee"`, or `"unknown"` before a key exists. Reads only; never makes a key. */
@@ -57,7 +65,7 @@ class KeystoreKey : WrappingKeyVault {
         mapped {
             if (keyStore().containsAlias(ALIAS)) return@mapped
             val (_, level) = generateWithFallback(
-                generate = { strongBox -> generate(strongBox) },
+                generate = generateKey,
                 cleanup = { try { keyStore().deleteEntry(ALIAS) } catch (_: Exception) {} },
             )
             backingKind = level
@@ -85,7 +93,7 @@ class KeystoreKey : WrappingKeyVault {
         key
     }
 
-    private fun keyStore(): KeyStore = KeyStore.getInstance(PROVIDER).apply { load(null) }
+    private fun keyStore(): KeyStore = openKeyStore()
 
     private inline fun <T> mapped(block: () -> T): T = try {
         block()
@@ -113,20 +121,22 @@ class KeystoreKey : WrappingKeyVault {
         TEE
     }
 
-    private fun generate(strongBox: Boolean): SecretKey {
-        val spec = KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
-            .setKeySize(256)
-            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-            .setRandomizedEncryptionRequired(true)
-            .setUserAuthenticationRequired(false)
-            .setUnlockedDeviceRequired(false)
-            .setIsStrongBoxBacked(strongBox)
-            .build()
-        return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, PROVIDER).apply { init(spec) }.generateKey()
-    }
-
     companion object {
+        internal fun openAndroidKeyStore(): KeyStore = KeyStore.getInstance(PROVIDER).apply { load(null) }
+
+        internal fun generateAndroidKey(strongBox: Boolean): SecretKey {
+            val spec = KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+                .setKeySize(256)
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .setRandomizedEncryptionRequired(true)
+                .setUserAuthenticationRequired(false)
+                .setUnlockedDeviceRequired(false)
+                .setIsStrongBoxBacked(strongBox)
+                .build()
+            return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, PROVIDER).apply { init(spec) }.generateKey()
+        }
+
         const val ALIAS = "app.secrets.v1"
         const val STRONGBOX = "strongbox"
         const val TEE = "tee"
@@ -139,13 +149,16 @@ class KeystoreKey : WrappingKeyVault {
 
 /**
  * Generates with StrongBox first. Any [ProviderException] (which includes `StrongBoxUnavailableException`)
- * from the StrongBox attempt falls back to the TEE after [cleanup] drops any partial alias. A failure of the
+ * or [InvalidAlgorithmParameterException] from the StrongBox attempt falls back to the TEE after [cleanup] drops any partial alias. A failure of the
  * TEE attempt propagates. Returns the key and where it lives.
  */
 internal fun <T> generateWithFallback(generate: (strongBox: Boolean) -> T, cleanup: () -> Unit): Pair<T, String> =
     try {
         generate(true) to KeystoreKey.STRONGBOX
     } catch (_: ProviderException) {
+        cleanup()
+        generate(false) to KeystoreKey.TEE
+    } catch (_: InvalidAlgorithmParameterException) {
         cleanup()
         generate(false) to KeystoreKey.TEE
     }

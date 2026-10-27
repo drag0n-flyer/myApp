@@ -1,13 +1,19 @@
 package org.example.app.auth
 
 import java.io.File
-import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
+import java.nio.channels.FileChannel
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.nio.file.StandardOpenOption
+import java.security.GeneralSecurityException
+import java.security.ProviderException
+import javax.crypto.AEADBadTagException
 import javax.crypto.Cipher
 import org.example.app.contracts.SecretStore
+import org.example.app.contracts.SecretStoreUnavailable
+import org.example.app.contracts.SecretsLost
 
 /**
  * The one AES-256-GCM wrapping key. The real one lives in the Android Keystore ([KeystoreKey]);
@@ -65,8 +71,10 @@ class VaultSecretStore(
         if (raw.size < HEADER_BYTES + TAG_BYTES) throw IOException("Stored secret is too short")
         if (raw[0] != VERSION) throw IOException("Unsupported secret format")
         val cipher = vault.decryptCipher(raw.copyOfRange(1, HEADER_BYTES))
-        cipher.updateAAD(name.toByteArray(Charsets.UTF_8))
-        val plain = cipher.doFinal(raw, HEADER_BYTES, raw.size - HEADER_BYTES)
+        val plain = cipherCall {
+            cipher.updateAAD(name.toByteArray(Charsets.UTF_8))
+            cipher.doFinal(raw, HEADER_BYTES, raw.size - HEADER_BYTES)
+        }
         logBackingOnce()
         cache[name] = plain
         return plain.copyOf()
@@ -115,8 +123,10 @@ class VaultSecretStore(
 
     private fun seal(name: String, value: ByteArray): ByteArray {
         val cipher = vault.encryptCipher()
-        cipher.updateAAD(name.toByteArray(Charsets.UTF_8))
-        val ct = cipher.doFinal(value)
+        val ct = cipherCall {
+            cipher.updateAAD(name.toByteArray(Charsets.UTF_8))
+            cipher.doFinal(value)
+        }
         val nonce = cipher.iv
         check(nonce.size == NONCE_BYTES) { "Unexpected nonce length" }
         logBackingOnce()
@@ -124,9 +134,7 @@ class VaultSecretStore(
     }
 
     /**
-     * Temp file, fsync, atomic rename, then fsync the directory. The directory sync opens the directory
-     * read-only and calls fsync on it (works on Linux and Android's ext4/f2fs); it is best effort because
-     * some filesystems refuse it, and the rename is already atomic without it.
+     * Temp file, fsync, atomic rename, then fsync the directory ([syncDirectory], best effort).
      */
     private fun writeDurably(name: String, sealed: ByteArray) {
         if (!dir.isDirectory && !dir.mkdirs() && !dir.isDirectory) throw IOException("Could not create secrets directory")
@@ -142,11 +150,26 @@ class VaultSecretStore(
             tmp.delete()
             throw e
         }
-        try {
-            FileInputStream(dir).use { it.fd.sync() }
-        } catch (_: IOException) {
-        } catch (_: SecurityException) {
-        }
+        syncDirectory(dir)
+    }
+
+    /**
+     * The crypto runs inside the keystore daemon at `doFinal`, so a transient daemon failure surfaces there.
+     * [AEADBadTagException] means the item failed authentication (corrupt) and passes through; every other
+     * cipher-side failure is [SecretStoreUnavailable].
+     */
+    private inline fun <T> cipherCall(block: () -> T): T = try {
+        block()
+    } catch (e: AEADBadTagException) {
+        throw e
+    } catch (e: SecretStoreUnavailable) {
+        throw e
+    } catch (e: SecretsLost) {
+        throw e
+    } catch (e: GeneralSecurityException) { // IllegalBlockSize, other BadPadding, ...
+        throw SecretStoreUnavailable("Keystore cipher failure", e)
+    } catch (e: ProviderException) {
+        throw SecretStoreUnavailable("Keystore provider failure", e)
     }
 
     private fun logBackingOnce() {
@@ -169,4 +192,21 @@ class VaultSecretStore(
         /** Secret names may not start with this, so a temp file never collides with a secret. */
         const val TEMP_PREFIX = "~tmp~"
     }
+}
+
+/**
+ * Best-effort fsync of a directory, so a rename inside it survives power loss. A directory cannot be opened
+ * with `FileInputStream` (the JDK and Android libcore both refuse with EISDIR), so this opens a read-only
+ * [FileChannel] on it and calls `force`. Returns whether the sync happened; some filesystems refuse it, and
+ * the rename is already atomic without it.
+ */
+internal fun syncDirectory(dir: File): Boolean = try {
+    FileChannel.open(dir.toPath(), StandardOpenOption.READ).use { it.force(true) }
+    true
+} catch (_: IOException) {
+    false
+} catch (_: UnsupportedOperationException) {
+    false
+} catch (_: SecurityException) {
+    false
 }

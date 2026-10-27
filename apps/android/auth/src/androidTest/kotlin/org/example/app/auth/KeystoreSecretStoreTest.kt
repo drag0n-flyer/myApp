@@ -26,6 +26,9 @@ class KeystoreSecretStoreTest {
     private val dir = File(context.noBackupFilesDir, "secrets")
 
     private fun newStore() = KeystoreSecretStore(context, dir)
+
+    /** A store with its own empty cache on the same directory and the real Keystore: reads go to disk. */
+    private fun uncachedStore() = VaultSecretStore(KeystoreKey(), dir) {}
     private fun aliasExists() = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.containsAlias(KeystoreKey.ALIAS)
 
     @BeforeTest fun clean() { newStore().wipeAll() }
@@ -53,7 +56,7 @@ class KeystoreSecretStoreTest {
         s.save("session", byteArrayOf(1))
         s.save("db.key", byteArrayOf(2))
         File(dir, "session").copyTo(File(dir, "db.key"), overwrite = true)
-        assertFailsWith<AEADBadTagException> { newStore().load("db.key") }
+        assertFailsWith<AEADBadTagException> { uncachedStore().load("db.key") }
         assertTrue(aliasExists())
         assertTrue(File(dir, "db.key").exists())
     }
@@ -105,6 +108,7 @@ class KeystoreSecretStoreTest {
     fun createKeyNeverReplacesAnExistingKey() {
         newStore().save("session", byteArrayOf(7))
         KeystoreKey().createKey()
-        assertContentEquals(byteArrayOf(7), newStore().load("session"))
+        // Through a fresh store, so the shared cache cannot hide a replaced key: the file must still decrypt.
+        assertContentEquals(byteArrayOf(7), uncachedStore().load("session"))
     }
 }
