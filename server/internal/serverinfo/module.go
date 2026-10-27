@@ -14,7 +14,6 @@ import (
 	"github.com/drag0n-flyer/myApp/server/internal/core"
 	"github.com/drag0n-flyer/myApp/server/internal/delivery"
 	"github.com/drag0n-flyer/myApp/server/internal/httpx"
-	"github.com/drag0n-flyer/myApp/server/internal/push"
 )
 
 // Module is the serverinfo module.
@@ -63,54 +62,14 @@ func (m *Module) doc(name, contentType string) httpx.HandlerFunc {
 	}
 }
 
-func (m *Module) info(w http.ResponseWriter, _ *http.Request) error {
-	p, c := m.d.Policy, m.d.Config
-	var escrow, gateway *string
-	if c.EscrowKeyFile != "" {
-		k, err := m.escrowPublicKey()
-		if err != nil {
-			return err
-		}
-		escrow = &k
+func (m *Module) info(w http.ResponseWriter, r *http.Request) error {
+	b, err := m.Document(r.Context())
+	if err != nil {
+		return err
 	}
-	if c.PushGatewayURL != "" {
-		gateway = &c.PushGatewayURL
-	}
-	var vapidKey *string
-	if c.VapidKeyFile != "" {
-		m.mu.Lock()
-		if m.vapidKey == "" {
-			k, err := push.VAPIDPublicKey(c.VapidKeyFile)
-			if err != nil {
-				m.mu.Unlock()
-				return err
-			}
-			m.vapidKey = k
-		}
-		k := m.vapidKey
-		m.mu.Unlock()
-		vapidKey = &k
-	}
-	features := []string{"linking"}
-	if c.TURNSecret != "" {
-		features = []string{"calls", "video", "linking"}
-	}
-	type obj = map[string]any
-	httpx.JSON(w, http.StatusOK, obj{
-		"protocol":       1,
-		"host":           c.Host,
-		"requiresInvite": p.RequiresInvite,
-		"policy": obj{
-			"defaultMode":     p.DefaultMode,
-			"maxMode":         p.MaxMode,
-			"defaultIPHiding": p.DefaultIPHiding,
-		},
-		"encryption": obj{"newConversations": p.Encryption.NewConversations, "escrowKey": escrow},
-		"push":       obj{"gateway": gateway, "vapidKey": vapidKey},
-		"features":   features,
-		"federation": false,
-		"limits":     obj{"attachmentBytes": p.Limits.AttachmentBytes},
-	})
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(b)
 	return nil
 }
 

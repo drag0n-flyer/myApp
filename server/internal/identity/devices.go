@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -43,13 +44,22 @@ func (m *Module) listDevices(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// revokeDevice answers DELETE /v1/devices/{id}. Deleting the device row ends
-// its sessions and everything else that cascades from it. After the commit the
-// device's connection is closed and the account's other devices are told.
-func (m *Module) revokeDevice(w http.ResponseWriter, r *http.Request) error {
-	ctx := r.Context()
-	p := httpx.PrincipalFrom(ctx)
-	id := r.PathValue("id")
+// revokeDeviceHandler answers DELETE /v1/devices/{id}.
+func (m *Module) revokeDeviceHandler(w http.ResponseWriter, r *http.Request) error {
+	p := httpx.PrincipalFrom(r.Context())
+	if err := m.revokeDevice(r.Context(), p.AccountID, r.PathValue("id")); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+// revokeDevice deletes the account's device. Deleting the device row ends its
+// sessions and everything else that cascades from it. After the commit the
+// device's connection is closed and the account's other devices are told. A
+// device that is not the account's is a not_found error. The user and admin
+// paths both come here.
+func (m *Module) revokeDevice(ctx context.Context, accountID, id string) error {
 	if !uuidRE.MatchString(id) {
 		return httpx.Err("not_found", "no such device")
 	}
@@ -58,14 +68,14 @@ func (m *Module) revokeDevice(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
-	tag, err := tx.Exec(ctx, `delete from devices where id = $1 and account_id = $2`, id, p.AccountID)
+	tag, err := tx.Exec(ctx, `delete from devices where id = $1 and account_id = $2`, id, accountID)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() != 1 {
 		return httpx.Err("not_found", "no such device")
 	}
-	rows, err := tx.Query(ctx, `select id from devices where account_id = $1`, p.AccountID)
+	rows, err := tx.Query(ctx, `select id from devices where account_id = $1`, accountID)
 	if err != nil {
 		return err
 	}
@@ -80,6 +90,5 @@ func (m *Module) revokeDevice(w http.ResponseWriter, r *http.Request) error {
 	for _, dev := range remaining {
 		m.d.Notify.Notify(ctx, dev, core.Event{Type: "device.revoked", Data: map[string]string{"deviceID": id}})
 	}
-	w.WriteHeader(http.StatusNoContent)
 	return nil
 }

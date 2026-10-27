@@ -50,13 +50,13 @@ class DataModePolicyTest {
         val o = DataModePolicy.sheetOptions(capped, s, NetworkType.Mobile, null)
         assertEquals(listOf("mode_auto", "mode_ultra_low", "mode_data_saver", "mode_balanced", "mode_high"), o.map { it.titleKey })
         assertTrue(o[0].isSelected)
-        assertNull(o[0].estimate)
+        assertNull(o[0].estimateMB)
         assertEquals("note_above_mobile_limit", o[3].noteKey)
         assertTrue(o[3].isEnabled)
         assertEquals("note_limited_by_server", o[4].noteKey)
         assertFalse(o[4].isEnabled)
         assertNull(o[2].noteKey)
-        assertEquals("~3 MB per 10 min", o[2].estimate)
+        assertEquals(3, o[2].estimateMB)
     }
 
     @Test fun stripLabels() {

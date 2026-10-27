@@ -249,4 +249,138 @@
     <string name="err_biometrics">Couldn\'t confirm it\'s you. Check your fingerprint or face and try again.</string>
     <string name="err_network">Can\'t reach the server. Check your connection and try again.</string>
     <string name="err_server">Something went wrong on the server. Try again later.</string>
+
+    <!-- Call screens -->
+    <string name="call_connecting">Connecting…</string>
+    <string name="call_ringing">Ringing…</string>
+    <string name="call_incoming">Incoming call</string>
+    <string name="call_ended">Call ended</string>
+    <string name="call_declined">Call declined</string>
+    <string name="call_no_answer">No answer</string>
+    <string name="call_answered_elsewhere">Answered on another device</string>
+    <string name="call_failed">Call failed</string>
+    <string name="call_network_a11y">Network %1$s</string>
+    <string name="call_mode_pill_auto">%1$s · %2$s</string>
+    <string name="call_ctrl_speaker">Speaker</string>
+    <string name="call_ctrl_flip">Flip camera</string>
+    <string name="call_ctrl_mute">Mute</string>
+    <string name="call_ctrl_unmute">Unmute</string>
+    <string name="call_ctrl_video">Video</string>
+    <string name="call_ctrl_data">Data</string>
+    <string name="call_ctrl_end">End</string>
+    <string name="call_answer">Answer</string>
+    <string name="call_decline">Decline</string>
+    <string name="call_remote_video">Video from the other person</string>
+    <string name="call_self_video">Your video</string>
+    <string name="call_data_sheet_title">Data for this call</string>
+    <string name="call_data_sheet_footer">This call only · audio, both directions, estimated</string>
+    <string name="data_size_kb">%1$s KB</string>
+    <string name="data_size_mb">%1$s MB</string>
+    <string name="call_data_used">≈ %1$s used</string>
+    <string name="call_data_estimate">~%1$s MB per 10 min</string>
+    <string name="call_simulate">Simulate network</string>
+    <string name="call_simulate_good">Good</string>
+    <string name="call_simulate_weak">Weak</string>
+    <string name="call_simulate_very_weak">Very weak</string>
+    <string name="call_simulate_lost">Lost</string>
+    <string name="call_simulate_advance">Advance 10 s</string>
+
+    <!-- Calls tab -->
+    <string name="calls_filter_all">All</string>
+    <string name="calls_filter_missed">Missed</string>
+    <string name="calls_empty">No calls</string>
+    <string name="calls_incoming">Incoming</string>
+    <string name="calls_outgoing">Outgoing</string>
+    <string name="calls_call_back">Call %1$s</string>
+
+    <!-- Contacts and message requests -->
+    <string name="contacts_invite">Invite people</string>
+    <string name="contacts_add">Add contact</string>
+    <string name="contacts_empty">No contacts yet</string>
+    <string name="invite_message">Join me on %1$s: %2$s</string>
+    <string name="add_username">Username</string>
+    <string name="add_submit">Add</string>
+    <string name="add_not_found">No one with that username on this server.</string>
+    <string name="requests_title">Message requests</string>
+    <string name="requests_footer">People not in your contacts land here. They can\'t ring you until you accept.</string>
+    <string name="requests_empty">No message requests</string>
+
+    <!-- Settings -->
+    <string name="settings_server">Server</string>
+    <string name="settings_linked_devices">Linked devices</string>
+    <string name="settings_privacy">Privacy</string>
+    <string name="settings_data">Data &amp; Storage</string>
+    <string name="settings_notifications">Notifications</string>
+    <string name="settings_folders">Chat folders</string>
+    <string name="settings_calls_audio">Calls &amp; Audio</string>
+    <string name="settings_server_connected">Connected</string>
+
+    <!-- Privacy -->
+    <string name="privacy_ip_title">Hide my IP address in calls</string>
+    <string name="privacy_find_title">Who can find me</string>
+    <string name="privacy_find_username">By username</string>
+    <string name="privacy_find_email">By email</string>
+    <string name="privacy_messages">Messages</string>
+    <string name="privacy_read_receipts">Read receipts</string>
+    <string name="privacy_blocked">Blocked</string>
+    <string name="privacy_blocked_empty">No one blocked</string>
+    <string name="disappear_1_day">1 day</string>
+    <string name="disappear_1_week">1 week</string>
+    <string name="disappear_4_weeks">4 weeks</string>
+
+    <!-- Data and storage -->
+    <string name="data_calls">Calls</string>
+    <string name="data_call_mode">Call data mode</string>
+    <string name="data_mobile_limit">Limit on mobile data</string>
+    <string name="data_video_off">Start video calls with video off on mobile</string>
+    <string name="data_server_footer">Server default: %1$s · Server maximum: %2$s</string>
+    <string name="data_auto_download">Auto-download media</string>
+    <string name="data_wifi">On Wi-Fi</string>
+    <string name="data_mobile">On mobile data</string>
+    <string name="data_voice_always">Voice messages always</string>
+
+    <!-- Calls and audio -->
+    <string name="audio_noise">Background noise</string>
+    <string name="audio_standard">Standard</string>
+    <string name="audio_standard_subtitle">Built-in noise reduction</string>
+    <string name="audio_enhanced">Enhanced</string>
+    <string name="audio_enhanced_subtitle">Stronger noise removal, uses a little more battery</string>
+    <string name="audio_off">Off</string>
+    <string name="audio_off_subtitle">No noise reduction</string>
+
+    <!-- Notifications -->
+    <string name="notif_delivery">Notification delivery</string>
+    <string name="notif_google">Google</string>
+    <string name="notif_google_subtitle">Works when Google Play services are on this phone</string>
+    <string name="notif_unifiedpush">UnifiedPush</string>
+    <string name="notif_unifiedpush_subtitle">Use a push app you choose, no Google needed</string>
+    <string name="notif_full_screen">Show incoming calls over the lock screen</string>
+    <string name="notif_full_screen_subtitle">Allow it in your phone\'s settings so calls can fill the screen</string>
+
+    <!-- Linked devices -->
+    <string name="devices_active_now">Active now</string>
+    <string name="devices_last_active">Last active %1$s</string>
+    <string name="device_iphone">iPhone</string>
+    <string name="device_mac">Mac</string>
+    <string name="device_android">Android</string>
+    <string name="devices_remove">Remove %1$s</string>
+    <string name="devices_remove_title">Remove this device?</string>
+    <string name="devices_footer">Remove a device you no longer use.</string>
+
+    <!-- Chat folders -->
+    <string name="folders_fixed_footer">All and Unread are always there.</string>
+    <string name="folders_new">New folder</string>
+    <string name="folders_name">Folder name</string>
+    <string name="folders_rename">Rename folder</string>
+    <string name="folders_save">Save</string>
+    <string name="folders_create">Create</string>
+    <string name="folders_chats">Chats</string>
+    <string name="folders_delete">Delete %1$s</string>
+    <string name="folders_move_up">Move %1$s up</string>
+    <string name="folders_move_down">Move %1$s down</string>
+    <string name="remove">Remove</string>
+    <string name="server_address">Address</string>
+    <string name="server_status">Status</string>
+    <string name="server_connected">Connected</string>
+    <string name="server_footer">Switching to another server doesn\'t move your contacts or chats.</string>
 </resources>

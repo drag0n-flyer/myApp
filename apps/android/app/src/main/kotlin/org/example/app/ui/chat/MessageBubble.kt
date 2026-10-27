@@ -28,6 +28,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import org.example.app.R
 import org.example.app.core.calls.DataFormat
+import org.example.app.ui.dataSizeText
 import org.example.app.core.chats.DeliveryStatus
 import org.example.app.core.chats.MediaState
 import org.example.app.core.chats.Message
@@ -112,14 +113,14 @@ private fun Body(message: Message, autoDownloads: (MediaKind) -> Boolean, onDown
             Text((message.preview as? MessagePreview.Resource)?.args?.firstOrNull().orEmpty())
         }
         is MessageContent.Photo -> MediaTile(
-            title = stringResource(R.string.photo_with_size, DataFormat.size(c.bytes)),
+            title = stringResource(R.string.photo_with_size, dataSizeText(DataFormat.size(c.bytes))),
             media = message.media,
             wait = !autoDownloads(MediaKind.Photo),
             blurred = true,
             onDownload = onDownload,
         )
         is MessageContent.File -> MediaTile(
-            title = stringResource(R.string.file_with_size, c.name, DataFormat.size(c.bytes)),
+            title = stringResource(R.string.file_with_size, c.name, dataSizeText(DataFormat.size(c.bytes))),
             media = message.media,
             wait = !autoDownloads(MediaKind.File),
             blurred = false,
