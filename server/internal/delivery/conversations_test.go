@@ -369,6 +369,19 @@ func TestRemovedDeviceGetsCommitOnly(t *testing.T) {
 	if r := w.c.Do(&w.bob2, "GET", "/v1/conversations/"+id, nil); r.Status != 404 {
 		t.Fatalf("removed device get: %s", r)
 	}
+	// A message posted afterwards reaches bob1 but not bob2.
+	if r := w.post(t, w.ana1, id, 2, "later", "m1", nil); r.Status != 200 {
+		t.Fatalf("post: %s", r)
+	}
+	if got := w.messages(t, w.bob1); len(got) != 1 {
+		t.Fatalf("bob1 messages = %+v", got)
+	}
+	if got := w.messages(t, w.bob2); len(got) != 0 {
+		t.Fatalf("removed device got a message: %+v", got)
+	}
+	if r := w.post(t, w.bob2, id, 2, "x", "m2", nil); r.Status != 404 {
+		t.Fatalf("removed device post: %s", r)
+	}
 }
 
 func TestInboxItemJSON(t *testing.T) {
