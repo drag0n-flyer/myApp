@@ -200,3 +200,12 @@ func message(_ id: String, chat: String = "c1", at: Double = 1, folded: String =
     #expect(a.state == "local" && a.localPath == "p" && a.downloaded == 2)
     #expect(try repo.attachment(id: "att")?.messageID == "m1")
 }
+
+@Test func testEntriesByPrefix() throws {
+    let (_, repo) = try makeRepo()
+    try repo.set("setting.a", Data([1]))
+    try repo.set("setting.b", Data([2]))
+    try repo.set("settingx", Data([3]))
+    try repo.set("inbox.cursor", Data([4]))
+    #expect(try repo.entries(prefix: "setting.") == ["setting.a": Data([1]), "setting.b": Data([2])])
+}

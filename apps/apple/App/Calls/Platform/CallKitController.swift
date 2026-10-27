@@ -11,16 +11,22 @@ protocol CallKitCallHandling: AnyObject {
     /// Decline while ringing, hang up once answered; the engine decides from its own state.
     func callKitEnd(callID: UUID)
     func callKitSetMuted(callID: UUID, muted: Bool)
+    /// May arrive before the engine knows the call (answer before the payload opened): keep it, do not drop it.
     func callKitAudioDidActivate(_ session: AVAudioSession)
     func callKitAudioDidDeactivate(_ session: AVAudioSession)
+    /// CallKit dropped every call (provider reset): the engine must end its calls and stop audio.
+    func callKitReset()
 }
 
 /// Owns the one `CXProvider` and the `CXCallController`. The server call ID (a UUIDv4 string) is the CallKit UUID.
 @MainActor
 final class CallKitController: NSObject, CXProviderDelegate {
+    /// `VoIPPushCenter` sets itself here to route push-created calls. Do not replace it with the engine.
     weak var handler: CallKitCallHandling?
     private let provider: CXProvider
     private let controller = CXCallController()
+    /// Display names of outgoing calls between `requestStart` and CallKit's start action.
+    private var outgoingNames: [UUID: String] = [:]
 
     static func configuration(appName: String) -> CXProviderConfiguration {
         let c = CXProviderConfiguration()
@@ -89,7 +95,7 @@ final class CallKitController: NSObject, CXProviderDelegate {
     /// Outgoing calls: tells CallKit about the call so the system UI and audio session cooperate.
     func requestStart(contact: Contact, video: Bool, callID: UUID) {
         let action = CXStartCallAction(call: callID, handle: CXHandle(type: .generic, value: contact.id))
-        action.contactIdentifier = contact.displayName
+        outgoingNames[callID] = contact.displayName
         action.isVideo = video
         controller.request(CXTransaction(action: action)) { _ in }
     }
@@ -102,19 +108,17 @@ final class CallKitController: NSObject, CXProviderDelegate {
     // MARK: CXProviderDelegate (delivered on the main queue)
 
     nonisolated func providerDidReset(_ provider: CXProvider) {
-        MainActor.assumeIsolated {
-            // CallKit dropped all calls; end whatever the engine has.
-            // The engine ignores IDs it does not know.
-        }
+        MainActor.assumeIsolated { handler?.callKitReset() }
     }
 
     nonisolated func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
         MainActor.assumeIsolated {
             let update = CXCallUpdate()
             update.remoteHandle = action.handle
-            update.localizedCallerName = action.contactIdentifier
+            update.localizedCallerName = outgoingNames.removeValue(forKey: action.callUUID)
             update.hasVideo = action.isVideo
             provider.reportCall(with: action.callUUID, updated: update)
+            provider.reportOutgoingCall(with: action.callUUID, startedConnectingAt: nil)
             action.fulfill()
         }
     }
@@ -157,5 +161,18 @@ extension CXCallEndedReason {
         case .unanswered: self = .unanswered
         }
     }
+}
+
+extension CXCallEndedReason {
+    init(_ kind: CallKitEndKind) {
+        switch kind {
+        case .failed: self = .failed
+        case .remoteEnded: self = .remoteEnded
+        case .unanswered: self = .unanswered
+        case .answeredElsewhere: self = .answeredElsewhere
+        }
+    }
+    /// The push-created call duplicates one the engine already shows: end it without a missed-call entry.
+    static let duplicate: CXCallEndedReason = .answeredElsewhere
 }
 #endif

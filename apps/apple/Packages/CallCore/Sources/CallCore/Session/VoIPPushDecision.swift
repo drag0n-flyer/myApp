@@ -33,6 +33,8 @@ public enum VoIPPushDecision {
             let name = contact.displayName
             if isStranger {
                 action = .reportThenEnd(name: name, reason: .unanswered)
+            } else if case .ended(let why)? = status, why == "missed" {
+                action = .reportThenEnd(name: name, reason: .unanswered)
             } else if let status, status != .ringing, status != .unknown {
                 action = .reportThenEnd(name: name, reason: .remoteEnded)
             } else {
@@ -121,7 +123,8 @@ public struct VoIPPushResolver: Sendable {
         self.sealer = sealer; self.contact = contact; self.status = status
     }
 
-    public func resolve(sealed: Data?) async -> VoIPPushResolution {
+    /// Local work only (decrypt, sender, contact lookup): the caller's name can be shown as soon as this returns.
+    public func open(sealed: Data?) async -> VoIPPushResolution {
         guard let sealed, !sealed.isEmpty else {
             return VoIPPushResolution(payload: .empty, isStranger: false, status: nil)
         }
@@ -129,10 +132,33 @@ public struct VoIPPushResolver: Sendable {
             return VoIPPushResolution(payload: .undecryptable, isStranger: false, status: nil)
         }
         if let known = await contact(opened.senderAccountID) {
-            let st = await status(opened.payload.callID)
-            return VoIPPushResolution(payload: .ring(opened.payload, contact: known), isStranger: false, status: st)
+            return VoIPPushResolution(payload: .ring(opened.payload, contact: known), isStranger: false, status: nil)
         }
         let stranger = Contact(id: opened.senderAccountID, displayName: VoIPPushDecision.unknownCallerName, username: "")
         return VoIPPushResolution(payload: .ring(opened.payload, contact: stranger), isStranger: true, status: nil)
+    }
+
+    public static let defaultStatusTimeout: Duration = .seconds(5)
+
+    /// `call.status`, or nil when it cannot be fetched within `timeout`. The `status` closure must honor
+    /// cancellation. On nil the call keeps ringing; the server's own ring timeout ends it.
+    public func fetchStatus(callID: String, timeout: Duration = Self.defaultStatusTimeout) async -> CallStatus? {
+        let status = self.status
+        return await withTaskGroup(of: CallStatus?.self) { group in
+            group.addTask { await status(callID) }
+            group.addTask { try? await Task.sleep(for: timeout); return nil }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+    }
+
+    /// `open` then `fetchStatus` (known contacts only), for callers that want both at once.
+    public func resolve(sealed: Data?, statusTimeout: Duration = Self.defaultStatusTimeout) async -> VoIPPushResolution {
+        var r = await open(sealed: sealed)
+        if case let .ring(ring, _) = r.payload, !r.isStranger {
+            r.status = await fetchStatus(callID: ring.callID, timeout: statusTimeout)
+        }
+        return r
     }
 }

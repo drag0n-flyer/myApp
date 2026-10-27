@@ -17,6 +17,8 @@ public protocol ChatStore: AnyObject {
     func folderChipTitle(_ folder: ChatFolder) -> String
     var messageRequests: [Chat] { get }
     var messageRequestsRowTitle: String? { get }
+    /// Account IDs this device has blocked (Settings > Privacy).
+    var blockedIDs: Set<String> { get }
     func chat(id: String) -> Chat?
     func contact(id: String) -> Contact?
     /// Called after any change to the store's data.
@@ -31,6 +33,8 @@ public protocol ChatStore: AnyObject {
     func delete(messageID: String, in chatID: String)
     func download(messageID: String, in chatID: String)
     func recordCall(_ summary: CallSummary, contactID: String, outgoing: Bool, at date: Date)
+    /// False while the engine cannot give real member keys: the Verify screen and the Verified seal stay hidden.
+    var supportsSafetyNumbers: Bool { get }
     /// `nil` until the chat has a conversation.
     func safetyNumber(for chatID: String) -> SafetyNumber?
     /// Local only.

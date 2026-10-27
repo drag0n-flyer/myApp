@@ -13,6 +13,7 @@ final class NotificationServiceTests: XCTestCase {
     override func setUp() { continueAfterFailure = false }
 
     func testPushShowsDecryptedPreview() async throws {
+        throw XCTSkip("Needs I1: shared -fakeMLS engine state and a CI step that sends the push with xcrun simctl push")
         let app = XCUIApplication.launched(extra: ["-fakeMLS"])
         XCTAssertTrue(app.tab("Chats").waitToExist())
 

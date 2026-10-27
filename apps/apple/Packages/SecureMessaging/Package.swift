@@ -31,6 +31,10 @@ if FileManager.default.fileExists(atPath: packageDirectory + "/" + xcframework) 
     if let index = targets.firstIndex(where: { $0.name == "SecureMessaging" }) {
         targets[index].dependencies.append("MLSFFIBindings")
     }
+    // The live-engine tests gate on `canImport(MLSFFIBindings)`, so the test target must see it.
+    if let index = targets.firstIndex(where: { $0.name == "SecureMessagingTests" }) {
+        targets[index].dependencies.append("MLSFFIBindings")
+    }
     // M6 adds the executable target `mls-nse-sim` here.
 }
 #endif

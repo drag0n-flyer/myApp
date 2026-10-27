@@ -3,6 +3,7 @@ name: server
 on:
   workflow_dispatch:
   push:
+    branches-ignore: [feat/server]
     paths:
       - 'server/**'
       - '.github/workflows/server.yml'

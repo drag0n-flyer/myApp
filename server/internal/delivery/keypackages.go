@@ -103,7 +103,8 @@ type claimedKeyPackage struct {
 func (m *Module) claimKeyPackages(w http.ResponseWriter, r *http.Request) error {
 	p := httpx.PrincipalFrom(r.Context())
 	var in struct {
-		AccountID string `json:"accountID"`
+		AccountID string   `json:"accountID"`
+		DeviceIDs []string `json:"deviceIDs"`
 	}
 	if err := httpx.Decode(r, &in); err != nil {
 		return err
@@ -133,6 +134,13 @@ func (m *Module) claimKeyPackages(w http.ResponseWriter, r *http.Request) error 
 	devices, err := m.d.Directory.DeviceIDs(ctx, target)
 	if err != nil {
 		return err
+	}
+
+	// An optional filter limits the claim to some devices of the account.
+	// IDs that are not devices of the account are ignored, so the reply never
+	// tells whether a device exists.
+	if len(in.DeviceIDs) > 0 {
+		devices = slices.DeleteFunc(devices, func(d string) bool { return !slices.Contains(in.DeviceIDs, d) })
 	}
 
 	// Lock devices in a fixed order so claims cannot deadlock each other.
