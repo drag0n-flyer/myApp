@@ -53,6 +53,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Script tests
-        run: python3 -m unittest scripts/test_check_rust_licenses.py
+        run: python3 -m unittest scripts/test_check_rust_licenses.py scripts/test_generate_oss_notices.py
       - name: Check crate licenses (cargo metadata)
         run: python3 scripts/check-rust-licenses.py
