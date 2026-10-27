@@ -18,7 +18,7 @@ type Relay struct{ Host, Region string }
 type Config struct {
 	Host, Listen, AdminListen, DatabaseURL, DataDir, SMTPURL, MailFrom, TURNSecret string
 	Relays                                                                         []Relay
-	PushGatewayURL, PushKeyFile, PushServerID, EscrowKeyFile                       string
+	PushGatewayURL, PushKeyFile, PushServerID, VapidKeyFile, EscrowKeyFile         string
 	AppleAppIDs                                                                    []string
 	AndroidApps                                                                    []AndroidApp // APP_ANDROID_APPS; empty accepts no Android passkey origins
 	DocsDir                                                                        string       // APP_DOCS_DIR: operator security.txt and legal pages; empty serves none
@@ -126,6 +126,7 @@ func Load(getenv func(string) string, readFile func(string) ([]byte, error)) (Co
 	c.PushGatewayURL = getenv("APP_PUSH_GATEWAY_URL")
 	c.PushKeyFile = getenv("APP_PUSH_KEY_FILE")
 	c.PushServerID = getenv("APP_PUSH_SERVER_ID")
+	c.VapidKeyFile = getenv("APP_VAPID_KEY_FILE")
 	c.EscrowKeyFile = getenv("APP_ESCROW_KEY_FILE")
 	c.AppleAppIDs = splitList(getenv("APP_APPLE_APP_IDS"))
 	apps, err := parseAndroidApps(getenv("APP_ANDROID_APPS"))

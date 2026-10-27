@@ -243,13 +243,14 @@ Relay health: every 30 s, send a STUN Binding Request (RFC 5389) over UDP to `H:
 
 ### 7.4 Push (lane D)
 
-Server endpoints: `PUT /v1/push/tokens/{kind}` (kind `alert` or `voip`) `{sealed:b64url}` → `204` (at most 2 KiB decoded; larger is `bad_request`), and `DELETE /v1/push/tokens/{kind}` → `204`.
+Server endpoints: `PUT /v1/push/tokens/{kind}` (kind `alert`, `voip` or `fcm`) `{sealed:b64url}` → `204` (at most 2 KiB decoded; larger is `bad_request`), `PUT /v1/push/tokens/unifiedpush` `{endpoint, p256dh, auth}` (not sealed; endpoint at most 1024 characters, `https` and port 443 only; `bad_request` when the server has no VAPID key) → `204`, and `DELETE /v1/push/tokens/{kind}` → `204`. A device has one of `fcm` and `unifiedpush`: uploading one deletes the other.
 
 **Sealed handle:** the device seals `{"t":"<apns token hex>","k":"alert"|"voip","e":"production"|"sandbox","b":"<bundle id>"}` with HPKE to the gateway's public key (the same suite as escrow, `info = "push-handle-v1"`). The server stores it as received and cannot read it.
 
 **Sending (`push.Sender`, implements `core.Pusher`):**
-- `PushCall` uses the device's `voip` handle if it has one (iPhone), otherwise its `alert` handle (Mac).
-- `PushMessage` uses the `alert` handle.
+- `PushCall` uses the device's `voip` handle if it has one (iPhone), then `alert` (Mac), then `fcm`, then `unifiedpush`.
+- `PushMessage` uses `alert`, then `fcm`, then `unifiedpush`.
+- A `unifiedpush` push goes straight to the distributor endpoint (RFC 8030/8291/8292, see [push](../../protocol/push.md#android-pushes-through-unifiedpush)), with no gateway, so it works when `APP_PUSH_GATEWAY_URL` is empty. The endpoint is untrusted: https and port 443 only, no redirects, no proxy, and the resolved address must be public (checked at connect time). `APP_VAPID_KEY_FILE` holds the P-256 VAPID key (`appserver keygen vapid`); `/v1/server` publishes it as `push.vapidKey`. `404` and `410` delete the registration. UnifiedPush sends run in their own pool and never hold a gateway push slot. Each send has an 8-second limit. At most 64 are in flight in all, and at most 8 message sends to one endpoint host; a send over either limit is dropped and the device fetches its inbox. A device has one message send in flight: later message pushes are coalesced, keeping only the latest payload, which goes out when the current send finishes, so the per-device limit never drops a message. A call push skips that queue and goes out at once; only the global limit can drop it. `push.Module.WaitBackground` waits for in-flight sends at shutdown.
 - No handle means no push and no error.
 
 **Padding:** the body is a 2-byte big-endian length, then the payload, then zeros up to the smallest bucket of 256, 512, 1024, 2048 or 3072 bytes. A payload over 3070 bytes is replaced by an empty one, and the device then fetches its inbox.
@@ -323,7 +324,7 @@ Server info document:
 { "protocol": 1, "host": "chat.example.org", "requiresInvite": true,
   "policy": { "defaultMode": "auto", "maxMode": "high", "defaultIPHiding": "nonContacts" },
   "encryption": { "newConversations": "e2ee", "escrowKey": null },
-  "push": { "gateway": "https://push.example.org" },
+  "push": { "gateway": "https://push.example.org", "vapidKey": "<base64url P-256 public key, or null>" },
   "features": ["calls", "video", "linking"], "federation": false,
   "limits": { "attachmentBytes": 104857600 } }
 ```
