@@ -10,6 +10,8 @@ packages:
     path: Packages/AppCore
   ServerKit:
     path: Packages/ServerKit
+  CallCore:
+    path: Packages/CallCore
 settings:
   base:
     SWIFT_VERSION: '6.0'
@@ -46,7 +48,7 @@ targets:
         PushGatewayKey: $(PUSH_GATEWAY_KEY)
         APNSEnvironment: $(APNS_ENVIRONMENT)
         KeychainAccessGroup: $(AppIdentifierPrefix)org.example.app.shared
-        UIBackgroundModes: [remote-notification]
+        UIBackgroundModes: [voip, audio, remote-notification]
     settings:
       base:
         PRODUCT_NAME: App
@@ -62,6 +64,7 @@ targets:
       - package: AppCore
       - package: ServerKit
         product: ServerKit
+      - package: CallCore
   AppMac:
     type: application
     platform: macOS
@@ -89,6 +92,7 @@ targets:
       - package: AppCore
       - package: ServerKit
         product: ServerKit
+      - package: CallCore
   AppiOSUITests:
     type: bundle.ui-testing
     platform: iOS

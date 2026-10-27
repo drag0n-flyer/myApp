@@ -10,6 +10,7 @@ public final class PlainCallSignalSealer: CallSignalSealer, @unchecked Sendable 
     public func setSender(_ id: String, of data: Data) {
         lock.withLock { senders[data] = id }
     }
+    func senderOf(_ data: Data) -> String? { lock.withLock { senders[data] } }
     public func seal(_ payload: CallSignalPayload, to contactID: String) async throws -> Data {
         try JSONEncoder().encode(payload)
     }
