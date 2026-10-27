@@ -20,8 +20,10 @@ private actor Gate {
     private var entered = false
     private var isOpen = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
+    private(set) var count = 0
     func enter() async {
         entered = true
+        count += 1
         if !isOpen { await withCheckedContinuation { waiters.append($0) } }
     }
     func open() { isOpen = true; waiters.forEach { $0.resume() }; waiters = [] }
@@ -462,15 +464,30 @@ private final class LogBox: @unchecked Sendable {
     @Test func burstOfEventsIsCoalesced() async throws {
         let rig = try await Rig.make()
         let record = try await startChat(rig)
-        let bob = Side(rig.bob1)
-        _ = try await bob.processor.syncOnce()
+        let gate = Gate()
+        let session = SessionStore(storage: MemorySessionStorage(Session(
+            host: FakeServer.host, accountID: rig.bob1.accountID, deviceID: rig.bob1.deviceID,
+            token: "test.\(rig.bob1.accountID).\(rig.bob1.deviceID)")))
+        let transport = BlockingTransport(inner: await rig.server.transport(for: rig.bob1), gate: gate)
+        let bob = Side(rig.bob1) { deps in
+            var deps = deps
+            deps.server = ServerClient(host: FakeServer.host, session: session, transport: transport)
+            return deps
+        }
         for i in 0..<5 { try await send(rig.ana1, record, .text("b\(i)", replyTo: nil)) }
         let items = try await rig.bob1.deps.server.inbox(after: nil).items
         let (events, continuation) = AsyncStream<ServerEvent>.makeStream()
+        let running = Task { await bob.processor.run(events: events) }
+        // The start-up sync is stuck in its inbox request while the whole burst arrives.
+        while !(await gate.hasEntered) { try await Task.sleep(for: .milliseconds(5)) }
         for item in items { continuation.yield(.inbox(item)) }
         continuation.finish()
-        await bob.processor.run(events: events)
+        try await Task.sleep(for: .milliseconds(200))
+        await gate.open()
+        await running.value
         #expect(try bob.texts("acc-ana").count == 5)
+        // One request for the start-up sync, one for the single extra sync. Not one per event.
+        #expect(await gate.count == 2)
     }
 
     @Test func processedByAnotherProcessBetweenPreCheckAndLock() async throws {
@@ -484,16 +501,11 @@ private final class LogBox: @unchecked Sendable {
             cursor: item.cursor, kind: item.kind, conversationID: item.conversationID, seq: item.seq, epoch: item.epoch,
             senderAccount: item.senderAccountID, senderDevice: item.senderDeviceID, payload: item.payload, sentAt: item.sentAt)])
 
-        // The "NSE" holds the lock while the app's pre-check has already passed.
-        let lock = bob.deps.lock
-        let holder = Task.detached { try lock.withLock(timeout: .seconds(2)) { Thread.sleep(forTimeInterval: 0.4) } }
-        try await Task.sleep(for: .milliseconds(100))
-        let draining = Task { await bob.processor.drainRaw() }
-        try await Task.sleep(for: .milliseconds(150))
-        // The NSE stores the message and marks the payload processed, then releases the lock.
-        try bob.deps.repo.markProcessed(hash: PortableSHA256.hash(item.payload))
-        try await holder.value
-        await draining.value
+        // The "NSE" handles the payload after the app's pre-check and before it takes the lock.
+        let repo = bob.deps.repo
+        let hash = PortableSHA256.hash(item.payload)
+        await bob.processor.setBeforeLockHook { _ in try? repo.markProcessed(hash: hash) }
+        await bob.processor.drainRaw()
         #expect(!bob.spy.processed.contains(item.payload))
         #expect(try bob.deps.repo.messages(chatID: "acc-ana", before: nil, limit: 10).filter(\.undecryptable).isEmpty)
         #expect(try bob.deps.repo.rawItems(limit: 10).isEmpty)

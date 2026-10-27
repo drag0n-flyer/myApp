@@ -9,6 +9,11 @@ import ServerKit
 /// processed in cursor order: the MLS result and its rows are written in one transaction that also marks
 /// the payload hash processed and deletes the raw row. The process lock is held only around that step,
 /// never across a network call.
+enum InboxError: Error, Equatable {
+    /// `mls.process` returned `.joined` for an item that is not a Welcome.
+    case joinedWithoutWelcome
+}
+
 public actor InboxProcessor {
     static let cursorKey = "inbox.cursor"
     static let pageSize = 100
@@ -19,8 +24,10 @@ public actor InboxProcessor {
     private let handler: IncomingHandler
     private let controls: ControlSender?
     private enum Section { case fetch, drain }
-    private var syncRunning = false
-    private var syncAgain = false
+    private var syncPending = false
+    private var streamEnded = false
+    private var wake: CheckedContinuation<Void, Never>?
+    private var beforeLock: (@Sendable (RawInboxRecord) async -> Void)?
     /// Welcomes that `mls.process` accepted but whose rows are not stored yet (retried without a second `process`).
     private var pendingJoins: [Int64: Incoming] = [:]
     private var held: Set<Section> = []
@@ -35,6 +42,9 @@ public actor InboxProcessor {
         self.handler = handler
         self.controls = controls
     }
+
+    /// Test hook: runs after the cheap pre-checks and before the process lock is taken.
+    func setBeforeLockHook(_ hook: (@Sendable (RawInboxRecord) async -> Void)?) { beforeLock = hook }
 
     // MARK: Sync
 
@@ -72,29 +82,49 @@ public actor InboxProcessor {
         return fetched
     }
 
-    /// Runs until the stream ends: syncs on start, then on every live item. A live item is only a hint.
+    /// Runs until the stream ends: syncs on start, then after live items. A live item is only a hint.
     /// Frames can arrive out of cursor order and the stream spans reconnects, so the inbox is always read
-    /// from the stored cursor, in order. A burst of events costs at most one extra sync.
+    /// from the stored cursor, in order.
+    ///
+    /// A child task reads the stream and only sets a flag, so events that arrive during a sync are
+    /// absorbed: any number of them cost one more sync.
     public func run(events: AsyncStream<ServerEvent>) async {
-        await requestSync()
-        for await event in events {
-            guard case .inbox = event else { continue }
-            await requestSync()
+        syncPending = true  // the sync on start
+        streamEnded = false
+        let reader = Task {
+            for await event in events {
+                guard case .inbox = event else { continue }
+                await self.signalEvent()
+            }
+            await self.signalEnd()
+        }
+        await withTaskCancellationHandler {
+            while true {
+                if syncPending {
+                    syncPending = false
+                    _ = try? await syncOnce()
+                } else if streamEnded {
+                    break
+                } else {
+                    // No suspension between the checks above and this registration, so no wake-up is lost.
+                    await withCheckedContinuation { wake = $0 }
+                }
+            }
+        } onCancel: {
+            reader.cancel()
         }
     }
 
-    /// Runs `syncOnce`, or when one is already running marks "sync again" so it runs once more after it.
-    private func requestSync() async {
-        if syncRunning {
-            syncAgain = true
-            return
-        }
-        syncRunning = true
-        repeat {
-            syncAgain = false
-            _ = try? await syncOnce()
-        } while syncAgain
-        syncRunning = false
+    private func signalEvent() {
+        syncPending = true
+        wake?.resume()
+        wake = nil
+    }
+
+    private func signalEnd() {
+        streamEnded = true
+        wake?.resume()
+        wake = nil
     }
 
     private func storedCursor() throws -> Int64? {
@@ -177,14 +207,17 @@ public actor InboxProcessor {
                 }
             }
 
+            await beforeLock?(raw)
             let applied = try await deps.lock.withAsyncLock(timeout: Self.lockTimeout) { () async throws -> AppliedResult? in
                 // Another process (the notification extension) may have handled this payload since the check
                 // above, so look again under the lock (Design 11).
                 if try repo.isProcessed(hash: hash) {
+                    pendingJoins[raw.cursor] = nil
                     try repo.deleteRaw(cursor: raw.cursor)
                     return nil
                 }
                 if try handler.isEchoedOwnCommit(raw, db: repo) {
+                    pendingJoins[raw.cursor] = nil
                     try repo.transaction {
                         try repo.markProcessed(hash: hash)
                         try repo.deleteRaw(cursor: raw.cursor)
@@ -213,7 +246,7 @@ public actor InboxProcessor {
                 }
                 if case .joined(let group, _) = incoming {
                     // The Welcome counts as processed only together with its conversation row.
-                    guard let serverMode else { throw SyncError.noPeer }  // never guess the mode (Design 18)
+                    guard let serverMode else { throw InboxError.joinedWithoutWelcome }  // never guess the mode (Design 18)
                     pendingJoins[raw.cursor] = incoming
                     let plan: ConversationManager.JoinPlan
                     do {
