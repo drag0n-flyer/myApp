@@ -4,7 +4,12 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.graphics.Color
 
-/** Baseline scheme from a blue seed (#1A73E8), used on Android 10 and 11 where dynamic colour does not exist. */
+/**
+ * Baseline schemes from a blue seed (#1A73E8), used on Android 10 and 11 where dynamic colour does not exist.
+ * Every M3 role is written out (none left at the stock purple defaults): accent roles from the blue tonal palette,
+ * surfaces and the surfaceContainer ladder from its low-chroma blue neutral palette (Material tone steps).
+ * BaselineThemeTest fails if any role falls back to the stock scheme.
+ */
 internal val BaselineLight = lightColorScheme(
     primary = Color(0xFF1A5FB4),
     onPrimary = Color(0xFFFFFFFF),
@@ -29,6 +34,31 @@ internal val BaselineLight = lightColorScheme(
     surfaceVariant = Color(0xFFE0E2EC),
     onSurfaceVariant = Color(0xFF44474E),
     outline = Color(0xFF74777F),
+    inversePrimary = Color(0xFFABC7FF),
+    surfaceTint = Color(0xFF1A5FB4),
+    inverseSurface = Color(0xFF2F3033),
+    inverseOnSurface = Color(0xFFF1F0F4),
+    outlineVariant = Color(0xFFC4C6D0),
+    scrim = Color(0xFF000000),
+    surfaceBright = Color(0xFFFAF9FD),
+    surfaceDim = Color(0xFFDAD9DD),
+    surfaceContainerLowest = Color(0xFFFFFFFF),
+    surfaceContainerLow = Color(0xFFF4F3F7),
+    surfaceContainer = Color(0xFFEEEDF1),
+    surfaceContainerHigh = Color(0xFFE8E7EB),
+    surfaceContainerHighest = Color(0xFFE3E2E6),
+    primaryFixed = Color(0xFFD6E3FF),
+    primaryFixedDim = Color(0xFFABC7FF),
+    onPrimaryFixed = Color(0xFF001B3E),
+    onPrimaryFixedVariant = Color(0xFF00458F),
+    secondaryFixed = Color(0xFFD9E3F8),
+    secondaryFixedDim = Color(0xFFBDC7DC),
+    onSecondaryFixed = Color(0xFF121C2B),
+    onSecondaryFixedVariant = Color(0xFF3D4758),
+    tertiaryFixed = Color(0xFFF8D8FD),
+    tertiaryFixedDim = Color(0xFFDBBCE1),
+    onTertiaryFixed = Color(0xFF28132F),
+    onTertiaryFixedVariant = Color(0xFF573E5D),
 )
 
 internal val BaselineDark = darkColorScheme(
@@ -55,4 +85,29 @@ internal val BaselineDark = darkColorScheme(
     surfaceVariant = Color(0xFF44474E),
     onSurfaceVariant = Color(0xFFC4C6D0),
     outline = Color(0xFF8E9099),
+    inversePrimary = Color(0xFF1A5FB4),
+    surfaceTint = Color(0xFFABC7FF),
+    inverseSurface = Color(0xFFE3E2E6),
+    inverseOnSurface = Color(0xFF2F3033),
+    outlineVariant = Color(0xFF44474E),
+    scrim = Color(0xFF000000),
+    surfaceBright = Color(0xFF38393D),
+    surfaceDim = Color(0xFF121317),
+    surfaceContainerLowest = Color(0xFF0D0E11),
+    surfaceContainerLow = Color(0xFF1A1B20),
+    surfaceContainer = Color(0xFF1E1F24),
+    surfaceContainerHigh = Color(0xFF292A2E),
+    surfaceContainerHighest = Color(0xFF343539),
+    primaryFixed = Color(0xFFD6E3FF),
+    primaryFixedDim = Color(0xFFABC7FF),
+    onPrimaryFixed = Color(0xFF001B3E),
+    onPrimaryFixedVariant = Color(0xFF00458F),
+    secondaryFixed = Color(0xFFD9E3F8),
+    secondaryFixedDim = Color(0xFFBDC7DC),
+    onSecondaryFixed = Color(0xFF121C2B),
+    onSecondaryFixedVariant = Color(0xFF3D4758),
+    tertiaryFixed = Color(0xFFF8D8FD),
+    tertiaryFixedDim = Color(0xFFDBBCE1),
+    onTertiaryFixed = Color(0xFF28132F),
+    onTertiaryFixedVariant = Color(0xFF573E5D),
 )
