@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io/fs"
 	"reflect"
 	"testing"
 	"time"
@@ -63,8 +64,16 @@ func TestMigrateIsIdempotent(t *testing.T) {
 	if err := pool.QueryRow(ctx, `select count(*) from schema_migrations`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
-	if n != 1 {
-		t.Fatalf("schema_migrations rows = %d, want 1", n)
+	mfs, err := db.MigrationFS()
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := fs.Glob(mfs, "*.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != len(files) {
+		t.Fatalf("schema_migrations rows = %d, want %d (one per migration file)", n, len(files))
 	}
 }
 
