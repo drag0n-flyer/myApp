@@ -211,7 +211,7 @@ Fan-out rules:
 
 Inbox rows older than `retention.inboxDays` are deleted hourly.
 
-Escrow keys: `appserver keygen escrow` prints a new X25519 private key as PKCS#8 PEM. Escrow: HPKE base mode, DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, ChaCha20-Poly1305, `info = "escrow-v1"`. The plaintext is client JSON `{conversationID, senderAccountID, sentAt, body}`. Escrow rows keep `retention.escrowDays`. The CLI command `appserver escrow export --conversation <id> --reason <text>` decrypts the copies, writes JSON lines to stdout, and appends a row to `escrow_access_log`.
+Escrow keys: `appserver keygen escrow` prints a new X25519 private key as PKCS#8 PEM. Escrow (wire format: the stored blob is the HPKE encapsulated key (32 bytes) followed by the ciphertext, single-shot with empty AAD — CryptoKit `HPKE.Sender` `encapsulatedKey || seal(_:)`): HPKE base mode, DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, ChaCha20-Poly1305, `info = "escrow-v1"`. The plaintext is client JSON `{conversationID, senderAccountID, sentAt, body}`. Escrow rows keep `retention.escrowDays`. The CLI command `appserver escrow export --conversation <id> --reason <text>` decrypts the copies, writes JSON lines to stdout, and appends a row to `escrow_access_log`.
 
 ### 7.3 Realtime, calls, TURN (lane C)
 
