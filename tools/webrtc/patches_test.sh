@@ -96,6 +96,16 @@ check "0004: self-test" has "selfTestCapturePostProcessing:" "$o/RTCAudioCapture
 check "0004: header listed as a source and exported in both frameworks" test "$(grep -c 'RTCAudioCapturePostProcessing.h' "$repo/sdk/BUILD.gn")" -eq 3
 check "0004: uses SetCapturePostProcessing" has "SetCapturePostProcessing" "$o/RTCAudioCapturePostProcessing.mm"
 
+# A public header that declares a category must import the header of the class
+# it extends (the umbrella header lists these alphabetically, so it cannot rely
+# on an earlier header).
+for h in "$o"/RTC*.h; do
+  cls=$(sed -n 's/^@interface RTC_OBJC_TYPE *(\([A-Za-z0-9_]*\)) *(.*/\1/p' "$h" | head -1)
+  [ -n "$cls" ] || continue
+  case "$(basename "$h")" in "$cls+"*) continue ;; esac # upstream +Private/+Native headers
+  check "$(basename "$h") imports $cls.h for its category" has "#import \".*/$cls.h\"" "$h"
+done
+
 if [ "$failures" -ne 0 ]; then
   echo "$failures check(s) failed"
   exit 1

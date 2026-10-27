@@ -1,8 +1,8 @@
 diff --git a/sdk/BUILD.gn b/sdk/BUILD.gn
-index 0450ef7..66ded85 100644
+index 45f734a..ed12815 100644
 --- a/sdk/BUILD.gn
 +++ b/sdk/BUILD.gn
-@@ -980,6 +980,8 @@ if (is_ios || is_mac) {
+@@ -981,6 +981,8 @@ if (is_ios || is_mac) {
        ]
        configs += [ "..:no_global_constructors" ]
        sources = [
@@ -11,7 +11,7 @@ index 0450ef7..66ded85 100644
          "objc/api/peerconnection/RTCAudioSource+Private.h",
          "objc/api/peerconnection/RTCAudioSource.h",
          "objc/api/peerconnection/RTCAudioSource.mm",
-@@ -1172,6 +1174,7 @@ if (is_ios || is_mac) {
+@@ -1171,6 +1173,7 @@ if (is_ios || is_mac) {
          "../common_video",
          "../media:media_constants",
          "../modules/audio_coding:webrtc_opus",
@@ -19,7 +19,7 @@ index 0450ef7..66ded85 100644
          "../modules/video_coding:video_codec_interface",
          "../pc:peer_connection_factory",
          "../pc:webrtc_sdp",
-@@ -1391,6 +1394,7 @@ if (is_ios || is_mac) {
+@@ -1390,6 +1393,7 @@ if (is_ios || is_mac) {
            "objc/helpers/RTCCameraPreviewView.h",
            "objc/helpers/RTCDispatcher.h",
            "objc/helpers/UIDevice+RTCDevice.h",
@@ -27,7 +27,7 @@ index 0450ef7..66ded85 100644
            "objc/api/peerconnection/RTCAudioSource.h",
            "objc/api/peerconnection/RTCAudioTrack.h",
            "objc/api/peerconnection/RTCConfiguration.h",
-@@ -1508,6 +1512,7 @@ if (is_ios || is_mac) {
+@@ -1507,6 +1511,7 @@ if (is_ios || is_mac) {
          output_name = "WebRTC"
  
          sources = [
@@ -37,10 +37,10 @@ index 0450ef7..66ded85 100644
            "objc/api/peerconnection/RTCCertificate.h",
 diff --git a/sdk/objc/api/peerconnection/RTCAudioCapturePostProcessing.h b/sdk/objc/api/peerconnection/RTCAudioCapturePostProcessing.h
 new file mode 100644
-index 0000000..2cdd201
+index 0000000..af03aa9
 --- /dev/null
 +++ b/sdk/objc/api/peerconnection/RTCAudioCapturePostProcessing.h
-@@ -0,0 +1,64 @@
+@@ -0,0 +1,67 @@
 +/*
 + *  Application patch (tools/webrtc/patches/0004): a writable hook on captured
 + *  audio. The upstream Objective-C SDK only lets an app observe it.
@@ -53,6 +53,7 @@ index 0000000..2cdd201
 +
 +#import <Foundation/Foundation.h>
 +
++#import "sdk/objc/api/peerconnection/RTCPeerConnectionFactory.h"
 +#import "sdk/objc/base/RTCMacros.h"
 +
 +NS_ASSUME_NONNULL_BEGIN
@@ -62,13 +63,15 @@ index 0000000..2cdd201
 +@protocol RTC_OBJC_TYPE
 +(RTCVideoEncoderFactory);
 +
-+/** Called on the audio thread, once per 10 ms frame. Do not block or allocate. */
++/** `processChannels:frames:channelCount:` is called on the audio thread, once per
++ *  10 ms frame; do not block or allocate in it. The other methods run on the
++ *  thread that is (re)starting the audio pipeline, which may be another thread. */
 +RTC_OBJC_EXPORT
 +@protocol RTC_OBJC_TYPE
 +(RTCAudioCapturePostProcessing)<NSObject>
 +
-+/** Called before the first frame and whenever the audio format changes. After a
-+ *  change, `reset` follows. */
++/** Called before the first frame and again whenever the audio pipeline is
++ *  re-initialised. After any re-initialisation, `reset` follows. */
 +- (void)initializeWithSampleRateHz:(NSInteger)sampleRateHz channels:(NSInteger)channels;
 +
 +/** Full-band float samples in [-1, 1], one buffer per channel; modify in place. */
@@ -76,8 +79,8 @@ index 0000000..2cdd201
 +                 frames:(NSInteger)frames
 +           channelCount:(NSInteger)channelCount;
 +
-+/** Drop any history. Called after `initializeWithSampleRateHz:channels:` when
-+ *  the audio format changed mid-stream. */
++/** Drop any history. Called after every re-initialisation, that is after each
++ *  `initializeWithSampleRateHz:channels:` except the first. */
 +- (void)reset;
 +
 +@end
@@ -107,10 +110,10 @@ index 0000000..2cdd201
 +NS_ASSUME_NONNULL_END
 diff --git a/sdk/objc/api/peerconnection/RTCAudioCapturePostProcessing.mm b/sdk/objc/api/peerconnection/RTCAudioCapturePostProcessing.mm
 new file mode 100644
-index 0000000..b170eb9
+index 0000000..daea477
 --- /dev/null
 +++ b/sdk/objc/api/peerconnection/RTCAudioCapturePostProcessing.mm
-@@ -0,0 +1,174 @@
+@@ -0,0 +1,168 @@
 +/*
 + *  Application patch (tools/webrtc/patches/0004). See
 + *  RTCAudioCapturePostProcessing.h.
@@ -158,7 +161,6 @@ index 0000000..b170eb9
 +      : delegate_(delegate) {}
 +
 +  void Initialize(int sample_rate_hz, int num_channels) override {
-+    pointers_.assign(static_cast<size_t>(num_channels), nullptr);
 +    id<RTC_OBJC_TYPE(RTCAudioCapturePostProcessing)> delegate = delegate_;
 +    [delegate initializeWithSampleRateHz:sample_rate_hz channels:num_channels];
 +    if (initialized_) {
@@ -174,24 +176,20 @@ index 0000000..b170eb9
 +    }
 +    const size_t channels = audio->num_channels();
 +    const size_t frames = audio->num_frames();
-+    if (pointers_.size() != channels) {
-+      pointers_.assign(channels, nullptr);
-+    }
++    // The delegate edits the AudioBuffer's own channel pointers in place, so
++    // nothing is copied or allocated here.
 +    float *const *data = audio->channels();
 +    for (size_t c = 0; c < channels; ++c) {
-+      float *p = data[c];
 +      for (size_t i = 0; i < frames; ++i) {
-+        p[i] *= kToUnit;
++        data[c][i] *= kToUnit;
 +      }
-+      pointers_[c] = p;
 +    }
-+    [delegate processChannels:pointers_.data()
++    [delegate processChannels:data
 +                       frames:static_cast<NSInteger>(frames)
 +                 channelCount:static_cast<NSInteger>(channels)];
 +    for (size_t c = 0; c < channels; ++c) {
-+      float *p = pointers_[c];
 +      for (size_t i = 0; i < frames; ++i) {
-+        p[i] *= kFromUnit;
++        data[c][i] *= kFromUnit;
 +      }
 +    }
 +  }
@@ -200,7 +198,6 @@ index 0000000..b170eb9
 +
 + private:
 +  __weak id<RTC_OBJC_TYPE(RTCAudioCapturePostProcessing)> delegate_;
-+  std::vector<float *> pointers_;
 +  bool initialized_ = false;
 +};
 +

@@ -1,11 +1,12 @@
 diff --git a/sdk/BUILD.gn b/sdk/BUILD.gn
-index aeb65e1..0450ef7 100644
+index aeb65e1..45f734a 100644
 --- a/sdk/BUILD.gn
 +++ b/sdk/BUILD.gn
-@@ -8,6 +8,13 @@
+@@ -8,6 +8,14 @@
  
  import("//third_party/libaom/options.gni")
  import("../webrtc.gni")
++
 +declare_args() {
 +  # App patch (tools/webrtc/patches/0003): the Opus PLC field trial name that
 +  # RTCOpusInfo reports. build.sh sets it from FIELD_TRIAL_OPUS_PLC in
@@ -16,7 +17,7 @@ index aeb65e1..0450ef7 100644
  if (is_ios) {
    import("//build/config/apple/mobile_config.gni")
    import("//build/config/ios/ios_sdk.gni")
-@@ -1023,6 +1030,8 @@ if (is_ios || is_mac) {
+@@ -1023,6 +1031,8 @@ if (is_ios || is_mac) {
          "objc/api/peerconnection/RTCMetricsSampleInfo+Private.h",
          "objc/api/peerconnection/RTCMetricsSampleInfo.h",
          "objc/api/peerconnection/RTCMetricsSampleInfo.mm",
@@ -25,7 +26,7 @@ index aeb65e1..0450ef7 100644
          "objc/api/peerconnection/RTCPeerConnection+DataChannel.mm",
          "objc/api/peerconnection/RTCPeerConnection+Private.h",
          "objc/api/peerconnection/RTCPeerConnection+Stats.mm",
-@@ -1090,8 +1099,18 @@ if (is_ios || is_mac) {
+@@ -1090,8 +1100,16 @@ if (is_ios || is_mac) {
          "objc/api/peerconnection/RTCVideoTrack+Private.h",
          "objc/api/peerconnection/RTCVideoTrack.h",
          "objc/api/peerconnection/RTCVideoTrack.mm",
@@ -36,15 +37,13 @@ index aeb65e1..0450ef7 100644
        ]
  
 +      # App patch: RTCOpusInfo.
-+      assert(
-+          app_opus_plc_trial != "",
-+          "set gn arg app_opus_plc_trial (FIELD_TRIAL_OPUS_PLC in tools/webrtc/VERSION)")
++      assert(app_opus_plc_trial != "", "set gn arg app_opus_plc_trial")
 +      defines = [ "APP_OPUS_PLC_TRIAL=\"$app_opus_plc_trial\"" ]
 +
        configs += [
          "..:common_objc",
          ":used_from_extension",
-@@ -1137,6 +1156,7 @@ if (is_ios || is_mac) {
+@@ -1137,6 +1155,7 @@ if (is_ios || is_mac) {
          "../api/audio_codecs:audio_codecs_api",
          "../api/audio_codecs:builtin_audio_decoder_factory",
          "../api/audio_codecs:builtin_audio_encoder_factory",
@@ -52,7 +51,7 @@ index aeb65e1..0450ef7 100644
          "../api/crypto:frame_decryptor_interface",
          "../api/crypto:frame_encryptor_interface",
          "../api/environment",
-@@ -1151,6 +1171,7 @@ if (is_ios || is_mac) {
+@@ -1151,6 +1170,7 @@ if (is_ios || is_mac) {
          "../api/video_codecs:video_codecs_api",
          "../common_video",
          "../media:media_constants",
@@ -60,7 +59,7 @@ index aeb65e1..0450ef7 100644
          "../modules/video_coding:video_codec_interface",
          "../pc:peer_connection_factory",
          "../pc:webrtc_sdp",
-@@ -1167,6 +1188,7 @@ if (is_ios || is_mac) {
+@@ -1167,6 +1187,7 @@ if (is_ios || is_mac) {
          "../rtc_base:timeutils",
          "../rtc_base/system:plan_b_only",
          "../system_wrappers:metrics",
@@ -68,7 +67,7 @@ index aeb65e1..0450ef7 100644
        ]
  
        if (is_ios) {
-@@ -1385,6 +1407,7 @@ if (is_ios || is_mac) {
+@@ -1385,6 +1406,7 @@ if (is_ios || is_mac) {
            "objc/api/peerconnection/RTCMediaStreamTrack.h",
            "objc/api/peerconnection/RTCMetrics.h",
            "objc/api/peerconnection/RTCMetricsSampleInfo.h",
@@ -76,7 +75,7 @@ index aeb65e1..0450ef7 100644
            "objc/api/peerconnection/RTCPeerConnection.h",
            "objc/api/peerconnection/RTCPeerConnectionFactory.h",
            "objc/api/peerconnection/RTCPeerConnectionFactoryOptions.h",
-@@ -1505,6 +1528,7 @@ if (is_ios || is_mac) {
+@@ -1505,6 +1527,7 @@ if (is_ios || is_mac) {
            "objc/api/peerconnection/RTCMediaStreamTrack.h",
            "objc/api/peerconnection/RTCMetrics.h",
            "objc/api/peerconnection/RTCMetricsSampleInfo.h",
