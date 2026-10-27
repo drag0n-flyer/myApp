@@ -59,7 +59,7 @@ struct Boom: Error {}
     try migrate(db)
     try applyProtection(to: url, .untilFirstUnlock)
     let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
-    #expect(attrs[.protectionKey] as? FileProtectionType == .completeUntilFirstUnlock)
+    #expect(attrs[.protectionKey] as? FileProtectionType == .completeUntilFirstUserAuthentication)
 }
 #endif
 
