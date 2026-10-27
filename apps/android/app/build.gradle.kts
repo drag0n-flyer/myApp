@@ -39,6 +39,7 @@ tasks.register("checkR8KeepRules") {
     doLast {
         val seeds = dir.resolve("seeds.txt").readLines()
         val mapping = mappingTxt.asFile.readLines().filter { !it.startsWith(" ") && it.contains(" -> ") }
+        check(mapping.isNotEmpty()) { "mapping.txt has no class entries; R8 output is empty or truncated" }
         // FfiConverter extends no JNA type, so only the explicit ffi keep rule retains it.
         check(seeds.contains("org.example.app.mls.ffi.FfiConverter")) { "R8 did not keep the UniFFI bindings" }
         for (prefix in listOf("org.example.app.mls.ffi.", "com.sun.jna.")) {
@@ -56,9 +57,19 @@ tasks.register("checkNoComponentProcess") {
     dependsOn("processReleaseManifest")
     val manifest = layout.buildDirectory.file("intermediates/merged_manifests/release/processReleaseManifest/AndroidManifest.xml").get()
     doLast {
-        val text = manifest.asFile.readText()
-        val offenders = Regex("""<(activity|activity-alias|service|receiver|provider)\b[^>]*android:process\s*=\s*"[^"]*"[^>]*>""")
-            .findAll(text).map { it.value.take(120) }.toList()
+        // Parse the XML (not regex) so single quotes, attribute order and <application> are all covered.
+        val doc = javax.xml.parsers.DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
+            .newDocumentBuilder().parse(manifest.asFile)
+        val androidNs = "http://schemas.android.com/apk/res/android"
+        val offenders = mutableListOf<String>()
+        val all = doc.getElementsByTagName("*")
+        for (i in 0 until all.length) {
+            val el = all.item(i) as org.w3c.dom.Element
+            if (el.tagName in setOf("application", "activity", "activity-alias", "service", "receiver", "provider") &&
+                el.hasAttributeNS(androidNs, "process")) {
+                offenders += "<${el.tagName} android:name=${el.getAttributeNS(androidNs, "name")} android:process=${el.getAttributeNS(androidNs, "process")}>"
+            }
+        }
         check(offenders.isEmpty()) { "Merged release manifest declares android:process: $offenders" }
     }
 }
