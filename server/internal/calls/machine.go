@@ -70,6 +70,11 @@ type Output struct {
 	Data any
 }
 
+// timedOut reports whether the ring time is up. Answer and Decline refuse a
+// call past it (ErrWrongState, call unchanged) so the timeout does not depend
+// on how often Tick runs; the next Tick ends the call as missed.
+func (c *Call) timedOut(now time.Time) bool { return now.Sub(c.Started) >= ringTimeout }
+
 func (c *Call) isCallee(device string, callees []string) bool {
 	return device != c.CallerDevice && slices.Contains(callees, device)
 }
@@ -107,7 +112,7 @@ func (c *Call) Answer(device string, calleeDevices []string, payload []byte, now
 	if !c.isCallee(device, calleeDevices) {
 		return nil, ErrNotParticipant
 	}
-	if c.State != Ringing {
+	if c.State != Ringing || c.timedOut(now) {
 		return nil, ErrWrongState
 	}
 	c.State, c.AnsweredBy, c.Changed = Answered, device, now
@@ -132,7 +137,7 @@ func (c *Call) Decline(device string, calleeDevices []string, now time.Time) ([]
 	if !c.isCallee(device, calleeDevices) {
 		return nil, ErrNotParticipant
 	}
-	if c.State != Ringing {
+	if c.State != Ringing || c.timedOut(now) {
 		return nil, ErrWrongState
 	}
 	return c.end(ReasonDeclined, calleeDevices, now), nil
@@ -159,7 +164,7 @@ func (c *Call) Hangup(device string, calleeDevices []string, now time.Time) ([]O
 // signals go to every callee device and a callee's go to the caller. Once
 // answered, signals pass only between the caller and the answering device.
 func (c *Call) Signal(device string, calleeDevices []string, payload []byte) ([]Output, error) {
-	data := map[string]any{"callID": c.ID, "payload": payload}
+	data := map[string]any{"callID": c.ID, "fromDeviceID": device, "payload": payload}
 	var to []string
 	switch {
 	case c.State == Answered:
@@ -193,7 +198,7 @@ func (c *Call) Signal(device string, calleeDevices []string, payload []byte) ([]
 
 // Tick ends a call that has rung for 45 s without an answer as missed.
 func (c *Call) Tick(calleeDevices []string, now time.Time) []Output {
-	if c.State != Ringing || now.Sub(c.Started) < ringTimeout {
+	if c.State != Ringing || !c.timedOut(now) {
 		return nil
 	}
 	return c.end(ReasonMissed, calleeDevices, now)
