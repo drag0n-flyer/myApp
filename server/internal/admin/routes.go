@@ -1,6 +1,9 @@
 package admin
 
 import (
+	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/drag0n-flyer/myApp/server/internal/httpx"
@@ -12,7 +15,7 @@ import (
 func (m *Module) Handler() http.Handler {
 	mux := m.mux(func(h apiFunc, public bool) http.Handler {
 		if public {
-			return serve(h, Session{})
+			return serve(h, Session{}, m.d.Log)
 		}
 		return m.requireSession(m.checkCSRF(h))
 	})
@@ -22,13 +25,19 @@ func (m *Module) Handler() http.Handler {
 // testHandler serves the same routes, running every request as s with no
 // host, session or CSRF checks.
 func (m *Module) testHandler(s Session) http.Handler {
-	return m.mux(func(h apiFunc, _ bool) http.Handler { return serve(h, s) })
+	return m.mux(func(h apiFunc, _ bool) http.Handler { return serve(h, s, m.d.Log) })
 }
 
-// serve runs h as s and answers an error with the server's envelope.
-func serve(h apiFunc, s Session) http.Handler {
+// serve runs h as s and answers an error with the server's envelope. An error
+// that is not an API error is a server fault: it is logged by route and type,
+// never with its text.
+func serve(h apiFunc, s Session, log *slog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := h(w, r, s); err != nil {
+			var e *httpx.Error
+			if !errors.As(err, &e) && log != nil {
+				log.Error("admin request failed", "path", r.URL.Path, "errType", fmt.Sprintf("%T", err))
+			}
 			httpx.WriteError(w, err)
 		}
 	})

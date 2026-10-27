@@ -34,8 +34,6 @@ const (
 // the idle timer; the absolute lifetime still applies.
 const BackgroundHeader = "X-Admin-Background"
 
-func notBuilt() error { return httpx.Err("internal", "not built") }
-
 // sessionState is what requireSession learned about the request's session. It
 // travels in the request context, because Session is fixed by the skeleton.
 type sessionState struct {
@@ -214,7 +212,7 @@ func (m *Module) requireSession(h apiFunc) http.Handler {
 			httpx.WriteError(w, err)
 			return
 		}
-		serve(h, s).ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, st)))
+		serve(h, s, m.d.Log).ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, st)))
 	})
 }
 

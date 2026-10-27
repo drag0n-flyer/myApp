@@ -167,9 +167,9 @@ ssh -N -L 9090:127.0.0.1:9090 you@<host>
 Then open `http://localhost:9090/admin/`.
 
 How to sign in:
-1. On the server run `docker compose exec appserver /appserver admin token create --label laptop`.
+1. On the server run `docker compose exec appserver /appserver admin token create --label laptop` (Docker), or `bin/appserver admin token create --label laptop` from the repository after `make run` (the binary reads the same `.env`).
 2. Paste the token into the login page once. It works one time only, and an unused token expires after 15 minutes (`--minutes N` changes this, at most 60).
-3. A session ends after 15 minutes without use, and after 8 hours at most. The overview's automatic refresh does not count as use. For a lost laptop, run `docker compose exec appserver /appserver admin sessions end` to end every session.
+3. A session ends after 15 minutes without use, and after 8 hours at most. The overview's automatic refresh does not count as use. For a lost laptop, run `docker compose exec appserver /appserver admin sessions end` (or `bin/appserver admin sessions end`) to end every session.
 
 Never publish port 9090. It must stay on `127.0.0.1`. Set `APP_ADMIN_HOSTS` only when you put your own HTTPS proxy in front of it, and give that proxy its own access control.
 

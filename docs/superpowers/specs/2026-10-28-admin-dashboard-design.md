@@ -15,7 +15,7 @@ Choices this document makes without an owner instruction are marked "(planner's 
 
   | Change | Owner | Exported function |
   |---|---|---|
-  | Create an invite | `identity` | `CreateInvite` (exists) |
+  | Create an invite | `identity` | `CreateInviteIn` (in the caller's transaction, so the audit row commits with it) |
   | Revoke an invite | `identity` | `RevokeInvite(ctx, id string) error` |
   | Revoke a device | `identity` | `AdminRevokeDevice(ctx, deviceID string) error` |
   | Delete an account | `identity` | `AdminDeleteAccount(ctx, accountID string) error` |
@@ -53,7 +53,7 @@ Values (all planner's choice):
 | Absolute lifetime | 8 hours from login |
 | Cookie | `admin_session`, `Path=/admin`, `HttpOnly`, `SameSite=Strict`, no `Max-Age` (ends with the browser), `Secure` unless the request's `Host` is a loopback name (§2) |
 | Login rate limit | 5 per minute per client address, and 30 per hour for the whole server (`ratelimit.Limiter`, keyed by `httpx.ClientIP`; the address is never stored or logged) |
-| Wrong, used, expired or revoked token | the same `401 unauthorized` body for each, compared by hash lookup (a constant-time compare of the hash is not needed: the lookup key is a hash of 32 random bytes) |
+| Wrong, used or expired token, or one ended by `admin sessions end` | the same `401 unauthorized` body for each, compared by hash lookup (a constant-time compare of the hash is not needed: the lookup key is a hash of 32 random bytes) |
 
 `appserver admin sessions end` ends every dashboard session at once (for a lost laptop). (planner's choice)
 
@@ -132,7 +132,7 @@ List: created, reason, reported account (username, or "deleted account"), report
 
 ### 6.5 Server
 
-Read-only. The loaded policy (the `config.Policy` JSON), the server info document (`GET /v1/server`, same bytes), and non-secret settings: host, public and admin listen addresses, relays, push gateway URL, whether escrow, SMTP, docs and lab mode are on, trust-proxy. If lab mode is on, the page shows the warning from the admin guide in a banner.
+Read-only. The loaded policy (the `config.Policy` JSON), the server info document (`GET /v1/server`, with any user-info, query and fragment removed from the push gateway URL), and non-secret settings: host, public and admin listen addresses, relays, push gateway URL, whether escrow, SMTP, docs and lab mode are on, trust-proxy. If lab mode is on, the page shows the warning from the admin guide in a banner.
 
 Editing is not built. `core.Deps.Policy` is copied by value into every module at start, so a live change would reach some modules and not others, and the compose file mounts the policy read-only. The operator edits the file and restarts. (owner decision O-3)
 

@@ -240,3 +240,31 @@ func TestPagesAccessible(t *testing.T) {
 		}
 	}
 }
+
+// A form submitted before its script runs must not put a secret in the URL:
+// a form with a password field posts, and the password field has no name
+// (a named field is what a browser would send).
+func TestSecretFormsNeverUseTheURL(t *testing.T) {
+	formRE := regexp.MustCompile(`(?s)<form\b[^>]*>.*?</form>`)
+	openRE := regexp.MustCompile(`<form\b[^>]*>`)
+	passwordRE := regexp.MustCompile(`<input\b[^>]*\btype="password"[^>]*>`)
+	for name, body := range embeddedFiles(t) {
+		if !strings.HasSuffix(name, ".html") {
+			continue
+		}
+		for _, form := range formRE.FindAllString(body, -1) {
+			pw := passwordRE.FindAllString(form, -1)
+			if len(pw) == 0 {
+				continue
+			}
+			if open := openRE.FindString(form); !strings.Contains(open, `method="post"`) {
+				t.Errorf("%s: %s has a password field but no method=\"post\"", name, open)
+			}
+			for _, in := range pw {
+				if strings.Contains(in, "name=") {
+					t.Errorf("%s: password field has a name: %s", name, in)
+				}
+			}
+		}
+	}
+}
