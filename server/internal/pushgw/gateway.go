@@ -303,8 +303,9 @@ func (g *gateway) push(w http.ResponseWriter, r *http.Request) error {
 	if req.Kind == "message" && h.Kind != "alert" {
 		return apiErr("bad_request", "a message needs an alert handle")
 	}
-	data, err := pushproto.Unpad(req.Data)
-	if err != nil {
+	// Unpad only validates. The padded bytes go on to APNs unchanged, so Apple
+	// cannot see the true size; the device unpads.
+	if _, err := pushproto.Unpad(req.Data); err != nil {
 		return apiErr("bad_request", "data is not padded correctly")
 	}
 	lim := g.lim.messages
@@ -315,7 +316,7 @@ func (g *gateway) push(w http.ResponseWriter, r *http.Request) error {
 		return apiErr("rate_limited", "handle over its limit")
 	}
 
-	gone, err := g.apns.Send(r.Context(), h, req.Kind, data)
+	gone, err := g.apns.Send(r.Context(), h, req.Kind, req.Data)
 	if err != nil {
 		g.log.Error("apns send failed", "errType", errTypeName(err))
 		return apiErr("upstream", "push provider failed")

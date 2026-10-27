@@ -376,6 +376,10 @@ func TestRequestSignature(t *testing.T) {
 		if err := pushproto.Verify(pub, req, body, now); err != nil {
 			t.Errorf("verify %s: %v", c.Timestamp, err)
 		}
+		otherPub := ed25519.NewKeyFromSeed(seq(0x20, 32)).Public().(ed25519.PublicKey)
+		if err := pushproto.Verify(otherPub, req, body, now); err == nil {
+			t.Errorf("wrong public key verified (%s)", c.Timestamp)
+		}
 		if err := pushproto.Verify(pub, req, append(body, 'x'), now); err == nil {
 			t.Errorf("changed body verified (%s)", c.Timestamp)
 		}
@@ -447,6 +451,13 @@ func checkSealed(t *testing.T, name, wantInfo string, open func(hpke.PrivateKey,
 			if _, err := open(priv, unb64(t, n.SealedB64)); err == nil {
 				t.Errorf("negative %q opened by the server function", n.Name)
 			}
+		}
+	}
+	// A wrong recipient key must not open any case.
+	wrong := hpkePriv(t, seq(0x10, 32))
+	for i, c := range f.Cases {
+		if _, err := open(wrong, unb64(t, c.SealedB64)); err == nil {
+			t.Errorf("case %d opened with the wrong key", i)
 		}
 	}
 	// The recorded wrong-info case is a valid message under the right info.

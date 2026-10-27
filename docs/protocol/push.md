@@ -84,7 +84,7 @@ The gateway's checks before it sends, the order they run in, and its limits per 
 
 ## What the notification extension does with `d`
 
-APNs delivers `d`: the padded payload in standard base64 with padding. For a message, the alert push has `mutable-content`, so the notification extension runs before anything is shown.
+APNs delivers `d`: standard base64 with padding of the **padded** payload, exactly the bytes the server sent. The gateway validates the padding but forwards the padded bytes unchanged. For a message, the alert push has `mutable-content`, so the notification extension runs before anything is shown.
 
 1. Decode `d` and unpad it. If that fails, show the generic text from the push (`[App]`, "New message").
 2. **Empty payload:** fetch the inbox, at most 20 items, and show the newest stored message, or the generic text.
