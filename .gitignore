@@ -18,6 +18,7 @@ target/
 
 # Go server
 server/bin/
+server/run/
 *.test
 *.out
 coverage.*
