@@ -1,0 +1,148 @@
+package admin
+
+import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/identity"
+	"github.com/drag0n-flyer/myApp/server/internal/push"
+	"github.com/drag0n-flyer/myApp/server/internal/serverinfo"
+	"github.com/drag0n-flyer/myApp/server/internal/social"
+	"github.com/drag0n-flyer/myApp/server/internal/testkit"
+)
+
+// variants lists the ways raw bytes could show up in a JSON body.
+func variants(b []byte) []string {
+	return []string{
+		string(b), hex.EncodeToString(b), strings.ToUpper(hex.EncodeToString(b)),
+		base64.StdEncoding.EncodeToString(b), base64.URLEncoding.EncodeToString(b),
+		base64.RawStdEncoding.EncodeToString(b), base64.RawURLEncoding.EncodeToString(b),
+	}
+}
+
+func randBytes(t *testing.T, n int) []byte {
+	t.Helper()
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// TestNoSecretsInResponses seeds one of everything the dashboard must never
+// show and checks the body of every GET endpoint of design section 7 that
+// lane B builds. GET /session (lane A) and GET /audit (lane C) are in the list
+// too, but a status other than 200 is tolerated for them until those lanes
+// are merged: they are checked for leaks whenever they answer.
+func TestNoSecretsInResponses(t *testing.T) {
+	d, f := testkit.NewDeps(t, func(d *core.Deps) {
+		c := &d.Config
+		c.SMTPURL = "smtp://u:SMTPPASS@h"
+		c.DatabaseURL = "postgres://app:DBPASS@db/app"
+		c.TURNSecret = "TURNSECRET"
+		c.PushKeyFile, c.EscrowKeyFile, c.VapidKeyFile = "/secrets/push.pem", "/secrets/escrow.key", "/secrets/vapid.pem"
+		c.PushGatewayURL, c.PushServerID = "https://u:GWPASS@push.example.org", "srv-1"
+	})
+	id := identity.New(d)
+	m := New(d, Sources{
+		Started: d.Now(), Live: fakeLive(3), Push: push.New(d), Relays: fakeRelays{},
+		Identity: id, Reports: social.New(d), Info: serverinfo.New(d),
+	})
+
+	// An account with a real-looking email, a session, a push handle, escrow.
+	ana := testkit.Account(t, d, "leak")
+	const fullEmail = "leak@example.org"
+	sessionToken := "SESSTOKEN-" + hex.EncodeToString(randBytes(t, 16))
+	sessionHash := sha256.Sum256([]byte(sessionToken))
+	mustExec(t, d, `insert into sessions (token_hash, account_id, device_id) values ($1, $2, $3)`, sessionHash[:], ana.AccountID, ana.DeviceID)
+	sealed := randBytes(t, 40)
+	mustExec(t, d, `insert into push_tokens (device_id, kind, sealed) values ($1, 'alert', $2)`, ana.DeviceID, sealed)
+	conv := core.NewID()
+	escrow := randBytes(t, 48)
+	mustExec(t, d, `insert into conversations (id, mode) values ($1, 'server_readable')`, conv)
+	mustExec(t, d, `insert into escrow (conversation_id, seq, sender_account, data) values ($1, 1, $2, $3)`, conv, ana.AccountID, escrow)
+	other := testkit.Account(t, d, "other")
+	reportID := core.NewID()
+	mustExec(t, d, `insert into reports (id, reporter, reported_account, conversation_id, reason, messages, note, created_at)
+		values ($1, $2, $3, $4, 'abuse', '[{"sentAt":"2026-11-01T10:00:00Z","text":"SECRET-TEXT"}]'::jsonb, 'SECRET-TEXT', $5)`,
+		reportID, other.AccountID, ana.AccountID, conv, f.Clock.Now())
+	_, inviteCode, err := id.CreateInviteID(t.Context(), 2, 24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminToken := "ADMINTOKEN-" + hex.EncodeToString(randBytes(t, 16))
+	adminHash := sha256.Sum256([]byte(adminToken))
+	mustExec(t, d, `insert into admin_tokens (id, token_hash, label, created_at, expires_at) values ($1, $2, 'lbl', $3, $4)`,
+		testSession.TokenID, adminHash[:], f.Clock.Now(), f.Clock.Now().Add(time.Hour))
+
+	forbidden := map[string][]string{
+		"full email":    {fullEmail, `leak@example.org`},
+		"session token": append([]string{sessionToken}, variants(sessionHash[:])...),
+		"push handle":   variants(sealed),
+		"escrow bytes":  variants(escrow),
+		"report text":   {"SECRET-TEXT"},
+		"invite code":   {inviteCode, inviteCode[6:]},
+		"admin token":   append([]string{adminToken}, variants(adminHash[:])...),
+		"client IP":     {"203.0.113", "198.51.100"},
+		"config secret": {"SMTPPASS", "DBPASS", "TURNSECRET", "GWPASS", "/secrets/"},
+	}
+
+	get := func(path string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", path, nil)
+		req.RemoteAddr = "203.0.113.7:51234"
+		req.Header.Set("X-Forwarded-For", "198.51.100.9")
+		rec := httptest.NewRecorder()
+		m.testHandler(testSession).ServeHTTP(rec, req)
+		return rec
+	}
+	// Generate audit rows first, so the audit listing has something to show.
+	call(t, m, "POST", "/admin/api/invites", map[string]int{"uses": 1})
+	get("/admin/api/accounts/" + ana.AccountID)
+	get("/admin/api/reports/" + reportID)
+	call(t, m, "POST", "/admin/api/reports/"+reportID+"/handle", nil)
+
+	endpoints := []struct {
+		path     string
+		tolerate bool
+	}{
+		{"/admin/api/overview", false},
+		{"/admin/api/invites", false},
+		{"/admin/api/invites?state=all", false},
+		{"/admin/api/accounts?q=leak", false},
+		{"/admin/api/accounts", false},
+		{"/admin/api/accounts/" + ana.AccountID, false},
+		{"/admin/api/reports?state=all", false},
+		{"/admin/api/reports/" + reportID, false},
+		{"/admin/api/server", false},
+		{"/admin/api/audit", true},
+		{"/admin/api/session", true},
+	}
+	for _, ep := range endpoints {
+		rec := get(ep.path)
+		if rec.Code != http.StatusOK && !ep.tolerate {
+			t.Errorf("GET %s = %d %s", ep.path, rec.Code, rec.Body.String())
+			continue
+		}
+		body := rec.Body.String()
+		for what, needles := range forbidden {
+			for _, n := range needles {
+				if n != "" && strings.Contains(body, n) {
+					t.Errorf("GET %s leaks %s (%q): %s", ep.path, what, n, body)
+				}
+			}
+		}
+	}
+	// The full code is shown once, by create, and by nothing else.
+	rec := call(t, m, "POST", "/admin/api/invites", map[string]int{})
+	if !strings.Contains(rec.Body.String(), `"code"`) {
+		t.Errorf("create answer lacks the code: %s", rec.Body.String())
+	}
+}
