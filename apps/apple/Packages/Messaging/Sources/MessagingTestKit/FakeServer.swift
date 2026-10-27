@@ -40,6 +40,7 @@ public actor FakeServer {
     private var nextCursor: Int64 = 1
     private var blocks: [String: Set<String>] = [:]             // account -> blocked accounts
     private var reports: [[String: String]] = []
+    private var requestLog: [String] = []
     private var attachments: [String: Data] = [:]
     private var messageSeqs: [String: Int64] = [:]              // "device|conv|clientMsgID" -> seq
     private var subscribers: [String: [UUID: AsyncStream<ServerEvent>.Continuation]] = [:]
@@ -86,7 +87,11 @@ public actor FakeServer {
         return stream
     }
 
+    /// Each report's `accountID`, `reason`, `conversationID` and `messages` (the number of messages sent).
     public func submittedReports() -> [[String: String]] { reports }
+
+    /// Every authenticated request so far, as `"METHOD /path"` (for example `"PUT /v1/blocks/acc-bob"`).
+    public func requests() -> [String] { requestLog }
 
     private func removeSubscriber(_ deviceID: String, _ id: UUID) {
         subscribers[deviceID]?[id] = nil
@@ -108,6 +113,7 @@ public actor FakeServer {
               deviceAccount[deviceID] == accountID else {
             return failure(401, "unauthorized")
         }
+        requestLog.append("\(method) \(path)")
         let body = request.httpBody ?? Data()
         let parts = path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
         guard parts.first == "v1" else { return failure(404, "not_found") }
@@ -314,7 +320,11 @@ public actor FakeServer {
 
     private func report(_ body: Data) -> (Data, HTTPURLResponse) {
         guard let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else { return failure(400, "bad_request") }
-        reports.append(["accountID": object["accountID"] as? String ?? "", "reason": object["reason"] as? String ?? ""])
+        reports.append([
+            "accountID": object["accountID"] as? String ?? "", "reason": object["reason"] as? String ?? "",
+            "conversationID": object["conversationID"] as? String ?? "",
+            "messages": String((object["messages"] as? [Any])?.count ?? 0),
+        ])
         return noContent()
     }
 

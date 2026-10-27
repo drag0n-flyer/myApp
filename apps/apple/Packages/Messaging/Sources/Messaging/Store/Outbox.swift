@@ -50,8 +50,10 @@ public actor Outbox: ControlSender {
 
     // MARK: - Queue
 
-    /// Stores the message as `sending` and adds its outbox row, in one transaction.
-    public func enqueue(_ envelope: ContentEnvelope, chatID: String) throws {
+    /// Stores the message as `sending` and adds its outbox row, in one transaction. `nonisolated` (it only
+    /// touches the thread-safe repository), so the main-actor chat store can enqueue synchronously and show the
+    /// message as `sending` at once.
+    nonisolated public func enqueue(_ envelope: ContentEnvelope, chatID: String) throws {
         let now = deps.now()
         let data = envelope.encoded()
         var text = ""
@@ -130,7 +132,7 @@ public actor Outbox: ControlSender {
     }
 
     /// Manual retry of a failed message: it goes to the END of its chat's queue.
-    public func retry(messageID: String) throws {
+    nonisolated public func retry(messageID: String) throws {
         try deps.repo.requeueSend(id: messageID)
     }
 
