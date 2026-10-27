@@ -10,6 +10,7 @@ macOS runners. Without Ruby, the file must be JSON-compatible YAML (the test fix
 full-line `#` comments are dropped first, as YAML would.
 """
 import argparse
+import fnmatch
 import glob
 import json
 import os
@@ -23,6 +24,14 @@ PLACEHOLDER_BUNDLE = "org.example.app"
 DEFAULT_APP_GROUP = "group.org.example.app"
 FILTERING_KEY = "com.apple.developer.usernotifications.filtering"
 RUBY_SNIPPET = "puts JSON.generate(YAML.safe_load(File.read(ARGV[0], encoding: 'UTF-8'), aliases: true))"
+MANIFEST_NAME = "PrivacyInfo.xcprivacy"
+API_CATEGORIES = {
+    "NSPrivacyAccessedAPICategoryFileTimestamp",
+    "NSPrivacyAccessedAPICategorySystemBootTime",
+    "NSPrivacyAccessedAPICategoryDiskSpace",
+    "NSPrivacyAccessedAPICategoryActiveKeyboards",
+    "NSPrivacyAccessedAPICategoryUserDefaults",
+}
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".heic", ".pdf", ".svg")
 
 
@@ -80,6 +89,55 @@ def info_value(target, key):
     if key in props:
         return props[key]
     return ((target.get("settings") or {}).get("base") or {}).get("INFOPLIST_KEY_" + key)
+
+
+def manifest_in_target(target, base_dir):
+    """Path of the target's PrivacyInfo.xcprivacy if xcodegen would bundle it, else None.
+
+    Bundled means: listed as its own source path, or inside a source directory without being excluded.
+    """
+    for src in target.get("sources") or []:
+        sp = src.get("path") if isinstance(src, dict) else src
+        if not sp:
+            continue
+        excludes = src.get("excludes") or [] if isinstance(src, dict) else []
+        if os.path.basename(sp) == MANIFEST_NAME:
+            full = os.path.join(base_dir, sp)
+        else:
+            full = os.path.join(base_dir, sp, MANIFEST_NAME)
+            if any(fnmatch.fnmatch(MANIFEST_NAME, e) or os.path.basename(e) == MANIFEST_NAME
+                   for e in excludes):
+                continue
+        if os.path.isfile(full):
+            return full
+    return None
+
+
+def manifest_problem(path):
+    """Why the manifest is not acceptable, or None."""
+    try:
+        with open(path, "rb") as f:
+            m = plistlib.load(f)
+    except (OSError, plistlib.InvalidFileException, ValueError) as e:
+        return "not a valid plist (%s)" % e
+    if not isinstance(m, dict):
+        return "top level is not a dictionary"
+    if m.get("NSPrivacyTracking") is not False:
+        return "NSPrivacyTracking must be false"
+    if m.get("NSPrivacyTrackingDomains") != []:
+        return "NSPrivacyTrackingDomains must be an empty array"
+    if not isinstance(m.get("NSPrivacyCollectedDataTypes"), list):
+        return "NSPrivacyCollectedDataTypes must be an array"
+    apis = m.get("NSPrivacyAccessedAPITypes")
+    if not isinstance(apis, list):
+        return "NSPrivacyAccessedAPITypes must be an array"
+    for a in apis:
+        if not isinstance(a, dict) or a.get("NSPrivacyAccessedAPIType") not in API_CATEGORIES:
+            return "unknown NSPrivacyAccessedAPIType"
+        reasons = a.get("NSPrivacyAccessedAPITypeReasons")
+        if not isinstance(reasons, list) or not reasons or not all(nonempty(r) for r in reasons):
+            return "%s has no reason codes" % a["NSPrivacyAccessedAPIType"]
+    return None
 
 
 def nonempty(v):
@@ -243,6 +301,22 @@ def main(argv=None):
                 if os.path.isfile(os.path.join(d, "icon.json")):
                     found = True
         rep.check(found, name, "app icon set is not empty")
+
+    for platform, label in (("iOS", "iOS"), ("macOS", "Mac")):
+        for kind, suffix in (("application", "app"), ("app-extension", "NSE")):
+            name, t = find(platform, kind)
+            if t is None:
+                continue  # already reported above
+            scope = "%s %s" % (label, suffix)
+            path = manifest_in_target(t, base_dir)
+            if path is None:
+                rep.add("MISSING", scope, "privacy manifest %s is not in the target's sources" % MANIFEST_NAME)
+                continue
+            problem = manifest_problem(path)
+            if problem:
+                rep.add("MISSING", scope, "privacy manifest: %s" % problem)
+            else:
+                rep.add("PASS", scope, "privacy manifest %s" % MANIFEST_NAME)
 
     miss = rep.missing()
     print("\nSummary: %d requirement(s) not met%s" % (len(miss), " (allowed by --allow-missing)" if miss and args.allow_missing else ""))
