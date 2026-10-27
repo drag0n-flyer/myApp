@@ -1,12 +1,13 @@
 package org.example.app.auth
 
 import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.io.IOException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import javax.crypto.Cipher
 import org.example.app.contracts.SecretStore
-
-/** The wrapping key is gone or permanently unusable (for example the Keystore invalidated it). */
-class KeyLostException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
 /**
  * The one AES-256-GCM wrapping key. The real one lives in the Android Keystore ([KeystoreKey]);
@@ -16,26 +17,35 @@ interface WrappingKeyVault {
     /** `"strongbox"` or `"tee"`. */
     val backing: String
 
-    /** A GCM encrypt cipher under the key, made if absent. The cipher picks its own random nonce (`iv`). */
+    /**
+     * A GCM encrypt cipher under the existing key; never makes a key. The cipher picks its own random nonce (`iv`).
+     * Throws [SecretStoreUnavailable] on any Keystore failure, [SecretsLost] if the key is permanently invalidated.
+     */
     fun encryptCipher(): Cipher
 
-    /** A GCM decrypt cipher (128-bit tag) with [nonce]. Throws [KeyLostException] if the key is gone or invalidated. */
+    /** A GCM decrypt cipher (128-bit tag) with [nonce]. Throws [SecretsLost] only on proven loss, otherwise [SecretStoreUnavailable]. */
     fun decryptCipher(nonce: ByteArray): Cipher
 
-    /** Whether the key exists right now. */
+    /** `false` only when the Keystore cleanly reports the alias absent. Throws [SecretStoreUnavailable] on any error. */
     fun hasKey(): Boolean
+
+    /** Makes the key. A no-op if the alias already exists: it must never replace a key. */
+    fun createKey()
 
     /** Deletes the key. No-op if absent. */
     fun deleteKey()
 }
 
 /**
- * File format: `nonce (12) || ciphertext || tag (16)`, AAD = the UTF-8 secret name, one file per secret.
- * Unwrapped values are cached in memory for the process lifetime (StrongBox calls are slow).
+ * File format: `version (1) || nonce (12) || ciphertext || tag (16)`, AAD = the UTF-8 secret name, one file per
+ * secret. Unwrapped values are cached in memory for the process lifetime (StrongBox calls are slow).
  *
- * If the key is lost, every file is unreadable: they are dropped and reads return `null`, so the app signs
- * in afresh (the iPhone store likewise drops an item it can never read). A file that fails authentication
- * with a live key (swapped, truncated, tampered) throws instead, and is left in place.
+ * Errors never cause deletion. Any Keystore failure throws [SecretStoreUnavailable] and the caller retries.
+ * The key counts as lost only when the Keystore cleanly reports the alias absent (or permanently invalidated)
+ * while secret files exist: [SecretsLost] is thrown, and the app layer runs the full wipe and sign-in flow.
+ * A key is created only when no secret file exists, so a wrong "absent" answer can never replace a live key.
+ * [load] returns `null` only for a secret that was never saved. A file that fails authentication with a live
+ * key (swapped, truncated, tampered) throws and is left in place.
  */
 class VaultSecretStore(
     private val vault: WrappingKeyVault,
@@ -52,15 +62,11 @@ class VaultSecretStore(
         val file = File(dir, name)
         if (!file.isFile) return null
         val raw = file.readBytes()
-        require(raw.size >= NONCE_BYTES + TAG_BYTES) { "Stored secret is too short" }
-        val plain = try {
-            val cipher = vault.decryptCipher(raw.copyOfRange(0, NONCE_BYTES))
-            cipher.updateAAD(name.toByteArray(Charsets.UTF_8))
-            cipher.doFinal(raw, NONCE_BYTES, raw.size - NONCE_BYTES)
-        } catch (_: KeyLostException) {
-            wipeAllLocked()
-            return null
-        }
+        if (raw.size < HEADER_BYTES + TAG_BYTES) throw IOException("Stored secret is too short")
+        if (raw[0] != VERSION) throw IOException("Unsupported secret format")
+        val cipher = vault.decryptCipher(raw.copyOfRange(1, HEADER_BYTES))
+        cipher.updateAAD(name.toByteArray(Charsets.UTF_8))
+        val plain = cipher.doFinal(raw, HEADER_BYTES, raw.size - HEADER_BYTES)
         logBackingOnce()
         cache[name] = plain
         return plain.copyOf()
@@ -69,21 +75,14 @@ class VaultSecretStore(
     @Synchronized
     override fun save(name: String, value: ByteArray) {
         checkName(name)
-        // Files left over from a key that no longer exists can never be opened: drop them before a new key starts.
-        if (!vault.hasKey()) dir.listFiles()?.forEach { it.delete() }
-        val sealed = try {
-            seal(name, value)
-        } catch (_: KeyLostException) {
-            wipeAllLocked() // the other files can no longer be opened
-            seal(name, value)
+        if (!vault.hasKey()) {
+            // Never replace a key under existing files, and never delete them: report the loss.
+            if (secretFiles().isNotEmpty()) throw SecretsLost("Wrapping key is gone")
+            vault.createKey()
         }
-        dir.mkdirs()
-        val tmp = File(dir, "$name.tmp")
-        tmp.writeBytes(sealed)
-        if (!tmp.renameTo(File(dir, name))) {
-            tmp.delete()
-            throw IOException("Could not store secret")
-        }
+        val sealed = seal(name, value)
+        writeDurably(name, sealed)
+        cache[name]?.fill(0)
         cache[name] = value.copyOf()
     }
 
@@ -91,17 +90,27 @@ class VaultSecretStore(
     override fun delete(name: String) {
         checkName(name)
         cache.remove(name)?.fill(0)
-        File(dir, name).delete()
+        val file = File(dir, name)
+        if (!file.delete() && file.exists()) throw IOException("Could not delete secret")
     }
 
     @Synchronized
-    override fun wipeAll() = wipeAllLocked()
-
-    private fun wipeAllLocked() {
+    override fun wipeAll() {
         cache.values.forEach { it.fill(0) }
         cache.clear()
-        dir.listFiles()?.forEach { it.delete() }
-        vault.deleteKey()
+        var failed = false
+        dir.listFiles()?.forEach { if (!it.delete() && it.exists()) failed = true }
+        vault.deleteKey() // without the key any file left behind is unreadable
+        if (failed) throw IOException("Could not delete every secret file")
+    }
+
+    private fun secretFiles(): List<File> {
+        val all = dir.listFiles()
+        if (all == null) {
+            if (dir.exists()) throw SecretStoreUnavailable("Cannot list secrets", null)
+            return emptyList()
+        }
+        return all.filter { !it.name.startsWith(TEMP_PREFIX) }
     }
 
     private fun seal(name: String, value: ByteArray): ByteArray {
@@ -111,7 +120,33 @@ class VaultSecretStore(
         val nonce = cipher.iv
         check(nonce.size == NONCE_BYTES) { "Unexpected nonce length" }
         logBackingOnce()
-        return nonce + ct
+        return byteArrayOf(VERSION) + nonce + ct
+    }
+
+    /**
+     * Temp file, fsync, atomic rename, then fsync the directory. The directory sync opens the directory
+     * read-only and calls fsync on it (works on Linux and Android's ext4/f2fs); it is best effort because
+     * some filesystems refuse it, and the rename is already atomic without it.
+     */
+    private fun writeDurably(name: String, sealed: ByteArray) {
+        if (!dir.isDirectory && !dir.mkdirs() && !dir.isDirectory) throw IOException("Could not create secrets directory")
+        val tmp = File(dir, TEMP_PREFIX + name)
+        try {
+            FileOutputStream(tmp).use { out ->
+                out.write(sealed)
+                out.flush()
+                out.fd.sync()
+            }
+            Files.move(tmp.toPath(), File(dir, name).toPath(), StandardCopyOption.ATOMIC_MOVE)
+        } catch (e: IOException) {
+            tmp.delete()
+            throw e
+        }
+        try {
+            FileInputStream(dir).use { it.fd.sync() }
+        } catch (_: IOException) {
+        } catch (_: SecurityException) {
+        }
     }
 
     private fun logBackingOnce() {
@@ -122,12 +157,16 @@ class VaultSecretStore(
     }
 
     private fun checkName(name: String) {
-        require(name.isNotEmpty() && name != "." && name != ".." &&
+        require(name.isNotEmpty() && name != "." && name != ".." && !name.startsWith(TEMP_PREFIX) &&
             name.none { it == '/' || it == '\\' || it == '\u0000' }) { "Invalid secret name" }
     }
 
     private companion object {
+        const val VERSION: Byte = 1
         const val NONCE_BYTES = 12
         const val TAG_BYTES = 16
+        const val HEADER_BYTES = 1 + NONCE_BYTES
+        /** Secret names may not start with this, so a temp file never collides with a secret. */
+        const val TEMP_PREFIX = "~tmp~"
     }
 }

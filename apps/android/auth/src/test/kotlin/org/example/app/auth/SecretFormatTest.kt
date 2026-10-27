@@ -12,28 +12,46 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
+import javax.crypto.AEADBadTagException
+import java.io.IOException
 import kotlin.test.assertTrue
 
-/** A software AES key standing in for the Keystore. `lose()` models the key being permanently invalidated. */
+/**
+ * A software AES key standing in for the Keystore. `lose()` models a clean "key is gone" answer; `fail` makes
+ * every call throw a transient error without touching the key.
+ */
 private class FakeVault : WrappingKeyVault {
     private var key: SecretKey? = null
-    var deleted = 0
-    var created = 0
+    @Volatile var fail: Boolean = false
+    @Volatile var deleted = 0
+    @Volatile var created = 0
     override val backing: String = "tee"
 
+    private fun maybeFail() { if (fail) throw SecretStoreUnavailable("transient", null) }
+
     override fun encryptCipher(): Cipher {
-        val k = key ?: KeyGenerator.getInstance("AES").apply { init(256) }.generateKey().also { key = it; created++ }
+        maybeFail()
+        val k = key ?: throw SecretStoreUnavailable("no key", null)
         return Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, k) }
     }
 
     override fun decryptCipher(nonce: ByteArray): Cipher {
-        val k = key ?: throw KeyLostException("no key")
+        maybeFail()
+        val k = key ?: throw SecretsLost("no key")
         return Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.DECRYPT_MODE, k, GCMParameterSpec(128, nonce)) }
     }
 
-    override fun hasKey() = key != null
-    override fun deleteKey() { key = null; deleted++ }
+    override fun hasKey(): Boolean { maybeFail(); return key != null }
+
+    @Synchronized
+    override fun createKey() {
+        maybeFail()
+        if (key == null) { Thread.sleep(2); key = KeyGenerator.getInstance("AES").apply { init(256) }.generateKey(); created++ }
+    }
+
+    override fun deleteKey() { maybeFail(); key = null; deleted++ }
     fun lose() { key = null }
 }
 
@@ -60,7 +78,8 @@ class SecretFormatTest {
         val value = "a-very-recognisable-secret".toByteArray()
         s.save("db.key", value)
         val raw = File(dir, "db.key").readBytes()
-        assertEquals(12 + value.size + 16, raw.size)
+        assertEquals(1 + 12 + value.size + 16, raw.size)
+        assertEquals(1, raw[0].toInt(), "format version byte")
         assertFalse(String(raw, Charsets.ISO_8859_1).contains(String(value, Charsets.ISO_8859_1)))
     }
 
@@ -81,16 +100,49 @@ class SecretFormatTest {
         s.save("db.key", byteArrayOf(2))
         File(dir, "session").copyTo(File(dir, "db.key"), overwrite = true)
         // A fresh instance, so the in-memory cache cannot hide the swap.
-        assertFailsWith<Exception> { store(vault, dir).load("db.key") }
+        assertFailsWith<AEADBadTagException> { store(vault, dir).load("db.key") }
+        assertTrue(File(dir, "db.key").exists())
     }
 
     @Test
-    fun truncatedFileFailsToOpen() {
+    fun shortFileFailsToOpenAndStays() {
         val dir = File(tmp(), "secrets")
         val vault = FakeVault()
         store(vault, dir).save("session", byteArrayOf(1))
-        File(dir, "session").writeBytes(ByteArray(10))
-        assertFailsWith<Exception> { store(vault, dir).load("session") }
+        File(dir, "session").writeBytes(ByteArray(10) { if (it == 0) 1 else 0 })
+        assertFailsWith<IOException> { store(vault, dir).load("session") }
+        assertTrue(File(dir, "session").exists())
+    }
+
+    @Test
+    fun tagCutOffFailsToOpenAndStays() {
+        val dir = File(tmp(), "secrets")
+        val vault = FakeVault()
+        store(vault, dir).save("session", ByteArray(40))
+        val f = File(dir, "session")
+        f.writeBytes(f.readBytes().copyOf(f.length().toInt() - 5))
+        assertFailsWith<AEADBadTagException> { store(vault, dir).load("session") }
+        assertTrue(f.exists())
+    }
+
+    @Test
+    fun unknownVersionByteIsRejected() {
+        val dir = File(tmp(), "secrets")
+        val vault = FakeVault()
+        store(vault, dir).save("session", byteArrayOf(1))
+        val f = File(dir, "session")
+        f.writeBytes(f.readBytes().also { it[0] = 9 })
+        assertFailsWith<IOException> { store(vault, dir).load("session") }
+    }
+
+    @Test
+    fun sameValueSealsWithDifferentNonces() {
+        val dir = File(tmp(), "secrets")
+        val s = store(dir = dir)
+        s.save("a", byteArrayOf(1)); s.save("b", byteArrayOf(1))
+        val na = File(dir, "a").readBytes().copyOfRange(1, 13)
+        val nb = File(dir, "b").readBytes().copyOfRange(1, 13)
+        assertNotEquals(na.toList(), nb.toList())
     }
 
     @Test
@@ -116,28 +168,146 @@ class SecretFormatTest {
         assertNull(s.load("session"))
     }
 
+    private fun files(dir: File) = dir.listFiles()!!.map { it.name }.sorted()
+
     @Test
-    fun invalidatedKeyWipesEverythingAndReadsAsAbsent() {
+    fun transientErrorOnLoadKeepsEverythingAndThrows() {
         val dir = File(tmp(), "secrets")
         val vault = FakeVault()
         store(vault, dir).apply { save("session", byteArrayOf(1)); save("db.key", byteArrayOf(2)) }
-        vault.lose() // the person removed the screen lock, or the key was otherwise invalidated
+        val before = files(dir)
         val fresh = store(vault, dir)
-        assertNull(fresh.load("session"))
-        assertEquals(0, dir.listFiles()?.size ?: 0, "unreadable files are dropped, like iPhone drops a corrupt item")
-        assertNull(fresh.load("db.key"))
+        vault.fail = true
+        assertFailsWith<SecretStoreUnavailable> { fresh.load("session") }
+        assertEquals(before, files(dir))
+        assertEquals(0, vault.deleted)
+        vault.fail = false
+        assertContentEquals(byteArrayOf(1), fresh.load("session")) // retry later works
+        assertContentEquals(byteArrayOf(2), fresh.load("db.key"))
     }
 
     @Test
-    fun saveAfterKeyLossStartsAfresh() {
+    fun transientErrorOnSaveKeepsEverythingAndNeverMakesAKey() {
+        val dir = File(tmp(), "secrets")
+        val vault = FakeVault()
+        store(vault, dir).save("session", byteArrayOf(1))
+        val before = files(dir)
+        val fresh = store(vault, dir)
+        vault.fail = true
+        assertFailsWith<SecretStoreUnavailable> { fresh.save("db.key", byteArrayOf(2)) }
+        assertEquals(before, files(dir))
+        assertEquals(1, vault.created)
+        assertEquals(0, vault.deleted)
+        vault.fail = false
+        assertContentEquals(byteArrayOf(1), fresh.load("session"))
+    }
+
+    @Test
+    fun lostKeyThrowsSecretsLostOnLoadAndWipesNothing() {
         val dir = File(tmp(), "secrets")
         val vault = FakeVault()
         store(vault, dir).apply { save("session", byteArrayOf(1)); save("db.key", byteArrayOf(2)) }
+        val before = files(dir)
         vault.lose()
         val fresh = store(vault, dir)
+        assertFailsWith<SecretsLost> { fresh.load("session") }
+        assertFailsWith<SecretsLost> { fresh.load("db.key") }
+        assertEquals(before, files(dir))
+        assertEquals(0, vault.deleted)
+    }
+
+    @Test
+    fun saveAfterKeyLossThrowsSecretsLostKeepsFilesAndMakesNoKey() {
+        val dir = File(tmp(), "secrets")
+        val vault = FakeVault()
+        store(vault, dir).apply { save("session", byteArrayOf(1)); save("db.key", byteArrayOf(2)) }
+        val before = files(dir)
+        vault.lose()
+        assertFailsWith<SecretsLost> { store(vault, dir).save("session", byteArrayOf(9)) }
+        assertEquals(before, files(dir))
+        assertEquals(1, vault.created)
+        assertEquals(0, vault.deleted)
+    }
+
+    @Test
+    fun explicitWipeAfterLossStartsAfresh() {
+        val dir = File(tmp(), "secrets")
+        val vault = FakeVault()
+        store(vault, dir).save("session", byteArrayOf(1))
+        vault.lose()
+        val fresh = store(vault, dir)
+        fresh.wipeAll()
         fresh.save("session", byteArrayOf(9))
-        assertContentEquals(byteArrayOf(9), fresh.load("session"))
-        assertNull(store(vault, dir).load("db.key"))
+        assertContentEquals(byteArrayOf(9), store(vault, dir).load("session"))
+    }
+
+    @Test
+    fun neverSavedIsNull() {
+        val dir = File(tmp(), "secrets")
+        val vault = FakeVault()
+        val s = store(vault, dir)
+        assertNull(s.load("session"))
+        s.save("db.key", byteArrayOf(1))
+        assertNull(s.load("session"))
+    }
+
+    @Test
+    fun twoCallersShareOneStoreAndMakeOneKey() {
+        val dir = File(tmp(), "secrets")
+        val vault = FakeVault()
+        val made = java.util.concurrent.atomic.AtomicInteger()
+        val factory = { made.incrementAndGet(); VaultSecretStore(vault, dir) {} }
+        val stores = java.util.concurrent.ConcurrentLinkedQueue<Any>()
+        val threads = (1..8).map { i ->
+            Thread {
+                val s = StoreRegistry.obtain(dir, factory)
+                s.save("n$i", byteArrayOf(i.toByte()))
+                stores += s
+            }
+        }
+        threads.forEach { it.start() }; threads.forEach { it.join() }
+        assertEquals(1, made.get())
+        assertEquals(1, stores.map { System.identityHashCode(it) }.toSet().size)
+        assertEquals(1, vault.created)
+        for (i in 1..8) assertContentEquals(byteArrayOf(i.toByte()), StoreRegistry.obtain(dir, factory).load("n$i"))
+    }
+
+    @Test
+    fun tempFileNameCannotCollideWithASecretName() {
+        val dir = File(tmp(), "secrets")
+        val s = store(dir = dir)
+        s.save("x", byteArrayOf(1))
+        s.save("x.tmp", byteArrayOf(2))
+        assertContentEquals(byteArrayOf(1), s.load("x"))
+        assertContentEquals(byteArrayOf(2), s.load("x.tmp"))
+        assertFailsWith<IllegalArgumentException> { s.save("~tmp~x", byteArrayOf(3)) }
+        assertEquals(listOf("x", "x.tmp"), files(dir))
+    }
+
+    @Test
+    fun strongBoxFailureOfAnyProviderExceptionFallsBackToTee() {
+        val tried = mutableListOf<Boolean>()
+        var cleaned = 0
+        val level = generateWithFallback(
+            generate = { sb -> tried += sb; if (sb) throw java.security.ProviderException("hw busy") else "key" },
+            cleanup = { cleaned++ },
+        )
+        assertEquals(listOf(true, false), tried)
+        assertEquals("tee", level.second)
+        assertEquals(1, cleaned)
+    }
+
+    @Test
+    fun strongBoxSuccessNeedsNoFallback() {
+        val level = generateWithFallback(generate = { "key" }, cleanup = { error("no cleanup") })
+        assertEquals("strongbox", level.second)
+    }
+
+    @Test
+    fun teeFailureIsNotSwallowed() {
+        assertFailsWith<java.security.ProviderException> {
+            generateWithFallback<String>(generate = { throw java.security.ProviderException("x") }, cleanup = {})
+        }
     }
 
     @Test
