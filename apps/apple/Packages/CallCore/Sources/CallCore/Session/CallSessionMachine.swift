@@ -220,10 +220,15 @@ public struct CallSessionMachine: Sendable {
             fx.append(.publish(state))
             return fx
         case .answer:
-            guard !outgoing, answerSent, !remoteDescriptionSet, device == answeringDevice, let answering = answeringDevice else { return [] }
+            // A push-woken callee never saw the WebSocket ring, so it has no caller device yet (empty): it binds to the
+            // device whose answer arrives. The payload was opened as sent by the caller's account.
+            guard !outgoing, answerSent, !remoteDescriptionSet, let bound = answeringDevice,
+                  device == bound || bound.isEmpty else { return [] }
             guard let sdp = p.sdp, let claimed = p.dtlsFingerprint, FingerprintCheck.isValid(sdp: sdp, claimed: claimed) else {
                 return end(.failed, notifyServer: true)
             }
+            let answering = device
+            answeringDevice = device
             if let c = p.ceiling { setPeerCeiling(c) }
             remoteDescriptionSet = true
             pinnedFingerprint = claimed

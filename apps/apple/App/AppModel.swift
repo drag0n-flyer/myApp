@@ -1,4 +1,5 @@
 import AppCore
+import CallCore
 import Foundation
 import Observation
 import ServerKit
@@ -20,7 +21,14 @@ enum AppTab: Hashable {
 @Observable
 final class AppModel {
     let chatStore: SampleChatStore
-    let calls: SimulatedCallEngine
+    /// Sample calls: the whole engine in `-sampleData` mode, and an inert placeholder before sign-in.
+    let sampleCalls: SimulatedCallEngine
+    /// The real engine, once signed in (it needs the live connection). `nil` in `-sampleData` mode.
+    private(set) var liveCalls: LiveCallEngine?
+    var calls: any CallEngine {
+        if let liveCalls { return liveCalls }
+        return sampleCalls
+    }
     let account: any AccountService
     /// `nil` in `-sampleData` mode.
     private let live: LiveAccountService?
@@ -32,15 +40,31 @@ final class AppModel {
     private var liveTasks: [Task<Void, Never>] = []
     private var apnsToken: Data?
     private var registrar: PushRegistrar?
+    private let callSealer = UnavailableCallSignalSealer()   // plan 7's `LiveChatStore` provides the MLS sealer
+    private var pathMonitor: PathMonitor?
+    private var isBackground = false
+    /// Newest stats of the running call, for the call info sheet.
+    private(set) var callStats: MediaStats?
+    #if os(iOS)
+    @ObservationIgnored private var callKit: CallKitController?
+    @ObservationIgnored private var voipCenter: VoIPPushCenter?
+    private var voipToken: Data?
+    #endif
 
     var server: ServerPolicy {
-        didSet { calls.server = server }
+        didSet { syncCalls() }
     }
     var settings: UserSettings {
-        didSet { calls.settings = settings.call }
+        didSet { syncCalls() }
     }
     var network: NetworkType {
-        didSet { calls.setNetwork(network) }
+        didSet { sampleCalls.setNetwork(network); liveCalls?.setNetwork(network) }
+    }
+
+    private func syncCalls() {
+        sampleCalls.server = server
+        sampleCalls.settings = settings.call
+        liveCalls?.update(server: server, settings: settings)
     }
     var onboarding: OnboardingFlow
     var selectedTab: AppTab = .chats
@@ -97,7 +121,7 @@ final class AppModel {
         self.network = launch.network
         self.isUITesting = launch.isUITesting
         self.chatStore = SampleChatStore()
-        self.calls = SimulatedCallEngine(server: server, settings: settings.call, network: launch.network)
+        self.sampleCalls = SimulatedCallEngine(server: server, settings: settings.call, network: launch.network)
         #if os(macOS)
         var flow = OnboardingFlow(platform: .mac)
         #else
@@ -115,13 +139,24 @@ final class AppModel {
         live?.onSignedOut = { [weak self] in self?.deviceWasRemoved() }
         if live?.isSignedIn == true { Task { await didSignIn() } }
         if let url = launch.openURL { handle(url: url) }
-        calls.onChange = { [weak self] state in
-            self?.activeCall = state
-        }
+        sampleCalls.onChange = { [weak self] state in self?.callStateChanged(state) }
         Task { await refreshDevices() }
         #if os(macOS)
         macRinger = MacRinger(handler: self, systemUI: !launch.isUITesting)
         #endif
+        if !launch.sampleData {
+            #if os(iOS)
+            setUpVoIP()
+            #endif
+            startPathMonitor()
+            ensureConnection()
+        }
+    }
+
+    private func callStateChanged(_ state: CallState?) {
+        activeCall = state
+        // The socket was kept open for the call while the app was in the background; close it now.
+        if isBackground, state?.isEnded ?? true { Task { await stopLive() } }
     }
 
     // MARK: - Chats (every read touches `revision` so SwiftUI tracks store changes)
@@ -262,31 +297,93 @@ final class AppModel {
     func scenePhaseChanged(_ phase: ScenePhase) {
         #if os(iOS)
         switch phase {
-        case .active: Task { await startLive() }
-        case .background: Task { await stopLive() }
+        case .active:
+            isBackground = false
+            Task { await startLive() }
+        case .background:
+            isBackground = true
+            // A running call keeps its signaling; `callStateChanged` closes the socket when the call ends.
+            if activeCall?.isEnded == false { return }
+            Task { await stopLive() }
         default: break
         }
         #endif
     }
 
     private func startLive() async {
-        guard let live, live.isSignedIn, let client = live.client else { return }
-        if connection == nil {
-            let c = LiveConnection(client: client, transport: URLSessionWebSocketTransport())
-            connection = c
-            liveTasks = [
-                Task { [weak self] in
-                    for await event in c.events {
-                        if case .deviceRevoked = event { await self?.refreshDevices() }
-                    }
-                },
-                Task { [weak self] in
-                    // `.revoked` also reaches the client's 401 path, which calls `deviceWasRemoved`.
-                    for await state in c.states where state == .revoked { await self?.stopLive() }
-                },
-            ]
-        }
+        ensureConnection()
         await connection?.start()
+    }
+
+    /// Creates the live connection and the call engine on top of it, once per sign-in.
+    private func ensureConnection() {
+        guard connection == nil, let live, live.isSignedIn, let client = live.client else { return }
+        let c = LiveConnection(client: client, transport: URLSessionWebSocketTransport())
+        connection = c
+        let signaling = LiveCallSignaling(connection: c, client: client)
+        let engine = LiveCallEngine(chat: chatStore, signaling: signaling, sealer: callSealer,
+                                    server: server, settings: settings, network: network)
+        engine.onChange = { [weak self] state in self?.callStateChanged(state) }
+        engine.onStats = { [weak self] stats in self?.callStats = stats }
+        engine.onHistory = { [weak self] in self?.revision += 1 }
+        #if os(iOS)
+        engine.callKit = callKit
+        engine.voip = voipCenter
+        voipCenter?.handler = engine
+        voipCenter?.engine = engine
+        #else
+        engine.ringer = macRinger
+        #endif
+        liveCalls = engine
+        liveTasks = [
+            Task { [weak self] in
+                for await event in c.events {
+                    signaling.ingest(event)   // call events go to the engine; the rest are handled here
+                    if case .deviceRevoked = event { await self?.refreshDevices() }
+                }
+            },
+            Task { [weak self] in
+                // `.revoked` also reaches the client's 401 path, which calls `deviceWasRemoved`.
+                for await state in c.states where state == .revoked { await self?.stopLive() }
+            },
+        ]
+    }
+
+    private func startPathMonitor() {
+        let monitor = PathMonitor()
+        monitor.onChange = { [weak self] network, meaningful in
+            guard let self else { return }
+            if self.network != network { self.network = network }
+            if meaningful { self.liveCalls?.pathChanged() }
+        }
+        monitor.start()
+        pathMonitor = monitor
+    }
+
+    #if os(iOS)
+    /// One PushKit registry and one CallKit provider for the app's lifetime (iPhone, signed-in builds only).
+    private func setUpVoIP() {
+        let callKit = CallKitController()
+        let resolver = VoIPPushResolver(
+            sealer: callSealer,
+            contact: { [weak self] id in await self?.contact(id: id) },
+            status: { [weak self] id in await self?.callStatus(id) })
+        let center = VoIPPushCenter(callKit: callKit, resolver: resolver,
+                                    onToken: { [weak self] token in Task { @MainActor in await self?.didReceiveVoIPToken(token) } })
+        self.callKit = callKit
+        voipCenter = center
+        center.start()
+    }
+
+    private func didReceiveVoIPToken(_ token: Data) async {
+        voipToken = token
+        if let registrar { await registrar.didRegister(voipToken: token) }
+    }
+    #endif
+
+    func callStatus(_ callID: String) async -> CallStatus? {
+        guard let signaling = liveCalls?.signaling else { return nil }
+        return try? await signaling.status(callID: callID)
     }
 
     private func stopLive() async {
@@ -295,6 +392,8 @@ final class AppModel {
             liveTasks.forEach { $0.cancel() }
             liveTasks = []
             connection = nil
+            liveCalls?.shutdown()
+            liveCalls = nil
         }
     }
 
@@ -319,6 +418,9 @@ final class AppModel {
                                       bundleID: Bundle.main.bundleIdentifier ?? "")
         self.registrar = registrar
         await registrar.didRegister(alertToken: token)
+        #if os(iOS)
+        if let voipToken { await registrar.didRegister(voipToken: voipToken) }
+        #endif
     }
 
     // MARK: - Calls
@@ -328,6 +430,12 @@ final class AppModel {
     func startCall(contactID: String, video: Bool) {
         guard let contact = chatStore.contact(id: contactID) else { return }
         calls.start(with: contact, video: video)
+    }
+
+    /// What the call info sheet shows: live numbers, or steady sample numbers in `-sampleData` mode.
+    var callInfoStats: MediaStats {
+        if let callStats { return callStats }
+        return isSampleData ? MediaStats(roundTripTime: 0.062, inboundLossFraction: 0.004, usingRelay: false) : MediaStats()
     }
 
     func dismissEndedCall() {
