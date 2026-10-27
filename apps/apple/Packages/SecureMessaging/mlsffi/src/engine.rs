@@ -353,6 +353,9 @@ impl<P: CryptoProvider + Clone> EngineCore<P> {
     ) -> Result<CommitBundle, FfiError> {
         let _g = self.lock();
         let mut group = self.load(&group_id)?;
+        if group.has_pending_commit() {
+            return Err(FfiError::PendingCommit);
+        }
         let mut builder = group.commit_builder();
         for kp in &key_packages {
             let msg = MlsMessage::from_bytes(kp).map_err(|_| FfiError::Malformed)?;
@@ -370,6 +373,11 @@ impl<P: CryptoProvider + Clone> EngineCore<P> {
     ) -> Result<CommitBundle, FfiError> {
         let _g = self.lock();
         let mut group = self.load(&group_id)?;
+        // First, so the answer does not depend on how far the pending commit got: a member it
+        // adds is not in the roster yet.
+        if group.has_pending_commit() {
+            return Err(FfiError::PendingCommit);
+        }
         let mut indexes = Vec::with_capacity(identities.len());
         for identity in &identities {
             indexes.push(
@@ -490,7 +498,9 @@ impl<P: CryptoProvider + Clone> EngineCore<P> {
                     }
                     ReceivedMessage::Commit(description) => Processed::Commit {
                         group_id: group_id.clone(),
-                        new_epoch: group.current_epoch(),
+                        // A commit at epoch N creates epoch N + 1. mls-rs leaves a removed member's
+                        // group at its old epoch, so do not read it back from the group.
+                        new_epoch: message_epoch + 1,
                         removed_me: matches!(description.effect, CommitEffect::Removed { .. }),
                     },
                     // Standalone proposals, GroupInfo, KeyPackage: never sent by our clients.
