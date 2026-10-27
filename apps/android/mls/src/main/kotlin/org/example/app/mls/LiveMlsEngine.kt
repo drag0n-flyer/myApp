@@ -1,7 +1,13 @@
 package org.example.app.mls
 
 import java.io.File
+import java.nio.channels.FileChannel
+import java.nio.channels.OverlappingFileLockException
+import java.nio.file.StandardOpenOption
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.example.app.contracts.CommitBundle
 import org.example.app.contracts.Encrypted
@@ -20,11 +26,24 @@ import org.example.app.mls.ffi.Processed
  * [org.example.app.mls.ffi.FfiException] becomes the matching [MlsException].
  */
 class LiveMlsEngine(identity: String, storageDir: File, secrets: SecretStore) : MlsEngine {
+    /** False until MLS M7 exports real member keys; M7 flips it. The safety-number UI stays hidden while false. */
+    val providesRealMemberKeys: Boolean = false
+
     private val engine: Engine
+    private val lockChannel: FileChannel
 
     init {
         try {
             if (!storageDir.isDirectory && !storageDir.mkdirs()) throw MlsException.Storage("cannot create storage directory")
+            // A second process on this directory would race the first one's state.
+            lockChannel = FileChannel.open(
+                File(storageDir, "mls.lock").toPath(), StandardOpenOption.CREATE, StandardOpenOption.WRITE,
+            )
+            try {
+                if (lockChannel.tryLock() == null) throw MlsException.Storage("storage is in use by another process")
+            } catch (_: OverlappingFileLockException) {
+                // Another engine in this process: engineLock already serialises those.
+            }
             val keypair = SigningKeys.loadOrCreate(secrets)
             engine = Engine(identity, keypair, storageDir.path)
         } catch (e: Throwable) {
@@ -32,15 +51,23 @@ class LiveMlsEngine(identity: String, storageDir: File, secrets: SecretStore) : 
         }
     }
 
-    private suspend fun <T> call(body: (Engine) -> T): T = MlsGate.withLock {
-        withContext(Dispatchers.IO) {
-            try {
-                body(engine)
-            } catch (e: Throwable) {
-                throw ErrorMapping.map(e)
+    /**
+     * One Rust call under the engine's own lock. This is not [MlsGate]: callers take the gate
+     * around "engine call + database write", and a second take here would deadlock.
+     * NonCancellable: Rust has already saved its state change when the call returns, so the
+     * result must never be dropped because the caller was cancelled. Callers should make
+     * "process + database write" non-cancellable too.
+     */
+    private suspend fun <T> call(body: (Engine) -> T): T =
+        withContext(Dispatchers.IO + NonCancellable) {
+            engineLock.withLock {
+                try {
+                    body(engine)
+                } catch (e: Throwable) {
+                    throw ErrorMapping.map(e)
+                }
             }
         }
-    }
 
     override suspend fun makeKeyPackages(count: Int): List<ByteArray> {
         if (count < 0) throw MlsException.Malformed
@@ -80,10 +107,30 @@ class LiveMlsEngine(identity: String, storageDir: File, secrets: SecretStore) : 
 
     override suspend fun members(group: GroupId): List<String> = call { it.members(group.raw) }
 
-    /** Needs the mlsffi member-key export from MLS M7, which is not on main yet. */
+    /**
+     * Same fallback as the iPhone's `Membership.keys(of:)`: members with placeholder keys, sorted
+     * by identity. Replace with the real export in MLS M7 and set [providesRealMemberKeys] true.
+     */
     override suspend fun memberKeys(group: GroupId): List<MemberKey> =
-        throw MlsException.Internal("memberKeys needs mlsffi M7")
+        members(group)
+            .map { MemberKey(it, "fake-sig:$it".toByteArray(Charsets.UTF_8)) }
+            .sortedWith { x, y -> compareUtf8(x.identity, y.identity) }
+
+    private fun compareUtf8(x: String, y: String): Int {
+        val a = x.toByteArray(Charsets.UTF_8)
+        val b = y.toByteArray(Charsets.UTF_8)
+        for (i in 0 until minOf(a.size, b.size)) {
+            val d = (a[i].toInt() and 0xFF) - (b[i].toInt() and 0xFF)
+            if (d != 0) return d
+        }
+        return a.size - b.size
+    }
 
     private fun bundle(ffi: org.example.app.mls.ffi.CommitBundle) =
         CommitBundle(ffi.commit, ffi.welcome, ffi.newEpoch.toLong())
+
+    private companion object {
+        /** Process-wide: two engines on one directory still take turns. */
+        val engineLock = Mutex()
+    }
 }

@@ -8,7 +8,10 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.example.app.contracts.GroupId
 import org.example.app.contracts.Incoming
 import org.example.app.contracts.MemorySecretStore
@@ -168,12 +171,44 @@ class LiveMlsEngineTest {
     }
 
     @Test
-    @kotlin.test.Ignore // mlsffi on main has no member-key export yet (MLS M7); wire in then.
-    fun memberKeysSortedIncludesSelf() = runBlocking {
+    fun memberKeysAreSortedPlaceholdersUntilM7() = runBlocking {
+        val a = engine("b1/d1")
+        val b = engine("a1/d1")
+        val group = a.createGroup()
+        val bundle = a.add(b.makeKeyPackages(1), group)
+        a.commitAccepted(group)
+        b.process(assertNotNull(bundle.welcome))
+        assertTrue(!a.providesRealMemberKeys)
+        val keys = a.memberKeys(group)
+        assertEquals(listOf("a1/d1", "b1/d1"), keys.map { it.identity })
+        assertEquals("fake-sig:a1/d1", String(keys[0].signatureKey))
+    }
+
+    @Test
+    fun callerHoldingGateCanCallEngine() = runBlocking {
+        val a = engine("a1/d1")
+        withTimeout(10_000) { MlsGate.withLock { a.createGroup() } }
+        Unit
+    }
+
+    @Test
+    fun cancelledCallerStillAppliesStateChange() = runBlocking {
         val a = engine("a1/d1")
         val b = engine("b1/d1")
         val group = pair(a, b)
-        val keys = a.memberKeys(group)
-        assertEquals(listOf("a1/d1", "b1/d1"), keys.map { it.identity })
+        val sealed = a.encrypt("x".toByteArray(), group)
+        val job = launch(start = CoroutineStart.UNDISPATCHED) { b.process(sealed.ciphertext) }
+        job.cancel()
+        job.join()
+        // The call ran to completion although the caller was cancelled: the message is consumed.
+        assertFailsWith<MlsException.Duplicate> { b.process(sealed.ciphertext) }
+        Unit
+    }
+
+    @Test
+    fun corruptStoredSigningKeyFailsClosed() {
+        val secrets = MemorySecretStore()
+        secrets.save(SecretNames.MLS_SIGNING, """{"pub":"","sec":""}""".toByteArray())
+        assertFailsWith<MlsException.Storage> { SigningKeys.loadOrCreate(secrets) }
     }
 }

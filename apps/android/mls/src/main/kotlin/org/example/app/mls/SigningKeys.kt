@@ -10,7 +10,7 @@ import org.example.app.mls.ffi.generateSignatureKeypair
 /** Loads or creates this device's MLS signing key. Stored as `{"pub":b64,"sec":b64}`. */
 object SigningKeys {
     private val lock = Any()
-    private val shape = Regex("""^\{"pub":"([A-Za-z0-9+/=]*)","sec":"([A-Za-z0-9+/=]*)"\}$""")
+    private val shape = Regex("""^\{"pub":"([A-Za-z0-9+/=]+)","sec":"([A-Za-z0-9+/=]+)"\}$""")
 
     fun loadOrCreate(secrets: SecretStore): SignatureKeypair = synchronized(lock) {
         secrets.load(SecretNames.MLS_SIGNING)?.let { stored ->
