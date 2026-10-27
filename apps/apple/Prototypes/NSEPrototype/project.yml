@@ -8,8 +8,8 @@ packages:
     path: ../../Packages/SecureMessaging
 settings:
   base:
-    SWIFT_VERSION: '6.0'
-    SWIFT_STRICT_CONCURRENCY: complete
+    # A throwaway prototype: Swift 5 mode avoids Sendable noise around the notification content handler.
+    SWIFT_VERSION: '5.0'
     CODE_SIGN_STYLE: Automatic
     CODE_SIGN_IDENTITY: '-'
     GENERATE_INFOPLIST_FILE: 'YES'
