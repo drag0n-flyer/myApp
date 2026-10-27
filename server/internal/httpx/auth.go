@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/velixio/myapp/server/internal/core"
+	"github.com/velixio/myApp/server/internal/core"
 )
 
 type principalKey struct{}

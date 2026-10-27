@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/velixio/myapp/server/internal/core"
-	"github.com/velixio/myapp/server/internal/ratelimit"
+	"github.com/velixio/myApp/server/internal/core"
+	"github.com/velixio/myApp/server/internal/ratelimit"
 )
 
 // HandlerFunc is an HTTP handler that reports failure by returning an error.

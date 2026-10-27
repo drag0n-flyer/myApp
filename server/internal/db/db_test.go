@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/velixio/myapp/server/internal/core"
-	"github.com/velixio/myapp/server/internal/db"
-	"github.com/velixio/myapp/server/internal/testkit"
+	"github.com/velixio/myApp/server/internal/core"
+	"github.com/velixio/myApp/server/internal/db"
+	"github.com/velixio/myApp/server/internal/testkit"
 )
 
 func newUUID(t testing.TB) string {

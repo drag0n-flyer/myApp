@@ -1,4 +1,4 @@
-module github.com/velixio/myapp/server
+module github.com/velixio/myApp/server
 
 go 1.26
 

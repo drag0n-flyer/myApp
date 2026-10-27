@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/velixio/myapp/server/internal/core"
-	"github.com/velixio/myapp/server/internal/ratelimit"
+	"github.com/velixio/myApp/server/internal/core"
+	"github.com/velixio/myApp/server/internal/ratelimit"
 )
 
 type fakeVerifier struct {

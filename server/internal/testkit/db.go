@@ -17,7 +17,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/velixio/myapp/server/internal/db"
+	"github.com/velixio/myApp/server/internal/db"
 )
 
 var (
