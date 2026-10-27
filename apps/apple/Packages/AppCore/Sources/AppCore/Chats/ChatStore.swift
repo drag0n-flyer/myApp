@@ -1,3 +1,4 @@
+import Foundation
 public enum IncomingCallDecision: Equatable, Sendable {
     /// Show the call screen.
     case ring
@@ -23,6 +24,7 @@ public protocol ChatStore: AnyObject {
     func report(chatID: String)
     func markRead(chatID: String)
     func incomingCall(from contact: Contact, video: Bool) -> IncomingCallDecision
+    func recordCall(_ summary: CallSummary, contactID: String, outgoing: Bool, at date: Date)
     func addContact(username: String) -> Contact?
     /// The chat with this contact, created empty if there is none yet.
     func ensureChat(with contactID: String) -> String

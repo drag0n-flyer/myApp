@@ -92,6 +92,12 @@ public final class SampleChatStore: ChatStore {
         return .silentMissed
     }
 
+    public func recordCall(_ summary: CallSummary, contactID: String, outgoing: Bool, at date: Date) {
+        let chatID = ensureChat(with: contactID)
+        let sender = outgoing ? me.id : contactID
+        append(Message(id: makeID(), senderID: sender, sentAt: date, content: .call(summary), status: outgoing ? .sent : .delivered, replyToID: nil, reactions: []), to: chatID)
+    }
+
     public func addContact(username: String) -> Contact? {
         let name = username.lowercased()
         if let existing = contacts.first(where: { $0.username == name }) { return existing }

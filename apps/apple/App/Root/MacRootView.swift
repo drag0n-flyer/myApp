@@ -60,7 +60,7 @@ struct MacRootView: View {
             if let caller = model.incomingCaller {
                 IncomingCallBanner(name: caller.displayName,
                                    accept: { model.answerIncomingCall(video: false) },
-                                   decline: { model.incomingCaller = nil })
+                                   decline: { model.declineIncomingCall() })
                     .padding(.top, 10)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
@@ -165,7 +165,13 @@ extension AppModel {
     func answerIncomingCall(video: Bool) {
         guard let caller = incomingCaller else { return }
         incomingCaller = nil
-        startCall(contactID: caller.id, video: video)
+        calls.simulateIncoming(from: caller, video: video)
+        calls.answer(video: video)
+    }
+
+    func declineIncomingCall() {
+        incomingCaller = nil
+        calls.decline()
     }
 }
 #endif
