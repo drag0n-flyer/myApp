@@ -50,11 +50,24 @@ public enum LinkClaim: Equatable, Sendable {
 
 // MARK: - WebAuthn
 
+/// The Go server sends the WebAuthn options bare (`{"challenge":…}`), as its spec says; a browser-style
+/// `{"publicKey":{…}}` wrapper is accepted too.
 private struct PublicKeyEnvelope<T: Decodable>: Decodable {
     let publicKey: T
+
+    private enum Keys: String, CodingKey { case publicKey }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        if c.contains(.publicKey) {
+            publicKey = try c.decode(T.self, forKey: .publicKey)
+        } else {
+            publicKey = try T(from: decoder)
+        }
+    }
 }
 
-/// Registration options, parsed from go-webauthn's `{"publicKey":{…}}`.
+/// Registration options, parsed from the server's bare options (or a `{"publicKey":{…}}` wrapper).
 public struct CreationOptions: Decodable, Equatable, Sendable {
     public let challenge: Data
     public let rpID: String
@@ -87,7 +100,7 @@ public struct CreationOptions: Decodable, Equatable, Sendable {
     }
 }
 
-/// Sign-in options, from `{"publicKey":{"challenge","rpId"}}`.
+/// Sign-in options, from `{"challenge","rpId"}` (or a `{"publicKey":{…}}` wrapper).
 public struct RequestOptions: Decodable, Equatable, Sendable {
     public let challenge: Data
     public let rpID: String
