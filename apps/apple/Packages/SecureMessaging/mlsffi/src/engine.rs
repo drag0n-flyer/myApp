@@ -32,9 +32,6 @@ use zeroize::Zeroizing;
 use crate::error::FfiError;
 use crate::storage::FileStorage;
 
-#[cfg(target_vendor = "apple")]
-type Provider = mls_rs_crypto_cryptokit::CryptoKitProvider;
-#[cfg(not(target_vendor = "apple"))]
 type Provider = mls_rs_crypto_rustcrypto::RustCryptoProvider;
 
 const CIPHER_SUITE: CipherSuite = CipherSuite::CURVE25519_AES128;
@@ -210,8 +207,8 @@ pub fn generate_signature_keypair() -> Result<SignatureKeypair, FfiError> {
 }
 
 /// The engine, generic over the crypto provider. `Engine` (the UniFFI object)
-/// wraps the platform provider; the generic form exists so tests can build
-/// two clients with different providers (CryptoKit and RustCrypto interop).
+/// wraps the RustCrypto provider (all targets); the generic form is kept so tests
+/// can inject another provider.
 #[doc(hidden)]
 pub struct EngineCore<P: CryptoProvider + Clone> {
     client: EngineClient<P>,

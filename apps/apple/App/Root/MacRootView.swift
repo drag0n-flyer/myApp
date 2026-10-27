@@ -59,8 +59,8 @@ struct MacRootView: View {
         .overlay(alignment: .top) {
             if let caller = model.incomingCaller {
                 IncomingCallBanner(name: caller.displayName,
-                                   accept: { model.answerIncomingCall(video: false) },
-                                   decline: { model.declineIncomingCall() })
+                                   accept: { model.macRinger?.answerFromBanner() },
+                                   decline: { model.macRinger?.declineFromBanner() })
                     .padding(.top, 10)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
@@ -70,6 +70,7 @@ struct MacRootView: View {
         .toolbar {
             ToolbarItem {
                 Button("Simulate incoming call", systemImage: "phone.arrow.down.left") { model.simulateIncomingCall() }
+                    .accessibilityIdentifier("mac.simulateIncoming")
             }
         }
         #endif
@@ -153,25 +154,23 @@ extension AppModel {
     func simulateIncomingCall() {
         guard let caller = contacts.first else { return }
         guard chatStore.incomingCall(from: caller, video: false) == .ring else { return }
-        incomingCaller = caller
-        guard !isUITesting else { return }
-        let content = UNMutableNotificationContent()
-        content.title = caller.displayName
-        content.body = String(localized: "Incoming call")
-        content.sound = .default
-        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "incoming-call", content: content, trigger: nil))
+        macRinger?.ring(callID: "sample-\(UUID().uuidString)", caller: caller, video: false)
     }
+}
 
-    func answerIncomingCall(video: Bool) {
-        guard let caller = incomingCaller else { return }
-        incomingCaller = nil
+extension AppModel: MacRingHandling {
+    func macRingSetCaller(_ caller: Contact?) { incomingCaller = caller }
+
+    func macRingAnswer(callID: String, caller: Contact?, video: Bool) {
+        guard let caller else { return }
         calls.simulateIncoming(from: caller, video: video)
         calls.answer(video: video)
     }
 
-    func declineIncomingCall() {
-        incomingCaller = nil
-        calls.decline()
-    }
+    func macRingDecline(callID: String) { calls.decline() }
+
+    func macRingStatus(callID: String) async -> CallStatus? { nil }
+
+    func macRingFinished(callID: String, kind: CallKitEndKind) {}
 }
 #endif

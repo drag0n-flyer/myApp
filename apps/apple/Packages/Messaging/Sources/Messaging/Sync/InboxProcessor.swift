@@ -22,6 +22,9 @@ public actor InboxProcessor {
     private let deps: MessagingDeps
     private let conversations: ConversationManager
     private let handler: IncomingHandler
+    private var membership: Membership { Membership(deps: deps) }
+    /// Device IDs whose notice is being shown right now (a second drain must not show it twice).
+    private var noticesInFlight: Set<String> = []
     private let controls: ControlSender?
     private enum Section { case fetch, drain }
     private var syncPending = false
@@ -30,6 +33,10 @@ public actor InboxProcessor {
     private var beforeLock: (@Sendable (RawInboxRecord) async -> Void)?
     /// Welcomes that `mls.process` accepted but whose rows are not stored yet (retried without a second `process`).
     private var pendingJoins: [Int64: Incoming] = [:]
+    /// Results of `mls.process` that another path (the call sealer) already obtained for a payload that is not its
+    /// to handle, by payload hash. `process` uses them instead of calling `mls.process` a second time, which
+    /// the engine would reject as a duplicate and leave the stored epoch behind.
+    private var adopted: [Data: Incoming] = [:]
     private var held: Set<Section> = []
     private var waiters: [Section: [CheckedContinuation<Void, Never>]] = [:]
 
@@ -45,6 +52,11 @@ public actor InboxProcessor {
 
     /// Test hook: runs after the cheap pre-checks and before the process lock is taken.
     func setBeforeLockHook(_ hook: (@Sendable (RawInboxRecord) async -> Void)?) { beforeLock = hook }
+
+    /// Hands over an MLS result that was produced outside the inbox pipeline (a commit, Welcome or non-call
+    /// message that arrived on the call channel). The item itself still comes from the server inbox; when
+    /// it is processed, this result is applied through the normal path (rows, epoch, device lines).
+    func adopt(_ incoming: Incoming, forPayloadHash hash: Data) { adopted[hash] = incoming }
 
     // MARK: Sync
 
@@ -162,12 +174,45 @@ public actor InboxProcessor {
             }
         }
         release(.drain)
-        // Receipts are network calls, so they go after the lock and the gate are released.
+        // Network calls (device names, receipts) go after the lock and the gate are released.
+        await noticeOwnDevices()
         if let controls {
             for (chatID, ids) in newMessages.sorted(by: { $0.key < $1.key }) {
                 // Best effort: a lost delivered receipt only delays the tick.
                 try? await controls.sendControl(.receipt(.delivered, ids: ids), chatID: chatID)
             }
+        }
+    }
+
+    // MARK: New own devices (Design 19)
+
+    static func noticeKey(_ deviceID: String) -> String { "notified.device.\(deviceID)" }
+
+    /// One "New device added" notice per device ID, ever. The apply transaction wrote a pending marker
+    /// (`notice.pending.<id>`) per new own device, so every drain posts all pending notices, also ones whose
+    /// first attempt was cut short. The name comes from `GET /v1/devices`; when that fails the marker stays and
+    /// the next drain tries again. A device the server no longer lists gets "A new device". The pending
+    /// marker is cleared after the notice and the `notified.device.<id>` marker, so a kill in between repeats
+    /// the notice rather than losing it.
+    private func noticeOwnDevices() async {
+        let pending = ((try? deps.repo.entries(prefix: IncomingHandler.pendingNoticePrefix)) ?? [:])
+            .filter { !$0.value.isEmpty }
+            .map { String($0.key.dropFirst(IncomingHandler.pendingNoticePrefix.count)) }.sorted()
+        // Claiming happens without a suspension point, so two drains cannot both claim an ID.
+        let todo = pending.filter { noticesInFlight.insert($0).inserted }
+        guard !todo.isEmpty else { return }
+        defer { for id in todo { noticesInFlight.remove(id) } }
+        let devices: [Device]
+        do { devices = try await deps.server.devices() } catch { return }
+        for id in todo {
+            if let done = try? deps.repo.get(Self.noticeKey(id)), !done.isEmpty {
+                try? deps.repo.set(IncomingHandler.pendingNoticeKey(id), Data())
+                continue
+            }
+            let name = devices.first { $0.id == id }?.name ?? ""
+            await deps.notifier.ownDeviceAdded(deviceID: id, name: name.isEmpty ? "A new device" : name)
+            try? deps.repo.set(Self.noticeKey(id), Data([1]))
+            try? deps.repo.set(IncomingHandler.pendingNoticeKey(id), Data())
         }
     }
 
@@ -225,7 +270,7 @@ public actor InboxProcessor {
                     return nil
                 }
                 let incoming: Incoming
-                if let accepted = pendingJoins[raw.cursor] {
+                if let accepted = pendingJoins[raw.cursor] ?? adopted[hash] {
                     incoming = accepted
                 } else {
                     do {
@@ -265,18 +310,23 @@ public actor InboxProcessor {
                         try plan.store(in: repo)
                         try repo.markProcessed(hash: hash)
                         try repo.deleteRaw(cursor: raw.cursor)
-                        return try handler.apply(incoming, raw: raw, db: repo)
+                        return try handler.apply(incoming, raw: raw, db: repo, memberKeys: plan.keys)
                     }
                     pendingJoins[raw.cursor] = nil
                     return result
                 }
+                // The group's members after a commit (under the lock, before the transaction). A failure here only
+                // skips the lines for now: the MLS state has advanced, so the item must not be processed again.
+                var keys: [MemberKey]?
+                if case .commit(let group, _, false) = incoming { keys = try? await membership.keys(of: group) }
                 return try repo.transaction {
-                    let result = try handler.apply(incoming, raw: raw, db: repo)
+                    let result = try handler.apply(incoming, raw: raw, db: repo, memberKeys: keys)
                     try repo.markProcessed(hash: hash)
                     try repo.deleteRaw(cursor: raw.cursor)
                     return result
                 }
             }
+            adopted[hash] = nil
             return (.done, applied)
         } catch {
             return (.stop, nil)

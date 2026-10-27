@@ -156,7 +156,7 @@ The sample services stay. The launch argument `-sampleData` selects them, so the
 |---|---|---|---|
 | pgx v5, coder/websocket, go-webauthn | MIT, ISC, BSD-3 | 2 | asked in plan 2 |
 | WebRTC (Google, M-branch) + libopus 1.6 | BSD-3 | 3 | named in GOAL.md; plan 3 pins the branch |
-| mls-rs, mls-rs-crypto-cryptokit, mls-rs-crypto-rustcrypto (git pin), uniffi | Apache-2.0 OR MIT / MPL-2.0 (uniffi) | 4 | mls-rs named in GOAL.md; plan 4 asks for the rest |
+| mls-rs, mls-rs-crypto-rustcrypto (git pin; all targets, CryptoKit crate dropped 2026-10-28), uniffi | Apache-2.0 OR MIT / MPL-2.0 (uniffi) | 4 | mls-rs named in GOAL.md; plan 4 asks for the rest |
 | RNNoise | BSD-3 | 5 (lab), 8 | named in GOAL.md |
 | Lab-only scoring: numpy, onnxruntime, ViSQOL/speequal, DNSMOS models; LibriSpeech + MUSAN/DNS noise corpora | various, to check | 5 | asked in plan 5; never shipped |
 | CI tools: markdownlint-cli2, lychee, gitleaks, go-licenses, gremlins | various | 9 | asked in plan 9 |
@@ -170,7 +170,7 @@ The sample services stay. The launch argument `-sampleData` selects them, so the
 
 - Plan 5 adds `appserver lab session` and `APP_LAB_MODE` to the server's identity package after plan 2 merges (owner review: auth).
 - Plan 8 needs plan 3's WebRTC build to add a capture post-processing hook for RNNoise and H.264 hardware factories.
-- Plan 8's first app build checks that plan 4's CryptoKit bridge symbols and WebRTC's symbols don't collide.
+- Symbol collision between plan 4 and WebRTC: no longer a risk. Plan 4 uses RustCrypto on all targets (owner decision 2026-10-28), so there is no CryptoKit bridge.
 - Plan 9's test vectors (push padding, signatures, sealed handles, TURN credentials, escrow, link sealing, safety numbers) are checked by both the Go and Swift tests.
 - **Plan 2 lane A (A5) adds `POST /v1/link/{linkID}/info`** (authed; `{secret}` → `{deviceName, platform, createdAt}`; `403 forbidden`, `410 expired`) for plan 6's link approval screen (OPEN-24). Owner review: auth.
 - **Plan 4 adds `MLSEngine.memberKeys(of:)` and `MemberKey`** (contract above) for plan 7 A4. Owner review: cryptography.
@@ -186,3 +186,7 @@ The sample services stay. The launch argument `-sampleData` selects them, so the
 | 2026-10-27 | Use mls-rs through our own thin Rust binding layer (`mlsffi`, plan 4) instead of `mls-rs-uniffi`; GOAL.md §3 and §5 updated. **Approved.** |
 | 2026-10-27 | Threat-model fixes (OPEN-18, OPEN-7, OPEN-24, OPEN-6): (1) chat mode bound inside the encrypted chat by its creator, clients never switch E2EE → server-readable; (2) adding a device to a chat shows "X added a new device" to the other members and notifies own devices; (3) link approval shows device name/type, requires Face ID/Touch ID, warns plainly; (4) real safety numbers derived from MLS keys. **Approved.** Added to plans 6 and 7. |
 | 2026-10-27 | Owner review of CODEOWNERS paths (identity, delivery, calls, push, pushgw, auth middleware, crypto) is deferred until the end of Phase 1; completed, reviewed work may merge to `main` before that. **Owner decision.** |
+| 2026-10-28 | MLS crypto provider is `mls-rs-crypto-rustcrypto` on all targets (iPhone, Mac, Linux); `mls-rs-crypto-cryptokit` is dropped. Its Swift bridge needs macOS 26 (the Mac app supports macOS 14) and its build script fails on Xcode 26.1+; one provider also means one crypto path to review and no symbol clash with WebRTC. Supersedes plan 4 decision 2. **Owner decision.** |
+| 2026-10-28 | No branch protection or code-owner enforcement for now (docs Task 13 deferred). Voice notes may be up to 30 minutes (minimum 0.5 s stays). The GitHub token in the local remote URL is a throwaway account's and stays. **Owner decisions.** |
+| 2026-10-28 | Device measurements (call lab L10) are replaced for now by automated test calls on GitHub Mac runners: the server runs on the runner; the Mac app and an iOS Simulator call each other with recorded speech as the microphone, under emulated bad networks; data use, connect time and network-switch survival are measured. Battery, real cellular, Bluetooth and real microphones are left for a later, optional device run. **Owner decision.** |
+| 2026-10-28 | Approved: call-lab scoring dependencies `numpy`, `onnxruntime`, `speequal` (plan 5 decision 4); noise set MUSAN "noise" subset if its license allows, else the DNS Challenge noise set (decision 5, controller call). Approved: docs tools `markdownlint-cli2`, `lychee` (docs Task 1) and `gitleaks`, `go-licenses` plus the Swift license check (docs Task 6). **Owner decision.** |

@@ -14,6 +14,10 @@ public enum AppliedResult: Sendable, Equatable {
     case joined(group: GroupID, epoch: UInt64)
     /// A commit by another device was applied to the conversation.
     case commit(conversationID: String, newEpoch: UInt64)
+    /// A commit (or a re-sent Welcome) added devices of my own account. The device lines and the safety number
+    /// are already written; the caller shows the "New device added" notice once per device ID, after the
+    /// process lock is released.
+    case ownDeviceAdded(deviceIDs: [String])
     /// A commit removed this device; the conversation is now inactive.
     case removedMe(conversationID: String)
     /// Applied without a new message (edit, delete, reaction, receipt, mode) or dropped.
@@ -27,6 +31,7 @@ public struct IncomingHandler: Sendable {
     public let me: (accountID: String, deviceID: String)
     let now: @Sendable () -> Date
     let log: @Sendable (String) -> Void
+    private let membership: Membership
 
     public init(
         me: (accountID: String, deviceID: String), now: @escaping @Sendable () -> Date,
@@ -35,6 +40,7 @@ public struct IncomingHandler: Sendable {
         self.me = me
         self.now = now
         self.log = log
+        self.membership = Membership(me: me, now: now)
     }
 
     // MARK: Echoed own commits (Design 17)
@@ -50,9 +56,15 @@ public struct IncomingHandler: Sendable {
 
     // MARK: Apply
 
-    public func apply(_ incoming: Incoming, raw: RawInboxRecord, db: Repository) throws -> AppliedResult {
+    /// - Parameter memberKeys: the group's members after a `.commit` or `.joined` (`Membership.keys(of:)`, read
+    ///   under the process lock before the transaction). `nil` skips the device lines and the safety number;
+    ///   the next update catches up, because it compares the whole stored state.
+    public func apply(
+        _ incoming: Incoming, raw: RawInboxRecord, db: Repository, memberKeys: [MemberKey]? = nil
+    ) throws -> AppliedResult {
         switch incoming {
         case .joined(let group, let epoch):
+            if let own = try updateMembership(memberKeys, raw: raw, db: db) { return own }
             return .joined(group: group, epoch: epoch)
         case .commit(_, let newEpoch, let removedMe):
             guard var conversation = try db.conversation(serverID: raw.conversationID) else { return .ignored }
@@ -62,11 +74,25 @@ public struct IncomingHandler: Sendable {
                 return .removedMe(conversationID: conversation.serverID)
             }
             try db.setEpoch(serverID: conversation.serverID, Int64(newEpoch))
+            if let own = try updateMembership(memberKeys, raw: raw, db: db) { return own }
             return .commit(conversationID: conversation.serverID, newEpoch: newEpoch)
         case .application(_, let sender, let plaintext, _):
             guard let conversation = try db.conversation(serverID: raw.conversationID) else { return .ignored }
             return try applyApplication(sender: sender, plaintext: plaintext, raw: raw, conversation: conversation, db: db)
         }
+    }
+
+    static let pendingNoticePrefix = "notice.pending."
+    static func pendingNoticeKey(_ deviceID: String) -> String { pendingNoticePrefix + deviceID }
+
+    /// Device lines and the safety number for the conversation of `raw` (Design 19, 20), after its epoch is stored.
+    private func updateMembership(_ keys: [MemberKey]?, raw: RawInboxRecord, db: Repository) throws -> AppliedResult? {
+        guard let keys, let conversation = try db.conversation(serverID: raw.conversationID) else { return nil }
+        let change = try membership.apply(keys: keys, conversation: conversation, db: db)
+        // Written in the caller's transaction, with the new members and the deleted raw item: the notice
+        // survives a kill before it is shown. `InboxProcessor` clears the marker after posting it.
+        for id in change.ownDevicesAdded { try db.set(Self.pendingNoticeKey(id), Data([1])) }
+        return change.ownDevicesAdded.isEmpty ? nil : .ownDeviceAdded(deviceIDs: change.ownDevicesAdded)
     }
 
     /// An MLS failure: one placeholder row (`undecryptable = 1`, ID `undecryptable-<cursor>`) in the chat,

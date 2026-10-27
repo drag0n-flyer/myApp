@@ -10,4 +10,5 @@ if [ ! -e "$dir/.env" ]; then
 fi
 docker compose -f "$dir/compose.yaml" config -q
 docker compose -f "$dir/compose.yaml" --profile gateway config -q
+docker compose -f "$dir/compose.yaml" --profile caddy config -q
 echo "compose config ok"

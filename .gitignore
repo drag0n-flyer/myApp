@@ -1,5 +1,6 @@
 knowledge/
 .superpowers/
+.vscode
 
 # Apple apps
 apps/apple/*.xcodeproj
@@ -44,3 +45,6 @@ apps/apple/Packages/SecureMessaging/Artifacts/
 apps/apple/Packages/SecureMessaging/mlsffi/build/
 
 # Python bytecode
+deploy/backups/
+deploy/relay/turnserver.rendered.conf
+deploy/relay/certs/

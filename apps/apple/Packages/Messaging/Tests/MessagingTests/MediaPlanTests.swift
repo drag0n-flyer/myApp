@@ -28,14 +28,14 @@ final class MediaPlanTests: XCTestCase {
         XCTAssertEqual(MediaPlan.Voice.bitRate, 16_000)
         XCTAssertEqual(MediaPlan.Voice.outcome(duration: 0.2), .tooShort)
         XCTAssertEqual(MediaPlan.Voice.outcome(duration: 0.5), .send)
-        XCTAssertEqual(MediaPlan.Voice.clamped(9_999), 600)
+        XCTAssertEqual(MediaPlan.Voice.clamped(9_999), 1_800)
         XCTAssertEqual(MediaPlan.Voice.clamped(-1), 0)
     }
 
     func testAutoStoppedAtLimitIsKept() {
         // The recorder reports 0 after stopping itself at the limit; the measured time is used.
-        let d = MediaPlan.Voice.finalDuration(recorderTime: 0, measured: 600.4)
-        XCTAssertEqual(d, 600)
+        let d = MediaPlan.Voice.finalDuration(recorderTime: 0, measured: 1_800.4)
+        XCTAssertEqual(d, 1_800)
         XCTAssertEqual(MediaPlan.Voice.outcome(duration: d), .send)
         XCTAssertEqual(MediaPlan.Voice.finalDuration(recorderTime: 3.2, measured: 3.3), 3.3, accuracy: 0.0001)
         XCTAssertEqual(MediaPlan.Voice.outcome(duration: MediaPlan.Voice.finalDuration(recorderTime: 0, measured: 0.1)), .tooShort)

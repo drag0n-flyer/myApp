@@ -374,6 +374,18 @@ public final class Repository: @unchecked Sendable {
         }
     }
 
+    /// Manual retry of a failed message: status back to `sending`, enqueue time reset, and a new outbox row at the
+    /// END of the chat's queue. Returns false when the message does not exist.
+    @discardableResult
+    public func requeueSend(id: String) throws -> Bool {
+        try db.transaction { d in
+            guard let m = try message(id: id) else { return false }
+            try d.execute("UPDATE messages SET status='sending', received_at=? WHERE id=?", [.int(ms(now())), .text(id)])
+            try enqueue(OutboxRecord(messageID: id, chatID: m.chatID, envelope: m.envelope, attempts: 0, nextAttemptAt: now()))
+            return true
+        }
+    }
+
     public func bumpOutbox(id: String, nextAttempt: Date) throws {
         try db.execute("UPDATE outbox SET attempts=attempts+1, next_attempt_at=? WHERE message_id=?", [.int(ms(nextAttempt)), .text(id)])
     }
@@ -514,6 +526,14 @@ public final class Repository: @unchecked Sendable {
 
     public func set(_ key: String, _ value: Data) throws {
         try db.execute("INSERT OR REPLACE INTO kv(key, value) VALUES (?,?)", [.text(key), .blob(value)])
+    }
+
+    /// Every `kv` entry whose key starts with `prefix` (used for the link snapshot's settings).
+    public func entries(prefix: String) throws -> [String: Data] {
+        let rows = try db.query("SELECT key, value FROM kv WHERE substr(key, 1, ?) = ?", [.int(Int64(prefix.utf8.count)), .text(prefix)]) {
+            ($0.text(0), $0.blob(1))
+        }
+        return Dictionary(rows, uniquingKeysWith: { $1 })
     }
 
     // MARK: wipe

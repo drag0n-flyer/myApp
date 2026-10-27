@@ -56,10 +56,10 @@ index 2fd36d9..be003f7 100644
 +      // App patch: decoder complexity 7 (Deep PLC, LACE, NoLACE) and OSCE
 +      // bandwidth extension. Both survive OPUS_RESET_STATE.
 +      [[maybe_unused]] int ret = opus_decoder_ctl(
-+          state->decoder, OPUS_SET_COMPLEXITY(kAppOpusDecoderComplexity));
++          state->decoder, OPUS_SET_COMPLEXITY(webrtc::kAppOpusDecoderComplexity));
 +      RTC_DCHECK_EQ(ret, OPUS_OK);
 +      ret = opus_decoder_ctl(state->decoder,
-+                             OPUS_SET_OSCE_BWE(kAppOpusOsceBwe));
++                             OPUS_SET_OSCE_BWE(webrtc::kAppOpusOsceBwe));
 +      RTC_DCHECK_EQ(ret, OPUS_OK);
        // Creation of memory all ok.
        state->channels = channels;

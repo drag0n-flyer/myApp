@@ -8,6 +8,7 @@ public final class SpyMLSEngine: MLSEngine, @unchecked Sendable {
     private var _processed: [Data] = []
     private var failing: Set<Data> = []
     private var membersFail = false
+    private var holds: [Data: (entered: AsyncStream<Void>.Continuation, release: AsyncStream<Void>)] = [:]
 
     public init(_ inner: MLSEngine) { self.inner = inner }
 
@@ -19,7 +20,21 @@ public final class SpyMLSEngine: MLSEngine, @unchecked Sendable {
     /// `members(of:)` throws `MLSError.storage` while set.
     public func failMembers(_ on: Bool) { lock.withLock { membersFail = on } }
 
+    /// `process` for this payload stops until `release()` is called. `entered` yields once `process` is running.
+    public func hold(_ payload: Data) -> (entered: AsyncStream<Void>, release: @Sendable () -> Void) {
+        let (entered, enteredContinuation) = AsyncStream.makeStream(of: Void.self)
+        let (released, releaseContinuation) = AsyncStream.makeStream(of: Void.self)
+        lock.withLock { holds[payload] = (enteredContinuation, released) }
+        return (entered, { releaseContinuation.finish() })
+    }
+
     public func process(_ message: Data) async throws -> Incoming {
+        if let held = lock.withLock({ holds.removeValue(forKey: message) }) {
+            lock.withLock { _processed.append(message) }
+            held.entered.yield()
+            for await _ in held.release {}
+            return try await inner.process(message)
+        }
         let shouldFail = lock.withLock { () -> Bool in
             _processed.append(message)
             return failing.contains(message)
@@ -27,6 +42,8 @@ public final class SpyMLSEngine: MLSEngine, @unchecked Sendable {
         if shouldFail { throw MLSError.crypto("injected failure") }
         return try await inner.process(message)
     }
+
+    public var providesRealMemberKeys: Bool { inner.providesRealMemberKeys }
 
     public func makeKeyPackages(count: Int) async throws -> [Data] { try await inner.makeKeyPackages(count: count) }
     public func createGroup() async throws -> GroupID { try await inner.createGroup() }

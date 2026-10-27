@@ -13,4 +13,16 @@ public enum MessagingLocations {
     public static func mediaURL(in container: URL) -> URL {
         container.appendingPathComponent(mediaDirectoryName, isDirectory: true)
     }
+
+    public static let mlsDirectoryName = "mls"
+    /// Where the app keeps the MLS engine's group state.
+    public static func mlsURL(in container: URL) -> URL {
+        container.appendingPathComponent(mlsDirectoryName, isDirectory: true)
+    }
+
+    /// Deletes the MLS engine's storage (sign-out, device removal). Missing storage is not an error.
+    public static func removeMLSStorage(in container: URL) throws {
+        let url = mlsURL(in: container)
+        if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+    }
 }

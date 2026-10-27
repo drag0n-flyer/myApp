@@ -908,21 +908,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mls-rs-crypto-cryptokit"
-version = "0.11.0"
-source = "git+https://github.com/awslabs/mls-rs?rev=323bd84f52e410c9ecb0b1ccd84a5a9f7f191b5a#323bd84f52e410c9ecb0b1ccd84a5a9f7f191b5a"
-dependencies = [
- "async-trait",
- "maybe-async",
- "mls-rs-core",
- "mls-rs-crypto-traits",
- "serde",
- "serde_json",
- "thiserror",
- "zeroize",
-]
-
-[[package]]
 name = "mls-rs-crypto-hpke"
 version = "0.22.0"
 source = "git+https://github.com/awslabs/mls-rs?rev=323bd84f52e410c9ecb0b1ccd84a5a9f7f191b5a#323bd84f52e410c9ecb0b1ccd84a5a9f7f191b5a"
@@ -991,7 +976,6 @@ version = "0.1.0"
 dependencies = [
  "mls-rs",
  "mls-rs-core",
- "mls-rs-crypto-cryptokit",
  "mls-rs-crypto-rustcrypto",
  "uniffi",
  "zeroize",

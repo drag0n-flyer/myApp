@@ -9,6 +9,7 @@ struct ChatInfoView: View {
     @State private var muted = false
     @State private var showingVerify = false
     @State private var confirmBlock = false
+    @State private var confirmReport = false
 
     private var chat: Chat? { model.chat(id: chatID) }
     private var contact: Contact? { chat.flatMap { model.contact(id: $0.contactID) } }
@@ -38,11 +39,25 @@ struct ChatInfoView: View {
                 }
 
                 Section {
-                    Label(chat.encryption.infoText, systemImage: chat.encryption == .endToEnd ? "lock" : "server.rack")
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel(Text(chat.encryption.infoText))
-                        .accessibilityIdentifier("chatinfo.encryption")
-                    Button("Verify", systemImage: "checkmark.shield") { showingVerify = true }
+                    if chat.modeMismatch {
+                        // Sending is paused; this replaces the encryption line (Messaging Design 18).
+                        Label("The server's settings for this chat don't match the ones it started with. Sending is paused to keep your messages private.",
+                              systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.red)
+                            .accessibilityIdentifier("chatinfo.mismatch")
+                    } else {
+                        Label(chat.encryption.infoText, systemImage: chat.encryption == .endToEnd ? "lock" : "server.rack")
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel(Text(chat.encryption.infoText))
+                            .accessibilityIdentifier("chatinfo.encryption")
+                        if model.supportsSafetyNumbers, model.safetyNumber(for: chatID)?.isVerified == true {
+                            Label("Verified", systemImage: "checkmark.seal")
+                                .accessibilityIdentifier("chatinfo.verified")
+                        }
+                    }
+                    if model.supportsSafetyNumbers {
+                        Button("Verify", systemImage: "checkmark.shield") { showingVerify = true }
+                    }
                 }
 
                 Section {
@@ -50,7 +65,7 @@ struct ChatInfoView: View {
                 }
 
                 Section {
-                    Button("Report", systemImage: "exclamationmark.bubble", role: .destructive) { model.report(chatID: chatID) }
+                    Button("Report", systemImage: "exclamationmark.bubble", role: .destructive) { confirmReport = true }
                     Button("Block \(contact.displayName)", systemImage: "hand.raised", role: .destructive) { confirmBlock = true }
                 }
             }
@@ -60,7 +75,13 @@ struct ChatInfoView: View {
         .navigationBarTitleDisplayMode(.inline)
         #endif
         .sheet(isPresented: $showingVerify) {
-            VerifyView(name: contact?.displayName ?? "")
+            VerifyView(model: model, chatID: chatID, name: contact?.displayName ?? "")
+        }
+        .confirmationDialog("Report this chat?", isPresented: $confirmReport, titleVisibility: .visible) {
+            Button("Report", role: .destructive) { model.report(chatID: chatID) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The last 10 messages will be sent to the server admin.")
         }
         .confirmationDialog("Block this person?", isPresented: $confirmBlock, titleVisibility: .visible) {
             Button("Block", role: .destructive) {
@@ -93,24 +114,43 @@ struct ChatInfoView: View {
     }
 }
 
-/// Safety code to compare in person or over a call.
+/// Safety number to compare in person or over a call (Messaging Design 20). It is the same on both phones.
 private struct VerifyView: View {
+    let model: AppModel
+    let chatID: String
     let name: String
     @Environment(\.dismiss) private var dismiss
-    private let code = ["37281", "90114", "52860", "11793", "64025", "88341",
-                        "20957", "73618", "45502", "39184", "61276", "08433"]
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 20) {
-                Text("Compare these numbers with \(name). If they match, your chat is safe.")
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 12) {
-                    ForEach(code, id: \.self) { Text($0).font(.title3.monospacedDigit()) }
+                if let number = model.safetyNumber(for: chatID) {
+                    Text("Compare these numbers with \(name). If they match, your chat is safe.")
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.secondary)
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 3), spacing: 12) {
+                        ForEach(Array(number.groups.enumerated()), id: \.offset) { index, group in
+                            Text(group)
+                                .font(.title3.monospacedDigit())
+                                .accessibilityIdentifier("verify.group.\(index)")
+                        }
+                    }
+                    .padding()
+                    .background(Color.secondaryBackground, in: RoundedRectangle(cornerRadius: 16))
+                    Toggle("Marked as verified", isOn: Binding(
+                        get: { number.isVerified },
+                        set: { model.setVerified($0, chatID: chatID) }))
+                        .accessibilityIdentifier("verify.toggle")
+                    Text("If the numbers change, someone added or changed a device. Compare them again.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                } else {
+                    Text("Send a message first to see the safety number.")
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("verify.empty")
                 }
-                .padding()
-                .background(Color.secondaryBackground, in: RoundedRectangle(cornerRadius: 16))
                 Spacer()
             }
             .padding()

@@ -102,6 +102,7 @@ struct RequestActionsBar: View {
     let chat: Chat
     let model: AppModel
     @Environment(\.dismiss) private var dismiss
+    @State private var confirmReport = false
 
     var body: some View {
         VStack(spacing: 10) {
@@ -116,7 +117,7 @@ struct RequestActionsBar: View {
                 } label: { Text("Block").frame(maxWidth: .infinity) }
                     .accessibilityIdentifier("requests.block")
                 Button {
-                    model.report(chatID: chat.id)
+                    confirmReport = true
                 } label: { Text("Report").frame(maxWidth: .infinity) }
                     .accessibilityIdentifier("requests.report")
                 Button {
@@ -127,6 +128,12 @@ struct RequestActionsBar: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.large)
+        }
+        .confirmationDialog("Report this chat?", isPresented: $confirmReport, titleVisibility: .visible) {
+            Button("Report", role: .destructive) { model.report(chatID: chat.id) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The last 10 messages will be sent to the server admin.")
         }
         .padding()
         .glassBackground(in: RoundedRectangle(cornerRadius: 24))
