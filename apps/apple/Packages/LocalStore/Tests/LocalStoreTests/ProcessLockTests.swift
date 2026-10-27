@@ -15,3 +15,8 @@ import Testing
     let r = try b.withLock(timeout: .milliseconds(100)) { 42 }
     #expect(r == 42)
 }
+
+@Test func testProcessLockOpenFailureIsNotTimeout() throws {
+    let lock = ProcessLock(url: URL(fileURLWithPath: "/nonexistent-dir/x.lock"))
+    #expect(throws: LockError.self) { try lock.withLock(timeout: .milliseconds(50)) {} }
+}

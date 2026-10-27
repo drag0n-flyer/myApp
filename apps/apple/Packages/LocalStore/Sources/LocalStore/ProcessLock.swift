@@ -7,6 +7,11 @@ import Glibc
 
 public struct LockTimeout: Error, Equatable {}
 
+/// The lock file could not be opened or locked (not a timeout).
+public struct LockError: Error, Equatable {
+    public let errno: Int32
+}
+
 /// Cross-process lock (`flock`) shared by the app and the notification extension.
 public final class ProcessLock: Sendable {
     private let url: URL
@@ -17,12 +22,14 @@ public final class ProcessLock: Sendable {
 
     public func withLock<T>(timeout: Duration, _ body: () throws -> T) throws -> T {
         let fd = open(url.path, O_CREAT | O_RDWR, 0o600)
-        guard fd >= 0 else { throw LockTimeout() }
+        guard fd >= 0 else { throw LockError(errno: errno) }
         defer { close(fd) }
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: timeout)
         while flock(fd, LOCK_EX | LOCK_NB) != 0 {
-            guard errno == EWOULDBLOCK || errno == EINTR, clock.now < deadline else { throw LockTimeout() }
+            let e = errno
+            guard e == EWOULDBLOCK || e == EINTR else { throw LockError(errno: e) }
+            guard clock.now < deadline else { throw LockTimeout() }
             Thread.sleep(forTimeInterval: 0.02)
         }
         defer { flock(fd, LOCK_UN) }

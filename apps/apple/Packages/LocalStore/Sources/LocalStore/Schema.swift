@@ -46,5 +46,9 @@ let schemaV1: [String] = [
     "CREATE TABLE folder_chats(folder_id TEXT NOT NULL REFERENCES folders ON DELETE CASCADE, chat_id TEXT NOT NULL REFERENCES chats ON DELETE CASCADE, PRIMARY KEY(folder_id, chat_id)) STRICT",
     "CREATE TABLE blocked(account_id TEXT PRIMARY KEY, blocked_at INTEGER NOT NULL) STRICT",
     "CREATE TABLE calls(id TEXT PRIMARY KEY, chat_id TEXT NOT NULL REFERENCES chats ON DELETE CASCADE, video INTEGER NOT NULL, outgoing INTEGER NOT NULL, outcome TEXT NOT NULL, started_at INTEGER NOT NULL, duration REAL NOT NULL) STRICT",
+    "CREATE INDEX attachments_message ON attachments(message_id)",
+    "CREATE INDEX calls_chat ON calls(chat_id)",
+    "CREATE INDEX outbox_chat ON outbox(chat_id)",
+    "CREATE INDEX folder_chats_chat ON folder_chats(chat_id)",
     "CREATE TABLE kv(key TEXT PRIMARY KEY, value BLOB NOT NULL) STRICT",
 ]

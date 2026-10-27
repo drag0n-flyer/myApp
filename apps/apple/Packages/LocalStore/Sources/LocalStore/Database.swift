@@ -48,6 +48,7 @@ public final class Database: @unchecked Sendable {
 
     public convenience init(url: URL) throws {
         try self.init(path: url.path)
+        try applyProtection(to: url, .untilFirstUnlock)  // database, -wal and -shm (iOS only)
     }
 
     public static func inMemory() throws -> Database {

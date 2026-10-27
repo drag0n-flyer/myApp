@@ -57,8 +57,33 @@ struct Boom: Error {}
     defer { try? FileManager.default.removeItem(at: url) }
     let db = try Database(url: url)
     try migrate(db)
-    applyProtection(to: url, .untilFirstUnlock)
+    try applyProtection(to: url, .untilFirstUnlock)
     let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
     #expect(attrs[.protectionKey] as? FileProtectionType == .completeUntilFirstUnlock)
 }
 #endif
+
+@Test func testTwoConnectionsMigrateSameFile() throws {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("ls-\(UUID().uuidString).sqlite")
+    defer { for s in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: url.path + s) } }
+    let dbs = [try Database(url: url), try Database(url: url)]
+    let failures = Failures()
+    DispatchQueue.concurrentPerform(iterations: 2) { i in
+        do { try migrate(dbs[i]) } catch { failures.add("\(error)") }
+    }
+    #expect(failures.all.isEmpty, "\(failures.all)")
+    #expect(try dbs[0].query("PRAGMA user_version") { $0.int(0) } == [1])
+}
+
+final class Failures: @unchecked Sendable {
+    private let lock = NSLock()
+    private var items: [String] = []
+    func add(_ s: String) { lock.lock(); items.append(s); lock.unlock() }
+    var all: [String] { lock.lock(); defer { lock.unlock() }; return items }
+}
+
+@Test func testMigrateRejectsNewerSchema() throws {
+    let db = try Database.inMemory()
+    try db.execute("PRAGMA user_version = 99")
+    #expect(throws: SchemaTooNew.self) { try migrate(db) }
+}

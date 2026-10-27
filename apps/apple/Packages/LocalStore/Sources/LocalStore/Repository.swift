@@ -494,5 +494,7 @@ public final class Repository: @unchecked Sendable {
                 try d.execute("DELETE FROM \(table)")
             }
         }
+        // Drop deleted content from the WAL file as well.
+        try db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     }
 }

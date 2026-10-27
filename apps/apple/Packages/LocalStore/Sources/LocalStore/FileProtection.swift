@@ -17,13 +17,13 @@ public enum StoreLocation {
 }
 
 /// Applies iOS data protection to a file and its SQLite `-wal`/`-shm` companions. No-op outside iOS.
-public func applyProtection(to url: URL, _ level: ProtectionLevel) {
+public func applyProtection(to url: URL, _ level: ProtectionLevel) throws {
     #if os(iOS)
     let type: FileProtectionType = level == .complete ? .complete : .completeUntilFirstUnlock
     for suffix in ["", "-wal", "-shm"] {
         let path = url.path + suffix
         if FileManager.default.fileExists(atPath: path) {
-            try? FileManager.default.setAttributes([.protectionKey: type], ofItemAtPath: path)
+            try FileManager.default.setAttributes([.protectionKey: type], ofItemAtPath: path)
         }
     }
     #endif
