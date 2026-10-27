@@ -83,18 +83,42 @@ public protocol MLSEngine: Sendable {
     /// Every member's identity and leaf signature public key, sorted by identity (UTF-8 byte
     /// order), including this device.
     func memberKeys(of group: GroupID) async throws -> [MemberKey]
-    /// Decrypts or validates `message` for `group` and persists NOTHING. The caller then writes its own
-    /// rows in a transaction and calls `confirm`. A crash before `confirm` leaves the engine unchanged,
-    /// so the message processes again on retry (the caller's rows must tolerate that: key them by
-    /// message). Throws what `process` throws; `.malformed` if the message is for another group.
+    /// Decrypts or validates `message` for `group` and persists NOTHING. Throws what `process` throws;
+    /// `.malformed` if the message is for another group.
+    ///
+    /// Caller protocol (stage, write rows, confirm):
+    /// 1. `stageProcess`.
+    /// 2. In one transaction, insert the message's rows keyed by the SHA-256 of the ciphertext (a unique
+    ///    key; inserting it again is a no-op). Do NOT key by the server's envelope id: an untrusted server
+    ///    can deliver one ciphertext under two ids.
+    /// 3. `confirm`. If it throws `.stale`, do not write rows again: stage the same ciphertext again and
+    ///    confirm that. A `.duplicate` from that second stage means someone else already applied it;
+    ///    the rows are already there, so you are done.
+    ///
+    /// Why `.stale` happens, with no crash involved:
+    /// - Double stage: the app and the notification extension fetch the same message and both stage it
+    ///   (the engine lock is held per call, not between stage and confirm). Both get the plaintext and
+    ///   both insert rows (the second insert is a no-op thanks to the ciphertext-hash key); the first
+    ///   confirm wins and the second gets `.stale`, then re-stages, gets `.duplicate`, and stops.
+    /// - Another send: anything that changes the group between stage and confirm (this device's own
+    ///   `encrypt`, another message, a commit) makes `confirm` throw `.stale`; re-stage and confirm.
+    /// A crash after the rows commit and before `confirm` is the same case: the retry stages again, the
+    /// row insert is a no-op, and `confirm` runs.
+    ///
+    /// The message may still be a replay or garbage until `confirm` succeeds; treat the staged plaintext
+    /// as provisional, and show it only after `confirm` returned.
     func stageProcess(_ group: GroupID, _ message: Data) async throws -> StagedProcess
-    /// Persists a staged message. Throws `.stale` (and writes nothing) if the group's stored state is
-    /// not the state it was staged against, or if it was already confirmed or discarded.
+    /// Persists a staged message. Throws `.stale` (and writes nothing) if the group's stored state changed
+    /// since staging, or if it was already confirmed or discarded; see `stageProcess` for what to do.
+    /// The real engine re-processes the message from storage under the lock when it confirms, so a stale
+    /// staging can never overwrite newer state.
     func confirm(_ staged: StagedProcess) async throws
     /// Drops a staged message. Nothing was persisted, so there is nothing to undo.
     func discard(_ staged: StagedProcess)
     /// Decrypts an application message and nothing else. A commit, proposal, Welcome or anything that
-    /// is not an application message throws `.notApplication` with the group state unchanged.
+    /// is not an application message throws `.notApplication` with the group state unchanged. The content
+    /// type of a commit is encrypted, so a commit from a future epoch throws `.epochGap` and one from a past
+    /// epoch throws `.duplicate`, as `process` does; only commits the engine can read give `.notApplication`.
     func decryptApplication(_ group: GroupID, _ message: Data) async throws -> ApplicationMessage
     /// Whether `memberKeys(of:)` returns real MLS signature keys. Safety numbers are shown only when this is true.
     var providesRealMemberKeys: Bool { get }

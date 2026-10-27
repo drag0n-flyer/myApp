@@ -165,8 +165,12 @@ impl Processed {
 #[derive(uniffi::Object)]
 pub struct StagedProcess {
     message: Vec<u8>,
-    /// SHA-256-class hash (the suite's hash) of the group's stored state at
-    /// staging time; `None` when the group had no stored state.
+    /// The suite's hash of the group's stored state at staging time (`None`
+    /// when there was none). This is a conservative extra check, not what makes
+    /// confirm safe: safety comes from `confirm` re-processing the message from
+    /// fresh storage under the lock, so it can never write stale ratchet state.
+    /// The hash only turns "something changed since staging" into `Stale`
+    /// (it covers the state file only, so an A to B to A change passes).
     base: Option<Vec<u8>>,
     processed: Processed,
     /// Set by `discard` and by a successful `confirm`.
@@ -565,6 +569,17 @@ impl<P: CryptoProvider + Clone> EngineCore<P> {
     /// matters (the epoch repair in `load` only deletes records that were never
     /// valid history). The caller decides whether to [`Self::finish`].
     fn prepare(&self, message: &[u8]) -> Result<Prepared<P>, FfiError> {
+        // Callers other than `decrypt_application` treat any content we do not
+        // handle (standalone proposals and the like) as malformed.
+        self.prepare_raw(message).map_err(|e| match e {
+            FfiError::NotApplication => FfiError::Malformed,
+            other => other,
+        })
+    }
+
+    /// Like `prepare`, but content that is neither application data nor a
+    /// commit (a proposal, ...) is reported as `NotApplication`.
+    fn prepare_raw(&self, message: &[u8]) -> Result<Prepared<P>, FfiError> {
         let message = MlsMessage::from_bytes(message).map_err(|_| FfiError::Malformed)?;
         match message.wire_format() {
             WireFormat::Welcome => {
@@ -630,7 +645,7 @@ impl<P: CryptoProvider + Clone> EngineCore<P> {
                         removed_me: matches!(description.effect, CommitEffect::Removed { .. }),
                     },
                     // Standalone proposals, GroupInfo, KeyPackage: never sent by our clients.
-                    _ => return Err(FfiError::Malformed),
+                    _ => return Err(FfiError::NotApplication),
                 };
                 Ok(Prepared {
                     group,
@@ -640,6 +655,15 @@ impl<P: CryptoProvider + Clone> EngineCore<P> {
                 })
             }
             _ => Err(FfiError::Malformed),
+        }
+    }
+
+    /// Refuses a message whose clear-text group id is not `group_id`.
+    fn check_group(message: &[u8], group_id: &[u8]) -> Result<(), FfiError> {
+        let parsed = MlsMessage::from_bytes(message).map_err(|_| FfiError::Malformed)?;
+        match parsed.group_id() {
+            Some(id) if id != group_id => Err(FfiError::Malformed),
+            _ => Ok(()),
         }
     }
 
@@ -673,6 +697,9 @@ impl<P: CryptoProvider + Clone> EngineCore<P> {
         message: Vec<u8>,
     ) -> Result<Arc<StagedProcess>, FfiError> {
         let _g = self.lock();
+        // Cheap check first, before any decryption (a Welcome has no group id
+        // in the clear; it is checked after joining below).
+        Self::check_group(&message, &group_id)?;
         let prepared = self.prepare(&message)?;
         // The caller names the group the message is for; refuse anything else.
         if prepared.processed.group_id() != group_id.as_slice() {
@@ -730,8 +757,9 @@ impl<P: CryptoProvider + Clone> EngineCore<P> {
         if parsed.wire_format() != WireFormat::PrivateMessage {
             return Err(FfiError::NotApplication);
         }
+        Self::check_group(&message, &group_id)?;
         // Content type is inside the encryption: stage in memory, inspect, then persist or drop.
-        let prepared = self.prepare(&message)?;
+        let prepared = self.prepare_raw(&message)?;
         if prepared.processed.group_id() != group_id.as_slice() {
             return Err(FfiError::Malformed);
         }

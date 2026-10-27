@@ -1022,10 +1022,15 @@ fn stage_for_the_wrong_group_is_malformed() {
     let g = group_of(&alice, &[&bob]);
     let other = group_of(&alice, &[&bob]);
     let ct = alice.encrypt(g.clone(), b"x".to_vec()).unwrap().ciphertext;
+    let before = (group_files(&bob, &g), group_files(&bob, &other));
     assert!(matches!(
-        bob.stage_process(other, ct),
+        bob.stage_process(other.clone(), ct.clone()),
         Err(FfiError::Malformed)
     ));
+    assert_eq!((group_files(&bob, &g), group_files(&bob, &other)), before);
+    // Nothing was consumed: the right group still takes the message.
+    let staged = bob.stage_process(g, ct).unwrap();
+    bob.confirm(staged).unwrap();
 }
 
 #[test]
@@ -1083,10 +1088,121 @@ fn decrypt_application_refuses_everything_else_without_touching_state() {
         Processed::Commit { new_epoch: 2, .. }
     ));
     carol.process(bundle.welcome.unwrap()).unwrap();
-    // The wrong group is refused too.
+}
+
+#[test]
+fn decrypt_application_for_the_wrong_group_consumes_nothing() {
+    let (alice, bob) = (dev("acct-a/dev-1"), dev("acct-b/dev-1"));
+    let g = group_of(&alice, &[&bob]);
+    let other = group_of(&alice, &[&bob]);
     let ct = alice.encrypt(g.clone(), b"x".to_vec()).unwrap().ciphertext;
+    let before = (group_files(&bob, &g), group_files(&bob, &other));
     assert!(matches!(
-        bob.decrypt_application(vec![7; 32], ct),
-        Err(FfiError::UnknownGroup) | Err(FfiError::Malformed)
+        bob.decrypt_application(other.clone(), ct.clone()),
+        Err(FfiError::Malformed)
     ));
+    assert_eq!((group_files(&bob, &g), group_files(&bob, &other)), before);
+    // Same ciphertext still decrypts for the right group.
+    assert_eq!(bob.decrypt_application(g, ct).unwrap().plaintext, b"x");
+}
+
+/// A second client on alice's storage whose handshake messages are encrypted
+/// (PrivateMessage), as an attacker or a future version could send them. Only
+/// builds messages in memory; nothing is written to alice's files.
+fn private_handshake_client(d: &Dev) -> mls_rs::Client<impl mls_rs::client_builder::MlsConfig> {
+    use mls_rs::client_builder::ClientBuilder;
+    use mls_rs::crypto::{SignaturePublicKey, SignatureSecretKey};
+    use mls_rs::identity::basic::{BasicCredential, BasicIdentityProvider};
+    use mls_rs::identity::SigningIdentity;
+    use mls_rs::mls_rules::{DefaultMlsRules, EncryptionOptions};
+    use mls_rs::client_builder::PaddingMode;
+    let storage = mlsffi::storage::FileStorage::new(d.dir.0.clone()).unwrap();
+    let identity = SigningIdentity::new(
+        BasicCredential::new(d.identity.clone().into_bytes()).into_credential(),
+        SignaturePublicKey::new(d.public.clone()),
+    );
+    ClientBuilder::new()
+        .group_state_storage(storage.clone())
+        .key_package_repo(storage)
+        .identity_provider(BasicIdentityProvider::new())
+        .crypto_provider(mls_rs_crypto_rustcrypto::RustCryptoProvider::default())
+        .mls_rules(
+            DefaultMlsRules::new()
+                .with_encryption_options(EncryptionOptions::new(true, PaddingMode::None)),
+        )
+        .signing_identity(
+            identity,
+            SignatureSecretKey::new(d.secret.clone()),
+            mls_rs::CipherSuite::CURVE25519_AES128,
+        )
+        .build()
+}
+
+
+#[test]
+fn decrypt_application_refuses_proposals_and_encrypted_commits_without_touching_state() {
+    let (alice, bob, carol) = (
+        dev("acct-a/dev-1"),
+        dev("acct-b/dev-1"),
+        dev("acct-c/dev-1"),
+    );
+    let g = group_of(&alice, &[&bob]);
+    let client = private_handshake_client(&alice);
+
+    // A proposal sent as a PrivateMessage.
+    let mut ag = client.load_group(&g).unwrap();
+    let proposal = ag.propose_update(vec![]).unwrap();
+    assert_eq!(proposal.wire_format(), mls_rs::WireFormat::PrivateMessage);
+    let proposal = proposal.to_bytes().unwrap();
+
+    // A commit sent as a PrivateMessage (so it is only recognizable after decryption).
+    let mut ag = client.load_group(&g).unwrap();
+    let commit = ag
+        .commit_builder()
+        .add_member(mls_rs::MlsMessage::from_bytes(&carol.key_packages(1).unwrap().remove(0)).unwrap())
+        .unwrap()
+        .build()
+        .unwrap()
+        .commit_message;
+    assert_eq!(commit.wire_format(), mls_rs::WireFormat::PrivateMessage);
+    let commit = commit.to_bytes().unwrap();
+
+    let before = group_files(&bob, &g);
+    for (name, bytes) in [("proposal", proposal), ("private commit", commit.clone())] {
+        assert!(
+            matches!(
+                bob.decrypt_application(g.clone(), bytes.clone()),
+                Err(FfiError::NotApplication)
+            ),
+            "{name}"
+        );
+        assert_eq!(group_files(&bob, &g), before, "{name}: state unchanged");
+        assert_eq!(bob.epoch(g.clone()).unwrap(), 1);
+    }
+    // The private commit was not consumed by the refusal: it still applies.
+    assert!(matches!(
+        bob.process(commit).unwrap(),
+        Processed::Commit { new_epoch: 2, .. }
+    ));
+}
+
+#[test]
+fn proposals_through_process_stay_malformed_and_change_nothing() {
+    let (alice, bob) = (dev("acct-a/dev-1"), dev("acct-b/dev-1"));
+    let g = group_of(&alice, &[&bob]);
+    let client = private_handshake_client(&alice);
+    let proposal = client
+        .load_group(&g)
+        .unwrap()
+        .propose_update(vec![])
+        .unwrap()
+        .to_bytes()
+        .unwrap();
+    let before = group_files(&bob, &g);
+    assert!(matches!(bob.process(proposal.clone()), Err(FfiError::Malformed)));
+    assert!(matches!(
+        bob.stage_process(g.clone(), proposal),
+        Err(FfiError::Malformed)
+    ));
+    assert_eq!(group_files(&bob, &g), before);
 }
