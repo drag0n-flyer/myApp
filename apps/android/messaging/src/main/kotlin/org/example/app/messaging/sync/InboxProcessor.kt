@@ -185,14 +185,15 @@ class InboxProcessor(
         val result: AppliedResult?
         if (incoming is Incoming.Joined) {
             // Never guess the mode (Design 18). A Welcome the server labelled otherwise has no server mode.
-            // A failure that will not go away (anything but a storage error) must not hold up every other chat: the
-            // item is parked with a "couldn't open this chat" placeholder and the queue moves on.
+            // A failure that will not go away (see [isPermanentJoinFailure]) must not hold up every other chat: the
+            // item is parked with a "couldn't open this chat" placeholder and the queue moves on. Anything else (a
+            // storage or database error, an unknown error) may be temporary: the raw row stays, the accepted result
+            // is kept, and the next drain retries.
             var failure: String? = if (serverMode == null) "not_welcome" else null
             val plan = if (serverMode == null) null else try {
                 conversations.planJoin(incoming.group, raw.conversationId, serverMode)
-            } catch (e: MlsException.Storage) {
-                throw e // possibly temporary (disk): the raw row stays, the accepted result is kept
             } catch (e: Exception) {
+                if (!isPermanentJoinFailure(e)) throw e
                 failure = e.javaClass.simpleName.ifEmpty { "error" }
                 null
             }
@@ -230,7 +231,17 @@ class InboxProcessor(
     @Suppress("UNUSED_PARAMETER")
     private suspend fun confirm(incoming: Incoming) = Unit
 
+    /**
+     * A Welcome that cannot be joined is parked with a `joinFailed` placeholder ("Couldn't open this chat"), so the
+     * user sees the chat the peer believes exists. Any other item gets an undecryptable placeholder in its
+     * conversation, or is parked when that conversation is not known.
+     */
     private fun placeholderOrPark(raw: RawInboxRecord, reason: String) {
+        if (raw.kind == "welcome") {
+            handler.park(raw, repo, reason)
+            handler.storeJoinFailed(raw, repo)
+            return
+        }
         if (!handler.storePlaceholder(raw, repo)) handler.park(raw, repo, reason)
     }
 
@@ -243,6 +254,17 @@ class InboxProcessor(
 
     companion object {
         const val CURSOR_KEY = "inbox.cursor"
+
+        /**
+         * The `planJoin` failures retrying cannot fix: no peer, a server ID bound to another group, and anything the
+         * engine rejects (unreadable credentials included) except a storage error. Everything else is temporary.
+         */
+        internal fun isPermanentJoinFailure(e: Exception): Boolean = when (e) {
+            is SyncException.NoPeer, is SyncException.ConversationRebound -> true
+            is MlsException.Storage -> false
+            is MlsException -> true
+            else -> false
+        }
         const val PAGE_SIZE = 100
 
         fun raw(item: InboxItem) = RawInboxRecord(

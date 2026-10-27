@@ -323,7 +323,7 @@ class InboxProcessorTest {
         val fromCarol = carol.manager.create("acc-bob")
         carol.send(fromCarol, ContentEnvelope.Text("c-1", NOW, "hello"))
         val anaGroup = GroupId(fromAna.groupId)
-        rig.bob1.mls.failMembers = { g -> if (g == anaGroup) IllegalStateException("unreadable credential") else null }
+        rig.bob1.mls.failMembers = { g -> if (g == anaGroup) MlsException.Crypto("unreadable credential") else null }
         val welcomeCursor = rig.server.pending("acc-bob/bob1").first { it.conversationId == fromAna.serverId && it.kind == "welcome" }.cursor
 
         rig.bob1.processor.sync()
@@ -337,7 +337,52 @@ class InboxProcessorTest {
         assertTrue(rig.bob1.logs.any { it.startsWith("join_parked") && "conversation=${fromAna.serverId}" in it })
         // ana's mode envelope for that group has no conversation: kept, not silently dropped.
         assertTrue(rig.bob1.repo.entries("parked:").size >= 2)
+
+        // A later commit in that group (the engine joined it, the database has no conversation) is parked too.
+        rig.ana1.manager.postCommitWithRetry(fromAna.serverId, anaGroup, emptyList(), listOf("ana2")) {
+            rig.ana1.mls.remove(listOf("acc-ana/ana2"), anaGroup)
+        }
+        val commitCursor = rig.server.pending("acc-bob/bob1").single { it.conversationId == fromAna.serverId && it.kind == "commit" }.cursor
+        rig.bob1.processor.sync()
+        assertTrue(rig.bob1.repo.rawItems(10).isEmpty())
+        assertNotNull(rig.bob1.repo.get("parked:$commitCursor"), "the commit is kept, not dropped")
+        assertTrue(rig.bob1.logs.any { it == "item_parked reason=unknown_group conversation=${fromAna.serverId} cursor=$commitCursor" })
         rig.assertLockDiscipline()
+    }
+
+    /** A Welcome the engine rejects (a used KeyPackage, a malformed Welcome) gets the "couldn't open this chat" placeholder. */
+    @Test
+    fun rejectedWelcomeGetsJoinFailedPlaceholder() = runTest {
+        val rig = Rig().start()
+        val record = rig.ana1.manager.create("acc-bob")
+        val welcome = rig.server.pending("acc-bob/bob1").single { it.conversationId == record.serverId && it.kind == "welcome" }
+        rig.bob1.mls.failProcess = { if (it.contentEquals(welcome.payload)) MlsException.Malformed else null }
+        rig.bob1.processor.sync()
+        assertTrue(rig.bob1.repo.rawItems(10).isEmpty(), "nothing blocks the queue")
+        assertEquals(null, rig.bob1.repo.conversation(record.serverId))
+        val placeholder = assertNotNull(rig.bob1.repo.message("join-failed-${welcome.cursor}"), "a placeholder in plain words")
+        assertTrue(placeholder.undecryptable)
+        assertEquals("acc-ana", placeholder.chatId)
+        assertEquals(true, rig.bob1.repo.chat("acc-ana")?.isRequest)
+        assertNotNull(rig.bob1.repo.get("parked:${welcome.cursor}"), "kept, not dropped")
+        assertTrue(rig.bob1.logs.any { it.startsWith("join_parked reason=mls_error") && "cursor=${welcome.cursor}" in it })
+    }
+
+    /** An unknown error while planning the join (not on the permanent list) is temporary: retried, nothing parked. */
+    @Test
+    fun unknownJoinFailureRetries() = runTest {
+        val rig = Rig().start()
+        val record = rig.ana1.manager.create("acc-bob")
+        var fail = true
+        rig.bob1.mls.failMembers = { if (fail) { fail = false; IllegalStateException("database is locked") } else null }
+        rig.bob1.processor.sync()
+        assertEquals(null, rig.bob1.repo.conversation(record.serverId))
+        assertTrue(rig.bob1.repo.rawItems(10).isNotEmpty(), "kept for the next drain")
+        assertTrue(rig.bob1.repo.entries("parked:").isEmpty())
+        rig.bob1.processor.sync()
+        assertNotNull(rig.bob1.repo.conversation(record.serverId))
+        assertTrue(rig.bob1.repo.entries("parked:").isEmpty())
+        assertTrue(rig.bob1.repo.allMessages().none { it.id.startsWith("join-failed-") })
     }
 
     /** A temporary engine error while planning the join stops the queue and is retried; nothing is parked. */
