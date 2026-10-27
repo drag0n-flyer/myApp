@@ -164,6 +164,18 @@ jobs:
         with:
           path: ~/.gradle/robolectric-repo
           key: robolectric-${{ runner.os }}-${{ hashFiles('apps/android/gradle/libs.versions.toml') }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/apple/Packages/SecureMessaging/mlsffi/target
+          key: cargo-host-${{ runner.os }}-${{ hashFiles('apps/apple/Packages/SecureMessaging/mlsffi/Cargo.lock') }}
+          restore-keys: cargo-host-${{ runner.os }}-
+      - name: Build the host libmlsffi.so (the :mls JVM tests load it through JNA)
+        if: needs.changes.outputs.mls == 'true'
+        working-directory: apps/apple/Packages/SecureMessaging/mlsffi
+        run: cargo build --release --lib --locked
       - name: Unit tests of the changed Android modules and the app
         env:
           AUTH: ${{ needs.changes.outputs.auth }}
