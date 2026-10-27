@@ -61,7 +61,7 @@ Expired tokens and sessions are deleted by the admin module's hourly `Run`.
 
 ## 4. Browser protections
 
-- **CSRF.** Each session has its own CSRF token (32 random bytes, stored as SHA-256). `GET /admin/api/session` returns it; the JavaScript keeps it in memory and sends it as `X-CSRF-Token` on every request whose method is not `GET` or `HEAD`. Such requests also need:
+- **CSRF.** Each session has its own CSRF token, derived as HMAC-SHA256 keyed with the session cookie value over a fixed label, so it can be returned on every `GET /admin/api/session` and only its SHA-256 is stored. `GET /admin/api/session` returns it; the JavaScript keeps it in memory and sends it as `X-CSRF-Token` on every request whose method is not `GET` or `HEAD`. Such requests also need:
   - `Content-Type: application/json` (a cross-site form cannot send it without a preflight, which the server never answers);
   - `Sec-Fetch-Site`, when present, equal to `same-origin`;
   - `Origin`, when present, equal to `http(s)://<Host>`.
