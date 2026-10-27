@@ -2,7 +2,7 @@
 # Settings come from .env (copy deploy/.env.example and edit); a variable set
 # in the shell wins over the file.
 #
-#   make build     build server/bin/appserver
+#   make build     build bin/appserver
 #   make run       start it in the background (log: server/run/appserver.log)
 #   make kill      stop it
 #   make restart   kill, then run
@@ -21,7 +21,7 @@
 #   make run BIND=127.0.0.1           this machine only
 
 ENV_FILE ?= .env
-BIN      := server/bin/appserver
+BIN      := bin/appserver
 RUN_DIR  := server/run
 PID      := $(RUN_DIR)/appserver.pid
 LOG      := $(RUN_DIR)/appserver.log
@@ -39,7 +39,7 @@ endif
 .PHONY: build run kill restart logs clean db db-stop db-shell
 
 build:
-	cd server && go build -trimpath -o bin/appserver ./cmd/appserver
+	cd server && go build -trimpath -o ../bin/appserver ./cmd/appserver
 
 run: build
 	@test -f "$(ENV_FILE)" || { echo "No $(ENV_FILE). Run: cp deploy/.env.example $(ENV_FILE), then edit it."; exit 1; }
@@ -67,7 +67,7 @@ logs:
 
 clean:
 	@if [ -f $(PID) ] && kill -0 $$(cat $(PID)) 2>/dev/null; then echo "Server is running. Use: make kill"; exit 1; fi
-	rm -rf server/bin $(RUN_DIR)
+	rm -rf bin $(RUN_DIR)
 
 db:
 	@command -v docker >/dev/null || { echo "Docker is not installed. Install PostgreSQL instead and create user and database appserver."; exit 1; }
