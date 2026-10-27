@@ -171,7 +171,7 @@ public final class CallRunner {
         case .rollback: try await media?.rollback()
         case .addCandidate(let c): try await media?.add(c)
         case .setAudioMaxBitrate(let bps): await media?.setAudioMaxBitrate(bps)
-        case .setVideo(let tier): await media?.setVideo(tier)
+        case .setVideo(let tier, let ceiling): await media?.setVideo(tier, ceiling: ceiling)
         case .setMuted(let on): await media?.setMuted(on)
         case .setNoiseSuppression(let mode): await media?.setNoiseSuppression(mode)
         case .closeMedia:

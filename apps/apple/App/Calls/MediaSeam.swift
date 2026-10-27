@@ -30,7 +30,7 @@ final class UnavailableMediaSession: MediaSession, @unchecked Sendable {
     func rollback() async throws {}
     func add(_ candidate: IceCandidate) async throws {}
     func setAudioMaxBitrate(_ bps: Int) async {}
-    func setVideo(_ tier: VideoTier?) async {}
+    func setVideo(_ tier: VideoTier?, ceiling: DataMode) async {}
     func setMuted(_ on: Bool) async {}
     func setNoiseSuppression(_ mode: NoiseSuppression) async {}
     func stats() async -> MediaStats { MediaStats() }
