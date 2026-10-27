@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/drag0n-flyer/myApp/server/internal/httpx"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/velixio/myApp/server/internal/httpx"
 )
 
 // IsBlocked reports whether blocker has blocked blocked. It is one indexed

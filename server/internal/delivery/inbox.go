@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/velixio/myApp/server/internal/httpx"
+	"github.com/drag0n-flyer/myApp/server/internal/httpx"
 )
 
 const (

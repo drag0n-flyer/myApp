@@ -7,8 +7,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/drag0n-flyer/myApp/server/internal/httpx"
 	"github.com/jackc/pgx/v5"
-	"github.com/velixio/myApp/server/internal/httpx"
 )
 
 const maxDisplayName = 64

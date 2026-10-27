@@ -8,9 +8,9 @@ import (
 	"errors"
 	"time"
 
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/httpx"
 	"github.com/jackc/pgx/v5"
-	"github.com/velixio/myApp/server/internal/core"
-	"github.com/velixio/myApp/server/internal/httpx"
 )
 
 // touchEvery is how often a session's last_used_at (and its device's

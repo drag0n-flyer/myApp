@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/velixio/myApp/server/internal/delivery"
-	"github.com/velixio/myApp/server/internal/pushproto"
-	"github.com/velixio/myApp/server/internal/turn"
+	"github.com/drag0n-flyer/myApp/server/internal/delivery"
+	"github.com/drag0n-flyer/myApp/server/internal/pushproto"
+	"github.com/drag0n-flyer/myApp/server/internal/turn"
 )
 
 var update = flag.Bool("update", false, "rewrite the vector files from fixed seeds")

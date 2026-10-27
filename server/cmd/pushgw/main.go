@@ -23,8 +23,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/velixio/myApp/server/internal/db"
-	"github.com/velixio/myApp/server/internal/pushgw"
+	"github.com/drag0n-flyer/myApp/server/internal/db"
+	"github.com/drag0n-flyer/myApp/server/internal/pushgw"
 )
 
 const shutdownTimeout = 10 * time.Second

@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/velixio/myApp/server/internal/core"
-	"github.com/velixio/myApp/server/internal/identity"
-	"github.com/velixio/myApp/server/internal/testkit"
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/identity"
+	"github.com/drag0n-flyer/myApp/server/internal/testkit"
 )
 
 func labCmd(t *testing.T, lab bool) (core.Deps, *identity.Module, core.Command) {

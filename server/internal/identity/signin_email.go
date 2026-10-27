@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/httpx"
 	"github.com/jackc/pgx/v5"
-	"github.com/velixio/myApp/server/internal/core"
-	"github.com/velixio/myApp/server/internal/httpx"
 )
 
 // emailSignInStart answers POST /v1/signin/email/start. It always answers

@@ -5,7 +5,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/velixio/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/core"
 )
 
 // Notifier records every Notify call.

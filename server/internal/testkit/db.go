@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/drag0n-flyer/myApp/server/internal/db"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/velixio/myApp/server/internal/db"
 )
 
 var (

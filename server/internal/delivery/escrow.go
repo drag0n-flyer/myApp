@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/velixio/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/core"
 )
 
 // escrowInfo is the HPKE info string of escrow copies (spec section 7.2).
