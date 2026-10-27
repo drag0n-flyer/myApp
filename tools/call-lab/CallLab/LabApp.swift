@@ -14,5 +14,8 @@ struct LabApp: App {
             }
             .environmentObject(call)
         }
+        #if os(macOS)
+        Window("Rig", id: "rig") { RigView() }
+        #endif
     }
 }
