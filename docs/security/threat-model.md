@@ -134,7 +134,7 @@ Every table has the columns `ID | STRIDE | Threat | Impact | Mitigation | Residu
 | SRV-I-01 | I | Enumeration of accounts through sign-in, user lookup, email discovery or KeyPackage claims. | Attacker learns which usernames or emails exist, or who blocked whom. | plan 2 A4; plan 2 E1; plan 2 B1 | `GET /v1/usernames/{name}` reveals whether a username exists, by design (30 per minute per IP). Timing differences between known and unknown emails are not tested. |
 | SRV-I-02 | I | Secrets or personal data end up in logs, error bodies or mail (codes, tokens, emails, IPs, push handles). | Disclosure to anyone with log access. | plan 2 F3; plan 2 A2; plan 2 A3 | Server design §8 forbids logging them, but no listed task adds a test that scans log output. This rests on code review. |
 | SRV-D-01 | D | Flooding sign-up start, email sending or passkey options. | Mail bombing of a victim; resource exhaustion. | plan 2 A2; plan 2 F3 | Limits are in memory per process and reset on restart (OPEN-3). An attacker rotating IP addresses avoids per-IP limits but is still held to 3 codes per hour per email. |
-| SRV-D-02 | D | Slow or oversized requests tie up the public listener. | The server stops answering. | plan 2 F3; plan 9 11 | Bodies are capped at 1 MiB. Connection timeouts are left to the reverse proxy (OPEN-14). |
+| SRV-D-02 | D | Slow or oversized requests tie up the public listener. | The server stops answering. | plan 2 F3; OPEN-14 | Bodies are capped at 1 MiB. Neither plan 2 nor plan 9 Task 11 sets read or write timeouts or a body limit at the proxy; Task 11 configures only HTTPS, HSTS and no access log. The owner should add them to Task 11 (OPEN-14). |
 | SRV-E-01 | E | A client spoofs `X-Forwarded-For` to dodge per-IP limits. | Rate limits are bypassed. | plan 2 F3 | The header is trusted only when `APP_TRUST_PROXY=true`, and then only the last hop. Setting it without a proxy lets anyone spoof. Not setting it behind a proxy puts all clients under one IP. |
 | SRV-E-02 | E | A user reaches another account's device, conversation, call or attachment by ID. | Cross-account access. | plan 2 A4; plan 2 B2; plan 2 C3; plan 2 E3 | Attachment IDs are 128 random bits and work as the access key for any authenticated user. The content is ciphertext and its key travels inside MLS. |
 
@@ -273,6 +273,7 @@ Every table has the columns `ID | STRIDE | Threat | Impact | Mitigation | Residu
 |---|---|---|---|---|---|
 | LNK-S-01 | S | A person who sees or photographs the QR code approves it from their own account. | The victim's new device signs in as the attacker's account and sends messages there. | plan 2 A5; plan 6 S1 | The link lasts 5 minutes and one claim. The new device does not show which account approved it (OPEN-8). |
 | LNK-S-02 | S | An attacker guesses a link ID or secret to approve or claim. | Account or session hijack. | plan 2 A5 | 16 random bytes per secret, stored hashed, with 60 claim attempts per minute per link. Negligible. |
+| LNK-S-03 | S | An attacker shows a QR code, or sends a `/link/<id>#<secret>` link that opens in the app (the app-site association covers `/link/*`), and a socially engineered victim approves it. | The attacker's device joins the victim's account and, through automatic device reconciliation, reads all of the victim's future messages. | OPEN-24 | Plan 6 S1 checks only that the link's host is the victim's server. Approval has no biometric step and no warning about what the new device can read (OPEN-7). |
 | LNK-T-01 | T | A QR code for another server is approved, sending the secret to that host. | The secret goes to the wrong server. | plan 6 S1 | None known. |
 | LNK-T-02 | T | The server substitutes the new device's key or the sealed snapshot. | The new device receives attacker data, or the snapshot is readable. | OPEN-8 | The plan 6 QR format omits the X25519 public key that the server design and roadmap require. No task seals the snapshot to the new device. |
 | LNK-R-01 | R | A user cannot tell which device approved a link, or when. | Unnoticed rogue device. | plan 2 A4; plan 6 S2 | The device list shows creation and last-seen times. No other device is notified (OPEN-7). |
@@ -326,7 +327,7 @@ Mode B is the server-readable mode. It is kept in Phase 1, off by default, by an
 
 **What the operator cannot read.**
 
-- Messages in strict E2EE conversations on the same server (Mode C). The server holds no key for them and rejects escrow copies for them.
+- Messages in strict E2EE conversations on the same server (Mode A, on a server that also allows Mode B). The server holds no key for them and rejects escrow copies for them.
 - Call media. No task attaches an escrow copy to a call signal, because the outbox adds escrow only to stored messages (plan 7 B1), and call signals travel as MLS messages on the call frames. Call media is protected by DTLS-SRTP (plan 8 M1, S3).
 - Anything the operator has no escrow row for, such as messages older than the escrow retention.
 
@@ -442,7 +443,7 @@ The gateway holds the APNs key and the HPKE private key on one host. The gateway
 
 ### OPEN-14 No limits on WebSocket frames, and no HTTP timeouts
 
-Plan 2 sets rate limits on HTTP endpoints, but none on WebSocket frames such as `call.invite`, and it sets no explicit WebSocket read limit or HTTP server timeouts. Only the gateway's 20 call pushes per hour per handle bounds ring spam. The reverse proxy must cover timeouts in the beta.
+Plan 2 sets rate limits on HTTP endpoints, but none on WebSocket frames such as `call.invite`, and it sets no explicit WebSocket read limit or HTTP server timeouts. Only the gateway's 20 call pushes per hour per handle bounds ring spam. Plan 9 Task 11 configures the proxy for HTTPS, HSTS and no access log, and sets no timeouts or body limits. The owner should add them to Task 11.
 
 ### OPEN-15 Mac data at rest relies on FileVault
 
@@ -479,6 +480,15 @@ Backups (14 daily and 8 weekly, plan 9 Task 11) retain deleted accounts, expired
 ### OPEN-23 Hostile media parsing is untested
 
 Incoming photos and inline thumbnails are decoded by the system image framework. Plan 7 re-encodes photos on send, and nothing tests or fuzzes the receive path.
+
+### OPEN-24 Approving a device link is too easy to abuse
+
+Approving a link gives the new device read access to all future messages (OPEN-7), but plan 6 S1 only checks the link's host, and the approval flow is a scan or a paste. A link opened from a message or a website, or a QR code shown by an attacker, can lead a victim to approve the attacker's device. Proposed next step for the owner, as a change to plan 6 S1 and plan 7 A3:
+
+- The approval prompt shows the new device's name, its platform and the approximate time the link was started.
+- Approval requires Face ID or Touch ID.
+- The prompt says plainly that the device will be able to read the user's future messages.
+- Every own device is notified when a device is added.
 
 ## 9. Review log
 
