@@ -126,4 +126,53 @@ private struct SeededRNG: RandomNumberGenerator {
             #expect(o.video == nil && o.banner != .audioOnly)
         }
     }
+
+    @Test func raisingCeilingKeepsVideo() {
+        var a = QualityAdaptor(ceiling: .balanced, videoWanted: true)
+        #expect(a.ingest(sample(600_000)).video == .p270)
+        a.setCeiling(.high)
+        let o = a.ingest(sample(600_000))
+        #expect(o.video != nil && o.banner != .audioOnly && o.mode == .high)
+    }
+
+    @Test func enablingVideoJumpsToBestFit() {
+        var a = QualityAdaptor(ceiling: .high, videoWanted: false)
+        #expect(a.ingest(sample(600_000)).video == nil)
+        a.setVideoWanted(true)
+        let o = a.ingest(sample(600_000))
+        #expect(o.video == .p360 && o.mode == .high)
+
+        var b = QualityAdaptor(ceiling: .high, videoWanted: false)
+        _ = b.ingest(sample(260_000))
+        b.setVideoWanted(true)
+        #expect(b.ingest(sample(260_000)).video == .p270)
+    }
+
+    @Test func nilAvailabilityHolds() {
+        var a = QualityAdaptor(ceiling: .high, videoWanted: false)
+        _ = a.ingest(sample(600_000))
+        #expect(a.ingest(sample(20_000)).mode == .ultraLow)
+        for _ in 0..<3 { _ = a.ingest(sample(600_000)) }          // 3 good samples
+        for _ in 0..<20 { #expect(a.ingest(sample(nil)).mode == .ultraLow) }  // nil neither counts nor resets
+        #expect(a.ingest(sample(600_000)).mode == .ultraLow)       // 4th good
+        #expect(a.ingest(sample(600_000)).mode == .dataSaver)      // 5th good
+    }
+
+    @Test func nilAvailabilityStillAppliesLoss() {
+        var a = QualityAdaptor(ceiling: .high, videoWanted: false)
+        _ = a.ingest(sample(nil, loss: 0.2))
+        #expect(a.ingest(sample(nil, loss: 0.2)).mode == .balanced)
+    }
+
+    @Test func flappingAroundThresholdIsBounded() {
+        var a = QualityAdaptor(ceiling: .high, videoWanted: true)
+        var last = a.ingest(sample(600_000))
+        var changes = 0
+        for i in 0..<200 {
+            let o = a.ingest(sample(i % 2 == 0 ? 250_000 : 330_000))
+            if o.mode != last.mode || o.video != last.video { changes += 1 }
+            last = o
+        }
+        #expect(changes <= 4)
+    }
 }

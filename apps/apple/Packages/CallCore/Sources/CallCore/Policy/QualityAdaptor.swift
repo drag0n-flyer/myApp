@@ -25,6 +25,7 @@ public struct QualityAdaptor: Sendable {
     private var current: Level
     private var badLossRun = 0
     private var goodRun = 0
+    private var lastAvail: Double?
 
     public init(ceiling: DataMode, videoWanted: Bool) {
         self.ceiling = ceiling
@@ -33,22 +34,49 @@ public struct QualityAdaptor: Sendable {
     }
 
     public mutating func setCeiling(_ c: DataMode) {
+        let raised = c > ceiling
         ceiling = c
-        clamp()
+        if raised, let tier = current.tier {
+            // Video levels only exist at the ceiling mode, so a running video call moves up with the ceiling.
+            current = Level(mode: c, tier: tier)
+        } else {
+            clamp()
+        }
     }
 
     public mutating func setVideoWanted(_ on: Bool) {
+        let turnedOn = on && !videoWanted
         videoWanted = on
         clamp()
+        // Jump straight to the best level the last known bandwidth supports instead of waiting for good samples.
+        if turnedOn, let avail = lastAvail {
+            let ladder = levels()
+            if let idx = ladder.firstIndex(of: current),
+               let target = ladder[...idx].first(where: { fits($0, avail) }) {
+                current = target
+            }
+        }
+        goodRun = 0
     }
 
     public mutating func ingest(_ s: MediaStats) -> AdaptorOutput {
-        let avail = s.availableOutgoingBitrate ?? .infinity
         let ladder = levels()
         let idx = ladder.firstIndex(of: current) ?? (ladder.count - 1)
 
         badLossRun = s.inboundLossFraction > Self.lossDown ? badLossRun + 1 : 0
         let lossTrigger = badLossRun >= 2
+
+        // No bandwidth estimate: hold. Only the loss rule applies, and goodRun is neither counted nor reset.
+        guard let measured = s.availableOutgoingBitrate else {
+            if lossTrigger {
+                goodRun = 0
+                badLossRun = 0
+                if idx < ladder.count - 1 { current = ladder[idx + 1] }
+            }
+            return output(avail: lastAvail ?? .infinity)
+        }
+        let avail = measured
+        lastAvail = measured
         let bandwidthBad = avail < Double(need(ladder[idx])) * Self.stepDownMargin
             || (current.tier != nil && avail < Self.audioOnlyBelow)
 
@@ -98,6 +126,7 @@ public struct QualityAdaptor: Sendable {
     }
 
     private func fits(_ l: Level, _ avail: Double) -> Bool {
+        // Stricter than the step-down trigger (need x 0.85 vs avail x 0.85) on purpose: a hold gap that stops flapping.
         if l.tier != nil && avail < Self.audioOnlyBelow { return false }
         return Double(need(l)) <= avail * Self.stepDownMargin
     }
