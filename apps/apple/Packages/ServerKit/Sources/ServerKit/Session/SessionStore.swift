@@ -48,8 +48,16 @@ public final class SessionStore: @unchecked Sendable {
             self.loadFailureType = nil
         } catch {
             self.cached = nil
-            self.loadFailureType = String(describing: type(of: error))
+            self.loadFailureType = Self.typeName(of: error)
         }
+    }
+
+    /// On Apple platforms a caught `URLError` can be an `NSError` box at runtime, so `type(of:)` reports
+    /// "NSError"; recover the Swift name for that domain so the diagnostic is the same everywhere.
+    private static func typeName(of error: Error) -> String {
+        let name = String(describing: type(of: error))
+        if name == "NSError", (error as NSError).domain == NSURLErrorDomain { return "URLError" }
+        return name
     }
 
     public var current: Session? { lock.withLock { cached } }

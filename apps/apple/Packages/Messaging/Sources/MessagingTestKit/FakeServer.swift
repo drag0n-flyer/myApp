@@ -45,6 +45,11 @@ public actor FakeServer {
     private var attachments: [String: Data] = [:]
     private var messageSeqs: [String: Int64] = [:]              // "device|conv|clientMsgID" -> seq
     private var subscribers: [String: [UUID: AsyncStream<ServerEvent>.Continuation]] = [:]
+    private var messageLog: [String: [StoredMessage]] = [:]      // conversation -> messages in seq order
+    private var pendingCommitRejections = 0
+    private var commitResponsesToLose = 0
+    private var responseLost = false
+    private var messageFailures: [Int] = []   // statuses for the next message posts
     private var counter = 0
     private let now: @Sendable () -> Date
 
@@ -54,6 +59,37 @@ public actor FakeServer {
 
     public func setDefaultMode(_ mode: String) { defaultMode = mode }
 
+    /// A message as the server stores it (what the sender posted).
+    public struct StoredMessage: Sendable, Equatable {
+        public let seq: Int64
+        public let epoch: UInt64
+        public let senderDeviceID: String
+        public let ciphertext: Data
+        public let escrow: Data?
+    }
+
+    /// The next `count` commit requests fail with `409 stale_epoch` (the epoch does not change).
+    public func rejectNextCommits(_ count: Int) { pendingCommitRejections = count }
+
+    /// The next `count` commits are applied, but the client never sees the reply (the transport throws).
+    public func loseNextCommitResponses(_ count: Int) { commitResponsesToLose = count }
+
+    /// The next message posts fail with these statuses, in order, without storing anything.
+    public func failNextMessages(statuses: [Int]) { messageFailures = statuses }
+
+    fileprivate func takeLostResponse() -> Bool {
+        defer { responseLost = false }
+        return responseLost
+    }
+
+    /// Messages stored for a conversation, in `seq` order.
+    public func storedMessages(in conversationID: String) -> [StoredMessage] { messageLog[conversationID] ?? [] }
+
+    /// Device IDs that are members of the conversation, sorted.
+    public func memberDevices(of conversationID: String) -> [String] { (conversations[conversationID]?.members ?? []).sorted() }
+
+    /// All conversation IDs, sorted.
+    public func conversationIDs() -> [String] { conversations.keys.sorted() }
     /// The escrow public key `GET /v1/server` reports (32 bytes; the fake never uses the private half).
     public var escrowKey = Data((0..<32).map { UInt8(0x40 + $0) })
 
@@ -192,7 +228,7 @@ public actor FakeServer {
     // MARK: - Delivery
 
     private struct KeyPackagesBody: Decodable { let keyPackages: [Base64URLData] }
-    private struct ClaimBody: Decodable { let accountID: String }
+    private struct ClaimBody: Decodable { let accountID: String; let deviceIDs: [String]? }
     private struct MembersBody: Decodable { let members: [String] }
     private struct CommitBody: Decodable {
         let epoch: UInt64
@@ -224,7 +260,7 @@ public actor FakeServer {
             return failure(404, "not_found")
         }
         var entries: [ClaimEntry] = []
-        for device in target.devices {
+        for device in target.devices where b.deviceIDs?.contains(device) ?? true {
             guard var list = keyPackages[device], let first = list.first else { continue }
             // A device's last KeyPackage is handed out without being removed.
             if list.count > 1 { list.removeFirst(); keyPackages[device] = list }
@@ -250,6 +286,10 @@ public actor FakeServer {
     private func postCommit(_ me: Caller, _ id: String, _ body: Data) -> (Data, HTTPURLResponse) {
         guard var c = conversations[id], c.members.contains(me.device) else { return failure(404, "not_found") }
         guard let b: CommitBody = decode(body) else { return failure(400, "bad_request") }
+        if pendingCommitRejections > 0 {
+            pendingCommitRejections -= 1
+            return failure(409, "stale_epoch", details: ["currentEpoch": Int(c.epoch)])
+        }
         guard b.epoch == c.epoch else { return failure(409, "stale_epoch", details: ["currentEpoch": Int(c.epoch)]) }
         let added = b.addDevices ?? []
         let removed = b.removeDevices ?? []
@@ -274,12 +314,14 @@ public actor FakeServer {
         for device in removed { c.members.remove(device) }
         c.epoch = newEpoch
         conversations[id] = c
+        if commitResponsesToLose > 0 { commitResponsesToLose -= 1; responseLost = true }
         return ok(EpochOut(epoch: newEpoch))
     }
 
     private func postMessage(_ me: Caller, _ id: String, _ body: Data) -> (Data, HTTPURLResponse) {
         guard var c = conversations[id], c.members.contains(me.device) else { return failure(404, "not_found") }
         guard let b: MessageBody = decode(body) else { return failure(400, "bad_request") }
+        if !messageFailures.isEmpty { return failure(messageFailures.removeFirst(), "unavailable") }
         let key = "\(me.device)|\(id)|\(b.clientMsgID)"
         if let seq = messageSeqs[key] { return ok(Seq(seq: seq)) }
         guard b.epoch <= c.epoch else { return failure(400, "bad_request") }
@@ -289,6 +331,8 @@ public actor FakeServer {
         c.nextSeq += 1
         conversations[id] = c
         messageSeqs[key] = seq
+        messageLog[id, default: []].append(StoredMessage(
+            seq: seq, epoch: b.epoch, senderDeviceID: me.device, ciphertext: b.ciphertext.data, escrow: b.escrow?.data))
         for device in c.members.sorted() where device != me.device {
             guard let account = deviceAccount[device], !blocks[account, default: []].contains(me.account) else { continue }
             deliver(to: device, kind: "message", conversation: id, seq: seq, epoch: Int64(b.epoch), from: me, payload: b.ciphertext.data)
@@ -403,6 +447,8 @@ public actor FakeServer {
 private struct FakeTransport: HTTPTransport {
     let server: FakeServer
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        await server.handle(request)
+        let reply = await server.handle(request)
+        if await server.takeLostResponse() { throw URLError(.networkConnectionLost) }
+        return reply
     }
 }

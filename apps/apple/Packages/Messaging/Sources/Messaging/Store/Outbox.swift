@@ -8,11 +8,6 @@ import os
 #endif
 
 /// Sends content that is not stored locally (receipts). Lane A's inbox processor uses it.
-public protocol ControlSender: Sendable {
-    /// Throws `OutboxError` when the message could not be sent (nothing is queued).
-    func sendControl(_ body: ContentEnvelope.Body, chatID: String) async throws
-}
-
 /// Why a send did not happen.
 public enum OutboxError: Error, Equatable, Sendable {
     /// A network or server problem; trying again later may work.

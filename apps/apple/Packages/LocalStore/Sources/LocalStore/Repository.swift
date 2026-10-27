@@ -17,6 +17,11 @@ public final class Repository: @unchecked Sendable {
         self.now = now
     }
 
+    /// Runs `body` in one transaction (joins an outer one). Rolls back when `body` throws.
+    public func transaction<T>(_ body: () throws -> T) throws -> T {
+        try db.transaction { _ in try body() }
+    }
+
     // MARK: contacts
 
     public func upsertContact(_ c: ContactRecord) throws {
@@ -521,6 +526,14 @@ public final class Repository: @unchecked Sendable {
 
     public func set(_ key: String, _ value: Data) throws {
         try db.execute("INSERT OR REPLACE INTO kv(key, value) VALUES (?,?)", [.text(key), .blob(value)])
+    }
+
+    /// Every `kv` entry whose key starts with `prefix` (used for the link snapshot's settings).
+    public func entries(prefix: String) throws -> [String: Data] {
+        let rows = try db.query("SELECT key, value FROM kv WHERE substr(key, 1, ?) = ?", [.int(Int64(prefix.utf8.count)), .text(prefix)]) {
+            ($0.text(0), $0.blob(1))
+        }
+        return Dictionary(rows, uniquingKeysWith: { $1 })
     }
 
     // MARK: wipe

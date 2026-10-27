@@ -21,11 +21,12 @@ extension ServerClient {
         return r.count
     }
 
-    public func claimKeyPackages(accountID: String) async throws(ServerError) -> [ClaimedKeyPackage] {
-        struct Body: Encodable { let accountID: String }
+    /// `deviceIDs` limits the claim to those devices of the account (omitted: every device).
+    public func claimKeyPackages(accountID: String, deviceIDs: [String]? = nil) async throws(ServerError) -> [ClaimedKeyPackage] {
+        struct Body: Encodable { let accountID: String; let deviceIDs: [String]? }
         struct Entry: Decodable { let deviceID: String; let keyPackage: Base64URLData }
         struct Reply: Decodable { let keyPackages: [Entry] }
-        let r: Reply = try await request("POST", "/v1/keypackages/claim", body: Body(accountID: accountID), auth: .session)
+        let r: Reply = try await request("POST", "/v1/keypackages/claim", body: Body(accountID: accountID, deviceIDs: deviceIDs), auth: .session)
         return r.keyPackages.map { ClaimedKeyPackage(deviceID: $0.deviceID, keyPackage: $0.keyPackage.data) }
     }
 

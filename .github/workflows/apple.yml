@@ -2,17 +2,88 @@ name: Apple apps
 
 on:
   push:
+    # feat/server mirrors main; building it again only doubles the Mac queue.
+    branches-ignore: [feat/server]
+    paths:
+      - "apps/apple/**"
+      - ".github/workflows/apple.yml"
   pull_request:
+    paths:
+      - "apps/apple/**"
+      - ".github/workflows/apple.yml"
+  workflow_dispatch:
 
 concurrency:
   group: apple-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  core:
+  # Decides which tests this change needs, so a change in one package does not
+  # spend Mac runners on the others. A package's tests also run when a package
+  # it depends on changes. A manual run, or a change to this file, runs everything.
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      appcore: ${{ steps.pick.outputs.appcore }}
+      localstore: ${{ steps.pick.outputs.localstore }}
+      serverkit: ${{ steps.pick.outputs.serverkit }}
+      callcore: ${{ steps.pick.outputs.callcore }}
+      messaging: ${{ steps.pick.outputs.messaging }}
+      app: ${{ steps.pick.outputs.app }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: pick
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          all=0
+          case "$EVENT" in
+            workflow_dispatch) all=1 ;;
+            pull_request) base="$PR_BASE" ;;
+            *) base="$BEFORE" ;;
+          esac
+          # A new branch has no "before": compare with where it left main.
+          if [ "$all" = 0 ] && { [ -z "${base:-}" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; }; then
+            git fetch -q origin main || true
+            base=$(git merge-base origin/main "$HEAD" 2>/dev/null || echo "")
+            [ -n "$base" ] || all=1
+          fi
+          files=""
+          [ "$all" = 1 ] || files=$(git diff --name-only "$base" "$HEAD")
+          echo "$files" | grep -qx '.github/workflows/apple.yml' && all=1
+          has() { [ "$all" = 1 ] || echo "$files" | grep -qE "$1"; }
+          P=apps/apple/Packages
+          appcore=false; localstore=false; serverkit=false; callcore=false; messaging=false; app=false
+          if has "^$P/AppCore/"; then appcore=true; serverkit=true; callcore=true; messaging=true; app=true; fi
+          if has "^$P/LocalStore/"; then localstore=true; messaging=true; app=true; fi
+          if has "^$P/ServerKit/"; then serverkit=true; messaging=true; app=true; fi
+          if has "^$P/SecureMessaging/"; then messaging=true; app=true; fi
+          if has "^$P/Messaging/"; then messaging=true; app=true; fi
+          if has "^$P/CallCore/"; then callcore=true; app=true; fi
+          if has "^apps/apple/(App|AppUITests|NotificationService|scripts)/|^apps/apple/project\.yml$"; then app=true; fi
+          for k in appcore localstore serverkit callcore messaging app; do
+            echo "$k=${!k}" >> "$GITHUB_OUTPUT"
+            echo "$k=${!k}"
+          done
+
+  # Package tests on Linux: cheap, and most package code is plain Swift.
+  linux-packages:
+    needs: changes
+    if: >-
+      needs.changes.outputs.appcore == 'true' || needs.changes.outputs.localstore == 'true' ||
+      needs.changes.outputs.serverkit == 'true' || needs.changes.outputs.callcore == 'true' ||
+      needs.changes.outputs.messaging == 'true'
     runs-on: ubuntu-24.04
     container: swift:6.0
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -20,40 +91,74 @@ jobs:
       - name: Install SQLite headers
         run: apt-get update && apt-get install -y libsqlite3-dev
       - name: AppCore tests
+        if: needs.changes.outputs.appcore == 'true'
         working-directory: apps/apple/Packages/AppCore
         run: swift test --no-parallel
       - name: LocalStore tests
+        if: needs.changes.outputs.localstore == 'true'
         working-directory: apps/apple/Packages/LocalStore
         run: swift test --no-parallel
       - name: ServerKit tests
+        if: needs.changes.outputs.serverkit == 'true'
         working-directory: apps/apple/Packages/ServerKit
         run: swift test --no-parallel
+      - name: CallCore tests
+        if: needs.changes.outputs.callcore == 'true'
+        working-directory: apps/apple/Packages/CallCore
+        run: swift test --no-parallel
+      - name: Messaging tests
+        if: needs.changes.outputs.messaging == 'true'
+        working-directory: apps/apple/Packages/Messaging
+        run: swift test --no-parallel
 
+  # Only what needs Apple frameworks: CryptoKit paths, SQLite file protection, the simulator.
   packages-macos:
+    needs: changes
+    if: needs.changes.outputs.localstore == 'true' || needs.changes.outputs.messaging == 'true'
     runs-on: macos-26
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm
+            ~/Library/org.swift.swiftpm
+            apps/apple/Packages/*/.build
+          key: spm-${{ runner.os }}-${{ hashFiles('apps/apple/Packages/*/Package.swift', 'apps/apple/Packages/*/Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
       - name: LocalStore tests
+        if: needs.changes.outputs.localstore == 'true'
         working-directory: apps/apple/Packages/LocalStore
         run: swift test
       - name: LocalStore tests on iOS Simulator
+        if: needs.changes.outputs.localstore == 'true'
         working-directory: apps/apple/Packages/LocalStore
         run: xcodebuild -scheme LocalStore test -destination 'platform=iOS Simulator,name=iPhone 16'
       - name: Messaging tests
-        if: ${{ !cancelled() && hashFiles('apps/apple/Packages/Messaging/Package.swift') != '' }}
+        if: needs.changes.outputs.messaging == 'true'
         working-directory: apps/apple/Packages/Messaging
         run: swift test
 
   serverkit-ios:
+    needs: changes
+    if: needs.changes.outputs.serverkit == 'true'
     runs-on: macos-26
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm
+            ~/Library/org.swift.swiftpm
+            apps/apple/Packages/*/.build
+          key: spm-${{ runner.os }}-${{ hashFiles('apps/apple/Packages/*/Package.swift', 'apps/apple/Packages/*/Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
       - name: ServerKit tests on an iOS simulator
         run: apps/apple/scripts/test-serverkit-ios.sh
       - name: Keep test results
@@ -63,7 +168,11 @@ jobs:
           name: serverkit-ios-xcresult
           path: ${{ runner.temp }}/serverkit-ios.xcresult
 
+  # Full app builds and UI tests: when app code (or a package it uses) changed,
+  # and only on main, pull requests and manual runs.
   ios:
+    needs: changes
+    if: needs.changes.outputs.app == 'true' && (github.ref == 'refs/heads/main' || github.event_name != 'push')
     runs-on: macos-26
     timeout-minutes: 60
     steps:
@@ -74,6 +183,9 @@ jobs:
         run: brew install xcodegen
       - name: No test-only libraries in the app
         run: apps/apple/scripts/check-test-only-libs.sh
+      - name: Release config check (reports only)
+        continue-on-error: true
+        run: python3 scripts/check-release-config.py --allow-missing --placeholder-brand-ok --filtering-pending
       - name: iPhone UI tests
         run: apps/apple/scripts/test-ios.sh
       - name: Keep test results
@@ -84,6 +196,8 @@ jobs:
           path: ${{ runner.temp }}/ios-ui.xcresult
 
   macos:
+    needs: changes
+    if: needs.changes.outputs.app == 'true' && (github.ref == 'refs/heads/main' || github.event_name != 'push')
     runs-on: macos-26
     timeout-minutes: 60
     steps:

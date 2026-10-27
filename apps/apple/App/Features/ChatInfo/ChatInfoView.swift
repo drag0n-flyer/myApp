@@ -39,6 +39,8 @@ struct ChatInfoView: View {
 
                 Section {
                     Label(chat.encryption.infoText, systemImage: chat.encryption == .endToEnd ? "lock" : "server.rack")
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(Text(chat.encryption.infoText))
                         .accessibilityIdentifier("chatinfo.encryption")
                     Button("Verify", systemImage: "checkmark.shield") { showingVerify = true }
                 }

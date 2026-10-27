@@ -102,7 +102,7 @@ public final class SampleChatStore: ChatStore {
         defer { onChange?() }
         let chatID = ensureChat(with: contactID)
         let senderID = outgoing ? me.id : contactID
-        append(Message(id: makeID(), senderID: senderID, sentAt: date, content: .call(summary), status: .read, replyToID: nil, reactions: []), to: chatID)
+        append(Message(id: makeID(), senderID: senderID, sentAt: date, content: .call(summary), status: outgoing ? .sent : .delivered, replyToID: nil, reactions: []), to: chatID)
     }
 
     public func messages(in chatID: String, before messageID: String?, limit: Int) -> [Message] {

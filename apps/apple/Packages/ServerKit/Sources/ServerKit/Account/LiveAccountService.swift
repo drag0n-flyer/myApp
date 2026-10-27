@@ -325,7 +325,7 @@ public final class LiveAccountService: AccountService {
         isSignedIn = true
     }
 
-    private func call<T>(link: Bool = false, _ body: () async throws(ServerError) -> T) async throws(AccountError) -> T {
+    private func call<T>(link: Bool = false, _ body: @MainActor () async throws(ServerError) -> T) async throws(AccountError) -> T {
         do throws(ServerError) { return try await body() } catch { throw Self.map(error, link: link) }
     }
 

@@ -45,7 +45,8 @@ struct CallView: View {
             }
         }
         .task(id: model.activeCall?.isEnded) {
-            guard model.activeCall?.isEnded == true else { return }
+            // UI tests keep the ended call on screen so they can read the final banner.
+            guard model.activeCall?.isEnded == true, !model.isUITesting else { return }
             try? await Task.sleep(for: .seconds(2))
             model.dismissEndedCall()
         }
@@ -83,12 +84,30 @@ private struct AudioStage: View {
     let call: CallState
     let modeText: String
 
+    private var statusText: String {
+        switch call.phase {
+        case .connecting: String(localized: "Connecting…")
+        case .ringing: String(localized: "Ringing…")
+        case .incoming: String(localized: "Incoming call")
+        case .active, .reconnecting: call.elapsedText
+        case .ended(let reason):
+            switch reason {
+            case .hungUp: String(localized: "Call ended")
+            case .connectionLost: String(localized: "Call ended: connection lost")
+            case .declined: String(localized: "Call declined")
+            case .missed: String(localized: "No answer")
+            case .answeredElsewhere: String(localized: "Answered on another device")
+            case .failed: String(localized: "Call failed")
+            }
+        }
+    }
+
     var body: some View {
         VStack(spacing: 6) {
             Avatar(name: call.contact.displayName, size: 110)
                 .padding(.bottom, 8)
             Text(call.contact.displayName).font(.title.weight(.semibold))
-            Text(call.phase == .connecting ? String(localized: "Connecting…") : call.elapsedText)
+            Text(statusText)
                 .font(.title3.monospacedDigit())
                 .foregroundStyle(.secondary)
             HStack(spacing: 8) {

@@ -22,4 +22,8 @@ xcrun simctl bootstatus "$UDID" -b
 RESULT="${RUNNER_TEMP:-/tmp}/ios-ui.xcresult"
 rm -rf "$RESULT"
 xcodebuild -project App.xcodeproj -scheme AppiOS -destination "id=$UDID" \
-  -resultBundlePath "$RESULT" CODE_SIGNING_ALLOWED=NO test
+  -configuration Debug -resultBundlePath "$RESULT" CODE_SIGNING_ALLOWED=NO test
+
+# The notification service extension must be embedded and declare the right extension point.
+. "$(dirname "$0")/lib-nse.sh"
+check_nse AppiOS "id=$UDID" "PlugIns/*.appex/Info.plist"

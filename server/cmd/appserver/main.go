@@ -24,6 +24,7 @@ import (
 	"github.com/velixio/myApp/server/internal/core"
 	"github.com/velixio/myApp/server/internal/db"
 	"github.com/velixio/myApp/server/internal/mail"
+	"github.com/velixio/myApp/server/internal/serverinfo"
 )
 
 const shutdownTimeout = 10 * time.Second
@@ -62,7 +63,7 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	a := app.New(core.Deps{
+	deps := core.Deps{
 		DB:        pool,
 		Config:    cfg,
 		Policy:    policy,
@@ -70,9 +71,17 @@ func run(ctx context.Context, args []string) error {
 		Now:       time.Now,
 		Mail:      mailer,
 		Directory: db.NewDirectory(pool),
-	})
+	}
+	serving := len(args) == 0 || (len(args) == 1 && args[0] == "serve")
+	if serving {
+		// Refuse to start with a missing or invalid escrow key.
+		if err := app.Validate(deps); err != nil {
+			return err
+		}
+	}
+	a := app.New(deps)
 
-	if len(args) == 0 || (len(args) == 1 && args[0] == "serve") {
+	if serving {
 		return serve(ctx, a, cfg, pool, log)
 	}
 	return a.Command(ctx, args, os.Stdout)
@@ -81,6 +90,14 @@ func run(ctx context.Context, args []string) error {
 func serve(ctx context.Context, a *app.App, cfg config.Config, pool *pgxpool.Pool, log *slog.Logger) error {
 	if err := db.Migrate(ctx, pool); err != nil {
 		return fmt.Errorf("migrate: %w", err)
+	}
+
+	if cfg.LabMode {
+		log.Warn("LAB MODE: sessions can be created without sign-in; never enable on a real server")
+	}
+
+	if w := serverinfo.SecurityTxtWarning(cfg.DocsDir, time.Now()); w != "" {
+		log.Warn(w, "dir", cfg.DocsDir)
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)
@@ -120,6 +137,7 @@ func serve(ctx context.Context, a *app.App, cfg config.Config, pool *pgxpool.Poo
 		}
 	}
 	wg.Wait()
+	a.Wait(sctx) // let detached work, such as sign-in emails, finish
 	return serveErr
 }
 

@@ -1,0 +1,7 @@
+# Copy to $APP_DOCS_DIR/security.txt and edit (RFC 9116).
+# Expires is required and must appear once. Keep it less than a year ahead and renew it.
+Contact: mailto:security@example.org
+Expires: 2027-09-30T00:00:00Z
+Policy: https://chat.example.org/legal/disclosure
+Preferred-Languages: en
+Canonical: https://chat.example.org/.well-known/security.txt

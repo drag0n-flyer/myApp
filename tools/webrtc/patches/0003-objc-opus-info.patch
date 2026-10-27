@@ -1,0 +1,214 @@
+diff --git a/sdk/BUILD.gn b/sdk/BUILD.gn
+index aeb65e1..45f734a 100644
+--- a/sdk/BUILD.gn
++++ b/sdk/BUILD.gn
+@@ -8,6 +8,14 @@
+ 
+ import("//third_party/libaom/options.gni")
+ import("../webrtc.gni")
++
++declare_args() {
++  # App patch (tools/webrtc/patches/0003): the Opus PLC field trial name that
++  # RTCOpusInfo reports. build.sh sets it from FIELD_TRIAL_OPUS_PLC in
++  # tools/webrtc/VERSION.
++  app_opus_plc_trial = ""
++}
++
+ if (is_ios) {
+   import("//build/config/apple/mobile_config.gni")
+   import("//build/config/ios/ios_sdk.gni")
+@@ -1023,6 +1031,8 @@ if (is_ios || is_mac) {
+         "objc/api/peerconnection/RTCMetricsSampleInfo+Private.h",
+         "objc/api/peerconnection/RTCMetricsSampleInfo.h",
+         "objc/api/peerconnection/RTCMetricsSampleInfo.mm",
++        "objc/api/peerconnection/RTCOpusInfo.h",
++        "objc/api/peerconnection/RTCOpusInfo.mm",
+         "objc/api/peerconnection/RTCPeerConnection+DataChannel.mm",
+         "objc/api/peerconnection/RTCPeerConnection+Private.h",
+         "objc/api/peerconnection/RTCPeerConnection+Stats.mm",
+@@ -1090,8 +1100,16 @@ if (is_ios || is_mac) {
+         "objc/api/peerconnection/RTCVideoTrack+Private.h",
+         "objc/api/peerconnection/RTCVideoTrack.h",
+         "objc/api/peerconnection/RTCVideoTrack.mm",
++
++        # Written by tools/webrtc/apply.sh (the Opus probe), not upstream.
++        "objc/components/app/opus_probe.c",
++        "objc/components/app/opus_probe.h",
+       ]
+ 
++      # App patch: RTCOpusInfo.
++      assert(app_opus_plc_trial != "", "set gn arg app_opus_plc_trial")
++      defines = [ "APP_OPUS_PLC_TRIAL=\"$app_opus_plc_trial\"" ]
++
+       configs += [
+         "..:common_objc",
+         ":used_from_extension",
+@@ -1137,6 +1155,7 @@ if (is_ios || is_mac) {
+         "../api/audio_codecs:audio_codecs_api",
+         "../api/audio_codecs:builtin_audio_decoder_factory",
+         "../api/audio_codecs:builtin_audio_encoder_factory",
++        "../api/audio_codecs/opus:audio_encoder_opus",
+         "../api/crypto:frame_decryptor_interface",
+         "../api/crypto:frame_encryptor_interface",
+         "../api/environment",
+@@ -1151,6 +1170,7 @@ if (is_ios || is_mac) {
+         "../api/video_codecs:video_codecs_api",
+         "../common_video",
+         "../media:media_constants",
++        "../modules/audio_coding:webrtc_opus",
+         "../modules/video_coding:video_codec_interface",
+         "../pc:peer_connection_factory",
+         "../pc:webrtc_sdp",
+@@ -1167,6 +1187,7 @@ if (is_ios || is_mac) {
+         "../rtc_base:timeutils",
+         "../rtc_base/system:plan_b_only",
+         "../system_wrappers:metrics",
++        "//third_party/opus",
+       ]
+ 
+       if (is_ios) {
+@@ -1385,6 +1406,7 @@ if (is_ios || is_mac) {
+           "objc/api/peerconnection/RTCMediaStreamTrack.h",
+           "objc/api/peerconnection/RTCMetrics.h",
+           "objc/api/peerconnection/RTCMetricsSampleInfo.h",
++          "objc/api/peerconnection/RTCOpusInfo.h",
+           "objc/api/peerconnection/RTCPeerConnection.h",
+           "objc/api/peerconnection/RTCPeerConnectionFactory.h",
+           "objc/api/peerconnection/RTCPeerConnectionFactoryOptions.h",
+@@ -1505,6 +1527,7 @@ if (is_ios || is_mac) {
+           "objc/api/peerconnection/RTCMediaStreamTrack.h",
+           "objc/api/peerconnection/RTCMetrics.h",
+           "objc/api/peerconnection/RTCMetricsSampleInfo.h",
++          "objc/api/peerconnection/RTCOpusInfo.h",
+           "objc/api/peerconnection/RTCPeerConnection.h",
+           "objc/api/peerconnection/RTCPeerConnectionFactory.h",
+           "objc/api/peerconnection/RTCPeerConnectionFactoryOptions.h",
+diff --git a/sdk/objc/api/peerconnection/RTCOpusInfo.h b/sdk/objc/api/peerconnection/RTCOpusInfo.h
+new file mode 100644
+index 0000000..6c38b1d
+--- /dev/null
++++ b/sdk/objc/api/peerconnection/RTCOpusInfo.h
+@@ -0,0 +1,47 @@
++/*
++ *  Application patch (tools/webrtc/patches/0003): reports what the Opus inside
++ *  this WebRTC build can do, so the app and its tests can check the build
++ *  instead of trusting it.
++ */
++
++#import <Foundation/Foundation.h>
++
++#import "sdk/objc/base/RTCMacros.h"
++
++NS_ASSUME_NONNULL_BEGIN
++
++RTC_OBJC_EXPORT
++@interface RTC_OBJC_TYPE (RTCOpusInfo) : NSObject
++
++/** libopus version string, for example "libopus 1.6". */
++@property(class, nonatomic, readonly) NSString *opusVersion;
++
++/** YES if the deep packet-loss concealment changes decoded audio. */
++@property(class, nonatomic, readonly) BOOL deepPLCActive;
++
++/** YES if the OSCE speech enhancement (LACE, NoLACE) changes decoded audio. */
++@property(class, nonatomic, readonly) BOOL osceActive;
++
++/** YES if the OSCE bandwidth extension changes decoded audio. */
++@property(class, nonatomic, readonly) BOOL bweActive;
++
++/** The complexity of a decoder made the way WebRTC makes one (48 kHz, mono),
++ *  or -1 if no decoder could be made. */
++@property(class, nonatomic, readonly) NSInteger webRTCDecoderComplexity;
++
++/** The field trial name that turns on Opus packet-loss concealment, compiled
++ *  in from tools/webrtc/VERSION (FIELD_TRIAL_OPUS_PLC). */
++@property(class, nonatomic, readonly) NSString *opusPLCFieldTrial;
++
++/** The packet length in ms the Opus encoder uses for an SDP `ptime` value:
++ *  the first supported length at or above `ptime`, the longest supported one
++ *  if `ptime` is larger, and 0 if the encoder rejects the format. */
+++ (NSInteger)encoderFrameMsForPtime:(NSInteger)ptime;
++
++/** The longest packet length in ms the encoder accepts: 120, or 60 when WebRTC
++ *  is built without 120 ms support. */
++@property(class, nonatomic, readonly) NSInteger maxPacketMs;
++
++@end
++
++NS_ASSUME_NONNULL_END
+diff --git a/sdk/objc/api/peerconnection/RTCOpusInfo.mm b/sdk/objc/api/peerconnection/RTCOpusInfo.mm
+new file mode 100644
+index 0000000..223acf2
+--- /dev/null
++++ b/sdk/objc/api/peerconnection/RTCOpusInfo.mm
+@@ -0,0 +1,70 @@
++/*
++ *  Application patch (tools/webrtc/patches/0003). See RTCOpusInfo.h.
++ */
++
++#import "RTCOpusInfo.h"
++
++#include <map>
++#include <optional>
++#include <string>
++
++#include "api/audio_codecs/audio_format.h"
++#include "api/audio_codecs/opus/audio_encoder_opus.h"
++#include "modules/audio_coding/codecs/opus/opus_interface.h"
++
++#import "components/app/opus_probe.h"
++
++#ifndef APP_OPUS_PLC_TRIAL
++#error "APP_OPUS_PLC_TRIAL must be defined (gn arg app_opus_plc_trial, from tools/webrtc/VERSION)"
++#endif
++
++@implementation RTC_OBJC_TYPE (RTCOpusInfo)
++
+++ (NSString *)opusVersion {
++  const char *v = app_opus_version();
++  return v ? [NSString stringWithUTF8String:v] : @"";
++}
++
+++ (BOOL)deepPLCActive {
++  static const BOOL active = app_opus_deep_plc_active() == 1;
++  return active;
++}
++
+++ (BOOL)osceActive {
++  static const BOOL active = app_opus_osce_active() == 1;
++  return active;
++}
++
+++ (BOOL)bweActive {
++  static const BOOL active = app_opus_bwe_active() == 1;
++  return active;
++}
++
+++ (NSInteger)webRTCDecoderComplexity {
++  OpusDecInst *inst = nullptr;
++  if (WebRtcOpus_DecoderCreate(&inst, /*channels=*/1, /*sample_rate_hz=*/48000) != 0 || !inst) {
++    return -1;
++  }
++  const int complexity = WebRtcOpus_DecoderGetComplexity(inst);
++  WebRtcOpus_DecoderFree(inst);
++  return complexity;
++}
++
+++ (NSString *)opusPLCFieldTrial {
++  return @APP_OPUS_PLC_TRIAL;
++}
++
+++ (NSInteger)encoderFrameMsForPtime:(NSInteger)ptime {
++  webrtc::SdpAudioFormat format("opus", 48000, 2, {{"ptime", std::to_string(ptime)}});
++  std::optional<webrtc::AudioEncoderOpusConfig> config =
++      webrtc::AudioEncoderOpus::SdpToConfig(format);
++  return config ? config->frame_size_ms : 0;
++}
++
+++ (NSInteger)maxPacketMs {
++  // WebRTC rounds an unsupported ptime up to the longest supported length, so
++  // asking for 120 reports 120 with 120 ms support and 60 without.
++  return [self encoderFrameMsForPtime:120];
++}
++
++@end

@@ -55,6 +55,9 @@ final class AppModel {
     var pendingInvite: InviteLink?
     /// Mac only: a contact who is ringing (macOS has no CallKit).
     var incomingCaller: Contact?
+    #if os(macOS)
+    @ObservationIgnored private(set) var macRinger: MacRinger?
+    #endif
     let isUITesting: Bool
 
     /// Bumped after every store change so views that read store data refresh.
@@ -116,6 +119,9 @@ final class AppModel {
             self?.activeCall = state
         }
         Task { await refreshDevices() }
+        #if os(macOS)
+        macRinger = MacRinger(handler: self, systemUI: !launch.isUITesting)
+        #endif
     }
 
     // MARK: - Chats (every read touches `revision` so SwiftUI tracks store changes)

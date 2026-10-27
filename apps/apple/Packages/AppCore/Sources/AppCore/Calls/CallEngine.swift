@@ -1,9 +1,13 @@
 public enum CallEndReason: Equatable, Sendable {
-    case hungUp, connectionLost
+    case hungUp, connectionLost, declined, missed, answeredElsewhere, failed
 }
 
 public enum CallPhase: Equatable, Sendable {
     case connecting, active, reconnecting
+    /// Outgoing call, waiting for the other person to answer.
+    case ringing
+    /// A ringing call shown in-app (Mac).
+    case incoming
     case ended(CallEndReason)
 }
 
@@ -47,6 +51,16 @@ public struct CallState: Equatable, Sendable {
     public var effectiveMode: DataMode
     public var network: NetworkType
 
+    public init(contact: Contact, phase: CallPhase, isVideoCall: Bool, isVideoOn: Bool, isMuted: Bool = false,
+                isSpeakerOn: Bool = false, quality: CallQuality = .good, banner: CallBanner? = nil,
+                elapsed: Double = 0, bytesUsed: Int64 = 0, inCallPreference: ModePreference? = nil,
+                effectiveMode: DataMode, network: NetworkType) {
+        self.contact = contact; self.phase = phase; self.isVideoCall = isVideoCall; self.isVideoOn = isVideoOn
+        self.isMuted = isMuted; self.isSpeakerOn = isSpeakerOn; self.quality = quality; self.banner = banner
+        self.elapsed = elapsed; self.bytesUsed = bytesUsed; self.inCallPreference = inCallPreference
+        self.effectiveMode = effectiveMode; self.network = network
+    }
+
     /// "04:12", or "1:02:05" past an hour.
     public var elapsedText: String {
         let total = Int(elapsed)
@@ -67,4 +81,9 @@ public protocol CallEngine: AnyObject {
     func setSpeaker(_ on: Bool)
     func setVideo(_ on: Bool)
     func end()
+    func answer(video: Bool)
+    func decline()
+    func setNetwork(_ type: NetworkType)
+    func reset()
+    var onChange: ((CallState?) -> Void)? { get set }
 }

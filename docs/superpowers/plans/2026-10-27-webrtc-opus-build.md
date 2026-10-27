@@ -72,11 +72,11 @@
   - adds the include directory `src/dnn`
   - forces floating point
 
-  The CMake equivalents in opus 1.6 are `OPUS_DEEP_PLC=ON` and `OPUS_OSCE=ON`, which define `ENABLE_DEEP_PLC`, `ENABLE_OSCE` and `ENABLE_OSCE_BWE`.
+  The CMake equivalents in opus 1.6 are `OPUS_DEEP_PLC=ON` and `OPUS_OSCE=ON`, which define `ENABLE_DEEP_PLC` and `ENABLE_OSCE`. They do not define `ENABLE_OSCE_BWE` (only `configure.ac` does), so the patch defines it by hand.
 
 **CPU features.**
-- On arm64, the build assumes NEON and dot-product instructions (`OPUS_ARM_PRESUME_NEON_INTR`, `OPUS_ARM_PRESUME_DOTPROD`, `-march=armv8.2-a+dotprod`, and no runtime detection map). This is safe because iOS 17 needs an A12 or newer chip, and every Mac with Apple silicon has dot-product.
-- The x86_64 slices (simulator and Intel Macs) use the generic C neural code: a smaller risk surface, and speed matters little there.
+- On arm64, the build assumes NEON only (`OPUS_ARM_PRESUME_NEON_INTR`, no runtime detection map), so `dnn_arm.h` picks `compute_linear_neon`. It does not use dot-product (`OPUS_ARM_*_DOTPROD`, `-march=armv8.2-a+dotprod`): iOS 17 still runs on the iPhone XS and XR (A12), and the A12 is ARMv8.3 without dot-product instructions (dot-product starts with the A13). NEON is safe on every arm64 target.
+- The x86_64 slices (simulator and Intel Macs) use Opus's runtime-dispatched SIMD (`dnn/x86/*`), because Chromium's x86 defines require it. Owner ruling.
 
 **WebRTC changes**, all in `tools/webrtc/patches/` and applied in name order:
 - `0001-third-party-opus-1.6.patch`: Opus `BUILD.gn` (described above).
@@ -140,7 +140,7 @@
 3. A **dynamic** XCFramework.
 4. Opus comes from the **official 1.6 release tarball** (hash-pinned, includes the models), not git.
 5. **Floating-point** Opus on every slice (libopus requires it for the neural features).
-6. On arm64, assume **NEON + dot-product**. The x86_64 slices use generic C.
+6. On arm64, assume **NEON only, no dot-product** (the A12 in iOS 17 devices lacks it). The x86_64 slices use Opus's runtime-dispatched SIMD (`dnn/x86/*`), because Chromium's x86 defines require it.
 7. **Decoder complexity 7 and BWE on are compiled in**, not configurable at runtime. DRED is off.
 8. **120 ms packet length is compiled in.** If the pin lacks it, the fallback is 60 ms, reported through `RTCOpusInfo.maxPacketMs`.
 9. **Software H.264 off, dav1d off**; VP8/VP9 default.
@@ -293,10 +293,10 @@ The probe algorithm. The signal and settings are fixed, so the result is determi
   - Fetch `third_party/opus/BUILD.gn` at the revision the pinned WebRTC `DEPS` names for `src/third_party`. Get it from gitiles with `?format=TEXT`, which is base64.
   - Patch that file to:
     1. `import("dnn_sources.gni")`
-    2. add `sources += deep_plc_sources + osce_sources`, and for `current_cpu == "arm64"` also `+ dnn_neon_sources + dnn_dotprod_sources`
+    2. add `sources += deep_plc_sources + osce_sources`, and for `current_cpu == "arm64"` also `+ dnn_neon_sources` (not the dot-product sources)
     3. `defines += [ "ENABLE_DEEP_PLC", "ENABLE_OSCE", "ENABLE_OSCE_BWE", "PACKAGE_VERSION=\"1.6\"" ]`
     4. `include_dirs += [ "src/dnn" ]`
-    5. on arm64, `defines += [ "OPUS_ARM_MAY_HAVE_NEON_INTR", "OPUS_ARM_PRESUME_NEON_INTR", "OPUS_ARM_MAY_HAVE_DOTPROD", "OPUS_ARM_PRESUME_DOTPROD" ]` and `cflags += [ "-march=armv8.2-a+dotprod" ]` for the DNN sources
+    5. on arm64, NEON only: `OPUS_ARM_MAY_HAVE_NEON_INTR` and `OPUS_ARM_PRESUME_NEON_INTR` (already in that file). No `OPUS_ARM_MAY_HAVE_DOTPROD`, `OPUS_ARM_PRESUME_DOTPROD` or `-march=armv8.2-a+dotprod`, because the A12 has no dot-product
     6. make every Apple target float: remove `FIXED_POINT` and the fixed-point source sets when `is_apple`, keeping whichever switch that `BUILD.gn` uses
   - Remove any Chromium-side source entry that no longer exists in 1.6. List them with a quick check: every path in `BUILD.gn` must exist under the unpacked tarball.
   - Save it with `git diff --no-prefix` relative to `third_party/`.
@@ -319,7 +319,7 @@ The probe algorithm. The signal and settings are fixed, so the result is determi
 ```objc
 RTC_OBJC_EXPORT
 @interface RTC_OBJC_TYPE(RTCOpusInfo) : NSObject
-@property(class, nonatomic, readonly) NSString *version;          // app_opus_version()
+@property(class, nonatomic, readonly) NSString *opusVersion;         // app_opus_version()
 @property(class, nonatomic, readonly) BOOL deepPLCActive;         // app_opus_deep_plc_active() == 1
 @property(class, nonatomic, readonly) BOOL osceActive;
 @property(class, nonatomic, readonly) BOOL bweActive;
@@ -401,7 +401,7 @@ The patches are written against the pinned commit. Fetch the touched files from 
 
 - [ ] **Step 1: Write the tests** (Swift Testing, `import WebRTC`).
   - `OpusBuildTests` (a `@Suite`):
-    - `opusVersionIsFloat16`: `#expect(RTCOpusInfo.version == "libopus 1.6")`
+    - `opusVersionIsFloat16`: `#expect(RTCOpusInfo.opusVersion == "libopus 1.6")`
     - `deepPLCActive`: `#expect(RTCOpusInfo.deepPLCActive)`
     - `osceActive`: `#expect(RTCOpusInfo.osceActive)`
     - `bweActive`: `#expect(RTCOpusInfo.bweActive)`

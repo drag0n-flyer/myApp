@@ -5,7 +5,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 go list ./... | while read -r pkg; do
-  targets=$(go test -list '^Fuzz' "$pkg" | grep '^Fuzz' || true)
+  # A failing `go test -list` (build error, bad package) must fail the script,
+  # so run it on its own: only the grep may come up empty.
+  listing=$(go test -list '^Fuzz' "$pkg")
+  targets=$(printf '%s\n' "$listing" | grep '^Fuzz' || true)
   for name in $targets; do
     echo "fuzz: $pkg $name"
     go test -run='^$' -fuzz="^$name\$" -fuzztime=15s "$pkg"

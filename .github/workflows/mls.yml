@@ -3,12 +3,15 @@ name: MLS client core
 on:
   workflow_dispatch:
   push:
+    branches-ignore: [feat/server]
     paths:
       - "apps/apple/Packages/SecureMessaging/**"
+      - "mlsffi/**"
       - ".github/workflows/mls.yml"
   pull_request:
     paths:
       - "apps/apple/Packages/SecureMessaging/**"
+      - "mlsffi/**"
       - ".github/workflows/mls.yml"
 
 concurrency:
@@ -16,6 +19,60 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  rust-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: cargo test (RustCrypto provider)
+        working-directory: apps/apple/Packages/SecureMessaging/mlsffi
+        run: cargo test --locked
+
+  apple:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Swift target info (diagnostic)
+        run: |
+          ls -d /Applications/Xcode* 
+          for x in /Applications/Xcode*.app; do
+            echo "== $x"
+            for t in arm64-apple-ios17.0 arm64-apple-ios17.0-simulator; do
+              echo "$t: $(DEVELOPER_DIR=$x/Contents/Developer xcrun swift -print-target-info --target=$t 2>&1 | grep -E 'librariesRequireRPath|compilerVersion' | tr -d '\n')"
+            done
+          done
+          swift --version
+          xcodebuild -version
+          for t in arm64-apple-ios17.0 arm64-apple-ios17.0-simulator arm64-apple-macosx26.0 x86_64-apple-macosx26.0; do
+            echo "$t: $(swift -print-target-info --target=$t | grep -E 'librariesRequireRPath')"
+          done
+      - name: Build XCFramework and bindings
+        working-directory: apps/apple/Packages/SecureMessaging
+        run: scripts/build-mlsffi.sh
+      - name: cargo test (CryptoKit provider, interop)
+        working-directory: apps/apple/Packages/SecureMessaging/mlsffi
+        run: cargo test --locked
+      - name: Upstream CryptoKit provider suite
+        run: |
+          git clone https://github.com/awslabs/mls-rs
+          git -C mls-rs checkout 323bd84f52e410c9ecb0b1ccd84a5a9f7f191b5a
+          cargo test --manifest-path mls-rs/mls-rs-crypto-cryptokit/Cargo.toml
+      - name: Binding drift check
+        working-directory: apps/apple/Packages/SecureMessaging
+        run: git diff --exit-code Sources/MLSFFIBindings
+      - name: Swift package builds with the XCFramework
+        working-directory: apps/apple/Packages/SecureMessaging
+        run: swift build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MLSFFI-xcframework
+          path: apps/apple/Packages/SecureMessaging/Artifacts/MLSFFI.xcframework
+
   swift-linux:
     runs-on: ubuntu-24.04
     container: swift:6.0

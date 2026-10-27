@@ -1,0 +1,104 @@
+diff --git a/modules/audio_coding/BUILD.gn b/modules/audio_coding/BUILD.gn
+index bd5c53e..86ba6d5 100644
+--- a/modules/audio_coding/BUILD.gn
++++ b/modules/audio_coding/BUILD.gn
+@@ -323,6 +323,7 @@ rtc_library("webrtc_multiopus") {
+ rtc_library("webrtc_opus_wrapper") {
+   poisonous = [ "audio_codecs" ]
+   sources = [
++    "codecs/opus/app_opus_config.h",
+     "codecs/opus/opus_inst.h",
+     "codecs/opus/opus_interface.cc",
+     "codecs/opus/opus_interface.h",
+diff --git a/modules/audio_coding/codecs/opus/app_opus_config.h b/modules/audio_coding/codecs/opus/app_opus_config.h
+new file mode 100644
+index 0000000..2768313
+--- /dev/null
++++ b/modules/audio_coding/codecs/opus/app_opus_config.h
+@@ -0,0 +1,21 @@
++/*
++ *  Application patch (tools/webrtc/patches/0002): settings applied to every
++ *  Opus decoder that WebRtcOpus_DecoderCreate makes.
++ */
++
++#ifndef MODULES_AUDIO_CODING_CODECS_OPUS_APP_OPUS_CONFIG_H_
++#define MODULES_AUDIO_CODING_CODECS_OPUS_APP_OPUS_CONFIG_H_
++
++namespace webrtc {
++
++// Deep PLC needs complexity >= 5, LACE >= 6 and NoLACE >= 7 (libopus 1.6,
++// src/opus_decoder.c). Compiled in; not configurable at run time.
++inline constexpr int kAppOpusDecoderComplexity = 7;
++
++// OPUS_SET_OSCE_BWE value: 1 turns on bandwidth extension. libopus applies it
++// only to 48 kHz output of a 16 kHz SILK stream and complexity >= 4.
++inline constexpr int kAppOpusOsceBwe = 1;
++
++}  // namespace webrtc
++
++#endif  // MODULES_AUDIO_CODING_CODECS_OPUS_APP_OPUS_CONFIG_H_
+diff --git a/modules/audio_coding/codecs/opus/opus_interface.cc b/modules/audio_coding/codecs/opus/opus_interface.cc
+index 2fd36d9..be003f7 100644
+--- a/modules/audio_coding/codecs/opus/opus_interface.cc
++++ b/modules/audio_coding/codecs/opus/opus_interface.cc
+@@ -13,6 +13,7 @@
+ #include <cstdint>
+ #include <cstdlib>
+ 
++#include "modules/audio_coding/codecs/opus/app_opus_config.h"
+ #include "rtc_base/checks.h"
+ 
+ enum {
+@@ -398,6 +399,14 @@ int16_t WebRtcOpus_DecoderCreate(OpusDecInst** inst,
+     state->decoder =
+         opus_decoder_create(sample_rate_hz, static_cast<int>(channels), &error);
+     if (error == OPUS_OK && state->decoder) {
++      // App patch: decoder complexity 7 (Deep PLC, LACE, NoLACE) and OSCE
++      // bandwidth extension. Both survive OPUS_RESET_STATE.
++      [[maybe_unused]] int ret = opus_decoder_ctl(
++          state->decoder, OPUS_SET_COMPLEXITY(kAppOpusDecoderComplexity));
++      RTC_DCHECK_EQ(ret, OPUS_OK);
++      ret = opus_decoder_ctl(state->decoder,
++                             OPUS_SET_OSCE_BWE(kAppOpusOsceBwe));
++      RTC_DCHECK_EQ(ret, OPUS_OK);
+       // Creation of memory all ok.
+       state->channels = channels;
+       state->sample_rate_hz = sample_rate_hz;
+@@ -471,6 +480,17 @@ size_t WebRtcOpus_DecoderChannels(OpusDecInst* inst) {
+   return inst->channels;
+ }
+ 
++int WebRtcOpus_DecoderGetComplexity(OpusDecInst* inst) {
++  opus_int32 complexity = -1;
++  if (inst->decoder) {
++    opus_decoder_ctl(inst->decoder, OPUS_GET_COMPLEXITY(&complexity));
++  } else {
++    opus_multistream_decoder_ctl(inst->multistream_decoder,
++                                 OPUS_GET_COMPLEXITY(&complexity));
++  }
++  return complexity;
++}
++
+ void WebRtcOpus_DecoderInit(OpusDecInst* inst) {
+   if (inst->decoder) {
+     opus_decoder_ctl(inst->decoder, OPUS_RESET_STATE);
+diff --git a/modules/audio_coding/codecs/opus/opus_interface.h b/modules/audio_coding/codecs/opus/opus_interface.h
+index b7ce4e8..1096da9 100644
+--- a/modules/audio_coding/codecs/opus/opus_interface.h
++++ b/modules/audio_coding/codecs/opus/opus_interface.h
+@@ -403,6 +403,15 @@ int16_t WebRtcOpus_DecoderFree(OpusDecInst* inst);
+  */
+ size_t WebRtcOpus_DecoderChannels(OpusDecInst* inst);
+ 
++/****************************************************************************
++ * WebRtcOpus_DecoderGetComplexity(...)
++ *
++ * App patch. Returns the complexity set on the decoder (OPUS_GET_COMPLEXITY),
++ * or -1 on error. Lets a test confirm that WebRtcOpus_DecoderCreate applied
++ * kAppOpusDecoderComplexity.
++ */
++int WebRtcOpus_DecoderGetComplexity(OpusDecInst* inst);
++
+ /****************************************************************************
+  * WebRtcOpus_DecoderInit(...)
+  *
