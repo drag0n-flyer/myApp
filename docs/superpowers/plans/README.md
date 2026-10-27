@@ -43,7 +43,7 @@ apps/apple/Packages/AppCore      plan 1; domain models + service protocols
 apps/apple/Packages/WebRTCBinary plan 3 (product and binary target `WebRTC`)
 tools/webrtc/                    plan 3 (pin, patches, build scripts, reserved-symbols.txt)
 apps/apple/Packages/SecureMessaging  plan 4
-apps/apple/Packages/SecureMessaging/rust  plan 4 (our thin `mlsffi` crate over mls-rs)
+apps/apple/Packages/SecureMessaging/mlsffi plan 4 (our thin `mlsffi` crate over mls-rs)
 apps/apple/Packages/ServerKit    plan 6 (products ServerKit, ServerKitTesting)
 apps/apple/Packages/LocalStore   plan 7
 apps/apple/Packages/Messaging    plan 7 (content envelope, outbox, inbox, LiveChatStore, Escrow)
