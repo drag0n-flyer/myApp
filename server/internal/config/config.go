@@ -224,7 +224,6 @@ func orDefault(v, def string) string {
 	return v
 }
 
-// splitList splits a comma list, trimming spaces and dropping empty items.
 // parseAndroidApps parses "package:<64 hex>[,...]". The package must look like
 // an Android application ID and the fingerprint must be 32 bytes of hex.
 func parseAndroidApps(s string) ([]AndroidApp, error) {
@@ -257,6 +256,7 @@ func validAndroidPackage(p string) bool {
 	return true
 }
 
+// splitList splits a comma list, trimming spaces and dropping empty items.
 func splitList(s string) []string {
 	var out []string
 	for _, part := range strings.Split(s, ",") {

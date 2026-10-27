@@ -1,6 +1,17 @@
 import AppCore
 import SwiftUI
 
+extension DevicePlatform {
+    /// Plain name for the device type, used as text and as the VoiceOver label for its symbol.
+    var displayName: String {
+        switch self {
+        case .mac: String(localized: "Mac")
+        case .iPhone: String(localized: "iPhone")
+        case .android: String(localized: "Android")
+        }
+    }
+}
+
 /// Shown on the signed-in iPhone after it scans a new device's code. Approving asks for Face ID or Touch ID.
 struct LinkApprovalView: View {
     let request: LinkRequest
@@ -11,11 +22,7 @@ struct LinkApprovalView: View {
     @State private var working = false
 
     private var platformName: String {
-        switch request.platform {
-        case .mac: String(localized: "Mac")
-        case .iPhone: String(localized: "iPhone")
-        case .android: String(localized: "Android")
-        }
+        request.platform.displayName
     }
 
     var body: some View {

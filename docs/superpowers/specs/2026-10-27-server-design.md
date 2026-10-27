@@ -136,7 +136,9 @@ Migrations are embedded SQL files run in filename order. Prefixes are reserved p
 
 `0001_core.sql` (F):
 - `accounts(id uuid pk, username text unique not null, email text not null, email_lower text unique not null, display_name text not null default '', find_by_email bool not null default false, created_at timestamptz not null default now())`
-- `devices(id uuid pk, account_id uuid not null references accounts on delete cascade, name text not null, platform text not null check (platform in ('iphone','mac','android')), created_at timestamptz not null default now(), last_seen_at timestamptz not null default now())`
+- `devices(id uuid pk, account_id uuid not null references accounts on delete cascade, name text not null, platform text not null check (platform in ('iphone','mac')), created_at timestamptz not null default now(), last_seen_at timestamptz not null default now())`
+
+`1003_android_platform.sql` (A): `devices.platform` and `link_requests.platform` also accept `android`.
 
 All later tables reference `accounts(id)` or `devices(id)` with `on delete cascade`. **Revoking a device deletes its row, and deleting an account deletes its row.** The cascade removes sessions, KeyPackages, inbox items, conversation membership, push tokens and blocks, with no code in other lanes.
 

@@ -1,7 +1,6 @@
 package identity_test
 
 import (
-	"encoding/base64"
 	"encoding/hex"
 	"strings"
 	"testing"
@@ -69,9 +68,16 @@ func TestPasskeyAndroidOriginRejectedWhenUnconfigured(t *testing.T) {
 }
 
 func TestAndroidOriginFormat(t *testing.T) {
-	b, _ := hex.DecodeString(androidFP)
-	want := "android:apk-key-hash:" + base64.RawURLEncoding.EncodeToString(b)
-	if got := androidOrigin(t, androidFP); got != want || strings.Contains(got, "=") {
-		t.Fatalf("%s", got)
+	const want = "android:apk-key-hash:AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA"
+	if got := androidOrigin(t, androidFP); got != want {
+		t.Fatalf("got %s", got)
+	}
+}
+
+func TestLinkRequestAcceptsAndroid(t *testing.T) {
+	e := newSignupEnv(t)
+	r := e.c.Do(nil, "POST", "/v1/link", map[string]string{"deviceName": "Pixel", "platform": "android"})
+	if r.Status != 200 {
+		t.Fatalf("link android: %s", r)
 	}
 }
