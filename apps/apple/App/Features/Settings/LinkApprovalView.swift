@@ -11,12 +11,16 @@ struct LinkApprovalView: View {
     @State private var working = false
 
     private var platformName: String {
-        request.platform == .mac ? String(localized: "Mac") : String(localized: "iPhone")
+        switch request.platform {
+        case .mac: String(localized: "Mac")
+        case .iPhone: String(localized: "iPhone")
+        case .android: String(localized: "Android")
+        }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Image(systemName: request.platform == .mac ? "laptopcomputer" : "iphone")
+            Image(systemName: request.platform.symbolName)
                 .font(.system(size: 56))
                 .foregroundStyle(.tint)
                 .frame(maxWidth: .infinity)

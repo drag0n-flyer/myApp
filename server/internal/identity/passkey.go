@@ -21,11 +21,15 @@ const challengeTTL = 5 * time.Minute
 // and user verification required, and no attestation.
 func newWebAuthn(cfg config.Config) (*webauthn.WebAuthn, error) {
 	required := true
+	origins := []string{"https://" + cfg.Host}
+	for _, a := range cfg.AndroidApps {
+		origins = append(origins, a.Origin())
+	}
 	timeout := webauthn.TimeoutConfig{Enforce: true, Timeout: challengeTTL, TimeoutUVD: challengeTTL}
 	return webauthn.New(&webauthn.Config{
 		RPID:                  cfg.Host,
 		RPDisplayName:         "[App]",
-		RPOrigins:             []string{"https://" + cfg.Host},
+		RPOrigins:             origins,
 		AttestationPreference: protocol.PreferNoAttestation,
 		AuthenticatorSelection: protocol.AuthenticatorSelection{
 			RequireResidentKey: &required,
