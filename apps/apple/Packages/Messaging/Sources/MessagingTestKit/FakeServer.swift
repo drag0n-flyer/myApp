@@ -45,6 +45,9 @@ public actor FakeServer {
     private var subscribers: [String: [UUID: AsyncStream<ServerEvent>.Continuation]] = [:]
     private var messageLog: [String: [StoredMessage]] = [:]      // conversation -> messages in seq order
     private var pendingCommitRejections = 0
+    private var commitResponsesToLose = 0
+    private var responseLost = false
+    private var messageFailures: [Int] = []   // statuses for the next message posts
     private var counter = 0
     private let now: @Sendable () -> Date
 
@@ -65,6 +68,17 @@ public actor FakeServer {
 
     /// The next `count` commit requests fail with `409 stale_epoch` (the epoch does not change).
     public func rejectNextCommits(_ count: Int) { pendingCommitRejections = count }
+
+    /// The next `count` commits are applied, but the client never sees the reply (the transport throws).
+    public func loseNextCommitResponses(_ count: Int) { commitResponsesToLose = count }
+
+    /// The next message posts fail with these statuses, in order, without storing anything.
+    public func failNextMessages(statuses: [Int]) { messageFailures = statuses }
+
+    fileprivate func takeLostResponse() -> Bool {
+        defer { responseLost = false }
+        return responseLost
+    }
 
     /// Messages stored for a conversation, in `seq` order.
     public func storedMessages(in conversationID: String) -> [StoredMessage] { messageLog[conversationID] ?? [] }
@@ -264,12 +278,14 @@ public actor FakeServer {
         for device in removed { c.members.remove(device) }
         c.epoch = newEpoch
         conversations[id] = c
+        if commitResponsesToLose > 0 { commitResponsesToLose -= 1; responseLost = true }
         return ok(EpochOut(epoch: newEpoch))
     }
 
     private func postMessage(_ me: Caller, _ id: String, _ body: Data) -> (Data, HTTPURLResponse) {
         guard var c = conversations[id], c.members.contains(me.device) else { return failure(404, "not_found") }
         guard let b: MessageBody = decode(body) else { return failure(400, "bad_request") }
+        if !messageFailures.isEmpty { return failure(messageFailures.removeFirst(), "unavailable") }
         let key = "\(me.device)|\(id)|\(b.clientMsgID)"
         if let seq = messageSeqs[key] { return ok(Seq(seq: seq)) }
         guard b.epoch <= c.epoch else { return failure(400, "bad_request") }
@@ -391,6 +407,8 @@ public actor FakeServer {
 private struct FakeTransport: HTTPTransport {
     let server: FakeServer
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        await server.handle(request)
+        let reply = await server.handle(request)
+        if await server.takeLostResponse() { throw URLError(.networkConnectionLost) }
+        return reply
     }
 }

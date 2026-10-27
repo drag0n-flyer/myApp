@@ -29,8 +29,16 @@ private struct Rig {
 }
 
 /// A manager whose stale-epoch sync is the test sync below.
-private func manager(_ device: TestDevice) -> ConversationManager {
-    ConversationManager(deps: device.deps, escrowKey: { escrowKey }, syncOnce: { try await syncInbox(device) })
+private actor Counter {
+    private(set) var value = 0
+    func bump() { value += 1 }
+}
+
+private func manager(_ device: TestDevice, syncs: Counter = Counter()) -> ConversationManager {
+    ConversationManager(deps: device.deps, escrowKey: { escrowKey }, syncOnce: {
+        await syncs.bump()
+        try await syncInbox(device)
+    })
 }
 
 /// A minimal stand-in for the inbox processor: welcomes go to `joined`, messages are decoded and
@@ -105,7 +113,9 @@ private func syncInbox(_ device: TestDevice, joinWith joiner: ConversationManage
     @Test func staleEpochRetries() async throws {
         let rig = try await Rig.make()
         await rig.server.rejectNextCommits(1)
-        let record = try await manager(rig.ana1).create(with: "acc-bob")
+        let syncs = Counter()
+        let record = try await manager(rig.ana1, syncs: syncs).create(with: "acc-bob")
+        #expect(await syncs.value == 1)
         #expect(record.epoch == 1)
         #expect(try await rig.ana1.deps.mls.epoch(of: GroupID(raw: record.groupID)) == 1)
         #expect(await rig.server.memberDevices(of: record.serverID).count == 4)
@@ -116,7 +126,7 @@ private func syncInbox(_ device: TestDevice, joinWith joiner: ConversationManage
         await rig.server.rejectNextCommits(4)
         await #expect(throws: SyncError.epochConflict) { try await manager(rig.ana1).create(with: "acc-bob") }
         #expect(try rig.ana1.deps.repo.conversations(chatID: "acc-bob").isEmpty)
-        #expect(await rig.server.memberDevices(of: "conv-5").count == 1)
+        #expect(await rig.server.memberDevices(of: try #require(await rig.server.conversationIDs().first)).count == 1)
     }
 
     @Test func simultaneousCreate() async throws {
@@ -179,5 +189,88 @@ private func syncInbox(_ device: TestDevice, joinWith joiner: ConversationManage
         #expect(await rig.server.storedMessages(in: record.serverID).count == 2)
         record.innerMode = nil
         await #expect(throws: SyncError.modeUnknown) { try await mgr.announceMode(record) }
+    }
+
+    /// A real race: bob1 commits first, so ana1's commit is rejected for real; the sync moves her
+    /// group forward and the rebuilt commit lands at the post-sync epoch.
+    @Test func staleEpochRebuildsAfterSync() async throws {
+        let rig = try await Rig.make()
+        let syncs = Counter()
+        let record = try await manager(rig.ana1, syncs: syncs).create(with: "acc-bob")
+        try await syncInbox(rig.bob1)
+        let bobGroup = GroupID(raw: try #require(try rig.bob1.deps.repo.conversation(serverID: record.serverID)).groupID)
+        let bobRemove = try await rig.bob1.deps.mls.remove(members: ["acc-bob/\(rig.bob2.deviceID)"], from: bobGroup)
+        #expect(try await rig.bob1.deps.server.postCommit(
+            conversationID: record.serverID, epoch: 1, commit: bobRemove.commit, welcome: nil,
+            addDevices: [], removeDevices: [rig.bob2.deviceID]) == 2)
+        try await rig.bob1.deps.mls.commitAccepted(bobGroup)
+
+        let group = GroupID(raw: record.groupID)
+        var builds = 0
+        let newEpoch = try await manager(rig.ana1, syncs: syncs).postCommitWithRetry(
+            serverID: record.serverID, group: group, addDevices: [], removeDevices: [rig.ana2.deviceID]
+        ) {
+            builds += 1
+            return try await rig.ana1.deps.mls.remove(members: ["acc-ana/\(rig.ana2.deviceID)"], from: group)
+        }
+        #expect(builds == 2 && newEpoch == 3)
+        #expect(await syncs.value == 1)
+        #expect(try await rig.ana1.deps.mls.epoch(of: group) == 3)
+        #expect(await rig.server.memberDevices(of: record.serverID) == [rig.ana1.deviceID, rig.bob1.deviceID].sorted())
+    }
+
+    /// The server applied the commit but the reply was lost: the pending commit must survive so the
+    /// echo (Design 17) merges it.
+    @Test func lostCommitResponseKeepsPendingCommit() async throws {
+        let rig = try await Rig.make()
+        let mgr = manager(rig.ana1)
+        let theirs = try await rig.ana1.deps.server.claimKeyPackages(accountID: "acc-bob")
+        let created = try await rig.ana1.deps.server.createConversation(with: "acc-bob")
+        let group = try await rig.ana1.deps.mls.createGroup()
+        await rig.server.loseNextCommitResponses(1)
+        await #expect(throws: (any Error).self) {
+            try await mgr.postCommitWithRetry(
+                serverID: created.conversationID, group: group, addDevices: theirs.map(\.deviceID), removeDevices: []
+            ) { try await rig.ana1.deps.mls.add(keyPackages: theirs.map(\.keyPackage), to: group) }
+        }
+        let echo = try #require(try await rig.ana1.deps.server.inbox(after: nil).items.first { $0.kind == "commit" })
+        #expect(try await rig.ana1.deps.mls.process(echo.payload) == .commit(group: group, newEpoch: 1, removedMe: false))
+        #expect(try await rig.ana1.deps.mls.epoch(of: group) == 1)
+    }
+
+    @Test func failedModePostIsSentBeforeAnythingElse() async throws {
+        let rig = try await Rig.make()
+        let mgr = manager(rig.ana1)
+        await rig.server.failNextMessages(statuses: [503])
+        await #expect(throws: (any Error).self) { try await mgr.create(with: "acc-bob") }
+        let serverID = try #require(await rig.server.conversationIDs().first)
+        #expect(await rig.server.storedMessages(in: serverID).isEmpty)
+
+        // The outbox path: ask for the conversation, then send a text.
+        let record = try await mgr.preferredConversation(with: "acc-bob")
+        let group = GroupID(raw: record.groupID)
+        let text = ContentEnvelope(id: UUID().uuidString.lowercased(), at: 1, body: .text("hi", replyTo: nil))
+        let (cipher, epoch) = try await rig.ana1.deps.mls.encrypt(text.encoded(), in: group)
+        _ = try await rig.ana1.deps.server.postMessage(
+            conversationID: serverID, epoch: epoch, ciphertext: cipher, escrow: nil, clientMsgID: text.id)
+
+        let stored = await rig.server.storedMessages(in: serverID)
+        #expect(stored.count == 2)
+        try await syncInbox(rig.bob1)
+        let bob = try #require(try rig.bob1.deps.repo.conversation(serverID: serverID))
+        #expect(bob.innerMode == "e2ee")   // the mode envelope was processed before the text
+        // A second ask does not announce again.
+        _ = try await mgr.preferredConversation(with: "acc-bob")
+        #expect(await rig.server.storedMessages(in: serverID).count == 2)
+    }
+
+    @Test func escrowSentAtIsRFC3339Milliseconds() async throws {
+        let rig = try await Rig.make(mode: "server_readable")
+        let record = try await manager(rig.ana1).create(with: "acc-bob")
+        let escrow = try #require(await rig.server.storedMessages(in: record.serverID).first?.escrow)
+        let json = try #require(try JSONSerialization.jsonObject(with: escrow.dropFirst("ESCROW:".count)) as? [String: Any])
+        #expect(json["sentAt"] as? String == "2023-11-14T22:13:20.000Z")
+        #expect(json["conversationID"] as? String == record.serverID && json["senderAccountID"] as? String == "acc-ana")
+        #expect((json["body"] as? [String: Any])?["k"] as? String == "mode")
     }
 }

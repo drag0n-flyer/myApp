@@ -45,7 +45,10 @@ public actor ConversationManager: ConversationManaging {
     // MARK: ConversationManaging
 
     public func preferredConversation(with peer: String) async throws -> ConversationRecord {
-        if let existing = try deps.repo.preferredConversation(chatID: peer) { return existing }
+        if let existing = try deps.repo.preferredConversation(chatID: peer) {
+            try await ensureModeAnnounced(existing)
+            return existing
+        }
         // Reentrancy: a second caller must wait for the first create, not start another.
         if let running = creating[peer] { return try await running.value }
         let task = Task { try await self.create(with: peer) }
@@ -60,15 +63,32 @@ public actor ConversationManager: ConversationManaging {
         try await syncOnce()
     }
 
+    // MARK: Pending mode envelope
+
+    // The creator's conversation is stored with `inner_mode` set, so "the mode envelope has not been
+    // sent yet" is an explicit marker in the `kv` table: `mode-pending:<serverID>` (non-empty = pending).
+    private func pendingKey(_ serverID: String) -> String { "mode-pending:\(serverID)" }
+
+    func isModePending(_ serverID: String) throws -> Bool {
+        !(try deps.repo.get(pendingKey(serverID)) ?? Data()).isEmpty
+    }
+
+    /// Sends the creator's `mode` envelope if an earlier attempt failed. Every send path calls this
+    /// (through `preferredConversation`) before anything else goes into the conversation.
+    public func ensureModeAnnounced(_ conversation: ConversationRecord) async throws {
+        guard try isModePending(conversation.serverID) else { return }
+        try await announceMode(conversation)
+    }
+
     // MARK: Create
 
     public func create(with peer: String) async throws -> ConversationRecord {
         // 1. Claim KeyPackages for the peer and for my other devices.
         let theirs = try await deps.server.claimKeyPackages(accountID: peer)
+        guard !theirs.isEmpty else { throw SyncError.noKeyPackages }
         let mine = try await deps.server.claimKeyPackages(accountID: deps.me.accountID)
             .filter { $0.deviceID != deps.me.deviceID }
         let claimed = theirs + mine
-        guard !theirs.isEmpty else { throw SyncError.noKeyPackages }
 
         // 2. Server conversation, then the group.
         let created = try await deps.server.createConversation(with: peer)
@@ -87,9 +107,11 @@ public actor ConversationManager: ConversationManaging {
         let record = ConversationRecord(
             serverID: created.conversationID, chatID: peer, groupID: group.raw, mode: created.mode, innerMode: created.mode,
             modeMismatch: false, epoch: Int64(epoch), active: true, createdAt: deps.now())
+        try deps.repo.set(pendingKey(record.serverID), Data([1]))
         try deps.repo.upsertConversation(record)
 
-        // 5. The mode envelope goes first, before anything else can be sent.
+        // 5. The mode envelope goes first, before anything else can be sent. If this post fails the
+        // pending marker stays and `preferredConversation` retries it before returning the conversation.
         try await announceMode(record)
         return record
     }
@@ -120,24 +142,33 @@ public actor ConversationManager: ConversationManaging {
     public func announceMode(_ conversation: ConversationRecord) async throws {
         guard let inner = conversation.innerMode else { throw SyncError.modeUnknown }
         let envelope = ContentEnvelope(
-            id: UUID().uuidString.lowercased(), at: Int64(deps.now().timeIntervalSince1970 * 1000), body: .mode(inner))
+            id: UUID().uuidString.lowercased(), at: Int64((deps.now().timeIntervalSince1970 * 1000).rounded()), body: .mode(inner))
         let plaintext = envelope.encoded()
         let (ciphertext, epoch) = try await deps.mls.encrypt(plaintext, in: GroupID(raw: conversation.groupID))
         // Design 18: escrow only when both the creator's mode and the server's say server_readable.
         var escrow: Data?
         if inner == "server_readable", conversation.mode == "server_readable" {
-            escrow = try await sealEscrow(envelope: plaintext, conversationID: conversation.serverID)
+            escrow = try await sealEscrow(envelope: plaintext, at: envelope.at, conversationID: conversation.serverID)
         }
         _ = try await deps.server.postMessage(
             conversationID: conversation.serverID, epoch: epoch, ciphertext: ciphertext, escrow: escrow,
             clientMsgID: envelope.id)
+        try deps.repo.set(pendingKey(conversation.serverID), Data())
     }
 
-    private func sealEscrow(envelope: Data, conversationID: String) async throws -> Data {
+    /// RFC 3339, UTC, milliseconds (ruling): `2026-10-28T12:00:00.123Z`.
+    static func rfc3339(milliseconds: Int64) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        return formatter.string(from: Date(timeIntervalSince1970: Double(milliseconds) / 1000))
+    }
+
+    private func sealEscrow(envelope: Data, at: Int64, conversationID: String) async throws -> Data {
         let body = try JSONSerialization.jsonObject(with: envelope)
         let object: [String: Any] = [
             "conversationID": conversationID, "senderAccountID": deps.me.accountID,
-            "sentAt": Int64(deps.now().timeIntervalSince1970 * 1000), "body": body,
+            "sentAt": Self.rfc3339(milliseconds: at), "body": body,
         ]
         let plaintext = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])
         return try deps.escrow.seal(plaintext, to: try await escrowKey())
@@ -162,7 +193,12 @@ public actor ConversationManager: ConversationManaging {
                     addDevices: addDevices, removeDevices: removeDevices)
             } catch {
                 guard error.status == 409, error.code == "stale_epoch" else {
-                    try? await deps.mls.commitRejected(group)
+                    // Only a definite rejection (4xx other than timeout/rate limit) discards the pending
+                    // commit. Anything else (transport error, 5xx, lost reply) may have been applied by the
+                    // server: keep it, so the echo of my own commit merges it (Design 17).
+                    if (400..<500).contains(error.status), error.status != 408, error.status != 429 {
+                        try? await deps.mls.commitRejected(group)
+                    }
                     throw error
                 }
                 try await deps.mls.commitRejected(group)
