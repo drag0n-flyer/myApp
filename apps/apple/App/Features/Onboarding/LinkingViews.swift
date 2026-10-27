@@ -21,7 +21,7 @@ struct LinkDeviceView: View {
             // Sample build: stands in for the iPhone confirming the scan (returns at once).
             Button("I scanned it") {
                 Task {
-                    do {
+                    do throws(AccountError) {
                         try await model.account.waitForLinkApproval()
                         model.onboarding.linked()
                     } catch { self.error = error }
@@ -37,7 +37,7 @@ struct LinkDeviceView: View {
             }
         }
         .task {
-            do { qrText = try await model.account.makeLinkCode().qrText } catch { self.error = error }
+            do throws(AccountError) { qrText = try await model.account.makeLinkCode().qrText } catch { self.error = error }
         }
     }
 }
@@ -55,7 +55,7 @@ struct LostDeviceView: View {
                        message: "Your account comes back, but old messages can only be restored from a backup.") {
             Button("Sign in with passkey", systemImage: "person.badge.key") {
                 Task {
-                    do {
+                    do throws(AccountError) {
                         try await model.account.signInWithPasskey()
                         model.onboarding.recovered()
                     } catch { self.error = error }
@@ -86,7 +86,7 @@ struct LostDeviceView: View {
         } buttons: {
             Button(codeSent ? "Sign in" : "Send code") {
                 Task {
-                    do {
+                    do throws(AccountError) {
                         if codeSent {
                             try await model.account.recover(email: email, code: code)
                             model.onboarding.recovered()

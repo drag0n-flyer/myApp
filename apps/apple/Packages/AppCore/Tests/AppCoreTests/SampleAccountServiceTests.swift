@@ -50,3 +50,21 @@ import Testing
         #expect(f.step == .done)
     }
 }
+
+/// Compile check for the pattern the app views use: a plain `do` would bind `any Error`.
+@MainActor
+@Suite struct TypedThrowsPatternTests {
+    private func capture(_ service: any AccountService) async -> AccountError? {
+        var captured: AccountError?
+        do throws(AccountError) {
+            try await service.verifyEmail(code: "000000")
+        } catch {
+            captured = error
+        }
+        return captured
+    }
+
+    @Test func doThrowsBindsAccountError() async {
+        #expect(await capture(SampleAccountService()) == .codeInvalid)
+    }
+}

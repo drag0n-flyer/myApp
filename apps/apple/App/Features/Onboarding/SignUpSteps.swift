@@ -30,7 +30,7 @@ struct InviteCodeView: View {
         checking = true
         Task {
             defer { checking = false }
-            do {
+            do throws(AccountError) {
                 if try await model.account.redeemInvite(code: code.trimmingCharacters(in: .whitespaces)) {
                     error = nil
                     model.onboarding.inviteAccepted()
@@ -110,7 +110,7 @@ struct CreateAccountView: View {
         } buttons: {
             Button("Continue") {
                 Task {
-                    do {
+                    do throws(AccountError) {
                         try await model.account.startSignUp(username: username, email: email)
                         error = nil
                         model.onboarding.accountSubmitted()
@@ -167,7 +167,7 @@ struct VerifyEmailView: View {
 
     private func verify() {
         Task {
-            do {
+            do throws(AccountError) {
                 try await model.account.verifyEmail(code: code)
                 error = nil
                 model.onboarding.emailVerified()
@@ -201,7 +201,7 @@ struct PasskeyView: View {
             // On `.cancelled` the person stays on this screen.
             Button("Create passkey") {
                 Task {
-                    do {
+                    do throws(AccountError) {
                         try await model.account.finishSignUp()
                         error = nil
                         model.onboarding.passkeyCreated()
