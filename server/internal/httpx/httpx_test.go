@@ -299,3 +299,27 @@ func TestInternalErrorLogOmitsErrorText(t *testing.T) {
 }
 
 func newVerifier() core.SessionVerifier { return fakeVerifier{"good", core.Principal{}} }
+
+func TestBearerSchemeIsCaseInsensitive(t *testing.T) {
+	rt := newRouter()
+	rt.Authed("GET /me", func(w http.ResponseWriter, r *http.Request) error { return nil })
+	for _, scheme := range []string{"Bearer", "bearer", "BEARER"} {
+		if rec := do(rt, "GET", "/me", "", map[string]string{"Authorization": scheme + " good"}); rec.Code != 200 {
+			t.Errorf("%s: got %d", scheme, rec.Code)
+		}
+	}
+	if rec := do(rt, "GET", "/me", "", map[string]string{"Authorization": "Bearerx good"}); rec.Code != 401 {
+		t.Errorf("Bearerx: got %d", rec.Code)
+	}
+}
+
+// A request with the wrong method on a known path falls to the catch-all, so
+// it gets the 404 envelope, not a plain-text 405.
+func TestWrongMethodUsesNotFoundEnvelope(t *testing.T) {
+	rt := newRouter()
+	rt.Public("GET /thing", func(http.ResponseWriter, *http.Request) error { return nil })
+	rec := do(rt, "POST", "/thing", "", nil)
+	if rec.Code != 404 || !strings.Contains(rec.Body.String(), `"code":"not_found"`) {
+		t.Fatalf("got %d %s", rec.Code, rec.Body)
+	}
+}
