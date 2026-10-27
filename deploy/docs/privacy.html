@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>[App] Privacy Policy</title>
+<style>body{font:1rem/1.5 system-ui,sans-serif;max-width:42rem;margin:0 auto;padding:1rem}table{border-collapse:collapse}td,th{border:1px solid #888;padding:.25rem .5rem;text-align:start}blockquote{margin-inline:0;padding-inline-start:1rem;border-inline-start:4px solid #c80}</style>
+</head>
+<body>
+<main>
+<h1>[App] Privacy Policy</h1>
+<blockquote><p><strong>Draft — needs lawyer review before use.</strong></p></blockquote>
+<p>Last updated: DRAFT (not yet in force). This policy describes what the invite-only beta server does today. A lawyer must review it before the server opens.</p>
+<h2>1. Who runs this server</h2>
+<blockquote><p><strong>Draft — needs lawyer review before use.</strong></p></blockquote>
+<p>This server is run by the operator named below. [App] is software that anyone can run; this policy covers the server run by the project owner for the invite-only beta.</p>
+<ul><li>Operator name: TO BE FILLED IN by the owner and lawyer.</li><li>Contact for privacy questions: TO BE FILLED IN (this is the <code>abuseContact</code> address in the server policy, or a separate privacy address).</li><li>Representative in the European Union, if the lawyer says one is needed: TO BE FILLED IN.</li></ul>
+<p>If you use a server run by someone else, that operator is responsible for that server, and this policy does not apply to it.</p>
+<h2>2. What we collect</h2>
+<blockquote><p><strong>Draft — needs lawyer review before use.</strong></p></blockquote>
+<p>The server keeps only what it needs to deliver your messages and calls. Each item below matches the server design, section 9, and the server&#x27;s database tables.</p>
+<ul><li><strong>Account data:</strong> your username, your email address, and your display name. The display name is stored as plain text.</li><li><strong>Device data:</strong> a name and type (iPhone or Mac) for each of your devices, and when each device was last seen.</li><li><strong>Conversation membership:</strong> which accounts are in a conversation together, and which of their devices are in it.</li><li><strong>Message timing and size:</strong> when a message was sent and how large it is. Not what it says in end-to-end encrypted chats.</li><li><strong>Call timing:</strong> when a call was set up between two accounts. Not what was said or shown.</li><li><strong>Block lists and reports:</strong> the accounts you have blocked, and reports you send about other accounts or messages.</li><li><strong>Attachments:</strong> photos and files are encrypted on your device before upload. They are deleted after the number of days set by <code>retention.attachmentDays</code> (30 days by default). The server also sees attachment sizes and timing.</li><li><strong>Escrow copies:</strong> only in chats marked as server-readable, the server keeps a copy it can read. See section 3.</li><li><strong>IP addresses:</strong> the server writes IP addresses to no logs. The server, the call relay servers and the push gateway still see your IP address for a moment while you connect.</li></ul>
+<p>For reference, this is the full list of what the server operator can see, as written in the server design:</p>
+<ul><li>accounts, usernames, emails, display names</li><li>device names, platforms, last-seen times</li><li>which accounts share a conversation, and which devices are in it</li><li>message timing and sizes</li><li>call timing between accounts</li><li>block lists and reports</li><li>attachment sizes and timing</li></ul>
+<p>The push gateway can see which server sends to which opaque handle, and when. Apple can see the push token, and the timing and size of pushes. Because the gateway has to open each handle to reach Apple, it also sees your raw push token at that moment.</p>
+<h2>3. What we cannot see</h2>
+<blockquote><p><strong>Draft — needs lawyer review before use.</strong></p></blockquote>
+<p>In an end-to-end encrypted chat, messages, photos, files and voice or video are locked on your device and can only be unlocked on the devices of the people in the chat. The server operator cannot read them and holds no key that can. Call audio and video go between devices and are not stored.</p>
+<p>Some chats on a server can be set up by the server administrator as server-readable. In those chats the server keeps a copy it can read, so the operator could read them. Server-readable chats are marked on the chat&#x27;s info page. A chat that is end-to-end encrypted stays that way even if other chats on the same server are server-readable.</p>
+<p>Even in encrypted chats, the operator can see the information listed in section 2 (who talks to whom, and when).</p>
+<h2>4. Why we use your data and the legal basis</h2>
+<blockquote><p><strong>Draft — needs lawyer review before use.</strong></p></blockquote>
+<p>The legal basis follows Article 6 of the GDPR. The lawyer must confirm each row.</p>
+<table><thead><tr><th>Purpose</th><th>Data</th><th>Legal basis (GDPR Art. 6)</th></tr></thead><tbody><tr><td>Create and run your account</td><td>Username, email, display name</td><td>Contract: Art. 6(1)(b)</td></tr><tr><td>Sign in and link devices</td><td>Email, device data</td><td>Contract: Art. 6(1)(b)</td></tr><tr><td>Deliver messages and attachments</td><td>Conversation membership, message timing and size, attachments</td><td>Contract: Art. 6(1)(b)</td></tr><tr><td>Set up calls</td><td>Call timing, IP addresses (transient)</td><td>Contract: Art. 6(1)(b)</td></tr><tr><td>Send notifications</td><td>Push token, push timing</td><td>Contract: Art. 6(1)(b)</td></tr><tr><td>Stop abuse: blocks, reports, rate limits</td><td>Block lists, reports</td><td>Legitimate interests: Art. 6(1)(f)</td></tr><tr><td>Keep server-readable copies where the administrator chose that mode</td><td>Escrow copies</td><td>To be decided by the lawyer (legitimate interests or legal obligation)</td></tr><tr><td>Keep the service secure</td><td>Rate-limit counters held in memory</td><td>Legitimate interests: Art. 6(1)(f)</td></tr></tbody></table>
+<h2>5. Who else sees data</h2>
+<blockquote><p><strong>Draft — needs lawyer review before use.</strong></p></blockquote>
+<ul><li><strong>Apple:</strong> to deliver notifications, Apple sees the push token and the timing and size of each push.</li><li><strong>The project push gateway:</strong> it passes notifications from the server to Apple. It sees which server sends to which handle and when, and, because it must open the handle to contact Apple, the raw push token at that moment. It does not see message content or account names.</li><li><strong>Call relay operators:</strong> when a call cannot go directly between devices, a relay server carries it. The relay sees both IP addresses, when the call starts and ends, and how much data flows. It does not see the call content.</li><li><strong>Cloudflare, optional:</strong> if the server administrator turns on Cloudflare as a fallback call relay, Cloudflare also sees your IP address and call volume. This server&#x27;s administrator will state here whether it is on: TO BE FILLED IN.</li><li><strong>Email delivery provider:</strong> the provider the operator uses to send sign-in codes sees your email address and when a code was sent. Provider name: TO BE FILLED IN.</li></ul>
+<p>We do not sell your data and do not use it for advertising.</p>
+<h2>6. How long we keep data</h2>
+<blockquote><p><strong>Draft — needs lawyer review before use.</strong></p></blockquote>
+<p>These are the default values of the server&#x27;s policy file.</p>
+<ul><li>Undelivered messages in the inbox: 30 days (<code>retention.inboxDays</code>).</li><li>Attachments: 30 days (<code>retention.attachmentDays</code>).</li><li>Escrow copies in server-readable chats: 365 days (<code>retention.escrowDays</code>).</li><li>Accounts and their data: until you delete them.</li><li>Reports: kept until the operator has handled them. TO BE CONFIRMED by the lawyer.</li></ul>
+<p>When you remove a device, its record is deleted. When you delete your account, your account record is deleted, and with it your devices, sessions, conversation membership, push tokens and blocks.</p>
+<h2>7. Your rights</h2>
+<blockquote><p><strong>Draft — needs lawyer review before use.</strong></p></blockquote>
+<ul><li><strong>Access:</strong> you can ask the operator for a copy of the data held about you.</li><li><strong>Correction:</strong> you can change your display name in the app, and ask the operator to correct other data.</li><li><strong>Deletion:</strong> you can delete your account inside the app. It takes effect immediately. The server operator cannot turn this off.</li><li><strong>Objection and restriction:</strong> you can ask the operator to stop or limit uses based on legitimate interests.</li><li><strong>Complaints:</strong> you can complain to your local data protection authority. TO BE FILLED IN by the lawyer, per country.</li></ul>
+<p>Write to the contact in section 1 to use these rights.</p>
+<h2>8. Children</h2>
+<blockquote><p><strong>Draft — needs lawyer review before use.</strong></p></blockquote>
+<p>The minimum age to use [App] is TO BE DECIDED by the lawyer (13 or 16, depending on the country). People under that age must not create an account.</p>
+<h2>9. Changes and contact</h2>
+<blockquote><p><strong>Draft — needs lawyer review before use.</strong></p></blockquote>
+<p>If we change this policy, we will post the new version on the server&#x27;s privacy page and tell you in the app before the change takes effect. Questions go to the contact in section 1.</p>
+</main>
+</body>
+</html>
