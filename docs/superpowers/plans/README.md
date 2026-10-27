@@ -177,3 +177,4 @@ The sample services stay. The launch argument `-sampleData` selects them, so the
 | 2026-10-27 | Passkeys only for hosts in the app's associated domains; other servers sign in by email code. **Approved.** |
 | 2026-10-27 | Plan 3 carries our own WebRTC patch for the capture post-processing hook (RNNoise). **Approved.** |
 | 2026-10-27 | Keep server-readable mode in Phase 1 (escrow copy, off by default, admin export is audit-logged). **Approved.** |
+| 2026-10-27 | Use mls-rs through our own thin Rust binding layer (`mlsffi`, plan 4) instead of `mls-rs-uniffi`; GOAL.md §3 and §5 updated. **Approved.** |
