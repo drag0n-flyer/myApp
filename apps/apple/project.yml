@@ -113,6 +113,7 @@ targets:
         NSExtension:
           NSExtensionPointIdentifier: com.apple.usernotifications.service
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
+        KeychainAccessGroup: $(AppIdentifierPrefix)org.example.app.shared
     settings:
       base:
         PRODUCT_NAME: NotificationService
@@ -120,7 +121,9 @@ targets:
         CODE_SIGN_ENTITLEMENTS: NotificationService/NSE-iOS$(NSE_FILTERING_$(NSE_FILTERING)_SUFFIX).entitlements
         TARGETED_DEVICE_FAMILY: '1'
         SKIP_INSTALL: 'YES'
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: '$(inherited) NSE_FILTERING_$(NSE_FILTERING)'
     dependencies:
+      - package: AppCore
       - package: Messaging
         product: Messaging
       - package: LocalStore
@@ -141,6 +144,7 @@ targets:
         NSExtension:
           NSExtensionPointIdentifier: com.apple.usernotifications.service
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
+        KeychainAccessGroup: $(AppIdentifierPrefix)org.example.app.shared
     settings:
       base:
         PRODUCT_NAME: NotificationService
@@ -148,7 +152,9 @@ targets:
         CODE_SIGN_ENTITLEMENTS: NotificationService/NSE-Mac$(NSE_FILTERING_$(NSE_FILTERING)_SUFFIX).entitlements
         ENABLE_HARDENED_RUNTIME: 'YES'
         SKIP_INSTALL: 'YES'
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: '$(inherited) NSE_FILTERING_$(NSE_FILTERING)'
     dependencies:
+      - package: AppCore
       - package: Messaging
         product: Messaging
       - package: LocalStore
@@ -169,6 +175,8 @@ targets:
         TEST_TARGET_NAME: AppiOS
     dependencies:
       - target: AppiOS
+      - package: SecureMessaging
+        product: SecureMessagingCore
   AppMacUITests:
     type: bundle.ui-testing
     platform: macOS

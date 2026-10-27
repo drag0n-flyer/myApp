@@ -47,6 +47,8 @@ public struct NotificationStrings: Sendable, Equatable {
     public var voiceMessage: String
     public var file: String
     public var unsupported: String
+    public var fallbackTitle: String        // the generic notice when nothing could be decrypted
+    public var fallbackBody: String
 
     public init(brand: String = "[App]") {
         requestTitle = "Message request"
@@ -60,6 +62,8 @@ public struct NotificationStrings: Sendable, Equatable {
         voiceMessage = "Voice message"
         file = "File"
         unsupported = "Update \(brand) to see this message"
+        fallbackTitle = brand
+        fallbackBody = "New message"
     }
 }
 

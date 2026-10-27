@@ -16,6 +16,8 @@ extension NotificationStrings {
         s.voiceMessage = String(localized: "Voice message")
         s.file = String(localized: "File")
         s.unsupported = String(localized: "Update [App] to see this message")
+        s.fallbackTitle = String(localized: "[App]")
+        s.fallbackBody = String(localized: "New message")
         return s
     }
 }
