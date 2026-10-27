@@ -43,6 +43,8 @@ public actor FakeServer {
     private var attachments: [String: Data] = [:]
     private var messageSeqs: [String: Int64] = [:]              // "device|conv|clientMsgID" -> seq
     private var subscribers: [String: [UUID: AsyncStream<ServerEvent>.Continuation]] = [:]
+    private var messageLog: [String: [StoredMessage]] = [:]      // conversation -> messages in seq order
+    private var pendingCommitRejections = 0
     private var counter = 0
     private let now: @Sendable () -> Date
 
@@ -51,6 +53,27 @@ public actor FakeServer {
     }
 
     public func setDefaultMode(_ mode: String) { defaultMode = mode }
+
+    /// A message as the server stores it (what the sender posted).
+    public struct StoredMessage: Sendable, Equatable {
+        public let seq: Int64
+        public let epoch: UInt64
+        public let senderDeviceID: String
+        public let ciphertext: Data
+        public let escrow: Data?
+    }
+
+    /// The next `count` commit requests fail with `409 stale_epoch` (the epoch does not change).
+    public func rejectNextCommits(_ count: Int) { pendingCommitRejections = count }
+
+    /// Messages stored for a conversation, in `seq` order.
+    public func storedMessages(in conversationID: String) -> [StoredMessage] { messageLog[conversationID] ?? [] }
+
+    /// Device IDs that are members of the conversation, sorted.
+    public func memberDevices(of conversationID: String) -> [String] { (conversations[conversationID]?.members ?? []).sorted() }
+
+    /// All conversation IDs, sorted.
+    public func conversationIDs() -> [String] { conversations.keys.sorted() }
 
     // MARK: - Test hooks
 
@@ -213,6 +236,10 @@ public actor FakeServer {
     private func postCommit(_ me: Caller, _ id: String, _ body: Data) -> (Data, HTTPURLResponse) {
         guard var c = conversations[id], c.members.contains(me.device) else { return failure(404, "not_found") }
         guard let b: CommitBody = decode(body) else { return failure(400, "bad_request") }
+        if pendingCommitRejections > 0 {
+            pendingCommitRejections -= 1
+            return failure(409, "stale_epoch", details: ["currentEpoch": Int(c.epoch)])
+        }
         guard b.epoch == c.epoch else { return failure(409, "stale_epoch", details: ["currentEpoch": Int(c.epoch)]) }
         let added = b.addDevices ?? []
         let removed = b.removeDevices ?? []
@@ -252,6 +279,8 @@ public actor FakeServer {
         c.nextSeq += 1
         conversations[id] = c
         messageSeqs[key] = seq
+        messageLog[id, default: []].append(StoredMessage(
+            seq: seq, epoch: b.epoch, senderDeviceID: me.device, ciphertext: b.ciphertext.data, escrow: b.escrow?.data))
         for device in c.members.sorted() where device != me.device {
             guard let account = deviceAccount[device], !blocks[account, default: []].contains(me.account) else { continue }
             deliver(to: device, kind: "message", conversation: id, seq: seq, epoch: Int64(b.epoch), from: me, payload: b.ciphertext.data)
