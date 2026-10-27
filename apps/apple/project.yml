@@ -48,7 +48,9 @@ targets:
     platform: iOS
     sources:
       - path: App
-        excludes: ['*.entitlements']
+        excludes: ['*.entitlements', PrivacyInfo.xcprivacy]
+      - path: App/PrivacyInfo.xcprivacy
+        buildPhase: resources
     info:
       path: Generated/AppiOS-Info.plist
       properties:
@@ -88,7 +90,9 @@ targets:
     platform: macOS
     sources:
       - path: App
-        excludes: ['*.entitlements']
+        excludes: ['*.entitlements', PrivacyInfo.xcprivacy]
+      - path: App/PrivacyInfo.xcprivacy
+        buildPhase: resources
     info:
       path: Generated/AppMac-Info.plist
       properties:
@@ -124,7 +128,9 @@ targets:
     platform: iOS
     sources:
       - path: NotificationService
-        excludes: ['*.entitlements']
+        excludes: ['*.entitlements', PrivacyInfo.xcprivacy]
+      - path: NotificationService/PrivacyInfo.xcprivacy
+        buildPhase: resources
     info:
       path: Generated/AppNSEiOS-Info.plist
       properties:
@@ -154,7 +160,9 @@ targets:
     platform: macOS
     sources:
       - path: NotificationService
-        excludes: ['*.entitlements']
+        excludes: ['*.entitlements', PrivacyInfo.xcprivacy]
+      - path: NotificationService/PrivacyInfo.xcprivacy
+        buildPhase: resources
     info:
       path: Generated/AppNSEMac-Info.plist
       properties:
