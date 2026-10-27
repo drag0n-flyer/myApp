@@ -21,7 +21,7 @@ before="$(sha256sum "$KT")"
 if git -C "$ROOT" ls-files --error-unmatch "$KT" >/dev/null 2>&1; then
     git -C "$ROOT" diff --exit-code -- "$KT" || fail "generated bindings drift from committed file"
 fi
-for abi in arm64-v8a x86_64; do
+for abi in arm64-v8a armeabi-v7a x86_64; do
     [ -z "$MODE" ] && { [ -f "$ROOT/apps/android/mls/src/main/jniLibs/$abi/libmlsffi.so" ] || fail "missing $abi .so"; }
 done
 echo "PASS${MODE:+ (host-only)}"

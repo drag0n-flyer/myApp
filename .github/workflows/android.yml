@@ -63,3 +63,166 @@ jobs:
             echo ".github/workflows/android.yml" > changed.txt
           fi
           scripts/android-changes.sh < changed.txt | tee -a "$GITHUB_OUTPUT"
+
+  mlsffi-android:
+    needs: changes
+    if: needs.changes.outputs.any == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      NDK_VERSION: 28.2.13676358
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/apple/Packages/SecureMessaging/mlsffi/target
+          key: cargo-android-${{ runner.os }}-${{ hashFiles('apps/apple/Packages/SecureMessaging/mlsffi/Cargo.lock') }}
+          restore-keys: cargo-android-${{ runner.os }}-
+      - uses: actions/cache@v4
+        id: cargo-ndk
+        with:
+          path: ~/.cargo/bin/cargo-ndk
+          key: cargo-ndk-4.1.2-${{ runner.os }}
+      - name: Install cargo-ndk
+        if: steps.cargo-ndk.outputs.cache-hit != 'true'
+        run: cargo install --locked --version 4.1.2 cargo-ndk
+      - name: Install the NDK
+        run: |
+          set -euo pipefail
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" >/dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+      - name: Cross-build mlsffi for every ABI and regenerate the bindings
+        run: scripts/build-mlsffi-android.sh
+      - name: Binding drift check
+        run: git diff --exit-code -- apps/android/mls/src/main/kotlin
+      - name: ABI check
+        run: |
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            test -f "apps/android/mls/src/main/jniLibs/$abi/libmlsffi.so"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jniLibs
+          path: apps/android/mls/src/main/jniLibs
+          retention-days: 7
+          if-no-files-found: error
+
+  jvm:
+    needs: changes
+    if: needs.changes.outputs.any == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Test the changed JVM modules
+        env:
+          CONTRACTS: ${{ needs.changes.outputs.contracts }}
+          CORE: ${{ needs.changes.outputs.core }}
+          NET: ${{ needs.changes.outputs.net }}
+          CALLS: ${{ needs.changes.outputs.calls }}
+          MESSAGING: ${{ needs.changes.outputs.messaging }}
+        working-directory: apps/android
+        run: |
+          set -euo pipefail
+          tasks=()
+          [ "$CONTRACTS" = true ] && tasks+=(:contracts:test)
+          [ "$CORE" = true ] && tasks+=(:core:test)
+          [ "$NET" = true ] && tasks+=(:net:test)
+          [ "$CALLS" = true ] && tasks+=(:calls:test)
+          [ "$MESSAGING" = true ] && tasks+=(:messaging:test)
+          if [ "${#tasks[@]}" -eq 0 ]; then echo "no JVM module changed"; exit 0; fi
+          ./gradlew --no-daemon "${tasks[@]}"
+
+  robolectric:
+    needs: changes
+    if: needs.changes.outputs.any == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/cache@v4
+        with:
+          path: ~/.gradle/robolectric-repo
+          key: robolectric-${{ runner.os }}-${{ hashFiles('apps/android/gradle/libs.versions.toml') }}
+      - name: Unit tests of the changed Android modules and the app
+        env:
+          AUTH: ${{ needs.changes.outputs.auth }}
+          CALLS_ANDROID: ${{ needs.changes.outputs.calls_android }}
+          MLS: ${{ needs.changes.outputs.mls }}
+          PUSH: ${{ needs.changes.outputs.push }}
+          STORE: ${{ needs.changes.outputs.store }}
+          WEBRTC: ${{ needs.changes.outputs.webrtc }}
+          APP: ${{ needs.changes.outputs.app }}
+        working-directory: apps/android
+        run: |
+          set -euo pipefail
+          tasks=()
+          [ "$AUTH" = true ] && tasks+=(:auth:testDebugUnitTest)
+          [ "$CALLS_ANDROID" = true ] && tasks+=(:calls-android:testDebugUnitTest)
+          [ "$MLS" = true ] && tasks+=(:mls:testDebugUnitTest)
+          [ "$PUSH" = true ] && tasks+=(:push:testDebugUnitTest)
+          [ "$STORE" = true ] && tasks+=(:store:testDebugUnitTest)
+          [ "$WEBRTC" = true ] && tasks+=(:webrtc:testDebugUnitTest)
+          [ "$APP" = true ] && tasks+=(:app:testDebugUnitTest)
+          if [ "${#tasks[@]}" -eq 0 ]; then echo "no Android module changed"; exit 0; fi
+          ./gradlew --no-daemon "${tasks[@]}"
+
+  lint:
+    needs: changes
+    if: needs.changes.outputs.any == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Lint (HardcodedText and SetTextI18n are errors)
+        working-directory: apps/android
+        run: ./gradlew --no-daemon lint
+
+  assemble:
+    needs: [changes, mlsffi-android]
+    if: needs.changes.outputs.any == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: jniLibs
+          path: apps/android/mls/src/main/jniLibs
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Assemble the debug build
+        working-directory: apps/android
+        run: ./gradlew --no-daemon assembleDebug

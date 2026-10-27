@@ -9,7 +9,7 @@ check() { if "${@:2}"; then echo "PASS $1"; else echo "FAIL $1"; fails=$((fails+
 out="$("$here/android-setup.sh" --dry-run 2>&1)"; rc=$?
 check "dry-run exits 0" test "$rc" = 0
 for want in "platforms;android-36" "build-tools;" "ndk;" "cargo install --locked --version 4.1.2 cargo-ndk" \
-  "aarch64-linux-android" "x86_64-linux-android" "Temurin 17" "cmdline-tools" "sha256"; do
+  "aarch64-linux-android" "armv7-linux-androideabi" "x86_64-linux-android" "Temurin 17" "cmdline-tools" "sha256"; do
   check "dry-run lists $want" grep -qF -- "$want" <<<"$out"
 done
 check "dry-run has NDK r28 or newer" bash -c 'grep -oE "ndk;[0-9]+" <<<"$1" | head -1 | cut -d";" -f2 | awk "{exit !(\$1>=28)}"' _ "$out"

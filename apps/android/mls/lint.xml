@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <!-- Generated uniffi bindings pick the Android cleaner on Android and use java.lang.ref.Cleaner
+         only where it exists (see UniffiCleaner.create). -->
+    <issue id="NewApi">
+        <ignore path="**/org/example/app/mls/ffi/mlsffi.kt" />
+    </issue>
+</lint>
