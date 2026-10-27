@@ -34,11 +34,14 @@ public struct LinkRequest: Equatable, Sendable {
     public let qrText: String
     public let deviceName: String
     public let platform: DevicePlatform
+    /// When the new device asked to be linked, as reported by the server.
+    public let requestedAt: Date?
 
-    public init(qrText: String, deviceName: String, platform: DevicePlatform) {
+    public init(qrText: String, deviceName: String, platform: DevicePlatform, requestedAt: Date? = nil) {
         self.qrText = qrText
         self.deviceName = deviceName
         self.platform = platform
+        self.requestedAt = requestedAt
     }
 }
 

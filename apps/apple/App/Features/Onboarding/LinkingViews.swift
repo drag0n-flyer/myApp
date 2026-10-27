@@ -7,9 +7,32 @@ struct LinkDeviceView: View {
     let model: AppModel
     @State private var qrText = ""
     @State private var error: AccountError?
+    @State private var host = ""
+    @State private var attempt = 0
+    @State private var askingServer = false
+    @State private var newHost = ""
 
     var body: some View {
         OnboardingPage(title: "Link this device", message: "Open \(AppBrand.name) on your iPhone → Settings → Linked devices → Link a device, and scan this code.") {
+            HStack {
+                Label {
+                    Text("Server: \(host)")
+                } icon: {
+                    Image(systemName: "server.rack")
+                }
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                Spacer()
+                Button("Change") {
+                    newHost = ""
+                    askingServer = true
+                }
+                .font(.footnote)
+                .accessibilityIdentifier("link.change")
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("link.server")
+
             QRCodeView(text: qrText)
                 .frame(width: 220, height: 220)
                 .frame(maxWidth: .infinity)
@@ -18,17 +41,16 @@ struct LinkDeviceView: View {
                 .accessibilityIdentifier("link.qr")
             AccountErrorText(error: error)
         } buttons: {
-            // Sample build: stands in for the iPhone confirming the scan (returns at once).
-            Button("I scanned it") {
-                Task {
-                    do throws(AccountError) {
-                        try await model.account.waitForLinkApproval()
-                        model.onboarding.linked()
-                    } catch { self.error = error }
-                }
+            if model.isSampleData {
+                // Sample build: stands in for the iPhone confirming the scan.
+                Button("I scanned it") { model.onboarding.linked() }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .accessibilityIdentifier("link.done")
+            } else if error == .linkExpired {
+                Button("Show new code") { attempt += 1 }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .accessibilityIdentifier("link.newcode")
             }
-                .buttonStyle(PrimaryButtonStyle())
-                .accessibilityIdentifier("link.done")
             if model.onboarding.canCreateAccount {
                 Button("I don't have my old device") { model.onboarding.noOldDevice() }
                     .font(.headline)
@@ -36,8 +58,37 @@ struct LinkDeviceView: View {
                     .accessibilityIdentifier("link.nodevice")
             }
         }
-        .task {
-            do throws(AccountError) { qrText = try await model.account.makeLinkCode().qrText } catch { self.error = error }
+        .task(id: attempt) { await run() }
+        .alert("Server address", isPresented: $askingServer) {
+            TextField("chat.example.org", text: $newHost)
+            Button("Continue") { changeServer() }
+            Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    /// Shows the code, then waits for the iPhone to approve it.
+    private func run() async {
+        error = nil
+        qrText = ""
+        if host.isEmpty { host = model.account.currentServer?.host ?? model.account.defaultServer.host }
+        do throws(AccountError) {
+            qrText = try await model.account.makeLinkCode().qrText
+            if model.isSampleData { return }
+            try await model.account.waitForLinkApproval()
+            await model.didSignIn()
+            model.onboarding.linked()
+        } catch { self.error = error }
+    }
+
+    private func changeServer() {
+        let target = newHost.trimmingCharacters(in: .whitespaces)
+        guard !target.isEmpty else { return }
+        Task {
+            do throws(AccountError) {
+                let policy = try await model.account.connect(host: target)
+                host = policy.host
+                attempt += 1
+            } catch { self.error = error }
         }
     }
 }
@@ -53,18 +104,22 @@ struct LostDeviceView: View {
     var body: some View {
         OnboardingPage(title: "Sign in on a new phone",
                        message: "Your account comes back, but old messages can only be restored from a backup.") {
-            Button("Sign in with passkey", systemImage: "person.badge.key") {
-                Task {
-                    do throws(AccountError) {
-                        try await model.account.signInWithPasskey()
-                        model.onboarding.recovered()
-                    } catch { self.error = error }
+            if model.account.supportsPasskeys {
+                Button("Sign in with passkey", systemImage: "person.badge.key") {
+                    Task {
+                        do throws(AccountError) {
+                            try await model.account.signInWithPasskey()
+                            await model.didSignIn()
+                            model.onboarding.recovered()
+                        } catch { self.error = error }
+                    }
                 }
-            }
                 .buttonStyle(.bordered)
                 .controlSize(.large)
                 .frame(maxWidth: .infinity)
-            Text("Or use your email").font(.caption).foregroundStyle(.secondary).padding(.top, 8)
+                .accessibilityIdentifier("lost.passkey")
+                Text("Or use your email").font(.caption).foregroundStyle(.secondary).padding(.top, 8)
+            }
             OnboardingField(label: "Email") {
                 TextField("you@example.com", text: $email)
                     .textContentType(.emailAddress)
@@ -89,6 +144,11 @@ struct LostDeviceView: View {
                     do throws(AccountError) {
                         if codeSent {
                             try await model.account.recover(email: email, code: code)
+                            if model.account.supportsPasskeys {
+                                // Adding a passkey is optional: cancelling (or failing) carries on signed in.
+                                do throws(AccountError) { try await model.account.addPasskey() } catch {}
+                            }
+                            await model.didSignIn()
                             model.onboarding.recovered()
                         } else {
                             try await model.account.sendRecoveryCode(to: email)

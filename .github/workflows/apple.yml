@@ -49,6 +49,8 @@ jobs:
           persist-credentials: false
       - name: Install XcodeGen
         run: brew install xcodegen
+      - name: No test-only libraries in the app
+        run: apps/apple/scripts/check-test-only-libs.sh
       - name: iPhone UI tests
         run: apps/apple/scripts/test-ios.sh
       - name: Keep test results
@@ -67,6 +69,8 @@ jobs:
           persist-credentials: false
       - name: Install XcodeGen
         run: brew install xcodegen
+      - name: No test-only libraries in the app
+        run: apps/apple/scripts/check-test-only-libs.sh
       - name: Mac UI tests
         run: apps/apple/scripts/test-macos.sh
       - name: Keep test results

@@ -83,7 +83,7 @@ public final class SampleAccountService: AccountService {
     public func linkRequest(qrText: String) async throws(AccountError) -> LinkRequest {
         guard let url = URL(string: qrText), url.path.hasPrefix("/link/") else { throw .linkExpired }
         guard url.host == defaultServer.host else { throw .wrongServer }
-        return LinkRequest(qrText: qrText, deviceName: "New Mac", platform: .mac)
+        return LinkRequest(qrText: qrText, deviceName: "New Mac", platform: .mac, requestedAt: Date())
     }
 
     public func approveLink(_ request: LinkRequest) async throws(AccountError) {

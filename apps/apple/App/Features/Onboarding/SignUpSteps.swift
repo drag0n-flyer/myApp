@@ -189,7 +189,9 @@ struct PasskeyView: View {
     }
 
     var body: some View {
-        OnboardingPage(title: title, message: "No password to remember. Your passkey is saved in iCloud Keychain, so a new phone can sign in too.") {
+        OnboardingPage(title: title, message: model.account.supportsPasskeys
+                       ? "No password to remember. Your passkey is saved in iCloud Keychain, so a new phone can sign in too."
+                       : "Passkeys aren't available on this server. You'll sign in with an email code instead.") {
             Image(systemName: "person.badge.key.fill")
                 .font(.system(size: 72))
                 .foregroundStyle(.tint)
@@ -199,11 +201,12 @@ struct PasskeyView: View {
             AccountErrorText(error: error)
         } buttons: {
             // On `.cancelled` the person stays on this screen.
-            Button("Create passkey") {
+            Button(model.account.supportsPasskeys ? "Create passkey" : "Continue") {
                 Task {
                     do throws(AccountError) {
                         try await model.account.finishSignUp()
                         error = nil
+                        await model.didSignIn()
                         model.onboarding.passkeyCreated()
                     } catch { self.error = error }
                 }
@@ -227,6 +230,7 @@ struct PermissionsView: View {
                     if !model.isUITesting {
                         _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
                         _ = await AVCaptureDevice.requestAccess(for: .audio)
+                        await model.registerForPushIfAllowed()
                     }
                     model.onboarding.permissionsHandled()
                 }

@@ -1,6 +1,14 @@
 import AppCore
 import Foundation
 import Observation
+import ServerKit
+import SwiftUI
+import UserNotifications
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 enum AppTab: Hashable {
     case contacts, calls, chats, settings, search
@@ -13,7 +21,17 @@ enum AppTab: Hashable {
 final class AppModel {
     let chatStore: SampleChatStore
     let calls: SimulatedCallEngine
-    let account: SampleAccountService
+    let account: any AccountService
+    /// `nil` in `-sampleData` mode.
+    private let live: LiveAccountService?
+    let config = AppConfig.current
+    let isSampleData: Bool
+    /// Shown after the server ends this device's session.
+    var deviceRemovedAlert = false
+    private var connection: LiveConnection?
+    private var liveTasks: [Task<Void, Never>] = []
+    private var apnsToken: Data?
+    private var registrar: PushRegistrar?
 
     var server: ServerPolicy {
         didSet { calls.server = server }
@@ -43,14 +61,34 @@ final class AppModel {
     private(set) var revision = 0
 
     init(launch: LaunchOptions = .current) {
+        let config = AppConfig.current
         #if os(macOS)
-        let account = SampleAccountService(platform: .mac)
+        let platform = DevicePlatform.mac
+        let deviceName = Host.current().localizedName ?? "Mac"
         #else
-        let account = SampleAccountService(platform: .iPhone)
+        let platform = DevicePlatform.iPhone
+        let deviceName = UIDevice.current.name
         #endif
+        let account: any AccountService
+        var live: LiveAccountService?
+        if launch.sampleData {
+            account = SampleAccountService(platform: platform)
+        } else {
+            let sessions = SessionStore(storage: KeychainSessionStorage(accessGroup: config.keychainAccessGroup))
+            let service = LiveAccountService(
+                defaultHost: config.defaultServerHost, passkeyDomains: config.passkeyDomains, platform: platform,
+                deviceName: deviceName, sessions: sessions,
+                makeClient: { ServerClient(host: $0, session: sessions) },
+                passkeys: PasskeyAuthenticator(),
+                approvalReason: String(localized: "Confirm to approve this new device."))
+            account = service
+            live = service
+        }
         let server = account.defaultServer
         let settings = UserSettings.initial(from: server)
         self.account = account
+        self.live = live
+        self.isSampleData = launch.sampleData
         self.server = server
         self.settings = settings
         self.network = launch.network
@@ -66,7 +104,13 @@ final class AppModel {
             flow.alreadyHaveAccount()
             flow.linked()
         }
+        if let live, live.isSignedIn {
+            flow.alreadyHaveAccount()
+            flow.linked()
+        }
         self.onboarding = flow
+        live?.onSignedOut = { [weak self] in self?.deviceWasRemoved() }
+        if live?.isSignedIn == true { Task { await didSignIn() } }
         if let url = launch.openURL { handle(url: url) }
         calls.onChange = { [weak self] state in
             self?.activeCall = state
@@ -163,28 +207,112 @@ final class AppModel {
         if let list = try? await account.devices() { linkedDevices = list }
     }
 
-    /// Sample build: stands in for scanning the new device's code and approving it.
-    func linkSampleDevice() async {
-        if let request = try? await account.linkRequest(qrText: SampleAccountService.sampleLinkText) {
-            try? await account.approveLink(request)
-        }
-        await refreshDevices()
-    }
-
     func removeDevice(id: String) async {
         try? await account.removeDevice(id: id)
         await refreshDevices()
     }
 
-    /// Sample build: forgets the account and returns to the welcome screen.
-    func deleteAccount() {
-        account.signOutLocally()
+    /// Deletes the account on the server, then returns to the welcome screen.
+    /// Returns the error to show when the server could not delete it.
+    func deleteAccount() async -> AccountError? {
+        await registrar?.unregisterAll()
+        do throws(AccountError) {
+            try await account.deleteAccount()
+        } catch {
+            return error
+        }
+        await stopLive()
+        resetToWelcome()
+        return nil
+    }
+
+    private func resetToWelcome() {
         #if os(macOS)
         onboarding = OnboardingFlow(platform: .mac)
         #else
         onboarding = OnboardingFlow(platform: .iPhone)
         #endif
         selectedTab = .chats
+        linkedDevices = []
+    }
+
+    /// The server ended this session (401, or the device was removed from the account).
+    private func deviceWasRemoved() {
+        Task { await stopLive() }
+        resetToWelcome()
+        deviceRemovedAlert = true
+    }
+
+    // MARK: - Signed-in services
+
+    /// Call after any sign-in succeeds: loads devices, starts the live connection and registers for push.
+    func didSignIn() async {
+        await refreshDevices()
+        await startLive()
+        await registerForPushIfAllowed()
+    }
+
+    /// iPhone: the socket runs only while the app is active. Mac: whenever the app runs.
+    func scenePhaseChanged(_ phase: ScenePhase) {
+        #if os(iOS)
+        switch phase {
+        case .active: Task { await startLive() }
+        case .background: Task { await stopLive() }
+        default: break
+        }
+        #endif
+    }
+
+    private func startLive() async {
+        guard let live, live.isSignedIn, let client = live.client else { return }
+        if connection == nil {
+            let c = LiveConnection(client: client, transport: URLSessionWebSocketTransport())
+            connection = c
+            liveTasks = [
+                Task { [weak self] in
+                    for await event in c.events {
+                        if case .deviceRevoked = event { await self?.refreshDevices() }
+                    }
+                },
+                Task { [weak self] in
+                    // `.revoked` also reaches the client's 401 path, which calls `deviceWasRemoved`.
+                    for await state in c.states where state == .revoked { await self?.stopLive() }
+                },
+            ]
+        }
+        await connection?.start()
+    }
+
+    private func stopLive() async {
+        await connection?.stop()
+        if live?.isSignedIn != true {   // signed out: drop the connection and its listeners
+            liveTasks.forEach { $0.cancel() }
+            liveTasks = []
+            connection = nil
+        }
+    }
+
+    /// Asks for a push token when notifications are already allowed (the Permissions step asks first).
+    func registerForPushIfAllowed() async {
+        guard !isSampleData, !isUITesting else { return }
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else { return }
+        #if os(iOS)
+        UIApplication.shared.registerForRemoteNotifications()
+        #else
+        NSApplication.shared.registerForRemoteNotifications()
+        #endif
+    }
+
+    /// From the app delegate. Push stays off without a gateway key, or when the server's gateway differs.
+    func didReceivePushToken(_ token: Data) async {
+        guard let live, live.isSignedIn, let client = live.client, let key = config.pushGatewayKey else { return }
+        apnsToken = token
+        guard let info = try? await client.serverInfo(), info.push?.gateway == config.pushGatewayURL else { return }
+        let registrar = PushRegistrar(client: client, gatewayKey: key, environment: config.apnsEnvironment,
+                                      bundleID: Bundle.main.bundleIdentifier ?? "")
+        self.registrar = registrar
+        await registrar.didRegister(alertToken: token)
     }
 
     // MARK: - Calls
@@ -210,19 +338,22 @@ final class AppModel {
     }
 }
 
-/// Launch arguments used by UI tests: `-skipOnboarding`, `-uiTesting`, `-network mobile|wifi`, `-openURL <url>`.
+/// Launch arguments used by UI tests: `-skipOnboarding`, `-uiTesting`, `-network mobile|wifi`, `-openURL <url>`, `-sampleData`.
 struct LaunchOptions {
     var skipOnboarding = false
     /// Skips system permission prompts so UI tests aren't blocked by alerts.
     var isUITesting = false
     var network: NetworkType = .mobile
     var openURL: URL?
+    /// `-sampleData`: sample accounts and chats, no server. UI tests always pass it.
+    var sampleData = false
 
     static var current: LaunchOptions {
         let args = ProcessInfo.processInfo.arguments
         var options = LaunchOptions()
         options.skipOnboarding = args.contains("-skipOnboarding")
         options.isUITesting = args.contains("-uiTesting")
+        options.sampleData = args.contains("-sampleData")
         if let i = args.firstIndex(of: "-network"), i + 1 < args.count {
             options.network = args[i + 1] == "wifi" ? .wifi : .mobile
         }

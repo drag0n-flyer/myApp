@@ -223,6 +223,7 @@ private func err(_ code: String) -> String { #"{"error":{"code":"\#(code)","mess
         await r.t.respond("POST", "/v1/link/L1/info", status: 200, json: #"{"deviceName":"New Mac","platform":"mac","createdAt":"2026-11-01T12:00:00Z"}"#)
         let req = try await r.service.linkRequest(qrText: "https://chat.test/link/L1#S1.\(qrKeyText)")
         #expect(req.deviceName == "New Mac" && req.platform == .mac)
+        #expect(req.requestedAt != nil)
         #expect(try jsonBody(try #require(await r.t.requests.last)) as? [String: String] == ["secret": "S1"])
         await r.t.respond("POST", "/v1/link/L1/info", status: 403, json: err("forbidden"))
         await #expect(throws: AccountError.linkExpired) { _ = try await r.service.linkRequest(qrText: "https://chat.test/link/L1#S1.\(qrKeyText)") }
@@ -321,7 +322,10 @@ private func err(_ code: String) -> String { #"{"error":{"code":"\#(code)","mess
     @Test func unauthorizedSignsOut() async {
         let r = Rig(signedIn: true)
         await r.t.respond("GET", "/v1/devices", status: 401, json: err("unauthorized"))
+        var called = 0
+        r.service.onSignedOut = { called += 1 }
         _ = try? await r.service.devices()
+        #expect(called == 1)
         #expect(!r.service.isSignedIn)
         #expect(r.store.current == nil)
     }

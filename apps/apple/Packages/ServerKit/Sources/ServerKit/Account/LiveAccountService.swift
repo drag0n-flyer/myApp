@@ -26,6 +26,8 @@ public final class LiveAccountService: AccountService {
     public private(set) var defaultServer: ServerPolicy
     public private(set) var currentServer: ServerPolicy?
     public private(set) var isSignedIn: Bool
+    /// Called when the server ends this session (401 or the device was removed), not on a local sign-out.
+    public var onSignedOut: (@MainActor () -> Void)?
     /// The client for the signed-in (or connecting) server, for plans 7 and 8.
     public var client: ServerClient? { working }
     /// Set when this device was linked and the approver sent a snapshot; plan 7 imports it.
@@ -236,7 +238,8 @@ public final class LiveAccountService: AccountService {
         let info = try await call(link: true) { () async throws(ServerError) in
             try await c.linkInfo(linkID: code.linkID, secret: code.secret)
         }
-        return LinkRequest(qrText: qrText, deviceName: info.deviceName, platform: Self.platform(info.platform))
+        return LinkRequest(qrText: qrText, deviceName: info.deviceName, platform: Self.platform(info.platform),
+                           requestedAt: info.createdAt)
     }
 
     public func approveLink(_ request: LinkRequest) async throws(AccountError) {
@@ -300,7 +303,10 @@ public final class LiveAccountService: AccountService {
         installedFor = nil
     }
 
-    private func didSignOut() { isSignedIn = false }
+    private func didSignOut() {
+        isSignedIn = false
+        onSignedOut?()
+    }
 
     private func register(_ options: CreationOptions) async throws(ServerError) -> RegistrationCredential {
         do { return try await passkeys.register(options) } catch { throw ServerError(status: 0, code: Self.accountCode(error)) }
