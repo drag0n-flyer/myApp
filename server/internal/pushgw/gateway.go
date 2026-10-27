@@ -7,6 +7,7 @@ import (
 	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/hpke"
+	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/x509"
 	"embed"
@@ -274,7 +275,11 @@ func (g *gateway) push(w http.ResponseWriter, r *http.Request) error {
 	if pushproto.Verify(ed25519.PublicKey(pub), r, body, now) != nil {
 		return apiErr("unauthorized", "bad signature")
 	}
-	if !g.replay.firstUse(r.Header.Get("X-Signature"), now) {
+	// Key on the decoded signature: base64 decoding is not strict, so the text
+	// of the header can be altered without changing the signature.
+	rawSig, _ := base64.StdEncoding.DecodeString(r.Header.Get("X-Signature"))
+	sigHash := sha256.Sum256(rawSig)
+	if !g.replay.firstUse(string(sigHash[:]), now) {
 		return apiErr("conflict", "request replayed")
 	}
 	if ok, _ := g.lim.server.Allow(id); !ok {

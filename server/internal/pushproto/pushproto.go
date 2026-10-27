@@ -32,6 +32,9 @@ type PushRequest struct {
 	Handle []byte `json:"handle"`
 	Kind   string `json:"kind"`
 	Data   []byte `json:"data"`
+	// Nonce makes every request body, and so every signature, unique even
+	// within one second. The gateway ignores it.
+	Nonce string `json:"nonce,omitempty"`
 }
 
 // SealHandle seals h to pub: DHKEM(X25519), HKDF-SHA256, ChaCha20-Poly1305.

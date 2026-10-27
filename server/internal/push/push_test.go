@@ -290,3 +290,23 @@ func TestRegisterCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestIdenticalPushesSignDifferently(t *testing.T) {
+	d, _, g := setup(t, 200)
+	m := push.New(d)
+	c := testkit.Serve(t, d, m)
+	p := testkit.Account(t, d, "alice")
+	putToken(t, c, p, "alert", []byte("h"))
+	for range 2 { // the fake clock does not move, so both are in the same second
+		if err := m.Push(context.Background(), p.DeviceID, core.PushMessage, []byte("same")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rs := g.requests()
+	if len(rs) != 2 {
+		t.Fatalf("requests %d", len(rs))
+	}
+	if rs[0].req.Header.Get("X-Signature") == rs[1].req.Header.Get("X-Signature") || bytes.Equal(rs[0].body, rs[1].body) {
+		t.Fatal("identical requests would be treated as a replay")
+	}
+}

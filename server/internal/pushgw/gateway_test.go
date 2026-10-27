@@ -442,3 +442,30 @@ func TestLoadHPKEKeyRequiresX25519(t *testing.T) {
 		t.Error("accepted garbage")
 	}
 }
+
+func TestReplayWithTweakedSignatureText(t *testing.T) {
+	e := setup(t)
+	b := e.body(e.handle(goodHandle), "message", "x")
+	var sig string
+	do := func(tweak bool) resp {
+		return e.do("POST", "/v1/push", "10.0.0.9:1", b, func(r *http.Request) {
+			pushproto.Sign(e.priv, r, b, e.serverID, e.clock.Now())
+			if sig == "" {
+				sig = r.Header.Get("X-Signature")
+			}
+			if tweak {
+				// the last data character carries 4 unused bits; flip one
+				const alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+				i := len(sig) - 3
+				v := bytes.IndexByte([]byte(alpha), sig[i]) ^ 1
+				r.Header.Set("X-Signature", sig[:i]+string(alpha[v])+sig[i+1:])
+			}
+		})
+	}
+	if r := do(false); r.status != 202 {
+		t.Fatal(r.status)
+	}
+	if r := do(true); r.status != 409 {
+		t.Fatalf("tweaked replay: %d", r.status)
+	}
+}

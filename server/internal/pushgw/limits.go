@@ -10,11 +10,11 @@ import (
 )
 
 const (
-	replayWindow   = 10 * time.Minute
-	registerPerIP  = 5    // per hour
-	serverPerMin   = 1000 // per server
-	messagePerHour = 120  // per handle
-	callPerHour    = 20   // per handle
+	replayWindow   = 10*time.Minute + time.Second // covers a request skewed by the full 300 s
+	registerPerIP  = 5                            // per hour
+	serverPerMin   = 1000                         // per server
+	messagePerHour = 120                          // per handle
+	callPerHour    = 20                           // per handle
 )
 
 // replayCache remembers signatures for replayWindow. Entries are queued in

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -161,7 +162,14 @@ func (m *Module) Push(ctx context.Context, deviceID string, kind core.PushKind, 
 	if kind == core.PushCall {
 		gwKind = "call"
 	}
-	body, err := json.Marshal(pushproto.PushRequest{Handle: sealed, Kind: gwKind, Data: pushproto.Pad(payload)})
+	var nonce [12]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return err
+	}
+	body, err := json.Marshal(pushproto.PushRequest{
+		Handle: sealed, Kind: gwKind, Data: pushproto.Pad(payload),
+		Nonce: base64.RawURLEncoding.EncodeToString(nonce[:]),
+	})
 	if err != nil {
 		return err
 	}
