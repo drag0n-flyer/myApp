@@ -566,35 +566,84 @@ func TestLinkVector(t *testing.T) {
 	}
 }
 
-// attachmentSeal is plan 7 Design 7, written out again here so the vector is
-// checked by code that is not the generator: 65 536 plaintext bytes per chunk,
-// AES-256-GCM, nonce 0x00000000 || u64be(index), AAD 0x01 on the last chunk
-// and 0x00 otherwise. An empty file is one empty last chunk.
-func attachmentSeal(t testing.TB, key, plain []byte, chunk int) []byte {
+// attachmentOpen is written from the spec (plan 7 Design 7) and shares nothing
+// with the generator: it splits the ciphertext into 65 536+16 byte pieces, opens
+// piece n with AES-256-GCM, nonce 0x00000000 || u64be(n), and AAD 0x01 only when
+// the piece is the final one. An empty file is one 16-byte piece.
+func attachmentOpen(t testing.TB, key, ct []byte, nonceHigh byte) ([]byte, error) {
 	t.Helper()
 	blk, err := aes.NewCipher(key)
 	if err != nil {
 		t.Fatal(err)
 	}
-	g, err := cipher.NewGCM(blk)
+	gcm, err := cipher.NewGCM(blk)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var out []byte
-	for idx, off := uint64(0), 0; ; idx++ {
-		end := min(off+chunk, len(plain))
-		last := end == len(plain)
-		nonce := make([]byte, 12)
-		binary.BigEndian.PutUint64(nonce[4:], idx)
-		aad := []byte{0}
-		if last {
-			aad[0] = 1
+	const piece = 65536 + 16
+	var plain []byte
+	for n := 0; ; n++ {
+		rest := ct[n*piece:]
+		final := len(rest) <= piece
+		if !final {
+			rest = rest[:piece]
 		}
-		out = g.Seal(out, nonce, plain[off:end], aad)
-		if last {
-			return out
+		var nonce [12]byte
+		nonce[0] = nonceHigh // 0 by the spec
+		binary.BigEndian.PutUint64(nonce[4:], uint64(n))
+		ad := []byte{0}
+		if final {
+			ad = []byte{1}
 		}
-		off = end
+		out, err := gcm.Open(nil, nonce[:], rest, ad)
+		if err != nil {
+			return nil, err
+		}
+		plain = append(plain, out...)
+		if final {
+			return plain, nil
+		}
+	}
+}
+
+// attachmentCiphertext builds the ciphertext from the spec by chunk count and
+// index, not by the generator's loop: n = max(1, ceil(len/65536)) chunks, chunk
+// i holds plain[i*65536:(i+1)*65536], and only chunk n-1 gets AAD 0x01.
+func attachmentCiphertext(t testing.TB, key, plain []byte) []byte {
+	t.Helper()
+	blk, err := aes.NewCipher(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gcm, err := cipher.NewGCM(blk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := max(1, (len(plain)+65535)/65536)
+	var ct []byte
+	for i := 0; i < n; i++ {
+		lo, hi := min(i*65536, len(plain)), min((i+1)*65536, len(plain))
+		nonce := append(make([]byte, 4), binary.BigEndian.AppendUint64(nil, uint64(i))...)
+		ad := []byte{0}
+		if i == n-1 {
+			ad[0] = 1
+		}
+		ct = append(ct, gcm.Seal(nil, nonce, plain[lo:hi], ad)...)
+	}
+	return ct
+}
+
+// TestAttachmentNonceRuleMatters shows the independent check is sensitive: one
+// wrong byte in the nonce rule makes the open fail.
+func TestAttachmentNonceRuleMatters(t *testing.T) {
+	key := seq(0x10, 32)
+	plain := make([]byte, 65537)
+	ct := attachmentCiphertext(t, key, plain)
+	if _, err := attachmentOpen(t, key, ct, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := attachmentOpen(t, key, ct, 1); err == nil {
+		t.Fatal("a changed nonce rule still opened")
 	}
 }
 
@@ -614,7 +663,15 @@ func TestAttachmentVector(t *testing.T) {
 			plain[i] = byte(i % 251)
 		}
 		key := unhex(t, c.KeyHex)
-		ct := attachmentSeal(t, key, plain, f.ChunkSize)
+		// The vector holds only the digest, so the ciphertext comes from the
+		// public AES-GCM calls below, one chunk at a time, written in the test
+		// itself, and is then checked against the vector's digest and opened
+		// again by the independent reader.
+		ct := attachmentCiphertext(t, key, plain)
+		got, err := attachmentOpen(t, key, ct, 0)
+		if err != nil || !bytes.Equal(got, plain) {
+			t.Errorf("%s: independent open failed: %v", c.Name, err)
+		}
 		chunks := max(1, (len(plain)+f.ChunkSize-1)/f.ChunkSize)
 		if len(ct) != len(plain)+16*chunks {
 			t.Errorf("%s: ciphertext length %d", c.Name, len(ct))
