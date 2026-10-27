@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "chunkSize": 65536,
+  "cases": [
+    {
+      "name": "empty file",
+      "keyHex": "101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f",
+      "plaintextLength": 0,
+      "plaintextSeed": "i mod 251",
+      "ciphertextSha256Hex": "9f897a8541757571c58d180b7f75d982242ef0589308c56d28575926d81667d1",
+      "digestB64": "n4l6hUF1dXHFjRgLf3XZgiQu8FiTCMVtKFdZJtgWZ9E="
+    },
+    {
+      "name": "one byte",
+      "keyHex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+      "plaintextLength": 1,
+      "plaintextSeed": "i mod 251",
+      "ciphertextSha256Hex": "a6e87b1d9ca7e4ac63e0e5c28d92216ad7297835caca9c0b8973d4bd7654f0f3",
+      "digestB64": "puh7HZyn5Kxj4OXCjZIhatcpeDXKypwLiXPUvXZU8PM="
+    },
+    {
+      "name": "exactly one full chunk",
+      "keyHex": "303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f",
+      "plaintextLength": 65536,
+      "plaintextSeed": "i mod 251",
+      "ciphertextSha256Hex": "7e1b4872bbe8ea91270f55f452f566bc07efbb3c48509645b07212f7912ee144",
+      "digestB64": "fhtIcrvo6pEnD1X0UvVmvAfvuzxIUJZFsHIS95Eu4UQ="
+    },
+    {
+      "name": "one full chunk and one byte",
+      "keyHex": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+      "plaintextLength": 65537,
+      "plaintextSeed": "i mod 251",
+      "ciphertextSha256Hex": "d62d4973abed3e2a769cecc9876bf97568995e1655a95f657f064e78345c5df3",
+      "digestB64": "1i1Jc6vtPip2nOzJh2v5dWiZXhZVqV9lfwZOeDRcXfM="
+    }
+  ]
+}

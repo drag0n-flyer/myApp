@@ -83,7 +83,7 @@ private func peerOffer(_ f: String, sdpFP: String? = nil) -> CallSignalPayload {
     @Test func statsDriveAdaptor() {
         var (m, _) = callerActive(video: true)
         let fx = m.handle(.stats(MediaStats(availableOutgoingBitrate: 55_000)))
-        #expect(fx.contains(.setVideo(nil)) && fx.contains(.setAudioMaxBitrate(16_000)))
+        #expect(fx.contains(.setVideo(nil, ceiling: .high)) && fx.contains(.setAudioMaxBitrate(16_000)))
         #expect(m.state?.banner == .audioOnly && m.state?.effectiveMode == .dataSaver)
         #expect(fx.contains { if case .publish(let s) = $0 { s?.banner == .audioOnly && s?.effectiveMode == .dataSaver } else { false } })
     }

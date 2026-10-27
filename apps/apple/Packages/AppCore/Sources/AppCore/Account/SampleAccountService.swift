@@ -24,6 +24,11 @@ public final class SampleAccountService: AccountService {
                 DeviceInfo(id: "this", name: "This Mac", platform: .mac, lastActive: now, isThisDevice: true),
                 DeviceInfo(id: "iphone", name: "iPhone", platform: .iPhone, lastActive: now.addingTimeInterval(-3600), isThisDevice: false),
             ]
+        case .android:
+            deviceList = [
+                DeviceInfo(id: "this", name: "This phone", platform: .android, lastActive: now, isThisDevice: true),
+                DeviceInfo(id: "iphone", name: "iPhone", platform: .iPhone, lastActive: now.addingTimeInterval(-3600), isThisDevice: false),
+            ]
         case .iPhone:
             deviceList = [
                 DeviceInfo(id: "this", name: "This iPhone", platform: .iPhone, lastActive: now, isThisDevice: true),

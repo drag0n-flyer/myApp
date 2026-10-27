@@ -45,7 +45,7 @@ One Go module in `server/` produces two binaries.
 | `pushgw` | The push gateway: server registry, request signatures, sealed handles, APNs | D |
 | `social` | User lookup, email discovery, profile settings, blocks, reports | E |
 | `attachments` | Encrypted blob upload, download and expiry | E |
-| `serverinfo` | `GET /v1/server`, `/invite/{code}` page, apple-app-site-association | E |
+| `serverinfo` | `GET /v1/server`, `/invite/{code}` page, apple-app-site-association, assetlinks.json | E |
 
 Binaries: `server/cmd/appserver` and `server/cmd/pushgw`. Deployment files go in `deploy/`.
 
@@ -109,6 +109,7 @@ Environment variables (`APP_` prefix). Required ones are marked ★.
 | `APP_PUSH_SERVER_ID` | — | ID the gateway gave this server at registration |
 | `APP_ESCROW_KEY_FILE` | — | X25519 private key (PKCS#8 PEM); required only when the policy allows server-readable |
 | `APP_APPLE_APP_IDS` | — | Comma list `TEAMID.bundle.id` for apple-app-site-association |
+| `APP_ANDROID_APPS` | — | Comma list `package:<64 hex>` (the app's signing-certificate SHA-256) for `assetlinks.json` and Android passkey origins; empty accepts no Android origins |
 | `APP_TRUST_PROXY` | `false` | Use the last `X-Forwarded-For` hop as the client IP |
 | `APP_DOCS_DIR` | — | Operator documents served at `/.well-known/security.txt`, `/privacy`, `/terms` (plan 9) |
 
@@ -136,6 +137,8 @@ Migrations are embedded SQL files run in filename order. Prefixes are reserved p
 `0001_core.sql` (F):
 - `accounts(id uuid pk, username text unique not null, email text not null, email_lower text unique not null, display_name text not null default '', find_by_email bool not null default false, created_at timestamptz not null default now())`
 - `devices(id uuid pk, account_id uuid not null references accounts on delete cascade, name text not null, platform text not null check (platform in ('iphone','mac')), created_at timestamptz not null default now(), last_seen_at timestamptz not null default now())`
+
+`1003_android_platform.sql` (A): `devices.platform` and `link_requests.platform` also accept `android`.
 
 All later tables reference `accounts(id)` or `devices(id)` with `on delete cascade`. **Revoking a device deletes its row, and deleting an account deletes its row.** The cascade removes sessions, KeyPackages, inbox items, conversation membership, push tokens and blocks, with no code in other lanes.
 
@@ -166,7 +169,7 @@ Usernames: `^[a-z][a-z0-9_]{2,31}$` (same rule as AppCore `UsernameCheck`). Rese
 | `POST /v1/signup/start` | – | `{inviteCode?, username, email}` → `{signupID}`; sends the email code. Errors: `invite_required`, `invite_invalid`, `invalid_username`, `username_taken`, `invalid_email` |
 | `POST /v1/signup/verify` | – | `{signupID, code}` → `{}`; `code_invalid`, `expired`, `rate_limited` (after 5 wrong codes) |
 | `POST /v1/signup/passkey/options` | – | `{signupID}` (must be verified) → WebAuthn `PublicKeyCredentialCreationOptions` JSON |
-| `POST /v1/signup/finish` | – | `{signupID, credential?, deviceName, platform}` → `{accountID, deviceID, sessionToken}`. Uses up the invite and creates the account, device, passkey (if `credential` is given) and session in one transaction. `username_taken` if the name was taken meanwhile. `credential` is optional because iOS allows passkeys only for hosts in the app's associated domains: on other self-hosted servers the account signs in by email code (client plan 6) |
+| `POST /v1/signup/finish` | – | `{signupID, credential?, deviceName, platform}` → `{accountID, deviceID, sessionToken}`. Uses up the invite and creates the account, device, passkey (if `credential` is given) and session in one transaction. `platform` is `iphone`, `mac` or `android`. `username_taken` if the name was taken meanwhile. `credential` is optional because iOS allows passkeys only for hosts in the app's associated domains: on other self-hosted servers the account signs in by email code (client plan 6). Android passkeys are accepted only from origins `android:apk-key-hash:<base64url, no padding, of the fingerprint>` for the apps in `APP_ANDROID_APPS` (none by default) |
 | `POST /v1/signin/passkey/options` | – | `{}` → `{challengeID, options}` (discoverable credential, user verification required) |
 | `POST /v1/signin/passkey/finish` | – | `{challengeID, credential, deviceName, platform}` → `{accountID, deviceID, sessionToken}` (new device) |
 | `POST /v1/signin/email/start` | – | `{email}` → `202 {}` always, whether or not the email exists |
@@ -270,8 +273,8 @@ Checks before sending:
 - The timestamp is within ±300 s of the gateway's clock.
 - The same signature has not been seen in the last 10 minutes (a replay).
 - The handle opens with the gateway's key.
-- The handle's bundle ID is in `PUSHGW_BUNDLE_IDS`.
-- The handle's kind fits: `call` may use `voip` or `alert`; `message` must use `alert`.
+- The handle's bundle ID is in `PUSHGW_BUNDLE_IDS` (for an `fcm` handle: its application ID is in `PUSHGW_ANDROID_APP_IDS`, and the gateway has FCM configured).
+- The handle's kind fits: `call` may use `voip`, `alert` or `fcm`; `message` must use `alert` or `fcm`.
 
 Limits: 1000 per minute per server, 120 per hour per handle for messages, and 20 per hour per handle for calls.
 
@@ -289,7 +292,14 @@ Besides the codes of section 7, the gateway also answers `conflict` (409, a repl
   - body `{"d":"<b64 data>"}`
 - APNs `410`, or `400 BadDeviceToken`, becomes a `410` to the server.
 
-`appserver keygen push` prints a new Ed25519 private key as PKCS#8 PEM; `appserver push register --gateway URL --name N --contact C` registers it and prints the server ID. Gateway configuration: `PUSHGW_LISTEN`, `PUSHGW_DATABASE_URL`, `PUSHGW_HPKE_KEY_FILE`, `PUSHGW_APNS_KEY_FILE` (.p8, held by the owner only), `PUSHGW_APNS_KEY_ID`, `PUSHGW_APNS_TEAM_ID`, `PUSHGW_BUNDLE_IDS`, `PUSHGW_APNS_URL` (overrides both APNs hosts; for tests).
+**FCM (`fcm` handles):**
+- HTTP/2 or HTTP/1.1 `POST https://fcm.googleapis.com/v1/projects/<PUSHGW_FCM_PROJECT_ID>/messages:send` with `Authorization: Bearer <access token>`. The access token comes from the service-account key: an RS256 JWT (`iss` = the account's email, `scope` = `https://www.googleapis.com/auth/firebase.messaging`, `aud` = the key's `token_uri`, one hour lifetime) exchanged at that URI. It is cached until 5 minutes before it expires, and a new one is never minted more than once a minute. No redirects are followed.
+- Body `{"message":{"token":"<t>","data":{"k":"message"|"call","d":"<b64 data>"},"android":{"priority":"HIGH","ttl":"86400s"|"45s"}}}`. `d` is standard base64 with padding of the padded payload, unchanged, as for APNs. The TTL is `45s` for a call and `86400s` for a message.
+- **Size rule:** FCM data is limited to 4096 bytes. A padded payload over 2048 bytes (the 3072 bucket, 4096 characters in base64) is replaced by the 256-byte empty one (length 0, "fetch the inbox"). The gateway decides this from the padded length alone.
+- FCM `UNREGISTERED` becomes a `410` to the server. Any other `404`, including `NOT_FOUND` (which a wrong URL, proxy or project also returns), is a gateway-side error: `502`, and the handle is kept.
+- An `fcm` handle must have `e = "production"`; anything else is `bad_request`.
+
+`appserver keygen push` prints a new Ed25519 private key as PKCS#8 PEM; `appserver push register --gateway URL --name N --contact C` registers it and prints the server ID. Gateway configuration: `PUSHGW_LISTEN`, `PUSHGW_DATABASE_URL`, `PUSHGW_HPKE_KEY_FILE`, `PUSHGW_APNS_KEY_FILE` (.p8, held by the owner only), `PUSHGW_APNS_KEY_ID`, `PUSHGW_APNS_TEAM_ID`, `PUSHGW_BUNDLE_IDS`, `PUSHGW_APNS_URL` (overrides both APNs hosts; for tests). Android handles need `PUSHGW_FCM_PROJECT_ID`, `PUSHGW_FCM_KEY_FILE` (the service-account JSON, held by the owner only) and `PUSHGW_ANDROID_APP_IDS` (all three or none), plus `PUSHGW_FCM_URL` (overrides the FCM host; for tests).
 
 ### 7.5 Social, attachments, server info (lane E)
 
@@ -306,6 +316,7 @@ Besides the codes of section 7, the gateway also answers `conflict` (409, a repl
 | `GET /v1/server` | – | the server info document below |
 | `GET /invite/{code}` | – | small HTML page: "Open this invite in [App]" (target of the universal link) |
 | `GET /.well-known/apple-app-site-association` | – | `applinks` for `/invite/*` and `/link/*`, plus `webcredentials`, for `APP_APPLE_APP_IDS` |
+| `GET /.well-known/assetlinks.json` | – | Digital Asset Links for `APP_ANDROID_APPS`: one entry per package with relations `delegate_permission/common.get_login_creds` and `delegate_permission/common.handle_all_urls` and the fingerprints as upper-case colon hex; `[]` when unset |
 
 Server info document:
 ```json

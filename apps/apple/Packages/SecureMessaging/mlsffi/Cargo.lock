@@ -977,6 +977,7 @@ dependencies = [
  "mls-rs",
  "mls-rs-core",
  "mls-rs-crypto-rustcrypto",
+ "serde_json",
  "uniffi",
  "zeroize",
 ]

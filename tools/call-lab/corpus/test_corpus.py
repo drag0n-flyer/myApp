@@ -113,6 +113,41 @@ class FetchTests(unittest.TestCase):
                 rc = fetch.main(["--sources", str(sources), "--dest", str(Path(d) / "data")])
             self.assertEqual(rc, 2)
 
+    def test_speech_clip_is_extracted_from_librispeech_archive(self):
+        import tarfile
+        with tempfile.TemporaryDirectory() as d:
+            archive = Path(d) / "test-clean.tar.gz"
+            payload = b"fLaC fake"
+            with tarfile.open(archive, "w:gz") as t:
+                for name in ("LibriSpeech/test-clean/1089/134686/1089-134686-0001.flac", fetch.SPEECH_CLIP_MEMBER):
+                    info = tarfile.TarInfo(name)
+                    info.size = len(payload)
+                    t.addfile(info, io.BytesIO(payload))
+            calls = []
+            out = fetch.extract_speech_clip(archive, Path(d) / "speech48k",
+                                            convert=lambda src, dst: (calls.append((src.name, dst.name)), dst.write_bytes(b"wav")))
+            self.assertEqual(out.name, "1089-134686-0000.wav")
+            self.assertEqual(calls, [("1089-134686-0000.flac", "1089-134686-0000.wav")])
+            self.assertEqual(sorted(p.name for p in (Path(d) / "speech48k").iterdir()), ["1089-134686-0000.wav"])
+
+    def test_fetch_extracts_speech_clip_for_librispeech_row(self):
+        import tarfile
+        with tempfile.TemporaryDirectory() as d:
+            archive = Path(d) / "test-clean.tar.gz"
+            with tarfile.open(archive, "w:gz") as t:
+                info = tarfile.TarInfo(fetch.SPEECH_CLIP_MEMBER)
+                info.size = 4
+                t.addfile(info, io.BytesIO(b"fLaC"))
+            sources = Path(d) / "SOURCES.tsv"
+            sources.write_text("name\turl\tsha256\tlicense\n"
+                               f"librispeech-test-clean\t{archive.as_uri()}\t{hashlib.sha256(archive.read_bytes()).hexdigest()}\tCC BY 4.0\n")
+            dest = Path(d) / "data"
+            fetch.convert_flac_to_wav = lambda src, dst: dst.write_bytes(b"wav")
+            with redirect_stdout(io.StringIO()):
+                rc = fetch.main(["--sources", str(sources), "--dest", str(dest)])
+            self.assertEqual(rc, 0)
+            self.assertTrue((dest / "speech48k" / "1089-134686-0000.wav").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

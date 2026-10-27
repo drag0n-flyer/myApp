@@ -8,6 +8,7 @@ apps/apple/*.xcodeproj
 DerivedData/
 tools/call-lab/*.xcodeproj
 tools/call-lab/corpus/data/
+tools/call-lab/scoring/.venv/
 tools/call-lab/runs/
 
 # Rust (MLS bindings) and built frameworks

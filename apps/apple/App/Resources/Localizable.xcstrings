@@ -23,6 +23,17 @@
         }
       }
     },
+    "Android" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Android"
+          }
+        }
+      }
+    },
     "Approve" : {
       "extractionState" : "manual",
       "localizations" : {

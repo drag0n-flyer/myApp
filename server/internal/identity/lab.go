@@ -22,7 +22,7 @@ func (m *Module) labSessionCommand(ctx context.Context, args []string, out io.Wr
 	fs.SetOutput(io.Discard)
 	username := fs.String("username", "", "account username (created if missing)")
 	device := fs.String("device", "", "device name")
-	platform := fs.String("platform", "", "iphone or mac")
+	platform := fs.String("platform", "", "iphone, mac or android")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

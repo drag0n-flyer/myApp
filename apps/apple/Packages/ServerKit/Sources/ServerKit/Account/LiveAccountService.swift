@@ -346,8 +346,22 @@ public final class LiveAccountService: AccountService {
         return ParsedLink(linkID: String(parts[1]), secret: bits[0], publicKey: key)
     }
 
-    private static func wire(_ p: DevicePlatform) -> String { p == .mac ? "mac" : "iphone" }
-    private static func platform(_ s: String) -> DevicePlatform { s == "iphone" ? .iPhone : .mac }
+    @_spi(Testing) public nonisolated static func wire(_ p: DevicePlatform) -> String {
+        switch p {
+        case .iPhone: "iphone"
+        case .mac: "mac"
+        case .android: "android"
+        }
+    }
+
+    /// Unknown strings stay `.mac`, as before Android existed.
+    @_spi(Testing) public nonisolated static func platform(_ s: String) -> DevicePlatform {
+        switch s {
+        case "iphone": .iPhone
+        case "android": .android
+        default: .mac
+        }
+    }
 
     private static func accountCode(_ e: AccountError) -> String { "account:\(e)" }
 

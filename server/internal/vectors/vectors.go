@@ -99,6 +99,10 @@ type Sealed struct {
 	RecipientPublicKeyB64  string         `json:"recipientPublicKeyB64"`
 	Cases                  []SealedCase   `json:"cases"`
 	Negative               []NegativeCase `json:"negative"`
+	// LowOrderRecipientKeysHex are X25519 public keys of small order (RFC 7748
+	// section 7, with their non-canonical encodings). Go's crypto/hpke refuses
+	// to seal to any of them; every implementation must do the same.
+	LowOrderRecipientKeysHex []string `json:"lowOrderRecipientKeysHex"`
 }
 
 // TURNCase is one turn-credential case.
@@ -133,4 +137,23 @@ func Write(name string, v any) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(Dir, name), append(raw, '\n'), 0o644)
+}
+
+// AttachmentCase is one attachment-stream case. PlaintextSeed names how the
+// plaintext is made: byte i is i mod 251.
+type AttachmentCase struct {
+	Name                string `json:"name"`
+	KeyHex              string `json:"keyHex"`
+	PlaintextLength     int    `json:"plaintextLength"`
+	PlaintextSeed       string `json:"plaintextSeed"`
+	CiphertextSha256Hex string `json:"ciphertextSha256Hex"`
+	DigestB64           string `json:"digestB64"`
+}
+
+// AttachmentStream is attachment-stream.json. It has no note field: it holds
+// no secret that matters, but it carries the common header's version only.
+type AttachmentStream struct {
+	Version   int              `json:"version"`
+	ChunkSize int              `json:"chunkSize"`
+	Cases     []AttachmentCase `json:"cases"`
 }
