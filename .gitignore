@@ -48,3 +48,6 @@ apps/apple/Packages/SecureMessaging/mlsffi/build/
 deploy/backups/
 deploy/relay/turnserver.rendered.conf
 deploy/relay/certs/
+
+# Call Lab generated Info.plist and entitlements
+tools/call-lab/Generated/
