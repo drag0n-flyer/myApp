@@ -56,3 +56,10 @@ jobs:
         run: python3 -m unittest scripts/test_check_rust_licenses.py scripts/test_generate_oss_notices.py
       - name: Check crate licenses (cargo metadata)
         run: python3 scripts/check-rust-licenses.py
+      - name: Check the open-source notices are up to date
+        run: |
+          python3 scripts/generate-oss-notices.py
+          git diff --exit-code -- apps/apple/Packages/AppCore/Sources/AppCore/Resources/oss-notices.json || {
+            echo "::error::oss-notices.json is stale. Run scripts/generate-oss-notices.py and commit the result."
+            exit 1
+          }

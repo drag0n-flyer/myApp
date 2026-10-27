@@ -57,22 +57,64 @@ class Reachable(unittest.TestCase):
         self.assertEqual([p["name"] for p in load().normal_packages(metadata)], ["x"])
 
 
-class LicenseText(unittest.TestCase):
+class LicenseIds(unittest.TestCase):
+    def test_ids_from_expression(self):
+        ids = load().license_ids("(MIT OR Apache-2.0) AND Unicode-3.0")
+        self.assertEqual(ids, ["MIT", "Apache-2.0", "Unicode-3.0"])
+
+    def test_exception_and_slash(self):
+        mod = load()
+        self.assertEqual(mod.license_ids("Apache-2.0 WITH LLVM-exception OR MIT"), ["Apache-2.0", "MIT"])
+        self.assertEqual(mod.license_ids("MIT/Apache-2.0"), ["MIT", "Apache-2.0"])
+
+
+class CrateEntry(unittest.TestCase):
     def test_reads_license_files_next_to_manifest(self):
         with tempfile.TemporaryDirectory() as d:
-            (Path(d) / "LICENSE-MIT").write_text("MIT text")
-            (Path(d) / "LICENSE-APACHE").write_text("Apache text")
+            (Path(d) / "LICENSE-MIT").write_text("MIT text with Copyright (c) Someone")
             (Path(d) / "README.md").write_text("not a license")
-            text = load().crate_license_text(pkg("c", manifest=str(Path(d) / "Cargo.toml")))
-        self.assertIn("MIT text", text)
-        self.assertIn("Apache text", text)
-        self.assertNotIn("not a license", text)
+            entry = load().crate_entry(pkg("c", manifest=str(Path(d) / "Cargo.toml"), authors=["A <a@x>"]))
+        self.assertEqual(entry["own_texts"], ["MIT text with Copyright (c) Someone"])
+        self.assertEqual(entry["authors"], "A <a@x>")
 
-    def test_fallback_when_no_file(self):
-        p = pkg("c", license="MIT OR Apache-2.0", repository="https://example.org/c")
-        text = load().crate_license_text(p)
-        self.assertIn("MIT OR Apache-2.0", text)
-        self.assertIn("https://example.org/c", text)
+    def test_no_file_means_no_own_text(self):
+        entry = load().crate_entry(pkg("c", repository="https://example.org/c"))
+        self.assertEqual(entry["own_texts"], [])
+        self.assertEqual(entry["repository"], "https://example.org/c")
+
+
+class Book(unittest.TestCase):
+    canonical = {"MIT": "The MIT text.", "Apache-2.0": "The Apache text."}
+
+    def entry(self, name, license="MIT", own=()):
+        return {"name": name, "version": "1", "license": license, "authors": "", "repository": None,
+                "own_texts": list(own), "pending": False}
+
+    def test_components_reference_canonical_ids(self):
+        book = load().build_book([self.entry("a", "MIT OR Apache-2.0")], self.canonical)
+        self.assertEqual(book["components"][0]["textIds"], ["MIT", "Apache-2.0"])
+        self.assertEqual(book["texts"]["MIT"], "The MIT text.")
+
+    def test_unknown_license_has_no_canonical_id(self):
+        book = load().build_book([self.entry("a", "MIT OR LGPL-2.1-or-later")], self.canonical)
+        self.assertEqual(book["components"][0]["textIds"], ["MIT"])
+
+    def test_identical_own_texts_are_stored_once(self):
+        entries = [self.entry("a", own=["Copyright X"]), self.entry("b", own=["Copyright X"])]
+        book = load().build_book(entries, self.canonical)
+        a, b = book["components"]
+        self.assertEqual(a["textIds"], b["textIds"])
+        self.assertEqual(len(book["texts"]), 2)
+
+    def test_own_text_equal_to_canonical_is_dropped(self):
+        book = load().build_book([self.entry("a", own=["The  MIT\ntext."])], self.canonical)
+        self.assertEqual(book["components"][0]["textIds"], ["MIT"])
+
+    def test_every_text_id_resolves(self):
+        book = load().build_book([self.entry("a", own=["Copyright X"])], self.canonical)
+        for c in book["components"]:
+            for t in c["textIds"]:
+                self.assertIn(t, book["texts"])
 
 
 class Build(unittest.TestCase):
@@ -90,22 +132,22 @@ class Build(unittest.TestCase):
         by_name = {e["name"]: e for e in entries}
         self.assertEqual(by_name["RNNoise"]["license"], "BSD-3-Clause")
         self.assertEqual(by_name["RNNoise"]["version"], "70f1d25")
-        self.assertEqual(by_name["RNNoise"]["text"], "rnnoise license")
+        self.assertEqual(by_name["RNNoise"]["own_texts"], ["rnnoise license"])
         self.assertFalse(by_name["RNNoise"]["pending"])
         self.assertEqual(by_name["WebRTC"]["version"], "m156")
         self.assertTrue(by_name["WebRTC"]["pending"])
         self.assertEqual(by_name["Opus"]["version"], "1.6")
         self.assertTrue(by_name["Opus"]["pending"])
 
-    def test_notices_are_sorted_and_have_the_four_fields(self):
+    def test_book_is_sorted_and_has_texts(self):
         mod = load()
-        out = mod.notices_json([
-            {"name": "b", "version": "1", "license": "MIT", "text": "t", "pending": False},
-            {"name": "A", "version": "1", "license": "MIT", "text": "t", "pending": False},
-        ])
-        data = json.loads(out)
+        e = lambda n: {"name": n, "version": "1", "license": "MIT", "authors": "", "repository": None,
+                       "own_texts": [], "pending": False}
+        data = json.loads(mod.notices_json([e("b"), e("A")], {"MIT": "t"}))
         self.assertEqual([c["name"] for c in data["components"]], ["A", "b"])
-        self.assertEqual(set(data["components"][0]), {"name", "version", "license", "text", "pending"})
+        self.assertEqual(data["texts"], {"MIT": "t"})
+        self.assertEqual(set(data["components"][0]),
+                         {"name", "version", "license", "authors", "repository", "textIds", "pending"})
 
 
 if __name__ == "__main__":
