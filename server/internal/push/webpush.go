@@ -275,46 +275,113 @@ func (m *Module) vapidHeader(endpoint *url.URL) (string, error) {
 
 const (
 	upMaxInFlight = 64 // all UnifiedPush sends together, separate from gateway pushes
-	upPerAccount  = 2  // in flight for one account
-	upTimeout     = 10 * time.Second
+	upPerHost     = 8  // message sends in flight to one endpoint host
+	upTimeout     = 8 * time.Second
 )
 
+// upQueued is a message push waiting behind the send in flight for a device.
+type upQueued struct{ stored, payload []byte }
+
+// upDevice is the state of a device with a message send in flight.
+type upDevice struct{ pending *upQueued }
+
+var errUPDropped = errors.New("push: unifiedpush send dropped, too many in flight")
+
+// WaitBackground waits for in-flight UnifiedPush sends. Call it at shutdown.
+func (m *Module) WaitBackground() { m.upWG.Wait() }
+
 // enqueueUnifiedPush hands a send to the UnifiedPush pool and returns at once,
-// so a stalled client-supplied endpoint never holds a caller's push slot. A
-// send over the global or per-account cap is dropped: the device fetches its
-// inbox when it next connects.
-func (m *Module) enqueueUnifiedPush(ctx context.Context, deviceID string, kind core.PushKind, stored, payload []byte) error {
-	var account string
-	if err := m.d.DB.QueryRow(ctx, `select account_id from devices where id = $1`, deviceID).Scan(&account); err != nil {
-		return err
+// so a stalled client-supplied endpoint never holds a caller's push slot.
+//
+//   - A message push has one send in flight per device. Later ones are
+//     coalesced: only the latest payload is kept, and it goes out when the
+//     current send finishes. The device cap never drops a message.
+//   - A call push skips that queue and goes out at once in its own slot.
+//   - The global limit (and, for messages, the per-host limit) drops a send
+//     that would exceed it; the device fetches its inbox later.
+func (m *Module) enqueueUnifiedPush(_ context.Context, deviceID string, kind core.PushKind, stored, payload []byte) error {
+	var reg upRegistration
+	if err := json.Unmarshal(stored, &reg); err != nil {
+		return errors.New("push: bad unifiedpush registration")
 	}
+	ep, err := validateEndpoint(reg.Endpoint)
+	if err != nil {
+		return errors.New("push: bad unifiedpush registration")
+	}
+	host := strings.ToLower(ep.Hostname())
+	payload = append([]byte(nil), payload...)
+
 	m.upMu.Lock()
-	if m.upActive >= upMaxInFlight || m.upByAccount[account] >= upPerAccount {
+	if kind == core.PushMessage {
+		if dv, busy := m.upDevices[deviceID]; busy {
+			dv.pending = &upQueued{stored, payload} // keep only the latest
+			m.upMu.Unlock()
+			return nil
+		}
+		if m.upActive >= upMaxInFlight || m.upHosts[host] >= upPerHost {
+			m.upMu.Unlock()
+			return errUPDropped
+		}
+		m.upHosts[host]++
+		m.upDevices[deviceID] = &upDevice{}
+	} else if m.upActive >= upMaxInFlight {
 		m.upMu.Unlock()
-		return errors.New("push: unifiedpush send dropped, too many in flight")
+		return errUPDropped
 	}
 	m.upActive++
-	m.upByAccount[account]++
 	m.upMu.Unlock()
-	payload = append([]byte(nil), payload...)
+
 	m.upWG.Add(1)
-	go func() {
-		defer m.upWG.Done()
-		defer func() {
-			m.upMu.Lock()
-			m.upActive--
-			if m.upByAccount[account]--; m.upByAccount[account] <= 0 {
-				delete(m.upByAccount, account)
-			}
-			m.upMu.Unlock()
-		}()
+	go m.runUnifiedPush(deviceID, kind, host, stored, payload)
+	return nil
+}
+
+func (m *Module) runUnifiedPush(deviceID string, kind core.PushKind, host string, stored, payload []byte) {
+	defer m.upWG.Done()
+	for {
 		sctx, cancel := context.WithTimeout(context.Background(), upTimeout)
-		defer cancel()
 		if err := m.sendUnifiedPush(sctx, deviceID, kind, stored, payload); err != nil {
 			m.d.Log.Warn("unifiedpush failed") // never the error text or endpoint
 		}
-	}()
-	return nil
+		cancel()
+		m.upMu.Lock()
+		if kind != core.PushMessage {
+			m.upActive--
+			m.upMu.Unlock()
+			return
+		}
+		dv := m.upDevices[deviceID]
+		next := dv.pending
+		dv.pending = nil
+		m.upHosts[host]--
+		if m.upHosts[host] <= 0 {
+			delete(m.upHosts, host)
+		}
+		if next == nil {
+			delete(m.upDevices, deviceID)
+			m.upActive--
+			m.upMu.Unlock()
+			return
+		}
+		// The queued push may name a new endpoint: take that host's slot,
+		// or drop it if the host is full.
+		var reg upRegistration
+		nh := host
+		if json.Unmarshal(next.stored, &reg) == nil {
+			if u, err := validateEndpoint(reg.Endpoint); err == nil {
+				nh = strings.ToLower(u.Hostname())
+			}
+		}
+		if m.upHosts[nh] >= upPerHost {
+			delete(m.upDevices, deviceID)
+			m.upActive--
+			m.upMu.Unlock()
+			return
+		}
+		m.upHosts[nh]++
+		m.upMu.Unlock()
+		host, stored, payload = nh, next.stored, next.payload
+	}
 }
 
 // sendUnifiedPush delivers one push to a UnifiedPush distributor endpoint.

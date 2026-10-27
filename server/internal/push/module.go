@@ -46,10 +46,11 @@ type Module struct {
 	vapid *ecdsa.PrivateKey  // the UnifiedPush VAPID key, cached the same way
 	up    *http.Client       // UnifiedPush endpoints: SSRF-guarded, no redirects
 
-	upMu        sync.Mutex
-	upActive    int
-	upByAccount map[string]int
-	upWG        sync.WaitGroup
+	upMu      sync.Mutex
+	upActive  int
+	upDevices map[string]*upDevice
+	upHosts   map[string]int
+	upWG      sync.WaitGroup
 }
 
 var _ core.Pusher = (*Module)(nil)
@@ -62,7 +63,7 @@ func New(d core.Deps) *Module {
 		Timeout:       httpTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	return &Module{d: d, hc: hc, up: newUPClient(false, nil), upByAccount: map[string]int{}}
+	return &Module{d: d, hc: hc, up: newUPClient(false, nil), upDevices: map[string]*upDevice{}, upHosts: map[string]int{}}
 }
 
 func validKind(k string) bool {

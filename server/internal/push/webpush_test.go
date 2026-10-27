@@ -21,6 +21,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -269,33 +270,89 @@ func TestIPLiteralEndpointRejectedAtUpload(t *testing.T) {
 	}
 }
 
-// stalling receiver: counts concurrent requests and holds them until released.
+// staller holds every request until released. entered gets one value per
+// request as it arrives, so tests can wait without sleeping.
 type staller struct {
-	srv         *httptest.Server
-	mu          sync.Mutex
-	cur, maxCur int
-	total       int
-	release     chan struct{}
+	srv     *httptest.Server
+	ua      *ecdh.PrivateKey
+	auth    []byte
+	entered chan struct{}
+	release chan struct{}
+	mu      sync.Mutex
+	bodies  [][]byte
 }
 
 func newStaller(t *testing.T) *staller {
-	s := &staller{release: make(chan struct{})}
+	ua, _ := ecdh.P256().GenerateKey(rand.Reader)
+	s := &staller{ua: ua, auth: make([]byte, 16), entered: make(chan struct{}, 100), release: make(chan struct{})}
 	s.srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		b, _ := io.ReadAll(req.Body)
 		s.mu.Lock()
-		s.cur++
-		s.total++
-		if s.cur > s.maxCur {
-			s.maxCur = s.cur
-		}
+		s.bodies = append(s.bodies, b)
 		s.mu.Unlock()
+		s.entered <- struct{}{}
 		<-s.release
-		s.mu.Lock()
-		s.cur--
-		s.mu.Unlock()
 		w.WriteHeader(201)
 	}))
 	t.Cleanup(s.srv.Close)
 	return s
+}
+
+func (s *staller) waitEntered(t *testing.T, n int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		select {
+		case <-s.entered:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("only %d of %d requests arrived", i, n)
+		}
+	}
+}
+
+func (s *staller) noMore(t *testing.T) {
+	t.Helper()
+	select {
+	case <-s.entered:
+		t.Fatal("an extra request arrived")
+	default:
+	}
+}
+
+func (s *staller) payloads(t *testing.T) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []string
+	for _, b := range s.bodies {
+		pt := decryptWebpush(t, s.ua, s.auth, b)
+		un, err := pushproto.Unpad(pt[1:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, string(un))
+	}
+	return out
+}
+
+func (s *staller) register(t *testing.T, d core.Deps, dev string) {
+	t.Helper()
+	reg, _ := json.Marshal(map[string]string{"endpoint": s.srv.URL + "/e",
+		"p256dh": base64.RawURLEncoding.EncodeToString(s.ua.PublicKey().Bytes()),
+		"auth":   base64.RawURLEncoding.EncodeToString(s.auth)})
+	if _, err := d.DB.Exec(context.Background(), `insert into push_tokens (device_id, kind, sealed) values ($1,'unifiedpush',$2)`, dev, reg); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func stallSetup(t *testing.T) (core.Deps, *push.Module, *staller) {
+	t.Helper()
+	st := newStaller(t)
+	vf, _ := newVapidFile(t)
+	d, _ := testkit.NewDeps(t, func(d *core.Deps) { d.Config.VapidKeyFile = vf })
+	m := push.New(d)
+	pool := x509.NewCertPool()
+	pool.AddCert(st.srv.Certificate())
+	m.UseTestTransport(pool)
+	return d, m, st
 }
 
 func TestStalledEndpointDoesNotBlockGatewayPush(t *testing.T) {
@@ -309,19 +366,12 @@ func TestStalledEndpointDoesNotBlockGatewayPush(t *testing.T) {
 	c := testkit.Serve(t, d, m)
 	up := testkit.Account(t, d, "alice")
 	gw := testkit.Account(t, d, "bob")
-	ua, _ := ecdh.P256().GenerateKey(rand.Reader)
-	reg, _ := json.Marshal(map[string]string{"endpoint": st.srv.URL + "/e",
-		"p256dh": base64.RawURLEncoding.EncodeToString(ua.PublicKey().Bytes()),
-		"auth":   base64.RawURLEncoding.EncodeToString(make([]byte, 16))})
-	_, _ = d.DB.Exec(context.Background(), `insert into push_tokens (device_id, kind, sealed) values ($1,'unifiedpush',$2)`, up.DeviceID, reg)
+	st.register(t, d, up.DeviceID)
 	putToken(t, c, gw, "alert", []byte("h"))
-	done := make(chan error, 1)
-	go func() { done <- m.Push(context.Background(), up.DeviceID, core.PushMessage, []byte("x")) }()
-	select {
-	case <-done: // Push hands the send to the UnifiedPush pool and returns
-	case <-time.After(2 * time.Second):
-		t.Fatal("Push blocked on a stalled endpoint")
+	if err := m.Push(context.Background(), up.DeviceID, core.PushMessage, []byte("x")); err != nil {
+		t.Fatal(err)
 	}
+	st.waitEntered(t, 1)
 	if err := m.Push(context.Background(), gw.DeviceID, core.PushMessage, []byte("y")); err != nil {
 		t.Fatal(err)
 	}
@@ -329,45 +379,86 @@ func TestStalledEndpointDoesNotBlockGatewayPush(t *testing.T) {
 		t.Fatal("gateway push did not go out")
 	}
 	close(st.release)
-	m.WaitUP()
+	m.WaitBackground()
 }
 
-func TestUnifiedPushCapsPerAccount(t *testing.T) {
-	st := newStaller(t)
-	vf, _ := newVapidFile(t)
-	d, _ := testkit.NewDeps(t, func(d *core.Deps) { d.Config.VapidKeyFile = vf })
-	m := push.New(d)
-	pool := x509.NewCertPool()
-	pool.AddCert(st.srv.Certificate())
-	m.UseTestTransport(pool)
+func TestAccountWithFiveDevicesPushesAllFive(t *testing.T) {
+	d, m, st := stallSetup(t)
 	alice := testkit.Account(t, d, "alice")
-	var devs []string
-	devs = append(devs, alice.DeviceID)
+	devs := []string{alice.DeviceID}
 	for i := 0; i < 4; i++ {
 		devs = append(devs, testkit.Device(t, d, alice.AccountID, "mac").DeviceID)
 	}
-	ua, _ := ecdh.P256().GenerateKey(rand.Reader)
-	reg, _ := json.Marshal(map[string]string{"endpoint": st.srv.URL + "/e",
-		"p256dh": base64.RawURLEncoding.EncodeToString(ua.PublicKey().Bytes()),
-		"auth":   base64.RawURLEncoding.EncodeToString(make([]byte, 16))})
 	for _, dev := range devs {
-		_, _ = d.DB.Exec(context.Background(), `insert into push_tokens (device_id, kind, sealed) values ($1,'unifiedpush',$2)`, dev, reg)
-		_ = m.Push(context.Background(), dev, core.PushMessage, []byte("x"))
+		st.register(t, d, dev)
+		if err := m.Push(context.Background(), dev, core.PushMessage, []byte("x")); err != nil {
+			t.Fatal(err)
+		}
 	}
-	time.Sleep(500 * time.Millisecond)
-	st.mu.Lock()
-	cur := st.cur
-	st.mu.Unlock()
-	if cur != 2 {
-		t.Fatalf("in flight %d, want exactly the cap of 2", cur)
-	}
+	st.waitEntered(t, 5) // all five in flight together
 	close(st.release)
-	m.WaitUP()
-	st.mu.Lock()
-	defer st.mu.Unlock()
-	if st.maxCur > 2 {
-		t.Fatalf("max concurrent %d", st.maxCur)
+	m.WaitBackground()
+}
+
+func TestBurstToOneDeviceCoalesces(t *testing.T) {
+	d, m, st := stallSetup(t)
+	p := testkit.Account(t, d, "alice")
+	st.register(t, d, p.DeviceID)
+	if err := m.Push(context.Background(), p.DeviceID, core.PushMessage, []byte("m0")); err != nil {
+		t.Fatal(err)
 	}
+	st.waitEntered(t, 1)
+	for i := 1; i < 10; i++ {
+		if err := m.Push(context.Background(), p.DeviceID, core.PushMessage, []byte("m"+strconv.Itoa(i))); err != nil {
+			t.Fatalf("a message push was refused: %v", err)
+		}
+	}
+	st.noMore(t)
+	close(st.release)
+	m.WaitBackground()
+	got := st.payloads(t)
+	if len(got) != 2 || got[0] != "m0" || got[1] != "m9" {
+		t.Fatalf("sends %v, want [m0 m9]", got)
+	}
+}
+
+func TestCallBypassesCoalescing(t *testing.T) {
+	d, m, st := stallSetup(t)
+	p := testkit.Account(t, d, "alice")
+	st.register(t, d, p.DeviceID)
+	_ = m.Push(context.Background(), p.DeviceID, core.PushMessage, []byte("msg"))
+	st.waitEntered(t, 1)
+	if err := m.Push(context.Background(), p.DeviceID, core.PushCall, []byte("ring")); err != nil {
+		t.Fatal(err)
+	}
+	st.waitEntered(t, 1) // the call is in flight while the message is still stalled
+	close(st.release)
+	m.WaitBackground()
+	if got := st.payloads(t); len(got) != 2 {
+		t.Fatalf("%v", got)
+	}
+}
+
+func TestPerHostCap(t *testing.T) {
+	d, m, st := stallSetup(t)
+	var devs []string
+	for i := 0; i < 9; i++ {
+		devs = append(devs, testkit.Account(t, d, "user"+strconv.Itoa(i)).DeviceID)
+	}
+	for i, dev := range devs {
+		st.register(t, d, dev)
+		err := m.Push(context.Background(), dev, core.PushMessage, []byte("x"))
+		if i < 8 && err != nil {
+			t.Fatalf("device %d: %v", i, err)
+		}
+		if i == 8 && err == nil {
+			t.Fatal("the ninth send to one host was accepted")
+		}
+	}
+	st.waitEntered(t, 8)
+	st.noMore(t)
+	close(st.release)
+	m.WaitBackground()
 }
 
 func TestRefusesPrivateEndpoints(t *testing.T) {
@@ -406,7 +497,7 @@ func TestPrivateEndpointNeverContacted(t *testing.T) {
 	if err := m.Push(context.Background(), p.DeviceID, core.PushMessage, []byte("hi")); err != nil {
 		t.Fatal(err)
 	}
-	m.WaitUP()
+	m.WaitBackground()
 	if r.hits != 0 {
 		t.Fatalf("receiver hit %d times", r.hits)
 	}
@@ -429,7 +520,7 @@ func TestWebpushRoundTrip(t *testing.T) {
 	if err := m.Push(context.Background(), p.DeviceID, core.PushMessage, []byte("hello")); err != nil {
 		t.Fatal(err)
 	}
-	m.WaitUP()
+	m.WaitBackground()
 	if len(r.got) != 1 {
 		t.Fatalf("hits %d", len(r.got))
 	}
@@ -509,7 +600,7 @@ func TestCallUsesTtl45(t *testing.T) {
 	if err := m.Push(context.Background(), p.DeviceID, core.PushCall, []byte("ring")); err != nil {
 		t.Fatal(err)
 	}
-	m.WaitUP()
+	m.WaitBackground()
 	if r.got[0].Header.Get("TTL") != "45" {
 		t.Fatalf("ttl %q", r.got[0].Header.Get("TTL"))
 	}
@@ -526,7 +617,7 @@ func TestEndpointGoneDeletes(t *testing.T) {
 		if err := m.Push(context.Background(), p.DeviceID, core.PushMessage, []byte("x")); err != nil {
 			t.Fatalf("%d: %v", st, err)
 		}
-		m.WaitUP()
+		m.WaitBackground()
 		if n := count(t, d, p.DeviceID); n != 0 {
 			t.Errorf("%d: registration kept", st)
 		}
@@ -535,7 +626,7 @@ func TestEndpointGoneDeletes(t *testing.T) {
 	d, m, _, p, _ := upSetup(t, r)
 	registerUP(t, d, p.DeviceID, r)
 	_ = m.Push(context.Background(), p.DeviceID, core.PushMessage, []byte("x"))
-	m.WaitUP()
+	m.WaitBackground()
 	if r.hits != 1 {
 		t.Error("503 endpoint not contacted")
 	}
@@ -560,7 +651,7 @@ func TestUnifiedPushNoRedirects(t *testing.T) {
 		"auth":   base64.RawURLEncoding.EncodeToString(target.auth)})
 	_, _ = d.DB.Exec(context.Background(), `insert into push_tokens (device_id, kind, sealed) values ($1,'unifiedpush',$2)`, p.DeviceID, reg)
 	_ = m.Push(context.Background(), p.DeviceID, core.PushMessage, []byte("x"))
-	m.WaitUP()
+	m.WaitBackground()
 	if target.hits != 0 {
 		t.Fatal("redirect followed")
 	}
@@ -635,7 +726,7 @@ func TestUnifiedPushWorksWithoutGateway(t *testing.T) {
 	p := testkit.Account(t, d, "alice")
 	registerUP(t, d, p.DeviceID, r)
 	err := m.Push(context.Background(), p.DeviceID, core.PushMessage, []byte("x"))
-	m.WaitUP()
+	m.WaitBackground()
 	if err != nil || r.hits != 1 {
 		t.Fatalf("%v %d", err, r.hits)
 	}

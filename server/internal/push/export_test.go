@@ -25,6 +25,3 @@ func VapidAudForTest(endpoint string) (string, error) {
 	}
 	return originOf(u), nil
 }
-
-// WaitUP waits for in-flight UnifiedPush sends.
-func (m *Module) WaitUP() { m.upWG.Wait() }
