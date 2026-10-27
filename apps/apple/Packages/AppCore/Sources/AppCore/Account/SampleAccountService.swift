@@ -1,3 +1,4 @@
+@MainActor
 public final class SampleAccountService: AccountService {
     public static let sampleEmailCode = "123456"
     public static let sampleInviteCode = "BETA-2026"

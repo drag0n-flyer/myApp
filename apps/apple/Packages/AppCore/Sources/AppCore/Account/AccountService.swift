@@ -9,6 +9,7 @@ public enum UsernameCheck: Equatable, Sendable {
 }
 
 /// Account sign-up and linking. `SampleAccountService` now; the Go server later.
+@MainActor
 public protocol AccountService: AnyObject {
     func checkUsername(_ name: String) async -> UsernameCheck
     func sendEmailCode(to email: String) async

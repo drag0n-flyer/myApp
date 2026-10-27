@@ -66,7 +66,7 @@ import Testing
     #expect(InviteLink.parse(URL(string: "https://chat.example.org/invite/abc")!) == nil)
 }
 
-@Test func usernames() async {
+@MainActor @Test func usernames() async {
     let a = SampleAccountService()
     #expect(await a.checkUsername("yourname") == .available)
     #expect(await a.checkUsername("riya") == .taken)
@@ -75,7 +75,7 @@ import Testing
     #expect(await a.checkUsername("Upper") == .invalid)
 }
 
-@Test func codes() async {
+@MainActor @Test func codes() async {
     let a = SampleAccountService()
     #expect(await a.verifyEmail(code: "123456"))
     #expect(!(await a.verifyEmail(code: "000000")))

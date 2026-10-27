@@ -1,0 +1,58 @@
+name: Apple apps
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: apple-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    runs-on: ubuntu-24.04
+    container: swift:6.0
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: AppCore tests
+        working-directory: apps/apple/Packages/AppCore
+        run: swift test --no-parallel
+
+  ios:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: iPhone UI tests
+        run: apps/apple/scripts/test-ios.sh
+      - name: Keep test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-ui-xcresult
+          path: ${{ runner.temp }}/ios-ui.xcresult
+
+  macos:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Mac UI tests
+        run: apps/apple/scripts/test-macos.sh
+      - name: Keep test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-ui-xcresult
+          path: ${{ runner.temp }}/mac-ui.xcresult
