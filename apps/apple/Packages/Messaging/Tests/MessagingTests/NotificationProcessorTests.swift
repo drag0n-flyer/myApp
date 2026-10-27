@@ -175,7 +175,7 @@ private struct NSEPair {
             try? lock.withLock(timeout: .seconds(1)) { acquired.signal(); Thread.sleep(forTimeInterval: 3) }
         }
         holder.start()
-        acquired.wait()
+        await Task.detached { acquired.wait() }.value
         let started = ContinuousClock.now
         let outcome = await pair.processor().process(pushData: data, deadline: NSEPair.deadline)
         #expect(outcome == .fallback)
