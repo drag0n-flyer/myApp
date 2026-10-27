@@ -47,7 +47,7 @@ class ChatStoreTest {
         s.receive(MessageContent.Text("hello"), stranger2)
         val request = s.requests.value.first { it.contactId == "stranger2" }
         assertTrue(request.isRequest)
-        assertEquals(0, request.unreadCount)
+        assertEquals(1, request.unreadCount)
         assertTrue(request.folderIds.isEmpty())
         assertTrue(s.chats(ChatFolder.All).none { it.contactId == "stranger2" })
         assertTrue(s.chats(ChatFolder.Unread).none { it.contactId == "stranger2" })
@@ -55,6 +55,20 @@ class ChatStoreTest {
         assertEquals(2, s.requests.value.size)
         assertNull(s.contacts.value.firstOrNull { it.id == "stranger2" })
         assertEquals("Someone New", s.contact("stranger2")?.displayName)
+    }
+
+    @Test fun acceptedRequestKeepsItsUnseenMessages() {
+        val s = store()
+        s.receive(MessageContent.Text("one"), stranger2)
+        s.receive(MessageContent.Text("two"), stranger2)
+        s.accept("chat-stranger2")
+        assertEquals(2, s.chat("chat-stranger2")!!.unreadCount)
+        assertTrue(s.chats(ChatFolder.Unread).any { it.id == "chat-stranger2" })
+    }
+
+    @Test fun safetyNumberForRiyaMatchesIPhone() {
+        val expected = "01362 42799 87429 32984 72403 52061 32693 70749 47126 18555 90264 31133".split(" ")
+        assertEquals(expected, store().safetyNumber("chat-riya")!!.groups)
     }
 
     @Test fun acceptingARequestMovesItToChatsAndAddsTheContact() {

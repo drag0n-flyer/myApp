@@ -126,8 +126,8 @@ class SampleChatStore(
         val message = Message(makeId(), from.id, clock(), content, DeliveryStatus.Delivered, null, emptyList())
         val chatId = chatIdCreatingRequestIfNeeded(from)
         append(message, chatId)
-        // A stranger's message waits in requests and never counts as unread.
-        change(chatId) { if (it.isRequest) it else it.copy(unreadCount = it.unreadCount + 1) }
+        // Request chats keep their count too, so accepting shows the unseen messages; the lists leave requests out.
+        change(chatId) { it.copy(unreadCount = it.unreadCount + 1) }
     }
 
     override fun accept(requestId: String) = mutate {
