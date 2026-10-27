@@ -1,22 +1,299 @@
-// Package calls is lane C: the call state machine and signaling. This file is
-// a stub.
+// Package calls is lane C: the call state machine and signaling.
 package calls
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"slices"
+	"sync"
+	"time"
 
 	"github.com/velixio/myApp/server/internal/core"
+	"github.com/velixio/myApp/server/internal/httpx"
 	"github.com/velixio/myApp/server/internal/realtime"
 )
+
+const (
+	endedKeep    = 60 * time.Second // an ended call stays visible to call.status
+	answeredKeep = 4 * time.Hour    // an answered call is forgotten after this
+	pushTimeout  = 10 * time.Second
+	maxIDLen     = 128
+)
+
+// entry is a call plus the facts the machine does not hold.
+type entry struct {
+	call *Call
+	// blocked means the callee had blocked the caller: nothing rang and the
+	// callee's devices must not see or act on the call.
+	blocked bool
+}
 
 // Module is the calls module.
 type Module struct {
 	d      core.Deps
 	frames realtime.FrameRouter
+
+	mu    sync.Mutex
+	calls map[string]*entry
 }
 
 // New returns the calls module, which registers its frames on frames.
-func New(d core.Deps, frames realtime.FrameRouter) *Module { return &Module{d: d, frames: frames} }
+func New(d core.Deps, frames realtime.FrameRouter) *Module {
+	m := &Module{d: d, frames: frames, calls: map[string]*entry{}}
+	frames.HandleFrame("call.invite", m.invite)
+	frames.HandleFrame("call.answer", m.answer)
+	frames.HandleFrame("call.signal", m.signal)
+	frames.HandleFrame("call.decline", m.decline)
+	frames.HandleFrame("call.hangup", m.hangup)
+	frames.HandleFrame("call.status", m.status)
+	return m
+}
 
-// Run does background work until ctx is cancelled.
-func (m *Module) Run(ctx context.Context) {}
+// Run ends unanswered calls, once a second, and forgets old ones, until ctx
+// is cancelled.
+func (m *Module) Run(ctx context.Context) {
+	t := time.NewTicker(time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			m.tick(ctx)
+		}
+	}
+}
+
+// tick times out ringing calls and drops expired ones.
+func (m *Module) tick(ctx context.Context) {
+	now := m.d.Now()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, e := range m.calls {
+		if expired(e.call, now) {
+			delete(m.calls, id)
+			continue
+		}
+		if e.call.State != Ringing || now.Sub(e.call.Started) < ringTimeout {
+			continue
+		}
+		devs, err := m.d.Directory.DeviceIDs(ctx, e.call.CalleeAccount)
+		if err != nil {
+			continue // retried next second
+		}
+		m.deliver(ctx, e, e.call.Tick(devs, now))
+	}
+}
+
+func expired(c *Call, now time.Time) bool {
+	switch c.State {
+	case Ended:
+		return now.Sub(c.Changed) >= endedKeep
+	case Answered:
+		return now.Sub(c.Changed) >= answeredKeep
+	}
+	return false
+}
+
+type frameData struct {
+	CallID  string `json:"callID"`
+	To      string `json:"to"`
+	Video   bool   `json:"video"`
+	Payload []byte `json:"payload"`
+}
+
+func decode(data json.RawMessage) (frameData, error) {
+	var f frameData
+	if err := json.Unmarshal(data, &f); err != nil || f.CallID == "" || len(f.CallID) > maxIDLen {
+		return f, httpx.Err("bad_request", "bad call frame")
+	}
+	return f, nil
+}
+
+func (m *Module) invite(ctx context.Context, from core.Principal, data json.RawMessage) (any, error) {
+	f, err := decode(data)
+	if err != nil {
+		return nil, err
+	}
+	if f.To == "" || f.To == from.AccountID || len(f.Payload) == 0 {
+		return nil, httpx.Err("bad_request", "bad call invite")
+	}
+	devs, err := m.d.Directory.DeviceIDs(ctx, f.To)
+	if err != nil {
+		return nil, err
+	}
+	blocked, err := m.d.Blocks.IsBlocked(ctx, f.To, from.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	now := m.d.Now()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, dup := m.calls[f.CallID]; dup {
+		return nil, httpx.Err("bad_request", "duplicate callID")
+	}
+	c := &Call{ID: f.CallID, CallerAccount: from.AccountID, CallerDevice: from.DeviceID,
+		CalleeAccount: f.To, Video: f.Video, State: Ringing, Started: now, Changed: now}
+	m.calls[f.CallID] = &entry{call: c, blocked: blocked}
+	if blocked {
+		return nil, nil // the caller learns only by the timeout
+	}
+	ring := map[string]any{"callID": c.ID, "fromAccountID": c.CallerAccount,
+		"fromDeviceID": c.CallerDevice, "video": c.Video, "payload": f.Payload}
+	for _, dev := range slices.Compact(slices.Clone(devs)) {
+		if !m.frames.Send(dev, "call.ring", ring) {
+			m.pushRing(dev, f.Payload)
+		}
+	}
+	return nil, nil
+}
+
+// pushRing sends the PushCall push off the caller's goroutine: frame handlers
+// run in the WebSocket read loop and a push can take seconds.
+func (m *Module) pushRing(dev string, payload []byte) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), pushTimeout)
+		defer cancel()
+		if err := m.d.Push.Push(ctx, dev, core.PushCall, payload); err != nil {
+			m.d.Log.Warn("call push failed")
+		}
+	}()
+}
+
+// op looks up the call, checks the caller may touch it, and runs fn with the
+// callee's current devices. Anything that is not the caller's device or an
+// account device of the callee gets not_found.
+func (m *Module) op(ctx context.Context, from core.Principal, data json.RawMessage,
+	fn func(e *entry, devs []string, now time.Time) ([]Output, error)) (any, error) {
+	f, err := decode(data)
+	if err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := m.d.Now()
+	e := m.lookup(f.CallID, now)
+	if e == nil || !m.mayAct(e, from) {
+		return nil, httpx.Err("not_found", "no such call")
+	}
+	devs, err := m.d.Directory.DeviceIDs(ctx, e.call.CalleeAccount)
+	if err != nil {
+		return nil, err
+	}
+	if m.reap(ctx, e, devs, now) {
+		return nil, httpx.Err("bad_request", "call is no longer active")
+	}
+	outs, err := fn(e, devs, now)
+	switch {
+	case errors.Is(err, ErrNotParticipant):
+		return nil, httpx.Err("not_found", "no such call")
+	case errors.Is(err, ErrWrongState):
+		return nil, httpx.Err("bad_request", "call is not in a state that allows this")
+	case err != nil:
+		return nil, err
+	}
+	m.deliver(ctx, e, outs)
+	return nil, nil
+}
+
+// reap ends an answered call as failed when either connected device has been
+// revoked, so a dead device never keeps receiving signals. It reports whether
+// it ended the call.
+func (m *Module) reap(ctx context.Context, e *entry, devs []string, now time.Time) bool {
+	c := e.call
+	if c.State != Answered {
+		return false
+	}
+	gone := !slices.Contains(devs, c.AnsweredBy)
+	if !gone {
+		if _, err := m.d.Directory.AccountOf(ctx, c.CallerDevice); errors.Is(err, core.ErrNotFound) {
+			gone = true
+		}
+	}
+	if !gone {
+		return false
+	}
+	m.deliver(ctx, e, c.end(ReasonFailed, devs, now))
+	return true
+}
+
+func (m *Module) lookup(id string, now time.Time) *entry {
+	e := m.calls[id]
+	if e != nil && expired(e.call, now) {
+		delete(m.calls, id)
+		return nil
+	}
+	return e
+}
+
+func (m *Module) mayAct(e *entry, from core.Principal) bool {
+	c := e.call
+	if from.DeviceID == c.CallerDevice && from.AccountID == c.CallerAccount {
+		return true
+	}
+	return !e.blocked && from.AccountID == c.CalleeAccount
+}
+
+// deliver sends the machine's outputs. A blocked call's outputs go to the
+// caller only.
+func (m *Module) deliver(_ context.Context, e *entry, outs []Output) {
+	for _, o := range outs {
+		for _, dev := range o.To {
+			if e.blocked && dev != e.call.CallerDevice {
+				continue
+			}
+			m.frames.Send(dev, o.Type, o.Data)
+		}
+	}
+}
+
+func (m *Module) answer(ctx context.Context, from core.Principal, data json.RawMessage) (any, error) {
+	f, err := decode(data)
+	if err != nil {
+		return nil, err
+	}
+	return m.op(ctx, from, data, func(e *entry, devs []string, now time.Time) ([]Output, error) {
+		return e.call.Answer(from.DeviceID, devs, f.Payload, now)
+	})
+}
+
+func (m *Module) signal(ctx context.Context, from core.Principal, data json.RawMessage) (any, error) {
+	f, err := decode(data)
+	if err != nil {
+		return nil, err
+	}
+	return m.op(ctx, from, data, func(e *entry, devs []string, _ time.Time) ([]Output, error) {
+		return e.call.Signal(from.DeviceID, devs, f.Payload)
+	})
+}
+
+func (m *Module) decline(ctx context.Context, from core.Principal, data json.RawMessage) (any, error) {
+	return m.op(ctx, from, data, func(e *entry, devs []string, now time.Time) ([]Output, error) {
+		return e.call.Decline(from.DeviceID, devs, now)
+	})
+}
+
+func (m *Module) hangup(ctx context.Context, from core.Principal, data json.RawMessage) (any, error) {
+	return m.op(ctx, from, data, func(e *entry, devs []string, now time.Time) ([]Output, error) {
+		return e.call.Hangup(from.DeviceID, devs, now)
+	})
+}
+
+func (m *Module) status(_ context.Context, from core.Principal, data json.RawMessage) (any, error) {
+	f, err := decode(data)
+	if err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	e := m.lookup(f.CallID, m.d.Now())
+	if e == nil || !m.mayAct(e, from) {
+		return nil, httpx.Err("not_found", "no such call")
+	}
+	out := map[string]any{"state": e.call.State.String()}
+	if e.call.State == Ended {
+		out["reason"] = e.call.Reason
+	}
+	return out, nil
+}
