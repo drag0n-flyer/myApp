@@ -109,3 +109,63 @@ import AppCore
                                         status: .ended(reason: "hangup")) == .reportThenEnd(name: "Bob", reason: .remoteEnded))
     }
 }
+
+@Suite struct PushCallLateEndTests {
+    let kit = UUID()
+    func ringing() -> PushCallTracker {
+        var t = PushCallTracker(); t.begin(kit: kit)
+        _ = t.reportFinished(kit: kit, refused: false)
+        _ = t.resolved(kit: kit, callID: "c1", engineKnows: false)
+        return t
+    }
+
+    @Test func lateStatusEndsRingingCallOnce() {
+        var t = ringing()
+        #expect(t.endRinging(kit: kit, kind: .remoteEnded) == PushLateEnd(callID: "c1", kind: .remoteEnded))
+        #expect(t.endRinging(kit: kit, kind: .unanswered) == nil)
+        #expect(!t.isRinging(kit: kit))
+    }
+    @Test func declineAfterOpenThenLateStatusIsOneEnd() {
+        var t = ringing()
+        #expect(t.userAction(.end, kit: kit) == .forward(callID: "c1"))
+        #expect(!t.isRinging(kit: kit))
+        #expect(t.endRinging(kit: kit, kind: .remoteEnded) == nil)
+    }
+    @Test func answeredCallIsNotEndedByLateStatusOrCap() {
+        var t = ringing()
+        _ = t.userAction(.answer, kit: kit)
+        #expect(t.endRinging(kit: kit, kind: .answeredElsewhere) == nil)
+        #expect(t.capReached(kit: kit) == .none)
+    }
+    @Test func capAfterEngineRingingTellsEngineOnce() {
+        var t = ringing()
+        #expect(t.capReached(kit: kit) == .endRinging(PushLateEnd(callID: "c1", kind: .unanswered)))
+        #expect(t.capReached(kit: kit) == .none)
+        #expect(t.endRinging(kit: kit, kind: .remoteEnded) == nil)
+    }
+    @Test func capBeforeSettlingEndsCallKitOnlyOnce() {
+        var t = PushCallTracker(); t.begin(kit: kit)
+        #expect(t.capReached(kit: kit) == .endUnsettled)
+        #expect(t.capReached(kit: kit) == .none)
+        #expect(t.resolved(kit: kit, callID: "c1", engineKnows: false) == nil)
+    }
+    @Test func statusMapsToCallKitEndKind() {
+        #expect(PushCallTracker.lateEndKind(status: .answered) == .answeredElsewhere)
+        #expect(PushCallTracker.lateEndKind(status: .ended(reason: "missed")) == .unanswered)
+        #expect(PushCallTracker.lateEndKind(status: .ended(reason: "hangup")) == .remoteEnded)
+        #expect(PushCallTracker.lateEndKind(status: .ended(reason: "answered_elsewhere")) == .answeredElsewhere)
+        #expect(PushCallTracker.lateEndKind(status: .ringing) == nil)
+        #expect(PushCallTracker.lateEndKind(status: .unknown) == nil)
+    }
+    @Test func briefedEndReasonsMapToKinds() {
+        #expect(CallKitEndKind(EndReason.failed) == .failed)
+        #expect(CallKitEndKind(EndReason.remoteEnded) == .remoteEnded)
+        #expect(CallKitEndKind(EndReason.unanswered) == .unanswered)
+    }
+    @Test func duplicatePushForSameCallDoesNotRingTwice() {
+        let k2 = UUID()
+        var t = ringing()
+        t.begin(kit: k2); _ = t.reportFinished(kit: k2, refused: false)
+        #expect(t.resolved(kit: k2, callID: "c1", engineKnows: false) == .endDuplicate)
+    }
+}

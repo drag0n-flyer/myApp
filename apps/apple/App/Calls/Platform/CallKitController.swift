@@ -11,6 +11,7 @@ protocol CallKitCallHandling: AnyObject {
     /// Decline while ringing, hang up once answered; the engine decides from its own state.
     func callKitEnd(callID: UUID)
     func callKitSetMuted(callID: UUID, muted: Bool)
+    /// May arrive before the engine knows the call (answer before the payload opened): keep it, do not drop it.
     func callKitAudioDidActivate(_ session: AVAudioSession)
     func callKitAudioDidDeactivate(_ session: AVAudioSession)
     /// CallKit dropped every call (provider reset): the engine must end its calls and stop audio.
@@ -20,6 +21,7 @@ protocol CallKitCallHandling: AnyObject {
 /// Owns the one `CXProvider` and the `CXCallController`. The server call ID (a UUIDv4 string) is the CallKit UUID.
 @MainActor
 final class CallKitController: NSObject, CXProviderDelegate {
+    /// `VoIPPushCenter` sets itself here to route push-created calls. Do not replace it with the engine.
     weak var handler: CallKitCallHandling?
     private let provider: CXProvider
     private let controller = CXCallController()
@@ -162,6 +164,14 @@ extension CXCallEndedReason {
 }
 
 extension CXCallEndedReason {
+    init(_ kind: CallKitEndKind) {
+        switch kind {
+        case .failed: self = .failed
+        case .remoteEnded: self = .remoteEnded
+        case .unanswered: self = .unanswered
+        case .answeredElsewhere: self = .answeredElsewhere
+        }
+    }
     /// The push-created call duplicates one the engine already shows: end it without a missed-call entry.
     static let duplicate: CXCallEndedReason = .answeredElsewhere
 }

@@ -17,8 +17,13 @@ protocol VoIPPushHandling: AnyObject {
     func voipPushDidResolveRing(kitCallID: UUID, contact: Contact, ring: CallSignalPayload, answer: Bool)
     /// The user declined before the payload opened: send `call.decline` for `ring.callID`; the call never rings.
     func voipPushDeclined(kitCallID: UUID, contact: Contact, ring: CallSignalPayload)
-    /// The call ended without ringing the engine (stranger, already over, status said missed, ring timeout, failure).
+    /// The call ended before the engine was ever handed it (stranger, undecryptable or empty push, ring cap before the
+    /// payload opened). The CallKit call is already ended. Never called for a call given to the engine.
     func voipPushDidEnd(kitCallID: UUID, reason: EndReason, resolution: VoIPPushResolution)
+    /// The engine already has this call ringing (`voipPushDidResolveRing`) and `call.status` or the ring cap says it is
+    /// over. The CallKit call is already ended; the engine drops its ringing call and records a missed call if `reason`
+    /// is `.unanswered`. Called at most once per call, and never after the user answered or declined.
+    func voipPushEndedAfterRing(kitCallID: UUID, callID: String, kind: CallKitEndKind)
 }
 
 /// The one `PKPushRegistry` for the app's lifetime, and the front door for CallKit's user actions.
@@ -103,6 +108,10 @@ final class VoIPPushCenter: NSObject, PKPushRegistryDelegate, CallKitCallHandlin
         }
         completion()
         Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.ringTimeout)
+            self?.capReached(kit: kitCallID)
+        }
+        Task { @MainActor [weak self] in
             await self?.resolve(kit: kitCallID, sealed: sealed, mustReport: mustReport, reportedGeneric: reportedGeneric)
         }
     }
@@ -139,34 +148,34 @@ final class VoIPPushCenter: NSObject, PKPushRegistryDelegate, CallKitCallHandlin
             }
             let known = handler?.engineKnows(callID: ring.callID) ?? false
             apply(tracker.resolved(kit: kit, callID: ring.callID, engineKnows: known), kit: kit)
-            startStatusAndTimeout(kit: kit, ring: ring, contact: contact, resolution: r, mustReport: mustReport)
+            startStatus(kit: kit, ring: ring)
         }
     }
 
     /// `call.status` runs after the name is shown. On a nil result (timeout) the call keeps ringing.
-    private func startStatusAndTimeout(kit: UUID, ring: CallSignalPayload, contact: Contact,
-                                       resolution: VoIPPushResolution, mustReport: Bool?) {
+    private func startStatus(kit: UUID, ring: CallSignalPayload) {
         let resolver = self.resolver
         Task { @MainActor [weak self] in
             let status = await resolver.fetchStatus(callID: ring.callID, timeout: Self.statusTimeout)
-            guard let self, self.tracker.isRinging(kit: kit), let status else { return }
-            var r = resolution; r.status = status
-            if case let .reportThenEnd(_, reason) = VoIPPushDecision.decide(
-                mustReport: mustReport, payload: r.payload, isStranger: r.isStranger, status: status) {
-                self.endRinging(kit: kit, reason: reason, resolution: r)
-            }
-        }
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(for: Self.ringTimeout)
-            guard let self, self.tracker.isRinging(kit: kit) else { return }
-            self.endRinging(kit: kit, reason: .unanswered, resolution: resolution)
+            guard let self, let status, let kind = PushCallTracker.lateEndKind(status: status) else { return }
+            if let late = self.tracker.endRinging(kit: kit, kind: kind) { self.endAfterRing(kit: kit, late) }
         }
     }
 
-    private func endRinging(kit: UUID, reason: EndReason, resolution: VoIPPushResolution) {
-        callKit.reportEnded(callID: kit, reason: CXCallEndedReason(reason))
-        tracker.finish(kit: kit); contexts[kit] = nil
-        handler?.voipPushDidEnd(kitCallID: kit, reason: reason, resolution: resolution)
+    private func capReached(kit: UUID) {
+        switch tracker.capReached(kit: kit) {
+        case .none: break
+        case let .endRinging(late): endAfterRing(kit: kit, late)
+        case .endUnsettled:
+            callKit.reportEnded(callID: kit, reason: CXCallEndedReason(.unanswered))
+            contexts[kit] = nil
+        }
+    }
+
+    private func endAfterRing(kit: UUID, _ late: PushLateEnd) {
+        callKit.reportEnded(callID: kit, reason: CXCallEndedReason(late.kind))
+        contexts[kit] = nil
+        handler?.voipPushEndedAfterRing(kitCallID: kit, callID: late.callID, kind: late.kind)
     }
 
     private func apply(_ effect: PushCallEffect?, kit: UUID) {
