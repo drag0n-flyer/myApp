@@ -8,7 +8,7 @@ check() { if "${@:2}"; then echo "PASS $1"; else echo "FAIL $1"; fails=$((fails+
 
 out="$("$here/android-setup.sh" --dry-run 2>&1)"; rc=$?
 check "dry-run exits 0" test "$rc" = 0
-for want in "platforms;android-36" "build-tools;" "ndk;" "cargo install --locked cargo-ndk" \
+for want in "platforms;android-36" "build-tools;" "ndk;" "cargo install --locked --version 4.1.2 cargo-ndk" \
   "aarch64-linux-android" "x86_64-linux-android" "Temurin 17" "cmdline-tools" "sha256"; do
   check "dry-run lists $want" grep -qF -- "$want" <<<"$out"
 done

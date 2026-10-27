@@ -39,7 +39,7 @@ if [ "$DRY_RUN" = 1 ]; then
   if [ "$WITH_EMULATOR" = 0 ]; then
     for p in "${EMULATOR_PACKAGES[@]}"; do echo "skipped (needs --with-emulator): $p"; done
   fi
-  echo "cargo: cargo install --locked cargo-ndk"
+  echo "cargo: cargo install --locked --version 4.1.2 cargo-ndk"
   for t in "${RUST_TARGETS[@]}"; do echo "rust target: $t"; done
   echo "licenses: accepted non-interactively"
   exit 0
@@ -85,7 +85,7 @@ yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses >/dev/null
 set -o pipefail
 "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install "${SDK_PACKAGES[@]}"
 
-cargo install --locked cargo-ndk
+cargo install --locked --version 4.1.2 cargo-ndk
 rustup target add "${RUST_TARGETS[@]}"
 
 cat > "$ANDROID_ROOT/env.sh" <<ENV

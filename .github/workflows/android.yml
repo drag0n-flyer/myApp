@@ -7,10 +7,14 @@ on:
     paths:
       - 'apps/android/**'
       - '.github/workflows/android.yml'
+      - 'scripts/android-*.sh'
+      - 'scripts/check-16kb.sh'
   pull_request:
     paths:
       - 'apps/android/**'
       - '.github/workflows/android.yml'
+      - 'scripts/android-*.sh'
+      - 'scripts/check-16kb.sh'
 
 permissions:
   contents: read
