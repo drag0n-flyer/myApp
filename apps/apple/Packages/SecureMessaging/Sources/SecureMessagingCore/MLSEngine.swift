@@ -42,6 +42,13 @@ public protocol MLSEngine: Sendable {
     func epoch(of group: GroupID) async throws -> UInt64
     func exportSecret(group: GroupID, label: String, length: Int) async throws -> Data
     func members(of group: GroupID) async throws -> [String]   // added by plan 7's request
+    /// Whether the engine's member keys are real MLS signature keys. Safety numbers are shown only when this is
+    /// true. TODO(M7): the real engine overrides this with `true` when `memberKeys(of:)` lands.
+    var providesRealMemberKeys: Bool { get }
+}
+
+extension MLSEngine {
+    public var providesRealMemberKeys: Bool { false }
 }
 
 /// Engine errors. Rust's `FfiError` maps one-to-one onto every case except `.busy`, which

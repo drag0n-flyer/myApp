@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "note": "TEST ONLY — published keys",
+  "suite": {
+    "kem": "DHKEM(X25519, HKDF-SHA256)",
+    "kdf": "HKDF-SHA256",
+    "aead": "ChaCha20Poly1305"
+  },
+  "info": "push-handle-v1",
+  "recipientPrivateKeyHex": "404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f",
+  "recipientPublicKeyB64": "eaYx7t4b-cmPEgMs3q3Q56B5OY_HhriMyEbsia-FpRo",
+  "cases": [
+    {
+      "plaintextJSON": "{\"t\":\"00ff\",\"k\":\"alert\",\"e\":\"sandbox\",\"b\":\"org.example.app\"}",
+      "sealedB64": "W6utPQLnlCCjo3POOjJ21oifSxd0xVotDW1zVXVk82pAxMzJyrlDO5_0bkZRArrxWkLUO5tXJSEdnjUXHhCyTiyLKS-J_xYKphdmViTY4nekQgCeUD-UdMqQeStY_g1T7LFzD4Xcx6NJ17A0"
+    },
+    {
+      "plaintextJSON": "{\"t\":\"a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90\",\"k\":\"voip\",\"e\":\"production\",\"b\":\"org.example.app\"}",
+      "sealedB64": "-tAC9n5gNDKFk1bZEnvdReP_3hh7X9wKhYazApTppzQ-lqe0aOMNS0VlVdIn1YzTv5WszQEceQkthqeoajR2Usz3Xh60eYutRBNvwk5KNtJTJSwZLmuacCX5C40bBdDIsP3zlKSbqpeAn8ltF1FgoYki_0lADsXIzxx0m99OtawwEXG4GuBHcu6Yr1_loWgqCuiofy7_6CHpk7D6mpHqGYmr10f-CCYthSY"
+    }
+  ],
+  "negative": [
+    {
+      "name": "wrong info",
+      "sealedB64": "W6utPQLnlCCjo3POOjJ21oifSxd0xVotDW1zVXVk82pAxMzJyrlDO5_0bkZRArrxWkLUO5tXJSEdnjUXHhCyTiyLKS-J_xYKphdmViTY4nekQgCeUD-UdMqQeStY_g1T7LFzD4Xcx6NJ17A0",
+      "info": "wrong-info-v1"
+    },
+    {
+      "name": "one flipped byte in the ciphertext",
+      "sealedB64": "W6utPQLnlCCjo3POOjJ21oifSxd0xVotDW1zVXVk82pAxMzJyrlDO5_0bkZRArrxWkLUO5tXJSEdnjUXHhCyTiyLKS-J_xYKphdmViTY4nekQgCeUD-UdMqQeStY_g1T7LFzD4Xcx6NJ17A1",
+      "info": "push-handle-v1"
+    },
+    {
+      "name": "one flipped byte in the encapsulated key",
+      "sealedB64": "WqutPQLnlCCjo3POOjJ21oifSxd0xVotDW1zVXVk82pAxMzJyrlDO5_0bkZRArrxWkLUO5tXJSEdnjUXHhCyTiyLKS-J_xYKphdmViTY4nekQgCeUD-UdMqQeStY_g1T7LFzD4Xcx6NJ17A0",
+      "info": "push-handle-v1"
+    },
+    {
+      "name": "truncated by one byte",
+      "sealedB64": "W6utPQLnlCCjo3POOjJ21oifSxd0xVotDW1zVXVk82pAxMzJyrlDO5_0bkZRArrxWkLUO5tXJSEdnjUXHhCyTiyLKS-J_xYKphdmViTY4nekQgCeUD-UdMqQeStY_g1T7LFzD4Xcx6NJ17A",
+      "info": "push-handle-v1"
+    },
+    {
+      "name": "shorter than the encapsulated key",
+      "sealedB64": "W6utPQLnlCCjo3POOjJ21oifSxd0xVotDW1zVXVk8w",
+      "info": "push-handle-v1"
+    }
+  ]
+}

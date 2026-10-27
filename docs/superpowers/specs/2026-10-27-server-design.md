@@ -21,7 +21,7 @@ These were not decided in GOAL.md. Each one changes what gets built.
 5. **Call state lives in memory** on the single server node. A restart ends ringing calls; calls that are already connected keep running, because media is peer-to-peer.
 6. **Display names are stored on the server in plain text** (Phase 1). Encrypted profiles come later.
 7. **TURN credentials last 12 hours.** coturn checks them on every allocation refresh, so the lifetime must cover the longest call. The TURN username is `<expiry>:<random 8 hex>`, which never contains an account or device ID.
-8. **Go module path** `github.com/velixio/myapp/server`. If the GitHub repo is named differently, rename it with one `go mod edit -module` and a search-and-replace.
+8. **Go module path** `github.com/velixio/myApp/server`. Confirmed against the repo `velixio/myApp` (2026-10-27).
 
 ## 3. Components
 
@@ -178,6 +178,7 @@ Usernames: `^[a-z][a-z0-9_]{2,31}$` (same rule as AppCore `UsernameCheck`). Rese
 | `GET /v1/devices` | ✓ | → `{devices:[{id, name, platform, createdAt, lastSeenAt, current}]}` |
 | `DELETE /v1/devices/{id}` | ✓ | → `204`; own devices only (`not_found` otherwise); sends `device.revoked` to the remaining devices |
 | `POST /v1/link` | – | `{deviceName, platform}` → `{linkID, secret, claimToken, expiresAt}`. The new device also makes an X25519 key pair and shows the QR code `https://<host>/link/<linkID>#<secret>.<publicKey b64url>`; the approver seals `sealed` to that key (HPKE, same suite as escrow, `info = "link-v1"`), so the server cannot read the link data |
+| `POST /v1/link/{linkID}/info` | ✓ | `{secret}` → `{deviceName, platform, createdAt}` for the approval screen (client plan 6, OPEN-24); `forbidden` on a wrong secret, `expired` after 5 minutes |
 | `POST /v1/link/{linkID}/approve` | ✓ | `{secret, sealed?}` → `204`. `sealed` is at most 64 KiB of opaque data handed to the new device |
 | `POST /v1/link/{linkID}/claim` | – | `{claimToken}` → `202 {}` while pending; once approved, `200 {accountID, deviceID, sessionToken, sealed}`, exactly once; `expired` after 5 minutes or after a claim |
 
@@ -191,7 +192,7 @@ Phase 1 conversations have exactly two accounts. The server tracks which **devic
 |---|---|---|
 | `POST /v1/keypackages` | ✓ | `{keyPackages:[b64]}` → `{count}`; at most 16 KiB each, at most 100 stored per device |
 | `GET /v1/keypackages/count` | ✓ | → `{count}` |
-| `POST /v1/keypackages/claim` | ✓ | `{accountID}` → `{keyPackages:[{deviceID, keyPackage}]}`, one per device of that account. A device's last KeyPackage is returned without being removed. If the target blocked the caller, or does not exist: `not_found` |
+| `POST /v1/keypackages/claim` | ✓ | `{accountID, deviceIDs?}` → `{keyPackages:[{deviceID, keyPackage}]}`, one per device of that account, or only per device listed in the optional `deviceIDs` (omitted or empty: all; IDs that are not devices of the account are ignored). A device's last KeyPackage is returned without being removed. If the target blocked the caller, or does not exist: `not_found` |
 | `POST /v1/conversations` | ✓ | `{members:[accountID]}` (exactly one other account) → `{conversationID, mode, epoch:0}`. The caller's device is the only member device at epoch 0 |
 | `GET /v1/conversations/{id}` | ✓ (member device) | → `{conversationID, mode, epoch}`; a device that joined by Welcome learns the mode here. Non-members: `not_found` |
 | `POST /v1/conversations/{id}/commits` | ✓ (member device) | `{epoch, commit:b64, welcome?:b64, addDevices?:[id], removeDevices?:[id]}` → `{epoch}` (the new epoch). The commit is accepted only if `epoch` equals the current epoch; otherwise `409 stale_epoch` with `{"currentEpoch":n}` in `error.details`. Added devices must belong to the conversation's accounts |
@@ -206,11 +207,11 @@ Fan-out rules:
 - A welcome goes to each added device.
 - A message goes to every member device except the sender.
 - Each delivery is one inbox row plus `Notify(device, Event{Type:"inbox", Data:item, Push:PushMessage, PushPayload:payload})`.
-- When a recipient's account has blocked the sender's account, the server skips that recipient silently and the sender still gets `200`.
+- When a recipient's account has blocked the sender's account, the server skips that recipient silently and the sender still gets `200`. For a **welcome**, the blocked recipient's device is skipped and not added to the conversation. For a **commit** in an existing conversation, the row is still delivered (skipping it would break the recipient's encryption state) but with no push.
 
 Inbox rows older than `retention.inboxDays` are deleted hourly.
 
-Escrow keys: `appserver keygen escrow` prints a new X25519 private key as PKCS#8 PEM. Escrow: HPKE base mode, DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, ChaCha20-Poly1305, `info = "escrow-v1"`. The plaintext is client JSON `{conversationID, senderAccountID, sentAt, body}`. Escrow rows keep `retention.escrowDays`. The CLI command `appserver escrow export --conversation <id> --reason <text>` decrypts the copies, writes JSON lines to stdout, and appends a row to `escrow_access_log`.
+Escrow keys: `appserver keygen escrow` prints a new X25519 private key as PKCS#8 PEM. Escrow (wire format: the stored blob is the HPKE encapsulated key (32 bytes) followed by the ciphertext, single-shot with empty AAD — CryptoKit `HPKE.Sender` `encapsulatedKey || seal(_:)`): HPKE base mode, DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, ChaCha20-Poly1305, `info = "escrow-v1"`. The plaintext is client JSON `{conversationID, senderAccountID, sentAt, body}`. Escrow rows keep `retention.escrowDays`. The CLI command `appserver escrow export --conversation <id> --reason <text>` decrypts the copies, writes JSON lines to stdout, and appends a row to `escrow_access_log`.
 
 ### 7.3 Realtime, calls, TURN (lane C)
 
@@ -218,7 +219,7 @@ Escrow keys: `appserver keygen escrow` prints a new X25519 private key as PKCS#8
 
 Frames: `{"type":string, "id"?:string, "data"?:object}`. When a client frame has an `id`, the server answers with `{"type":"ack","id"}` or `{"type":"error","id","data":{"code"}}`.
 
-Server → client: `inbox`, `device.revoked {deviceID}`, `call.ring`, `call.answered`, `call.signal`, `call.ended`.
+Server → client: `inbox`, `device.revoked {deviceID}`, `call.ring`, `call.answered`, `call.signal`, `call.ended`. Every server-sent `call.signal` carries `{callID, fromDeviceID, payload}`: before the answer several callee devices may signal the caller (client plan 8 has callees make the offer), so the caller must know which device each signal came from.
 
 Client → server, for calls (`payload` is always an opaque MLS application message the server cannot read, carrying the SDP and DTLS fingerprint):
 
@@ -233,13 +234,13 @@ Client → server, for calls (`payload` is always an opaque MLS application mess
 
 Call states are `ringing`, `answered` and `ended`. End reasons are `declined`, `hangup`, `missed`, `answered_elsewhere`, `failed`, and `missed` is used when ringing goes unanswered for 45 s. An answered call is forgotten after 4 h. An ended call is kept for 60 s so `call.status` can report it. Only the caller's device and the callee account's devices may act on a call. Anything else gets `not_found`.
 
-`GET /v1/turn` (auth) → `{iceServers:[{urls:[…], username, credential}], ttl:43200}`, or `calls_disabled`. Each healthy relay contributes `stun:H:3478`, `turn:H:3478?transport=udp`, `turn:H:3478?transport=tcp` and `turns:H:443?transport=tcp`. The username is `<unix expiry>:<8 random hex>`. The credential is `base64(HMAC-SHA1(secret, username))`.
+`GET /v1/turn` (auth) → `{iceServers:[{urls:[…], username, credential}], ttl:43200}`, or `calls_disabled`. There is one `iceServers` entry per healthy relay (same username and credential), and each contributes `stun:H:3478`, `turn:H:3478?transport=udp`, `turn:H:3478?transport=tcp` and `turns:H:443?transport=tcp`. The username is `<unix expiry>:<8 random hex>`. The credential is `base64(HMAC-SHA1(secret, username))`.
 
 Relay health: every 30 s, send a STUN Binding Request (RFC 5389) over UDP to `H:3478` with a 2 s timeout. A relay becomes unhealthy after 3 failures in a row and healthy again after 1 success. Healthy relays are listed fastest first. If no relay is healthy, all of them are listed.
 
 ### 7.4 Push (lane D)
 
-Server endpoints: `PUT /v1/push/tokens/{kind}` (kind `alert` or `voip`) `{sealed:b64}` → `204`, and `DELETE /v1/push/tokens/{kind}` → `204`.
+Server endpoints: `PUT /v1/push/tokens/{kind}` (kind `alert` or `voip`) `{sealed:b64url}` → `204` (at most 2 KiB decoded; larger is `bad_request`), and `DELETE /v1/push/tokens/{kind}` → `204`.
 
 **Sealed handle:** the device seals `{"t":"<apns token hex>","k":"alert"|"voip","e":"production"|"sandbox","b":"<bundle id>"}` with HPKE to the gateway's public key (the same suite as escrow, `info = "push-handle-v1"`). The server stores it as received and cannot read it.
 
@@ -251,15 +252,15 @@ Server endpoints: `PUT /v1/push/tokens/{kind}` (kind `alert` or `voip`) `{sealed
 **Padding:** the body is a 2-byte big-endian length, then the payload, then zeros up to the smallest bucket of 256, 512, 1024, 2048 or 3072 bytes. A payload over 3070 bytes is replaced by an empty one, and the device then fetches its inbox.
 
 **Server → gateway:**
-- The request is `POST {gateway}/v1/push` with body `{handle:b64, kind:"message"|"call", data:b64}`.
+- The request is `POST {gateway}/v1/push` with body `{handle:b64, kind:"message"|"call", data:b64, nonce?:string}`, where `b64` is standard base64 with padding, not base64url. Decision 3 covers client-facing fields only.
 - It carries three headers: `X-Server-ID`, `X-Timestamp` (Unix seconds) and `X-Signature`.
-- `X-Signature` is base64 Ed25519 over `"v1\n"+method+"\n"+path+"\n"+timestamp+"\n"+hex(sha256(body))`.
+- `X-Signature` is standard base64 (with padding) Ed25519 over `"v1\n"+method+"\n"+path+"\n"+timestamp+"\n"+hex(sha256(body))`.
 - If the gateway answers `410`, the server deletes that handle.
 
 **Gateway (`cmd/pushgw`):**
 
 Endpoints:
-- `GET /v1/gateway-key` → `{publicKey:b64}`
+- `GET /v1/gateway-key` → `{publicKey:b64url}` (base64url, no padding, like every client-facing binary field)
 - `POST /v1/servers` `{publicKey, name, contact}`, signed with that key → `{serverID}`. Limited to 5 per hour per IP.
 - `POST /v1/push`
 
@@ -274,11 +275,14 @@ Checks before sending:
 
 Limits: 1000 per minute per server, 120 per hour per handle for messages, and 20 per hour per handle for calls.
 
+Besides the codes of section 7, the gateway also answers `conflict` (409, a replayed signature), `gone` (410, the handle is no longer valid) and `upstream` (502, APNs failed). It returns no other codes.
+
 **APNs:**
 - HTTP/2 `POST https://api.push.apple.com/3/device/<token>`, or `api.sandbox.push.apple.com` for sandbox handles.
 - The auth JWT is ES256 with header `{alg:ES256, kid}` and claims `{iss:teamID, iat}`, refreshed every 50 minutes.
 - Alert push:
   - headers `apns-push-type: alert`, `apns-priority: 10`, `apns-topic: <bundle>`
+  - `d` is standard base64 with padding. It is an APNs payload field, not a client API field, so decision 3 does not apply
   - body `{"aps":{"alert":{"title":"[App]","body":"New message"},"mutable-content":1,"sound":"default"},"d":"<b64 data>"}`
 - VoIP push:
   - headers `apns-push-type: voip`, `apns-priority: 10`, `apns-expiration: 0`, `apns-topic: <bundle>.voip`

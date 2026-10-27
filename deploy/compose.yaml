@@ -1,0 +1,110 @@
+# [App] server. Copy .env.example to .env and edit it, then: docker compose up -d
+# TLS is terminated by a reverse proxy in front of 127.0.0.1:8080 (see the admin guide).
+services:
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: appserver
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: appserver
+      PUSHGW_DB_PASSWORD: ${PUSHGW_DB_PASSWORD:-} # creates the gateway's own role and database
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U appserver -d appserver"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  appserver:
+    build:
+      context: ../server
+      dockerfile: ../deploy/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      APP_DATABASE_URL: postgres://appserver:${POSTGRES_PASSWORD}@postgres:5432/appserver?sslmode=disable
+      APP_LISTEN: ":8080"
+      # Overrides .env: inside the container the admin port must listen on all
+      # interfaces so the published port works; the host side stays 127.0.0.1.
+      APP_ADMIN_LISTEN: "0.0.0.0:9090"
+      APP_DATA_DIR: /var/lib/appserver
+      # Caddy (below) sets X-Forwarded-For; the published ports are bound to
+      # 127.0.0.1, so only a proxy on this host can reach the server.
+      APP_TRUST_PROXY: ${APP_TRUST_PROXY:-true}
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:9090:9090" # admin: /healthz /readyz /debug/vars, never public
+    volumes:
+      - appdata:/var/lib/appserver
+      - ./secrets:/secrets:ro
+      - ./docs:/docs:ro # operator documents, see APP_DOCS_DIR
+
+  # Optional: Caddy as the reverse proxy, with automatic HTTPS for APP_HOST.
+  # Start it with: docker compose --profile caddy up -d
+  # Leave it off if you already run your own proxy on ports 80 and 443.
+  caddy:
+    profiles: ["caddy"]
+    image: caddy:2.10
+    restart: unless-stopped
+    depends_on:
+      - appserver
+    environment:
+      APP_HOST: ${APP_HOST:?set APP_HOST in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+
+  coturn:
+    image: coturn/coturn:4.18
+    restart: unless-stopped
+    network_mode: host
+    # Single-host setup: TURN on 3478 and TLS on 5349, no TLS-on-443 fallback
+    # (the reverse proxy owns 443). See "Calls and TURN" in the admin guide.
+    volumes:
+      # coturn does not expand ${TURN_SECRET} itself: render it first, see the admin guide
+      - ./turnserver.rendered.conf:/etc/coturn/turnserver.conf:ro
+      - ./certs:/certs:ro
+    command: ["-c", "/etc/coturn/turnserver.conf"]
+
+  # Optional: the push gateway, only for a server that runs its own gateway.
+  # Start it with: docker compose --profile gateway up -d
+  pushgw:
+    profiles: ["gateway"]
+    build:
+      context: ../server
+      dockerfile: ../deploy/Dockerfile
+    entrypoint: ["/pushgw"]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PUSHGW_LISTEN: ":8081"
+      PUSHGW_DATABASE_URL: postgres://pushgw:${PUSHGW_DB_PASSWORD:-}@postgres:5432/pushgw?sslmode=disable
+      PUSHGW_HPKE_KEY_FILE: ${PUSHGW_HPKE_KEY_FILE:-/secrets/pushgw-hpke.pem}
+      PUSHGW_APNS_KEY_FILE: ${PUSHGW_APNS_KEY_FILE:-/secrets/apns.p8}
+      PUSHGW_APNS_KEY_ID: ${PUSHGW_APNS_KEY_ID:-}
+      PUSHGW_APNS_TEAM_ID: ${PUSHGW_APNS_TEAM_ID:-}
+      PUSHGW_BUNDLE_IDS: ${PUSHGW_BUNDLE_IDS:-}
+      PUSHGW_TRUST_PROXY: ${PUSHGW_TRUST_PROXY:-false}
+    ports:
+      - "127.0.0.1:8081:8081"
+    volumes:
+      - ./secrets:/secrets:ro
+
+volumes:
+  pgdata:
+  appdata:
+  caddydata:
+  caddyconfig:

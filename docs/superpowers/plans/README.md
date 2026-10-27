@@ -43,7 +43,7 @@ apps/apple/Packages/AppCore      plan 1; domain models + service protocols
 apps/apple/Packages/WebRTCBinary plan 3 (product and binary target `WebRTC`)
 tools/webrtc/                    plan 3 (pin, patches, build scripts, reserved-symbols.txt)
 apps/apple/Packages/SecureMessaging  plan 4
-apps/apple/Packages/SecureMessaging/rust  plan 4 (our thin `mlsffi` crate over mls-rs)
+apps/apple/Packages/SecureMessaging/mlsffi plan 4 (our thin `mlsffi` crate over mls-rs)
 apps/apple/Packages/ServerKit    plan 6 (products ServerKit, ServerKitTesting)
 apps/apple/Packages/LocalStore   plan 7
 apps/apple/Packages/Messaging    plan 7 (content envelope, outbox, inbox, LiveChatStore, Escrow)
@@ -68,6 +68,7 @@ docs/measurements/               plan 5
 - Encryption mode strings are the server's: `e2ee` and `server_readable`.
 - Contact IDs in AppCore are server account IDs.
 - Device-linking QR: `https://<host>/link/<linkID>#<secret>.<X25519 public key, b64url>`; the approver seals the link snapshot to that key (server design §7.1).
+  - Before approving, the approver fetches `POST /v1/link/{linkID}/info {secret}` → `{deviceName, platform, createdAt}` (plan 2 lane A adds it; plan 6 shows it, then requires Face ID / Touch ID).
 - Passkeys work only for hosts in the app's associated domains (the project's servers). On other servers, sign-up skips the passkey and sign-in uses an email code.
 
 ### `SecureMessaging` (plan 4 owns it; plans 7 and 8 consume it)
@@ -92,7 +93,9 @@ public protocol MLSEngine: Sendable {
     func epoch(of group: GroupID) async throws -> UInt64
     func exportSecret(group: GroupID, label: String, length: Int) async throws -> Data
     func members(of group: GroupID) async throws -> [String]   // added by plan 7's request
+    func memberKeys(of group: GroupID) async throws -> [MemberKey]   // requested by plan 7 (safety numbers, device lines; OPEN-6/7): sorted by identity, includes this device
 }
+public struct MemberKey: Sendable, Equatable { public let identity: String; public let signatureKey: Data }   // the leaf's MLS signature public key; FakeMLSEngine: Data("fake-sig:\(identity)".utf8)
 public enum MLSError: Error   // plan 4 defines the cases
 // The engine re-reads group state from storage on every call: the NSE changes it from another process.
 // Product `SecureMessagingCore` (no binary target, builds on Linux) holds the protocol, the types,
@@ -114,7 +117,7 @@ public enum ServerEvent: Sendable, Equatable {
     case inbox(InboxItem), deviceRevoked(String)
     case callRing(callID: String, fromAccountID: String, fromDeviceID: String, video: Bool, payload: Data)
     case callAnswered(callID: String, deviceID: String, payload: Data)
-    case callSignal(callID: String, payload: Data)
+    case callSignal(callID: String, fromDeviceID: String, payload: Data)
     case callEnded(callID: String, reason: String)
 }
 public actor LiveConnection {         // the /v1/ws socket, with reconnects
@@ -153,7 +156,7 @@ The sample services stay. The launch argument `-sampleData` selects them, so the
 |---|---|---|---|
 | pgx v5, coder/websocket, go-webauthn | MIT, ISC, BSD-3 | 2 | asked in plan 2 |
 | WebRTC (Google, M-branch) + libopus 1.6 | BSD-3 | 3 | named in GOAL.md; plan 3 pins the branch |
-| mls-rs, mls-rs-crypto-cryptokit, mls-rs-crypto-rustcrypto (git pin), uniffi | Apache-2.0 OR MIT / MPL-2.0 (uniffi) | 4 | mls-rs named in GOAL.md; plan 4 asks for the rest |
+| mls-rs, mls-rs-crypto-rustcrypto (git pin; all targets, CryptoKit crate dropped 2026-10-28), uniffi | Apache-2.0 OR MIT / MPL-2.0 (uniffi) | 4 | mls-rs named in GOAL.md; plan 4 asks for the rest |
 | RNNoise | BSD-3 | 5 (lab), 8 | named in GOAL.md |
 | Lab-only scoring: numpy, onnxruntime, ViSQOL/speequal, DNSMOS models; LibriSpeech + MUSAN/DNS noise corpora | various, to check | 5 | asked in plan 5; never shipped |
 | CI tools: markdownlint-cli2, lychee, gitleaks, go-licenses, gremlins | various | 9 | asked in plan 9 |
@@ -167,8 +170,11 @@ The sample services stay. The launch argument `-sampleData` selects them, so the
 
 - Plan 5 adds `appserver lab session` and `APP_LAB_MODE` to the server's identity package after plan 2 merges (owner review: auth).
 - Plan 8 needs plan 3's WebRTC build to add a capture post-processing hook for RNNoise and H.264 hardware factories.
-- Plan 8's first app build checks that plan 4's CryptoKit bridge symbols and WebRTC's symbols don't collide.
-- Plan 9's test vectors (push padding, signatures, sealed handles, TURN credentials, escrow, link sealing) are checked by both the Go and Swift tests.
+- Symbol collision between plan 4 and WebRTC: no longer a risk. Plan 4 uses RustCrypto on all targets (owner decision 2026-10-28), so there is no CryptoKit bridge.
+- Plan 9's test vectors (push padding, signatures, sealed handles, TURN credentials, escrow, link sealing, safety numbers) are checked by both the Go and Swift tests.
+- **Plan 2 lane A (A5) adds `POST /v1/link/{linkID}/info`** (authed; `{secret}` → `{deviceName, platform, createdAt}`; `403 forbidden`, `410 expired`) for plan 6's link approval screen (OPEN-24). Owner review: auth.
+- **Plan 4 adds `MLSEngine.memberKeys(of:)` and `MemberKey`** (contract above) for plan 7 A4. Owner review: cryptography.
+- **Plan 7's content envelope gains kind `mode`** (`{"k":"mode","m":"e2ee"|"server_readable"}`), sent first by a conversation's creator and after every add; clients pin it and never add escrow to a chat pinned `e2ee` (OPEN-18). Plan 9's protocol spec documents it and the safety-number derivation (plan 7 Design 20).
 
 ## Owner decisions log
 
@@ -178,3 +184,8 @@ The sample services stay. The launch argument `-sampleData` selects them, so the
 | 2026-10-27 | Plan 3 carries our own WebRTC patch for the capture post-processing hook (RNNoise). **Approved.** |
 | 2026-10-27 | Keep server-readable mode in Phase 1 (escrow copy, off by default, admin export is audit-logged). **Approved.** |
 | 2026-10-27 | Use mls-rs through our own thin Rust binding layer (`mlsffi`, plan 4) instead of `mls-rs-uniffi`; GOAL.md §3 and §5 updated. **Approved.** |
+| 2026-10-27 | Threat-model fixes (OPEN-18, OPEN-7, OPEN-24, OPEN-6): (1) chat mode bound inside the encrypted chat by its creator, clients never switch E2EE → server-readable; (2) adding a device to a chat shows "X added a new device" to the other members and notifies own devices; (3) link approval shows device name/type, requires Face ID/Touch ID, warns plainly; (4) real safety numbers derived from MLS keys. **Approved.** Added to plans 6 and 7. |
+| 2026-10-27 | Owner review of CODEOWNERS paths (identity, delivery, calls, push, pushgw, auth middleware, crypto) is deferred until the end of Phase 1; completed, reviewed work may merge to `main` before that. **Owner decision.** |
+| 2026-10-28 | MLS crypto provider is `mls-rs-crypto-rustcrypto` on all targets (iPhone, Mac, Linux); `mls-rs-crypto-cryptokit` is dropped. Its Swift bridge needs macOS 26 (the Mac app supports macOS 14) and its build script fails on Xcode 26.1+; one provider also means one crypto path to review and no symbol clash with WebRTC. Supersedes plan 4 decision 2. **Owner decision.** |
+| 2026-10-28 | No branch protection or code-owner enforcement for now (docs Task 13 deferred). Voice notes may be up to 30 minutes (minimum 0.5 s stays). The GitHub token in the local remote URL is a throwaway account's and stays. **Owner decisions.** |
+| 2026-10-28 | Device measurements (call lab L10) are replaced for now by automated test calls on GitHub Mac runners: the server runs on the runner; the Mac app and an iOS Simulator call each other with recorded speech as the microphone, under emulated bad networks; data use, connect time and network-switch survival are measured. Battery, real cellular, Bluetooth and real microphones are left for a later, optional device run. **Owner decision.** |

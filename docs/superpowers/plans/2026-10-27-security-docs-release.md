@@ -407,7 +407,7 @@ A missing directory or file gives 404 `not_found`. Files are read on each reques
 
 **Required sections** (it is a memo and checklist):
 1. **What the apps contain:**
-   - MLS through mls-rs (AES-128-GCM, X25519, Ed25519, SHA-256)
+   - MLS through mls-rs with the RustCrypto provider (AES-128-GCM, X25519, Ed25519, SHA-256)
    - DTLS-SRTP inside the project's own WebRTC build (BoringSSL)
    - HPKE through CryptoKit (OS-provided)
    - TLS through URLSession (OS-provided)

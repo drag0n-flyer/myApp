@@ -1,0 +1,48 @@
+name: restore-drill
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 4 * * 1' # weekly, Monday 04:17 UTC
+  push:
+    paths:
+      - 'deploy/**'
+      - 'server/**'
+      - '.github/workflows/restore-drill.yml'
+  pull_request:
+    paths:
+      - 'deploy/**'
+      - 'server/**'
+      - '.github/workflows/restore-drill.yml'
+
+jobs:
+  drill:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://postgres@localhost:5432/postgres?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compose files are valid
+        run: |
+          sh deploy/compose_test.sh
+          docker compose -f deploy/relay/compose.yaml config -q
+          docker compose -f deploy/pushgw/compose.yaml config -q
+      - name: Backup and restore scripts
+        # Run inside the postgres:18 image so pg_dump matches the server version.
+        run: >-
+          docker run --rm --network host -v "$PWD:/w" -e TEST_DATABASE_URL
+          postgres:18 sh /w/deploy/scripts/backup_test.sh
+      - name: Restore drill
+        run: sh deploy/scripts/restore-drill.sh
