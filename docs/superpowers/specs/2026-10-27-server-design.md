@@ -234,7 +234,7 @@ Client → server, for calls (`payload` is always an opaque MLS application mess
 
 Call states are `ringing`, `answered` and `ended`. End reasons are `declined`, `hangup`, `missed`, `answered_elsewhere`, `failed`, and `missed` is used when ringing goes unanswered for 45 s. An answered call is forgotten after 4 h. An ended call is kept for 60 s so `call.status` can report it. Only the caller's device and the callee account's devices may act on a call. Anything else gets `not_found`.
 
-`GET /v1/turn` (auth) → `{iceServers:[{urls:[…], username, credential}], ttl:43200}`, or `calls_disabled`. Each healthy relay contributes `stun:H:3478`, `turn:H:3478?transport=udp`, `turn:H:3478?transport=tcp` and `turns:H:443?transport=tcp`. The username is `<unix expiry>:<8 random hex>`. The credential is `base64(HMAC-SHA1(secret, username))`.
+`GET /v1/turn` (auth) → `{iceServers:[{urls:[…], username, credential}], ttl:43200}`, or `calls_disabled`. There is one `iceServers` entry per healthy relay (same username and credential), and each contributes `stun:H:3478`, `turn:H:3478?transport=udp`, `turn:H:3478?transport=tcp` and `turns:H:443?transport=tcp`. The username is `<unix expiry>:<8 random hex>`. The credential is `base64(HMAC-SHA1(secret, username))`.
 
 Relay health: every 30 s, send a STUN Binding Request (RFC 5389) over UDP to `H:3478` with a 2 s timeout. A relay becomes unhealthy after 3 failures in a row and healthy again after 1 success. Healthy relays are listed fastest first. If no relay is healthy, all of them are listed.
 
