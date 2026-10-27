@@ -130,7 +130,10 @@ private func makeGroup(creator: any MLSEngine, joiners: [any MLSEngine]) async t
             }
         }
         thread.start()
-        acquired.wait()
+        // `DispatchSemaphore.wait` is unavailable in async contexts: wait on a global queue.
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global().async { acquired.wait(); continuation.resume() }
+        }
         await #expect(throws: MLSError.busy) { _ = try await a.createGroup() }
         release.signal()
         // Once the holder lets go the engine works again.
