@@ -35,7 +35,17 @@ Devices: the A12 iPhone and the current iPhone. Do the whole protocol on each.
    Expected: three entries.
 5. For each mode record the footprint delta (memory added by loading the model): `footprintBytesAfter - footprintBytesBefore`.
    Expected: a number of bytes. Convert to MB (1 MB = 1 000 000 bytes) for the result.
-6. Score the clips. After the run, the bench (Task L5) will write one WAV file per clip for each pass, in one subfolder per mode: `raw/<clip-id>.wav`, `vpio/<clip-id>.wav` and `rnnoise/<clip-id>.wav`, next to `bench.json`. Score each mode folder with one command (folder mode prints one JSON line per clip, with the `clip` id first):
+6. Convert and move the recordings to the scoring machine. The ViSQOL package only installs ready-made on Linux x86_64 (see `tools/call-lab/scoring/README.md`), and `afconvert` exists only on the Mac. So on the Mac, convert every recording to 48 kHz mono 16-bit WAV, then copy the folder to the Linux machine (replace `<run_id>`, `<user>` and `<linux-host>`):
+
+   ```
+   cd tools/call-lab/runs/<run_id>
+   for m in raw vpio rnnoise; do mkdir -p ../<run_id>-48k/$m; for f in $m/*.wav; do afconvert -f WAVE -d LEI16@48000 -c 1 "$f" "../<run_id>-48k/$m/$(basename "$f")"; done; done
+   rsync -a ../<run_id>-48k/ <user>@<linux-host>:myApp/tools/call-lab/runs/<run_id>/
+   rsync -a <clean-folder>/ <user>@<linux-host>:myApp/tools/call-lab/runs/clean/
+   ```
+
+   Expected: the Linux machine has `raw/`, `vpio/` and `rnnoise/` under `tools/call-lab/runs/<run_id>/` and the clean clips (already converted with `afconvert` the same way) in `tools/call-lab/runs/clean/`. On the Linux machine, `<clean-folder>` below means `tools/call-lab/runs/clean/`. Run the next two steps there.
+7. Score the clips. After the run, the bench (Task L5) will write one WAV file per clip for each pass, in one subfolder per mode: `raw/<clip-id>.wav`, `vpio/<clip-id>.wav` and `rnnoise/<clip-id>.wav`, next to `bench.json`. Score each mode folder with one command (folder mode prints one JSON line per clip, with the `clip` id first):
 
    ```
    tools/call-lab/scoring/.venv/bin/python tools/call-lab/scoring/score.py dnsmos --in tools/call-lab/runs/<run_id>/vpio/
@@ -43,17 +53,17 @@ Devices: the A12 iPhone and the current iPhone. Do the whole protocol on each.
 
    Run it again with `raw/` and `rnnoise/`.
    Expected: one `{"clip": "<clip-id>", "sig": x, "bak": y, "ovrl": z}` per clip, each value between 1 and 5, for 150 clips in each of the three folders.
-7. Score each mode folder against the clean references with ViSQOL. The clean references are the clean speech clips you gave to `mix_noise.py --clean` in "Before you start" step 1; keep them in one folder, named by the same `<clip-id>`, here called `<clean-folder>`:
+8. Score each mode folder against the clean references with ViSQOL. The clean references are the clean speech clips you gave to `mix_noise.py --clean` in "Before you start" step 1; keep them in one folder, named by the same `<clip-id>`, here called `<clean-folder>`:
 
    ```
    tools/call-lab/scoring/.venv/bin/python tools/call-lab/scoring/score.py visqol --ref <clean-folder> --deg tools/call-lab/runs/<run_id>/rnnoise/
    ```
 
    Run it again with `vpio/` for comparison.
-   Expected: a `{"clip": "<clip-id>", "visqol_moslqo": x}` per clip, matched by `<clip-id>`. A clip with no clean reference is listed on stderr and the exit code is 1.
-8. Average SIG, BAK and OVRL per mode and per noise category. Then compute, per category, `OVRL(rnnoise) - OVRL(vpio)`.
+   Expected: a `{"clip": "<clip-id>", "visqol_moslqo": x}` per clip, matched by `<clip-id>`. A clip with no clean reference, a reference with no recording, or a clip that cannot be scored (a `{"clip": ..., "error": ...}` line) makes the exit code 1; fix those before using the numbers.
+9. Average SIG, BAK and OVRL per mode and per noise category. Then compute, per category, `OVRL(rnnoise) - OVRL(vpio)`.
    Expected: a 5-row table (one per category) with a difference column.
-9. Run the 30-minute bench loop for battery: charge to 80% or more, unplug, lock nothing (the bench must stay in front), start the NS bench loop in `rnnoise` mode for 30 minutes, then repeat with `vpio`. Read the battery % at start and end from the phone, and the `battery` column of the loop's `stats.csv` if present.
+10. Run the 30-minute bench loop for battery: charge to 80% or more, unplug, lock nothing (the bench must stay in front), start the NS bench loop in `rnnoise` mode for 30 minutes, then repeat with `vpio`. Read the battery % at start and end from the phone, and the `battery` column of the loop's `stats.csv` if present.
    Expected: two numbers per mode: start % and end %. Subtract to get the drop.
 
 ## Where each number comes from

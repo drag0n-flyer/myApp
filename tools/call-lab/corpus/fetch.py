@@ -7,6 +7,8 @@ import csv
 import hashlib
 import os
 import re
+import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -47,6 +49,34 @@ def extract(archive, dest):
             t.extractall(dest, filter="data")
 
 
+SPEECH_CLIP_MEMBER = "LibriSpeech/test-clean/1089/134686/1089-134686-0000.flac"
+
+
+def convert_flac_to_wav(src, dst):
+    """48 kHz mono 16-bit WAV, with afconvert (macOS) or ffmpeg."""
+    if shutil.which("afconvert"):
+        cmd = ["afconvert", "-f", "WAVE", "-d", "LEI16@48000", "-c", "1", str(src), str(dst)]
+    elif shutil.which("ffmpeg"):
+        cmd = ["ffmpeg", "-loglevel", "error", "-y", "-i", str(src), "-ac", "1", "-ar", "48000", "-c:a", "pcm_s16le", str(dst)]
+    else:
+        raise OSError("neither afconvert nor ffmpeg found; cannot convert the speech clip")
+    subprocess.run(cmd, check=True)
+
+
+def extract_speech_clip(archive, out_dir, convert=None):
+    """Extract one fixed LibriSpeech clip and convert it to <out_dir>/<id>.wav (used by the >= 4.5 scoring test)."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stem = Path(SPEECH_CLIP_MEMBER).stem
+    wav = out_dir / f"{stem}.wav"
+    with tempfile.TemporaryDirectory() as tmp:
+        flac = Path(tmp) / f"{stem}.flac"
+        with tarfile.open(archive) as t:
+            flac.write_bytes(t.extractfile(SPEECH_CLIP_MEMBER).read())
+        (convert or convert_flac_to_wav)(flac, wav)
+    return wav
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--sources", default=str(HERE / "SOURCES.tsv"))
@@ -66,6 +96,11 @@ def main(argv=None):
         try:
             path = fetch_one(row, archives)
             print(f"ok {row['name']} {path}")
+            if row["name"] == "librispeech-test-clean":
+                try:
+                    print(f"ok speech clip {extract_speech_clip(path, dest / 'speech48k', convert_flac_to_wav)}")
+                except (OSError, KeyError, subprocess.CalledProcessError) as e:
+                    print(f"warning: speech clip not prepared ({e}); the >= 4.5 ViSQOL test will skip", file=sys.stderr)
             if a.extract:
                 extract(path, dest / row["name"])
         except (ValueError, OSError) as e:

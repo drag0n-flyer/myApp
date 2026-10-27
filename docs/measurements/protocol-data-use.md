@@ -120,17 +120,25 @@ Do these in order, for each of the 3 runs of a cell.
 
    What the options mean: `--local` is the phone you captured on. `--peer` keeps only traffic with the other end of the call, so notifications and updates are not counted. `--udp-only` drops TCP traffic such as signaling. `--exclude-ports 53,5353` leaves out name lookups (53) and local-network discovery (5353). `duration_s` is counted from the first to the last media packet. It prints one line of JSON.
    Expected: JSON with `duration_s` close to 300, and `up_bytes`, `down_bytes`, `bytes_per_min` and `mb_per_10min` filled in. If it prints an error, note the message and see "If something fails" below.
-9. Score the voice quality:
+9. Convert and move the recording to the scoring machine. `afconvert` exists only on the Mac, and ViSQOL installs ready-made only on Linux x86_64 (see `tools/call-lab/scoring/README.md`). On the Mac:
 
     ```
-    tools/call-lab/scoring/.venv/bin/python tools/call-lab/scoring/score.py visqol --ref stimulus.wav --deg tools/call-lab/runs/<run_id>/received.wav
+    afconvert -f WAVE -d LEI16@48000 -c 1 tools/call-lab/runs/<run>/received.wav tools/call-lab/runs/<run>/received-48k.wav
+    rsync -a tools/call-lab/runs/<run>/received-48k.wav stimulus.wav <user>@<linux-host>:myApp/tools/call-lab/runs/<run>/
+    ```
+
+    Expected: both files are on the Linux machine. Use `received-48k.wav` and `stimulus.wav` (convert `stimulus.wav` the same way if it is not already 48 kHz mono 16-bit) in the next step, and run it on the Linux machine.
+10. Score the voice quality:
+
+    ```
+    tools/call-lab/scoring/.venv/bin/python tools/call-lab/scoring/score.py visqol --ref stimulus.wav --deg tools/call-lab/runs/<run_id>/received-48k.wav
     ```
 
     Expected: one line like `{"visqol_moslqo": 4.1}`. Use the number as `visqol`. (If the scoring tools are not installed yet, follow `tools/call-lab/scoring/README.md` first.)
-10. Work out `concealed_pct`: the share of received audio the phone had to make up. Open the **callee's** `stats.csv`, take the **last row**, and compute `100 * concealed_samples / total_samples_recv`.
+11. Work out `concealed_pct`: the share of received audio the phone had to make up. Open the **callee's** `stats.csv`, take the **last row**, and compute `100 * concealed_samples / total_samples_recv`.
     Expected: a number from 0 to about 30 (higher on `loss5` and `cap32`).
 11. Check that the run is valid (see below).
-12. Add one row to your copy of `templates/data-use.csv` (the finished file is `docs/measurements/YYYY-MM-DD-data-use.csv`). Columns:
+13. Add one row to your copy of `templates/data-use.csv` (the finished file is `docs/measurements/YYYY-MM-DD-data-use.csv`). Columns:
 
     | Column | Where it comes from |
     |---|---|

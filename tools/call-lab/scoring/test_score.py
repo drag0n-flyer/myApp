@@ -25,7 +25,8 @@ MODEL = HERE.parent / "corpus" / "data" / "archives" / "sig_bak_ovr.onnx"
 # (clips converted from LibriSpeech as described in scoring/README.md).
 _env = os.environ.get("CALL_LAB_SPEECH_WAV")
 REAL_SPEECH = ([Path(_env)] if _env else sorted((HERE.parent / "corpus" / "data" / "speech48k").glob("*.wav")))[:1]
-NEED_SPEECH = "no real speech clip: set CALL_LAB_SPEECH_WAV or put converted LibriSpeech WAVs in corpus/data/speech48k/"
+NEED_SPEECH = ("no real speech clip. To enable: python3 tools/call-lab/corpus/fetch.py --only librispeech-test-clean "
+               "(extracts one clip into corpus/data/speech48k/; needs ffmpeg or afconvert), or set CALL_LAB_SPEECH_WAV=<mono 16-bit wav>")
 NEED_NUMPY = "numpy is not installed (create the venv: see scoring/README.md)"
 NEED_VISQOL = "speequal is not installed (create the venv: see scoring/README.md)"
 NEED_DNSMOS = "onnxruntime or the DNSMOS model is missing (see scoring/README.md)"
@@ -99,9 +100,10 @@ class FolderMatchTests(unittest.TestCase):
                 (ref / f"{n}.wav").touch()
             for n in ("b", "c", "z"):
                 (deg / f"{n}.wav").touch()
-            pairs, missing = score.pair_folders(ref, deg)
+            pairs, no_ref, no_rec = score.pair_folders(ref, deg)
             self.assertEqual([p[0] for p in pairs], ["b", "c"])
-            self.assertEqual(missing, ["z"])
+            self.assertEqual(no_ref, ["z"])
+            self.assertEqual(no_rec, ["a"])
 
 
 @unittest.skipUnless(HAVE_VISQOL, NEED_VISQOL)
@@ -193,6 +195,103 @@ class DnsmosTests(unittest.TestCase):
             for l in lines:
                 for k in ("sig", "bak", "ovrl"):
                     self.assertTrue(1.0 <= l[k] <= 5.0)
+
+
+def write_tone_wav(path, seconds=3, rate=16000, channels=1):
+    import wave
+    import array
+    a = array.array("h", [int(8000 * math.sin(2 * math.pi * 300 * i / rate)) for i in range(int(seconds * rate))] * channels)
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(channels)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(a.tobytes())
+
+
+def run_cli(*args, timeout=60):
+    return subprocess.run([sys.executable, "-I", str(HERE / "score.py"), *args],
+                          capture_output=True, text=True, timeout=timeout)
+
+
+@unittest.skipUnless(HAVE_NUMPY, NEED_NUMPY)
+class FailFastTests(unittest.TestCase):
+    def test_empty_wav_fails_fast_visqol(self):
+        with tempfile.TemporaryDirectory() as d:
+            write_tone_wav(Path(d, "ok.wav"), seconds=3)
+            write_tone_wav(Path(d, "empty.wav"), seconds=0)
+            out = run_cli("visqol", "--ref", str(Path(d, "ok.wav")), "--deg", str(Path(d, "empty.wav")), timeout=30)
+            self.assertNotEqual(out.returncode, 0)
+            self.assertIn("empty", out.stderr)
+
+    def test_too_short_wav_is_rejected(self):
+        with tempfile.TemporaryDirectory() as d:
+            write_tone_wav(Path(d, "short.wav"), seconds=0.01)
+            write_tone_wav(Path(d, "ok.wav"), seconds=3)
+            out = run_cli("visqol", "--ref", str(Path(d, "ok.wav")), "--deg", str(Path(d, "short.wav")), timeout=30)
+            self.assertNotEqual(out.returncode, 0)
+            self.assertIn("short", out.stderr)
+
+
+@unittest.skipUnless(HAVE_VISQOL, NEED_VISQOL)
+class FolderRobustnessTests(unittest.TestCase):
+    def _folders(self, d):
+        ref, deg = Path(d, "ref"), Path(d, "deg")
+        ref.mkdir()
+        deg.mkdir()
+        return ref, deg
+
+    def test_reference_without_recording_is_reported(self):
+        import wavio
+        with tempfile.TemporaryDirectory() as d:
+            ref, deg = self._folders(d)
+            x = (speechlike(4, 16000) * 32767).astype(int).tolist()
+            for n in ("a", "b"):
+                wavio.write_wav(ref / f"{n}.wav", x, 16000)
+            wavio.write_wav(deg / "a.wav", x, 16000)
+            out = run_cli("visqol", "--ref", str(ref), "--deg", str(deg))
+            self.assertEqual(out.returncode, 1, out.stderr)
+            self.assertIn("no recording for b", out.stderr)
+            self.assertEqual(len(out.stdout.strip().splitlines()), 1)
+
+    def test_bad_clip_does_not_abort_folder(self):
+        import wavio
+        with tempfile.TemporaryDirectory() as d:
+            ref, deg = self._folders(d)
+            x = (speechlike(4, 16000) * 32767).astype(int).tolist()
+            for n in ("a", "b", "c"):
+                wavio.write_wav(ref / f"{n}.wav", x, 16000)
+            wavio.write_wav(deg / "a.wav", x, 16000)
+            write_tone_wav(deg / "b.wav", channels=2)  # stereo: unsupported
+            wavio.write_wav(deg / "c.wav", x, 16000)
+            out = run_cli("visqol", "--ref", str(ref), "--deg", str(deg))
+            self.assertEqual(out.returncode, 1, out.stderr)
+            lines = [json.loads(l) for l in out.stdout.strip().splitlines()]
+            self.assertEqual([l["clip"] for l in lines], ["a", "b", "c"])
+            self.assertIn("error", lines[1])
+            self.assertNotIn("error", lines[0])
+            self.assertIn("visqol_moslqo", lines[2])
+
+
+@unittest.skipUnless(HAVE_ORT and MODEL.exists(), NEED_DNSMOS)
+class DnsmosRobustnessTests(unittest.TestCase):
+    def test_empty_wav_fails_fast(self):
+        with tempfile.TemporaryDirectory() as d:
+            write_tone_wav(Path(d, "empty.wav"), seconds=0)
+            out = run_cli("dnsmos", "--in", str(Path(d, "empty.wav")), timeout=30)
+            self.assertNotEqual(out.returncode, 0)
+            self.assertIn("empty", out.stderr)
+
+    def test_bad_clip_does_not_abort_folder(self):
+        with tempfile.TemporaryDirectory() as d:
+            write_tone_wav(Path(d, "a.wav"), seconds=10)
+            write_tone_wav(Path(d, "b.wav"), seconds=0)
+            write_tone_wav(Path(d, "c.wav"), seconds=10, channels=2)
+            write_tone_wav(Path(d, "d.wav"), seconds=10)
+            out = run_cli("dnsmos", "--in", d, timeout=120)
+            self.assertEqual(out.returncode, 1, out.stderr)
+            lines = [json.loads(l) for l in out.stdout.strip().splitlines()]
+            self.assertEqual([l["clip"] for l in lines], ["a", "b", "c", "d"])
+            self.assertEqual([("error" in l) for l in lines], [False, True, True, False])
 
 
 class ModelHashTests(unittest.TestCase):

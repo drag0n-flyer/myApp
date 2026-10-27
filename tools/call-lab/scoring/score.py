@@ -10,7 +10,8 @@ ViSQOL v3 (speech mode, via the speequal wheel) compares a recording with its cl
 after cross-correlation alignment (max lag 2 s) and resampling to 16 kHz. DNSMOS P.835 uses
 Microsoft's sig_bak_ovr.onnx with the published non-personalized polynomial fit, as in
 microsoft/DNS-Challenge DNSMOS/dnsmos_local.py. Input WAVs are mono 16-bit PCM at any rate.
-Exit codes: 0 ok, 1 some clips could not be paired, 2 bad input, model or hash.
+Exit codes: 0 ok, 1 some clips failed or could not be paired (recording without reference, or
+reference without recording; each failed clip also prints {"clip", "error"}), 2 bad input, model or hash.
 """
 import argparse
 import csv
@@ -28,6 +29,7 @@ import wavio  # noqa: E402
 
 RATE = 16000
 MAX_LAG_SECONDS = 2.0
+MIN_SECONDS = 0.1
 DNSMOS_SECONDS = 9.01
 DNSMOS_SOURCES_NAME = "dnsmos-sig-bak-ovr"
 DEFAULT_MODEL = CORPUS / "data" / "archives" / "sig_bak_ovr.onnx"
@@ -51,6 +53,10 @@ def load(path):
     """Return (float64 samples in [-1, 1), rate)."""
     np = _np()
     samples, rate = wavio.read_wav(path)
+    if not samples:
+        raise ValueError(f"{path}: the WAV file is empty (0 samples)")
+    if len(samples) < MIN_SECONDS * rate:
+        raise ValueError(f"{path}: the WAV file is too short ({len(samples) / rate:.3f} s, need at least {MIN_SECONDS} s)")
     return np.asarray(samples, dtype="float64") / 32768.0, rate
 
 
@@ -112,20 +118,27 @@ def visqol_files(ref_path, deg_path):
     lag = find_lag(ref, deg, RATE)
     ref, deg = align(ref, deg, lag)
     if len(ref) < RATE:
-        raise ValueError(f"{deg_path}: less than 1 s left after alignment (lag {lag / RATE:.3f} s)")
+        raise ValueError(f"{deg_path}: too short, less than 1 s left after alignment (lag {lag / RATE:.3f} s)")
     return visqol_score(ref, deg, RATE)
 
 
 def pair_folders(ref_dir, deg_dir):
-    """Match <clip-id>.wav in both folders. Returns ([(id, ref, deg)], [deg ids with no reference])."""
+    """Match <clip-id>.wav in both folders.
+
+    Returns ([(id, ref, deg)], recordings with no reference, references with no recording).
+    """
     refs = {p.stem: p for p in Path(ref_dir).glob("*.wav")}
-    pairs, missing = [], []
-    for p in sorted(Path(deg_dir).glob("*.wav")):
-        if p.stem in refs:
-            pairs.append((p.stem, refs[p.stem], p))
-        else:
-            missing.append(p.stem)
-    return pairs, missing
+    degs = {p.stem: p for p in Path(deg_dir).glob("*.wav")}
+    pairs = [(c, refs[c], degs[c]) for c in sorted(degs) if c in refs]
+    no_ref = sorted(set(degs) - set(refs))
+    no_rec = sorted(set(refs) - set(degs))
+    return pairs, no_ref, no_rec
+
+
+def _fail(clip, err):
+    """Report one failed clip as a JSON line on stdout and a message on stderr."""
+    print(json.dumps({"clip": clip, "error": str(err)}), flush=True)
+    print(f"{clip}: {err}", file=sys.stderr)
 
 
 def cmd_visqol(a):
@@ -134,15 +147,22 @@ def cmd_visqol(a):
         print(json.dumps({"visqol_moslqo": round(visqol_files(ref, deg), 4)}))
         return 0
     if ref.is_dir() and deg.is_dir():
-        pairs, missing = pair_folders(ref, deg)
+        pairs, no_ref, no_rec = pair_folders(ref, deg)
         if not pairs:
             print(f"no clip ids in common between {ref} and {deg}", file=sys.stderr)
             return 2
-        for clip, r, d in pairs:
-            print(json.dumps({"clip": clip, "visqol_moslqo": round(visqol_files(r, d), 4)}), flush=True)
-        for clip in missing:
+        failed = False
+        for clip in no_ref:
             print(f"no clean reference for {clip}", file=sys.stderr)
-        return 1 if missing else 0
+        for clip in no_rec:
+            print(f"no recording for {clip} (reference exists)", file=sys.stderr)
+        for clip, r, d in pairs:
+            try:
+                print(json.dumps({"clip": clip, "visqol_moslqo": round(visqol_files(r, d), 4)}), flush=True)
+            except ValueError as e:
+                _fail(clip, e)
+                failed = True
+        return 1 if (failed or no_ref or no_rec) else 0
     print("--ref and --deg must both be files or both be folders", file=sys.stderr)
     return 2
 
@@ -211,10 +231,15 @@ def cmd_dnsmos(a):
         if not files:
             print(f"no .wav files in {src}", file=sys.stderr)
             return 2
+        failed = False
         for p in files:
-            audio, rate = load(p)
-            print(json.dumps({"clip": p.stem, **dnsmos_score(audio, rate, sess)}), flush=True)
-        return 0
+            try:
+                audio, rate = load(p)
+                print(json.dumps({"clip": p.stem, **dnsmos_score(audio, rate, sess)}), flush=True)
+            except ValueError as e:
+                _fail(p.stem, e)
+                failed = True
+        return 1 if failed else 0
     print(f"{src} is not a file or folder", file=sys.stderr)
     return 2
 

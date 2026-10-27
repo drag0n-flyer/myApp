@@ -4,7 +4,7 @@ Offline quality scores for recordings made with the lab: ViSQOL v3 (against a cl
 
 ## Set up
 
-Needs Python 3.12 or 3.14. The ViSQOL package (`speequal`) ships ready-made wheels only for Linux x86_64 with those two Python versions. On a Mac, `pip` builds it from source, which needs Bazel and a TensorFlow Lite build. If that is a problem, run the scoring on a Linux x86_64 machine (copy the `runs/` folder over).
+Needs Python 3.12 (the lock was compiled for it; 3.14 also has a speequal wheel but needs a re-lock). The ViSQOL package (`speequal`) ships ready-made wheels only for Linux x86_64 with those two Python versions. On a Mac, `pip` builds it from source, which needs Bazel and a TensorFlow Lite build. If that is a problem, run the scoring on a Linux x86_64 machine (copy the `runs/` folder over).
 
 ```
 cd tools/call-lab/scoring
@@ -57,4 +57,6 @@ cd tools/call-lab/scoring
 .venv/bin/python -m unittest -v
 ```
 
-Tests that need `numpy`, `speequal`, `onnxruntime` or the DNSMOS model skip with a reason when those are missing. `test_visqol_identical_is_high` also needs one real speech clip: set `CALL_LAB_SPEECH_WAV=<mono 16-bit wav>` or put converted LibriSpeech clips in `tools/call-lab/corpus/data/speech48k/`.
+Folder mode never stops at one bad clip: each failure prints `{"clip": ..., "error": ...}` (and a line on stderr), the rest is scored, and the exit code is 1 at the end. A reference with no recording, or a recording with no reference, is reported and also gives exit code 1. Empty or too-short WAV files are rejected with a clear error.
+
+Tests that need `numpy`, `speequal`, `onnxruntime` or the DNSMOS model skip with a reason when those are missing. `test_visqol_identical_is_high` needs one real speech clip. `python3 tools/call-lab/corpus/fetch.py --only librispeech-test-clean` extracts one (`1089-134686-0000`) into `tools/call-lab/corpus/data/speech48k/` and converts it with `afconvert` or `ffmpeg`; or set `CALL_LAB_SPEECH_WAV=<mono 16-bit wav>`.
