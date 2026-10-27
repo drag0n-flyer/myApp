@@ -78,6 +78,10 @@ targets:
       - package: CallCore
       - package: Messaging
         product: Messaging
+      - package: LocalStore
+        product: LocalStore
+      - package: SecureMessaging
+        product: SecureMessaging
       - target: AppNSEiOS
   AppMac:
     type: application
@@ -110,6 +114,10 @@ targets:
       - package: CallCore
       - package: Messaging
         product: Messaging
+      - package: LocalStore
+        product: LocalStore
+      - package: SecureMessaging
+        product: SecureMessaging
       - target: AppNSEMac
   AppNSEiOS:
     type: app-extension

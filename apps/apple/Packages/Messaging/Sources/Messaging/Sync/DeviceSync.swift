@@ -49,14 +49,20 @@ public actor DeviceSync {
     private let deps: MessagingDeps
     private let conversations: ConversationManager
     private let wipeMLS: @Sendable () async throws -> Void
+    private let deleteSigningKey: @Sendable () async throws -> Void
     private let lockTimeout: Duration
 
     /// - Parameter wipeMLS: deletes the MLS engine's storage. `MLSEngine` has no such call, so the app
     ///   passes one that removes the engine's database. Required: a revoked device must not keep key material.
+    /// - Parameter deleteSigningKey: deletes this account's MLS signing key from the keychain (ruling: a wipe
+    ///   removes it too). M5's `SigningKeyStore` is wired in here by integration I1; until then the default does
+    ///   nothing. It runs on every wipe, after the other steps.
     public init(
         deps: MessagingDeps, conversations: ConversationManager,
-        wipeMLS: @escaping @Sendable () async throws -> Void, lockTimeout: Duration = .seconds(5)
+        wipeMLS: @escaping @Sendable () async throws -> Void,
+        deleteSigningKey: @escaping @Sendable () async throws -> Void = {}, lockTimeout: Duration = .seconds(5)
     ) {
+        self.deleteSigningKey = deleteSigningKey
         self.lockTimeout = lockTimeout
         self.deps = deps
         self.conversations = conversations
@@ -180,17 +186,30 @@ public actor DeviceSync {
     /// Deletes the database rows, the media directory and the MLS storage. Every step runs; the first
     /// error is thrown at the end.
     public func wipeLocalData() async throws {
+        try await Self.wipe(
+            repo: deps.repo, mediaDirectory: deps.mediaDirectory, lock: deps.lock, wipeMLS: wipeMLS,
+            deleteSigningKey: deleteSigningKey, lockTimeout: lockTimeout)
+    }
+
+    /// The wipe without a running graph (the app calls it at launch to finish a wipe that was cut short). Rows,
+    /// media, MLS storage, then the signing key.
+    public static func wipe(
+        repo: Repository, mediaDirectory: URL, lock: ProcessLock,
+        wipeMLS: @Sendable () async throws -> Void, deleteSigningKey: @Sendable () async throws -> Void = {},
+        lockTimeout: Duration = .seconds(5)
+    ) async throws {
         // No network inside: the whole wipe is one locked step, so the notification extension cannot
         // process an item into a half-deleted store.
-        try await deps.lock.withAsyncLock(timeout: lockTimeout) {
+        try await lock.withAsyncLock(timeout: lockTimeout) {
             var failure: Error?
-            do { try deps.repo.wipe() } catch { failure = error }
+            do { try repo.wipe() } catch { failure = error }
             do {
-                if FileManager.default.fileExists(atPath: deps.mediaDirectory.path) {
-                    try FileManager.default.removeItem(at: deps.mediaDirectory)
+                if FileManager.default.fileExists(atPath: mediaDirectory.path) {
+                    try FileManager.default.removeItem(at: mediaDirectory)
                 }
             } catch { failure = failure ?? error }
             do { try await wipeMLS() } catch { failure = failure ?? error }
+            do { try await deleteSigningKey() } catch { failure = failure ?? error }
             if let failure { throw failure }
         }
     }
