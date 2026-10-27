@@ -6,7 +6,7 @@ apps/apple/*.xcodeproj
 .build/
 DerivedData/
 tools/call-lab/*.xcodeproj
-tools/call-lab/corpus/
+tools/call-lab/corpus/data/
 tools/call-lab/runs/
 
 # Rust (MLS bindings) and built frameworks
@@ -28,4 +28,11 @@ deploy/data/
 *.pem
 *.p8
 *.key
+deploy/.env
+deploy/turnserver.rendered.conf
+deploy/secrets/
+deploy/certs/
+
+# Python
 __pycache__/
+*.pyc

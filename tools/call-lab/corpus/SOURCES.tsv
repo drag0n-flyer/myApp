@@ -1,0 +1,4 @@
+name	url	sha256	license
+librispeech-test-clean	https://www.openslr.org/resources/12/test-clean.tar.gz	39fde525e59672dc6d1551919b1478f724438a95aa55f874b576be21967e6c23	CC BY 4.0
+#noise-musan	https://www.openslr.org/resources/17/musan.tar.gz	TODO-verify	Mixed per clip (see MUSAN README); owner decision 5
+#noise-dns-challenge	TODO-verify	TODO-verify	TODO-verify; owner decision 5
