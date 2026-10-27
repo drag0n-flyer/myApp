@@ -11,13 +11,18 @@ android {
     }
 
     // The device smoke test loads the real libmlsffi.so for the emulator ABI (x86_64) from src/main/jniLibs,
-    // which scripts/build-mlsffi-android.sh fills. API 36 runs through the CI emulator step, not a managed device.
+    // which scripts/build-mlsffi-android.sh fills. API 29 and API 36 run as managed devices in .github/workflows/android-emulator.yml.
     testOptions {
         managedDevices {
             localDevices {
                 create("pixel6Api29") {
                     device = "Pixel 6"
                     apiLevel = 29
+                    systemImageSource = "aosp"
+                }
+                create("pixel6Api36") {
+                    device = "Pixel 6"
+                    apiLevel = 36
                     systemImageSource = "aosp"
                 }
             }

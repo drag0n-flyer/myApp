@@ -1,0 +1,89 @@
+name: android-emulator
+
+on:
+  workflow_dispatch:
+  push:
+    branches-ignore: [feat/server]
+    paths:
+      - 'apps/android/**'
+      - '.github/workflows/android-emulator.yml'
+  pull_request:
+    paths:
+      - 'apps/android/**'
+      - '.github/workflows/android-emulator.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-emulator-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  emulator:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      NDK_VERSION: 28.2.13676358
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      # Native library for :mls instrumented tests (x86_64 comes from the same cross-build as android.yml's mlsffi-android job).
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/apple/Packages/SecureMessaging/mlsffi/target
+          key: cargo-android-${{ runner.os }}-${{ hashFiles('apps/apple/Packages/SecureMessaging/mlsffi/Cargo.lock') }}
+          restore-keys: cargo-android-${{ runner.os }}-
+      - uses: actions/cache@v4
+        id: cargo-ndk
+        with:
+          path: ~/.cargo/bin/cargo-ndk
+          key: cargo-ndk-4.1.2-${{ runner.os }}
+      - name: Install cargo-ndk
+        if: steps.cargo-ndk.outputs.cache-hit != 'true'
+        run: cargo install --locked --version 4.1.2 cargo-ndk
+      - name: Install the NDK
+        run: |
+          set -euo pipefail
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" >/dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+      - name: Cross-build mlsffi
+        run: scripts/build-mlsffi-android.sh
+      - name: Cache the emulator system images and AVDs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.android/avd
+            ~/.android/gradle
+          key: avd-${{ runner.os }}-api29-api36-${{ hashFiles('apps/android/mls/build.gradle.kts', 'apps/android/store/build.gradle.kts') }}
+      - name: Instrumented tests on API 29 and API 36
+        working-directory: apps/android
+        run: |
+          ./gradlew --no-daemon \
+            -Pandroid.testoptions.manageddevices.emulator.gpu=swiftshader_indirect \
+            -Pandroid.experimental.androidTest.numManagedDeviceShards=1 \
+            :mls:pixel6Api29DebugAndroidTest :mls:pixel6Api36DebugAndroidTest \
+            :store:pixel6Api29DebugAndroidTest :store:pixel6Api36DebugAndroidTest
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: emulator-reports
+          path: apps/android/*/build/reports/androidTests
+          retention-days: 7
+          if-no-files-found: ignore
