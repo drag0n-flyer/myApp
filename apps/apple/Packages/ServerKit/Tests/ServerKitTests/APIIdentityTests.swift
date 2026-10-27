@@ -83,7 +83,9 @@ private let sessionJSON = #"{"accountID":"a1","deviceID":"d1","sessionToken":"t1
         let e = ServerJSON.encoder()
         e.outputFormatting = [.sortedKeys]
         let cred = RegistrationCredential(id: Data([1, 2, 3]), clientDataJSON: Data("foo".utf8), attestationObject: Data([4, 5, 6]))
-        #expect(String(decoding: try e.encode(cred), as: UTF8.self) == (try fixture("registration-credential")))
+        let encoded = String(decoding: try e.encode(cred), as: UTF8.self)
+        let expected = try fixture("registration-credential")
+        #expect(encoded == expected)
     }
 
     @Test func assertionCredentialJSON() throws {

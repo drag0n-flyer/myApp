@@ -85,11 +85,13 @@ public final class PasskeyAuthenticator: NSObject, PasskeyAuthenticating, ASAuth
     nonisolated public func authorizationController(controller: ASAuthorizationController,
                                                     didCompleteWithAuthorization authorization: ASAuthorization) {
         let outcome = Self.outcome(from: authorization)
-        MainActor.assumeIsolated { finish(ObjectIdentifier(controller), outcome.map { .success($0) } ?? .failure(PasskeyFailure())) }
+        let id = ObjectIdentifier(controller)
+        MainActor.assumeIsolated { finish(id, outcome.map { .success($0) } ?? .failure(PasskeyFailure())) }
     }
 
     nonisolated public func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {
-        MainActor.assumeIsolated { finish(ObjectIdentifier(controller), .failure(error)) }
+        let id = ObjectIdentifier(controller)
+        MainActor.assumeIsolated { finish(id, .failure(error)) }
     }
 
     nonisolated public func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
