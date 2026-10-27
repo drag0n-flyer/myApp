@@ -165,7 +165,8 @@ private func raw(_ conv: ConversationRecord, cursor: Int64 = 900, kind: String =
         let bob = Side(rig.bob1)
         _ = try await bob.processor.syncOnce()
         try await send(rig.ana1, record, .text("once", replyTo: nil))
-        let payload = try #require(await rig.server.storedMessages(in: record.serverID).last).ciphertext
+        let storedLast = await rig.server.storedMessages(in: record.serverID).last
+        let payload = try #require(storedLast).ciphertext
         try bob.deps.repo.markProcessed(hash: PortableSHA256.hash(payload))
         let before = bob.spy.processed.count
         _ = try await bob.processor.syncOnce()
@@ -340,7 +341,8 @@ private func raw(_ conv: ConversationRecord, cursor: Int64 = 900, kind: String =
         _ = try await bob.processor.syncOnce()
         let payload = CallSignalPayload(kind: .ring, callID: "call-1", video: false)
         try await send(rig.ana1, record, .callSignal(payload), id: "cs1")
-        let item = try #require(await rig.server.storedMessages(in: record.serverID).last)
+        let storedLast = await rig.server.storedMessages(in: record.serverID).last
+        let item = try #require(storedLast)
 
         // Through the processor the inbox copy is dropped and its hash marked processed.
         _ = try await bob.processor.syncOnce()
@@ -485,7 +487,8 @@ private final class LogBox: @unchecked Sendable {
         await running.value
         #expect(try bob.texts("acc-ana") == ["first", "second"])
         let order = bob.spy.processed.suffix(2)
-        #expect(Array(order) == (await rig.server.storedMessages(in: record.serverID)).suffix(2).map(\.ciphertext))
+        let lastTwo = await rig.server.storedMessages(in: record.serverID).suffix(2).map(\.ciphertext)
+        #expect(Array(order) == lastTwo)
         #expect(try await rig.bob1.deps.server.inbox(after: nil).items.isEmpty)
     }
 

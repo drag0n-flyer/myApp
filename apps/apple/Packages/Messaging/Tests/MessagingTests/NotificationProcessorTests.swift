@@ -249,7 +249,8 @@ private struct NSEPair {
         var handler = TestHandler()
         handler.keysSeen = seen
         _ = await pair.processor(handler: handler).process(pushData: padded(bundle.commit), deadline: NSEPair.deadline)
-        let keys = try #require(seen.commits.first ?? nil)
+        let firstCommit = seen.commits.first
+        let keys = try #require(firstCommit.flatMap { $0 })
         #expect(keys.contains { $0.identity == "acc-carol/\(carol.deviceID)" })
     }
 

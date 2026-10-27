@@ -245,7 +245,7 @@ public actor ConversationManager: ConversationManaging {
 
     func postCommitWithRetry(
         serverID: String, group: GroupID, addDevices: [String], removeDevices: [String],
-        build: () async throws -> CommitBundle
+        build: @Sendable () async throws -> CommitBundle
     ) async throws -> UInt64 {
         for attempt in 0...Self.maxStaleRetries {
             let (bundle, epoch) = try await locked { () async throws -> (CommitBundle, UInt64) in

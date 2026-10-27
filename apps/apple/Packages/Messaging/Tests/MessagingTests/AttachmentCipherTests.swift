@@ -17,13 +17,9 @@ struct ToyChunkAEAD: ChunkAEAD {
 
     private static func xor(_ data: Data, key: Data, nonce: Data) -> Data {
         let pad = [UInt8](key + nonce)
-        var out = Data(count: data.count)
-        data.withUnsafeBytes { src in
-            out.withUnsafeMutableBytes { dst in
-                for i in 0..<src.count { dst[i] = src[i] ^ pad[i % pad.count] ^ UInt8(truncatingIfNeeded: i &* 31) }
-            }
-        }
-        return out
+        var out = [UInt8](repeating: 0, count: data.count)
+        for (i, byte) in data.enumerated() { out[i] = byte ^ pad[i % pad.count] ^ UInt8(truncatingIfNeeded: i &* 31) }
+        return Data(out)
     }
 
     private static func tag(_ cipher: Data, key: Data, nonce: Data, aad: Data) -> Data {

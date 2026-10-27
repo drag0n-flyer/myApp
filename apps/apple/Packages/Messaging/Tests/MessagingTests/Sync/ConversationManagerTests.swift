@@ -129,7 +129,9 @@ private func syncInbox(_ device: TestDevice, joinWith joiner: ConversationManage
         await rig.server.rejectNextCommits(4)
         await #expect(throws: SyncError.epochConflict) { try await manager(rig.ana1).create(with: "acc-bob") }
         #expect(try rig.ana1.deps.repo.conversations(chatID: "acc-bob").isEmpty)
-        #expect(await rig.server.memberDevices(of: try #require(await rig.server.conversationIDs().first)).count == 1)
+        let allIDs = await rig.server.conversationIDs()
+        let onlyID = try #require(allIDs.first)
+        #expect(await rig.server.memberDevices(of: onlyID).count == 1)
     }
 
     @Test func simultaneousCreate() async throws {
@@ -145,7 +147,8 @@ private func syncInbox(_ device: TestDevice, joinWith joiner: ConversationManage
         let first = try await ana.preferredConversation(with: "acc-bob")
         let second = try await bob.preferredConversation(with: "acc-ana")
         #expect(first.serverID == second.serverID)
-        #expect(first.serverID == (await rig.server.conversationIDs()).min())
+        let smallest = await rig.server.conversationIDs().min()
+        #expect(first.serverID == smallest)
         #expect(try rig.ana1.deps.repo.chats().count == 1 && rig.bob1.deps.repo.chats().count == 1)
         #expect(try rig.ana1.deps.repo.conversations(chatID: "acc-bob").count == 2)
     }
@@ -209,14 +212,14 @@ private func syncInbox(_ device: TestDevice, joinWith joiner: ConversationManage
         try await rig.bob1.deps.mls.commitAccepted(bobGroup)
 
         let group = GroupID(raw: record.groupID)
-        var builds = 0
+        let builds = Counter()
         let newEpoch = try await manager(rig.ana1, syncs: syncs).postCommitWithRetry(
             serverID: record.serverID, group: group, addDevices: [], removeDevices: [rig.ana2.deviceID]
         ) {
-            builds += 1
+            await builds.bump()
             return try await rig.ana1.deps.mls.remove(members: ["acc-ana/\(rig.ana2.deviceID)"], from: group)
         }
-        #expect(builds == 2 && newEpoch == 3)
+        #expect(await builds.value == 2 && newEpoch == 3)
         #expect(await syncs.value == 1)
         #expect(try await rig.ana1.deps.mls.epoch(of: group) == 3)
         #expect(await rig.server.memberDevices(of: record.serverID) == [rig.ana1.deviceID, rig.bob1.deviceID].sorted())
@@ -246,7 +249,8 @@ private func syncInbox(_ device: TestDevice, joinWith joiner: ConversationManage
         let mgr = manager(rig.ana1)
         await rig.server.failNextMessages(statuses: [503])
         await #expect(throws: (any Error).self) { try await mgr.create(with: "acc-bob") }
-        let serverID = try #require(await rig.server.conversationIDs().first)
+        let allIDs = await rig.server.conversationIDs()
+        let serverID = try #require(allIDs.first)
         #expect(await rig.server.storedMessages(in: serverID).isEmpty)
 
         // The outbox path: ask for the conversation, then send a text.
@@ -270,7 +274,8 @@ private func syncInbox(_ device: TestDevice, joinWith joiner: ConversationManage
     @Test func escrowSentAtIsRFC3339Milliseconds() async throws {
         let rig = try await Rig.make(mode: "server_readable")
         let record = try await manager(rig.ana1).create(with: "acc-bob")
-        let escrow = try #require(await rig.server.storedMessages(in: record.serverID).first?.escrow)
+        let storedFirst = await rig.server.storedMessages(in: record.serverID).first
+        let escrow = try #require(storedFirst?.escrow)
         let json = try #require(try JSONSerialization.jsonObject(with: escrow.dropFirst("ESCROW:".count)) as? [String: Any])
         #expect(json["sentAt"] as? String == "2023-11-14T22:13:20.000Z")
         #expect(json["conversationID"] as? String == record.serverID && json["senderAccountID"] as? String == "acc-ana")
@@ -318,11 +323,12 @@ private struct BusyLockAfterCommit: HTTPTransport {
         let group = try await deps.mls.createGroup()
         let packages = try await rig.bob1.deps.mls.makeKeyPackages(count: 1)
         let manager = ConversationManager(deps: deps, lockTimeout: .milliseconds(100))
+        let mls = deps.mls
         do {
             // The server answers 400: "dev-nope" is not a device.
             let epoch = try await manager.postCommitWithRetry(
                 serverID: created.conversationID, group: group, addDevices: ["dev-nope"], removeDevices: []
-            ) { try await deps.mls.add(keyPackages: packages, to: group) }
+            ) { try await mls.add(keyPackages: packages, to: group) }
             return (spy, .success(epoch))
         } catch {
             return (spy, .failure(error))

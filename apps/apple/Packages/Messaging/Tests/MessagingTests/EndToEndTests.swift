@@ -167,7 +167,8 @@ private struct World {
         w.bob1.store.send(.text("hello back"), in: "acc-ana")
         await w.bob1.store.settle()
 
-        let conversation = try #require(await w.server.conversationIDs().first)
+        let conversationIDs = await w.server.conversationIDs()
+        let conversation = try #require(conversationIDs.first)
         let stored = await w.server.storedMessages(in: conversation)
         #expect(stored.count >= 2)
         #expect(stored.allSatisfy { $0.escrow != nil })
