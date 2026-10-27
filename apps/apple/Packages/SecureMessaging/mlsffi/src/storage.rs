@@ -166,7 +166,8 @@ impl GroupStateStorage for FileStorage {
         // Like mls-rs's in-memory storage, an update replaces an existing epoch only.
         for record in &epoch_updates {
             let path = self.epoch_path(&state.id, record.id);
-            if path.exists() {
+            // `try_exists` is false only for NotFound; any other stat error is returned.
+            if path.try_exists().map_err(err)? {
                 atomic_write(&path, &record.data).map_err(err)?;
             }
         }
@@ -422,5 +423,24 @@ mod tests {
             .collect();
         kps.sort();
         assert_eq!(kps, vec!["2e2e2f78", "612f62"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn epoch_update_propagates_stat_errors() {
+        // A self-referencing symlink makes stat fail with ELOOP (not NotFound),
+        // and the state file stays writable, so only the epoch check can fail.
+        // Unlike a permission-based setup this also works when run as root.
+        let t = TempDir::new();
+        let mut s = FileStorage::new(t.root()).unwrap();
+        s.write(gstate(b"g", b"s"), vec![rec(2, b"2")], vec![]).unwrap();
+        let dir = t.root().join("groups").join(hex(b"g"));
+        std::os::unix::fs::symlink("epoch-1", dir.join("epoch-1")).unwrap();
+        assert!(std::fs::metadata(dir.join("epoch-1")).is_err());
+
+        let result = s.write(gstate(b"g", b"s2"), vec![], vec![rec(1, b"new")]);
+        assert!(matches!(result, Err(FfiError::Storage(_))), "got {result:?}");
+        // The failed write left the old state in place.
+        assert_eq!(s.state(b"g").unwrap().unwrap().as_slice(), b"s");
     }
 }
