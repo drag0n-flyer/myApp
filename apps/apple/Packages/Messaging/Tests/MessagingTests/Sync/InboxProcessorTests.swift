@@ -432,3 +432,110 @@ private final class LogBox: @unchecked Sendable {
     func add(_ line: String) { lock.withLock { storage.append(line) } }
     var lines: [String] { lock.withLock { storage } }
 }
+
+@Suite("TestInboxProcessorFixRound1") struct TestInboxProcessorFixRound1 {
+    @Test func liveEventSyncsMissingEarlierItemFirst() async throws {
+        let rig = try await Rig.make()
+        let record = try await startChat(rig)
+        let bob = Side(rig.bob1)
+        _ = try await bob.processor.syncOnce()
+        let (events, continuation) = AsyncStream<ServerEvent>.makeStream()
+        let running = Task { await bob.processor.run(events: events) }
+        try await Task.sleep(for: .milliseconds(100))
+        try await send(rig.ana1, record, .text("first", replyTo: nil), id: "n1")
+        try await send(rig.ana1, record, .text("second", replyTo: nil), id: "n2")
+        // Only the later item arrives live; the earlier one was missed.
+        let items = try await rig.bob1.deps.server.inbox(after: nil).items
+        continuation.yield(.inbox(try #require(items.last)))
+        for _ in 0..<200 {
+            if try bob.texts("acc-ana").count == 2 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        continuation.finish()
+        await running.value
+        #expect(try bob.texts("acc-ana") == ["first", "second"])
+        let order = bob.spy.processed.suffix(2)
+        #expect(Array(order) == (await rig.server.storedMessages(in: record.serverID)).suffix(2).map(\.ciphertext))
+        #expect(try await rig.bob1.deps.server.inbox(after: nil).items.isEmpty)
+    }
+
+    @Test func burstOfEventsIsCoalesced() async throws {
+        let rig = try await Rig.make()
+        let record = try await startChat(rig)
+        let bob = Side(rig.bob1)
+        _ = try await bob.processor.syncOnce()
+        for i in 0..<5 { try await send(rig.ana1, record, .text("b\(i)", replyTo: nil)) }
+        let items = try await rig.bob1.deps.server.inbox(after: nil).items
+        let (events, continuation) = AsyncStream<ServerEvent>.makeStream()
+        for item in items { continuation.yield(.inbox(item)) }
+        continuation.finish()
+        await bob.processor.run(events: events)
+        #expect(try bob.texts("acc-ana").count == 5)
+    }
+
+    @Test func processedByAnotherProcessBetweenPreCheckAndLock() async throws {
+        let rig = try await Rig.make()
+        let record = try await startChat(rig)
+        let bob = Side(rig.bob1)
+        _ = try await bob.processor.syncOnce()
+        try await send(rig.ana1, record, .text("raced", replyTo: nil), id: "r1")
+        let item = try #require(try await rig.bob1.deps.server.inbox(after: nil).items.last)
+        try bob.deps.repo.insertRaw([RawInboxRecord(
+            cursor: item.cursor, kind: item.kind, conversationID: item.conversationID, seq: item.seq, epoch: item.epoch,
+            senderAccount: item.senderAccountID, senderDevice: item.senderDeviceID, payload: item.payload, sentAt: item.sentAt)])
+
+        // The "NSE" holds the lock while the app's pre-check has already passed.
+        let lock = bob.deps.lock
+        let holder = Task.detached { try lock.withLock(timeout: .seconds(2)) { Thread.sleep(forTimeInterval: 0.4) } }
+        try await Task.sleep(for: .milliseconds(100))
+        let draining = Task { await bob.processor.drainRaw() }
+        try await Task.sleep(for: .milliseconds(150))
+        // The NSE stores the message and marks the payload processed, then releases the lock.
+        try bob.deps.repo.markProcessed(hash: PortableSHA256.hash(item.payload))
+        try await holder.value
+        await draining.value
+        #expect(!bob.spy.processed.contains(item.payload))
+        #expect(try bob.deps.repo.messages(chatID: "acc-ana", before: nil, limit: 10).filter(\.undecryptable).isEmpty)
+        #expect(try bob.deps.repo.rawItems(limit: 10).isEmpty)
+    }
+
+    @Test func welcomeNotProcessedUntilConversationStored() async throws {
+        let rig = try await Rig.make()
+        let record = try await startChat(rig)
+        let bob = Side(rig.bob1)
+        let welcome = try #require(try await rig.bob1.deps.server.inbox(after: nil).items.first { $0.kind == "welcome" })
+        bob.spy.failMembers(true)
+        _ = try? await bob.processor.syncOnce()
+        // Nothing is stored, the Welcome is neither processed nor dropped, and nothing behind it ran.
+        #expect(try bob.deps.repo.conversation(serverID: record.serverID) == nil)
+        #expect(try bob.deps.repo.chat(id: "acc-ana") == nil)
+        #expect(try !bob.deps.repo.isProcessed(hash: PortableSHA256.hash(welcome.payload)))
+        #expect(try bob.deps.repo.rawItems(limit: 10).count == 2)
+
+        bob.spy.failMembers(false)
+        await bob.processor.drainRaw()
+        let stored = try #require(try bob.deps.repo.conversation(serverID: record.serverID))
+        #expect(stored.innerMode == "e2ee")
+        #expect(try bob.deps.repo.isProcessed(hash: PortableSHA256.hash(welcome.payload)))
+        #expect(try bob.deps.repo.rawItems(limit: 10).isEmpty)
+        #expect(bob.spy.processed.filter { $0 == welcome.payload }.count == 1)  // not processed twice
+    }
+
+    @Test func welcomeWithoutPeerIsDroppedWithoutRows() async throws {
+        let rig = try await Rig.make()
+        let bob1 = Side(rig.bob1)
+        // bob2 makes a conversation with ana and adds only bob1: no member of another account stays in the group.
+        let created = try await rig.bob2.deps.server.createConversation(with: "acc-ana")
+        let group = try await rig.bob2.deps.mls.createGroup()
+        let claimed = try await rig.bob2.deps.server.claimKeyPackages(accountID: "acc-bob").filter { $0.deviceID == rig.bob1.deviceID }
+        let bundle = try await rig.bob2.deps.mls.add(keyPackages: claimed.map(\.keyPackage), to: group)
+        _ = try await rig.bob2.deps.server.postCommit(
+            conversationID: created.conversationID, epoch: 0, commit: bundle.commit, welcome: bundle.welcome,
+            addDevices: [rig.bob1.deviceID], removeDevices: [])
+        _ = try await bob1.processor.syncOnce()
+        #expect(try bob1.deps.repo.conversation(serverID: created.conversationID) == nil)
+        #expect(try bob1.deps.repo.chats().isEmpty)
+        #expect(try bob1.deps.repo.rawItems(limit: 10).isEmpty)
+        #expect(try bob1.deps.repo.isProcessed(hash: PortableSHA256.hash(bundle.welcome ?? Data())))
+    }
+}

@@ -127,19 +127,35 @@ public actor ConversationManager: ConversationManaging {
     /// The local part of `joined`, with the server's mode already fetched. The inbox processor fetches it
     /// before it takes the process lock, so no network call happens under the lock.
     func joined(group: GroupID, serverConversationID: String, serverMode: String) async throws {
+        let plan = try await planJoin(group: group, serverConversationID: serverConversationID, serverMode: serverMode)
+        try deps.repo.transaction { try plan.store(in: deps.repo) }
+    }
+
+    /// The rows a Welcome creates. Built first (it awaits the MLS engine), written later by `store`, so the
+    /// inbox processor can write them in the same transaction as `markProcessed`.
+    struct JoinPlan: Sendable {
+        let chat: ChatRecord
+        let conversation: ConversationRecord
+
+        /// The chat is only created when it does not exist yet.
+        func store(in repo: Repository) throws {
+            if try repo.chat(id: chat.id) == nil { try repo.upsertChat(chat) }
+            try repo.upsertConversation(conversation)
+        }
+    }
+
+    func planJoin(group: GroupID, serverConversationID: String, serverMode: String) async throws -> JoinPlan {
         let identities = try await deps.mls.members(of: group)
         let accounts = Set(identities.map { String($0.split(separator: "/", maxSplits: 1)[0]) })
         guard let peer = accounts.subtracting([deps.me.accountID]).sorted().first else { throw SyncError.noPeer }
         let epoch = try await deps.mls.epoch(of: group)
-
-        if try deps.repo.chat(id: peer) == nil {
-            let isContact = try deps.repo.contact(id: peer)?.isContact ?? false
-            try deps.repo.upsertChat(ChatRecord(id: peer, isRequest: !isContact, unread: 0, muted: false, lastActivity: deps.now()))
-        }
+        let isContact = try deps.repo.contact(id: peer)?.isContact ?? false
         // `inner_mode` stays NULL until the creator's `mode` envelope arrives.
-        try deps.repo.upsertConversation(ConversationRecord(
-            serverID: serverConversationID, chatID: peer, groupID: group.raw, mode: serverMode, innerMode: nil,
-            modeMismatch: false, epoch: Int64(epoch), active: true, createdAt: deps.now()))
+        return JoinPlan(
+            chat: ChatRecord(id: peer, isRequest: !isContact, unread: 0, muted: false, lastActivity: deps.now()),
+            conversation: ConversationRecord(
+                serverID: serverConversationID, chatID: peer, groupID: group.raw, mode: serverMode, innerMode: nil,
+                modeMismatch: false, epoch: Int64(epoch), active: true, createdAt: deps.now()))
     }
 
     // MARK: Mode envelope

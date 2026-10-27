@@ -19,6 +19,10 @@ public actor InboxProcessor {
     private let handler: IncomingHandler
     private let controls: ControlSender?
     private enum Section { case fetch, drain }
+    private var syncRunning = false
+    private var syncAgain = false
+    /// Welcomes that `mls.process` accepted but whose rows are not stored yet (retried without a second `process`).
+    private var pendingJoins: [Int64: Incoming] = [:]
     private var held: Set<Section> = []
     private var waiters: [Section: [CheckedContinuation<Void, Never>]] = [:]
 
@@ -68,14 +72,29 @@ public actor InboxProcessor {
         return fetched
     }
 
-    /// Runs until the stream ends: syncs on start, then stores and processes each live item.
+    /// Runs until the stream ends: syncs on start, then on every live item. A live item is only a hint.
+    /// Frames can arrive out of cursor order and the stream spans reconnects, so the inbox is always read
+    /// from the stored cursor, in order. A burst of events costs at most one extra sync.
     public func run(events: AsyncStream<ServerEvent>) async {
-        _ = try? await syncOnce()
+        await requestSync()
         for await event in events {
-            guard case .inbox(let item) = event else { continue }
-            guard (try? deps.repo.insertRaw([Self.raw(item)])) != nil else { continue }
-            await drainRaw()
+            guard case .inbox = event else { continue }
+            await requestSync()
         }
+    }
+
+    /// Runs `syncOnce`, or when one is already running marks "sync again" so it runs once more after it.
+    private func requestSync() async {
+        if syncRunning {
+            syncAgain = true
+            return
+        }
+        syncRunning = true
+        repeat {
+            syncAgain = false
+            _ = try? await syncOnce()
+        } while syncAgain
+        syncRunning = false
     }
 
     private func storedCursor() throws -> Int64? {
@@ -158,23 +177,64 @@ public actor InboxProcessor {
             }
 
             let applied = try await deps.lock.withAsyncLock(timeout: Self.lockTimeout) { () async throws -> AppliedResult? in
-                let incoming: Incoming
-                do {
-                    incoming = try await deps.mls.process(raw.payload)
-                } catch MLSError.busy {
-                    throw MLSError.busy
-                } catch {
-                    // Anything else the engine rejects is permanent for this payload.
+                // Another process (the notification extension) may have handled this payload since the check
+                // above, so look again under the lock (Design 11).
+                if try repo.isProcessed(hash: hash) {
+                    try repo.deleteRaw(cursor: raw.cursor)
+                    return nil
+                }
+                if try handler.isEchoedOwnCommit(raw, db: repo) {
                     try repo.transaction {
-                        try handler.storePlaceholder(for: raw, db: repo)
                         try repo.markProcessed(hash: hash)
                         try repo.deleteRaw(cursor: raw.cursor)
                     }
                     return nil
                 }
+                let incoming: Incoming
+                if let accepted = pendingJoins[raw.cursor] {
+                    incoming = accepted
+                } else {
+                    do {
+                        incoming = try await deps.mls.process(raw.payload)
+                    } catch MLSError.busy {
+                        throw MLSError.busy
+                    } catch MLSError.storage(let reason) {
+                        throw MLSError.storage(reason)  // possibly temporary (disk): retry later
+                    } catch {
+                        // Anything else the engine rejects is permanent for this payload.
+                        try repo.transaction {
+                            try handler.storePlaceholder(for: raw, db: repo)
+                            try repo.markProcessed(hash: hash)
+                            try repo.deleteRaw(cursor: raw.cursor)
+                        }
+                        return nil
+                    }
+                }
                 if case .joined(let group, _) = incoming {
-                    try await conversations.joined(
-                        group: group, serverConversationID: raw.conversationID, serverMode: serverMode ?? "e2ee")
+                    // The Welcome counts as processed only together with its conversation row.
+                    guard let serverMode else { throw SyncError.noPeer }  // never guess the mode (Design 18)
+                    pendingJoins[raw.cursor] = incoming
+                    let plan: ConversationManager.JoinPlan
+                    do {
+                        plan = try await conversations.planJoin(
+                            group: group, serverConversationID: raw.conversationID, serverMode: serverMode)
+                    } catch SyncError.noPeer {
+                        // Never going to work for this Welcome: drop it, store nothing.
+                        pendingJoins[raw.cursor] = nil
+                        try repo.transaction {
+                            try repo.markProcessed(hash: hash)
+                            try repo.deleteRaw(cursor: raw.cursor)
+                        }
+                        return nil
+                    }
+                    let result = try repo.transaction {
+                        try plan.store(in: repo)
+                        try repo.markProcessed(hash: hash)
+                        try repo.deleteRaw(cursor: raw.cursor)
+                        return try handler.apply(incoming, raw: raw, db: repo)
+                    }
+                    pendingJoins[raw.cursor] = nil
+                    return result
                 }
                 return try repo.transaction {
                     let result = try handler.apply(incoming, raw: raw, db: repo)
