@@ -5,7 +5,7 @@ extension XCUIApplication {
     /// Launches the app with UI-test launch arguments (see `LaunchOptions` in the app).
     static func launched(skipOnboarding: Bool = true, network: String = "mobile", extra: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
-        var args = ["-uiTesting", "-network", network] + extra
+        var args = ["-ApplePersistenceIgnoreState", "YES", "-uiTesting", "-network", network] + extra
         if skipOnboarding { args.append("-skipOnboarding") }
         app.launchArguments = args
         app.launch()
@@ -13,7 +13,13 @@ extension XCUIApplication {
         // A freshly launched Mac app on a CI runner may not be frontmost; make sure its window is up.
         app.activate()
         if !app.windows.firstMatch.waitForExistence(timeout: 10) {
-            print("No window after launch: \(app.debugDescription)")
+            // SwiftUI did not open the main window on this runner: ask for one through File > New Window.
+            print("No window after launch; using File > New Window")
+            app.menuBars.menuBarItems["File"].click()
+            app.menuBars.menuItems["New Window"].click()
+            if !app.windows.firstMatch.waitForExistence(timeout: 10) {
+                print("Still no window: \(app.debugDescription)")
+            }
         }
         #endif
         return app
