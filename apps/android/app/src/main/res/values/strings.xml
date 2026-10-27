@@ -122,6 +122,133 @@
     <string name="block_title">Block this person?</string>
     <string name="cancel">Cancel</string>
     <string name="close">Close</string>
+    <!-- Onboarding, sign-up and linking (A8) -->
+    <string name="ob_welcome_title">Welcome to %1$s</string>
+    <string name="ob_welcome_pitch">Clear calls and private chats, even on a weak network.</string>
+    <string name="ob_point_data_title">Uses very little data</string>
+    <string name="ob_point_data_text">Calls keep working on bad networks.</string>
+    <string name="ob_point_private_title">Private by default</string>
+    <string name="ob_point_private_text">Your personal chats stay between you and the people you talk to.</string>
+    <string name="ob_point_server_title">Your own server</string>
+    <string name="ob_point_server_text">Join a server you trust, or run one yourself.</string>
+    <string name="ob_get_started">Get started</string>
+    <string name="ob_have_account">I already have an account</string>
+    <string name="ob_link_to_phone">Link to your other phone</string>
+    <string name="ob_create_on_phone_first">Create your account in %1$s on your phone first.</string>
+    <string name="ob_logo_description">%1$s logo</string>
+    <string name="ob_continue">Continue</string>
+    <string name="ob_join">Join</string>
+
+    <string name="ob_join_title">Join a server</string>
+    <string name="ob_join_message">Your chats live on a server. Use ours, or join one you trust.</string>
+    <string name="ob_server_name">%1$s server</string>
+    <string name="ob_recommended">Recommended</string>
+    <string name="ob_run_by_team">Run by the %1$s team</string>
+    <string name="ob_invite_during_beta">Invite code needed during the beta</string>
+    <string name="ob_or_join_other">Or join another server</string>
+    <string name="ob_scan_invite">Scan invite QR code</string>
+    <string name="ob_scan_invite_subtitle">From a friend\'s phone or a printed card</string>
+    <string name="ob_paste_invite">Paste invite link</string>
+    <string name="ob_paste_invite_subtitle">Opened automatically if you tapped a link</string>
+    <string name="ob_enter_address">Enter server address</string>
+    <string name="ob_enter_address_subtitle">For example chat.example.org</string>
+    <string name="ob_server_address">Server address</string>
+    <string name="ob_server_address_hint">chat.example.org</string>
+    <string name="ob_invite_link_hint">https://…/invite/…</string>
+    <string name="ob_not_invite_link">That isn\'t an invite link.</string>
+
+    <string name="ob_invite_title">Invite code</string>
+    <string name="ob_invite_message">The %1$s server is invite-only during the beta.</string>
+    <string name="ob_invite_hint">ABCDE-FGH23</string>
+
+    <string name="ob_account_title">Create your account</string>
+    <string name="ob_joining">Joining %1$s</string>
+    <string name="ob_name">Name</string>
+    <string name="ob_name_hint">Your Name</string>
+    <string name="ob_name_help">Shown to people you chat with.</string>
+    <string name="ob_username">Username</string>
+    <string name="ob_username_hint">yourname</string>
+    <string name="ob_email">Email</string>
+    <string name="ob_email_hint">you@example.com</string>
+    <string name="ob_email_help">Only used to recover your account. Nobody can find you by email unless you turn it on.</string>
+    <string name="ob_username_available">✓ Available</string>
+    <string name="ob_username_taken">Taken</string>
+    <string name="ob_username_invalid">3–32 letters, numbers or _, starting with a letter</string>
+    <string name="ob_username_unknown">Couldn\'t check right now</string>
+
+    <string name="ob_verify_title">Check your email</string>
+    <string name="ob_verify_message">Enter the 6-digit code we sent you.</string>
+    <string name="ob_code">Code</string>
+    <string name="ob_code_hint">123456</string>
+    <string name="ob_verify">Verify</string>
+
+    <string name="ob_passkey_title">Use your screen lock to sign in</string>
+    <string name="ob_passkey_message">No password to remember. Your passkey is saved to your Google account, so a new phone can sign in too.</string>
+    <string name="ob_passkey_unavailable">Passkeys aren\'t available on this server. You\'ll sign in with an email code instead.</string>
+    <string name="ob_passkey_create">Create passkey</string>
+    <string name="ob_passkey_email_instead">Use an email code instead</string>
+
+    <string name="ob_permissions_title">Two quick permissions</string>
+    <string name="ob_perm_notifications">Notifications</string>
+    <string name="ob_perm_notifications_reason">So you know when someone messages or calls you.</string>
+    <string name="ob_perm_microphone">Microphone</string>
+    <string name="ob_perm_microphone_reason">So people can hear you on calls.</string>
+    <string name="ob_perm_camera">Camera</string>
+    <string name="ob_perm_camera_reason">So you can scan a QR code. Nothing is recorded.</string>
+    <string name="ob_perm_camera_allow">Allow camera</string>
+    <string name="ob_perm_camera_denied">Camera access is off. Turn it on in Settings to scan.</string>
+    <string name="ob_perm_camera_settings">Open Settings</string>
+    <string name="qr_camera_unavailable">The camera isn\'t available right now. Close other apps that use it and try again.</string>
+
+    <string name="link_title">Link this device</string>
+    <string name="link_message">Open %1$s on your other phone, go to Settings, Linked devices, Link a device, and scan this code.</string>
+    <string name="link_server">Server: %1$s</string>
+    <string name="link_change">Change</string>
+    <string name="link_qr_description">Linking QR code</string>
+    <string name="link_new_code">Show new code</string>
+    <string name="link_waiting">Waiting for approval…</string>
+    <string name="link_no_old_device">I don\'t have my old device</string>
+
+    <string name="link_approve_title">Link this device?</string>
+    <string name="link_device">Device</string>
+    <string name="link_type">Type</string>
+    <string name="link_asked">Asked</string>
+    <string name="link_warning">This device will be able to read all your future messages. Only approve it if it\'s yours and you started linking it just now.</string>
+    <string name="link_approve">Approve</string>
+    <string name="link_dont_approve">Don\'t approve</string>
+    <string name="link_scan_title">Scan the code on your new device</string>
+    <string name="link_confirm_title">Confirm it\'s you</string>
+    <string name="link_confirm_subtitle">Approving a device needs your fingerprint or face.</string>
+    <string name="link_confirm_use_lock">Use screen lock</string>
+    <string name="platform_iphone">iPhone</string>
+    <string name="platform_mac">Mac</string>
+    <string name="platform_android">Android</string>
+
+    <string name="lost_title">Sign in on a new phone</string>
+    <string name="lost_message">Your account comes back, but old messages can only be restored from a backup.</string>
+    <string name="lost_passkey">Sign in with passkey</string>
+    <string name="lost_or_email">Or use your email</string>
+    <string name="lost_send_code">Send code</string>
+    <string name="lost_sign_in">Sign in</string>
+
+    <string name="qr_scanner_description">Camera view for scanning a QR code</string>
+
+    <string name="err_invite_required">This server needs an invite code.</string>
+    <string name="err_invite_invalid">That invite code doesn\'t work. Check it and try again.</string>
+    <string name="err_username_taken">That username is taken.</string>
+    <string name="err_invalid_username">Use 3–32 lowercase letters, numbers, or _, starting with a letter.</string>
+    <string name="err_invalid_email">Enter a valid email address.</string>
+    <string name="err_code_invalid">That code isn\'t right.</string>
+    <string name="err_code_expired">That code has expired. Ask for a new one.</string>
+    <string name="err_too_many_minutes">Too many tries. Try again in %1$d min.</string>
+    <string name="err_too_many">Too many tries. Try again later.</string>
+    <string name="err_link_expired">This code has expired. Start again on the new device.</string>
+    <string name="err_invalid_address">That isn\'t a valid server address. Use a name like chat.example.org, with an optional port.</string>
+    <string name="err_wrong_server">This code is for a different server.</string>
+    <string name="err_passkey_unavailable">Passkeys aren\'t available on this server. Use an email code instead.</string>
+    <string name="err_biometrics">Couldn\'t confirm it\'s you. Check your fingerprint or face and try again.</string>
+    <string name="err_network">Can\'t reach the server. Check your connection and try again.</string>
+    <string name="err_server">Something went wrong on the server. Try again later.</string>
 
     <!-- Call screens -->
     <string name="call_connecting">Connecting…</string>
@@ -238,6 +365,7 @@
     <string name="device_android">Android</string>
     <string name="devices_remove">Remove %1$s</string>
     <string name="devices_remove_title">Remove this device?</string>
+    <string name="devices_link">Link a device</string>
     <string name="devices_footer">Remove a device you no longer use.</string>
 
     <!-- Chat folders -->

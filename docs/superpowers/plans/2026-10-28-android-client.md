@@ -557,9 +557,9 @@ If plan 4's `member_keys` export is still missing, add `Engine::member_keys(grou
 
 ### Task D6: Attachments (owner review: cryptography)
 
-**Files:** `.../messaging/crypto/AttachmentCipher.kt`, `.../messaging/media/{Uploader,Downloader,AutoDownload,PhotoPrep,VoiceRecorder}.kt`; tests `AttachmentCipherTest`, `AutoDownloadTest`, Robolectric `PhotoPrepTest`.
+**Files:** `:messaging` (pure JVM): `org/example/app/messaging/crypto/AttachmentCipher.kt`, `.../messaging/media/{Uploader,Downloader,AutoDownload,MediaPlan}.kt`, `.../messaging/media/ogg/{OggOpus,VoiceNoteValidator}.kt`. `:app` (needs Android APIs): `org/example/app/media/{PhotoPrep,VoiceRecorder,VoiceNoteFinisher,MediaCache}.kt`. Tests: `AttachmentCipherTest`, `TransferTest`, `AutoDownloadTest`, `OggOpusTest`, Robolectric `PhotoPrepTest`, `VoiceNoteFinisherTest`, `VoiceRecorderTest`, instrumented `VoiceRecorderInstrumentedTest` (androidTest).
 
-**Interfaces — Produces:** `AttachmentCipher.encrypt(input, key): EncryptedBlob` and `decrypt(input, key, digest)` (chunk 65 536, nonce `0^4 ‖ u64be(i)`, AAD last-flag); `PhotoPrep.prepare(uri): Prepared` (JPEG, max side 1600, quality 70; thumbnail max side 32, quality 40, at most 1536 bytes); `VoiceRecorder` (`MediaRecorder`, `AudioEncoder.OPUS`, `OutputFormat.OGG`, 16 kHz mono, 16 kbps; see the voice-format question in design §17).
+**Interfaces — Produces:** `AttachmentCipher.encrypt(input, output): EncryptedBlob` (generates the key; the key-taking variant is internal, for vectors) and `decrypt(input, to, key, digest)` (chunk 65 536, nonce `0^4 ‖ u64be(i)`, AAD last-flag); `PhotoPrep.prepare(uri): Prepared` (JPEG, max side 1600, quality 70; thumbnail max side 32, quality 40, at most 1536 bytes); `VoiceRecorder` (`AudioRecord` 16 kHz mono + `MediaCodec` `audio/opus` at 16 kbps, packets written by `OggOpusWriter`; `start(): StartResult`, `stop(): StopResult` = Success / TooShort / Failed(reason)).
 
 - [ ] **Step 1: Failing tests:** `matchesAttachmentVector` (every `attachment-stream.json` case); `truncatedFileFails`; `resumesFromRange` (decrypt from chunk 1 after a range fetch); `autoDownloadRules` (Wi-Fi all, mobile none, voice always); `thumbnailUnder1536Bytes`.
 - [ ] **Step 2:** FAIL. **Step 3: Implement.** **Step 4:** PASS.

@@ -26,6 +26,8 @@ sealed class AccountError : Exception() {
     data class TooManyAttempts(val retryAfterSeconds: Int?) : AccountError()
     data object LinkExpired : AccountError()
     data object WrongServer : AccountError()
+    /** The typed server address breaks the rules in [ServerAddress]. */
+    data object InvalidServerAddress : AccountError()
     data object PasskeyUnavailable : AccountError()
     /** The approving device could not confirm with the fingerprint, face or screen lock. */
     data object BiometricsUnavailable : AccountError()
@@ -65,10 +67,18 @@ interface AccountService {
     suspend fun connect(host: String): ServerPolicy
     suspend fun checkUsername(name: String): UsernameCheck
     suspend fun redeemInvite(code: String): Boolean
-    suspend fun startSignUp(username: String, email: String)
+    /**
+     * Starts sign-up and sends the email code. [displayName] is the name shown to people the
+     * account chats with. The live service keeps it and sends it with `PATCH /v1/me/settings`
+     * right after `signupFinish`, until the server's `signup/start` accepts it; a failed PATCH
+     * does not fail the sign-up. (Same on iPhone.)
+     */
+    suspend fun startSignUp(displayName: String, username: String, email: String)
     suspend fun verifyEmail(code: String)
     /** Creates the passkey when supported. */
     suspend fun finishSignUp()
+    /** Finishes sign-up without registering a passkey ("Use an email code instead"); later sign-in uses an email code. */
+    suspend fun finishSignUpWithEmailCode()
     suspend fun signInWithPasskey()
     suspend fun sendRecoveryCode(email: String)
     suspend fun recover(email: String, code: String)
