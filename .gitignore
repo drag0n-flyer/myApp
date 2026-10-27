@@ -28,3 +28,8 @@ deploy/data/
 *.pem
 *.p8
 *.key
+
+# MLS client core (plan 4)
+apps/apple/Packages/SecureMessaging/mlsffi/target/
+apps/apple/Packages/SecureMessaging/Artifacts/
+apps/apple/Packages/SecureMessaging/mlsffi/build/

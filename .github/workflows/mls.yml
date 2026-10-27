@@ -16,6 +16,51 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  rust-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: cargo test (RustCrypto provider)
+        working-directory: apps/apple/Packages/SecureMessaging/mlsffi
+        run: cargo test --locked
+
+  apple:
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      # mls-rs-crypto-cryptokit's build.rs panics when `swift -print-target-info` reports
+      # librariesRequireRPath=true for iOS 17.0, which every Xcode from 26.1 on does.
+      # Xcode 26.0.x reports false. Revisit when the crate's build.rs is fixed upstream.
+      DEVELOPER_DIR: /Applications/Xcode_26.0.1.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build XCFramework and bindings
+        working-directory: apps/apple/Packages/SecureMessaging
+        run: scripts/build-mlsffi.sh
+      - name: cargo test (CryptoKit provider, interop)
+        working-directory: apps/apple/Packages/SecureMessaging/mlsffi
+        run: cargo test --locked
+      - name: Upstream CryptoKit provider suite
+        run: |
+          git clone https://github.com/awslabs/mls-rs
+          git -C mls-rs checkout 323bd84f52e410c9ecb0b1ccd84a5a9f7f191b5a
+          cargo test --manifest-path mls-rs/mls-rs-crypto-cryptokit/Cargo.toml
+      - name: Binding drift check
+        working-directory: apps/apple/Packages/SecureMessaging
+        run: git diff --exit-code Sources/MLSFFIBindings
+      - name: Swift package builds with the XCFramework
+        working-directory: apps/apple/Packages/SecureMessaging
+        run: swift build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MLSFFI-xcframework
+          path: apps/apple/Packages/SecureMessaging/Artifacts/MLSFFI.xcframework
+
   swift-linux:
     runs-on: ubuntu-24.04
     container: swift:6.0

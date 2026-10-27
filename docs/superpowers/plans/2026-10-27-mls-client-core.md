@@ -68,7 +68,8 @@
   | `Malformed` | `.malformed` | decode errors |
   | `UnknownGroup` | `.unknownGroup` | `GroupNotFound` |
   | `NotMember` | `.notMember` | |
-  | `Duplicate` | `.duplicate` | `CantProcessMessageFromSelf`, `KeyMissing`, `InvalidEpoch` on an already-seen generation |
+  | `Duplicate` | `.duplicate` | `CantProcessMessageFromSelf`, `KeyMissing`; an older-epoch message mls-rs rejects |
+  | `EpochGap` | `.epochGap` | message epoch newer than the stored group (a commit was missed; resync) |
   | `PendingCommit` | `.pendingCommit` | `ExistingPendingCommit` |
   | `Storage(String)` | `.storage` | |
   | `Crypto(String)` | `.crypto` | |
@@ -148,7 +149,7 @@ apps/apple/Prototypes/NSEPrototype/    M6 XcodeGen project: host app + NSE
   - `impl mls_rs_core::key_package::KeyPackageStorage`
   - `Clone` (the same root)
 - `const EPOCH_RETENTION: u64 = 3`
-- `pub enum FfiError { Malformed, UnknownGroup, NotMember, Duplicate, PendingCommit, Storage(String), Crypto(String), Internal(String) }`, as a `#[derive(uniffi::Error)]`, with a hand-written `Display` and `std::error::Error`
+- `pub enum FfiError { Malformed, UnknownGroup, NotMember, Duplicate, EpochGap, PendingCommit, Storage(String), Crypto(String), Internal(String) }`, as a `#[derive(uniffi::Error)]`, with a hand-written `Display` and `std::error::Error`
 
 `Cargo.toml` contents:
 - `[lib] crate-type = ["lib", "staticlib", "cdylib"]`, `name = "mlsffi"`
@@ -195,7 +196,7 @@ apps/apple/Prototypes/NSEPrototype/    M6 XcodeGen project: host app + NSE
     pub fn create_group(&self) -> Result<Vec<u8>, FfiError>;          // 32 random bytes; epoch 0
     pub fn add(&self, group_id: Vec<u8>, key_packages: Vec<Vec<u8>>) -> Result<CommitBundle, FfiError>;
     pub fn remove(&self, group_id: Vec<u8>, identities: Vec<String>) -> Result<CommitBundle, FfiError>;
-    pub fn commit_accepted(&self, group_id: Vec<u8>) -> Result<(), FfiError>;  // apply_pending_commit
+    pub fn commit_accepted(&self, group_id: Vec<u8>) -> Result<(), FfiError>;  // apply_pending_commit; no-op if none
     pub fn commit_rejected(&self, group_id: Vec<u8>) -> Result<(), FfiError>;  // clear_pending_commit; no-op if none
     pub fn has_pending_commit(&self, group_id: Vec<u8>) -> Result<bool, FfiError>;
     pub fn encrypt(&self, group_id: Vec<u8>, plaintext: Vec<u8>) -> Result<Encrypted, FfiError>;
@@ -215,7 +216,7 @@ The client is built with these settings:
 
 `process`:
 - A Welcome goes through `join_group(None, msg)` and returns `Joined`.
-- A private or public message goes through `load_group(msg.group_id())`. If the message is a commit and `has_pending_commit()` is true, the engine calls `clear_pending_commit()` first, then `process_incoming_message` and `write_to_storage`.
+- A private or public message goes through `load_group(msg.group_id())`. The engine does not clear a pending commit itself: mls-rs applies it when the message is our own commit echoed back, and drops it when another member's commit is processed (clearing first would break the echo). It compares `message.epoch()` with the group's current epoch first: newer gives `EpochGap`; an older message that mls-rs rejects as `InvalidEpoch`/`EpochNotFound` gives `Duplicate`. Then `process_incoming_message` and `write_to_storage`; `Application.epoch` is the epoch the message was sent in. After every load and after `join_group`, a repair step deletes epoch records with id >= the current epoch, deletes all of them if the newest left is not current-1, and on a Welcome deletes all existing epoch records for the group first.
 - Anything else is `Malformed`.
 
 Every mutating method ends with `write_to_storage()`.
