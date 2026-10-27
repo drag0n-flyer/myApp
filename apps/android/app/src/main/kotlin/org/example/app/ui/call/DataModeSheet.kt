@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import org.example.app.R
 import org.example.app.core.calls.DataSheetOption
 import org.example.app.core.calls.ModePreference
+import org.example.app.ui.dataEstimateText
 import org.example.app.ui.keyString
 
 /** "Data for this call" as a bottom sheet. The choice applies to this call only. */
@@ -76,8 +77,8 @@ private fun OptionRow(option: DataSheetOption, onSelect: (ModePreference) -> Uni
         }
         if (option.isSelected) {
             Icon(painterResource(R.drawable.ic_check), contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-        } else option.estimate?.let {
-            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else option.estimateMB?.let {
+            Text(dataEstimateText(it), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

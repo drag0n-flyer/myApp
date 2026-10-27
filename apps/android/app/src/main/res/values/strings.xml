@@ -147,6 +147,10 @@
     <string name="call_self_video">Your video</string>
     <string name="call_data_sheet_title">Data for this call</string>
     <string name="call_data_sheet_footer">This call only · audio, both directions, estimated</string>
+    <string name="data_size_kb">%1$s KB</string>
+    <string name="data_size_mb">%1$s MB</string>
+    <string name="call_data_used">≈ %1$s used</string>
+    <string name="call_data_estimate">~%1$s MB per 10 min</string>
     <string name="call_simulate">Simulate network</string>
     <string name="call_simulate_good">Good</string>
     <string name="call_simulate_weak">Weak</string>

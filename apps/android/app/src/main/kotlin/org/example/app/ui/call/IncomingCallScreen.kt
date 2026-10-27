@@ -35,8 +35,9 @@ fun IncomingCallScreen(viewModel: CallViewModel, modifier: Modifier = Modifier) 
     CallTheme {
         val call by viewModel.call.collectAsState()
         val current = call ?: return@CallTheme
+        CallBackHandler(onMinimise = null)
         val name = viewModel.contactName(current)
-        Box(modifier.fillMaxSize().background(Backdrop)) {
+        Box(modifier.fillMaxSize().background(Backdrop).consumeTouches()) {
             Column(
                 Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,

@@ -46,11 +46,13 @@ fun CallControls(
     onData: () -> Unit,
     onEnd: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Flip camera shows only once a camera exists; until then the video call has no such control. */
+    canFlip: Boolean = false,
 ) {
     Surface(modifier.fillMaxWidth(), shape = MaterialTheme.shapes.extraLarge, color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.85f)) {
         Row(Modifier.padding(horizontal = 6.dp, vertical = 12.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
             if (call.isVideoCall && call.isVideoOn) {
-                CallControl(stringResource(R.string.call_ctrl_flip), R.drawable.ic_sync, onClick = onFlip, modifier = Modifier.weight(1f))
+                if (canFlip) CallControl(stringResource(R.string.call_ctrl_flip), R.drawable.ic_sync, onClick = onFlip, modifier = Modifier.weight(1f))
             } else {
                 CallControl(stringResource(R.string.call_ctrl_speaker), R.drawable.ic_volume_up, isOn = call.isSpeakerOn, onClick = onSpeaker, modifier = Modifier.weight(1f))
             }

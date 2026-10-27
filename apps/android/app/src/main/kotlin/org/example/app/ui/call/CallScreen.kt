@@ -1,5 +1,8 @@
 package org.example.app.ui.call
 
+import android.app.Activity
+import android.content.ContextWrapper
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -32,6 +35,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -42,6 +46,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -59,6 +66,8 @@ import org.example.app.core.calls.CallQuality
 import org.example.app.core.calls.CallState
 import org.example.app.core.calls.SimulatedNetwork
 import org.example.app.ui.Avatar
+import org.example.app.ui.DataText
+import org.example.app.ui.dataUsedText
 import org.example.app.ui.keyString
 import org.example.app.ui.theme.BaselineDark
 import org.example.app.ui.theme.AppTypography
@@ -66,6 +75,7 @@ import org.example.app.ui.theme.AppTypography
 /** The call screens ignore the system light or dark setting: always dark, like the iPhone ones. */
 @Composable
 fun CallTheme(onResolved: (ColorScheme) -> Unit = {}, content: @Composable () -> Unit) {
+    LightStatusBarIcons()
     val colors = BaselineDark.copy(
         background = Color(0xFF0B0D1C),
         surface = Color(0xFF14172B),
@@ -75,6 +85,42 @@ fun CallTheme(onResolved: (ColorScheme) -> Unit = {}, content: @Composable () ->
     )
     onResolved(colors)
     MaterialTheme(colorScheme = colors, typography = AppTypography, content = content)
+}
+
+/** Dark backdrop, so the status bar icons must be light while a call screen shows; restores the previous look after. */
+@Composable
+internal fun LightStatusBarIcons() {
+    val view = LocalView.current
+    if (view.isInEditMode) return
+    DisposableEffect(view) {
+        val window = generateSequence(view.context) { (it as? ContextWrapper)?.baseContext }
+            .filterIsInstance<Activity>().firstOrNull()?.window
+        if (window == null) return@DisposableEffect onDispose {}
+        val controller = WindowCompat.getInsetsController(window, view)
+        val previous = controller.isAppearanceLightStatusBars
+        controller.isAppearanceLightStatusBars = false
+        onDispose { controller.isAppearanceLightStatusBars = previous }
+    }
+}
+
+/** Blocks touches from reaching whatever is under a call screen, and owns system Back (see [CallBackHandler]). */
+internal fun Modifier.consumeTouches(): Modifier = pointerInput(Unit) {
+    awaitPointerEventScope { while (true) awaitPointerEvent().changes.forEach { it.consume() } }
+}
+
+/** A call screen is not a back-stack entry: Back never reaches the chat under it. [onMinimise] is null until an in-call banner exists. */
+@Composable
+internal fun CallBackHandler(onMinimise: (() -> Unit)?) {
+    BackHandler { onMinimise?.invoke() }
+}
+
+/** The one-second tick of the sample call clock. Tests inject their own. */
+fun interface CallClock {
+    suspend fun awaitNextSecond()
+}
+
+object SystemCallClock : CallClock {
+    override suspend fun awaitNextSecond() = delay(1_000)
 }
 
 private val CallBackdrop = Brush.verticalGradient(listOf(Color(0xFF2A3560), Color(0xFF11142B), Color(0xFF070914)))
@@ -88,12 +134,16 @@ fun CallScreen(
     viewModel: CallViewModel,
     modifier: Modifier = Modifier,
     ticking: Boolean = true,
+    clock: CallClock = SystemCallClock,
+    canFlipCamera: Boolean = false,
+    onMinimise: (() -> Unit)? = null,
     onThemeResolved: (ColorScheme) -> Unit = {},
 ) {
     CallTheme(onResolved = onThemeResolved) {
         val call by viewModel.call.collectAsState()
         val current = call ?: return@CallTheme
         var showData by remember { mutableStateOf(false) }
+        CallBackHandler(onMinimise)
 
         if (ticking) {
             val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -102,7 +152,7 @@ fun CallScreen(
                 if (!live) return@LaunchedEffect
                 lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
                     while (true) {
-                        delay(1_000)
+                        clock.awaitNextSecond()
                         viewModel.tick()
                     }
                 }
@@ -116,7 +166,7 @@ fun CallScreen(
             }
         }
 
-        Box(modifier.fillMaxSize().background(CallBackdrop)) {
+        Box(modifier.fillMaxSize().background(CallBackdrop).consumeTouches()) {
             Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 14.dp, vertical = 12.dp)) {
                 AnimatedVisibility(
                     visible = current.banner != null,
@@ -138,6 +188,7 @@ fun CallScreen(
                 CallControls(
                     current,
                     onSpeaker = viewModel::toggleSpeaker,
+                    canFlip = canFlipCamera,
                     onFlip = {},
                     onMute = viewModel::toggleMute,
                     onVideo = viewModel::toggleVideo,
@@ -169,7 +220,7 @@ private fun statusText(call: CallState): String = when (val phase = call.phase) 
     CallPhase.Connecting -> stringResource(R.string.call_connecting)
     CallPhase.Ringing -> stringResource(R.string.call_ringing)
     CallPhase.Incoming -> stringResource(R.string.call_incoming)
-    CallPhase.Active, CallPhase.Reconnecting -> call.elapsedText
+    CallPhase.Active, CallPhase.Reconnecting -> DataText.clock(call.elapsed)
     is CallPhase.Ended -> when (phase.reason) {
         // The banner already says "Call ended: connection lost".
         CallEndReason.HungUp, CallEndReason.ConnectionLost -> stringResource(R.string.call_ended)
@@ -199,7 +250,7 @@ private fun AudioStage(call: CallState, name: String, modeText: String) {
             }
             Pill { Text(modeText, style = MaterialTheme.typography.labelLarge, color = Color.White) }
         }
-        Pill { Text(call.dataUsedText, style = MaterialTheme.typography.labelLarge, color = Color.White.copy(alpha = 0.85f)) }
+        Pill { Text(dataUsedText(call.bytesUsed), style = MaterialTheme.typography.labelLarge, color = Color.White.copy(alpha = 0.85f)) }
     }
 }
 

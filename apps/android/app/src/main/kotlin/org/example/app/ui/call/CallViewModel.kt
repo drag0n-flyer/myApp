@@ -56,6 +56,7 @@ class CallViewModel(
 
     fun decline() {
         outgoing = false
+        recorded = false
         engine.decline()
         recordIfEnded()
     }

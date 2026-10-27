@@ -1,6 +1,9 @@
 package org.example.app.ui.call
 
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.semantics.SemanticsConfiguration
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -46,14 +49,32 @@ class CallScreenTest {
     private val engine = SimulatedCallEngine(server, settings, NetworkType.Wifi)
     private var scheme: androidx.compose.material3.ColorScheme? = null
 
-    private fun launch(video: Boolean = false, darkOutside: Boolean = false): CallViewModel {
+    private val clock = ManualClock()
+    private val owner = TestLifecycleOwner()
+
+    private fun launch(
+        video: Boolean = false,
+        darkOutside: Boolean = false,
+        ticking: Boolean = false,
+        showSimulator: Boolean = false,
+        canFlip: Boolean = false,
+    ): CallViewModel {
         engine.start("riya", video)
         engine.advance(5.0)
-        val vm = CallViewModel(engine, store, server, settings)
+        val vm = CallViewModel(engine, store, server, settings, simulator = engine, showSimulator = showSimulator)
         rule.setContent {
-            AppTheme(darkTheme = darkOutside) { CallScreen(vm, ticking = false, onThemeResolved = { scheme = it }) }
+            CompositionLocalProvider(LocalLifecycleOwner provides owner) {
+                AppTheme(darkTheme = darkOutside) {
+                    CallScreen(vm, ticking = ticking, clock = clock, canFlipCamera = canFlip, onThemeResolved = { scheme = it })
+                }
+            }
         }
         return vm
+    }
+
+    private fun setLifecycle(state: Lifecycle.State) {
+        rule.runOnUiThread { owner.registry.currentState = state }
+        rule.waitForIdle()
     }
 
     @Test
@@ -96,10 +117,73 @@ class CallScreenTest {
     }
 
     @Test
-    fun videoCallOnShowsFlipInsteadOfSpeaker() {
+    fun videoCallHidesFlipUntilACameraExists() {
         launch(video = true)
-        rule.onNodeWithContentDescription("Flip camera").assertIsDisplayed()
+        rule.onNodeWithContentDescription("Flip camera").assertDoesNotExist()
         rule.onNodeWithContentDescription("Speaker").assertDoesNotExist()
+        rule.onNodeWithContentDescription("Mute").assertIsDisplayed()
+    }
+
+    @Test
+    fun videoCallShowsFlipWhenACameraExists() {
+        launch(video = true, canFlip = true)
+        rule.onNodeWithContentDescription("Flip camera").assertIsDisplayed()
+    }
+
+    @Test
+    fun clockTicksEachSecondOnlyWhileStarted() {
+        val vm = launch(ticking = true)
+        setLifecycle(Lifecycle.State.RESUMED)
+        clock.ticks.trySend(Unit)
+        rule.waitForIdle()
+        assertEquals(6.0, vm.call.value!!.elapsed)
+        rule.onNodeWithText("00:06").assertIsDisplayed()
+
+        setLifecycle(Lifecycle.State.CREATED)
+        clock.ticks.trySend(Unit)
+        rule.waitForIdle()
+        assertEquals(6.0, vm.call.value!!.elapsed)
+
+        setLifecycle(Lifecycle.State.STARTED)
+        assertEquals(7.0, vm.call.value!!.elapsed)
+    }
+
+    @Test
+    fun clockStopsOnceTheCallHasEnded() {
+        val vm = launch(ticking = true)
+        setLifecycle(Lifecycle.State.RESUMED)
+        rule.mainClock.autoAdvance = false
+        rule.runOnUiThread { vm.hangUp() }
+        rule.mainClock.advanceTimeByFrame()
+        val elapsed = vm.call.value!!.elapsed
+        clock.ticks.trySend(Unit)
+        rule.mainClock.advanceTimeBy(500)
+        assertEquals(elapsed, vm.call.value!!.elapsed)
+    }
+
+    @Test
+    fun finishedCallIsDismissedAfterTwoSeconds() {
+        val vm = launch(ticking = true)
+        setLifecycle(Lifecycle.State.RESUMED)
+        rule.mainClock.autoAdvance = false
+        rule.runOnUiThread { vm.hangUp() }
+        rule.mainClock.advanceTimeByFrame()
+        rule.mainClock.advanceTimeBy(1_900)
+        assertTrue(vm.call.value != null, "still showing before 2 s")
+        rule.mainClock.advanceTimeBy(200)
+        assertEquals(null, vm.call.value)
+    }
+
+    @Test
+    fun simulateMenuIsHiddenUnlessTheDebugFlagIsOn() {
+        launch(showSimulator = false)
+        rule.onNodeWithContentDescription("Simulate network").assertDoesNotExist()
+    }
+
+    @Test
+    fun simulateMenuShowsWhenTheDebugFlagIsOn() {
+        launch(showSimulator = true)
+        rule.onNodeWithContentDescription("Simulate network").assertIsDisplayed()
     }
 
     @Test
@@ -171,3 +255,14 @@ class CallScreenTest {
 
 private fun SemanticsConfiguration.getOrNullCd(): String? =
     getOrNull(SemanticsProperties.ContentDescription)?.firstOrNull()
+
+/** A clock the test drives: one `send` is one second. */
+internal class ManualClock : CallClock {
+    val ticks = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+    override suspend fun awaitNextSecond() = ticks.receive()
+}
+
+internal class TestLifecycleOwner : androidx.lifecycle.LifecycleOwner {
+    val registry = androidx.lifecycle.LifecycleRegistry.createUnsafe(this)
+    override val lifecycle: Lifecycle get() = registry
+}
