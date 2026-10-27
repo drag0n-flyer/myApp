@@ -9,6 +9,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -63,6 +64,7 @@ fun PrivacyScreen(settings: SettingsStore, chatStore: ChatStore, onBack: () -> U
 
 @Composable
 private fun BlockedList(store: ChatStore, blocked: Set<String>, onBack: () -> Unit, modifier: Modifier) {
+    BackHandler(onBack = onBack)
     SettingsPage(stringResource(R.string.privacy_blocked), onBack, modifier) {
         if (blocked.isEmpty()) item { FooterText(stringResource(R.string.privacy_blocked_empty)) }
         items(blocked.sorted(), key = { it }) { id ->

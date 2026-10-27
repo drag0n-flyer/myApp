@@ -8,6 +8,7 @@ import android.os.Build
 import android.provider.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -77,7 +78,7 @@ fun AppRoot(graph: AppGraph) {
                 MainTabs { tab ->
                     if (tab == MainTab.Chats) {
                         val vm = viewModel<ChatListViewModel>(
-                            factory = factory { ChatListViewModel(graph.chatStore, graph.serverPolicy, graph.userSettings.call, graph.network) },
+                            factory = factory { ChatListViewModel(graph.chatStore, graph.serverPolicy, graph.settingsStore.settings, graph.network) },
                         )
                         ChatListScreen(vm, onOpenChat = { nav.navigate("chat/$it") }, onOpenRequests = { nav.navigate(REQUESTS) }, onNewChat = {})
                     } else if (tab == MainTab.Contacts) {
@@ -112,11 +113,11 @@ fun AppRoot(graph: AppGraph) {
             composable(SettingsPage.CallsAudio.route) { CallsAudioScreen(graph.settingsStore, onBack = { nav.popBackStack() }) }
             composable(SettingsPage.Notifications.route) {
                 val context = LocalContext.current
-                // Sample choice until the push settings are wired (the live push choice lives in :push).
-                var delivery by rememberSaveable { mutableStateOf(NotificationDelivery.Google) }
+                val delivery by graph.settingsStore.delivery.collectAsState()
+                val fullScreenAllowed by rememberRefreshedOnResume { canUseFullScreenIntent(context) }
                 NotificationsScreen(
-                    delivery, { delivery = it },
-                    canUseFullScreenIntent = canUseFullScreenIntent(context),
+                    delivery, graph.settingsStore::setDelivery,
+                    canUseFullScreenIntent = fullScreenAllowed,
                     onOpenFullScreenSettings = { openFullScreenSettings(context) },
                     onBack = { nav.popBackStack() },
                 )
@@ -125,7 +126,7 @@ fun AppRoot(graph: AppGraph) {
                 val id = entry.arguments!!.getString("id")!!
                 val vm = viewModel<ChatViewModel>(
                     key = "chat-$id",
-                    factory = factory { ChatViewModel(graph.chatStore, id, graph.network, graph.userSettings.autoDownload) },
+                    factory = factory { ChatViewModel(graph.chatStore, id, graph.network) { graph.settingsStore.settings.value.autoDownload } },
                 )
                 ChatScreen(
                     vm, myId = graph.chatStore.me.id,

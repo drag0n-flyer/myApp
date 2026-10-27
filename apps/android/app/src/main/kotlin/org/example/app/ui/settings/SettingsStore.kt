@@ -11,6 +11,11 @@ class SettingsStore(initial: UserSettings = UserSettings()) {
     private val state = MutableStateFlow(initial)
     val settings: StateFlow<UserSettings> = state.asStateFlow()
     fun update(change: (UserSettings) -> UserSettings) = state.update(change)
+
+    private val deliveryState = MutableStateFlow(NotificationDelivery.Google)
+    /** Sample choice until the push settings are wired (the live push choice lives in :push). */
+    val delivery: StateFlow<NotificationDelivery> = deliveryState.asStateFlow()
+    fun setDelivery(value: NotificationDelivery) { deliveryState.value = value }
 }
 
 /** How push messages reach this phone. */

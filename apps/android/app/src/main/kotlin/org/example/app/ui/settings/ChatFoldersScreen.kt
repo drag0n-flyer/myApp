@@ -3,6 +3,7 @@ package org.example.app.ui.settings
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -15,6 +16,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.ui.Modifier
@@ -38,8 +40,7 @@ fun ChatFoldersScreen(store: ChatStore, onBack: () -> Unit, modifier: Modifier =
             ListItem(headlineContent = { Text(if (folder.kind == ChatFolder.Kind.All) stringResource(R.string.folder_all) else stringResource(R.string.folder_unread)) })
         }
         item { FooterText(stringResource(R.string.folders_fixed_footer)) }
-        items(custom, key = { it.id }) { folder ->
-            val index = custom.indexOf(folder)
+        itemsIndexed(custom, key = { _, it -> it.id }) { index, folder ->
             ListItem(
                 modifier = Modifier.clickable { renaming = folder },
                 headlineContent = { Text(folder.name) },
@@ -68,7 +69,7 @@ fun ChatFoldersScreen(store: ChatStore, onBack: () -> Unit, modifier: Modifier =
     }
 
     renaming?.let { folder ->
-        var name by remember(folder.id) { mutableStateOf(folder.name) }
+        var name by rememberSaveable(folder.id) { mutableStateOf(folder.name) }
         AlertDialog(
             onDismissRequest = { renaming = null },
             title = { Text(stringResource(R.string.folders_rename)) },
@@ -82,7 +83,7 @@ fun ChatFoldersScreen(store: ChatStore, onBack: () -> Unit, modifier: Modifier =
         )
     }
     if (creating) {
-        var name by remember { mutableStateOf("") }
+        var name by rememberSaveable { mutableStateOf("") }
         val chosen = remember { mutableStateListOf<String>() }
         AlertDialog(
             onDismissRequest = { creating = false },

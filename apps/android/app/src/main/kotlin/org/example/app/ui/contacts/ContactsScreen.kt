@@ -15,6 +15,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.painterResource
@@ -38,7 +39,9 @@ fun ContactsScreen(
 ) {
     val contacts by store.contacts.collectAsState()
     val locale = LocalLocale.current.platformLocale
-    val sections = contacts.sortedBy { it.displayName.lowercase(locale) }.groupBy { it.displayName.take(1).uppercase(locale) }.toSortedMap()
+    val sections = remember(contacts, locale) {
+        contacts.sortedBy { it.displayName.lowercase(locale) }.groupBy { it.displayName.take(1).uppercase(locale) }.toSortedMap()
+    }
     val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     Scaffold(
         modifier = modifier.nestedScroll(scroll.nestedScrollConnection),

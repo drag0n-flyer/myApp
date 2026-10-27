@@ -1,5 +1,7 @@
 package org.example.app.ui.settings
 
+import androidx.activity.ComponentActivity
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import org.example.app.core.chats.SampleChatStore
 import org.example.app.core.settings.IPHiding
 import androidx.compose.ui.test.assertIsDisplayed
@@ -21,7 +23,7 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], qualifiers = "w411dp-h2000dp")
 class PrivacyScreenTest {
-    @get:Rule val rule = createComposeRule()
+    @get:Rule val rule = createAndroidComposeRule<ComponentActivity>()
     private val settings = SettingsStore()
 
     private fun launch() = rule.setContent { AppTheme { PrivacyScreen(settings, SampleChatStore(), onBack = {}) } }
@@ -58,5 +60,18 @@ class PrivacyScreenTest {
         launch()
         val text = rule.allLabels().joinToString(" ")
         assertTrue(Regex("relay|MLS|E2EE|codec|kbps", RegexOption.IGNORE_CASE).containsMatchIn(text).not())
+    }
+
+    @Test
+    fun systemBackInBlockedListReturnsToPrivacyPage() {
+        var leftPrivacy = false
+        rule.setContent { AppTheme { PrivacyScreen(settings, SampleChatStore(), onBack = { leftPrivacy = true }) } }
+        rule.onNodeWithText("Blocked").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithText("Hide my IP address in calls").assertDoesNotExist()
+        rule.runOnUiThread { rule.activity.onBackPressedDispatcher.onBackPressed() }
+        rule.waitForIdle()
+        rule.onNodeWithText("Hide my IP address in calls").assertIsDisplayed()
+        assertEquals(false, leftPrivacy)
     }
 }
