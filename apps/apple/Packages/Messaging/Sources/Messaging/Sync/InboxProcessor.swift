@@ -37,6 +37,9 @@ public actor InboxProcessor {
     /// to handle, by payload hash. `process` uses them instead of calling `mls.process` a second time, which
     /// the engine would reject as a duplicate and leave the stored epoch behind.
     private var adopted: [Data: Incoming] = [:]
+    /// Called for every new message from another account, after its rows are stored and outside the lock
+    /// (the store starts the auto-download from here).
+    private var onStored: (@Sendable (MessageRecord) async -> Void)?
     private var held: Set<Section> = []
     private var waiters: [Section: [CheckedContinuation<Void, Never>]] = [:]
 
@@ -49,6 +52,8 @@ public actor InboxProcessor {
         self.handler = handler
         self.controls = controls
     }
+
+    public func setOnStored(_ hook: (@Sendable (MessageRecord) async -> Void)?) { onStored = hook }
 
     /// Test hook: runs after the cheap pre-checks and before the process lock is taken.
     func setBeforeLockHook(_ hook: (@Sendable (RawInboxRecord) async -> Void)?) { beforeLock = hook }
@@ -164,16 +169,19 @@ public actor InboxProcessor {
     public func drainRaw() async {
         await acquire(.drain)
         var newMessages: [String: [String]] = [:]
+        var storedFromOthers: [MessageRecord] = []
         scan: while let items = try? deps.repo.rawItems(limit: Self.pageSize), !items.isEmpty {
             for raw in items {
                 let (step, applied) = await process(raw)
                 if step == .stop { break scan }
                 if case .stored(let message)? = applied, message.senderAccount != deps.me.accountID, !message.undecryptable {
                     newMessages[message.chatID, default: []].append(message.id)
+                    storedFromOthers.append(message)
                 }
             }
         }
         release(.drain)
+        if let onStored { for message in storedFromOthers { await onStored(message) } }
         // Messages the notification extension stored: it never sends, so their receipts go out now.
         let pendingReceipts = ((try? deps.repo.entries(prefix: NotificationProcessor.receiptPendingPrefix)) ?? [:])
             .filter { !$0.value.isEmpty }

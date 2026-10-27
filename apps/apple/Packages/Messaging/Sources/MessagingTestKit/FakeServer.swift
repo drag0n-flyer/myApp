@@ -105,6 +105,14 @@ public actor FakeServer {
         return deviceID
     }
 
+    /// Removes a device from its account: its token stops working (401) and it is no longer listed.
+    /// Group membership is the clients' business (the revoking device sends the remove commit).
+    public func revokeDevice(_ deviceID: String) {
+        guard let account = deviceAccount[deviceID] else { return }
+        accounts[account]?.devices.removeAll { $0 == deviceID }
+        deviceAccount[deviceID] = nil
+    }
+
     public func transport(accountID: String, deviceID: String) -> HTTPTransport {
         FakeTransport(server: self)
     }
