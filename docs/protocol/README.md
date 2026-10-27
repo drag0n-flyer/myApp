@@ -72,4 +72,4 @@ These rules and values are in this folder but are not fixed by the server design
 | Calls: buffer pre-answer `call.signal` frames per `fromDeviceID` and keep only the answering device's | [Calls](calls.md#call-setup) |
 | An unknown higher `protocol` stops all traffic and keeps local data, also for a signed-in account | [Versioning](versioning.md#what-a-client-does-with-an-unknown-version) |
 
-Test vectors: none of its own. The shared vectors live in `test-vectors/`. They are generated only by the Go generator (plan 9 Task 4), never edited by hand, and verified by both Go and Swift. They are linked from [push](push.md), [escrow](escrow.md) and [calls](calls.md).
+Test vectors: none of its own. The shared vectors live in `test-vectors/` (see its [README](test-vectors/README.md) for the file list, `link-v1.json`, `attachment-stream.json`, `content-v1.json` and `safety-v1.json` among them, and an open question about the `ceiling` type). They are generated only by the Go generator (plan 9 Task 4), never edited by hand, and verified by both Go and Swift. They are linked from [push](push.md), [escrow](escrow.md) and [calls](calls.md).
