@@ -153,6 +153,8 @@ targets:
         product: LocalStore
       - package: ServerKit
         product: ServerKit
+      - package: Messaging
+        product: Messaging
       - package: SecureMessaging
         product: SecureMessaging
   AppNSEMac:
@@ -185,6 +187,8 @@ targets:
         product: LocalStore
       - package: ServerKit
         product: ServerKit
+      - package: Messaging
+        product: Messaging
       - package: SecureMessaging
         product: SecureMessaging
   AppiOSUITests:
