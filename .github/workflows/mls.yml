@@ -7,11 +7,13 @@ on:
     paths:
       - "apps/apple/Packages/SecureMessaging/**"
       - "mlsffi/**"
+      - "apps/apple/Prototypes/NSEPrototype/**"
       - ".github/workflows/mls.yml"
   pull_request:
     paths:
       - "apps/apple/Packages/SecureMessaging/**"
       - "mlsffi/**"
+      - "apps/apple/Prototypes/NSEPrototype/**"
       - ".github/workflows/mls.yml"
 
 concurrency:
