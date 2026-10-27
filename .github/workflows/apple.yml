@@ -83,7 +83,7 @@ jobs:
     if: >-
       needs.changes.outputs.appcore == 'true' || needs.changes.outputs.localstore == 'true' ||
       needs.changes.outputs.serverkit == 'true' || needs.changes.outputs.callcore == 'true' ||
-      needs.changes.outputs.messaging == 'true'
+      needs.changes.outputs.messaging == 'true' || needs.changes.outputs.callmedia == 'true'
     runs-on: ubuntu-24.04
     container: swift:6.0
     timeout-minutes: 30
@@ -113,6 +113,12 @@ jobs:
         if: needs.changes.outputs.messaging == 'true'
         working-directory: apps/apple/Packages/Messaging
         run: swift test --no-parallel
+      - name: CallMedia tests
+        if: needs.changes.outputs.callmedia == 'true'
+        working-directory: apps/apple/Packages/CallMedia
+        run: |
+          ./scripts/fetch-rnnoise-model.sh
+          swift test --no-parallel
 
   # Only what needs Apple frameworks: CryptoKit paths, SQLite file protection, the simulator.
   packages-macos:
@@ -176,7 +182,9 @@ jobs:
       - name: CallMedia tests
         if: steps.gate.outputs.ready == 'true'
         working-directory: apps/apple/Packages/CallMedia
-        run: swift test
+        run: |
+          ./scripts/fetch-rnnoise-model.sh
+          swift test
 
   serverkit-ios:
     needs: changes
