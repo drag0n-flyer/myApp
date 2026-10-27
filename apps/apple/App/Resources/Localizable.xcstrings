@@ -550,6 +550,72 @@
           }
         }
       }
+    },
+    "Attach": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Attach"
+          }
+        }
+      }
+    },
+    "Record voice message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Record voice message"
+          }
+        }
+      }
+    },
+    "Cancel recording": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cancel recording"
+          }
+        }
+      }
+    },
+    "Stop and send voice message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stop and send voice message"
+          }
+        }
+      }
+    },
+    "Microphone access is off": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Microphone access is off"
+          }
+        }
+      }
+    },
+    "Turn it on in Settings to record voice messages.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Turn it on in Settings to record voice messages."
+          }
+        }
+      }
     }
   },
   "version": "1.0"

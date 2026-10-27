@@ -55,7 +55,7 @@ targets:
         TARGETED_DEVICE_FAMILY: '1'
         INFOPLIST_KEY_UILaunchScreen_Generation: 'YES'
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: 'YES'
-        INFOPLIST_KEY_NSMicrophoneUsageDescription: So people can hear you on calls.
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: So people can hear you on calls and in voice messages.
         INFOPLIST_KEY_NSCameraUsageDescription: To scan invite and device-linking QR codes, and for video calls.
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
     dependencies:
@@ -82,7 +82,7 @@ targets:
         PRODUCT_NAME: App
         PRODUCT_BUNDLE_IDENTIFIER: org.example.app.mac
         CODE_SIGN_ENTITLEMENTS: App/AppMac.entitlements
-        INFOPLIST_KEY_NSMicrophoneUsageDescription: So people can hear you on calls.
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: So people can hear you on calls and in voice messages.
         INFOPLIST_KEY_NSCameraUsageDescription: For video calls.
         ENABLE_HARDENED_RUNTIME: 'YES'
     dependencies:

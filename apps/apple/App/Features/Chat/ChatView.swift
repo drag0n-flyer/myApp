@@ -20,7 +20,8 @@ struct ChatView: View {
                         if chat.isRequest {
                             RequestActionsBar(chat: chat, model: model)
                         } else {
-                            ComposerView(text: $draft, send: send, sendSample: sendSample)
+                            ComposerView(text: $draft, send: send, sendSample: sendSample,
+                                         sendAttachment: { model.sendAttachment($0, in: chatID) })
                         }
                     }
             } else {
