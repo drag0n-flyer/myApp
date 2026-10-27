@@ -66,6 +66,9 @@ jobs:
       - name: Swift package builds with the XCFramework
         working-directory: apps/apple/Packages/SecureMessaging
         run: swift build
+      - name: SecureMessaging tests with the real engine
+        working-directory: apps/apple/Packages/SecureMessaging
+        run: swift test
       - uses: actions/upload-artifact@v4
         with:
           name: MLSFFI-xcframework

@@ -55,6 +55,19 @@ private func checkConfirmAfterEpochAdvanceIsStale(a: any MLSEngine, b: any MLSEn
     #expect(try await b.epoch(of: g) == 2)
 }
 
+/// The app and the notification extension both stage one ciphertext: the first confirm wins, the
+/// second is stale, and its re-stage is a duplicate (the documented caller protocol).
+private func checkDoubleStage(a: any MLSEngine, b: any MLSEngine) async throws {
+    let g = try await makeGroup(creator: a, joiners: [b])
+    let (ct, _) = try await a.encrypt(utf8("both"), in: g)
+    let first = try await b.stageProcess(g, ct)
+    let second = try await b.stageProcess(g, ct)
+    #expect(first.incoming == second.incoming)
+    try await b.confirm(first)
+    await #expect(throws: MLSError.stale) { try await b.confirm(second) }
+    await #expect(throws: MLSError.duplicate) { _ = try await b.stageProcess(g, ct) }
+}
+
 private func checkStagedCommitAppliesOnConfirmOnly(a: any MLSEngine, b: any MLSEngine, c: any MLSEngine) async throws {
     let g = try await makeGroup(creator: a, joiners: [b])
     let bundle = try await a.add(keyPackages: try await c.makeKeyPackages(count: 1), to: g)
@@ -113,6 +126,7 @@ private func checkMemberKeysSortedAndIncludeSelf(creator: any MLSEngine, joiners
     }
     @Test func testStagedCommit() async throws { let (a, b, c) = engines(); try await checkStagedCommitAppliesOnConfirmOnly(a: a, b: b, c: c) }
     @Test func testWrongGroup() async throws { let (a, b, _) = engines(); try await checkStageForWrongGroupIsMalformed(a: a, b: b) }
+    @Test func testDoubleStage() async throws { let (a, b, _) = engines(); try await checkDoubleStage(a: a, b: b) }
     @Test func testDecryptApplication() async throws { let (a, b, c) = engines(); try await checkDecryptApplication(a: a, b: b, c: c) }
 
     @Test func testDroppedStageLeavesNothing() async throws {
@@ -154,6 +168,30 @@ private func checkMemberKeysSortedAndIncludeSelf(creator: any MLSEngine, joiners
     }
     @Test func testStagedCommit() async throws { let (a, b, c) = try engines(); try await checkStagedCommitAppliesOnConfirmOnly(a: a, b: b, c: c) }
     @Test func testWrongGroup() async throws { let (a, b, _) = try engines(); try await checkStageForWrongGroupIsMalformed(a: a, b: b) }
+    @Test func testDoubleStage() async throws { let (a, b, _) = try engines(); try await checkDoubleStage(a: a, b: b) }
+
+    /// Another send between stage and confirm moves the sender ratchet: stale, then re-stage works.
+    @Test func testOwnSendBetweenStageAndConfirmIsStale() async throws {
+        let (a, b, _) = try engines()
+        let g = try await makeGroup(creator: a, joiners: [b])
+        let (ct, _) = try await a.encrypt(utf8("x"), in: g)
+        let staged = try await b.stageProcess(g, ct)
+        _ = try await b.encrypt(utf8("bob talks"), in: g)
+        await #expect(throws: MLSError.stale) { try await b.confirm(staged) }
+        try await b.confirm(try await b.stageProcess(g, ct))
+    }
+
+    /// Proposals and encrypted commits are `.notApplication`/`.malformed` mapping checks live in Rust;
+    /// here: the FfiError to MLSError mapping of the two new cases, through the real engine.
+    @Test func testNewErrorsMapThroughTheLiveEngine() async throws {
+        let (a, b, c) = try engines()
+        let g = try await makeGroup(creator: a, joiners: [b])
+        let bundle = try await a.add(keyPackages: try await c.makeKeyPackages(count: 1), to: g)
+        await #expect(throws: MLSError.notApplication) { _ = try await b.decryptApplication(g, try #require(bundle.welcome)) }
+        let staged = try await b.stageProcess(g, bundle.commit)
+        b.discard(staged)
+        await #expect(throws: MLSError.stale) { try await b.confirm(staged) }
+    }
     @Test func testDecryptApplication() async throws { let (a, b, c) = try engines(); try await checkDecryptApplication(a: a, b: b, c: c) }
 
     @Test func testCrashBeforeConfirmProcessesAgain() async throws {
