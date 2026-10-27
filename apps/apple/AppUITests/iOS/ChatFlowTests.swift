@@ -52,4 +52,28 @@ final class ChatFlowTests: XCTestCase {
         XCTAssertTrue(info.waitToExist())
         XCTAssertEqual(info.label, "Not end-to-end encrypted: the server admin can read this chat")
     }
+
+    func testAcceptRequest() {
+        let app = XCUIApplication.launched()
+        app.element("chatlist.requests").tap()
+        app.element("requests.row.chat-stranger1").tap()
+        app.element("requests.accept").tap()
+        XCTAssertTrue(app.element("chat.composer.field").waitToExist())
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.element("chatlist.row.chat-stranger1").waitToExist())
+        XCTAssertFalse(app.element("chatlist.requests").exists)
+    }
+
+    func testAddContactByUsername() {
+        let app = XCUIApplication.launched()
+        app.tab("Contacts").tap()
+        app.element("contacts.add").tap()
+        let field = app.textFields["addcontact.field"]
+        XCTAssertTrue(field.waitToExist())
+        field.tap()
+        field.typeText("neha")
+        app.element("addcontact.submit").tap()
+        XCTAssertTrue(app.element("contacts.row.neha").waitToExist())
+    }
 }
