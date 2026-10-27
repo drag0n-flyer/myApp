@@ -94,3 +94,17 @@ jobs:
           path: apps/android/*/build/reports/androidTests
           retention-days: 7
           if-no-files-found: ignore
+
+  android-emulator-ci:
+    # Fails closed: a failed, cancelled or skipped emulator job fails it.
+    if: always()
+    needs: [emulator]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check the emulator job result
+        env:
+          RESULT: ${{ needs.emulator.result }}
+        run: |
+          echo "emulator: $RESULT"
+          [ "$RESULT" = success ]
