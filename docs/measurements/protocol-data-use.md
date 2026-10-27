@@ -13,7 +13,7 @@ Every cell is run **3 times, 5 minutes each**.
 | Profile | `clean`, `loss5`, `cap32` (see [network-profiles.md](network-profiles.md)) |
 | Video | `off` for all four presets. `on` only for `balanced` and `high`. |
 
-That is 24 audio-only cells plus 12 video cells: 36 cells, 108 runs of 5 minutes. Do the audio-only cells first. Keep a tick list of cells.
+That is 24 audio-only cells plus 12 video cells: 36 cells, 108 runs of 5 minutes (about 9 hours of calls, not counting setup). **72 audio-only runs (24 cells x 3) is the minimum for the Phase 0 exit item**; the 36 video runs are extra. Do the audio-only cells first. Keep a tick list of cells.
 
 ## Before you start
 
@@ -25,17 +25,13 @@ That is 24 audio-only cells plus 12 video cells: 36 cells, 108 runs of 5 minutes
    Expected: the Mac lists the interface as an input and output device (System Settings, Sound).
 3. Install Call Lab on both iPhones. Open it, paste the server host, your lab token and the other phone's account ID.
    Expected: the Connect screen keeps the values after you close and reopen the app.
-4. Turn off Wi-Fi Assist (Settings, Cellular) on both phones, and make sure both phones are on the same Wi-Fi.
+4. Turn off Wi-Fi Assist (Settings, Cellular) on both phones.
    Expected: the setting shows off.
-5. Find the caller iPhone's IP address: Settings, Wi-Fi, tap the `i` next to your network, read "IP Address". Write it down. It is called `<iPhone IP>` below.
-   Expected: an address like `192.168.1.23`.
-6. Find the caller iPhone's UDID (its device ID). On the Mac run:
-
-   ```
-   xcrun xctrace list devices
-   ```
-
-   Expected: a list where your iPhone's name is followed by a long ID in parentheses. That ID is `<UDID>`.
+5. Set up the Mac as the Wi-Fi network the phones use, so the Mac can see their traffic. This keeps the phone's port free for the headset adapter. The Mac needs a wired Ethernet connection to the internet. Then: System Settings, General, Sharing, turn on Internet Sharing. Share from Ethernet, to computers using Wi-Fi. In its options give the Wi-Fi network a name and a WPA2/WPA3 password, then switch Internet Sharing on.
+   Expected: the Internet Sharing switch is on with a green dot.
+6. Join **both** phones to that Wi-Fi network (Settings, Wi-Fi). Then find the caller's IP address: Settings, Wi-Fi, tap the `i` next to the network, read "IP Address". Do the same on the callee. Write both down: `<caller IP>` and `<callee IP>`.
+   Expected: two addresses like `192.168.2.2` and `192.168.2.3`. On the Mac, `ifconfig bridge100` shows the interface the capture uses (it exists once Internet Sharing is on).
+   (Alternative, only for runs where the headset adapter is not needed: plug the caller in by USB and capture with `rvictl -s <UDID>` then `sudo tcpdump -i rvi0 -w ...`, and stop with `rvictl -x <UDID>`. Find the `<UDID>` with `xcrun xctrace list devices`. `rvictl` does not work wirelessly. The adapter and the USB cable cannot share the phone's port, so the main method is the Internet Sharing one.)
 7. Make a folder for captures. Run these in the repo, on the Mac:
 
    ```
@@ -63,61 +59,51 @@ That is 24 audio-only cells plus 12 video cells: 36 cells, 108 runs of 5 minutes
    Expected: for `direct`, you have a screenshot of the Network Link Conditioner screen on both phones. For `relay`, `tc qdisc show dev eth0` on the host shows a `netem` line with `loss 5%` (or your profile's values).
 9. In Call Lab on both phones, pick the preset, set the path (and video on or off), and leave all other knobs alone.
    Expected: the knob form shows the preset's values from the table in [README.md](README.md).
+10. For video cells only: fix the scene so video data is comparable. Put the caller phone on a stand, camera facing a printed test card or a static scene (a poster with text and colours), at arm's length (about 60 cm), in steady room light (lights on, no daylight change). At the very start of each run, wave your hand in front of the camera for 10 seconds, then take it away and stay out of the picture. Do this identically in every video run, and name the scene in the result.
+    Expected: the preview on the caller shows the same test card in the same position every time.
 
 ## Steps for each run
 
 Do these in order, for each of the 3 runs of a cell.
 
-1. Start the capture on the caller iPhone's traffic. On the Mac run:
+1. Start the capture on the Mac (use the run's `run_id` for `<run>`, for example `20261105-141500-balanced-direct-loss5-1`; use this name format for every run: date-time, preset, path, profile, run number):
 
    ```
-   rvictl -s <UDID>
+   sudo tcpdump -i bridge100 -w tools/call-lab/runs/<run>.pcap
    ```
 
-   Expected: it prints `Starting device <UDID> [SUCCEEDED]`. (`rvictl` makes a virtual network interface, `rvi0`, that shows everything the phone sends and receives.)
-2. In a second Terminal window on the Mac run (use the run's `run_id` for `<run>`, for example `20261105-141500-balanced-direct`):
-
-   ```
-   sudo tcpdump -i rvi0 -w tools/call-lab/runs/<run>.pcap
-   ```
-
-   Expected: it prints `listening on rvi0` and waits. Leave it running.
+   Expected: it prints `listening on bridge100` and waits. Leave it running.
+2. Take a note of the time. You start the call in the next step; traffic from before the call (notifications, updates) is in the file too, and the counting step (step 8) filters it out.
+   Expected: the Terminal window is still showing tcpdump running.
 3. On the caller phone tap Start. On the callee phone tap Answer.
    Expected: both phones show a connected call within 3 seconds, and the lab writes `runs/<run_id>/events.csv` with `ice_connected` and `first_audio_packet`.
 4. On the Mac, in the Call Lab Mac rig, pick the stimulus output and the recording input, name the file after the run ID, and press Play + Record. This plays `stimulus.wav` into the caller and records the callee's sound to `received.wav`.
    Expected: the rig shows it is playing for 5 minutes. You should hear nothing in the room, since the sound goes over cables.
 5. Wait for the 5 minutes to end. Hang up on the caller phone.
    Expected: `events.csv` has an `ended` event.
-6. Stop the capture: click the second Terminal window and press Control-C.
+6. Stop the capture: click the Terminal window running tcpdump and press Control-C.
    Expected: tcpdump prints `packets captured` and a count that is not 0.
-7. Stop the virtual interface:
-
-   ```
-   rvictl -x <UDID>
-   ```
-
-   Expected: it prints `Stopping device <UDID> [SUCCEEDED]`.
-8. Export both phones' run folders from Call Lab (Export button, saves a zip) and unzip them into `tools/call-lab/runs/<run_id>/`. Put the Mac's `received.wav` there too.
+7. Export both phones' run folders from Call Lab (Export button, saves a zip) and unzip them into `tools/call-lab/runs/<run_id>/`. Put the Mac's `received.wav` there too.
    Expected: the folder holds `stats.csv`, `events.csv` and `received.wav`.
-9. Count the bytes:
+8. Count the bytes:
 
    ```
-   python3 tools/call-lab/pcap/pcapbytes.py tools/call-lab/runs/<run>.pcap --local <iPhone IP> --exclude-ports 53,5353,443
+   python3 tools/call-lab/pcap/pcapbytes.py tools/call-lab/runs/<run>.pcap --local <caller IP> --peer <peer IP> --exclude-ports 53,5353 --udp-only
    ```
 
-   (`--local` is the phone you captured on. `--exclude-ports` leaves out name lookups (53), local-network discovery (5353) and web traffic (443) that are not the call.) It prints one line of JSON.
+   What the options mean: `--local` is the phone you captured on. `--peer` keeps only traffic with the other end of the call, so notifications and updates are not counted. For path `direct`, `<peer IP>` is `<callee IP>`. For path `relay`, `<peer IP>` is the IP address of the TURN (coturn) server, from the server config, or the other end of the biggest UDP flow in the capture (Wireshark: Statistics, Conversations, UDP, sort by Bytes). `--udp-only` drops TCP traffic such as signaling. `--exclude-ports 53,5353` leaves out name lookups (53) and local-network discovery (5353). `duration_s` is counted from the first to the last media packet. It prints one line of JSON.
    Expected: JSON with `duration_s` close to 300, and `up_bytes`, `down_bytes`, `bytes_per_min` and `mb_per_10min` filled in. If it prints an error, note the message and see "If something fails" below.
-10. Score the voice quality:
+9. Score the voice quality:
 
     ```
     python3 tools/call-lab/scoring/score.py visqol --ref stimulus.wav --deg tools/call-lab/runs/<run_id>/received.wav
     ```
 
     Expected: one line like `{"visqol_moslqo": 4.1}`. Use the number as `visqol`. (If the scoring tools are not installed yet, follow `tools/call-lab/scoring/README.md` first.)
-11. Work out `concealed_pct`: the share of received audio the phone had to make up. Open the **callee's** `stats.csv`, take the **last row**, and compute `100 * concealed_samples / total_samples_recv`.
+10. Work out `concealed_pct`: the share of received audio the phone had to make up. Open the **callee's** `stats.csv`, take the **last row**, and compute `100 * concealed_samples / total_samples_recv`.
     Expected: a number from 0 to about 30 (higher on `loss5` and `cap32`).
-12. Check that the run is valid (see below).
-13. Add one row to your copy of `templates/data-use.csv` (the finished file is `docs/measurements/YYYY-MM-DD-data-use.csv`). Columns:
+11. Check that the run is valid (see below).
+12. Add one row to your copy of `templates/data-use.csv` (the finished file is `docs/measurements/YYYY-MM-DD-data-use.csv`). Columns:
 
     | Column | Where it comes from |
     |---|---|
@@ -150,9 +136,9 @@ Expected: three `True` values. If any run is `False`, or has a `disconnected` ev
 
 ## If something fails
 
-- `rvictl` does not say `[SUCCEEDED]`: unplug and replug the phone, tap Trust on the phone, try again.
-- `pcapbytes` says `pcapng not supported`: re-save the capture as pcap: `editcap -F pcap in.pcap out.pcap`, or recapture without the `-P` flag.
-- `pcapbytes` says `--local is required`: add `--local <iPhone IP>`.
+- `tcpdump` says no such device `bridge100`: Internet Sharing is not on. Turn it on (Setup A step 5) and check with `ifconfig bridge100`. If the phone cannot join the Wi-Fi, switch Internet Sharing off and on.
+- `pcapbytes` says `pcapng not supported`: re-save the capture as pcap: `editcap -F pcap in.pcap out.pcap`, or recapture.
+- `pcapbytes` says `--local is required`: add `--local <caller IP>`.
 - The call says "120 ms needs custom WebRTC build": that only matters if you changed ptime. The four presets do not use 120 ms.
 
 ## Where each number comes from

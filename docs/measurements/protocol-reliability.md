@@ -13,7 +13,7 @@ Use preset `balanced`, audio only, for all attempts.
 
 ## Before you start
 
-1. Do the one-time setup (steps 1 to 7) of [protocol-data-use.md](protocol-data-use.md), except that for this protocol you do not need the cable rig or `rvictl`.
+1. Do the one-time setup (Setup A, steps 1 to 7) of [protocol-data-use.md](protocol-data-use.md), except that for this protocol you do not need the cable rig or `rvictl`.
    Expected: both phones have Call Lab, tokens, and the server and coturn are up.
 2. Make sure both phones have cellular data on, with a working plan. Turn off Wi-Fi Assist on both (Settings, Cellular).
    Expected: with Wi-Fi off, Safari still loads a web page.

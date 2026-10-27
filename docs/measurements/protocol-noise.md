@@ -4,13 +4,13 @@ Goal: decide whether the "Enhanced" mode ships RNNoise. VPIO is Apple's built-in
 
 ## Decision rule (from GOAL.md section 4)
 
-**Enhanced ships RNNoise only if OVRL improves by 0.2 or more over VPIO on at least 3 of 5 noise categories, at 0.15 RTF or less on the A12.** Otherwise Enhanced is deferred.
+**Enhanced ships RNNoise only if OVRL improves by 0.2 or more over VPIO on at least 3 of 5 noise categories, at 0.15 RTF or less on the A12.** (The wording in this protocol: pass means `realTimeFactor` is 0.15 or less.) Otherwise Enhanced is deferred.
 
 In plain words: OVRL is DNSMOS's overall score. RTF (real-time factor) is processing time divided by audio time, so 0.15 means 1 second of sound takes 0.15 seconds of CPU time.
 
 ## What is measured
 
-The noise bench (the NS bench screen in the iPhone Call Lab) plays 150 mixed files through the cable rig: 5 categories (fan, traffic, keyboard, wind, babble) x 10 clips x 3 noise levels (SNR 0, 5 and 10 dB; a lower number is noisier). It records three passes per run: `raw.wav` (no processing), `vpio.wav` (Apple VPIO), and `rnnoise.wav` (RNNoise).
+The Mac rig plays 150 mixed files over the cable into the iPhone's headset microphone, and the noise bench (the NS bench screen in the iPhone Call Lab) records them. The set is 150 mixed files through the cable rig: 5 categories (fan, traffic, keyboard, wind, babble) x 10 clips x 3 noise levels (SNR 0, 5 and 10 dB; a lower number is noisier). It records three passes per run: `raw.wav` (no processing), `vpio.wav` (Apple VPIO), and `rnnoise.wav` (RNNoise).
 
 Devices: the A12 iPhone and the current iPhone. Do the whole protocol on each.
 
@@ -20,7 +20,7 @@ Devices: the A12 iPhone and the current iPhone. Do the whole protocol on each.
    Expected: 150 WAV files, 10 per category per level.
 2. Set up the scoring tools by following `tools/call-lab/scoring/README.md`.
    Expected: `python3 tools/call-lab/scoring/score.py dnsmos --in <any mixed file>` prints `{"sig": ..., "bak": ..., "ovrl": ...}`.
-3. Wire the cable rig as in [README.md](README.md): Mac output into the iPhone's headset microphone input. Turn off Wi-Fi Assist, Bluetooth and Low Data Mode on the phone. Plug the iPhone into the Mac with a USB cable too (see the "Known problem" in [README.md](README.md)).
+3. Wire the cable rig as in [README.md](README.md): Mac output into the iPhone's headset microphone input. Turn off Wi-Fi Assist, Bluetooth and Low Data Mode on the phone.
    Expected: the iPhone's NS bench screen shows input level moving when the Mac plays a sound.
 
 ## Steps (repeat for each iPhone)
@@ -35,20 +35,20 @@ Devices: the A12 iPhone and the current iPhone. Do the whole protocol on each.
    Expected: three entries.
 5. For each mode record the footprint delta (memory added by loading the model): `footprintBytesAfter - footprintBytesBefore`.
    Expected: a number of bytes. Convert to MB (1 MB = 1 000 000 bytes) for the result.
-6. Score each pass with DNSMOS. For each of `vpio.wav` and `rnnoise.wav`, and for `raw.wav` as the baseline, cut the recording into one clip per played file (the clips play in playlist order; if the bench folder has no clip markers, ask the project agent for a split script before continuing), then run for each clip:
+6. Score the clips. The bench writes one WAV file per clip, named `<clip-id>.wav`, for each pass, next to `bench.json`. Score the whole folder with one command (available after L8 scoring is approved; the L8 scoring tool provides folder mode):
 
    ```
-   python3 tools/call-lab/scoring/score.py dnsmos --in <clip>.wav
+   python3 tools/call-lab/scoring/score.py dnsmos --in tools/call-lab/runs/<run_id>/
    ```
 
-   Expected: `{"sig": x, "bak": y, "ovrl": z}` for each clip, each between 1 and 5.
-7. Score RNNoise against the clean reference with ViSQOL:
+   Expected: one `{"sig": x, "bak": y, "ovrl": z}` line per clip (or one JSON list), each value between 1 and 5, for all 150 clips in each of `raw`, `vpio` and `rnnoise`.
+7. Score RNNoise against the clean reference with ViSQOL, over the folder in the same way (available after L8 scoring is approved):
 
    ```
-   python3 tools/call-lab/scoring/score.py visqol --ref <clean clip>.wav --deg <rnnoise clip>.wav
+   python3 tools/call-lab/scoring/score.py visqol --ref <folder of clean clips> --deg tools/call-lab/runs/<run_id>/
    ```
 
-   Expected: `{"visqol_moslqo": x}`.
+   Expected: a `{"visqol_moslqo": x}` per clip, matched by `<clip-id>`.
 8. Average SIG, BAK and OVRL per mode and per noise category. Then compute, per category, `OVRL(rnnoise) - OVRL(vpio)`.
    Expected: a 5-row table (one per category) with a difference column.
 9. Run the 30-minute bench loop for battery: charge to 80% or more, unplug, lock nothing (the bench must stay in front), start the NS bench loop in `rnnoise` mode for 30 minutes, then repeat with `vpio`. Read the battery % at start and end from the phone, and the `battery` column of the loop's `stats.csv` if present.
@@ -60,7 +60,7 @@ Devices: the A12 iPhone and the current iPhone. Do the whole protocol on each.
 |---|---|
 | DNSMOS SIG, BAK, OVRL | `score.py dnsmos` output (`sig`, `bak`, `ovrl`) |
 | ViSQOL for `rnnoise` against the clean reference | `score.py visqol` output (`visqol_moslqo`) |
-| `realTimeFactor` (pass: under 0.15 on the A12) | `bench.json` |
+| `realTimeFactor` (pass: 0.15 or less on the A12) | `bench.json` |
 | Footprint delta | `bench.json` (`footprintBytesAfter` minus `footprintBytesBefore`) |
 | Battery over the 30-minute bench loop | battery % read at start and end (phone screen, and `battery` column in `stats.csv`) |
 
@@ -69,9 +69,9 @@ Devices: the A12 iPhone and the current iPhone. Do the whole protocol on each.
 1. Count the categories where `OVRL(rnnoise) - OVRL(vpio)` is 0.2 or more.
    Expected: a number from 0 to 5.
 2. Read `realTimeFactor` for `rnnoise` on the A12 phone.
-   Expected: a number. It passes only if under 0.15.
+   Expected: a number. It passes only if 0.15 or less.
 3. Write exactly one line at the end of the result:
-   - "Enhanced ships RNNoise" if at least 3 categories improve by 0.2 or more **and** the A12 `realTimeFactor` is under 0.15.
+   - "Enhanced ships RNNoise" if at least 3 categories improve by 0.2 or more **and** the A12 `realTimeFactor` is 0.15 or less.
    - "Enhanced is deferred" in every other case.
 
 ## Finish

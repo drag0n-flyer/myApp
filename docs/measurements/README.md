@@ -25,7 +25,7 @@ Only summary results (Markdown and CSV, each under 1 MB) are committed here. Cap
 These are fixed. Use them exactly.
 
 - **The lab never ships.** Its bundle ID is `org.example.app.calllab`. It is installed via Xcode or internal TestFlight only. Plaintext SDP (the text a call uses to agree on audio settings) is allowed here and nowhere else.
-- **Bytes on the wire** means the IP packet length: the IP header, the UDP or TCP header, and the payload. So the encryption (SRTP), RTCP, STUN and TURN overhead is included, and link-layer framing is not. It is always counted on one call device (through `rvictl` or the Mac's own network interface), in both directions, from the first to the last media packet.
+- **Bytes on the wire** means the IP packet length: the IP header, the UDP or TCP header, and the payload. So the encryption (SRTP), RTCP, STUN and TURN overhead is included, and link-layer framing is not. It is always counted on one call device (through the Mac's Internet Sharing capture, or `rvictl`), in both directions, from the first to the last media packet.
 - **Units:** 1 kbps = 1 000 bit/s. 1 MB = 1 000 000 bytes. This matches AppCore `DataFormat`.
 - **Path:** `direct` means the two phones talk to each other. `relay` means the call is forced through the TURN relay server (`iceTransportPolicy = .relay`).
 - **Presets** (from GOAL.md section 4):
@@ -89,7 +89,7 @@ Wiring:
 
 If you cannot buy this, the fallback is a speaker and a microphone in a quiet room. It is less repeatable, so write "acoustic fallback" in the result.
 
-Known problem to check on day one: the Mac capture tool `rvictl` needs the caller iPhone plugged into the Mac by USB cable, and the headset adapter also uses the phone's one port. If your adapter cannot do both at once, stop and tell the project owner before measuring.
+Capture note: the phone's single port is taken by the headset adapter, so the Mac captures the phone's traffic through Internet Sharing (the Mac becomes the Wi-Fi network the phones join, and `tcpdump -i bridge100` records it) instead of `rvictl`. The `rvictl` method (USB, Mac-side virtual interface) is only an alternative for runs without the adapter. Setup is in [protocol-data-use.md](protocol-data-use.md).
 
 ## Phase 0 exit checklist
 
