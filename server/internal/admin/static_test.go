@@ -13,7 +13,7 @@ import (
 )
 
 // pages lists every HTML page the dashboard ships (without ".html").
-var pages = []string{"index", "login", "invites", "server", "audit"}
+var pages = []string{"index", "login", "invites", "server", "audit", "accounts", "account", "reports", "report"}
 
 // designPages are the pages of the design's section 7.
 var designPages = map[string]bool{
