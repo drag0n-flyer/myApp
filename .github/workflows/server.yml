@@ -1,0 +1,50 @@
+name: server
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'server/**'
+      - '.github/workflows/server.yml'
+  pull_request:
+    paths:
+      - 'server/**'
+      - '.github/workflows/server.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://postgres@localhost:5432/postgres?sslmode=disable
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          # Always take the newest 1.26 patch release; govulncheck fails on a
+          # standard-library fix the runner's cached Go doesn't have yet.
+          check-latest: true
+          cache-dependency-path: server/go.sum
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -race ./...
+      - name: Vulnerability check
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+      - name: Fuzz smoke
+        run: scripts/fuzz-smoke.sh
