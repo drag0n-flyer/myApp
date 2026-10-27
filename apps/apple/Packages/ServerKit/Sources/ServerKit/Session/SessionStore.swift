@@ -48,7 +48,7 @@ public final class SessionStore: @unchecked Sendable {
             self.loadFailureType = nil
         } catch {
             self.cached = nil
-            self.loadFailureType = String(describing: type(of: error))
+            self.loadFailureType = String(describing: type(of: error as Any))
         }
     }
 
