@@ -19,7 +19,7 @@ struct ToyChunkAEAD: ChunkAEAD {
         let pad = [UInt8](key + nonce)
         var out = Data(count: data.count)
         data.withUnsafeBytes { src in
-            out.withUnsafeMutableBytes { dst in
+            out.withUnsafeMutableBytes { (dst: UnsafeMutableRawBufferPointer) in
                 for i in 0..<src.count { dst[i] = src[i] ^ pad[i % pad.count] ^ UInt8(truncatingIfNeeded: i &* 31) }
             }
         }
