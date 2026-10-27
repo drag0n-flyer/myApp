@@ -99,6 +99,10 @@ type Sealed struct {
 	RecipientPublicKeyB64  string         `json:"recipientPublicKeyB64"`
 	Cases                  []SealedCase   `json:"cases"`
 	Negative               []NegativeCase `json:"negative"`
+	// LowOrderRecipientKeysHex are X25519 public keys of small order (RFC 7748
+	// section 7, with their non-canonical encodings). Go's crypto/hpke refuses
+	// to seal to any of them; every implementation must do the same.
+	LowOrderRecipientKeysHex []string `json:"lowOrderRecipientKeysHex"`
 }
 
 // TURNCase is one turn-credential case.

@@ -26,6 +26,17 @@ Message content format: see [plan 7 (client messaging)](../superpowers/plans/202
 
 TODO(plan 7): replace the link above with the schema document once plan 7 publishes it, and use one name for the object.
 
+## Voice attachments
+
+A `voice` attachment (see `Att` in the `MessageBody`) holds one Ogg Opus stream, RFC 7845, channel mapping family 0, 1 or 2 channels. Sender: extension `.ogg`, local mime `audio/ogg; codecs=opus`. The mime is never sent; the envelope has no field for it.
+
+Receivers:
+- Identify the format by the first four bytes `OggS`, not by extension or mime. A file that starts with anything else is rejected. CAF (`caff`) was the old iPhone format, exists only in local storage on devices that recorded it, and must never be accepted from the network.
+- Verify before decoding: every page CRC, consecutive sequence numbers, one stream (no chaining), `OpusHead` and `OpusTags` each alone on a page, mapping family 0, and an end-of-stream page. Reject empty packets, packets with an invalid first byte, and stereo packets in a mono stream.
+- Play time is (last granule - `OpusHead` pre-skip) / 48000 seconds. Granules count 48 kHz samples. The last granule may trim encoder padding (under one packet) but must not exceed the sum of the packets' durations.
+- Limits, enforced before any large allocation: at most 1800 s (30 minutes; 86 400 000 samples), taken from both the last granule and the sum of packet durations; at most 120 000 000 bytes per file (510 kbit/s for 30 minutes is 114 750 000 bytes, plus Ogg overhead). Reject, do not truncate.
+- Conformance file for both platforms: `test-vectors/voice-ogg-v1.json` and `voice-v1.ogg`.
+
 ## Conventions
 
 - **Binary data in JSON** is base64url without padding (RFC 4648 §5): KeyPackages, commits, Welcomes, ciphertexts, escrow copies, sealed blobs, push handles, public keys and call payloads. Writers MUST NOT add padding. This rule covers client-facing fields only. There are four exceptions, each stated where it applies:

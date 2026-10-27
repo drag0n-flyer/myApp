@@ -14,6 +14,7 @@ import (
 	"github.com/drag0n-flyer/myApp/server/internal/core"
 	"github.com/drag0n-flyer/myApp/server/internal/delivery"
 	"github.com/drag0n-flyer/myApp/server/internal/httpx"
+	"github.com/drag0n-flyer/myApp/server/internal/push"
 )
 
 // Module is the serverinfo module.
@@ -22,6 +23,7 @@ type Module struct {
 
 	mu        sync.Mutex
 	escrowKey string // base64url public key, cached after the first good read
+	vapidKey  string // same for the VAPID public key
 }
 
 // New returns the serverinfo module.
@@ -74,6 +76,21 @@ func (m *Module) info(w http.ResponseWriter, _ *http.Request) error {
 	if c.PushGatewayURL != "" {
 		gateway = &c.PushGatewayURL
 	}
+	var vapidKey *string
+	if c.VapidKeyFile != "" {
+		m.mu.Lock()
+		if m.vapidKey == "" {
+			k, err := push.VAPIDPublicKey(c.VapidKeyFile)
+			if err != nil {
+				m.mu.Unlock()
+				return err
+			}
+			m.vapidKey = k
+		}
+		k := m.vapidKey
+		m.mu.Unlock()
+		vapidKey = &k
+	}
 	features := []string{"linking"}
 	if c.TURNSecret != "" {
 		features = []string{"calls", "video", "linking"}
@@ -89,7 +106,7 @@ func (m *Module) info(w http.ResponseWriter, _ *http.Request) error {
 			"defaultIPHiding": p.DefaultIPHiding,
 		},
 		"encryption": obj{"newConversations": p.Encryption.NewConversations, "escrowKey": escrow},
-		"push":       obj{"gateway": gateway},
+		"push":       obj{"gateway": gateway, "vapidKey": vapidKey},
 		"features":   features,
 		"federation": false,
 		"limits":     obj{"attachmentBytes": p.Limits.AttachmentBytes},

@@ -65,6 +65,7 @@ None of these may be added before the owner approves this list. Versions are pin
 | SQLCipher for Android | `net.zetetic:sqlcipher-android` | BSD-3-Clause style (SQLCipher Community) | `:store` | Encrypted database |
 | WorkManager | `androidx.work:work-runtime-ktx` | Apache-2.0 | `:messaging` wiring, `:push` | Deferred and expedited work |
 | Credential Manager | `androidx.credentials:credentials`, `androidx.credentials:credentials-play-services-auth` | Apache-2.0 (the Play services part is Google's proprietary SDK) | `:auth` | Passkeys |
+| Biometric | `androidx.biometric:biometric` | Apache-2.0 | `:auth` | Fingerprint/face unlock (`BiometricGate`); approved 2026-10-28 |
 | OkHttp, MockWebServer | `com.squareup.okhttp3:okhttp`, `com.squareup.okhttp3:mockwebserver` (tests) | Apache-2.0 | `:net` | HTTP and WebSocket |
 | JNA | `net.java.dev.jna:jna` (`@aar` on Android, jar for JVM tests) | Apache-2.0 (dual with LGPL-2.1; we use Apache-2.0) | `:mls` | UniFFI Kotlin loads `libmlsffi.so` through it |
 | Firebase Cloud Messaging | `com.google.firebase:firebase-messaging` | Google proprietary SDK (Firebase terms) | `:push` | FCM data messages |
@@ -209,7 +210,7 @@ data class IceCandidate(val sdp: String, val sdpMid: String? = null, val sdpMLin
 @kotlinx.serialization.Serializable
 data class CallSignalPayload(val kind: Kind, val callID: String, val video: Boolean? = null, val sdp: String? = null,
     val dtlsFingerprint: String? = null, val candidate: IceCandidate? = null,
-    val ceiling: DataMode? = null /* wire: Int 0..3 today, string accepted; owner to decide */, val videoOn: Boolean? = null) {
+    val ceiling: DataMode? = null /* wire: string per calls.md (resolved 2026-10-28) */, val videoOn: Boolean? = null) {
     enum class Kind { ring, offer, answer, candidate, renegotiate, renegotiateAnswer, modeChange }
 }
 sealed class CallSealException : Exception() { object WrongSender; object Undecryptable }
@@ -249,7 +250,7 @@ object PushPadding {                                                      // imp
 ### Task A1: Gradle scaffold, version catalog, contracts, module skeletons
 
 **Files:**
-- Create: `apps/android/settings.gradle.kts` (all 12 modules), `build.gradle.kts`, `gradle.properties`, `gradle/libs.versions.toml`, Gradle wrapper (`gradlew`, `gradlew.bat`, `gradle/wrapper/*`), `.gitignore` (`build/`, `.gradle/`, `local.properties`, `**/jniLibs/`)
+- Create: `apps/android/settings.gradle.kts` (all 12 modules), `build.gradle.kts`, `gradle.properties`, `gradle/libs.versions.toml`, Gradle wrapper (`gradlew`, `gradlew.bat`, `gradle/wrapper/*`), `.gitignore` (`build/`, `.gradle/`, `local.properties`, `**/jniLibs/`); `:app` sets `defaultConfig { ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") } }`
 - Create: one `build.gradle.kts` per module with its kind from design §3 and its dependencies; `src/main/kotlin/org/example/app/<module>/Placeholder.kt` and one placeholder test, so every module builds
 - Create: `apps/android/contracts/src/main/kotlin/org/example/app/contracts/*.kt` (the Contracts block above), `apps/android/contracts/src/test/kotlin/.../ContractsTest.kt`
 - Create: `apps/android/app/src/main/AndroidManifest.xml` with `android:allowBackup="false"`, `android:dataExtractionRules="@xml/data_extraction_rules"`, `android:supportsRtl="true"`, `android:label="@string/app_name"`; `res/xml/data_extraction_rules.xml` excluding every domain; `res/values/strings.xml` with `app_name` = `[App]`
@@ -260,11 +261,11 @@ object PushPadding {                                                      // imp
 - [ ] **Step 1: Failing tests.**
   - `groupIdEqualityByContent`: `GroupId(byteArrayOf(1,2)) == GroupId(byteArrayOf(1,2))`, equal hash codes.
   - `unpadsEverySharedVector`: every case of `docs/protocol/test-vectors/push-padding.json` (read by relative path from the repo root) unpads to `payloadHex`; a 3071-byte payload case unpads to empty; a non-bucket length, a too-long length field and a non-zero padding byte return `null`.
-  - `callsigCeilingDecodesIntAndString`: `{"kind":"offer","callID":"c1","ceiling":2}` and `{"kind":"offer","callID":"c1","ceiling":"balanced"}` both decode to `ceiling == DataMode.Balanced`; encoding writes `"ceiling":2`.
+  - `callsigCeilingIsString`: `{"kind":"offer","callID":"c1","ceiling":"balanced"}` decodes to `ceiling == DataMode.Balanced`; encoding writes `"ceiling":"balanced"`; an unknown string or an integer is rejected (resolved 2026-10-28: string per calls.md).
   - `fakeEngineRoundTrip`: two `FakeMlsEngine`s, `createGroup` + `add` + `process(welcome)` gives `Joined`; `encrypt` then `process` gives `Application` with the sender identity.
   - `backupIsDisabled` (Robolectric): the merged manifest has `allowBackup == false`.
 - [ ] **Step 2:** `./gradlew test` → FAIL (types missing).
-- [ ] **Step 3: Implement.** `CallSignalPayload.ceiling` uses a custom `KSerializer<DataMode>` that writes the ordinal and reads an int or the camel-case name (`ultraLow`, `dataSaver`, `balanced`, `high`).
+- [ ] **Step 3: Implement.** `CallSignalPayload.ceiling` uses a custom `KSerializer<DataMode>` that writes and reads the camel-case name (`ultraLow`, `dataSaver`, `balanced`, `high`) and rejects anything else.
 - [ ] **Step 4:** `./gradlew test assembleDebug` → PASS.
 - [ ] **Step 5: Commit** `feat(android): Gradle scaffold, version catalog, contracts`.
 
@@ -460,18 +461,18 @@ If plan 4's `member_keys` export is still missing, add `Engine::member_keys(grou
 **Files:** Create `scripts/build-mlsffi-android.sh`, `scripts/build-mlsffi-android_test.sh`, `apps/android/mls/uniffi.toml`; generated (committed) `apps/android/mls/src/main/kotlin/org/example/app/mls/ffi/mlsffi.kt`.
 
 **Interfaces — Produces:** `build-mlsffi-android.sh [--host-only]`:
-1. `rustup target add aarch64-linux-android x86_64-linux-android`
-2. `cargo ndk -t arm64-v8a -t x86_64 --platform 29 -o apps/android/mls/src/main/jniLibs build --release --lib --locked` (skipped with `--host-only`)
+1. `rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android`
+2. `cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 --platform 29 -o apps/android/mls/src/main/jniLibs build --release --lib --locked` (skipped with `--host-only`)
 3. `cargo build --release --lib --locked` (host `libmlsffi.so` for JVM tests, path printed as `HOST_LIB=…`)
 4. `cargo run --release --bin uniffi-bindgen -- generate --library target/release/libmlsffi.so --language kotlin --no-format --config ../../../../android/mls/uniffi.toml --out-dir build/kotlin`, then copy `org/example/app/mls/ffi/mlsffi.kt`
-5. `scripts/check-16kb.sh` on each built `.so`
+5. `scripts/check-16kb.sh` on each built `.so` (it skips `armeabi-v7a`: the 16 KB requirement is 64-bit only)
 
 `uniffi.toml`: `[bindings.kotlin] package_name = "org.example.app.mls.ffi"`, `cdylib_name = "mlsffi"`.
 
 - [ ] **Step 1: Failing test** `build-mlsffi-android_test.sh`: with `--host-only`, the generated Kotlin file exists, declares `package org.example.app.mls.ffi`, contains `fun hpkeSeal(`, and `git diff --exit-code` on it is clean after a second run (drift check).
 - [ ] **Step 2:** run → FAIL.
 - [ ] **Step 3: Implement.** `ANDROID_NDK_HOME` comes from `scripts/android-setup.sh` (G1); until G1 lands, the test uses `--host-only`.
-- [ ] **Step 4:** PASS (and, with the NDK, both ABIs build).
+- [ ] **Step 4:** PASS (and, with the NDK, all three ABIs build).
 - [ ] **Step 5: Commit** `build(mls): Android cross-build and Kotlin bindings for mlsffi`.
 
 ### Task C3: `:mls` live engine (owner review: cryptography)
@@ -518,7 +519,7 @@ If plan 4's `member_keys` export is still missing, add `Engine::member_keys(grou
 
 **Interfaces — Produces:** `sealed interface ContentEnvelope` with `Text(t, r?)`, `Photo(a, w, h, th?, r?)`, `Voice(a, dur, r?)`, `File(a, name, mime, r?)`, `Edit(target, t)`, `Delete(target)`, `React(target, e)`, `Receipt(s, ids)`, `CallSig(p: CallSignalPayload)`, `Mode(m)`, `Unknown(raw)`; common `v`, `id`, `at`; `ContentCodec.encode/decode`; `Att(id, key, dg, sz, csz)` with standard base64; `LinkSnapshot` with plan 7's fields (`settings` kept as opaque bytes); `SafetyNumber.compute(memberKeys, accountA, accountB): List<String>` (12 groups).
 
-- [ ] **Step 1: Failing tests:** `decodesEverySwiftContentFixture` (every case of `docs/protocol/test-vectors/content-v1.json` decodes and re-encodes to the same JSON object); `encodesCallsigLikeSwift` (the `callsig` case's `ceiling` stays `2`); `unknownKindIsUnknown` and `v2IsUnknown`; `textOver4096Rejected`; `safetyMatchesVector` (`safety-v1.json`); `linkSnapshotDecodesSwiftShape`.
+- [ ] **Step 1: Failing tests:** `decodesEverySwiftContentFixture` (every case of `docs/protocol/test-vectors/content-v1.json` decodes and re-encodes to the same JSON object); `encodesCallsigLikeSwift` (the `callsig` case's `ceiling` is `"balanced"`); `unknownKindIsUnknown` and `v2IsUnknown`; `textOver4096Rejected`; `safetyMatchesVector` (`safety-v1.json`); `linkSnapshotDecodesSwiftShape`.
 - [ ] **Step 2:** `./gradlew :messaging:test` → FAIL. **Step 3: Implement.** **Step 4:** PASS.
 - [ ] **Step 5: Commit** `feat(android-messaging): content envelope and safety numbers`.
 
@@ -582,9 +583,9 @@ If plan 4's `member_keys` export is still missing, add `Engine::member_keys(grou
 
 **Files:** Create `tools/webrtc/build-android.sh`, `tools/webrtc/package-android.sh`, `tools/webrtc/patches/0005-android-opus-info.patch`, `tools/webrtc/patches/0006-android-capture-post-processing.patch` (or a `Ruling:` instead, see design §8.1), `tools/webrtc/build_android_test.sh`; modify `tools/webrtc/README.md` (Android section).
 
-**Interfaces — Produces:** `build-android.sh <abi>` (`arm64-v8a` or `x86_64`) → `out/android/<abi>/libjingle_peerconnection_so.so` plus the Java classes jar; `package-android.sh` → `out/android/libwebrtc.aar` + `.sha256` + `LICENSE.md`; gn args `rtc_use_h264=false rtc_include_dav1d_in_internal_decoder_factory=false rtc_opus_support_120ms_ptime=true is_debug=false symbol_level=1 target_os="android"`; Java `org.webrtc.OpusInfo` (`decoderComplexity()`, `hasDeepPlc()`, `hasOsce()`, `maxPacketMs()`).
+**Interfaces — Produces:** `build-android.sh <abi>` (`arm64-v8a`, `armeabi-v7a` or `x86_64`) → `out/android/<abi>/libjingle_peerconnection_so.so` plus the Java classes jar; `package-android.sh` → `out/android/libwebrtc.aar` + `.sha256` + `LICENSE.md`; gn args `rtc_use_h264=false rtc_include_dav1d_in_internal_decoder_factory=false rtc_opus_support_120ms_ptime=true is_debug=false symbol_level=1 target_os="android"`; Java `org.webrtc.OpusInfo` (`decoderComplexity()`, `hasDeepPlc()`, `hasOsce()`, `maxPacketMs()`).
 
-- [ ] **Step 1: Failing test** `build_android_test.sh` (Linux, no WebRTC checkout): reads `VERSION`; rejects an unknown ABI; prints the exact gn args for each ABI (arm64 without dotprod flags); `0005`/`0006` apply cleanly with `git apply --check --3way` to a fixture tree; `package-android.sh` on a fake two-ABI layout produces an AAR whose `jni/` has exactly `arm64-v8a` and `x86_64`.
+- [ ] **Step 1: Failing test** `build_android_test.sh` (Linux, no WebRTC checkout): reads `VERSION`; rejects an unknown ABI; prints the exact gn args for each ABI (arm64 and armeabi-v7a without dotprod flags); `0005`/`0006` apply cleanly with `git apply --check --3way` to a fixture tree; `package-android.sh` on a fake three-ABI layout produces an AAR whose `jni/` has exactly `arm64-v8a`, `armeabi-v7a` and `x86_64`.
 - [ ] **Step 2:** run → FAIL. **Step 3: Implement** (reuses `apply.sh` for patches 0001–0002; 0003–0004 are Objective-C and not applied). **Step 4:** PASS.
 - [ ] **Step 5: Commit** `build(webrtc): Android build and packaging scripts, Android patches`.
 
@@ -593,7 +594,7 @@ If plan 4's `member_keys` export is still missing, add `Engine::member_keys(grou
 **Files:** Create `.github/workflows/webrtc-android.yml`, `apps/android/webrtc/build.gradle.kts` (download by URL, verify SHA-256, expose the AAR), `apps/android/webrtc/webrtc.properties` (`url`, `sha256`, `version`), instrumented `apps/android/webrtc/src/androidTest/kotlin/.../OpusInfoTest.kt`.
 
 - [ ] **Step 1: Failing test** `OpusInfoTest`: `decoderComplexity() == 7`, `hasDeepPlc()`, `hasOsce()`, `maxPacketMs()` is 120 (or 60 with a recorded `Ruling:`); `PeerConnectionFactory` lists H264 in `HardwareVideoDecoderFactory` on API 36; `RtpSender.parameters.encodings[0].maxBitrateBps` can be set.
-- [ ] **Step 2:** Workflow jobs: `build` (matrix `arm64-v8a`, `x86_64`; `ubuntu-24.04`; frees disk first; `timeout-minutes: 350`), `package` (AAR, license check fails on `GNU General Public License`, `GNU Lesser General Public License`, `GNU Affero`; `scripts/check-16kb.sh`), `smoke` (emulator API 29 x86_64 runs `OpusInfoTest`), `release` (tag `webrtc-android-m<milestone>.<n>`, on `workflow_dispatch` only). Triggers: `workflow_dispatch` and pushes to `feat/webrtc-android` only.
+- [ ] **Step 2:** Workflow jobs: `build` (matrix `arm64-v8a`, `armeabi-v7a`, `x86_64`; `ubuntu-24.04`; frees disk first; `timeout-minutes: 350`), `package` (AAR, license check fails on `GNU General Public License`, `GNU Lesser General Public License`, `GNU Affero`; `scripts/check-16kb.sh`, which skips `armeabi-v7a`), `smoke` (emulator API 29 x86_64 runs `OpusInfoTest`), `release` (tag `webrtc-android-m<milestone>.<n>`, on `workflow_dispatch` only). Triggers: `workflow_dispatch` and pushes to `feat/webrtc-android` only.
 - [ ] **Step 3:** Run the workflow by hand; read failures with `gh run view --log-failed`; fix until green.
 - [ ] **Step 4:** Publish the first release; write its URL and hash into `webrtc.properties`; `./gradlew :webrtc:pixel6Api29DebugAndroidTest` → PASS.
 - [ ] **Step 5: Commit** `build(webrtc): Android AAR CI, release and Gradle module`.
@@ -646,7 +647,7 @@ If plan 4's `member_keys` export is still missing, add `Engine::member_keys(grou
 
 **Files:** Modify `server/internal/pushgw/` (handle kind `fcm`, `PUSHGW_FCM_PROJECT_ID`, `PUSHGW_FCM_KEY_FILE`, `PUSHGW_FCM_URL` for tests, `PUSHGW_ANDROID_APP_IDS`), `server/internal/pushproto/` if the handle type lives there; create `server/internal/pushgw/fcm.go`, `fcm_test.go`; modify `docs/protocol/push.md` and server design §7.4 (the `fcm` kind, the size rule).
 
-**Interfaces — Produces:** handle `{"t":"<FCM token>","k":"fcm","e":"production","b":"<applicationId>"}`; kind rules: `message` → `alert` or `fcm`; `call` → `voip`, `alert` or `fcm`; FCM v1 body from design §9.2 with `android.priority = "HIGH"`, `ttl = "45s"` for calls and `"86400s"` for messages; OAuth token: RS256 JWT (`iss` = service account email, `scope` = `https://www.googleapis.com/auth/firebase.messaging`, `aud` = token URI), cached until 5 minutes before expiry.
+**Interfaces — Produces:** handle `{"t":"<FCM token>","k":"fcm","e":"production","b":"<applicationId>"}`; kind rules: `message` → `alert` or `fcm`; `call` → `voip`, `alert` or `fcm`; FCM v1 body from design §9.2 with `android.priority = "HIGH"`, `ttl = "45s"` for calls and `"86400s"` for messages; OAuth token: RS256 JWT (`iss` = service account email, `scope` = `https://www.googleapis.com/auth/firebase.messaging`, `aud` = token URI), cached until 5 minutes before expiry; `e` must be `production`; only FCM `UNREGISTERED` becomes `410`; any other `404`, including `NOT_FOUND`, stays an error.
 
 - [ ] **Step 1: Failing tests** (fake FCM and fake token endpoint): `fcmMessageBody` (exact JSON, `d` standard base64 of the padded bytes); `fcmOversizeBecomesEmpty` (a 3072-byte padded payload goes out as the 256-byte empty one; no request body over 4096 bytes); `fcmCallTtl45s`; `unregisteredBecomes410`; `fcmBundleMustBeListed`; `tokenCachedAndRefreshed`; `fcmKindRulesEnforced`.
 - [ ] **Step 2:** `go test ./internal/pushgw/...` → FAIL. **Step 3: Implement** (standard library only; the key file is read at start and never logged). **Step 4:** PASS.
@@ -698,7 +699,7 @@ If plan 4's `member_keys` export is still missing, add `Engine::member_keys(grou
 
 **Files:** Modify `.github/workflows/android.yml`.
 
-- [ ] **Step 1:** Add jobs on `ubuntu-24.04`, each gated by `changes`: `jvm` (`./gradlew test` for the changed JVM modules), `robolectric` (`:app:testDebugUnitTest` and the Android modules' unit tests), `lint` (`./gradlew lint`, `HardcodedText` and `SetTextI18n` as errors), `assemble` (`assembleDebug`), `mlsffi-android` (`scripts/build-mlsffi-android.sh` with the NDK; binding drift check; uploads `jniLibs` as an artifact consumed by `assemble` and emulator jobs).
+- [ ] **Step 1:** Add jobs on `ubuntu-24.04`, each gated by `changes`: `jvm` (`./gradlew test` for the changed JVM modules), `robolectric` (`:app:testDebugUnitTest` and the Android modules' unit tests), `lint` (`./gradlew lint`, `HardcodedText` and `SetTextI18n` as errors), `assemble` (`assembleDebug`), `mlsffi-android` (`scripts/build-mlsffi-android.sh` with the NDK, all three ABIs; binding drift check; uploads `jniLibs` as an artifact consumed by `assemble` and emulator jobs).
 - [ ] **Step 2:** Push the lane branch; `gh run watch`; fix until green.
 - [ ] **Step 3: Commit** `ci(android): JVM tests, lint, build, Rust cross-build`.
 
@@ -714,7 +715,7 @@ If plan 4's `member_keys` export is still missing, add `Engine::member_keys(grou
 
 **Files:** Modify `.github/workflows/android.yml` (`release-bundle` job on `main` and dispatch); create `docs/release/android-play.md` (owner's release steps: Play Console, Play App Signing, upload key made and kept by the owner, FGS and full-screen-intent declarations, the account-deletion web page), `docs/release/android-data-safety.md` (draft answers for the data safety form, marked for owner and legal review).
 
-- [ ] **Step 1:** `release-bundle`: `./gradlew bundleRelease` unsigned; `scripts/check-16kb.sh` on every `.so` in the bundle; the Gradle dependency license report checked against the approved list (fails on an unlisted library or a GPL/LGPL/AGPL license, JNA counted as Apache-2.0); `gitleaks` over `apps/android`.
+- [ ] **Step 1:** `release-bundle`: `./gradlew bundleRelease` unsigned; `scripts/check-16kb.sh` on every `.so` in the bundle (skips `armeabi-v7a`); the bundle's ABI list is exactly `arm64-v8a`, `armeabi-v7a`, `x86_64`; the Gradle dependency license report checked against the approved list (fails on an unlisted library or a GPL/LGPL/AGPL license, JNA counted as Apache-2.0); `gitleaks` over `apps/android`.
 - [ ] **Step 2:** Write the two documents; `bash scripts/check-docs.sh docs/release` passes.
 - [ ] **Step 3:** Push; green run.
 - [ ] **Step 4: Commit** `ci(android): release bundle checks, Play release and data safety drafts`.
