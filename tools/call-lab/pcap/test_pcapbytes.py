@@ -88,6 +88,18 @@ class PcapBytesTest(unittest.TestCase):
         s = stats(p, "--local", "fd00::2")
         self.assertEqual((s["up_bytes"], s["down_bytes"]), (100, 100))
 
+    def test_zero_length_offload_falls_back_to_captured_length(self):
+        p4 = bytearray(fx.ipv4_udp(DEV, PEER, 5000, 6000, 100))
+        p4[2:4] = b"\x00\x00"
+        p6 = bytearray(fx.ipv6_udp("fd00::2", "fd00::9", 5000, 6000, 60))
+        p6[4:6] = b"\x00\x00"
+        p = self.path("v4.pcap")
+        fx.write_pcap(p, [(1000.0, bytes(p4))])
+        self.assertEqual(stats(p, "--local", DEV)["up_bytes"], 100)
+        p = self.path("v6.pcap")
+        fx.write_pcap(p, [(1000.0, bytes(p6))])
+        self.assertEqual(stats(p, "--local", "fd00::2")["up_bytes"], 100)
+
     def test_linktypes_agree(self):
         pk = call_packets() + [(1000.3, fx.ipv6_udp("fd00::2", "fd00::9", 1, 2, 60))]
         pk.sort(key=lambda x: x[0])

@@ -95,6 +95,8 @@ def parse_ip(ip):
             return None
         ihl = (ip[0] & 0x0F) * 4
         total = struct.unpack("!H", ip[2:4])[0]
+        if total == 0:  # TSO/GSO offload: use the captured length
+            total = len(ip)
         frag = struct.unpack("!H", ip[6:8])[0] & 0x1FFF
         proto = ip[9]
         src, dst = ip[12:16], ip[16:20]
