@@ -33,7 +33,7 @@ import org.example.app.R
 import org.example.app.core.settings.MediaKind
 import org.example.app.messaging.content.TextLimit
 
-/** Attach, message field, emoji, and a mic that turns into send once there is text. */
+/** Attach, message field, and a mic that turns into send once there is text. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun Composer(
@@ -58,9 +58,6 @@ fun Composer(
             onValueChange = { text = TextLimit.truncate(it) },
             enabled = enabled,
             placeholder = { Text(stringResource(if (enabled) R.string.message_hint else R.string.sending_paused_hint)) },
-            trailingIcon = {
-                Icon(painterResource(R.drawable.ic_emoji), contentDescription = stringResource(R.string.emoji))
-            },
             maxLines = 5,
             colors = TextFieldDefaults.colors(focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent),
             shape = RoundedCornerShape(24.dp),

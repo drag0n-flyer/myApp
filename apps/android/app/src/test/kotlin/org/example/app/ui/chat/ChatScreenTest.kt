@@ -4,6 +4,8 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -13,6 +15,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import org.example.app.core.calls.NetworkType
 import org.example.app.core.chats.ChatEncryption
+import org.example.app.core.chats.ChatStore
 import org.example.app.core.chats.MessageContent
 import org.example.app.core.chats.SampleChatStore
 import org.example.app.core.settings.AutoDownloadSettings
@@ -35,7 +38,7 @@ class ChatScreenTest {
     private var infos = 0
     private val calls = mutableListOf<Boolean>()
 
-    private fun launch(store: SampleChatStore, network: NetworkType = NetworkType.Wifi) {
+    private fun launch(store: ChatStore, network: NetworkType = NetworkType.Wifi) {
         val vm = ChatViewModel(store, "chat-riya", network, AutoDownloadSettings())
         rule.setContent {
             AppTheme { ChatScreen(vm, myId = "me", onBack = { backs++ }, onOpenInfo = { infos++ }, onCall = { calls += it }) }
@@ -62,10 +65,74 @@ class ChatScreenTest {
     }
 
     @Test
-    fun photoOnWifiDownloadsByItself() {
+    fun photoOnWifiShowsNoDownloadButton() {
         launch(storeWith(photoAndVoice), NetworkType.Wifi)
         rule.onNodeWithText("Photo · 240 KB").assertIsDisplayed()
         rule.onNodeWithContentDescription("Download").assertDoesNotExist()
+    }
+
+    private class RecordingStore(inner: SampleChatStore) : ChatStore by inner {
+        val downloads = mutableListOf<String>()
+        override fun download(messageId: String, chatId: String) { downloads += messageId }
+    }
+
+    @Test
+    fun photoOnWifiIsDownloadedOncePerMessage() {
+        val store = RecordingStore(storeWith(photoAndVoice))
+        launch(store, NetworkType.Wifi)
+        rule.waitForIdle()
+        rule.onNodeWithText("Photo · 240 KB").assertIsDisplayed()
+        assertEquals(listOf("2"), store.downloads)
+    }
+
+    @Test
+    fun photoOnMobileDataIsNotDownloadedByItself() {
+        val store = RecordingStore(storeWith(photoAndVoice))
+        launch(store, NetworkType.Mobile)
+        rule.waitForIdle()
+        assertEquals(emptyList(), store.downloads)
+    }
+
+    private fun longChat(): SampleChatStore =
+        storeWith((0 until 300).map { msg("m$it", "riya", MessageContent.Text("message $it")) })
+
+    @Test
+    fun readingOlderMessagesKeepsPositionWhenOneArrives() {
+        val store = longChat()
+        launch(store)
+        rule.onNode(hasScrollAction()).performScrollToIndex(150)
+        rule.waitForIdle()
+        val before = rule.allLabels().filter { it.startsWith("message ") }.toSet()
+        rule.runOnIdle { store.receive(MessageContent.Text("fresh"), store.contact("riya")!!) }
+        rule.waitForIdle()
+        rule.onNodeWithText("fresh").assertDoesNotExist()
+        assertEquals(before, rule.allLabels().filter { it.startsWith("message ") }.toSet())
+    }
+
+    @Test
+    fun atTheNewestMessageAnArrivingMessageScrollsIntoView() {
+        val store = longChat()
+        launch(store)
+        rule.runOnIdle { store.receive(MessageContent.Text("fresh"), store.contact("riya")!!) }
+        rule.waitForIdle()
+        rule.onNodeWithText("fresh").assertIsDisplayed()
+    }
+
+    @Test
+    fun sendingYourOwnMessageScrollsToItEvenWhenReadingOlderOnes() {
+        val store = longChat()
+        launch(store)
+        rule.onNode(hasScrollAction()).performScrollToIndex(150)
+        rule.waitForIdle()
+        rule.runOnIdle { store.send(MessageContent.Text("mine"), "chat-riya") }
+        rule.waitForIdle()
+        rule.onNodeWithText("mine").assertIsDisplayed()
+    }
+
+    @Test
+    fun composerHasNoEmojiButton() {
+        launch(storeWith(photoAndVoice))
+        rule.onNodeWithContentDescription("Emoji").assertDoesNotExist()
     }
 
     @Test

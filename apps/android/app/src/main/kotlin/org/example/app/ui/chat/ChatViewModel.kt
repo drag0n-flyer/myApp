@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import org.example.app.core.calls.NetworkType
 import org.example.app.core.chats.Chat
@@ -29,15 +31,17 @@ class ChatViewModel(
     private val network: NetworkType,
     private val autoDownload: AutoDownloadSettings,
 ) : ViewModel() {
+    // Only this chat matters: other chats changing must not recompute anything.
     val state: StateFlow<ChatState> =
-        combine(store.chats, store.requests) { _, _ -> read() }.stateIn(viewModelScope, SharingStarted.Eagerly, read())
+        combine(store.chats, store.requests) { chats, requests ->
+            chats.firstOrNull { it.id == chatId } ?: requests.firstOrNull { it.id == chatId }
+        }.distinctUntilChanged().map { read(it) }.stateIn(viewModelScope, SharingStarted.Eagerly, read(store.chat(chatId)))
 
     init {
         store.markRead(chatId)
     }
 
-    private fun read(): ChatState {
-        val chat = store.chat(chatId)
+    private fun read(chat: Chat?): ChatState {
         return ChatState(
             chat = chat,
             contactName = chat?.let { store.contact(it.contactId)?.displayName } ?: "",

@@ -135,6 +135,7 @@ private fun Body(message: Message, autoDownloads: (MediaKind) -> Boolean, onDown
 @Composable
 private fun MediaTile(title: String, media: MediaState?, wait: Boolean, blurred: Boolean, onDownload: () -> Unit) {
     val phase = media?.phase ?: MediaState.Phase.Remote
+    val downloadingLabel = stringResource(R.string.downloading)
     val needsTap = phase is MediaState.Phase.Failed || (phase is MediaState.Phase.Remote && wait)
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Box(
@@ -151,7 +152,7 @@ private fun MediaTile(title: String, media: MediaState?, wait: Boolean, blurred:
                 }
                 phase is MediaState.Phase.Downloading -> CircularProgressIndicator(
                     progress = { phase.progress.toFloat() },
-                    modifier = Modifier.semantics { contentDescription = "" }.size(32.dp),
+                    modifier = Modifier.semantics { contentDescription = downloadingLabel }.size(32.dp),
                 )
             }
         }
