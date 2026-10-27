@@ -1,0 +1,61 @@
+name: android
+
+on:
+  workflow_dispatch:
+  push:
+    branches-ignore: [feat/server]
+    paths:
+      - 'apps/android/**'
+      - '.github/workflows/android.yml'
+  pull_request:
+    paths:
+      - 'apps/android/**'
+      - '.github/workflows/android.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      contracts: ${{ steps.flags.outputs.contracts }}
+      core: ${{ steps.flags.outputs.core }}
+      net: ${{ steps.flags.outputs.net }}
+      auth: ${{ steps.flags.outputs.auth }}
+      mls: ${{ steps.flags.outputs.mls }}
+      messaging: ${{ steps.flags.outputs.messaging }}
+      store: ${{ steps.flags.outputs.store }}
+      calls: ${{ steps.flags.outputs.calls }}
+      calls_android: ${{ steps.flags.outputs.calls_android }}
+      webrtc: ${{ steps.flags.outputs.webrtc }}
+      push: ${{ steps.flags.outputs.push }}
+      app: ${{ steps.flags.outputs.app }}
+      all: ${{ steps.flags.outputs.all }}
+      any: ${{ steps.flags.outputs.any }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Flag changed modules and their dependents
+        id: flags
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          base=""
+          if [ "$EVENT" = pull_request ]; then base="$BASE_SHA"
+          elif [ "$EVENT" = push ] && [ -n "$BEFORE_SHA" ] && [ "${BEFORE_SHA//0/}" != "" ]; then base="$BEFORE_SHA"; fi
+          if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+            git diff --name-only "$base" HEAD > changed.txt
+          else
+            # workflow_dispatch, new branch or unknown base: treat everything as changed
+            echo ".github/workflows/android.yml" > changed.txt
+          fi
+          scripts/android-changes.sh < changed.txt | tee -a "$GITHUB_OUTPUT"
