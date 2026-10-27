@@ -51,6 +51,8 @@ public actor ConversationManager: ConversationManaging {
         try await deps.lock.withAsyncLock(timeout: lockTimeout, body)
     }
 
+    private var membership: Membership { Membership(deps: deps) }
+
     // MARK: ConversationManaging
 
     public func preferredConversation(with peer: String) async throws -> ConversationRecord {
@@ -116,9 +118,14 @@ public actor ConversationManager: ConversationManaging {
         let record = ConversationRecord(
             serverID: created.conversationID, chatID: peer, groupID: group.raw, mode: created.mode, innerMode: created.mode,
             modeMismatch: false, epoch: Int64(epoch), active: true, createdAt: deps.now())
-        try deps.repo.transaction {
-            try deps.repo.set(pendingKey(record.serverID), Data([1]))
-            try deps.repo.upsertConversation(record)
+        // The members and the first safety number are stored with the conversation (no lines: it is new).
+        try await locked {
+            let keys = try await membership.keys(of: group)
+            try deps.repo.transaction {
+                try deps.repo.set(pendingKey(record.serverID), Data([1]))
+                try deps.repo.upsertConversation(record)
+                _ = try membership.apply(keys: keys, conversation: record, db: deps.repo)
+            }
         }
 
         // 5. The mode envelope goes first, before anything else can be sent. If this post fails the
@@ -139,7 +146,10 @@ public actor ConversationManager: ConversationManaging {
     /// before it takes the process lock, so no network call happens under the lock.
     func joined(group: GroupID, serverConversationID: String, serverMode: String) async throws {
         let plan = try await planJoin(group: group, serverConversationID: serverConversationID, serverMode: serverMode)
-        try deps.repo.transaction { try plan.store(in: deps.repo) }
+        try deps.repo.transaction {
+            try plan.store(in: deps.repo)
+            _ = try membership.apply(keys: plan.keys, conversation: plan.conversation, db: deps.repo)
+        }
     }
 
     /// The rows a Welcome creates. Built first (it awaits the MLS engine), written later by `store`, so the
@@ -147,6 +157,8 @@ public actor ConversationManager: ConversationManaging {
     struct JoinPlan: Sendable {
         let chat: ChatRecord
         let conversation: ConversationRecord
+        /// The group's members, stored by `IncomingHandler.apply(memberKeys:)` or `joined`.
+        let keys: [MemberKey]
 
         /// The chat is only created when it does not exist yet.
         func store(in repo: Repository) throws {
@@ -156,7 +168,8 @@ public actor ConversationManager: ConversationManaging {
     }
 
     func planJoin(group: GroupID, serverConversationID: String, serverMode: String) async throws -> JoinPlan {
-        let identities = try await deps.mls.members(of: group)
+        let keys = try await membership.keys(of: group)
+        let identities = keys.map(\.identity)
         let accounts = Set(identities.map { String($0.split(separator: "/", maxSplits: 1)[0]) })
         guard let peer = accounts.subtracting([deps.me.accountID]).sorted().first else { throw SyncError.noPeer }
         let epoch = try await deps.mls.epoch(of: group)
@@ -166,7 +179,8 @@ public actor ConversationManager: ConversationManaging {
             chat: ChatRecord(id: peer, isRequest: !isContact, unread: 0, muted: false, lastActivity: deps.now()),
             conversation: ConversationRecord(
                 serverID: serverConversationID, chatID: peer, groupID: group.raw, mode: serverMode, innerMode: nil,
-                modeMismatch: false, epoch: Int64(epoch), active: true, createdAt: deps.now()))
+                modeMismatch: false, epoch: Int64(epoch), active: true, createdAt: deps.now()),
+            keys: keys)
     }
 
     // MARK: Mode envelope
@@ -251,6 +265,12 @@ public actor ConversationManager: ConversationManaging {
             try await locked {
                 try await deps.mls.commitAccepted(group)
                 try deps.repo.setEpoch(serverID: serverID, Int64(newEpoch))
+                // Device lines and the safety number. Best effort: if the engine or database fails here, the next
+                // update compares the whole stored state and writes the lines then. (`create` has no row yet and
+                // stores the members itself.)
+                if let conversation = try? deps.repo.conversation(serverID: serverID) {
+                    _ = try? await membership.update(conversation: conversation, db: deps.repo)
+                }
             }
             return newEpoch
         }

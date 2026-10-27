@@ -22,6 +22,9 @@ public actor InboxProcessor {
     private let deps: MessagingDeps
     private let conversations: ConversationManager
     private let handler: IncomingHandler
+    private var membership: Membership { Membership(deps: deps) }
+    /// Device IDs whose notice is being shown right now (a second drain must not show it twice).
+    private var noticesInFlight: Set<String> = []
     private let controls: ControlSender?
     private enum Section { case fetch, drain }
     private var syncPending = false
@@ -152,21 +155,49 @@ public actor InboxProcessor {
     public func drainRaw() async {
         await acquire(.drain)
         var newMessages: [String: [String]] = [:]
+        var newOwnDevices: [String] = []
         scan: while let items = try? deps.repo.rawItems(limit: Self.pageSize), !items.isEmpty {
             for raw in items {
                 let (step, applied) = await process(raw)
                 if step == .stop { break scan }
+                if case .ownDeviceAdded(let ids)? = applied { newOwnDevices += ids }
                 if case .stored(let message)? = applied, message.senderAccount != deps.me.accountID, !message.undecryptable {
                     newMessages[message.chatID, default: []].append(message.id)
                 }
             }
         }
         release(.drain)
-        // Receipts are network calls, so they go after the lock and the gate are released.
+        // Network calls (device names, receipts) go after the lock and the gate are released.
+        await noticeOwnDevices(newOwnDevices)
         if let controls {
             for (chatID, ids) in newMessages.sorted(by: { $0.key < $1.key }) {
                 await controls.sendControl(.receipt(.delivered, ids: ids), chatID: chatID)
             }
+        }
+    }
+
+    // MARK: New own devices (Design 19)
+
+    static func noticeKey(_ deviceID: String) -> String { "notified.device.\(deviceID)" }
+
+    /// One "New device added" notice per device ID, ever (kv `notified.device.<id>`). The name comes from
+    /// `GET /v1/devices`, or "A new device" when it is unknown. The marker is written after the notice, so a
+    /// crash in between repeats the notice rather than losing it.
+    private func noticeOwnDevices(_ deviceIDs: [String]) async {
+        // Checking and claiming happen without a suspension point, so two drains cannot both claim an ID.
+        var todo: [String] = []
+        for id in deviceIDs where !todo.contains(id) && !noticesInFlight.contains(id) {
+            if let marker = try? deps.repo.get(Self.noticeKey(id)), !marker.isEmpty { continue }
+            noticesInFlight.insert(id)
+            todo.append(id)
+        }
+        guard !todo.isEmpty else { return }
+        let devices = (try? await deps.server.devices()) ?? []
+        for id in todo {
+            let name = devices.first { $0.id == id }?.name ?? ""
+            await deps.notifier.ownDeviceAdded(deviceID: id, name: name.isEmpty ? "A new device" : name)
+            try? deps.repo.set(Self.noticeKey(id), Data([1]))
+            noticesInFlight.remove(id)
         }
     }
 
@@ -264,13 +295,17 @@ public actor InboxProcessor {
                         try plan.store(in: repo)
                         try repo.markProcessed(hash: hash)
                         try repo.deleteRaw(cursor: raw.cursor)
-                        return try handler.apply(incoming, raw: raw, db: repo)
+                        return try handler.apply(incoming, raw: raw, db: repo, memberKeys: plan.keys)
                     }
                     pendingJoins[raw.cursor] = nil
                     return result
                 }
+                // The group's members after a commit (under the lock, before the transaction). A failure here only
+                // skips the lines for now: the MLS state has advanced, so the item must not be processed again.
+                var keys: [MemberKey]?
+                if case .commit(let group, _, false) = incoming { keys = try? await membership.keys(of: group) }
                 return try repo.transaction {
-                    let result = try handler.apply(incoming, raw: raw, db: repo)
+                    let result = try handler.apply(incoming, raw: raw, db: repo, memberKeys: keys)
                     try repo.markProcessed(hash: hash)
                     try repo.deleteRaw(cursor: raw.cursor)
                     return result
