@@ -1,0 +1,6 @@
+{
+  "plaintext": "{\"body\":{\"at\":1700000000000,\"id\":\"0b7e1c52-3c43-4c1b-9d7e-5f5a2f0c9a11\",\"k\":\"text\",\"t\":\"hello escrow\",\"v\":1},\"conversationID\":\"conv-1\",\"senderAccountID\":\"acc-ana\",\"sentAt\":1700000000000}",
+  "privateKey": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+  "publicKey": "605a725d2a4adfeeb1a29e17edd621c1b7593ee8cdbc44ac6c4ab6e2f805d23c",
+  "sealed": "9eNIPzXr95rHCzU0C_DWYF1DfqyBCuSKuhq69MYKESKBQvvN07Ge11Qg2vEbVLtfPz_UxluMFGKI43EUWnCNNRvHYydwKVIrV9Z8VhmY5FwldI8eT1RwiLC8Gxq6zNVJ2yTJo7y9Qm1zeyJD9u8gUA-1zwKxd7UGFTxhf3dvFzv-RSKwg38fKNbqKZk5jfX2TPN3nbh09NC5CA2N1bSs1JkDnVkQ7ncVzoFb2LKhCDh09Ahf8KZWf3d7lRsQ9zVIa819anHiwXH23ZXylyTOnbO-ED1Fu5dO1omP3RYTlLuHM13QMMTj5MgT"
+}

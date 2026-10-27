@@ -336,6 +336,14 @@ public final class Repository: @unchecked Sendable {
                        [.text(o.messageID), .text(o.chatID), .blob(o.envelope), .int(Int64(o.attempts)), .int(ms(o.nextAttemptAt))])
     }
 
+    /// Stores a message and its outbox row in one transaction.
+    public func enqueueSend(message: MessageRecord, outbox: OutboxRecord) throws {
+        try db.transaction { _ in
+            try insertMessage(message)
+            try enqueue(outbox)
+        }
+    }
+
     public func dueOutbox(at: Date) throws -> [OutboxRecord] {
         try db.query("""
             SELECT message_id, chat_id, envelope, attempts, next_attempt_at FROM outbox

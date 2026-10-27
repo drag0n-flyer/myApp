@@ -52,6 +52,9 @@ public actor FakeServer {
 
     public func setDefaultMode(_ mode: String) { defaultMode = mode }
 
+    /// The escrow public key `GET /v1/server` reports (32 bytes; the fake never uses the private half).
+    public var escrowKey = Data((0..<32).map { UInt8(0x40 + $0) })
+
     // MARK: - Test hooks
 
     /// Adds a device to `account`, creating the account (with `username`) on first use.
@@ -97,6 +100,7 @@ public actor FakeServer {
             return failure(400, "bad_request")
         }
         let path = comps.path
+        if method == "GET", path == "/v1/server" { return serverInfo() }
         let query = Dictionary((comps.queryItems ?? []).compactMap { item in item.value.map { (item.name, $0) } },
                                uniquingKeysWith: { first, _ in first })
         guard let token = request.value(forHTTPHeaderField: "Authorization"), token.hasPrefix("Bearer test."),
@@ -134,6 +138,23 @@ public actor FakeServer {
         case "GET /devices": return devices(me)
         default: return failure(404, "not_found")
         }
+    }
+
+    private func serverInfo() -> (Data, HTTPURLResponse) {
+        struct Policy: Encodable { let defaultMode = "auto", maxMode = "high", defaultIPHiding = "nonContacts" }
+        struct Encryption: Encodable { let newConversations: String; let escrowKey: String? }
+        struct Limits: Encodable { let attachmentBytes = 104_857_600 }
+        struct Info: Encodable {
+            let `protocol` = 1, host = FakeServer.host, requiresInvite = false
+            let policy = Policy()
+            let encryption: Encryption
+            let features: [String] = []
+            let federation = false
+            let limits = Limits()
+        }
+        return ok(Info(encryption: Encryption(
+            newConversations: defaultMode,
+            escrowKey: defaultMode == "server_readable" ? Base64URLData(escrowKey).encoded : nil)))
     }
 
     private struct Count: Encodable { let count: Int }

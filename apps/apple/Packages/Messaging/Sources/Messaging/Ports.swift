@@ -8,18 +8,6 @@ public protocol EscrowSealer: Sendable {
     func seal(_ plaintext: Data, to recipientKey: Data) throws -> Data
 }
 
-public enum EscrowError: Error, Equatable, Sendable { case unavailable }
-
-/// Escrow sealing: HPKE (Curve25519, HKDF-SHA256, ChaCha20-Poly1305, `info = "escrow-v1"`),
-/// output `encapsulatedKey (32) || ciphertext`. Needs CryptoKit.
-///
-/// F2 declares the name and signature only; B1 implements it. Until then it fails closed.
-public enum Escrow {
-    public static func seal(_ plaintext: Data, serverKey: Data) throws -> Data {
-        throw EscrowError.unavailable
-    }
-}
-
 /// Chunked attachment encryption (Design 7). The real cipher is built in B2; tests use
 /// `FakeAttachmentCipher`.
 public protocol AttachmentCipher: Sendable {

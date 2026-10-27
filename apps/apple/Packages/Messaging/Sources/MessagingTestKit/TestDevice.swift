@@ -49,6 +49,7 @@ public func makeDevice(
                               transport: await server.transport(accountID: account, deviceID: deviceID))
     // An in-memory database cannot fail to open; the test kit has nowhere to report it anyway.
     let db = try! Database.inMemory()
+    try! migrate(db)
     let notifier = RecordingDeviceNotifier()
     let deps = MessagingDeps(
         me: (account, deviceID), server: client, mls: FakeMLSEngine(identity: "\(account)/\(deviceID)"),
