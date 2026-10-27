@@ -9,20 +9,25 @@ public enum VoicePlaybackError: Error, Equatable, Sendable {
 }
 
 /// Apple only (untested on Linux). Turns a stored voice note into PCM for playback: Ogg Opus is
-/// demuxed by `OggOpusReader` and decoded by `AVAudioConverter`'s Opus decoder; an old CAF note
-/// is read directly with `AVAudioFile`.
+/// validated and demuxed by `VoiceNoteValidator`, then decoded by `AVAudioConverter`'s Opus decoder;
+/// an old local CAF note is read directly with `AVAudioFile`.
 public enum VoicePlaybackLoader {
-    public static func load(_ url: URL) throws -> AVAudioPCMBuffer {
+    /// `origin` says where the file came from. A file received from another person must be Ogg Opus
+    /// within the size and length limits (`VoiceNoteValidator`); CAF is read only for local files.
+    public static func load(_ url: URL, origin: VoiceNoteOrigin) throws -> AVAudioPCMBuffer {
+        // Check the size on disk before reading anything into memory.
+        let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        try VoiceNoteValidator.checkFileSize(size)
         let data = try Data(contentsOf: url)
-        switch VoiceContainer.detect(prefix: Array(data.prefix(4))) {
-        case .ogg: return try decode(ogg: [UInt8](data))
+        switch try VoiceNoteValidator.validate([UInt8](data), origin: origin) {
+        case .ogg(let stream): return try decode(stream)
         case .caf: return try loadCAF(url)
-        case nil: throw VoicePlaybackError.unknownFormat
         }
     }
 
     static func loadCAF(_ url: URL) throws -> AVAudioPCMBuffer {
         let file = try AVAudioFile(forReading: url)
+        try VoiceNoteValidator.checkCAFLength(frames: file.length, sampleRate: file.processingFormat.sampleRate)
         guard let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)) else {
             throw VoicePlaybackError.decodeFailed
         }
@@ -31,8 +36,9 @@ public enum VoicePlaybackLoader {
     }
 
     /// Decodes to 48 kHz Float32 and drops the pre-skip and anything past the final granule.
-    public static func decode(ogg: [UInt8]) throws -> AVAudioPCMBuffer {
-        let stream = try OggOpusReader.read(ogg)
+    /// The stream must already have passed `VoiceNoteValidator` (limits, no empty packets).
+    static func decode(_ stream: OggOpusStream) throws -> AVAudioPCMBuffer {
+        try VoiceNoteValidator.check(stream)
         let channels = AVAudioChannelCount(stream.channels)
         let durations = stream.packets.map { OpusPacket.samples48k($0) ?? 0 }
         let totalFrames = durations.reduce(0, +)
@@ -55,7 +61,7 @@ public enum VoicePlaybackLoader {
         var offset = 0
         for (i, packet) in stream.packets.enumerated() {
             packet.withUnsafeBytes { raw in
-                (compressed.data + offset).copyMemory(from: raw.baseAddress!, byteCount: packet.count)
+                if let base = raw.baseAddress { (compressed.data + offset).copyMemory(from: base, byteCount: packet.count) }
             }
             compressed.packetDescriptions![i] = AudioStreamPacketDescription(
                 mStartOffset: Int64(offset), mVariableFramesInPacket: description.mFramesPerPacket == 0 ? UInt32(durations[i]) : 0,

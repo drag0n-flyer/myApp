@@ -4,7 +4,7 @@ import Testing
 
 /// A real file: 0.3 s of 440 Hz, mono, 16 kHz input, made by ffmpeg with libopus (libogg did the
 /// paging). It is the independent reference for the page checksum, the header layout and the reader.
-private let ffmpegFileB64 = "T2dnUwACAAAAAAAAAABBJWEmAAAAAGiqv5EBE09wdXNIZWFkAQE4AYA+AAAAAABPZ2dTAAAAAAAAAAAAAEElYSYBAAAA/s47xAE9T3B1c1RhZ3MMAAAATGF2ZjYxLjcuMTAzAQAAAB0AAABlbmNvZGVyPUxhdmM2MS4xOS4xMDEgbGlib3B1c09nZ1MABHg5AAAAAAAAQSVhJgIAAABmRWjTED8pKzEyKjQvJywtKiYtKRtIggFdbH5A5gAAC9PYYLZXBl2HORjlhtlT/QW+gyii4kNZicPPXfM07o5qEynO6ZO4NgGLLtuOBwPa+sczkmBIofeXrJiFA1wmChaAH061cgLfGstK6ehyTE5pvT9SidZ+Tjgy8rMRY0ibKx91nPxLOkXWd+Q7svIBcyzM+5ouPj5xBY1LVi39PL3Rmk7TTNRLlwFImwYysJKgTNY9ToVLHOcCrPPyAPu0PPICD+YJiR+vchZQ3qazzfIW7+rJlftCowYoSJqy33Wc/EkO2Lq+Ka3jGV51yGvYOtq2OUUAFUAel5F/8HQjRmlvYwsGU0IKXRB2rkBImrKSUUUAzlAVhU5HP85PHPska1lyYPITKYa8RETeaMLzGD+Q3pN2tCRImrLfdZz8SUjzMrkr0uhGFvqvworWsya7kWhZtibeGPQ+ZLMjsLBtQE/MddGMyJYMFvLaSJqy33Wc/Es6RdO0VUs6ynp10Y7raM1soKafS5wgG5mnzuY6WZ8BSFLGn9HsaqJImrLfe82BSlW3FtzJ8aLWN1NXGOeAQSWEEYcq/FkBJdfPVCdBg2BImthMmpe/qq/Aoa5mO0GuE1Vgvs0/CB0BFQWOVcGYBDTZDeSrEuyk8D7RGEibKtJTqkh8pFm7GZIEstQpVsWBoeXHaXt3FxX+wdbRyEOVrImZFjJPdJBd4EibKx91nPxJSiI2gzf4vfxdv8eou+8HLqeKBWUtCp+2L6IS+ufojhmHYEibKx91nPxLOkV5vDt+H1CfGH0ZhjKwB5LNEPOwoMkQnQqqH6qISJsq0lOqROIsskIVqAK1eg+nSqBRCTOAvKNEln8foy1llvacG5NngQd1lTmQSJsrH3Wc/EkzslW6pAl3pmM/OxOPiSqNH3woeA1U61c0C/uXGyeaHkBIBejXSjogw39kDZVLmnbbOkie+r1CvriK5Lw="
+let ffmpegFileB64 = "T2dnUwACAAAAAAAAAABBJWEmAAAAAGiqv5EBE09wdXNIZWFkAQE4AYA+AAAAAABPZ2dTAAAAAAAAAAAAAEElYSYBAAAA/s47xAE9T3B1c1RhZ3MMAAAATGF2ZjYxLjcuMTAzAQAAAB0AAABlbmNvZGVyPUxhdmM2MS4xOS4xMDEgbGlib3B1c09nZ1MABHg5AAAAAAAAQSVhJgIAAABmRWjTED8pKzEyKjQvJywtKiYtKRtIggFdbH5A5gAAC9PYYLZXBl2HORjlhtlT/QW+gyii4kNZicPPXfM07o5qEynO6ZO4NgGLLtuOBwPa+sczkmBIofeXrJiFA1wmChaAH061cgLfGstK6ehyTE5pvT9SidZ+Tjgy8rMRY0ibKx91nPxLOkXWd+Q7svIBcyzM+5ouPj5xBY1LVi39PL3Rmk7TTNRLlwFImwYysJKgTNY9ToVLHOcCrPPyAPu0PPICD+YJiR+vchZQ3qazzfIW7+rJlftCowYoSJqy33Wc/EkO2Lq+Ka3jGV51yGvYOtq2OUUAFUAel5F/8HQjRmlvYwsGU0IKXRB2rkBImrKSUUUAzlAVhU5HP85PHPska1lyYPITKYa8RETeaMLzGD+Q3pN2tCRImrLfdZz8SUjzMrkr0uhGFvqvworWsya7kWhZtibeGPQ+ZLMjsLBtQE/MddGMyJYMFvLaSJqy33Wc/Es6RdO0VUs6ynp10Y7raM1soKafS5wgG5mnzuY6WZ8BSFLGn9HsaqJImrLfe82BSlW3FtzJ8aLWN1NXGOeAQSWEEYcq/FkBJdfPVCdBg2BImthMmpe/qq/Aoa5mO0GuE1Vgvs0/CB0BFQWOVcGYBDTZDeSrEuyk8D7RGEibKtJTqkh8pFm7GZIEstQpVsWBoeXHaXt3FxX+wdbRyEOVrImZFjJPdJBd4EibKx91nPxJSiI2gzf4vfxdv8eou+8HLqeKBWUtCp+2L6IS+ufojhmHYEibKx91nPxLOkV5vDt+H1CfGH0ZhjKwB5LNEPOwoMkQnQqqH6qISJsq0lOqROIsskIVqAK1eg+nSqBRCTOAvKNEln8foy1llvacG5NngQd1lTmQSJsrH3Wc/EkzslW6pAl3pmM/OxOPiSqNH3woeA1U61c0C/uXGyeaHkBIBejXSjogw39kDZVLmnbbOkie+r1CvriK5Lw="
 private let ffmpegFile = [UInt8](Data(base64Encoded: ffmpegFileB64)!)
 
 /// Deterministic fake packets: valid Opus TOC bytes, filler payload (not decodable audio).
@@ -255,5 +255,48 @@ func syntheticPackets(count: Int, sizes: [Int: Int] = [:]) -> [[UInt8]] {
         var pages: [OggPage] = [], offset = 0
         while offset < data.count { let (p, n) = try OggPage.parse(data, at: offset); pages.append(p); offset = n }
         return pages
+    }
+}
+
+@Suite("OggOpusRobustness") struct OggOpusRobustnessTests {
+    @Test func everyTocByteGivesAKnownDuration() {
+        for toc in 0...255 {
+            for code in 0...3 {
+                let byte = UInt8(toc & ~3 | code)
+                let packet: [UInt8] = code == 3 ? [byte, 1] : [byte, 0]
+                let samples = OpusPacket.samples48k(packet)
+                let frame = [480, 960, 1_920, 2_880, 480, 960, 1_920, 2_880, 480, 960, 1_920, 2_880, 480, 960, 480, 960,
+                             120, 240, 480, 960, 120, 240, 480, 960, 120, 240, 480, 960, 120, 240, 480, 960][Int(byte >> 3)]
+                let frames = [1, 2, 2, 1][code]
+                #expect(samples == frame * frames, "toc \(byte)")
+            }
+        }
+    }
+
+    @Test func randomDamageNeverCrashes() throws {
+        let file = try OggOpusWriter.write(packets: syntheticPackets(count: 30, sizes: [3: 300]), preSkip: 312, serial: 9)
+        var seed: UInt64 = 0x9E37_79B9_7F4A_7C15
+        func next() -> Int { seed = seed &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407; return Int(seed >> 33) }
+        for _ in 0..<3_000 {
+            var copy = file
+            for _ in 0...(next() % 4) { copy[next() % copy.count] = UInt8(next() & 0xFF) }
+            if next() % 3 == 0 { copy = Array(copy[0..<(next() % copy.count)]) }
+            _ = try? OggOpusReader.read(copy)
+            _ = try? VoiceNoteValidator.validate(copy, origin: .received)
+        }
+        // Pure noise, with and without the capture pattern.
+        for _ in 0..<500 {
+            let noise = (0..<(next() % 200)).map { _ in UInt8(next() & 0xFF) }
+            _ = try? VoiceNoteValidator.validate(noise, origin: .received)
+            _ = try? VoiceNoteValidator.validate(Array("OggS".utf8) + noise, origin: .received)
+        }
+    }
+
+    @Test func headerPacketsMustBeAloneOnTheirPages() throws {
+        let head = Array("OpusHead".utf8) + [1, 1] + le16(312) + le32(16_000) + le16(0) + [0]
+        let tags = Array("OpusTags".utf8) + le32(0) + le32(0)
+        let both = OggPage(flags: OggPage.beginOfStream | OggPage.endOfStream, granule: 0, serial: 1, sequence: 0,
+                           segments: [UInt8(head.count), UInt8(tags.count)], body: head + tags).encoded()
+        #expect(throws: OggOpusError.badHeader) { try OggOpusReader.read(both) }
     }
 }

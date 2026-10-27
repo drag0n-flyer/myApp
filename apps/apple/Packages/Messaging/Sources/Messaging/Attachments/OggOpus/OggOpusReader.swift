@@ -27,6 +27,7 @@ public enum OggOpusReader {
         var packets: [[UInt8]] = []
         var finalGranule: Int64 = 0
         var ended = false
+        var pageIndex = 0
 
         while offset < data.count {
             guard !ended else { throw OggOpusError.trailingData }
@@ -52,6 +53,9 @@ public enum OggOpusReader {
                 cursor += Int(lace)
                 if lace < 255 { packets.append(partial); partial = [] }
             }
+            // RFC 7845 section 3: OpusHead and OpusTags are each alone on their page.
+            if pageIndex < 2, packets.count != pageIndex + 1 || !partial.isEmpty { throw OggOpusError.badHeader }
+            pageIndex += 1
             if page.granule >= 0 { finalGranule = page.granule }
             if page.flags & OggPage.endOfStream != 0 {
                 ended = true
@@ -70,8 +74,9 @@ public enum OggOpusReader {
 
         let tags = packets[1]
         guard tags.count >= 16, Array(tags[0..<8]) == Array("OpusTags".utf8) else { throw OggOpusError.badHeader }
-        let vendorLength = Int(readLE32(tags, at: 8))
-        guard vendorLength <= tags.count - 12 else { throw OggOpusError.badHeader }
+        let declaredVendor = readLE32(tags, at: 8)
+        guard declaredVendor <= UInt32(tags.count - 12) else { throw OggOpusError.badHeader }
+        let vendorLength = Int(declaredVendor)
         let vendor = String(decoding: tags[12..<12 + vendorLength], as: UTF8.self)
 
         return OggOpusStream(
@@ -86,7 +91,7 @@ public enum OggOpusReader {
 }
 
 /// Tells the voice-note containers apart by their first bytes: Ogg Opus (current) or CAF (old
-/// recordings in local storage, never sent publicly).
+/// recordings in local storage. Only `.ogg` may come from the network (see `VoiceNoteValidator`)).
 public enum VoiceContainer: Equatable, Sendable {
     case ogg, caf
 
