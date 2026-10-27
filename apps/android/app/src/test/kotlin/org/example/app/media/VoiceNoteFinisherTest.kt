@@ -17,7 +17,7 @@ class VoiceNoteFinisherTest {
     @Test fun twoSecondsBecomeAValidOggOpusFile() {
         val d = dir()
         try {
-            val r = VoiceNoteFinisher.finish(frames(100), 312, d)
+            val r = VoiceNoteFinisher.finish(frames(100), d)
             val ok = assertIs<StopResult.Success>(r)
             assertEquals(listOf(ok.recording.file.name), d.list()!!.toList())
             assertTrue(ok.recording.durationSeconds in 1.9..2.1, "duration ${ok.recording.durationSeconds}")
@@ -31,7 +31,7 @@ class VoiceNoteFinisherTest {
     @Test fun accidentalTapIsTooShortAndLeavesNothing() {
         val d = dir()
         try {
-            assertIs<StopResult.TooShort>(VoiceNoteFinisher.finish(frames(10), 312, d))   // 0.2 s
+            assertIs<StopResult.TooShort>(VoiceNoteFinisher.finish(frames(10), d))   // 0.2 s
             assertEquals(emptyList(), d.list()!!.toList())
         } finally { d.deleteRecursively() }
     }
@@ -39,7 +39,7 @@ class VoiceNoteFinisherTest {
     @Test fun noPacketsIsAnEncoderFailureNotASilentNull() {
         val d = dir()
         try {
-            val r = assertIs<StopResult.Failed>(VoiceNoteFinisher.finish(emptyList(), 312, d))
+            val r = assertIs<StopResult.Failed>(VoiceNoteFinisher.finish(emptyList(), d))
             assertEquals(VoiceFailure.Encoder, r.reason)
         } finally { d.deleteRecursively() }
     }
@@ -48,7 +48,7 @@ class VoiceNoteFinisherTest {
         val d = dir()
         try {
             val stereo = frames(100).toMutableList().also { it[3][0] = (it[3][0].toInt() or 0x04).toByte() }
-            val r = assertIs<StopResult.Failed>(VoiceNoteFinisher.finish(stereo, 312, d))
+            val r = assertIs<StopResult.Failed>(VoiceNoteFinisher.finish(stereo, d))
             assertEquals(VoiceFailure.Invalid, r.reason)
             assertEquals(emptyList(), d.list()!!.toList())
         } finally { d.deleteRecursively() }
@@ -58,7 +58,7 @@ class VoiceNoteFinisherTest {
         val d = dir()
         try {
             val blocker = File(d, "file").also { it.writeText("x") }
-            val r = assertIs<StopResult.Failed>(VoiceNoteFinisher.finish(frames(100), 312, File(blocker, "sub")))
+            val r = assertIs<StopResult.Failed>(VoiceNoteFinisher.finish(frames(100), File(blocker, "sub")))
             assertEquals(VoiceFailure.Storage, r.reason)
         } finally { d.deleteRecursively() }
     }
@@ -66,7 +66,7 @@ class VoiceNoteFinisherTest {
     @Test fun exactlyThirtyMinutesIsKept() {
         val d = dir()
         try {
-            val ok = assertIs<StopResult.Success>(VoiceNoteFinisher.finish(frames(90_000), 312, d))
+            val ok = assertIs<StopResult.Success>(VoiceNoteFinisher.finish(frames(90_000), d))
             assertEquals(1_800.0, ok.recording.durationSeconds, 0.1)
         } finally { d.deleteRecursively() }
     }
@@ -74,7 +74,7 @@ class VoiceNoteFinisherTest {
     @Test fun overThirtyMinutesIsRejectedByTheValidator() {
         val d = dir()
         try {
-            val r = assertIs<StopResult.Failed>(VoiceNoteFinisher.finish(frames(90_100), 312, d))
+            val r = assertIs<StopResult.Failed>(VoiceNoteFinisher.finish(frames(90_100), d))
             assertEquals(VoiceFailure.Invalid, r.reason)
         } finally { d.deleteRecursively() }
     }
@@ -84,32 +84,21 @@ class VoiceNoteFinisherTest {
         val captureFrames = VoiceNoteFinisher.MAX_CAPTURE_SAMPLES / 320
         val d = dir()
         try {
-            val ok = assertIs<StopResult.Success>(VoiceNoteFinisher.finish(frames(captureFrames.toInt() + 2), 312, d))
+            val ok = assertIs<StopResult.Success>(VoiceNoteFinisher.finish(frames(captureFrames.toInt() + 2), d))
             assertEquals(1_800.0, ok.recording.durationSeconds, 0.1)
         } finally { d.deleteRecursively() }
     }
 
-    @Test fun preSkipIsReadFromAndroidsAopusHdrCodecConfig() {
-        // C2SoftOpusEnc csd-0: "AOPUSHDR", u64 length, then an OpusHead of 19 bytes (pre-skip 0x0138 = 312).
-        val head = "OpusHead".toByteArray() + byteArrayOf(1, 1, 0x38, 0x01, 0x80.toByte(), 0x3E, 0, 0, 0, 0, 0)
-        val csd = "AOPUSHDR".toByteArray() + java.nio.ByteBuffer.allocate(8).order(java.nio.ByteOrder.LITTLE_ENDIAN)
-            .putLong(head.size.toLong()).array() + head
-        assertEquals(0x138, VoiceNoteFinisher.preSkipFromOpusHead(csd))
-        val other = csd.copyOf().also { it[8 + 8 + 10] = 0x40; it[8 + 8 + 11] = 0 }
-        assertEquals(0x40, VoiceNoteFinisher.preSkipFromOpusHead(other))
-        // A wrapper whose length runs past the buffer, or another tag, falls back.
-        val truncated = csd.copyOf(20)
-        assertEquals(VoiceNoteFinisher.DEFAULT_PRE_SKIP, VoiceNoteFinisher.preSkipFromOpusHead(truncated))
+    @Test fun preSkipIsAlwaysTheStandard312In48kHzUnits() {
+        val d = dir()
+        try {
+            val ok = assertIs<StopResult.Success>(VoiceNoteFinisher.finish(frames(100), d))
+            assertEquals(312, VoiceNoteValidator.validate(ok.recording.file.readBytes()).preSkip)
+            assertEquals(312, VoiceNoteFinisher.DEFAULT_PRE_SKIP)
+        } finally { d.deleteRecursively() }
     }
 
-    @Test fun preSkipIsParsedFromTheEncodersOpusHead() {
-        val head = "OpusHead".toByteArray() + byteArrayOf(1, 1, 0x38, 0x01, 0x80.toByte(), 0x3E, 0, 0, 0, 0, 0)
-        assertEquals(0x138, VoiceNoteFinisher.preSkipFromOpusHead(head))
-        assertEquals(VoiceNoteFinisher.DEFAULT_PRE_SKIP, VoiceNoteFinisher.preSkipFromOpusHead(byteArrayOf(1, 2, 3)))
-        assertEquals(VoiceNoteFinisher.DEFAULT_PRE_SKIP, VoiceNoteFinisher.preSkipFromOpusHead(null))
-    }
-
-    private fun note(d: File) = assertIs<StopResult.Success>(VoiceNoteFinisher.finish(frames(100), 312, d))
+    private fun note(d: File) = assertIs<StopResult.Success>(VoiceNoteFinisher.finish(frames(100), d))
 
     @Test fun abandoningAfterTheNoteIsReadyDeletesTheFile() {
         val d = dir()

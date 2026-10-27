@@ -38,7 +38,7 @@ class VoiceRecorderInstrumentedTest {
         assertEquals(1, stream.channels)
         assertTrue(stream.packets.isNotEmpty())
         assertEquals(16_000L, stream.inputSampleRate)
-        assertEquals(312, stream.preSkip, "libopus look-ahead at 48 kHz, read from the encoder or the default")
+        assertEquals(312, stream.preSkip, "standard Opus pre-skip in 48 kHz units")
         assertEquals(listOf(ok.recording.file.name), dir.list()!!.toList())
     }
 
@@ -47,7 +47,7 @@ class VoiceRecorderInstrumentedTest {
         val recorder = VoiceRecorder(context, dir)
         assertIs<StartResult.Started>(recorder.start())
         val result = recorder.stop()
-        assertTrue(result is StopResult.TooShort || result is StopResult.Failed, "stop() returned $result")
+        assertIs<StopResult.TooShort>(result, "stop() returned $result")
         assertEquals(emptyList(), dir.list()?.toList() ?: emptyList())
     }
 }

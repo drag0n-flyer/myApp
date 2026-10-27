@@ -54,12 +54,14 @@ class Downloader(
     /** Makes sure the verified, still encrypted file is on disk and returns it. */
     suspend fun download(att: Att): File = withContext(Dispatchers.IO) {
         checkId(att.id)
+        checkShape(att)
         lock(att.id).withLock { ensureBlob(att) }
     }
 
     /** Downloads when needed, then decrypts into [openDir]. Close the result when the item is no longer shown. */
     suspend fun open(att: Att): OpenedAttachment = withContext(Dispatchers.IO) {
         checkId(att.id)
+        checkShape(att)
         // The plaintext file is named for the id, the digest and the key, so a message with another key never
         // shares (or deletes) the file that another message shows.
         val name = "${att.id}-${hex(att.dg)}-${hex(MessageDigest.getInstance("SHA-256").digest(att.key)).take(16)}"
@@ -89,9 +91,11 @@ class Downloader(
 
     /**
      * Deletes the files in [openDir] that no viewer shows (leftovers of a killed process, temp files). Safe to call
-     * while items are shown; call it at app start.
+     * while items are shown; also deletes partial downloads (`*.enc.part`) in [blobDir], so call it at app start,
+     * before any download begins.
      */
     fun sweepOpen() {
+        blobDir.listFiles()?.forEach { if (it.name.endsWith(".enc.part")) it.delete() }
         val shown = synchronized(viewers) { viewers.keys.toSet() }
         openDir.listFiles()?.forEach { if (it.name !in shown) it.deleteRecursively() }
     }
@@ -103,6 +107,11 @@ class Downloader(
     private fun checkId(id: String) {
         // The id comes from another person's message: it must never become a path.
         require(ID.matches(id)) { "bad attachment id" }
+    }
+
+    /** Digest and key are 32 bytes; anything else is malformed, and `dg` becomes part of a file name. */
+    private fun checkShape(att: Att) {
+        if (att.dg.size != 32 || att.key.size != 32) throw AttachmentSizeException("malformed attachment")
     }
 
     private fun checkSizes(att: Att) {

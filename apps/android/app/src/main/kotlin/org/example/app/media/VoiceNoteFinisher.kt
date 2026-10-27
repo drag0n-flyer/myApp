@@ -58,7 +58,7 @@ class NoteSlot {
  * with [VoiceNoteValidator], and only then writes the file. Pure Kotlin, so it is tested with synthetic frames.
  */
 object VoiceNoteFinisher {
-    /** 312 samples at 48 kHz: libopus's look-ahead, used when the encoder gives no readable OpusHead. */
+    /** The standard pre-skip, 312 samples in 48 kHz units (RFC 7845), always written, as on the iPhone. The encoder's own header is not read. */
     const val DEFAULT_PRE_SKIP = 312
 
     /**
@@ -67,14 +67,14 @@ object VoiceNoteFinisher {
      */
     const val MAX_CAPTURE_SAMPLES: Long = (MediaPlan.Voice.MAX_DURATION * MediaPlan.Voice.SAMPLE_RATE).toLong() - 2 * 320
 
-    fun finish(packets: List<ByteArray>, preSkip: Int, outputDir: File): StopResult {
+    fun finish(packets: List<ByteArray>, outputDir: File): StopResult {
         if (packets.isEmpty()) return StopResult.Failed(VoiceFailure.Encoder)
         val samples = packets.sumOf { (OpusPacket.samples48k(it) ?: return StopResult.Failed(VoiceFailure.Encoder)).toLong() }
         if (MediaPlan.Voice.tooShort(samples / 48_000.0)) return StopResult.TooShort
         val bytes: ByteArray
         val stream: OggOpusStream
         try {
-            bytes = OggOpusWriter.write(packets, preSkip, MediaPlan.Voice.SAMPLE_RATE.toLong(), MediaPlan.Voice.CHANNELS)
+            bytes = OggOpusWriter.write(packets, DEFAULT_PRE_SKIP, MediaPlan.Voice.SAMPLE_RATE.toLong(), MediaPlan.Voice.CHANNELS)
             stream = VoiceNoteValidator.validate(bytes)
         } catch (e: VoiceNoteException) {
             return StopResult.Failed(VoiceFailure.Invalid)
@@ -91,22 +91,5 @@ object VoiceNoteFinisher {
             out?.delete()
             StopResult.Failed(VoiceFailure.Storage)
         }
-    }
-
-    /**
-     * Pre-skip (little-endian u16 at offset 10 of an `OpusHead`) from the encoder's codec config, or the default.
-     * Android's `audio/opus` encoder (C2SoftOpusEnc) sends `csd-0` as `"AOPUSHDR"`, a u64 little-endian length, then
-     * the `OpusHead` (pre-skip is in 48 kHz samples, as RFC 7845 says); a bare `OpusHead` is accepted too.
-     */
-    fun preSkipFromOpusHead(csd: ByteArray?): Int {
-        var head = csd ?: return DEFAULT_PRE_SKIP
-        if (head.size >= 16 && String(head, 0, 8, Charsets.ISO_8859_1) == "AOPUSHDR") {
-            var len = 0L
-            for (i in 7 downTo 0) len = (len shl 8) or (head[8 + i].toLong() and 0xFF)
-            if (len < 0 || len > head.size - 16) return DEFAULT_PRE_SKIP
-            head = head.copyOfRange(16, 16 + len.toInt())
-        }
-        if (head.size < 12 || String(head, 0, 8, Charsets.ISO_8859_1) != "OpusHead") return DEFAULT_PRE_SKIP
-        return (head[10].toInt() and 0xFF) or ((head[11].toInt() and 0xFF) shl 8)
     }
 }

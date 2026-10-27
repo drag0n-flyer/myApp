@@ -32,7 +32,6 @@ class VoiceRecorder(
         val slot = NoteSlot()
         lateinit var thread: Thread
         val packets = ArrayList<ByteArray>()
-        var preSkip = VoiceNoteFinisher.DEFAULT_PRE_SKIP
     }
 
     private var session: Session? = null
@@ -128,7 +127,7 @@ class VoiceRecorder(
             runCatching { s.codec.release() }
         }
         s.slot.offer(
-            if (failure != null) StopResult.Failed(failure) else VoiceNoteFinisher.finish(s.packets, s.preSkip, outputDir),
+            if (failure != null) StopResult.Failed(failure) else VoiceNoteFinisher.finish(s.packets, outputDir),
         )
     }
 
@@ -157,23 +156,17 @@ class VoiceRecorder(
                     if (!endOfStream) return
                     if (++idle > 500) throw IllegalStateException("encoder did not finish")
                 }
-                o == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> readHead(s, s.codec.outputFormat.getByteBuffer("csd-0"))
                 o >= 0 -> {
                     idle = 0
                     val out = s.codec.getOutputBuffer(o)!!
                     val bytes = ByteArray(info.size).also { out.position(info.offset); out.get(it) }
                     val config = info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
-                    if (config) readHead(s, java.nio.ByteBuffer.wrap(bytes)) else if (bytes.isNotEmpty()) s.packets += bytes
+                    if (!config && bytes.isNotEmpty()) s.packets += bytes
                     s.codec.releaseOutputBuffer(o, false)
                     if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) return
                 }
             }
         }
-    }
-
-    private fun readHead(s: Session, csd: java.nio.ByteBuffer?) {
-        val b = csd?.let { dup -> ByteArray(dup.remaining()).also { dup.duplicate().get(it) } }
-        s.preSkip = VoiceNoteFinisher.preSkipFromOpusHead(b)
     }
 
     private companion object {

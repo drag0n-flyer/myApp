@@ -227,6 +227,35 @@ class TransferTest {
         } finally { dir.deleteRecursively() }
     }
 
+    @Test fun digestOrKeyThatIsNotExactly32BytesIsRejectedBeforeAnyRequest() = runBlocking {
+        val dir = tmp()
+        try {
+            val server = FakeServer()
+            val sz = 1000L
+            val csz = AttachmentCipher.sealedSize(sz)
+            for ((dg, key) in listOf(ByteArray(31) to ByteArray(32), ByteArray(33) to ByteArray(32), ByteArray(0) to ByteArray(32),
+                ByteArray(32) to ByteArray(31), ByteArray(32) to ByteArray(0), ByteArray(200) to ByteArray(32))) {
+                val att = org.example.app.messaging.content.Att("x", dg, key, sz, csz)
+                assertFailsWith<AttachmentSizeException>("dg=${dg.size} key=${key.size}") { downloader(server, dir).download(att) }
+                assertFailsWith<AttachmentSizeException>("dg=${dg.size} key=${key.size}") { downloader(server, dir).open(att) }
+            }
+            assertEquals(0, server.downloads.get())
+            assertTrue(dir.walkTopDown().none { it.isFile })
+        } finally { dir.deleteRecursively() }
+    }
+
+    @Test fun sweepOpenAlsoRemovesLeftoverPartialDownloadsButKeepsVerifiedBlobs() = runBlocking {
+        val dir = tmp()
+        try {
+            val dl = downloader(FakeServer(), dir)
+            val blobDir = File(dir, "dl").also { it.mkdirs() }
+            File(blobDir, "a-00.enc.part").writeBytes(ByteArray(5))
+            File(blobDir, "a-00.enc").writeBytes(ByteArray(5))
+            dl.sweepOpen()
+            assertEquals(listOf("a-00.enc"), blobDir.list()!!.toList())
+        } finally { dir.deleteRecursively() }
+    }
+
     @Test fun concurrentDownloadsOfOneAttachmentFetchOnceAndBothSucceed() = runBlocking {
         val dir = tmp()
         try {
