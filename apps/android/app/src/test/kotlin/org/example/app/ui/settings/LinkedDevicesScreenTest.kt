@@ -45,4 +45,14 @@ class LinkedDevicesScreenTest {
         rule.onNodeWithContentDescription("Remove iPhone").performClick()
         rule.onNodeWithText("Remove this device?").assertIsDisplayed()
     }
+
+    @Test
+    fun linkADeviceItemCallsBack() {
+        val account = SampleAccountService()
+        var linked = 0
+        rule.setContent { AppTheme { LinkedDevicesScreen(account, onBack = {}, onLinkDevice = { linked++ }) } }
+        rule.waitUntil(5_000) { rule.onAllNodesWithText("iPhone").fetchSemanticsNodes().isNotEmpty() }
+        rule.onNodeWithText("Link a device").performClick()
+        assertEquals(1, linked)
+    }
 }

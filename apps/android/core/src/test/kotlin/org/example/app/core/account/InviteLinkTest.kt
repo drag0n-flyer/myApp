@@ -36,4 +36,8 @@ class InviteLinkTest {
         assertNull(InviteLink.parse("https://home.example.org/invite/ABCDE-FGHI0"))
         assertNull(InviteLink.parse("https:///invite/ABCDE-FGH23"))
     }
+
+    @Test fun linkKeepsThePort() {
+        assertEquals(InviteLink("home.example.org:8443", "ABCDE-FGH23"), InviteLink.parse("https://home.example.org:8443/invite/ABCDE-FGH23"))
+    }
 }
