@@ -9,6 +9,13 @@ extension XCUIApplication {
         if skipOnboarding { args.append("-skipOnboarding") }
         app.launchArguments = args
         app.launch()
+        #if os(macOS)
+        // A freshly launched Mac app on a CI runner may not be frontmost; make sure its window is up.
+        app.activate()
+        if !app.windows.firstMatch.waitForExistence(timeout: 10) {
+            print("No window after launch: \(app.debugDescription)")
+        }
+        #endif
         return app
     }
 
