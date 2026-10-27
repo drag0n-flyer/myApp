@@ -77,7 +77,9 @@ final class LabCall: ObservableObject {
     private var callID = ""
     private var isCaller = false
     private var peerDeviceID: String?
-    private var pendingCandidates: [RTCIceCandidate] = []
+    private var outGate = OutboundGate<String>()
+    private var router = CandidateRouter<RTCIceCandidate>()
+    private var glare = OfferGlare(polite: false)
     private var policy = IceRestartPolicy(afterSeconds: nil)
     private var everConnected = false
     private var disconnected = false
@@ -115,6 +117,7 @@ final class LabCall: ObservableObject {
             let payload = try LabPayload(kind: .offer, sdp: munged, knobs: knobs).encoded()
             try await signaling?.send(.invite(callID: callID, to: peerAccountID, video: knobs.video != nil, payload: payload))
             recorder?.event(.inviteSent)
+            await openOutboundGate()
         } catch { fail(error) }
     }
 
@@ -127,7 +130,7 @@ final class LabCall: ObservableObject {
             let turn = try await Signaling.fetchTurn(host: host, token: token)
             try await makePeerConnection(turn: turn)
             try await setRemote(.offer, inc.offerSDP)
-            try await flushPendingCandidates()
+            try await applyQueuedCandidates()
             let sdp = try await createAnswer()
             let munged = SDPMunger.apply(knobs, to: sdp)
             try await setLocal(.answer, munged)
@@ -135,6 +138,7 @@ final class LabCall: ObservableObject {
             let payload = try LabPayload(kind: .answer, sdp: munged).encoded()
             try await signaling?.send(.answer(callID: callID, payload: payload))
             recorder?.event(.answerSent)
+            await openOutboundGate()
             status = "Connecting"
         } catch { fail(error) }
     }
@@ -176,7 +180,8 @@ final class LabCall: ObservableObject {
         let id = RunNaming.runID(date: Date(), preset: presetName, path: knobs.path)
         recorder = try StatsRecorder(runID: id)
         policy = IceRestartPolicy(afterSeconds: knobs.iceRestartAfter)
-        everConnected = false; disconnected = false; peerDeviceID = nil; pendingCandidates = []
+        everConnected = false; disconnected = false; peerDeviceID = nil
+        outGate.reset(); router = CandidateRouter(); glare = OfferGlare(polite: !isCaller)
     }
 
     private func handle(_ ev: LabServerEvent) async {
@@ -189,6 +194,7 @@ final class LabCall: ObservableObject {
                 callID = cid; isCaller = false; peerDeviceID = fromDev
                 if let k = p.knobs { knobs = k }
                 try beginRun()
+                router.lock(to: fromDev)
                 recorder?.event(.ringReceived)
                 incoming = IncomingCall(callID: cid, fromAccountID: from, fromDeviceID: fromDev, video: video,
                                         offerSDP: sdp, knobs: p.knobs)
@@ -199,13 +205,14 @@ final class LabCall: ObservableObject {
                 let p = try LabPayload.decode(payload)
                 guard p.kind == .answer, let sdp = p.sdp else { return }
                 peerDeviceID = deviceID
+                router.lock(to: deviceID)
                 recorder?.event(.answerReceived)
                 try await setRemote(.answer, sdp)
-                try await flushPendingCandidates()
+                try await applyQueuedCandidates()
                 status = "Connecting"
             case let .signal(cid, fromDev, payload):
-                guard cid == callID, fromDev == peerDeviceID else { return }
-                try await handleSignal(LabPayload.decode(payload))
+                guard cid == callID, router.accepts(from: fromDev) else { return }
+                try await handleSignal(LabPayload.decode(payload), from: fromDev)
             case let .ended(cid, reason):
                 guard cid == callID else { return }
                 recorder?.event(.ended, detail: reason)
@@ -218,25 +225,27 @@ final class LabCall: ObservableObject {
         } catch { fail(error) }
     }
 
-    private func handleSignal(_ p: LabPayload) async throws {
+    private func handleSignal(_ p: LabPayload, from dev: String) async throws {
         switch p.kind {
         case .candidate:
             guard let c = p.candidate else { return }
             let cand = RTCIceCandidate(sdp: c, sdpMLineIndex: p.sdpMLineIndex ?? 0, sdpMid: p.sdpMid)
-            if let pc, pc.remoteDescription != nil { try await add(cand) } else { pendingCandidates.append(cand) }
+            if router.route(cand, from: dev) == .apply { try await add(cand) }
         case .offer:   // ICE restart from the peer
-            guard let sdp = p.sdp, let pc else { return }
-            if pc.signalingState == .haveLocalOffer {
-                if isCaller { return }   // caller is impolite: keeps its own offer
-                try await setLocal(.rollback, "")
+            guard peerDeviceID == dev, let sdp = p.sdp, let pc else { return }
+            switch glare.incomingOffer(signalingStable: pc.signalingState == .stable) {
+            case .ignore: return   // impolite caller keeps its own offer
+            case .accept(let rollback): if rollback { try await setLocal(.rollback, "") }
             }
             try await setRemote(.offer, sdp)
             let a = SDPMunger.apply(knobs, to: try await createAnswer())
             try await setLocal(.answer, a)
             try await signaling?.send(.signal(callID: callID, payload: try LabPayload(kind: .answer, sdp: a).encoded()))
         case .answer:
+            guard peerDeviceID == dev else { return }
             if let sdp = p.sdp { try await setRemote(.answer, sdp) }
         case .bye:
+            guard peerDeviceID == dev else { return }
             recorder?.event(.ended, detail: "bye"); finish()
         }
     }
@@ -339,7 +348,12 @@ final class LabCall: ObservableObject {
     private func sendCandidate(_ sdp: String, _ mid: String?, _ idx: Int32) async {
         guard !callID.isEmpty, let payload = try? LabPayload(kind: .candidate, candidate: sdp, sdpMid: mid, sdpMLineIndex: idx).encoded()
         else { return }
-        try? await signaling?.send(.signal(callID: callID, payload: payload))
+        // Queued until call.invite / call.answer has been sent (OutboundGate).
+        for p in outGate.submit(payload) { try? await signaling?.send(.signal(callID: callID, payload: p)) }
+    }
+
+    private func openOutboundGate() async {
+        for p in outGate.open() { try? await signaling?.send(.signal(callID: callID, payload: p)) }
     }
 
     // MARK: ICE restart
@@ -363,10 +377,15 @@ final class LabCall: ObservableObject {
     }
 
     private func sendRestart() async {
-        guard pc != nil, !finished else { return }
+        guard let pc, !finished, glare.canMakeOffer(signalingStable: pc.signalingState == .stable) else { return }
+        let token = glare.beginLocalOffer()
+        defer { glare.endLocalOffer() }
         do {
             let sdp = SDPMunger.apply(knobs, to: try await createOffer(iceRestart: true))
+            // A peer offer that arrived meanwhile makes this one stale (OfferGlare).
+            guard glare.isCurrent(token), pc.signalingState == .stable else { return }
             try await setLocal(.offer, sdp)
+            guard glare.isCurrent(token) else { return }
             try await signaling?.send(.signal(callID: callID, payload: try LabPayload(kind: .offer, sdp: sdp, knobs: knobs).encoded()))
             recorder?.event(.restartSent)
         } catch { lastError = error.localizedDescription }
@@ -479,9 +498,7 @@ final class LabCall: ObservableObject {
         }
     }
 
-    private func flushPendingCandidates() async throws {
-        let list = pendingCandidates
-        pendingCandidates = []
-        for c in list { try await add(c) }
+    private func applyQueuedCandidates() async throws {
+        for c in router.markRemoteReady() { try await add(c) }
     }
 }

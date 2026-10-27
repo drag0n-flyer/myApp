@@ -1,8 +1,16 @@
 import CallLabKit
 import Foundation
+import UniformTypeIdentifiers
 #if os(macOS)
 import AppKit
 #endif
+
+private final class ErrorBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Error?
+    var error: Error? { lock.withLock { stored } }
+    func set(_ e: Error) { lock.withLock { stored = e } }
+}
 
 enum RunExport {
     /// `runs/<run_id>/` inside Documents (the sandbox container on the Mac).
@@ -19,11 +27,11 @@ enum RunExport {
         let dest = FileManager.default.temporaryDirectory.appendingPathComponent(RunNaming.zipName(runID: runID))
         try? FileManager.default.removeItem(at: dest)
         var coordError: NSError?
-        var copyError: Error?
+        let copyError = ErrorBox()   // the accessor block may be @Sendable: no captured var mutation
         NSFileCoordinator().coordinate(readingItemAt: runDir, options: .forUploading, error: &coordError) { tmpZip in
-            do { try FileManager.default.copyItem(at: tmpZip, to: dest) } catch { copyError = error }
+            do { try FileManager.default.copyItem(at: tmpZip, to: dest) } catch { copyError.set(error) }
         }
-        if let e = coordError ?? copyError { throw e }
+        if let e = coordError ?? copyError.error { throw e }
         return dest
     }
 

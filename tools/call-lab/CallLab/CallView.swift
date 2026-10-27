@@ -61,7 +61,13 @@ struct CallView: View {
 }
 
 private extension View {
-    func navigationBarBackButtonHiddenIfNeeded() -> some View { self.navigationBarBackButtonHidden(true) }
+    func navigationBarBackButtonHiddenIfNeeded() -> some View {
+        #if os(iOS)
+        self.navigationBarBackButtonHidden(true)
+        #else
+        self
+        #endif
+    }
 }
 
 #if os(iOS)

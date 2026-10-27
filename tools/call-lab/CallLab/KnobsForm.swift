@@ -27,6 +27,10 @@ struct KnobsForm: View {
                 ForEach([10, 20, 40, 60, 120], id: \.self) { Text("\($0) ms").tag($0) }
             }
             .accessibilityLabel("Packet time")
+            if knobs.ptime == 120 {
+                Text("120 ms needs custom WebRTC build")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
             Toggle("DTX", isOn: $knobs.dtx).accessibilityLabel("Discontinuous transmission")
             Toggle("FEC", isOn: $knobs.fec).accessibilityLabel("Forward error correction")
             Picker("Max playback rate", selection: $knobs.maxPlaybackRate) {
