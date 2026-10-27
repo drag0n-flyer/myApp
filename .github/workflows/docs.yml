@@ -1,0 +1,56 @@
+name: docs
+
+on:
+  workflow_dispatch:
+  push:
+    branches-ignore: [feat/server]
+    paths:
+      - '**.md'
+      - '.markdownlint-cli2.jsonc'
+      - 'lychee.toml'
+      - 'scripts/check-docs.sh'
+      - 'scripts/check-threat-model.py'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    paths:
+      - '**.md'
+      - '.markdownlint-cli2.jsonc'
+      - 'lychee.toml'
+      - 'scripts/check-docs.sh'
+      - 'scripts/check-threat-model.py'
+      - '.github/workflows/docs.yml'
+  schedule:
+    - cron: '0 6 * * 1'
+
+env:
+  LYCHEE_VERSION: v0.18.1
+  LYCHEE_SHA256: 0d48569e2dc11c1917fa98321dfd7aa675fba03b79f41e8e74afa3223e30d379
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install lychee (checksum verified)
+        run: |
+          set -euo pipefail
+          f=lychee-x86_64-unknown-linux-gnu.tar.gz
+          curl -fsSL -o "$RUNNER_TEMP/$f" "https://github.com/lycheeverse/lychee/releases/download/lychee-${LYCHEE_VERSION}/$f"
+          echo "${LYCHEE_SHA256}  $RUNNER_TEMP/$f" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/lychee"
+          tar -xzf "$RUNNER_TEMP/$f" -C "$RUNNER_TEMP/lychee"
+          echo "$RUNNER_TEMP/lychee" >> "$GITHUB_PATH"
+      - name: Document checks (offline)
+        if: github.event_name != 'schedule'
+        run: scripts/check-docs.sh docs GOAL.md AGENTS.md SECURITY.md
+      - name: Document checks (weekly, with external links)
+        if: github.event_name == 'schedule'
+        env:
+          ONLINE: '1'
+        run: scripts/check-docs.sh docs GOAL.md AGENTS.md SECURITY.md

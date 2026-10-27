@@ -230,7 +230,7 @@ Client → server, for calls (`payload` is always an opaque MLS application mess
 | `call.signal` | `{callID, payload}` | Before the answer, caller signals go to every ringing device and callee signals go to the caller. After the answer, signals go only between the two connected devices |
 | `call.decline` | `{callID}` | Ends the call as `declined` on every device |
 | `call.hangup` | `{callID}` | Ends the call as `hangup` on every device |
-| `call.status` | `{callID}` | Acknowledged with `data:{state:"ringing"|"answered"|"ended", reason?}`. Used by a device woken by a push |
+| `call.status` | `{callID}` | Acknowledged with `data:{state:"ringing"\|"answered"\|"ended", reason?}`. Used by a device woken by a push |
 
 Call states are `ringing`, `answered` and `ended`. End reasons are `declined`, `hangup`, `missed`, `answered_elsewhere`, `failed`, and `missed` is used when ringing goes unanswered for 45 s. An answered call is forgotten after 4 h. An ended call is kept for 60 s so `call.status` can report it. Only the caller's device and the callee account's devices may act on a call. Anything else gets `not_found`.
 
@@ -300,7 +300,7 @@ Besides the codes of section 7, the gateway also answers `conflict` (409, a repl
 | `PATCH /v1/me/settings` | ✓ | `{displayName?, findByEmail?}` → `204`. The display name is at most 64 characters with no control characters |
 | `PUT /v1/blocks/{accountID}` / `DELETE …` | ✓ | → `204` |
 | `GET /v1/blocks` | ✓ | → `{accountIDs:[…]}` |
-| `POST /v1/reports` | ✓ | `{accountID, conversationID?, reason:"spam"|"abuse"|"other", messages:[{sentAt, text}] (≤50, shared with the user's consent), note?}` → `202`. Emailed to `abuseContact` if one is set. CLI: `appserver reports list` |
+| `POST /v1/reports` | ✓ | `{accountID, conversationID?, reason:"spam"\|"abuse"\|"other", messages:[{sentAt, text}] (≤50, shared with the user's consent), note?}` → `202`. Emailed to `abuseContact` if one is set. CLI: `appserver reports list` |
 | `POST /v1/attachments` | ✓ | raw body (already encrypted by the client), `Content-Length` required → `{id, expiresAt}`; `too_large` |
 | `GET /v1/attachments/{id}` | ✓ | → bytes, with HTTP Range support. The ID is 128 random bits and works as the access key |
 | `GET /v1/server` | – | the server info document below |

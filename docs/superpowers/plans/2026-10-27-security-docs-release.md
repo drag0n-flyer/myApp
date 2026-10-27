@@ -184,7 +184,7 @@ It exits non-zero on the first failure. CI runs it with `--offline` off weekly (
 **Required content:**
 
 - **`README.md`:**
-  - Index, plus "Endpoints and frames: see [server design §7](../superpowers/specs/2026-10-27-server-design.md#7-http-api)".
+  - Index, plus "`Endpoints and frames: see [server design §7](../superpowers/specs/2026-10-27-server-design.md#7-http-api)`".
   - Message content format: "see plan 7 (client messaging), `MessageBody` schema". Until plan 7 lands, leave a `TODO(plan 7)` link that Task 14 checks is gone.
   - Conventions: base64url without padding, and UTF-8 everywhere.
 - **`mls-profile.md`:**
