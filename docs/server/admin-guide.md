@@ -49,6 +49,8 @@ chat.example.org {
 }
 ```
 
+The compose file also has an optional Caddy service with this setup (`deploy/Caddyfile`, automatic HTTPS for `APP_HOST`): `docker compose --profile caddy up -d`. Leave it off if you run your own proxy on ports 80 and 443.
+
 With nginx, add `proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade";` and a long `proxy_read_timeout` for `/v1/ws`. Allow request bodies up to your `attachmentBytes` limit (100 MiB by default) on `/v1/attachments`.
 
 Set `APP_TRUST_PROXY=true` only when the proxy sets `X-Forwarded-For`. The server then uses the last hop as the client address for rate limits. If clients can reach the server directly, leave it `false`, or anyone can fake their address.
@@ -119,6 +121,8 @@ docker run --rm -v deploy_appdata:/data -v "$PWD":/out alpine tar czf /out/appda
 ```
 
 (`deploy_appdata` is the volume behind `APP_DATA_DIR`; the prefix is your compose project name.) Also keep `.env`, `secrets/` and the policy file. Attachments are encrypted by the apps and expire after `attachmentDays`, so losing the directory costs only files still within that window.
+
+The scripts `deploy/scripts/backup.sh` and `restore.sh` do the same, write a dated folder with checksums, and keep 14 daily and 8 weekly backups (`sh scripts/backup.sh --dry-run` shows what it would do). For a fresh install, `sh scripts/restore.sh <backup folder>` does the restore steps below and runs the migrations. The beta operations runbook (`docs/ops/beta-runbook.md`) covers the drill that proves a backup works.
 
 **Restore** on a fresh install: start only postgres (`docker compose up -d postgres`), then `docker compose exec -T postgres pg_restore -U appserver -d appserver --clean --if-exists < backup.dump`, unpack the attachments archive into the data volume, and `docker compose up -d`.
 
