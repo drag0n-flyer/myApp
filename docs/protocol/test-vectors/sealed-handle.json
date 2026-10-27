@@ -45,5 +45,21 @@
       "sealedB64": "W6utPQLnlCCjo3POOjJ21oifSxd0xVotDW1zVXVk8w",
       "info": "push-handle-v1"
     }
+  ],
+  "lowOrderRecipientKeysHex": [
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "0000000000000000000000000000000000000000000000000000000000000080",
+    "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "0100000000000000000000000000000000000000000000000000000000000000",
+    "0100000000000000000000000000000000000000000000000000000000000080",
+    "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800",
+    "e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b880",
+    "5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157",
+    "5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f11d7",
+    "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
   ]
 }

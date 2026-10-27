@@ -60,7 +60,12 @@ fn check_vector_file(path: &str, expected_info: &str) {
             .as_bytes()
             .to_vec();
         let r = hpke_open(private.clone(), public.clone(), info, sealed);
-        assert!(r.is_err(), "negative case opened: {}", n["name"]);
+        let name = n["name"].as_str().unwrap();
+        if name == "shorter than the encapsulated key" {
+            assert!(matches!(r, Err(FfiError::Malformed)), "{name}: {r:?}");
+        } else {
+            assert!(matches!(r, Err(FfiError::Crypto(_))), "{name}: {r:?}");
+        }
     }
 }
 
@@ -139,4 +144,29 @@ fn short_input_is_malformed() {
         );
         assert!(matches!(r, Err(FfiError::Malformed)), "{r:?}");
     }
+}
+
+#[test]
+fn seal_to_low_order_keys_is_rejected() {
+    // The list is made by the Go vector generator, where crypto/hpke refuses each key.
+    for file in ["escrow.json", "sealed-handle.json"] {
+        let v = load(&format!("docs/protocol/test-vectors/{file}"));
+        let keys = v["lowOrderRecipientKeysHex"].as_array().unwrap();
+        assert_eq!(keys.len(), 14);
+        for k in keys {
+            let r = hpke_seal(
+                hex(k.as_str().unwrap()),
+                b"escrow-v1".to_vec(),
+                b"x".to_vec(),
+            );
+            assert!(matches!(r, Err(FfiError::Malformed)), "{k}: {r:?}");
+        }
+    }
+}
+
+#[test]
+fn seal_to_normal_key_still_works() {
+    let v = load("docs/protocol/test-vectors/escrow.json");
+    let public = b64url(v["recipientPublicKeyB64"].as_str().unwrap());
+    assert!(hpke_seal(public, b"escrow-v1".to_vec(), b"x".to_vec()).is_ok());
 }
