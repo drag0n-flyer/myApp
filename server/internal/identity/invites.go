@@ -10,7 +10,7 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/velixio/myApp/server/internal/httpx"
+	"github.com/drag0n-flyer/myApp/server/internal/httpx"
 )
 
 // inviteAlphabet has 32 letters and digits, without I, O, 0 and 1.

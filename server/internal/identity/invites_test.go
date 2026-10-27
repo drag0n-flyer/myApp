@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/velixio/myApp/server/internal/identity"
-	"github.com/velixio/myApp/server/internal/testkit"
+	"github.com/drag0n-flyer/myApp/server/internal/identity"
+	"github.com/drag0n-flyer/myApp/server/internal/testkit"
 )
 
 func TestUsernameAvailability(t *testing.T) {

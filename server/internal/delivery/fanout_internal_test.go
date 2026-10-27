@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/testkit"
 	"github.com/jackc/pgx/v5"
-	"github.com/velixio/myApp/server/internal/core"
-	"github.com/velixio/myApp/server/internal/testkit"
 )
 
 func TestDeliverOutsideInTxFails(t *testing.T) {

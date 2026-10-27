@@ -4,8 +4,8 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/drag0n-flyer/myApp/server/internal/httpx"
 	"github.com/jackc/pgx/v5"
-	"github.com/velixio/myApp/server/internal/httpx"
 )
 
 // revokedCode is the WebSocket close code for a revoked device.

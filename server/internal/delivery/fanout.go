@@ -6,8 +6,8 @@ import (
 	"errors"
 	"time"
 
+	"github.com/drag0n-flyer/myApp/server/internal/core"
 	"github.com/jackc/pgx/v5"
-	"github.com/velixio/myApp/server/internal/core"
 )
 
 // InboxItem is one entry of a device's inbox, as sent to the client.

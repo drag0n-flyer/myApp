@@ -1,4 +1,4 @@
-module github.com/velixio/myApp/server
+module github.com/drag0n-flyer/myApp/server
 
 go 1.26.0
 

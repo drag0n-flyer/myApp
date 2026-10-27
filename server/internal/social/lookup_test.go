@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/velixio/myApp/server/internal/core"
-	"github.com/velixio/myApp/server/internal/social"
-	"github.com/velixio/myApp/server/internal/testkit"
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/social"
+	"github.com/drag0n-flyer/myApp/server/internal/testkit"
 )
 
 type found struct {

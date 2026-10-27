@@ -7,9 +7,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/velixio/myApp/server/internal/core"
-	"github.com/velixio/myApp/server/internal/delivery"
-	"github.com/velixio/myApp/server/internal/testkit"
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/delivery"
+	"github.com/drag0n-flyer/myApp/server/internal/testkit"
 )
 
 type convo struct {

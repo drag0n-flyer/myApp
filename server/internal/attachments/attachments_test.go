@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/velixio/myApp/server/internal/attachments"
-	"github.com/velixio/myApp/server/internal/core"
-	"github.com/velixio/myApp/server/internal/testkit"
+	"github.com/drag0n-flyer/myApp/server/internal/attachments"
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/testkit"
 )
 
 type fx struct {

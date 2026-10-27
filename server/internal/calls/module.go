@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/velixio/myApp/server/internal/core"
-	"github.com/velixio/myApp/server/internal/httpx"
-	"github.com/velixio/myApp/server/internal/realtime"
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/httpx"
+	"github.com/drag0n-flyer/myApp/server/internal/realtime"
 )
 
 var uuidRE = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)

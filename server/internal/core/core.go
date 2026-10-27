@@ -10,8 +10,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/drag0n-flyer/myApp/server/internal/config"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/velixio/myApp/server/internal/config"
 )
 
 // ErrNotFound is returned when a looked-up record does not exist.

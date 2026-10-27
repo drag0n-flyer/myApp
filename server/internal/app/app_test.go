@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/velixio/myApp/server/internal/app"
-	"github.com/velixio/myApp/server/internal/core"
-	"github.com/velixio/myApp/server/internal/httpx"
-	"github.com/velixio/myApp/server/internal/testkit"
+	"github.com/drag0n-flyer/myApp/server/internal/app"
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/httpx"
+	"github.com/drag0n-flyer/myApp/server/internal/testkit"
 )
 
 func get(h http.Handler, path string) *httptest.ResponseRecorder {

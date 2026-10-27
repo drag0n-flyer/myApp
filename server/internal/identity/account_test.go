@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/velixio/myApp/server/internal/core"
-	"github.com/velixio/myApp/server/internal/core/coretest"
-	"github.com/velixio/myApp/server/internal/identity/softauth"
-	"github.com/velixio/myApp/server/internal/testkit"
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/core/coretest"
+	"github.com/drag0n-flyer/myApp/server/internal/identity/softauth"
+	"github.com/drag0n-flyer/myApp/server/internal/testkit"
 )
 
 func (e *signupEnv) emailStart(t *testing.T, email string) *testkit.Response {

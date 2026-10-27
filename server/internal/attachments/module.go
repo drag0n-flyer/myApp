@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/velixio/myApp/server/internal/core"
-	"github.com/velixio/myApp/server/internal/httpx"
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/httpx"
 )
 
 // Module is the attachments module.

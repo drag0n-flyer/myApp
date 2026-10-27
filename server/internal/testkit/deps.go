@@ -6,11 +6,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/velixio/myApp/server/internal/config"
-	"github.com/velixio/myApp/server/internal/core"
-	"github.com/velixio/myApp/server/internal/core/coretest"
-	"github.com/velixio/myApp/server/internal/db"
-	"github.com/velixio/myApp/server/internal/mail/mailtest"
+	"github.com/drag0n-flyer/myApp/server/internal/config"
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/core/coretest"
+	"github.com/drag0n-flyer/myApp/server/internal/db"
+	"github.com/drag0n-flyer/myApp/server/internal/mail/mailtest"
 )
 
 // Clock is a controllable time source.

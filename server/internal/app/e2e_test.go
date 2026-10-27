@@ -15,10 +15,10 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/velixio/myApp/server/internal/app"
-	"github.com/velixio/myApp/server/internal/core"
-	"github.com/velixio/myApp/server/internal/identity/softauth"
-	"github.com/velixio/myApp/server/internal/testkit"
+	"github.com/drag0n-flyer/myApp/server/internal/app"
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/identity/softauth"
+	"github.com/drag0n-flyer/myApp/server/internal/testkit"
 )
 
 var b64 = base64.RawURLEncoding

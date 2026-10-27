@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/velixio/myApp/server/internal/core"
-	"github.com/velixio/myApp/server/internal/httpx"
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/httpx"
 )
 
 // defaultRemoteAddr is what httptest.NewRequest uses (a TEST-NET-1 address).

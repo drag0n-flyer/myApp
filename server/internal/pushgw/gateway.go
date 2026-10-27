@@ -23,12 +23,12 @@ import (
 	"slices"
 	"time"
 
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/db"
+	"github.com/drag0n-flyer/myApp/server/internal/httpx"
+	"github.com/drag0n-flyer/myApp/server/internal/pushproto"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/velixio/myApp/server/internal/core"
-	"github.com/velixio/myApp/server/internal/db"
-	"github.com/velixio/myApp/server/internal/httpx"
-	"github.com/velixio/myApp/server/internal/pushproto"
 )
 
 //go:embed migrations/*.sql

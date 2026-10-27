@@ -21,7 +21,7 @@ These were not decided in GOAL.md. Each one changes what gets built.
 5. **Call state lives in memory** on the single server node. A restart ends ringing calls; calls that are already connected keep running, because media is peer-to-peer.
 6. **Display names are stored on the server in plain text** (Phase 1). Encrypted profiles come later.
 7. **TURN credentials last 12 hours.** coturn checks them on every allocation refresh, so the lifetime must cover the longest call. The TURN username is `<expiry>:<random 8 hex>`, which never contains an account or device ID.
-8. **Go module path** `github.com/velixio/myApp/server`. Confirmed against the repo `velixio/myApp` (2026-10-27).
+8. **Go module path** `github.com/drag0n-flyer/myApp/server`. Confirmed against the repo `drag0n-flyer/myApp` (2026-10-27).
 
 ## 3. Components
 

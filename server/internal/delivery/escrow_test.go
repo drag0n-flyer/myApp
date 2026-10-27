@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/velixio/myApp/server/internal/core"
-	"github.com/velixio/myApp/server/internal/delivery"
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/delivery"
 )
 
 func writeKey(t *testing.T) (path string, priv hpke.PrivateKey) {
