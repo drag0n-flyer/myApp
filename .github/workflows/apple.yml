@@ -29,6 +29,7 @@ jobs:
       localstore: ${{ steps.pick.outputs.localstore }}
       serverkit: ${{ steps.pick.outputs.serverkit }}
       callcore: ${{ steps.pick.outputs.callcore }}
+      callmedia: ${{ steps.pick.outputs.callmedia }}
       messaging: ${{ steps.pick.outputs.messaging }}
       app: ${{ steps.pick.outputs.app }}
     steps:
@@ -61,15 +62,16 @@ jobs:
           echo "$files" | grep -qx '.github/workflows/apple.yml' && all=1
           has() { [ "$all" = 1 ] || echo "$files" | grep -qE "$1"; }
           P=apps/apple/Packages
-          appcore=false; localstore=false; serverkit=false; callcore=false; messaging=false; app=false
+          appcore=false; localstore=false; serverkit=false; callcore=false; callmedia=false; messaging=false; app=false
           if has "^$P/AppCore/"; then appcore=true; serverkit=true; callcore=true; messaging=true; app=true; fi
           if has "^$P/LocalStore/"; then localstore=true; messaging=true; app=true; fi
           if has "^$P/ServerKit/|^apps/apple/(serverkit-tests\.yml|ServerKitTestHost/)"; then serverkit=true; messaging=true; app=true; fi
           if has "^$P/SecureMessaging/"; then messaging=true; app=true; fi
           if has "^$P/Messaging/"; then messaging=true; app=true; fi
-          if has "^$P/CallCore/"; then callcore=true; app=true; fi
+          if has "^$P/CallCore/"; then callcore=true; callmedia=true; app=true; fi
+          if has "^$P/(CallMedia|WebRTCBinary)/"; then callmedia=true; app=true; fi
           if has "^apps/apple/(App|AppUITests|NotificationService|scripts)/|^apps/apple/project\.yml$"; then app=true; fi
-          for k in appcore localstore serverkit callcore messaging app; do
+          for k in appcore localstore serverkit callcore callmedia messaging app; do
             echo "$k=${!k}" >> "$GITHUB_OUTPUT"
             echo "$k=${!k}"
           done
@@ -140,6 +142,29 @@ jobs:
       - name: Messaging tests
         if: needs.changes.outputs.messaging == 'true'
         working-directory: apps/apple/Packages/Messaging
+        run: swift test
+
+  # WebRTC media session tests: loopback calls in one process on a Mac.
+  # Needs the released WebRTC.xcframework (Task 6 sets the checksum in WebRTCBinary).
+  callmedia:
+    needs: changes
+    if: needs.changes.outputs.callmedia == 'true'
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm
+            ~/Library/org.swift.swiftpm
+            apps/apple/Packages/*/.build
+          key: spm-${{ runner.os }}-${{ hashFiles('apps/apple/Packages/*/Package.swift', 'apps/apple/Packages/*/Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+      - name: CallMedia tests
+        working-directory: apps/apple/Packages/CallMedia
         run: swift test
 
   serverkit-ios:
