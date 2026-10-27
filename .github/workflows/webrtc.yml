@@ -89,12 +89,6 @@ jobs:
       - name: Disk after build
         if: always()
         run: df -h /
-      - name: Licenses
-        if: matrix.slice == 'ios-arm64'
-        run: |
-          cd "$WORK/src"
-          python3 tools_webrtc/libs/generate_licenses.py --target //sdk:framework_objc "$WORK/licenses" out/ios-arm64
-          ls -l "$WORK/licenses"
       - name: Pack the slice
         run: tar -C "$WORK/artifacts" -cf "slice-${{ matrix.slice }}.tar" "${{ matrix.slice }}"
       - uses: actions/upload-artifact@v4
@@ -102,6 +96,15 @@ jobs:
           name: slice-${{ matrix.slice }}
           path: slice-${{ matrix.slice }}.tar
           if-no-files-found: error
+      - name: Licenses
+        if: matrix.slice == 'ios-arm64'
+        run: |
+          mkdir -p "$WORK/licenses"
+          cd "$WORK/src"
+          python3 tools_webrtc/libs/generate_licenses.py --target //sdk:framework_objc "$WORK/licenses" out/ios-arm64
+          ls -l "$WORK/licenses"
+          cd "$GITHUB_WORKSPACE"
+          sh tools/webrtc/package.sh --check-license "$WORK/licenses/LICENSE.md"
       - uses: actions/upload-artifact@v4
         if: matrix.slice == 'ios-arm64'
         with:
