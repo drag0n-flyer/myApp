@@ -24,6 +24,7 @@ import (
 	"github.com/velixio/myApp/server/internal/core"
 	"github.com/velixio/myApp/server/internal/db"
 	"github.com/velixio/myApp/server/internal/mail"
+	"github.com/velixio/myApp/server/internal/serverinfo"
 )
 
 const shutdownTimeout = 10 * time.Second
@@ -93,6 +94,10 @@ func serve(ctx context.Context, a *app.App, cfg config.Config, pool *pgxpool.Poo
 
 	if cfg.LabMode {
 		log.Warn("LAB MODE: sessions can be created without sign-in; never enable on a real server")
+	}
+
+	if w := serverinfo.SecurityTxtWarning(cfg.DocsDir, time.Now()); w != "" {
+		log.Warn(w, "dir", cfg.DocsDir)
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)

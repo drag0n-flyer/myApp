@@ -21,16 +21,23 @@ The server policy (invite requirement, call quality limits, retention, upload li
 
 ## Security contact and legal pages
 
-`APP_DOCS_DIR` names a directory (mounted into the container) from which the server serves four files, read on every request, so you can edit them without a restart:
+The server serves four files from `APP_DOCS_DIR`, read on every request, so edits show without a restart. Under compose, `deploy/docs/` on the host is mounted read-only at `/docs` in the container, and `.env.example` already sets `APP_DOCS_DIR=/docs`.
 
-| URL | File |
+| URL | File in `deploy/docs/` |
 |---|---|
 | `/.well-known/security.txt` | `security.txt` |
 | `/legal/privacy` | `privacy.html` |
 | `/legal/terms` | `terms.html` |
 | `/legal/disclosure` | `disclosure.html` |
 
-A missing directory or file gives 404. Start `security.txt` from `deploy/docs/security.txt.example`: set your own `Contact`, host name, and an `Expires` date less than a year ahead. The server does not check the date, so put a reminder in your calendar to renew it before it passes (RFC 9116 treats an expired file as stale). The privacy and terms pages are drafts that need a lawyer's review before use.
+A missing file gives 404. To publish a security contact:
+
+1. `cp docs/security.txt.example docs/security.txt`
+2. Edit `docs/security.txt`: set `Contact`, your host name in `Policy` and `Canonical`, and an `Expires` date less than a year ahead.
+3. Create `docs/disclosure.html` (the `Policy` line points to `/legal/disclosure`, which is 404 until it exists), or remove the `Policy` line.
+4. `docker compose up -d` (needed once, so the container picks up `APP_DOCS_DIR` and the mount; later edits to the files need no restart).
+
+At start the server logs a warning if `security.txt` has expired, expires within 30 days, or has no valid `Expires`. Renew the date before then (RFC 9116 treats an expired file as stale). The privacy and terms pages are drafts that need a lawyer's review before use.
 
 ## Reverse proxy
 

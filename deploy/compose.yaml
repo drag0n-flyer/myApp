@@ -40,6 +40,7 @@ services:
     volumes:
       - appdata:/var/lib/appserver
       - ./secrets:/secrets:ro
+      - ./docs:/docs:ro # operator documents, see APP_DOCS_DIR
 
   coturn:
     image: coturn/coturn:4.18
