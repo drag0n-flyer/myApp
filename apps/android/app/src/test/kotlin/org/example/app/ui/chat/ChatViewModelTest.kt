@@ -6,6 +6,7 @@ import org.example.app.core.chats.ChatStore
 import org.example.app.core.chats.MessageContent
 import org.example.app.core.chats.SampleChatStore
 import org.example.app.core.settings.AutoDownloadSettings
+import org.example.app.core.settings.MediaKind
 import org.example.app.ui.msg
 import org.example.app.ui.storeWith
 import kotlinx.coroutines.Dispatchers
@@ -41,5 +42,33 @@ class ChatViewModelTest {
         // A message in this chat does update the state.
         inner.receive(MessageContent.Text("here"), inner.contact("riya")!!)
         assertEquals(2, vm.state.value.messages.size)
+    }
+
+    @Test
+    fun autoDownloadIsRequestedOncePerMessage() {
+        val downloads = mutableListOf<String>()
+        val inner = storeWith(listOf(msg("1", "riya", MessageContent.Photo(1000))))
+        val store = object : ChatStore by inner {
+            override fun download(messageId: String, chatId: String) { downloads += messageId }
+        }
+        val vm = ChatViewModel(store, "chat-riya", NetworkType.Wifi, AutoDownloadSettings())
+        vm.requestAutoDownload("1", MediaKind.Photo)
+        vm.requestAutoDownload("1", MediaKind.Photo)
+        assertEquals(listOf("1"), downloads)
+        // A tap still downloads.
+        vm.download("1")
+        assertEquals(listOf("1", "1"), downloads)
+    }
+
+    @Test
+    fun autoDownloadRespectsTheNetworkRule() {
+        val downloads = mutableListOf<String>()
+        val inner = storeWith(listOf(msg("1", "riya", MessageContent.Photo(1000))))
+        val store = object : ChatStore by inner {
+            override fun download(messageId: String, chatId: String) { downloads += messageId }
+        }
+        val vm = ChatViewModel(store, "chat-riya", NetworkType.Mobile, AutoDownloadSettings())
+        vm.requestAutoDownload("1", MediaKind.Photo)
+        assertEquals(emptyList(), downloads)
     }
 }

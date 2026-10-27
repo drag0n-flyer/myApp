@@ -58,6 +58,15 @@ class ChatViewModel(
         return true
     }
 
+    // Lives in the ViewModel, so it survives rotation and a message scrolling off and back on screen.
+    // The store reports no failure, so an id is never removed; the tap on the download button still retries.
+    private val requestedDownloads = mutableSetOf<String>()
+
+    /** Starts the automatic download for a message once, if the rules allow it on this network. */
+    fun requestAutoDownload(messageId: String, kind: MediaKind) {
+        if (autoDownloads(kind) && requestedDownloads.add(messageId)) store.download(messageId, chatId)
+    }
+
     fun download(messageId: String) = store.download(messageId, chatId)
 
     /** Photos and files wait for a tap when the rules say not to download on this network. */

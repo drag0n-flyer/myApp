@@ -20,6 +20,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,7 +52,7 @@ fun ChatScreen(
     val byId = remember(state.messages) { state.messages.associateBy { it.id } }
     // Follow new messages only when already at the newest one, or when the user sent it.
     val newest = newestFirst.firstOrNull()
-    var previousNewestId by remember { mutableStateOf<String?>(null) }
+    var previousNewestId by rememberSaveable { mutableStateOf<String?>(null) }
     LaunchedEffect(newest?.id) {
         if (newest != null) {
             val first = list.layoutInfo.visibleItemsInfo.firstOrNull()
@@ -92,10 +93,10 @@ fun ChatScreen(
                     is MessageContent.File -> MediaKind.File
                     else -> null
                 }
-                // Once per message: keyed on the id, so recomposition and scrolling never retrigger it.
+                // The item re-enters composition on scroll-back and rotation; the ViewModel asks the store only once per id.
                 LaunchedEffect(message.id) {
                     val waiting = (message.media?.phase ?: MediaState.Phase.Remote) is MediaState.Phase.Remote
-                    if (autoKind != null && waiting && viewModel.autoDownloads(autoKind)) viewModel.download(message.id)
+                    if (autoKind != null && waiting) viewModel.requestAutoDownload(message.id, autoKind)
                 }
                 MessageBubble(
                     message = message,

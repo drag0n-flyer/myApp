@@ -86,6 +86,23 @@ class ChatScreenTest {
     }
 
     @Test
+    fun scrollingAPhotoAwayAndBackDoesNotRequestItAgain() {
+        val chat = listOf(msg("photo", "riya", MessageContent.Photo(240_000))) +
+            (0 until 300).map { msg("m$it", "riya", MessageContent.Text("message $it")) }
+        val store = RecordingStore(storeWith(chat))
+        launch(store, NetworkType.Wifi)
+        rule.waitForIdle()
+        rule.onNode(hasScrollAction()).performScrollToIndex(300)
+        rule.waitForIdle()
+        assertEquals(listOf("photo"), store.downloads)
+        rule.onNode(hasScrollAction()).performScrollToIndex(0)
+        rule.waitForIdle()
+        rule.onNode(hasScrollAction()).performScrollToIndex(300)
+        rule.waitForIdle()
+        assertEquals(listOf("photo"), store.downloads)
+    }
+
+    @Test
     fun photoOnMobileDataIsNotDownloadedByItself() {
         val store = RecordingStore(storeWith(photoAndVoice))
         launch(store, NetworkType.Mobile)
