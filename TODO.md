@@ -74,9 +74,3 @@ The Apple apps workflow on `main` stays red until the Swift 6.2 fix on `fix/swif
    - the Mac camera permission
    - Apple's notification-filtering permission
    - how crash reports are sent and kept, marked "TO BE FILLED IN" in the privacy policy
-5. **Optional:** override any admin-dashboard default. Emails are masked, report text is hidden, the policy is read-only, the audit log is kept for 365 days, and deleted users aren't emailed.
-6. **Set aside until the end of Phase 1:**
-   - the owner review of sensitive code
-   - the independent security review
-   - on-device measurements (L10)
-   - the USB-microphone check of the Mac rig
