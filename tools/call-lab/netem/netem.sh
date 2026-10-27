@@ -14,9 +14,13 @@ run() {
 # Refuse ifb devices and interfaces that do not exist. NETEM_SYSFS lets tests
 # point at a fake sysfs root.
 check_iface() {
+    if ! printf '%s\n' "$1" | grep -Eq '^[A-Za-z0-9_.:-]{1,15}$'; then
+        echo "bad interface name: $1" >&2; exit 2
+    fi
     case "$1" in
     ifb*) echo "refusing ifb device: $1" >&2; exit 2 ;;
     esac
+    [ "$dry" -eq 1 ] && return 0
     if [ ! -e "${NETEM_SYSFS:-/sys/class/net}/$1" ]; then
         echo "no such interface: $1" >&2; exit 2
     fi
@@ -51,9 +55,20 @@ apply)
 clear)
     [ $# -eq 2 ] || usage
     check_iface "$2"
-    run tc qdisc del dev "$2" root
-    run tc qdisc del dev "$2" ingress
-    run tc qdisc del dev ifb0 root
+    # Try all three deletes. A missing qdisc is fine; any other error fails.
+    bad=0
+    try_del() {
+        if [ "$dry" -eq 1 ]; then echo "$*"; return 0; fi
+        err=$("$@" 2>&1) && return 0
+        case "$err" in
+        *"No such file"*|*"Cannot find"*|*"Cannot delete qdisc with handle of zero"*|*"Invalid handle"*) return 0 ;;
+        esac
+        echo "failed: $*: $err" >&2; bad=1
+    }
+    try_del tc qdisc del dev "$2" root
+    try_del tc qdisc del dev "$2" ingress
+    try_del tc qdisc del dev ifb0 root
+    exit "$bad"
     ;;
 *) usage ;;
 esac

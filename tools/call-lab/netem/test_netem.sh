@@ -44,9 +44,9 @@ test_unknown_profile() {
 }
 
 test_unknown_interface() {
-    out=$(sh "$S" --dry-run apply bogus0 loss5 2>&1); rc=$?
+    out=$(sh "$S" apply bogus0 loss5 2>&1); rc=$?
     check unknown_interface "2 no such interface: bogus0" "$rc $out"
-    out=$(sh "$S" --dry-run clear bogus0 2>&1); rc=$?
+    out=$(sh "$S" clear bogus0 2>&1); rc=$?
     check unknown_interface_clear "2 no such interface: bogus0" "$rc $out"
 }
 
@@ -69,6 +69,31 @@ test_stops_on_first_failure() {
     check stops_on_first_failure "nonzero 3" "$rcok $n"
 }
 
+test_dry_run_skips_existence_check() {
+    out=$(sh "$S" --dry-run clear bogus0 2>&1); rc=$?
+    check dry_run_skips_existence_check "0 3" "$rc $(echo "$out" | wc -l | tr -d ' ')"
+}
+
+test_bad_interface_name() {
+    for n in 'a/b' 'averyveryverylongname' 'a b' '..;x'; do
+        out=$(sh "$S" --dry-run clear "$n" 2>&1); rc=$?
+        check "bad_interface_name($n)" "2 bad interface name: $n" "$rc $out"
+    done
+}
+
+test_clear_continues_when_absent() {
+    printf '#!/bin/sh\necho "tc $*" >> "%s/log"\ncase "$*" in *" root"*) echo "RTNETLINK answers: No such file or directory" >&2; exit 2;; esac\n' "$tmp" > "$tmp/bin/tc"
+    printf '#!/bin/sh\n' > "$tmp/bin/ip"; chmod +x "$tmp/bin/"*
+    : > "$tmp/log"
+    out=$(PATH="$tmp/bin:$PATH" sh "$S" clear eth0 2>&1); rc=$?
+    check clear_continues_when_absent "0 3" "$rc $(wc -l < "$tmp/log" | tr -d ' ')"
+    printf '#!/bin/sh\necho "tc $*" >> "%s/log"\necho "Error: permission denied" >&2; exit 2\n' "$tmp" > "$tmp/bin/tc"
+    : > "$tmp/log"
+    out=$(PATH="$tmp/bin:$PATH" sh "$S" clear eth0 2>&1); rc=$?
+    [ "$rc" -ne 0 ] && r=nonzero || r=zero
+    check clear_fails_on_real_error "nonzero 3" "$r $(wc -l < "$tmp/log" | tr -d ' ')"
+}
+
 test_executable() {
     [ -x "$S" ] && r=yes || r=no
     check executable yes "$r"
@@ -82,4 +107,7 @@ test_unknown_interface
 test_refuse_ifb
 test_stops_on_first_failure
 test_executable
+test_dry_run_skips_existence_check
+test_bad_interface_name
+test_clear_continues_when_absent
 if [ "$fail" -eq 0 ]; then echo "PASS $total/$total"; else echo "FAIL $((total - fail))/$total"; exit 1; fi
