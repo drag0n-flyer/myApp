@@ -13,6 +13,7 @@ import org.example.app.core.chats.SampleChatStore
 import org.example.app.core.settings.IPHiding
 import org.example.app.core.settings.ServerPolicy
 import org.example.app.core.settings.UserSettings
+import org.example.app.ui.settings.SettingsStore
 
 /**
  * Manual wiring of the services the screens use. Until the live services land (plan Task I1) both
@@ -26,6 +27,7 @@ class AppGraph(context: Context, val sampleData: Boolean) {
     // Sample values until the live server, settings and network monitor exist.
     val serverPolicy = ServerPolicy(ModePreference.Auto, DataMode.High, IPHiding.NonContacts, true, "home.example.org")
     val userSettings = UserSettings()
+    val settingsStore = SettingsStore(userSettings)
     val network = NetworkType.Wifi
     val callEngine: CallEngine by lazy {
         SimulatedCallEngine(server = serverPolicy, settings = userSettings.call, network = network)
