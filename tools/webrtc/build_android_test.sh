@@ -56,8 +56,8 @@ g() { git -c user.name=test -c user.email=test@example.com -c commit.gpgsign=fal
 
 # --- build-android.sh ---
 expect_exit "build-android: no arguments" 1 sh "$here/build-android.sh"
-expect_exit "build-android: unknown ABI" 1 env WEBRTC_WORKDIR="$work/w" sh "$here/build-android.sh" armeabi-v7a
-check "build-android: unknown ABI is named" out_has "unknown ABI 'armeabi-v7a'"
+expect_exit "build-android: unknown ABI" 1 env WEBRTC_WORKDIR="$work/w" sh "$here/build-android.sh" mips
+check "build-android: unknown ABI is named" out_has "unknown ABI 'mips'"
 expect_exit "build-android: unknown ABI (gn args)" 1 sh "$here/build-android.sh" --print-gn-args x86
 expect_exit "build-android: gn args need an ABI" 1 sh "$here/build-android.sh" --print-gn-args
 expect_exit "build-android: a build needs Linux" 1 env APP_UNAME=Darwin WEBRTC_WORKDIR="$work/w" sh "$here/build-android.sh" arm64-v8a
@@ -65,7 +65,7 @@ check "build-android: says Linux" out_has "needs Linux"
 expect_exit "build-android: a second argument is rejected" 1 sh "$here/build-android.sh" arm64-v8a "$work/w"
 check "build-android: no workdir directory made on a bad call" test ! -e "$work/w"
 
-for abi in arm64-v8a x86_64; do
+for abi in arm64-v8a armeabi-v7a x86_64; do
   expect_exit "build-android: gn args for $abi" 0 sh "$here/build-android.sh" --print-gn-args "$abi"
   cp "$work/out.txt" "$work/args-$abi.txt"
   for a in 'target_os="android"' 'is_debug=false' 'symbol_level=1' 'rtc_use_h264=false' \
@@ -77,6 +77,7 @@ for abi in arm64-v8a x86_64; do
   check "build-android: $abi has no dot-product flag" sh -c '! grep -q -i "dotprod\|dot_prod\|arm_version\|arm_use_neon=false" "$1"' _ "$work/args-$abi.txt"
 done
 check "build-android: arm64-v8a is target_cpu arm64" has 'target_cpu="arm64"' "$work/args-arm64-v8a.txt"
+check "build-android: armeabi-v7a is target_cpu arm" has 'target_cpu="arm"' "$work/args-armeabi-v7a.txt"
 check "build-android: x86_64 is target_cpu x64" has 'target_cpu="x64"' "$work/args-x86_64.txt"
 # The pinned Apple-only argument must not leak in.
 check "build-android: no app_opus_plc_trial" sh -c '! grep -q app_opus_plc_trial "$1" "$2"' _ "$work/args-arm64-v8a.txt" "$work/args-x86_64.txt"
@@ -84,6 +85,7 @@ check "build-android: no Apple arguments" sh -c '! grep -q "ios\|mac_\|enable_ds
 # The whole line, exactly. An added or dropped argument fails here.
 common='target_os="android" is_debug=false is_component_build=false rtc_include_tests=false android_static_analysis="off" use_siso=true symbol_level=1 rtc_use_h264=false rtc_include_dav1d_in_internal_decoder_factory=false rtc_opus_support_120ms_ptime=true'
 check "build-android: arm64-v8a exact args" test "$(cat "$work/args-arm64-v8a.txt")" = "$common target_cpu=\"arm64\""
+check "build-android: armeabi-v7a exact args" test "$(cat "$work/args-armeabi-v7a.txt")" = "$common target_cpu=\"arm\""
 check "build-android: x86_64 exact args" test "$(cat "$work/args-x86_64.txt")" = "$common target_cpu=\"x64\""
 # The exact gn arguments of the brief, in the exact form.
 for a in 'rtc_use_h264=false' 'rtc_include_dav1d_in_internal_decoder_factory=false' \
@@ -116,11 +118,11 @@ zip_names() { python3 -I -c 'import sys, zipfile; print("\n".join(sorted(zipfile
 expect_exit "package-android: no arguments" 1 sh "$here/package-android.sh"
 expect_exit "package-android: missing directory" 1 sh "$here/package-android.sh" "$work/none"
 
-make_layout "$work/ok" arm64-v8a x86_64
-expect_exit "package-android: two ABIs" 0 sh "$here/package-android.sh" "$work/ok"
+make_layout "$work/ok" arm64-v8a armeabi-v7a x86_64
+expect_exit "package-android: three ABIs" 0 sh "$here/package-android.sh" "$work/ok"
 check "package-android: AAR written" test -s "$work/ok/libwebrtc.aar"
 zip_names "$work/ok/libwebrtc.aar" >"$work/names.txt"
-check "package-android: jni/ holds exactly the two ABIs" test "$(grep '^jni/' "$work/names.txt")" = "$(printf 'jni/arm64-v8a/libjingle_peerconnection_so.so\njni/x86_64/libjingle_peerconnection_so.so')"
+check "package-android: jni/ holds exactly the three ABIs" test "$(grep '^jni/' "$work/names.txt")" = "$(printf 'jni/arm64-v8a/libjingle_peerconnection_so.so\njni/armeabi-v7a/libjingle_peerconnection_so.so\njni/x86_64/libjingle_peerconnection_so.so')"
 check "package-android: AndroidManifest.xml" has '^AndroidManifest.xml$' "$work/names.txt"
 check "package-android: classes.jar" has '^classes.jar$' "$work/names.txt"
 check "package-android: classes.jar is the jar" sh -c 'python3 -I -c "
@@ -135,23 +137,23 @@ cp "$work/ok/libwebrtc.aar" "$work/first.aar"
 sh "$here/package-android.sh" "$work/ok" >/dev/null 2>&1
 check "package-android: the AAR is reproducible" cmp -s "$work/first.aar" "$work/ok/libwebrtc.aar"
 
-make_layout "$work/one" arm64-v8a
+make_layout "$work/one" arm64-v8a armeabi-v7a
 expect_exit "package-android: a missing ABI fails" 1 sh "$here/package-android.sh" "$work/one"
 check "package-android: names x86_64" out_has "x86_64"
-make_layout "$work/three" arm64-v8a x86_64 armeabi-v7a
+make_layout "$work/three" arm64-v8a armeabi-v7a x86_64 x86
 expect_exit "package-android: an extra ABI fails" 1 sh "$here/package-android.sh" "$work/three"
-check "package-android: names the extra ABI" out_has "armeabi-v7a"
-make_layout "$work/gpl" arm64-v8a x86_64
+check "package-android: names the extra ABI" out_has "unexpected ABI .x86."
+make_layout "$work/gpl" arm64-v8a armeabi-v7a x86_64
 printf 'dep\nGNU General Public License v3\n' >"$work/gpl/LICENSE.md"
 expect_exit "package-android: a GNU license fails" 4 sh "$here/package-android.sh" "$work/gpl"
 check "package-android: no AAR for a GNU license" test ! -e "$work/gpl/libwebrtc.aar"
-make_layout "$work/nolic" arm64-v8a x86_64
+make_layout "$work/nolic" arm64-v8a armeabi-v7a x86_64
 rm "$work/nolic/LICENSE.md"
 expect_exit "package-android: a missing license fails" 1 sh "$here/package-android.sh" "$work/nolic"
-make_layout "$work/nojar" arm64-v8a x86_64
+make_layout "$work/nojar" arm64-v8a armeabi-v7a x86_64
 rm "$work/nojar/arm64-v8a/libwebrtc.jar"
 expect_exit "package-android: a missing jar fails" 1 sh "$here/package-android.sh" "$work/nojar"
-make_layout "$work/nocls" arm64-v8a x86_64
+make_layout "$work/nocls" arm64-v8a armeabi-v7a x86_64
 python3 -I - "$work/nocls/arm64-v8a/libwebrtc.jar" <<'PY'
 import sys, zipfile
 with zipfile.ZipFile(sys.argv[1], "w") as z:

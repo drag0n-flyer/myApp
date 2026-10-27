@@ -36,7 +36,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        abi: [arm64-v8a, x86_64]
+        abi: [arm64-v8a, armeabi-v7a, x86_64]
     env:
       WEBRTC_WORKDIR: /mnt/webrtc-android
     steps:
@@ -82,7 +82,7 @@ jobs:
       - name: Assemble the AAR
         run: |
           mkdir -p out
-          for abi in arm64-v8a x86_64; do cp -r "downloaded/build-$abi/$abi" "out/$abi"; done
+          for abi in arm64-v8a armeabi-v7a x86_64; do cp -r "downloaded/build-$abi/$abi" "out/$abi"; done
           # The license file and manifest are the same in both builds except for the ABI list
           # in the license scan; take the arm64-v8a ones.
           cp downloaded/build-arm64-v8a/AndroidManifest.xml downloaded/build-arm64-v8a/LICENSE.md out/
@@ -95,9 +95,11 @@ jobs:
           done
       - name: 16 KB page alignment
         run: |
+          # armeabi-v7a is exempt on purpose: the 16 KB page rule covers 64-bit ABIs only.
           if [ -f scripts/check-16kb.sh ]; then
             for so in out/arm64-v8a/*.so out/x86_64/*.so; do sh scripts/check-16kb.sh "$so"; done
           else
+            # armeabi-v7a is exempt on purpose: the 16 KB page rule covers 64-bit ABIs only.
             # scripts/check-16kb.sh (task G1) is not on this branch yet: same rule, inline.
             python3 - out/arm64-v8a/*.so out/x86_64/*.so <<'PY'
           import subprocess, sys
@@ -193,7 +195,7 @@ jobs:
 
           Opus features: Deep PLC, OSCE (LACE and NoLACE), OSCE bandwidth extension. DRED is off.
           Decoder complexity 7. Packet lengths up to 120 ms. Hardware H.264 only (software H.264 and dav1d are off).
-          ABIs: arm64-v8a, x86_64. The libraries are 16 KB page aligned.
+          ABIs: arm64-v8a, armeabi-v7a, x86_64. The 64-bit libraries are 16 KB page aligned.
 
           Device check: pending
           NOTES

@@ -6,17 +6,18 @@
 #
 # <android-out-dir> is <workdir>/out/android from build-android.sh:
 #   arm64-v8a/libjingle_peerconnection_so.so   arm64-v8a/libwebrtc.jar
+#   armeabi-v7a/libjingle_peerconnection_so.so
 #   x86_64/libjingle_peerconnection_so.so
 #   AndroidManifest.xml
 #   LICENSE.md
 # It writes, into the same directory:
 #   libwebrtc.aar         AndroidManifest.xml, classes.jar (the arm64-v8a jar; the
 #                         Java classes do not depend on the ABI), and
-#                         jni/arm64-v8a/ and jni/x86_64/ with the .so files
+#                         jni/arm64-v8a/, jni/armeabi-v7a/ and jni/x86_64/ with the .so files
 #   libwebrtc.aar.sha256  "<sha256>  libwebrtc.aar"
 # The AAR is reproducible: fixed file order and timestamps.
 #
-# Checks first, before writing anything: exactly the ABIs arm64-v8a and x86_64
+# Checks first, before writing anything: exactly the ABIs arm64-v8a, armeabi-v7a and x86_64
 # (no missing and no extra ABI directory); LICENSE.md names no GPL, LGPL or AGPL
 # license; the jar holds org/webrtc/OpusInfo.class and
 # org/webrtc/AudioCapturePostProcessing.class (our patches 0005 and 0006).
@@ -24,7 +25,7 @@
 # Exit codes: 0 ok, 1 failure or bad usage, 4 LICENSE.md names a GNU license.
 set -eu
 
-abis="arm64-v8a x86_64"
+abis="arm64-v8a armeabi-v7a x86_64"
 
 usage() {
   echo "usage: sh tools/webrtc/package-android.sh <android-out-dir>" >&2
@@ -92,7 +93,7 @@ import os, sys, zipfile
 aar, d = sys.argv[1], sys.argv[2]
 entries = [("AndroidManifest.xml", os.path.join(d, "AndroidManifest.xml")),
            ("classes.jar", os.path.join(d, "arm64-v8a", "libwebrtc.jar"))]
-for abi in ("arm64-v8a", "x86_64"):
+for abi in ("arm64-v8a", "armeabi-v7a", "x86_64"):
     entries.append(("jni/%s/libjingle_peerconnection_so.so" % abi,
                     os.path.join(d, abi, "libjingle_peerconnection_so.so")))
 with zipfile.ZipFile(aar + ".part", "w", zipfile.ZIP_DEFLATED) as z:

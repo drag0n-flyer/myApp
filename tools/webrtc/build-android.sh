@@ -6,7 +6,7 @@
 #   sh tools/webrtc/build-android.sh <abi>
 #   sh tools/webrtc/build-android.sh --print-gn-args <abi>    # no checkout needed
 #
-# ABIs: arm64-v8a x86_64
+# ABIs: arm64-v8a armeabi-v7a x86_64
 #
 # <workdir> is $WEBRTC_WORKDIR, or ./webrtc-android when that is not set.
 #
@@ -45,13 +45,13 @@ here=$(cd "$(dirname "$0")" && pwd)
 usage() {
   echo "usage: sh tools/webrtc/build-android.sh <abi>   (workdir: \$WEBRTC_WORKDIR, default ./webrtc-android)" >&2
   echo "       sh tools/webrtc/build-android.sh --print-gn-args <abi>" >&2
-  echo "abis: arm64-v8a x86_64" >&2
+  echo "abis: arm64-v8a armeabi-v7a x86_64" >&2
   exit 1
 }
 
 check_abi() {
   case "$1" in
-    arm64-v8a | x86_64) ;;
+    arm64-v8a | armeabi-v7a | x86_64) ;;
     *) echo "error: unknown ABI '$1'" >&2; usage ;;
   esac
 }
@@ -70,6 +70,7 @@ gn_args() { # gn_args <abi>: one line, the gn arguments for the ABI
   # relies on Opus's runtime-dispatched SIMD.
   case "$1" in
     arm64-v8a) cpu='target_cpu="arm64"' ;;
+    armeabi-v7a) cpu='target_cpu="arm"' ;;
     x86_64) cpu='target_cpu="x64"' ;;
   esac
   echo "$common $cpu"
