@@ -97,6 +97,7 @@ struct MacSettingsView: View {
 struct ProfileView: View {
     @Bindable var model: AppModel
     @State private var confirmDelete = false
+    @State private var deleteError: AccountError?
 
     var body: some View {
         Form {
@@ -110,11 +111,16 @@ struct ProfileView: View {
             } footer: {
                 Text("Deletes your account and your messages on this server. This can't be undone.")
             }
+            AccountErrorText(error: deleteError)
         }
         .formStyle(.grouped)
         .navigationTitle("Account")
         .confirmationDialog("Delete your account?", isPresented: $confirmDelete, titleVisibility: .visible) {
-            Button("Delete account", role: .destructive) { model.deleteAccount() }
+            Button("Delete account", role: .destructive) {
+                Task { deleteError = await model.deleteAccount() }
+            }
+        } message: {
+            Text("Delete your account? Your messages on this device are erased and can't be recovered.")
         }
     }
 }

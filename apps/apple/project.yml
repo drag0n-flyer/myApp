@@ -8,15 +8,26 @@ options:
 packages:
   AppCore:
     path: Packages/AppCore
+  ServerKit:
+    path: Packages/ServerKit
 settings:
   base:
     SWIFT_VERSION: '6.0'
     SWIFT_STRICT_CONCURRENCY: complete
     CODE_SIGN_STYLE: Automatic
+    PASSKEY_DOMAINS: home.example.org
+    DEFAULT_SERVER_HOST: home.example.org
+    PUSH_GATEWAY_URL: https://push.example.org
+    PUSH_GATEWAY_KEY: ''
     MARKETING_VERSION: '0.1.0'
     CURRENT_PROJECT_VERSION: '1'
     GENERATE_INFOPLIST_FILE: 'YES'
     ENABLE_USER_SCRIPT_SANDBOXING: 'YES'
+  configs:
+    Debug:
+      APNS_ENVIRONMENT: sandbox
+    Release:
+      APNS_ENVIRONMENT: production
     LOCALIZATION_PREFERS_STRING_CATALOGS: 'YES'
     SWIFT_EMIT_LOC_STRINGS: 'YES'
 targets:
@@ -25,10 +36,22 @@ targets:
     platform: iOS
     sources:
       - path: App
+        excludes: ['*.entitlements']
+    info:
+      path: Generated/AppiOS-Info.plist
+      properties:
+        DefaultServerHost: $(DEFAULT_SERVER_HOST)
+        PasskeyDomains: $(PASSKEY_DOMAINS)
+        PushGatewayURL: $(PUSH_GATEWAY_URL)
+        PushGatewayKey: $(PUSH_GATEWAY_KEY)
+        APNSEnvironment: $(APNS_ENVIRONMENT)
+        KeychainAccessGroup: $(AppIdentifierPrefix)org.example.app.shared
+        UIBackgroundModes: [remote-notification]
     settings:
       base:
         PRODUCT_NAME: App
         PRODUCT_BUNDLE_IDENTIFIER: org.example.app
+        CODE_SIGN_ENTITLEMENTS: App/AppiOS.entitlements
         TARGETED_DEVICE_FAMILY: '1'
         INFOPLIST_KEY_UILaunchScreen_Generation: 'YES'
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: 'YES'
@@ -37,20 +60,35 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
     dependencies:
       - package: AppCore
+      - package: ServerKit
+        product: ServerKit
   AppMac:
     type: application
     platform: macOS
     sources:
       - path: App
+        excludes: ['*.entitlements']
+    info:
+      path: Generated/AppMac-Info.plist
+      properties:
+        DefaultServerHost: $(DEFAULT_SERVER_HOST)
+        PasskeyDomains: $(PASSKEY_DOMAINS)
+        PushGatewayURL: $(PUSH_GATEWAY_URL)
+        PushGatewayKey: $(PUSH_GATEWAY_KEY)
+        APNSEnvironment: $(APNS_ENVIRONMENT)
+        KeychainAccessGroup: $(AppIdentifierPrefix)org.example.app.shared
     settings:
       base:
         PRODUCT_NAME: App
         PRODUCT_BUNDLE_IDENTIFIER: org.example.app.mac
+        CODE_SIGN_ENTITLEMENTS: App/AppMac.entitlements
         INFOPLIST_KEY_NSMicrophoneUsageDescription: So people can hear you on calls.
         INFOPLIST_KEY_NSCameraUsageDescription: For video calls.
         ENABLE_HARDENED_RUNTIME: 'YES'
     dependencies:
       - package: AppCore
+      - package: ServerKit
+        product: ServerKit
   AppiOSUITests:
     type: bundle.ui-testing
     platform: iOS

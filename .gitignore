@@ -36,3 +36,4 @@ deploy/certs/
 # Python
 __pycache__/
 *.pyc
+apps/apple/Generated/

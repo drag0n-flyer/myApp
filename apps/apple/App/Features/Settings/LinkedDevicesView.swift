@@ -1,3 +1,4 @@
+import AppCore
 import SwiftUI
 
 struct LinkedDevicesView: View {
@@ -9,16 +10,21 @@ struct LinkedDevicesView: View {
             Section {
                 ForEach(model.linkedDevices) { device in
                     HStack(spacing: 12) {
-                        Image(systemName: device.symbol).font(.title2).frame(width: 34)
+                        Image(systemName: device.platform == .mac ? "laptopcomputer" : "iphone").font(.title2).frame(width: 34)
                         VStack(alignment: .leading) {
                             Text(device.name)
-                            Text(device.lastActive).font(.caption).foregroundStyle(.secondary)
+                            if device.isThisDevice {
+                                Text("Active now").font(.caption).foregroundStyle(.secondary)
+                            } else {
+                                Text(device.lastActive, style: .relative).font(.caption).foregroundStyle(.secondary)
+                            }
                         }
                     }
                     .deleteDisabled(device.isThisDevice)
                 }
                 .onDelete { offsets in
-                    offsets.map { model.linkedDevices[$0].id }.forEach(model.removeDevice)
+                    let ids = offsets.map { model.linkedDevices[$0].id }
+                    Task { for id in ids { await model.removeDevice(id: id) } }
                 }
             } footer: {
                 Text("Swipe to remove a device you no longer use.")
@@ -31,37 +37,65 @@ struct LinkedDevicesView: View {
             #endif
         }
         .navigationTitle("Linked devices")
+        .task { await model.refreshDevices() }
         .sheet(isPresented: $showingScanner) {
-            ScanLinkCodeView { model.linkSampleDevice() }
+            ScanLinkCodeView(model: model)
         }
     }
 }
 
-/// Camera scanner placeholder: the real app scans the QR code shown on the new device.
+/// Scan the new device's code, show who is asking, then approve.
 private struct ScanLinkCodeView: View {
-    let scanned: () -> Void
+    let model: AppModel
     @Environment(\.dismiss) private var dismiss
+    @State private var request: LinkRequest?
+    @State private var error: AccountError?
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 20) {
-                RoundedRectangle(cornerRadius: 24)
-                    .strokeBorder(style: StrokeStyle(lineWidth: 3, dash: [12, 8]))
-                    .frame(width: 240, height: 240)
-                    .overlay { Image(systemName: "qrcode").font(.system(size: 80)).foregroundStyle(.secondary) }
-                Text("Point your camera at the QR code on your Mac.")
-                    .multilineTextAlignment(.center)
-                Button("Simulate scan") {
-                    scanned()
-                    dismiss()
+            Group {
+                if let request {
+                    LinkApprovalView(request: request, approve: { await approve(request) }, cancel: { dismiss() })
+                } else {
+                    VStack(spacing: 12) {
+                        QRScannerView { text in
+                            Task { await read(text) }
+                        }
+                        Text("Point your camera at the QR code on your Mac.")
+                            .multilineTextAlignment(.center)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                        AccountErrorText(error: error)
+                    }
+                    .padding()
                 }
-                .buttonStyle(.borderedProminent)
             }
-            .padding()
             .navigationTitle("Link a device")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             }
         }
+    }
+
+    private func read(_ text: String) async {
+        do throws(AccountError) {
+            request = try await model.account.linkRequest(qrText: text)
+            error = nil
+        } catch { self.error = error }
+    }
+
+    /// Returns the error to show, or `nil` after dismissing on success.
+    private func approve(_ request: LinkRequest) async -> AccountError? {
+        do throws(AccountError) {
+            try await model.account.approveLink(request)
+        } catch {
+            return error == .cancelled ? nil : error
+        }
+        await model.refreshDevices()
+        dismiss()
+        return nil
     }
 }

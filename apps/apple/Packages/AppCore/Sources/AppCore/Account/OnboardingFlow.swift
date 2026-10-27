@@ -61,6 +61,12 @@ public struct OnboardingFlow: Sendable {
         go(.done)
     }
 
+    /// Signed back in without the old device.
+    public mutating func recovered() {
+        guard step == .lostDevice else { return }
+        go(.done)
+    }
+
     public mutating func back() {
         guard step != .done, let previous = history.popLast() else { return }
         step = previous
