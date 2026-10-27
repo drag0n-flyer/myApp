@@ -133,9 +133,9 @@ step "gn gen $out"
 gn gen "$out" --args="$(gn_args "$abi")"
 step "build libjingle_peerconnection_so and libwebrtc"
 if [ -x third_party/siso/cipd/siso ]; then
-  third_party/siso/cipd/siso ninja -C "$out" sdk/android:libjingle_peerconnection_so sdk/android:libwebrtc
+  third_party/siso/cipd/siso ninja -k 0 -C "$out" sdk/android:libjingle_peerconnection_so sdk/android:libwebrtc
 else
-  autoninja -C "$out" sdk/android:libjingle_peerconnection_so sdk/android:libwebrtc
+  autoninja -k 0 -C "$out" sdk/android:libjingle_peerconnection_so sdk/android:libwebrtc
 fi
 
 # 6. artifacts

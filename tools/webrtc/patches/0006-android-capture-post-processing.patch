@@ -165,9 +165,9 @@ index 0000000..fa6d603
 +  }
 +
 +  @NativeMethods
-+  interface Natives {
-+    long create(long webrtcEnvRef, long nativeProcessor);
-+    float[] selfTest(long nativeProcessor);
++  interface Natives { // Parameters are not named native<Class>: jni_zero would make that a pointer type.
++    long create(long webrtcEnvRef, long processorHandle);
++    float[] selfTest(long processorHandle);
 +  }
 +}
 diff --git a/sdk/android/src/jni/app/audio_capture_post_processing.cc b/sdk/android/src/jni/app/audio_capture_post_processing.cc
