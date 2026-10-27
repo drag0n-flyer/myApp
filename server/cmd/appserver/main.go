@@ -42,7 +42,17 @@ func main() {
 func run(ctx context.Context, args []string) error {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 
-	cfg, policy, err := config.Load(os.Getenv, os.ReadFile)
+	// Settings come from the environment, then from APP_ENV_FILE (default
+	// ./.env, optional); the environment wins.
+	envFile, required := os.LookupEnv("APP_ENV_FILE")
+	if !required {
+		envFile = ".env"
+	}
+	getenv, err := config.EnvWithFile(os.LookupEnv, os.ReadFile, envFile, required)
+	if err != nil {
+		return err
+	}
+	cfg, policy, err := config.Load(getenv, os.ReadFile)
 	if err != nil {
 		return err
 	}
