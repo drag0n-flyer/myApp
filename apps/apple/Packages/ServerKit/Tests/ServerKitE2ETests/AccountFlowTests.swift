@@ -99,12 +99,13 @@ private actor StateLog {
     var client: ServerClient { get throws { try #require(service.client) } }
     var deviceID: String { store.current?.deviceID ?? "" }
 
+    /// The server sends at most 3 codes an hour to one address, so each test uses its own address.
     /// Connects, signs up "ana" with a passkey and returns the account's username as the server sees it.
-    func signUpAna(mail: Mailbox) async throws -> String {
+    func signUpAna(email: String, mail: Mailbox) async throws -> String {
         _ = try await service.connect(host: "localhost")
         #expect(try await service.redeemInvite(code: try env("E2E_INVITE_CODE")))
         let before = mail.newest()
-        try await service.startSignUp(username: "ana", email: "ana@example.org")
+        try await service.startSignUp(username: "ana", email: email)
         try await service.verifyEmail(code: try await mail.code(after: before))
         try await service.finishSignUp()
         return try await client.me().username
@@ -131,7 +132,7 @@ private actor StateLog {
 
     @Test func signUpLinkRevoke() async throws {
         let iphone = try TestDevice(name: "Ana's iPhone", platform: .iPhone)
-        #expect(try await iphone.signUpAna(mail: mail) == "ana")
+        #expect(try await iphone.signUpAna(email: "ana@example.org", mail: mail) == "ana")
 
         // The Mac shows a link code and waits.
         let mac = try TestDevice(name: "Ana's Mac", platform: .mac)
@@ -170,14 +171,15 @@ private actor StateLog {
 
     @Test func recoveryAddsPasskey() async throws {
         let first = try TestDevice(name: "Ana's iPhone", platform: .iPhone)
-        #expect(try await first.signUpAna(mail: mail) == "ana")
+        let email = "ana-recovery@example.org"
+        #expect(try await first.signUpAna(email: email, mail: mail) == "ana")
 
         // A new device that has no passkey recovers with an email code, then adds its own passkey.
         let second = try TestDevice(name: "Ana's iPad", platform: .iPhone)
         _ = try await second.service.connect(host: "localhost")
         let before = mail.newest()
-        try await second.service.sendRecoveryCode(to: "ana@example.org")
-        try await second.service.recover(email: "ana@example.org", code: try await mail.code(after: before))
+        try await second.service.sendRecoveryCode(to: email)
+        try await second.service.recover(email: email, code: try await mail.code(after: before))
         #expect(second.service.isSignedIn)
         try await second.service.addPasskey()
 
@@ -195,7 +197,7 @@ private actor StateLog {
 
     @Test func deleteAccountFreesUsername() async throws {
         let device = try TestDevice(name: "Ana's iPhone", platform: .iPhone)
-        #expect(try await device.signUpAna(mail: mail) == "ana")
+        #expect(try await device.signUpAna(email: "ana-delete@example.org", mail: mail) == "ana")
         let client = try device.client
         #expect(try await client.usernameAvailable("ana") == false)
         try await device.service.deleteAccount()
