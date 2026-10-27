@@ -1,0 +1,13 @@
+# name	rate_kbit	delay_ms	jitter_ms	loss_pct
+clean	-	0	0	0
+loss1	-	40	5	1
+loss5	-	40	5	5
+loss10	-	40	5	10
+loss20	-	40	5	20
+jitter	-	80	40	0
+latency	-	300	10	0
+cap64	64	60	10	0
+cap32	32	60	10	0
+cap24	24	60	10	1
+edge	200	300	50	2
+3g	1000	100	20	1
