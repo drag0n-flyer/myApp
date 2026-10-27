@@ -24,6 +24,22 @@ jobs:
         working-directory: apps/apple/Packages/ServerKit
         run: swift test --no-parallel
 
+  serverkit-ios:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: ServerKit tests on an iOS simulator
+        run: apps/apple/scripts/test-serverkit-ios.sh
+      - name: Keep test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: serverkit-ios-xcresult
+          path: ${{ runner.temp }}/serverkit-ios.xcresult
+
   ios:
     runs-on: macos-26
     timeout-minutes: 60

@@ -8,11 +8,13 @@ struct QRScannerView: View {
     let onCode: (String) -> Void
 
     @State private var pasted = ""
+    /// Set when the camera cannot start, so the paste field takes over.
+    @State private var cameraFailed = false
 
     private var usesCamera: Bool {
         #if os(iOS)
-        !ProcessInfo.processInfo.arguments.contains("-uiTesting") && DataScannerViewController.isSupported
-            && DataScannerViewController.isAvailable
+        !cameraFailed && !ProcessInfo.processInfo.arguments.contains("-uiTesting")
+            && DataScannerViewController.isSupported && DataScannerViewController.isAvailable
         #else
         false
         #endif
@@ -21,7 +23,7 @@ struct QRScannerView: View {
     var body: some View {
         #if os(iOS)
         if usesCamera {
-            CameraScanner(onCode: onCode)
+            CameraScanner(onCode: onCode, onFailure: { cameraFailed = true })
                 .accessibilityLabel("QR code scanner")
         } else {
             pasteField
@@ -52,23 +54,31 @@ struct QRScannerView: View {
 #if os(iOS)
 private struct CameraScanner: UIViewControllerRepresentable {
     let onCode: (String) -> Void
+    let onFailure: () -> Void
 
     func makeUIViewController(context: Context) -> DataScannerViewController {
         let vc = DataScannerViewController(recognizedDataTypes: [.barcode(symbologies: [.qr])],
                                            isHighlightingEnabled: true)
         vc.delegate = context.coordinator
-        try? vc.startScanning()
         return vc
     }
 
-    func updateUIViewController(_ uiViewController: DataScannerViewController, context: Context) {}
+    func updateUIViewController(_ uiViewController: DataScannerViewController, context: Context) {
+        context.coordinator.onCode = onCode
+        // The controller must be on screen before it can scan, so start here rather than in make.
+        if !uiViewController.isScanning, !context.coordinator.delivered {
+            do { try uiViewController.startScanning() } catch {
+                DispatchQueue.main.async { onFailure() }
+            }
+        }
+    }
 
     func makeCoordinator() -> Coordinator { Coordinator(onCode: onCode) }
 
     @MainActor
     final class Coordinator: NSObject, DataScannerViewControllerDelegate {
-        let onCode: (String) -> Void
-        private var delivered = false
+        var onCode: (String) -> Void
+        private(set) var delivered = false
 
         init(onCode: @escaping (String) -> Void) { self.onCode = onCode }
 

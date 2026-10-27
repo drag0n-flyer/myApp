@@ -1,5 +1,6 @@
 #if canImport(UserNotifications) && canImport(CryptoKit)
 import Foundation
+import os
 #if os(iOS) && canImport(PushKit)
 import PushKit
 #endif
@@ -11,6 +12,7 @@ public final class PushRegistrar {
     private let gatewayKey: Data
     private let environment: String
     private let bundleID: String
+    private let log = Logger(subsystem: "org.example.app", category: "push")
     #if os(iOS) && canImport(PushKit)
     private var voip: VoIPDelegate?
     #endif
@@ -22,21 +24,45 @@ public final class PushRegistrar {
         self.bundleID = bundleID
     }
 
-    public func didRegister(alertToken: Data) async {
+    /// Returns whether the server accepted the handle. Failures are logged by kind and error code only
+    /// (never the token or handle); the app retries at the next launch.
+    @discardableResult
+    public func didRegister(alertToken: Data) async -> Bool {
         await register(token: alertToken, kind: .alert)
     }
 
-    private func register(token: Data, kind: PushTokenKind) async {
+    private func register(token: Data, kind: PushTokenKind) async -> Bool {
         let handle = PushHandle(t: PushHandle.hex(token), k: kind.rawValue, e: environment, b: bundleID)
-        guard let sealed = try? PushHandleSealer.seal(handle, gatewayKey: gatewayKey) else { return }
-        // A failure is retried at the next launch; nothing about the token is logged.
-        try? await client.putPushToken(kind: kind, sealed: sealed)
+        let sealed: Data
+        do {
+            sealed = try PushHandleSealer.seal(handle, gatewayKey: gatewayKey)
+        } catch {
+            // Usually a bad compiled-in gateway key.
+            log.error("push \(kind.rawValue, privacy: .public): sealing failed (\(String(describing: type(of: error)), privacy: .public))")
+            return false
+        }
+        do {
+            try await client.putPushToken(kind: kind, sealed: sealed)
+            return true
+        } catch {
+            log.error("push \(kind.rawValue, privacy: .public): register failed (status \(error.status), \(error.code, privacy: .public))")
+            return false
+        }
     }
 
-    /// Deletes both handles (sign-out).
-    public func unregisterAll() async {
-        try? await client.deletePushToken(kind: .alert)
-        try? await client.deletePushToken(kind: .voip)
+    /// Deletes both handles (sign-out). Returns whether both deletes succeeded.
+    @discardableResult
+    public func unregisterAll() async -> Bool {
+        var ok = true
+        for kind in [PushTokenKind.alert, .voip] {
+            do {
+                try await client.deletePushToken(kind: kind)
+            } catch {
+                ok = false
+                log.error("push \(kind.rawValue, privacy: .public): unregister failed (status \(error.status), \(error.code, privacy: .public))")
+            }
+        }
+        return ok
     }
 
     #if os(iOS) && canImport(PushKit)
@@ -51,7 +77,7 @@ public final class PushRegistrar {
     }
 
     fileprivate func didRegister(voipToken: Data) async {
-        await register(token: voipToken, kind: .voip)
+        _ = await register(token: voipToken, kind: .voip)
     }
     #endif
 }

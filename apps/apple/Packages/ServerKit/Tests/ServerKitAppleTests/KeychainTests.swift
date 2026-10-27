@@ -31,6 +31,23 @@ import Testing
         #expect(try k.load() == s2)
     }
 
+    @Test func corruptItemIsClearedAndReadsAsNil() throws {
+        let service = "org.example.app.session.test.\(UUID().uuidString)"
+        let k = KeychainSessionStorage(service: service, accessGroup: nil)
+        defer { try? k.clear() }
+        let add: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: "session",
+            kSecAttrSynchronizable as String: false,
+            kSecValueData as String: Data("not json".utf8),
+        ]
+        #expect(SecItemAdd(add as CFDictionary, nil) == errSecSuccess)
+        #expect(try k.load() == nil)
+        try k.save(s1)
+        #expect(try k.load() == s1)
+    }
+
     @Test func attributes() throws {
         let service = "org.example.app.session.test.\(UUID().uuidString)"
         let k = KeychainSessionStorage(service: service, accessGroup: nil)

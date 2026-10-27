@@ -43,7 +43,13 @@ public struct KeychainSessionStorage: SessionStorage {
         let status = SecItemCopyMatching(q as CFDictionary, &out)
         if status == errSecItemNotFound { return nil }
         guard status == errSecSuccess, let data = out as? Data else { throw KeychainError(status: status) }
-        return try JSONDecoder().decode(Session.self, from: data)
+        do {
+            return try JSONDecoder().decode(Session.self, from: data)
+        } catch {
+            // A corrupt item can never be read again; drop it so the person can sign in afresh.
+            try clear()
+            return nil
+        }
     }
 
     public func save(_ s: Session) throws {

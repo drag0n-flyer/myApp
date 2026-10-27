@@ -13,8 +13,15 @@ import AppKit
 @MainActor
 public final class PasskeyAuthenticator: NSObject, PasskeyAuthenticating, ASAuthorizationControllerDelegate,
                                          ASAuthorizationControllerPresentationContextProviding {
-    private var continuation: CheckedContinuation<ASAuthorization, Error>?
-    private var controller: ASAuthorizationController?
+    /// Sendable results, built inside the delegate callback so no `ASAuthorization` crosses isolation.
+    private enum Outcome: Sendable {
+        case registration(RegistrationCredential)
+        case assertion(AssertionCredential)
+    }
+
+    private struct PasskeyFailure: Error {}
+
+    private var pending: (controller: ASAuthorizationController, continuation: CheckedContinuation<Outcome, Error>)?
 
     public override init() { super.init() }
 
@@ -23,30 +30,27 @@ public final class PasskeyAuthenticator: NSObject, PasskeyAuthenticating, ASAuth
         let request = provider.createCredentialRegistrationRequest(challenge: options.challenge, name: options.userName,
                                                                    userID: options.userID)
         request.userVerificationPreference = .required
-        let result = try await perform([request])
-        guard let c = result.credential as? ASAuthorizationPlatformPublicKeyCredentialRegistration,
-              let attestation = c.rawAttestationObject else { throw .passkeyUnavailable }
-        return RegistrationCredential(id: c.credentialID, clientDataJSON: c.rawClientDataJSON, attestationObject: attestation)
+        guard case .registration(let credential) = try await perform([request]) else { throw .passkeyUnavailable }
+        return credential
     }
 
     public func assert(_ options: RequestOptions) async throws(AccountError) -> AssertionCredential {
         let provider = ASAuthorizationPlatformPublicKeyCredentialProvider(relyingPartyIdentifier: options.rpID)
         let request = provider.createCredentialAssertionRequest(challenge: options.challenge)
         request.userVerificationPreference = .required
-        let result = try await perform([request])
-        guard let c = result.credential as? ASAuthorizationPlatformPublicKeyCredentialAssertion else { throw .passkeyUnavailable }
-        return AssertionCredential(id: c.credentialID, clientDataJSON: c.rawClientDataJSON,
-                                   authenticatorData: c.rawAuthenticatorData, signature: c.signature, userHandle: c.userID)
+        guard case .assertion(let credential) = try await perform([request]) else { throw .passkeyUnavailable }
+        return credential
     }
 
-    private func perform(_ requests: [ASAuthorizationRequest]) async throws(AccountError) -> ASAuthorization {
+    /// One request at a time: a second call while one is pending fails instead of replacing it.
+    private func perform(_ requests: [ASAuthorizationRequest]) async throws(AccountError) -> Outcome {
+        guard pending == nil else { throw .passkeyUnavailable }
         do {
-            return try await withCheckedThrowingContinuation { (c: CheckedContinuation<ASAuthorization, Error>) in
-                continuation = c
+            return try await withCheckedThrowingContinuation { (c: CheckedContinuation<Outcome, Error>) in
                 let controller = ASAuthorizationController(authorizationRequests: requests)
                 controller.delegate = self
                 controller.presentationContextProvider = self
-                self.controller = controller
+                pending = (controller, c)
                 controller.performRequests()
             }
         } catch {
@@ -55,21 +59,37 @@ public final class PasskeyAuthenticator: NSObject, PasskeyAuthenticating, ASAuth
         }
     }
 
-    private func finish(_ result: Result<ASAuthorization, Error>) {
-        let c = continuation
-        continuation = nil
-        controller = nil
-        c?.resume(with: result)
+    /// Ignores callbacks from any controller other than the current one.
+    private func finish(_ controller: ASAuthorizationController, _ result: Result<Outcome, Error>) {
+        guard let current = pending, current.controller === controller else { return }
+        pending = nil
+        current.continuation.resume(with: result)
+    }
+
+    nonisolated private static func outcome(from authorization: ASAuthorization) -> Outcome? {
+        switch authorization.credential {
+        case let c as ASAuthorizationPlatformPublicKeyCredentialRegistration:
+            guard let attestation = c.rawAttestationObject else { return nil }
+            return .registration(RegistrationCredential(id: c.credentialID, clientDataJSON: c.rawClientDataJSON,
+                                                        attestationObject: attestation))
+        case let c as ASAuthorizationPlatformPublicKeyCredentialAssertion:
+            return .assertion(AssertionCredential(id: c.credentialID, clientDataJSON: c.rawClientDataJSON,
+                                                  authenticatorData: c.rawAuthenticatorData, signature: c.signature,
+                                                  userHandle: c.userID))
+        default:
+            return nil
+        }
     }
 
     // The system calls these on the main thread.
     nonisolated public func authorizationController(controller: ASAuthorizationController,
                                                     didCompleteWithAuthorization authorization: ASAuthorization) {
-        MainActor.assumeIsolated { finish(.success(authorization)) }
+        let outcome = Self.outcome(from: authorization)
+        MainActor.assumeIsolated { finish(controller, outcome.map { .success($0) } ?? .failure(PasskeyFailure())) }
     }
 
     nonisolated public func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {
-        MainActor.assumeIsolated { finish(.failure(error)) }
+        MainActor.assumeIsolated { finish(controller, .failure(error)) }
     }
 
     nonisolated public func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
