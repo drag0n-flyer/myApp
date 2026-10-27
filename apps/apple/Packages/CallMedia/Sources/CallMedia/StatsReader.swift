@@ -1,10 +1,11 @@
 import Foundation
 import CallCore
-import WebRTC
+@preconcurrency import WebRTC
 
 /// `StatsSource` over an `RTCPeerConnection`. Flattens `RTCStatisticsReport` into `RawStat`;
 /// all picking and aggregation lives in CallCore (`MediaStatsAggregator`, `StatsSampler`).
 /// UNVERIFIED against WebRTC M156 (not compiled here).
+// @unchecked Sendable: immutable `pc`; WebRTC allows `statistics` from any thread and the report is mapped to Sendable `RawStat`s inside the callback.
 struct StatsReader: StatsSource, @unchecked Sendable {
     let pc: RTCPeerConnection
 

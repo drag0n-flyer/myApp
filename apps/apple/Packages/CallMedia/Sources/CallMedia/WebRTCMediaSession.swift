@@ -3,7 +3,7 @@ import AVFoundation
 import CoreMedia
 import AppCore
 import CallCore
-import WebRTC
+@preconcurrency import WebRTC
 
 public enum MediaSessionError: Error, Equatable {
     case notConfigured, alreadyConfigured, noDescription
@@ -11,6 +11,7 @@ public enum MediaSessionError: Error, Equatable {
 
 /// `MediaSession` over WebRTC (Unified Plan, one BUNDLE, Opus audio, optional H.264 video).
 /// Written against the M156 Objective-C API; see the M1 report for what is verified.
+// @unchecked Sendable: every mutable field is read and written under `lock`; the RTC objects are only used behind it.
 public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
     public let events: AsyncStream<MediaEvent>
     private let continuation: AsyncStream<MediaEvent>.Continuation
@@ -31,12 +32,16 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
     private var closed = false
     private var monitor: Task<Void, Never>?
 
-    /// Task M3 sets this to apply the noise suppression mode to the audio processing module.
-    public var noiseSuppressionHandler: (@Sendable (NoiseSuppression) -> Void)?
+    private var _noiseSuppressionHandler: (@Sendable (NoiseSuppression) -> Void)?   // behind `lock`
+    /// Applies the noise suppression mode (set to `NoiseSuppressionController.apply`). Safe from any thread.
+    public var noiseSuppressionHandler: (@Sendable (NoiseSuppression) -> Void)? {
+        get { lock.withLock { _noiseSuppressionHandler } }
+        set { lock.withLock { _noiseSuppressionHandler = newValue } }
+    }
     private let prewarm: Bool
 
-    /// Test hook: the audio RTP sender.
-    var audioSenderForTesting: RTCRtpSender? { lock.withLock { audioSender } }
+    /// Test hook: `maxBitrateBps` of the audio sender's first encoding.
+    var audioMaxBitrateForTesting: Int? { lock.withLock { audioSender }?.parameters.encodings.first?.maxBitrateBps?.intValue }
 
     public init(prewarm: Bool = false) {
         self.prewarm = prewarm
@@ -102,7 +107,7 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
             ? RTCMediaConstraints(mandatoryConstraints: ["IceRestart": "true"], optionalConstraints: nil)
             : Self.emptyConstraints
         let offer = try await Self.offer(pc, constraints)
-        let munged = SDPMunger.apply(receive, to: offer.sdp)
+        let munged = SDPMunger.apply(receive, to: offer)
         try await Self.setLocal(pc, RTCSessionDescription(type: .offer, sdp: munged))
         return munged
     }
@@ -113,7 +118,7 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
         try await Self.setRemote(pc, RTCSessionDescription(type: .offer, sdp: SDPMunger.apply(send, to: sdp)))
         lock.withLock { sendProfile = send }
         let answer = try await Self.answer(pc, Self.emptyConstraints)
-        let munged = SDPMunger.apply(receive, to: answer.sdp)
+        let munged = SDPMunger.apply(receive, to: answer)
         try await Self.setLocal(pc, RTCSessionDescription(type: .answer, sdp: munged))
         return munged
     }
@@ -148,8 +153,8 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
         sender.parameters = params
     }
 
-    public func setVideo(_ tier: VideoTier?) async {
-        let (controller, ceiling) = lock.withLock { (videoController, sendProfile?.mode) }
+    public func setVideo(_ tier: VideoTier?, ceiling: DataMode) async {
+        let controller = lock.withLock { videoController }
         await controller?.setVideo(tier, ceiling: ceiling)
     }
 
@@ -158,7 +163,7 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
     }
 
     public func setNoiseSuppression(_ mode: NoiseSuppression) async {
-        noiseSuppressionHandler?(mode)
+        noiseSuppressionHandler?(mode)   // via the locked accessor
     }
 
     public func stats() async -> MediaStats {
@@ -203,7 +208,7 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
                 guard let self, let pc = self.lock.withLock({ self.pc }) else { return }
-                let frames: Double? = await withCheckedContinuation { k in
+                let frames: Double? = await withCheckedContinuation { (k: CheckedContinuation<Double?, Never>) in
                     pc.statistics { report in
                         let v = report.statistics.values.first {
                             $0.type == "inbound-rtp" && ($0.values["kind"] as? String) == "video"
@@ -217,17 +222,18 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
         lock.withLock { monitor = task }
     }
 
-    private static func offer(_ pc: RTCPeerConnection, _ c: RTCMediaConstraints) async throws -> RTCSessionDescription {
-        try await withCheckedThrowingContinuation { k in
+    // The SDP text (a Sendable String) crosses the continuation, never the non-Sendable RTCSessionDescription.
+    private static func offer(_ pc: RTCPeerConnection, _ c: RTCMediaConstraints) async throws -> String {
+        try await withCheckedThrowingContinuation { (k: CheckedContinuation<String, Error>) in
             pc.offer(for: c) { sdp, error in
-                if let sdp { k.resume(returning: sdp) } else { k.resume(throwing: error ?? MediaSessionError.noDescription) }
+                if let sdp { k.resume(returning: sdp.sdp) } else { k.resume(throwing: error ?? MediaSessionError.noDescription) }
             }
         }
     }
-    private static func answer(_ pc: RTCPeerConnection, _ c: RTCMediaConstraints) async throws -> RTCSessionDescription {
-        try await withCheckedThrowingContinuation { k in
+    private static func answer(_ pc: RTCPeerConnection, _ c: RTCMediaConstraints) async throws -> String {
+        try await withCheckedThrowingContinuation { (k: CheckedContinuation<String, Error>) in
             pc.answer(for: c) { sdp, error in
-                if let sdp { k.resume(returning: sdp) } else { k.resume(throwing: error ?? MediaSessionError.noDescription) }
+                if let sdp { k.resume(returning: sdp.sdp) } else { k.resume(throwing: error ?? MediaSessionError.noDescription) }
             }
         }
     }
@@ -244,6 +250,7 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
 
     // MARK: Delegate
 
+    // @unchecked Sendable: `owner` is set once in the session's init, before WebRTC can call the delegate.
     private final class Delegate: NSObject, RTCPeerConnectionDelegate, @unchecked Sendable {
         weak var owner: WebRTCMediaSession?
 

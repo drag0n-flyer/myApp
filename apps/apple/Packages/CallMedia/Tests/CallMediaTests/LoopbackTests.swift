@@ -1,4 +1,4 @@
-import XCTest
+@preconcurrency import XCTest
 import AppCore
 import CallCore
 @testable import CallMedia
@@ -6,7 +6,7 @@ import CallCore
 /// Test-only audio source: writes a 440 Hz sine into the capture path through the capture hook,
 /// so the encoder has real audio to send and DTX does not silence it. The hook runs only when the
 /// audio pipeline captures; a runner with no input device never calls it (see `testSendProfileReachesEncoder`).
-final class ToneProcessor: CaptureProcessor, @unchecked Sendable {
+final class ToneProcessor: CaptureProcessor, @unchecked Sendable {   // all state behind `lock`
     private let lock = NSLock()
     private var phase = 0.0, rate = 48_000.0, _frames = 0
     var frames: Int { lock.withLock { _frames } }
@@ -24,7 +24,7 @@ final class ToneProcessor: CaptureProcessor, @unchecked Sendable {
 }
 
 /// Holds each side's candidates until the other side has its remote description (add throws before that).
-final class CandidateRelay: @unchecked Sendable {
+final class CandidateRelay: @unchecked Sendable {   // all state behind `lock`
     private let lock = NSLock()
     private var ready: Set<String> = [], pending: [String: [IceCandidate]] = [:]
     private var sessions: [String: WebRTCMediaSession] = [:]
@@ -45,19 +45,12 @@ final class CandidateRelay: @unchecked Sendable {
     }
 }
 
-final class LoopbackTests: XCTestCase {
-    static let tone = ToneProcessor()
-    private let relay = CandidateRelay()
-    override class func setUp() { MediaFactory.captureProcessor = tone }  // before the first shared()
-
-    private var pumps: [Task<Void, Never>] = []
+/// Event log shared with the pump tasks (they must not capture the XCTestCase).
+final class EventRecorder: @unchecked Sendable {   // all state behind `lock`
+    private let lock = NSLock()
     private var iceStates: [String: [IceState]] = [:]
     private var localCandidates: [String: Int] = [:]
-    private let lock = NSLock()
-
-    override func tearDown() { pumps.forEach { $0.cancel() }; pumps = [] }
-
-    private func record(_ name: String, _ e: MediaEvent) {
+    func record(_ name: String, _ e: MediaEvent) {
         lock.withLock {
             switch e {
             case .iceState(let s): iceStates[name, default: []].append(s)
@@ -66,13 +59,28 @@ final class LoopbackTests: XCTestCase {
             }
         }
     }
-    private func has(_ name: String, _ s: IceState) -> Bool { lock.withLock { iceStates[name]?.contains(s) ?? false } }
+    func has(_ name: String, _ s: IceState) -> Bool { lock.withLock { iceStates[name]?.contains(s) ?? false } }
+    func candidateCount(_ name: String) -> Int { lock.withLock { localCandidates[name] ?? 0 } }
+}
 
-    /// Forwards candidates to `to` (when given) and records every event.
+final class LoopbackTests: XCTestCase {
+    static let tone = ToneProcessor()
+    private let relay = CandidateRelay()
+    override class func setUp() { MediaFactory.captureProcessor = tone }  // before the first shared()
+
+    private var pumps: [Task<Void, Never>] = []
+    private let recorder = EventRecorder()
+
+    override func tearDown() { pumps.forEach { $0.cancel() }; pumps = [] }
+
+    private func has(_ name: String, _ s: IceState) -> Bool { recorder.has(name, s) }
+
+    /// Forwards candidates to `peer` (when given) and records every event.
     private func pump(_ name: String, _ from: WebRTCMediaSession, peer: String?) {
-        pumps.append(Task { [self] in
+        let recorder = recorder, relay = relay
+        pumps.append(Task {
             for await e in from.events {
-                record(name, e)
+                recorder.record(name, e)
                 if case .localCandidate(let c) = e, let peer { await relay.deliver(to: peer, c) }
             }
         })
@@ -146,14 +154,14 @@ final class LoopbackTests: XCTestCase {
         pump("A", a, peer: nil)
         _ = try await a.makeOffer(receive: .for(.balanced), iceRestart: false)
         try await Task.sleep(nanoseconds: 3_000_000_000)
-        XCTAssertEqual(lock.withLock { localCandidates["A"] ?? 0 }, 0)
+        XCTAssertEqual(recorder.candidateCount("A"), 0)
         await a.close()
         // Positive control: the same flow with policy .all does gather, so silence above means the filter works.
         let c = WebRTCMediaSession()
         try await c.configure(iceServers: [], policy: .all, video: false)
         pump("C", c, peer: nil)
         _ = try await c.makeOffer(receive: .for(.balanced), iceRestart: false)
-        let gathered = await wait(3) { self.lock.withLock { self.localCandidates["C"] ?? 0 } > 0 }
+        let gathered = await wait(3) { self.recorder.candidateCount("C") > 0 }
         XCTAssertTrue(gathered)
         await c.close()
     }

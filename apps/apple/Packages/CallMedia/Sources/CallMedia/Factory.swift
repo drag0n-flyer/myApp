@@ -1,17 +1,17 @@
 import Foundation
 import AVFoundation
-import WebRTC
+@preconcurrency import WebRTC
 
 /// What runs on the captured microphone audio, after WebRTC's own processing (patch 0004).
 /// `process` runs on the audio thread once per 10 ms frame: do not block or allocate.
-public protocol CaptureProcessor: AnyObject {
+public protocol CaptureProcessor: AnyObject, Sendable {
     func initialize(sampleRateHz: Int, channels: Int)
     func process(channels: UnsafePointer<UnsafeMutablePointer<Float>>, frames: Int, channelCount: Int)
     func reset()
 }
 
 /// Thin bridge from a `CaptureProcessor` to patch 0004's `RTCAudioCapturePostProcessing`.
-/// Task M3's noise suppression slot bridges to a `CaptureProcessor` at merge.
+/// Noise suppression reaches it through `NoiseCaptureBridge`.
 public final class CapturePostProcessingAdapter: NSObject, RTCAudioCapturePostProcessing {
     private let processor: CaptureProcessor
     public init(_ processor: CaptureProcessor) { self.processor = processor }
@@ -30,16 +30,26 @@ public final class CapturePostProcessingAdapter: NSObject, RTCAudioCapturePostPr
 /// the capture hook is installed when `captureProcessor` is set before the first `shared()` call
 /// and the build has patch 0004's hook (`hasCapturePostProcessingHook`).
 public enum MediaFactory {
-    nonisolated(unsafe) public static var captureProcessor: CaptureProcessor?
+    /// All process-wide state, behind one lock.
+    // @unchecked Sendable: every field is read and written under `lock`.
+    private final class State: @unchecked Sendable {
+        let lock = NSLock()
+        var captureProcessor: CaptureProcessor?
+        var instance: RTCPeerConnectionFactory?
+        // The factory holds the hook weakly, so the adapter is kept here for the process lifetime.
+        var adapter: CapturePostProcessingAdapter?
+    }
+    private static let state = State()
 
-    nonisolated(unsafe) private static var instance: RTCPeerConnectionFactory?
-    // The factory holds the hook weakly, so the adapter is kept here for the process lifetime.
-    nonisolated(unsafe) private static var adapter: CapturePostProcessingAdapter?
-    private static let lock = NSLock()
+    /// The capture hook processor. Set before the first `shared()` call; read once there.
+    public static var captureProcessor: CaptureProcessor? {
+        get { state.lock.withLock { state.captureProcessor } }
+        set { state.lock.withLock { state.captureProcessor = newValue } }
+    }
 
     public static func shared() -> RTCPeerConnectionFactory {
-        lock.lock(); defer { lock.unlock() }
-        if let f = instance { return f }
+        state.lock.lock(); defer { state.lock.unlock() }
+        if let f = state.instance { return f }
         RTCInitializeSSL()
         #if os(iOS)
         // CallKit owns the audio session; WebRTC must not start audio before it is activated.
@@ -49,14 +59,14 @@ public enum MediaFactory {
         #endif
         let encoder = RTCDefaultVideoEncoderFactory(), decoder = RTCDefaultVideoDecoderFactory()
         let f: RTCPeerConnectionFactory
-        if let processor = captureProcessor, RTCPeerConnectionFactory.hasCapturePostProcessingHook {
+        if let processor = state.captureProcessor, RTCPeerConnectionFactory.hasCapturePostProcessingHook {
             let a = CapturePostProcessingAdapter(processor)
-            adapter = a
+            state.adapter = a
             f = RTCPeerConnectionFactory(encoderFactory: encoder, decoderFactory: decoder, capturePostProcessing: a)
         } else {
             f = RTCPeerConnectionFactory(encoderFactory: encoder, decoderFactory: decoder)
         }
-        instance = f
+        state.instance = f
         return f
     }
 

@@ -66,7 +66,6 @@ final class StatsTests: XCTestCase {
         XCTAssertNil(MediaLogic.effectiveTier(nil, ceiling: .high))
         XCTAssertEqual(MediaLogic.effectiveTier(.p360, ceiling: .balanced), .p270)
         XCTAssertEqual(MediaLogic.effectiveTier(.p360, ceiling: .dataSaver), .p180)
-        XCTAssertEqual(MediaLogic.effectiveTier(.p360, ceiling: nil), .p360)
     }
 
     func testVideoTierFormat() {

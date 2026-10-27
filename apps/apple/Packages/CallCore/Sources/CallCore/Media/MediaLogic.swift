@@ -35,11 +35,9 @@ public enum MediaLogic {
         min(tier, VideoLadder.allowed(ceiling: ceiling) ?? .p180)
     }
 
-    /// The tier `setVideo` actually applies: `nil` stays off; no known ceiling (not negotiated yet) passes through.
-    public static func effectiveTier(_ tier: VideoTier?, ceiling: DataMode?) -> VideoTier? {
-        guard let tier else { return nil }
-        guard let ceiling else { return tier }
-        return clampTier(tier, ceiling: ceiling)
+    /// The tier `setVideo` actually applies: `nil` stays off, anything else is clamped to the ceiling the call machine passed.
+    public static func effectiveTier(_ tier: VideoTier?, ceiling: DataMode) -> VideoTier? {
+        tier.map { clampTier($0, ceiling: ceiling) }
     }
 
     /// Video tier -> size, max bitrate and fps, from the `VideoLadder` table (the plan's single source).

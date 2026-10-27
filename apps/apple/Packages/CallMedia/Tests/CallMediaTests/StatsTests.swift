@@ -1,4 +1,4 @@
-import XCTest
+@preconcurrency import XCTest
 import AppCore
 import CallCore
 @testable import CallMedia
@@ -16,11 +16,11 @@ final class MediaStatsTests: XCTestCase {
         try await a.configure(iceServers: [], policy: .all, video: false)
         try await b.configure(iceServers: [], policy: .all, video: false)
         relay.register("A", a); relay.register("B", b)
-        for (name, s, peer) in [("A", a, "B"), ("B", b, "A")] {
-            pumps.append(Task { [relay] in
+        for (s, peer) in [(a, "B"), (b, "A")] {
+            let relay = relay
+            pumps.append(Task {
                 for await e in s.events { if case .localCandidate(let c) = e { await relay.deliver(to: peer, c) } }
             })
-            _ = name
         }
         let p = AudioProfile.for(.balanced)
         let offer = try await a.makeOffer(receive: p, iceRestart: false)
@@ -34,22 +34,32 @@ final class MediaStatsTests: XCTestCase {
     func testStatsAfterConnect() async throws {
         let (a, b) = try await connectedPair()
         let f0 = LoopbackTests.tone.frames
-        try await Task.sleep(nanoseconds: 3_000_000_000)
-        let s = await a.stats()
-        let toneRan = LoopbackTests.tone.frames != f0
-        await a.close(); await b.close()
-        try XCTSkipIf(!toneRan, "no audio capture on this runner, so no audio was sent")
-        XCTAssertGreaterThan(s.bytesSent, 0)
+        // Wait for traffic instead of sleeping a fixed time (transport totals count STUN/DTLS too, so this needs no audio).
+        var s = await a.stats()
+        let end = Date().addingTimeInterval(15)
+        while s.packetsReceived == 0, Date() < end {
+            try await Task.sleep(nanoseconds: 250_000_000)
+            s = await a.stats()
+        }
         XCTAssertGreaterThan(s.packetsReceived, 0)
         XCTAssertFalse(s.usingRelay)
+        // Audio-specific values need real audio, which only flows when the runner captures (the tone hook ran).
+        try await Task.sleep(nanoseconds: 2_000_000_000)
+        s = await a.stats()
+        let toneRan = LoopbackTests.tone.frames != f0
+        await a.close(); await b.close()
+        if !toneRan {
+            if ProcessInfo.processInfo.environment["CI"] != nil { XCTFail("no audio capture on this CI runner: audio stats not checked") }
+            throw XCTSkip("no audio capture on this runner, so no audio was sent")
+        }
+        XCTAssertGreaterThan(s.bytesSent, 0)
         XCTAssertEqual(s.audioCodec, "audio/opus")
     }
 
     func testAudioMaxBitrateApplied() async throws {
         let (a, b) = try await connectedPair()
         await a.setAudioMaxBitrate(8000)
-        let sender = try XCTUnwrap(a.audioSenderForTesting)
-        XCTAssertEqual(sender.parameters.encodings.first?.maxBitrateBps?.intValue, 8000)
+        XCTAssertEqual(a.audioMaxBitrateForTesting, 8000)
         await a.close(); await b.close()
     }
 }

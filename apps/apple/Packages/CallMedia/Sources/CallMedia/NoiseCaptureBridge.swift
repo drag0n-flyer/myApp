@@ -6,7 +6,7 @@ import NoiseSuppression
 /// Order matters because the hook is a single slot (`MediaFactory.captureProcessor`):
 /// sources and test signals (such as the loopback tone) come first, noise suppression comes last,
 /// so it cleans the final signal. In production the chain is just `[NoiseCaptureBridge]`.
-public final class CaptureProcessorChain: CaptureProcessor, @unchecked Sendable {
+public final class CaptureProcessorChain: CaptureProcessor {   // immutable Sendable state, so plain Sendable
     private let processors: [CaptureProcessor]
     public init(_ processors: [CaptureProcessor]) { self.processors = processors }
 
@@ -20,35 +20,24 @@ public final class CaptureProcessorChain: CaptureProcessor, @unchecked Sendable 
 }
 
 /// Thin conformance between M3's `AudioPostProcessingHook` (installs an `RNNoiseProcessor`) and M1's `CaptureProcessor`
-/// (what `MediaFactory.captureProcessor` runs on the microphone audio).
+/// (what `MediaFactory.captureProcessor` runs on the microphone audio). All frame rules live in the Linux-tested
+/// `CaptureNoiseProcessor` (NoiseSuppression target): wrong rate or frame size, out-of-range samples and
+/// suppression off pass through; only channel 0 is ever denoised.
 ///
-/// RNNoise needs 48 kHz mono frames of exactly 480 samples. Anything else (another rate, another frame size)
-/// passes through untouched. With more than one channel, channel 0 is denoised and copied to the others.
-/// The slot is empty (bypass) until `NoiseSuppressionController` installs a processor.
-/// UNVERIFIED: depends on patch 0004 delivering normalized floats (-1...1) in 10 ms frames; not compiled here.
-public final class NoiseCaptureBridge: CaptureProcessor, AudioPostProcessingHook, @unchecked Sendable {
-    private let slot = AudioProcessorSlot()
-    private let lock = NSLock()
-    private var supported = false
-
+/// Patch 0004 delivers full-band floats in [-1, 1] in 10 ms frames (it scales WebRTC's FloatS16 around the delegate call).
+/// UNVERIFIED on a device: not compiled here.
+public final class NoiseCaptureBridge: CaptureProcessor, AudioPostProcessingHook {   // immutable Sendable state, so plain Sendable
+    private let core = CaptureNoiseProcessor()
     public init() {}
 
-    // MARK: AudioPostProcessingHook
-    public func setProcessor(_ processor: RNNoiseProcessor?) { slot.set(processor) }
+    /// False while the pipeline runs at a rate RNNoise cannot take (`.enhanced` then does nothing).
+    public var isActive: Bool { core.isActive }
 
-    // MARK: CaptureProcessor
-    public func initialize(sampleRateHz: Int, channels: Int) {
-        lock.withLock { supported = sampleRateHz == 48_000 }
-    }
-
+    public func setProcessor(_ processor: RNNoiseProcessor?) { core.setProcessor(processor) }
+    public func initialize(sampleRateHz: Int, channels: Int) { core.initialize(sampleRateHz: sampleRateHz, channels: channels) }
     public func process(channels: UnsafePointer<UnsafeMutablePointer<Float>>, frames: Int, channelCount: Int) {
-        guard channelCount > 0, frames == RNNoiseProcessor.frameSize, lock.withLock({ supported }) else { return }
-        slot.process(channels[0], count: frames)
-        if channelCount > 1 {
-            for c in 1..<channelCount { channels[c].update(from: channels[0], count: frames) }
-        }
+        core.process(channels: channels, frames: frames, channelCount: channelCount)
     }
-
     public func reset() {}
 }
 

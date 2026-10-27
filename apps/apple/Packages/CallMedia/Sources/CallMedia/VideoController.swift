@@ -3,10 +3,11 @@ import AVFoundation
 import AppCore
 import CallCore
 import CoreMedia
-import WebRTC
+@preconcurrency import WebRTC
 
 /// Camera capture and sender limits for a video tier. UNVERIFIED against WebRTC M156 (not compiled here).
 /// Tier values come from CallCore (`MediaLogic.videoParameters`, which reads `VideoLadder`).
+// @unchecked Sendable: all stored properties are immutable `let`s, and WebRTC's sender, source and capturer accept calls from any thread.
 final class VideoController: @unchecked Sendable {
     private let source: RTCVideoSource
     private let track: RTCVideoTrack
@@ -27,7 +28,7 @@ final class VideoController: @unchecked Sendable {
     }
 
     /// `ceiling` is the data mode in effect for the call; the tier is clamped to what it allows.
-    func setVideo(_ requested: VideoTier?, ceiling: DataMode?) async {
+    func setVideo(_ requested: VideoTier?, ceiling: DataMode) async {
         guard let tier = MediaLogic.effectiveTier(requested, ceiling: ceiling) else {
             track.isEnabled = false
             sender.track = nil   // no frames, so the peer sees the video stop
