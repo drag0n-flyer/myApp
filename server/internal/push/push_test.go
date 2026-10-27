@@ -48,6 +48,11 @@ func (g *gateway) requests() []recorded {
 // setup starts a fake gateway and returns push deps pointed at it.
 func setup(t *testing.T, gwStatus int) (core.Deps, *testkit.Fakes, *gateway) {
 	t.Helper()
+	return setupWith(t, gwStatus, func(*core.Deps) {})
+}
+
+func setupWith(t *testing.T, gwStatus int, extra func(*core.Deps)) (core.Deps, *testkit.Fakes, *gateway) {
+	t.Helper()
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	der, _ := x509.MarshalPKCS8PrivateKey(priv)
 	keyFile := filepath.Join(t.TempDir(), "push.pem")
@@ -72,6 +77,7 @@ func setup(t *testing.T, gwStatus int) (core.Deps, *testkit.Fakes, *gateway) {
 		d.Config.PushGatewayURL = g.srv.URL
 		d.Config.PushKeyFile = keyFile
 		d.Config.PushServerID = "srv1"
+		extra(d)
 	})
 	// the gateway shares the fake clock
 	clock = f.Clock

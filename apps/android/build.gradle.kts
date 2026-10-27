@@ -72,15 +72,17 @@ tasks.register("checkAppId") {
     val root = layout.projectDirectory.asFile
     doLast {
         val id = Regex("org" + "\\." + "example" + "\\." + "app" + "(?![.\\w])")
-        val extensions = setOf("kt", "kts", "xml", "json", "yml", "yaml", "properties", "toml", "md", "txt", "pro")
+        val extensions = setOf("kt", "kts", "java", "gradle", "sh", "xml", "json", "yml", "yaml", "properties", "toml", "md", "txt", "pro")
         val skipped = setOf("build", ".gradle", ".kotlin", ".idea")
         val offenders = root.walkTopDown()
             .onEnter { it.name !in skipped }
-            .filter { it.isFile && it.extension in extensions && it.name != "app-id.properties" }
+            .filter { it.isFile && it.extension in extensions && it != root.resolve("app-id.properties") }
             .flatMap { file ->
                 file.readLines().withIndex().filter { (_, line) ->
-                    val trimmed = line.trim()
-                    id.containsMatchIn(line) && !trimmed.startsWith("package ") && !trimmed.startsWith("namespace")
+                    // Blank out the allowed uses, then look for what is left.
+                    val rest = line.replace(Regex("^\\s*package\\s+\\S+"), "")
+                        .replace(Regex("namespace\\s*=\\s*\"[^\"]*\""), "")
+                    id.containsMatchIn(rest)
                 }.map { (index, _) -> "${file.relativeTo(root)}:${index + 1}" }
             }
             .toList()

@@ -30,9 +30,7 @@ if [ "$host_only" -eq 0 ]; then
     rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
     cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 --platform 29 \
         -o "$MLS/src/main/jniLibs" build --release --lib --locked
-    # 16 KB page alignment applies to 64-bit ABIs only; armeabi-v7a is checked for presence.
-    [ -f "$MLS/src/main/jniLibs/armeabi-v7a/libmlsffi.so" ] || { echo "missing armeabi-v7a .so" >&2; exit 1; }
-    for abi in arm64-v8a x86_64; do
+    for abi in arm64-v8a armeabi-v7a x86_64; do
         built+=("$MLS/src/main/jniLibs/$abi/libmlsffi.so")
     done
 fi

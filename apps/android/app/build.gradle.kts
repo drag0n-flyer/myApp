@@ -27,6 +27,26 @@ android {
 
 tasks.named("check") { dependsOn(":checkAppId") }
 
+// Proves the :mls keep rules reach the release build: R8 must keep JNA and the UniFFI bindings
+// (seeds.txt) and must not rename them (mapping.txt lists only classes that were renamed).
+val mappingDir = layout.buildDirectory.dir("outputs/mapping/release")
+tasks.register("checkR8KeepRules") {
+    group = "verification"
+    dependsOn("minifyReleaseWithR8")
+    val dir = mappingDir.get().asFile
+    doLast {
+        val seeds = dir.resolve("seeds.txt").readLines()
+        val mapping = dir.resolve("mapping.txt").readLines().filter { !it.startsWith(" ") && it.contains(" -> ") }
+        // FfiConverter extends no JNA type, so only the explicit ffi keep rule retains it.
+        check(seeds.contains("org.example.app.mls.ffi.FfiConverter")) { "R8 did not keep the UniFFI bindings" }
+        for (prefix in listOf("org.example.app.mls.ffi.", "com.sun.jna.")) {
+            check(seeds.any { it.startsWith(prefix) }) { "R8 did not keep any $prefix class" }
+            val renamed = mapping.filter { it.startsWith(prefix) && it.substringBefore(" -> ") != it.substringAfter(" -> ").removeSuffix(":") }
+            check(renamed.isEmpty()) { "R8 renamed $prefix classes: ${renamed.take(3)}" }
+        }
+    }
+}
+
 dependencies {
     implementation(project(":contracts"))
     implementation(project(":core"))

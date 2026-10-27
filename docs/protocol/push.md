@@ -106,6 +106,23 @@ The extension's memory budget is about 24 MB. The visible alert text is not auth
 
 The gateway sends an `fcm` handle as an FCM HTTP v1 data message: `{"message":{"token":"<t>","data":{"k":"message"|"call","d":"<std base64 of the padded payload>"},"android":{"priority":"HIGH","ttl":"86400s"|"45s"}}}`. A call expires after 45 seconds (the ring timeout), a message after one day. FCM `UNREGISTERED` becomes `410` to the server, which deletes the handle; any other `404`, including `NOT_FOUND`, is a gateway error (`502`) and keeps the handle. The gateway authenticates with an OAuth access token minted from the owner's service-account key (RS256 JWT, cached until 5 minutes before expiry); it follows no redirects and logs neither tokens nor payloads. Details: [server design §7.4](../superpowers/specs/2026-10-27-server-design.md#74-push-lane-d).
 
+## Android pushes through UnifiedPush
+
+A device that uses UnifiedPush uploads `PUT /v1/push/tokens/unifiedpush {"endpoint":"https://...","p256dh":"<b64url>","auth":"<b64url>"}` instead of a sealed handle. The server must read it, so it is not sealed. The endpoint is at most 1024 characters, `https` only, port 443 only, with no user info. `p256dh` is the receiver's uncompressed P-256 public key (65 bytes) and `auth` is its 16-byte Web Push secret. The server refuses the upload with `bad_request` when it has no VAPID key. A device has one transport: uploading `unifiedpush` deletes its `fcm` handle and the reverse.
+
+The server sends directly, with no gateway: `POST <endpoint>` with the body encrypted as RFC 8291 `aes128gcm` (one record), and these headers:
+
+| Header | Value |
+|---|---|
+| `Content-Encoding` | `aes128gcm` |
+| `TTL` | `45` for a call, `86400` for a message |
+| `Urgency` | `high` |
+| `Authorization` | `vapid t=<JWT>, k=<server public key>` (RFC 8292: ES256, `aud` is the endpoint's origin, `exp` 12 hours out, `sub` is `https://<host>`) |
+
+The plaintext is one kind byte (`0x01` message, `0x02` call) followed by the padded payload (see Padding; the device unpads it, the distributor sees only ciphertext). The server's VAPID public key is `push.vapidKey` in `/v1/server` (base64url, 65 bytes), from `APP_VAPID_KEY_FILE` (`appserver keygen vapid`). `404` and `410` delete the registration; other failures are errors that keep it.
+
+The endpoint is untrusted. The server refuses any address that is private, loopback, link-local, multicast, unspecified or in 100.64.0.0/10 (including IPv4-mapped IPv6 forms and the cloud metadata address), checked on the resolved address when it connects, so DNS rebinding does not help. It follows no redirects and uses no proxy. It has 10-second timeouts, and reads at most 16 KiB of the answer. It logs no endpoints, keys or payloads.
+
 ## iOS VoIP pushes
 
 An iPhone gets call pushes as PushKit VoIP pushes with `apns-expiration: 0`. The server picks the device's `voip` handle for a call push, or its `alert` handle when it has no `voip` one, which is the case on a Mac. A Mac never gets a VoIP push: its call push is an alert push, and the extension turns it into the call notification.

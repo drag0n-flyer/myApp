@@ -201,6 +201,9 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
+      - name: Application ID check
+        working-directory: apps/android
+        run: ./gradlew --no-daemon checkAppId
       - name: Lint (HardcodedText and SetTextI18n are errors)
         working-directory: apps/android
         run: ./gradlew --no-daemon lint
@@ -226,3 +229,6 @@ jobs:
       - name: Assemble the debug build
         working-directory: apps/android
         run: ./gradlew --no-daemon assembleDebug
+      - name: R8 keep rules (release build keeps JNA and UniFFI classes)
+        working-directory: apps/android
+        run: ./gradlew --no-daemon :app:checkR8KeepRules

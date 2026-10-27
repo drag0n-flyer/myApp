@@ -155,8 +155,10 @@ func (a *App) Wait(ctx context.Context) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for _, m := range a.modules {
-			if w, ok := m.(interface{ WaitBackground() }); ok {
+		// Reverse order: modules that start pushes (realtime, calls) drain
+		// before the push module they hand sends to.
+		for i := len(a.modules) - 1; i >= 0; i-- {
+			if w, ok := a.modules[i].(interface{ WaitBackground() }); ok {
 				w.WaitBackground()
 			}
 		}
