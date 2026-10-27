@@ -75,6 +75,9 @@ jobs:
         run: brew install xcodegen
       - name: No test-only libraries in the app
         run: apps/apple/scripts/check-test-only-libs.sh
+      - name: Release config check (reports only)
+        continue-on-error: true
+        run: python3 scripts/check-release-config.py --allow-missing --placeholder-brand-ok --filtering-pending
       - name: iPhone UI tests
         run: apps/apple/scripts/test-ios.sh
       - name: Keep test results
