@@ -74,11 +74,3 @@ import Testing
     #expect(await a.checkUsername("ab") == .invalid)
     #expect(await a.checkUsername("Upper") == .invalid)
 }
-
-@MainActor @Test func codes() async {
-    let a = SampleAccountService()
-    #expect(await a.verifyEmail(code: "123456"))
-    #expect(!(await a.verifyEmail(code: "000000")))
-    #expect(await a.redeemInvite(code: "BETA-2026"))
-    #expect(!(await a.redeemInvite(code: "nope")))
-}

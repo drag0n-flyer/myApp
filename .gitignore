@@ -28,3 +28,4 @@ deploy/data/
 *.pem
 *.p8
 *.key
+apps/apple/Generated/
