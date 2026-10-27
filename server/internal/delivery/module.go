@@ -36,9 +36,6 @@ func (m *Module) Routes(r *httpx.Router) {
 	m.inboxRoutes(r)
 }
 
-// Commands returns the admin CLI subcommands.
-func (m *Module) Commands() map[string]core.Command { return nil }
-
 // Run prunes expired rows every hour until ctx is cancelled.
 func (m *Module) Run(ctx context.Context) {
 	t := time.NewTicker(time.Hour)
