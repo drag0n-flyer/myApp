@@ -25,6 +25,7 @@ settings:
     DEFAULT_SERVER_HOST: home.example.org
     PUSH_GATEWAY_URL: https://push.example.org
     PUSH_GATEWAY_KEY: ''
+    # Keep NotificationService/NSE-*-filtering.entitlements identical to the plain files plus the filtering key.
     NSE_FILTERING: 'NO'
     NSE_FILTERING_YES_SUFFIX: '-filtering'
     NSE_FILTERING_NO_SUFFIX: ''
