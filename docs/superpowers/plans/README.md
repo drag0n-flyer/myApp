@@ -15,6 +15,7 @@ All plans needed to reach the GOAL.md Phase 1 exit: an invite-only private beta.
 | 7 | [Client messaging](2026-10-27-client-messaging.md) | 1 | 4, 6 | up to 4 lanes | MLS use, NSE, escrow |
 | 8 | [Client calling](2026-10-27-client-calling.md) | 1 | 3, 4, 6 | up to 4 lanes | CallKit/PushKit, media keys |
 | 9 | [Security, docs, release](2026-10-27-security-docs-release.md) | 1 (beta gate) | 2, 7, 8 for final checks | 1 + owner | all |
+| 10 | [Android client](2026-10-28-android-client.md) ([design](../specs/2026-10-28-android-client-design.md)) | 1 (in parallel, owner decision 2026-10-28) | 2 (spec; lanes B1, F1, F2 change it), 3 (pin and scripts), 4 (`mlsffi`), 7 (vectors, envelope) | 7 lanes + 1 integration (about 7 at once) | auth, keys, MLS use, push and gateway, WebRTC build, Telecom |
 
 ## Running order (at most 5 coding agents at once)
 
@@ -54,6 +55,7 @@ tools/call-lab/                  plan 5 (app, CallLabKit, RNNoiseLab, rig and sc
 docs/protocol/                   plan 9 (protocol spec, test vectors)
 docs/security/ docs/legal/ docs/release/ docs/ops/   plan 9
 docs/measurements/               plan 5
+apps/android/                    plan 10 (Gradle modules: contracts, core, app, net, auth, mls, messaging, store, calls, calls-android, webrtc, push)
 ```
 
 ### Identifiers
@@ -161,6 +163,7 @@ The sample services stay. The launch argument `-sampleData` selects them, so the
 | Lab-only scoring: numpy, onnxruntime, ViSQOL/speequal, DNSMOS models; LibriSpeech + MUSAN/DNS noise corpora | various, to check | 5 | asked in plan 5; never shipped |
 | CI tools: markdownlint-cli2, lychee, gitleaks, go-licenses, gremlins | various | 9 | asked in plan 9 |
 | SQLite | public domain, ships with Apple OSes | 7 | system library: no new dependency |
+| Android libraries and tools (AndroidX, Compose, Room, SQLCipher, OkHttp, kotlinx, JNA, WorkManager, Credential Manager, Firebase Messaging, UnifiedPush connector, CameraX, ZXing, Robolectric, cargo-ndk) | see plan 10 | 10 | asked in plan 10, "Dependencies needing owner approval" |
 
 ## Cross-plan changes outside the owning plan
 
