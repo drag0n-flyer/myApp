@@ -35,13 +35,16 @@ public enum MediaPlan {
         return out
     }
 
-    /// Voice notes: Opus in CAF, 16 kHz mono, 16 kbps (Design 9).
+    /// Voice notes: Opus, 16 kHz mono, 16 kbps (Design 9). The recorder writes CAF; the file that is
+    /// sent and stored is Ogg Opus (RFC 7845), the one container Android and iPhone both play.
     public enum Voice {
         public static let sampleRate = 16_000.0
         public static let channels = 1
         public static let bitRate = 16_000
-        public static let fileExtension = "caf"
-        public static let mime = "audio/x-caf"
+        public static let fileExtension = "ogg"
+        public static let mime = "audio/ogg; codecs=opus"
+        /// The platform recorder's own file, converted to Ogg Opus right after recording stops.
+        public static let recordingExtension = "caf"
         /// A recording shorter than this is treated as an accidental tap and discarded.
         public static let minDuration = 0.5
         /// Recording stops by itself at this length.
