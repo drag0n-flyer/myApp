@@ -489,6 +489,10 @@ impl<P: CryptoProvider + Clone> EngineCore<P> {
     ) -> Result<CommitBundle, FfiError> {
         let _g = self.lock();
         let mut group = self.load(&group_id)?;
+        // Same order as `add` and the fake engine: a pending commit wins over member lookup.
+        if group.has_pending_commit() {
+            return Err(FfiError::PendingCommit);
+        }
         let mut indexes = Vec::with_capacity(identities.len());
         for identity in &identities {
             indexes.push(
@@ -639,11 +643,20 @@ impl<P: CryptoProvider + Clone> EngineCore<P> {
                             epoch: message_epoch,
                         }
                     }
-                    ReceivedMessage::Commit(description) => Processed::Commit {
-                        group_id: group_id.clone(),
-                        new_epoch: group.current_epoch(),
-                        removed_me: matches!(description.effect, CommitEffect::Removed { .. }),
-                    },
+                    ReceivedMessage::Commit(description) => {
+                        let removed_me = matches!(description.effect, CommitEffect::Removed { .. });
+                        Processed::Commit {
+                            group_id: group_id.clone(),
+                            // A removed device's stored group stays at the old epoch;
+                            // report the epoch the commit creates either way.
+                            new_epoch: if removed_me {
+                                message_epoch + 1
+                            } else {
+                                group.current_epoch()
+                            },
+                            removed_me,
+                        }
+                    }
                     // Standalone proposals, GroupInfo, KeyPackage: never sent by our clients.
                     _ => return Err(FfiError::NotApplication),
                 };

@@ -218,7 +218,15 @@ fn three_devices_add_and_remove() {
         other => panic!("expected Commit, got {other:?}"),
     }
     match alice2.process(removal.commit).unwrap() {
-        Processed::Commit { removed_me, .. } => assert!(removed_me),
+        Processed::Commit {
+            removed_me,
+            new_epoch,
+            ..
+        } => {
+            assert!(removed_me);
+            // The epoch the commit creates, even though this device is out of it.
+            assert_eq!(new_epoch, 2);
+        }
         other => panic!("expected Commit, got {other:?}"),
     }
 
@@ -1205,4 +1213,24 @@ fn proposals_through_process_stay_malformed_and_change_nothing() {
         Err(FfiError::Malformed)
     ));
     assert_eq!(group_files(&bob, &g), before);
+}
+
+#[test]
+fn remove_while_a_commit_is_pending_reports_the_pending_commit() {
+    let (alice, bob, carol) = (
+        dev("acct-a/dev-1"),
+        dev("acct-b/dev-1"),
+        dev("acct-c/dev-1"),
+    );
+    let g = group_of(&alice, &[&bob]);
+    alice
+        .add(g.clone(), vec![carol.key_packages(1).unwrap().remove(0)])
+        .unwrap();
+    let before = group_files(&alice, &g);
+    // Even for a member that is not in the group (yet): the pending commit is reported first.
+    assert!(matches!(
+        alice.remove(g.clone(), vec![carol.identity.clone()]),
+        Err(FfiError::PendingCommit)
+    ));
+    assert_eq!(group_files(&alice, &g), before);
 }
