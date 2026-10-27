@@ -20,6 +20,11 @@ sealed interface RingOutcome {
 
     /** A stranger called: no ring. */
     class SilentMissed(val callId: String, val fromAccountId: String) : RingOutcome
+
+    /** The call ended or was cancelled before it was answered: no ring, a "Missed call" for that chat. */
+    class MissedBeforeAnswer(val callId: String, val chatId: String, val callerName: String) : RingOutcome
+
+    /** The ring could not be opened or read. */
     object Drop : RingOutcome
 }
 
