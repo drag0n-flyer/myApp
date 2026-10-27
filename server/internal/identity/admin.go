@@ -2,21 +2,53 @@ package identity
 
 import (
 	"context"
+	"fmt"
 	"time"
 
+	"github.com/drag0n-flyer/myApp/server/internal/core"
 	"github.com/drag0n-flyer/myApp/server/internal/httpx"
 )
 
-// Lane B (B1) fills these for the admin dashboard.
+// Lane B fills these for the admin dashboard.
 
 // CreateInviteID is CreateInvite that also returns the invite's ID.
 func (m *Module) CreateInviteID(ctx context.Context, uses int, ttl time.Duration) (id, code string, err error) {
-	return "", "", httpx.Err("internal", "not built")
+	if uses < 1 || ttl <= 0 {
+		return "", "", fmt.Errorf("invite needs at least one use and a positive lifetime")
+	}
+	code = NewInviteCode()
+	err = m.d.DB.QueryRow(ctx,
+		`insert into invites (code, uses_left, expires_at, created_at) values ($1, $2, $3, $4) returning id::text`,
+		code, uses, m.d.Now().Add(ttl), m.d.Now()).Scan(&id)
+	if err != nil {
+		return "", "", err
+	}
+	return id, code, nil
 }
 
-// RevokeInvite ends an invite.
+// RevokeInvite ends an invite: no uses left, and revoked_at set once. An
+// unknown id is core.ErrNotFound; an already revoked invite is not an error.
 func (m *Module) RevokeInvite(ctx context.Context, id string) error {
-	return httpx.Err("internal", "not built")
+	if !uuidRE.MatchString(id) {
+		return core.ErrNotFound
+	}
+	tag, err := m.d.DB.Exec(ctx,
+		`update invites set uses_left = 0, revoked_at = $2 where id = $1 and revoked_at is null`,
+		id, m.d.Now())
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 1 {
+		return nil
+	}
+	var exists bool
+	if err := m.d.DB.QueryRow(ctx, `select exists (select 1 from invites where id = $1)`, id).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return core.ErrNotFound
+	}
+	return nil
 }
 
 // AdminRevokeDevice does what DELETE /v1/devices/{id} does.
