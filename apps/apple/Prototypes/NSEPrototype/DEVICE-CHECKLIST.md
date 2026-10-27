@@ -8,3 +8,4 @@ Each item is one line. Mark pass or fail.
 - [ ] `nse-result.txt` in the app group container starts with `OK hello from MLS` and reports `mem=` above 0.
 - [ ] After a reboot, without unlocking, send the push again: the fallback `New message` is shown (expected).
 - [ ] Instruments, Allocations, attached to the extension: peak memory stays below 24 MB.
+- [ ] On the device, `LiveMLSEngineTests.testStorageProtectionClass` passes (the simulator has no data protection, so CI skips it).

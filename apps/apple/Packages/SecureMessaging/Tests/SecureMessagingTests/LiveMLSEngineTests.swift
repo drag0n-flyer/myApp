@@ -140,7 +140,9 @@ private func makeGroup(creator: any MLSEngine, joiners: [any MLSEngine]) async t
         _ = try await LiveMLSEngine(identity: alice, storage: dir, keys: InMemorySigningKeyStore()).createGroup()
     }
 
-    #if os(iOS)
+    // The simulator has no data protection and reports no class, so this runs on a device only
+    // (DEVICE-CHECKLIST.md covers it for the owner).
+    #if os(iOS) && !targetEnvironment(simulator)
     @Test func testStorageProtectionClass() throws {
         let dir = tempDir()
         _ = try live(alice, dir: dir)
