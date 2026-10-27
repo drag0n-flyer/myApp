@@ -378,4 +378,82 @@ func makePair(serverMode: String, inner: String?, clock: TestClock = TestClock()
         #expect(try p.outboxRow(env.id) != nil)
         #expect(try p.repo.message(id: env.id)?.status == "sending")
     }
+
+    @Test func headFailsAfterTenAttemptsAndNextMessageSends() async throws {
+        let p = try await makePair(serverMode: "e2ee", inner: "e2ee")
+        let head = p.envelope("head"), next = p.envelope("next")
+        try await p.outbox.enqueue(head, chatID: p.chatID)
+        try await p.outbox.enqueue(next, chatID: p.chatID)
+        p.probe.failNext(10)
+        for attempt in 1...10 {
+            #expect(try p.repo.message(id: head.id)?.status == "sending")
+            try await p.outbox.flush()
+            p.clock.advance(301)
+            // The 10th failure fails the head, so the next message goes in the same flush.
+            #expect(p.messagePosts().count == (attempt < 10 ? attempt : 11))
+        }
+        #expect(try p.repo.message(id: head.id)?.status == "failed")
+        #expect(try p.outboxRow(head.id) == nil)
+        try await p.outbox.flush()
+        #expect(try p.repo.message(id: next.id)?.status == "sent")
+        #expect(try await p.bobTexts() == ["next"])
+    }
+
+    @Test func headOlderThan24HoursFails() async throws {
+        let p = try await makePair(serverMode: "e2ee", inner: "e2ee")
+        let head = p.envelope("stale"), next = p.envelope("fresh")
+        try await p.outbox.enqueue(head, chatID: p.chatID)
+        p.probe.failNext(1)
+        try await p.outbox.flush()
+        p.clock.advance(24 * 3600 + 1)
+        try await p.outbox.enqueue(next, chatID: p.chatID)
+        try await p.outbox.flush()
+        #expect(try p.repo.message(id: head.id)?.status == "failed")
+        #expect(p.messagePosts().count == 2)               // the old head was not tried again
+        #expect(try p.repo.message(id: next.id)?.status == "sent")
+    }
+
+    @Test func manualRetryGoesToEndOfQueue() async throws {
+        let p = try await makePair(serverMode: "e2ee", inner: "e2ee")
+        let a = p.envelope("a"), b = p.envelope("b")
+        try await p.outbox.enqueue(a, chatID: p.chatID)
+        p.probe.failNext(1)
+        try await p.outbox.flush()
+        p.clock.advance(24 * 3600 + 1)
+        try await p.outbox.enqueue(b, chatID: p.chatID)
+        try await p.outbox.flush()                            // a fails (too old), b sent
+        #expect(try p.repo.message(id: a.id)?.status == "failed")
+        try await p.outbox.retry(messageID: a.id)
+        #expect(try p.repo.message(id: a.id)?.status == "sending")
+        try await p.outbox.flush()
+        #expect(try p.repo.message(id: a.id)?.status == "sent")
+        #expect(try await p.bobTexts() == ["b", "a"])
+    }
+
+    @Test func rfc3339FromMilliseconds() {
+        #expect(Escrow.rfc3339(milliseconds: 1_700_000_000_000) == "2023-11-14T22:13:20.000Z")
+        #expect(Escrow.rfc3339(milliseconds: 1_700_000_000_123) == "2023-11-14T22:13:20.123Z")
+        #expect(Escrow.rfc3339(milliseconds: 1_700_000_000_999) == "2023-11-14T22:13:20.999Z")
+        #expect(Escrow.rfc3339(milliseconds: 0) == "1970-01-01T00:00:00.000Z")
+        #expect(Escrow.rfc3339(milliseconds: 951_782_400_007) == "2000-02-29T00:00:00.007Z")
+        #expect(Escrow.rfc3339(milliseconds: -1) == "1969-12-31T23:59:59.999Z")
+    }
+
+    @Test func oneRecordingErrorDoesNotStopOtherChats() async throws {
+        let db = try Database.inMemory()
+        let p = try await makePair(serverMode: "e2ee", inner: "e2ee", database: db)
+        // A second chat whose conversation the server does not know: its message is rejected, and recording
+        // that result fails (trigger). The first chat must still be sent.
+        let carolGroup = try await p.ana.deps.mls.createGroup()
+        try p.repo.upsertChat(ChatRecord(id: "acc-carol", isRequest: false, unread: 0, muted: false, lastActivity: p.clock.now))
+        try p.repo.upsertConversation(ConversationRecord(
+            serverID: "conv-unknown", chatID: "acc-carol", groupID: carolGroup.raw, mode: "e2ee", innerMode: "e2ee",
+            modeMismatch: false, epoch: 1, active: true, createdAt: p.clock.now))
+        let carol = p.envelope("to carol"), bob = p.envelope("to bob")
+        try await p.outbox.enqueue(carol, chatID: "acc-carol")
+        try await p.outbox.enqueue(bob, chatID: p.chatID)
+        try db.execute("CREATE TRIGGER no_failed BEFORE UPDATE OF status ON messages WHEN new.status = 'failed' BEGIN SELECT RAISE(ABORT, 'boom'); END")
+        await #expect(throws: (any Error).self) { try await p.outbox.flush() }
+        #expect(try p.repo.message(id: bob.id)?.status == "sent")
+    }
 }
