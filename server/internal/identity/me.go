@@ -1,9 +1,11 @@
 package identity
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
+	"github.com/drag0n-flyer/myApp/server/internal/core"
 	"github.com/drag0n-flyer/myApp/server/internal/httpx"
 	"github.com/jackc/pgx/v5"
 )
@@ -34,11 +36,20 @@ func (m *Module) me(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// deleteAccount answers DELETE /v1/me. Deleting the account row removes
-// everything that cascades from it. Every device is disconnected afterwards.
-func (m *Module) deleteAccount(w http.ResponseWriter, r *http.Request) error {
-	ctx := r.Context()
-	p := httpx.PrincipalFrom(ctx)
+// deleteAccountHandler answers DELETE /v1/me.
+func (m *Module) deleteAccountHandler(w http.ResponseWriter, r *http.Request) error {
+	p := httpx.PrincipalFrom(r.Context())
+	if err := m.deleteAccount(r.Context(), p.AccountID); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+// deleteAccount deletes the account row, which removes everything that
+// cascades from it, then disconnects every device. An unknown account is
+// core.ErrNotFound. The user and admin paths both come here.
+func (m *Module) deleteAccount(ctx context.Context, accountID string) error {
 	tx, err := m.d.DB.Begin(ctx)
 	if err != nil {
 		return err
@@ -48,7 +59,7 @@ func (m *Module) deleteAccount(w http.ResponseWriter, r *http.Request) error {
 	// cannot deadlock with a message fan-out, and a device added concurrently
 	// is either in this list (and disconnected) or waits until the account is
 	// gone.
-	rows, err := tx.Query(ctx, `select id from devices where account_id = $1 order by id for update`, p.AccountID)
+	rows, err := tx.Query(ctx, `select id from devices where account_id = $1 order by id for update`, accountID)
 	if err != nil {
 		return err
 	}
@@ -56,8 +67,12 @@ func (m *Module) deleteAccount(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `delete from accounts where id = $1`, p.AccountID); err != nil {
+	tag, err := tx.Exec(ctx, `delete from accounts where id = $1`, accountID)
+	if err != nil {
 		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return core.ErrNotFound
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return err
@@ -65,6 +80,5 @@ func (m *Module) deleteAccount(w http.ResponseWriter, r *http.Request) error {
 	for _, id := range devices {
 		m.d.Live.Disconnect(id, revokedCode, "revoked")
 	}
-	w.WriteHeader(http.StatusNoContent)
 	return nil
 }

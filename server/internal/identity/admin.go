@@ -2,11 +2,12 @@ package identity
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/drag0n-flyer/myApp/server/internal/core"
-	"github.com/drag0n-flyer/myApp/server/internal/httpx"
+	"github.com/jackc/pgx/v5"
 )
 
 // Lane B fills these for the admin dashboard.
@@ -51,12 +52,28 @@ func (m *Module) RevokeInvite(ctx context.Context, id string) error {
 	return nil
 }
 
-// AdminRevokeDevice does what DELETE /v1/devices/{id} does.
+// AdminRevokeDevice does what DELETE /v1/devices/{id} does, for any device.
+// An unknown device is core.ErrNotFound.
 func (m *Module) AdminRevokeDevice(ctx context.Context, deviceID string) error {
-	return httpx.Err("internal", "not built")
+	if !uuidRE.MatchString(deviceID) {
+		return core.ErrNotFound
+	}
+	var accountID string
+	err := m.d.DB.QueryRow(ctx, `select account_id::text from devices where id = $1`, deviceID).Scan(&accountID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return core.ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	return m.revokeDevice(ctx, accountID, deviceID)
 }
 
-// AdminDeleteAccount does what DELETE /v1/me does.
+// AdminDeleteAccount does what DELETE /v1/me does, for any account. An
+// unknown account is core.ErrNotFound.
 func (m *Module) AdminDeleteAccount(ctx context.Context, accountID string) error {
-	return httpx.Err("internal", "not built")
+	if !uuidRE.MatchString(accountID) {
+		return core.ErrNotFound
+	}
+	return m.deleteAccount(ctx, accountID)
 }
