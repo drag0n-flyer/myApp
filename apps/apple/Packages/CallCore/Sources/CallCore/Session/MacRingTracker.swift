@@ -39,9 +39,17 @@ public struct MacRingTracker: Sendable {
         return true
     }
 
-    /// The 45 s cap. True once, when the ringing call is old enough to stop and show as missed.
-    public mutating func capReached(callID: String, now: Date) -> Bool {
-        guard let c = current, c.callID == callID, now.timeIntervalSince(c.at) >= CallNotificationText.staleAfter else { return false }
+    /// How long the ring timer should sleep for the ringing call: the cap minus its age, never negative.
+    /// nil when `callID` is not the ringing call. The caller sleeps on a monotonic clock for this long.
+    public func capDelay(callID: String, now: Date) -> TimeInterval? {
+        guard let c = current, c.callID == callID else { return nil }
+        return max(0, CallNotificationText.staleAfter - now.timeIntervalSince(c.at))
+    }
+
+    /// The cap timer fired. The timer is authoritative (no wall-clock check, so clock drift cannot leave a ring
+    /// without a cap). True once, only while `callID` is the ringing call.
+    public mutating func capFired(callID: String) -> Bool {
+        guard current?.callID == callID else { return false }
         current = nil
         done.insert(callID)
         return true
@@ -49,18 +57,32 @@ public struct MacRingTracker: Sendable {
 
     /// Maps a tap on the notification's Answer or Decline. The app may have been launched by the tap, so the
     /// ring time comes from the notification and `status` from `call.status` (nil when it could not be fetched).
+    /// `stopsRinging` is true only when the action settled the call that is ringing right now.
     public mutating func route(_ action: MacNotificationAction, callID: String, ringedAt: Date,
-                               status: CallStatus?, now: Date) -> MacActionRoute {
-        guard !done.contains(callID) else { return .ignore }
+                               status: CallStatus?, now: Date) -> MacRouteOutcome {
+        guard !done.contains(callID) else { return MacRouteOutcome(route: .ignore, stopsRinging: false) }
         done.insert(callID)
-        if current?.callID == callID { current = nil }
+        let stops = current?.callID == callID
+        if stops { current = nil }
+        let route: MacActionRoute
         switch action {
         case .decline:
-            return .decline(callID: callID)
+            route = .decline(callID: callID)
         case .answer:
-            if let status, let kind = PushCallTracker.lateEndKind(status: status) { return .expired(callID: callID, kind: kind) }
-            if now.timeIntervalSince(ringedAt) >= CallNotificationText.staleAfter { return .expired(callID: callID, kind: .unanswered) }
-            return .answer(callID: callID)
+            if let status, let kind = PushCallTracker.lateEndKind(status: status) {
+                route = .expired(callID: callID, kind: kind)
+            } else if now.timeIntervalSince(ringedAt) >= CallNotificationText.staleAfter {
+                route = .expired(callID: callID, kind: .unanswered)
+            } else {
+                route = .answer(callID: callID)
+            }
         }
+        return MacRouteOutcome(route: route, stopsRinging: stops)
     }
+}
+
+public struct MacRouteOutcome: Equatable, Sendable {
+    public var route: MacActionRoute
+    public var stopsRinging: Bool
+    public init(route: MacActionRoute, stopsRinging: Bool) { self.route = route; self.stopsRinging = stopsRinging }
 }

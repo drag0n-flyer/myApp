@@ -64,8 +64,10 @@ final class MacRinger: NSObject, UNUserNotificationCenterDelegate {
         guard plays else { return }
         NSApp.dockTile.badgeLabel = "1"
         startSound()
+        // Monotonic sleep; the timer firing is the cap (no wall-clock re-check).
+        let delay = tracker.capDelay(callID: callID, now: Date()) ?? CallNotificationText.staleAfter
         capTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(CallNotificationText.staleAfter))
+            try? await ContinuousClock().sleep(for: .seconds(delay))
             guard !Task.isCancelled else { return }
             self?.capFired(callID: callID)
         }
@@ -83,7 +85,7 @@ final class MacRinger: NSObject, UNUserNotificationCenterDelegate {
     func declineFromBanner() { act(.decline, callID: ringing?.callID) }
 
     private func capFired(callID: String) {
-        guard let r = ringing, r.callID == callID, tracker.capReached(callID: callID, now: Date()) else { return }
+        guard let r = ringing, r.callID == callID, tracker.capFired(callID: callID) else { return }
         stopRinging()
         post(callID: callID, name: r.caller.displayName, video: r.video, ringAge: CallNotificationText.staleAfter, at: r.at)
         handler?.macRingFinished(callID: callID, kind: .unanswered)
@@ -107,10 +109,12 @@ final class MacRinger: NSObject, UNUserNotificationCenterDelegate {
             guard let self, let handler = self.handler else { return }
             let caller = self.ringing?.caller
             let status = await Self.status(of: callID, via: handler)
-            let route = self.tracker.route(action, callID: callID, ringedAt: at, status: status, now: Date())
-            self.stopRinging()
-            self.center?.removeDeliveredNotifications(withIdentifiers: [callID])
-            switch route {
+            let outcome = self.tracker.route(action, callID: callID, ringedAt: at, status: status, now: Date())
+            if outcome.stopsRinging {
+                self.stopRinging()
+                self.center?.removeDeliveredNotifications(withIdentifiers: [callID])
+            }
+            switch outcome.route {
             case .answer(let id): handler.macRingAnswer(callID: id, caller: caller, video: isVideo)
             case .decline(let id): handler.macRingDecline(callID: id)
             case .expired(let id, let kind): handler.macRingFinished(callID: id, kind: kind)
