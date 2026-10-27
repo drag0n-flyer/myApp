@@ -153,7 +153,7 @@ The sample services stay. The launch argument `-sampleData` selects them, so the
 |---|---|---|---|
 | pgx v5, coder/websocket, go-webauthn | MIT, ISC, BSD-3 | 2 | asked in plan 2 |
 | WebRTC (Google, M-branch) + libopus 1.6 | BSD-3 | 3 | named in GOAL.md; plan 3 pins the branch |
-| mls-rs, mls-rs-crypto-cryptokit, mls-rs-crypto-rustcrypto (git pin), uniffi | Apache-2.0 OR MIT / MPL-2.0 (uniffi) | 4 | mls-rs named in GOAL.md; plan 4 asks for the rest |
+| mls-rs, mls-rs-crypto-rustcrypto (git pin; all targets, CryptoKit crate dropped 2026-10-28), uniffi | Apache-2.0 OR MIT / MPL-2.0 (uniffi) | 4 | mls-rs named in GOAL.md; plan 4 asks for the rest |
 | RNNoise | BSD-3 | 5 (lab), 8 | named in GOAL.md |
 | Lab-only scoring: numpy, onnxruntime, ViSQOL/speequal, DNSMOS models; LibriSpeech + MUSAN/DNS noise corpora | various, to check | 5 | asked in plan 5; never shipped |
 | CI tools: markdownlint-cli2, lychee, gitleaks, go-licenses, gremlins | various | 9 | asked in plan 9 |
@@ -167,7 +167,7 @@ The sample services stay. The launch argument `-sampleData` selects them, so the
 
 - Plan 5 adds `appserver lab session` and `APP_LAB_MODE` to the server's identity package after plan 2 merges (owner review: auth).
 - Plan 8 needs plan 3's WebRTC build to add a capture post-processing hook for RNNoise and H.264 hardware factories.
-- Plan 8's first app build checks that plan 4's CryptoKit bridge symbols and WebRTC's symbols don't collide.
+- Symbol collision between plan 4 and WebRTC: no longer a risk. Plan 4 uses RustCrypto on all targets (owner decision 2026-10-28), so there is no CryptoKit bridge.
 - Plan 9's test vectors (push padding, signatures, sealed handles, TURN credentials, escrow, link sealing) are checked by both the Go and Swift tests.
 
 ## Owner decisions log
