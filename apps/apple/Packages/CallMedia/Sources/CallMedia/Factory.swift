@@ -2,13 +2,39 @@ import Foundation
 import AVFoundation
 import WebRTC
 
+/// What runs on the captured microphone audio, after WebRTC's own processing (patch 0004).
+/// `process` runs on the audio thread once per 10 ms frame: do not block or allocate.
+public protocol CaptureProcessor: AnyObject {
+    func initialize(sampleRateHz: Int, channels: Int)
+    func process(channels: UnsafePointer<UnsafeMutablePointer<Float>>, frames: Int, channelCount: Int)
+    func reset()
+}
+
+/// Thin bridge from a `CaptureProcessor` to patch 0004's `RTCAudioCapturePostProcessing`.
+/// Task M3's noise suppression slot bridges to a `CaptureProcessor` at merge.
+public final class CapturePostProcessingAdapter: NSObject, RTCAudioCapturePostProcessing {
+    private let processor: CaptureProcessor
+    public init(_ processor: CaptureProcessor) { self.processor = processor }
+
+    public func initialize(withSampleRateHz sampleRateHz: Int, channels: Int) {
+        processor.initialize(sampleRateHz: sampleRateHz, channels: channels)
+    }
+    public func processChannels(_ channels: UnsafePointer<UnsafeMutablePointer<Float>>, frames: Int, channelCount: Int) {
+        processor.process(channels: channels, frames: frames, channelCount: channelCount)
+    }
+    public func reset() { processor.reset() }
+}
+
 /// One `RTCPeerConnectionFactory` per process.
-/// H.264 hardware encoder and decoder factories; the audio processing module is the
-/// optional hook `audioProcessingModule` (Task M3 sets it before the first `shared()` call).
+/// Default encoder and decoder factories (H.264 through VideoToolbox is preferred by the SDP);
+/// the capture hook is installed when `captureProcessor` is set before the first `shared()` call
+/// and the build has patch 0004's hook (`hasCapturePostProcessingHook`).
 public enum MediaFactory {
-    nonisolated(unsafe) public static var audioProcessingModule: RTCAudioProcessingModule?
+    nonisolated(unsafe) public static var captureProcessor: CaptureProcessor?
 
     nonisolated(unsafe) private static var instance: RTCPeerConnectionFactory?
+    // The factory holds the hook weakly, so the adapter is kept here for the process lifetime.
+    nonisolated(unsafe) private static var adapter: CapturePostProcessingAdapter?
     private static let lock = NSLock()
 
     public static func shared() -> RTCPeerConnectionFactory {
@@ -21,10 +47,15 @@ public enum MediaFactory {
         s.useManualAudio = true
         s.isAudioEnabled = false
         #endif
-        let f = RTCPeerConnectionFactory(
-            encoderFactory: RTCDefaultVideoEncoderFactory(),
-            decoderFactory: RTCDefaultVideoDecoderFactory(),
-            audioProcessingModule: audioProcessingModule)
+        let encoder = RTCDefaultVideoEncoderFactory(), decoder = RTCDefaultVideoDecoderFactory()
+        let f: RTCPeerConnectionFactory
+        if let processor = captureProcessor, RTCPeerConnectionFactory.hasCapturePostProcessingHook {
+            let a = CapturePostProcessingAdapter(processor)
+            adapter = a
+            f = RTCPeerConnectionFactory(encoderFactory: encoder, decoderFactory: decoder, capturePostProcessing: a)
+        } else {
+            f = RTCPeerConnectionFactory(encoderFactory: encoder, decoderFactory: decoder)
+        }
         instance = f
         return f
     }

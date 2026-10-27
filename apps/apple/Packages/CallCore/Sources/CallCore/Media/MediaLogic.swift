@@ -29,13 +29,10 @@ public enum MediaLogic {
         max(0, min(bps, profile.maxAverageBitrate))
     }
 
-    /// Video tier -> (height, max bitrate bps, max fps). Width is derived at 16:9 by the capturer.
+    /// Video tier -> (height, max bitrate bps, max fps), from `VideoLadder` (the plan's 100k/200k/300k caps).
     public static func videoParameters(_ tier: VideoTier) -> (height: Int, maxBitrate: Int, fps: Int) {
-        switch tier {
-        case .p180: return (180, 150_000, 15)
-        case .p270: return (270, 300_000, 15)
-        case .p360: return (360, 500_000, 20)
-        }
+        let s = VideoLadder.spec(tier)
+        return (s.height, s.maxBps, s.fps)
     }
 }
 
@@ -91,5 +88,27 @@ public struct MediaStatsAggregator: Sendable {
         if dRecv >= 0, dRecv + dLost > 0 { out.inboundLossFraction = dLost / (dRecv + dLost) }
         lastReceived = received; lastLost = lost
         return out
+    }
+}
+
+/// Decides when the peer's video starts or stops, from the inbound video frame counter sampled about once a second.
+/// A sender that turns video off sends no frames, so the counter stops growing.
+public struct RemoteVideoDetector: Sendable {
+    public private(set) var active = false
+    private var last: Double = 0, stalls = 0
+    private let stallLimit: Int
+    public init(stallLimit: Int = 2) { self.stallLimit = stallLimit }
+
+    /// Returns the new state when it changed, nil otherwise.
+    public mutating func sample(frames: Double?) -> Bool? {
+        if let f = frames, f > last {
+            last = f; stalls = 0
+            if !active { active = true; return true }
+            return nil
+        }
+        if let f = frames, f < last { last = f }   // counter reset after a restart
+        stalls += 1
+        if active, stalls >= stallLimit { active = false; return false }
+        return nil
     }
 }

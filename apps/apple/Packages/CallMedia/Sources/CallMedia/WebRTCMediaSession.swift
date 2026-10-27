@@ -1,4 +1,6 @@
 import Foundation
+import AVFoundation
+import CoreMedia
 import AppCore
 import CallCore
 import WebRTC
@@ -26,6 +28,7 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
     private var sendProfile: AudioProfile?
     private var statsAggregator = MediaStatsAggregator()
     private var closed = false
+    private var monitor: Task<Void, Never>?
 
     /// Task M3 sets this to apply the noise suppression mode to the audio processing module.
     public var noiseSuppressionHandler: (@Sendable (NoiseSuppression) -> Void)?
@@ -76,6 +79,7 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
             vSender = pc.addTransceiver(with: track, init: vInit)?.sender
             vSource = source; vTrack = track
             cap = RTCCameraVideoCapturer(delegate: source)
+            startRemoteVideoMonitor()
         }
 
         lock.withLock {
@@ -104,7 +108,6 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
         let answer = try await Self.answer(pc, Self.emptyConstraints)
         let munged = SDPMunger.apply(receive, to: answer.sdp)
         try await Self.setLocal(pc, RTCSessionDescription(type: .answer, sdp: munged))
-        reportRemoteVideo(pc)
         return munged
     }
 
@@ -112,7 +115,6 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
         let pc = try requirePC()
         try await Self.setRemote(pc, RTCSessionDescription(type: .answer, sdp: SDPMunger.apply(send, to: sdp)))
         lock.withLock { sendProfile = send }
-        reportRemoteVideo(pc)
     }
 
     public func rollback() async throws {
@@ -144,6 +146,7 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
         guard let track, let sender, let capturer else { return }
         guard let tier else {
             track.isEnabled = false
+            sender.track = nil   // no frames, so the peer sees the video stop
             await withCheckedContinuation { (k: CheckedContinuation<Void, Never>) in
                 capturer.stopCapture { k.resume() }
             }
@@ -154,6 +157,7 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
         for e in params.encodings { e.maxBitrateBps = NSNumber(value: p.maxBitrate); e.maxFramerate = NSNumber(value: p.fps) }
         sender.parameters = params
         track.isEnabled = true
+        sender.track = track
         guard let device = Self.cameraDevice(),
               let format = Self.closestFormat(device, height: p.height) else { return }
         try? await capturer.startCapture(with: device, format: format, fps: p.fps)
@@ -181,6 +185,7 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
         let (pc, cap) = lock.withLock { () -> (RTCPeerConnection?, RTCCameraVideoCapturer?) in
             if closed { return (nil, nil) }
             closed = true
+            monitor?.cancel(); monitor = nil
             let r = (self.pc, capturer)
             self.pc = nil; capturer = nil
             audioTrack = nil; audioSender = nil; audioSource = nil
@@ -203,11 +208,25 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
         return pc
     }
 
-    private func reportRemoteVideo(_ pc: RTCPeerConnection) {
-        let has = pc.transceivers.contains {
-            $0.mediaType == .video && ($0.currentDirection == .sendRecv || $0.currentDirection == .recvOnly)
+    /// Polls the inbound video frame counter and emits `.remoteVideo` when the peer starts or stops sending.
+    private func startRemoteVideoMonitor() {
+        let task = Task { [weak self] in
+            var detector = RemoteVideoDetector()
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard let self, let pc = self.lock.withLock({ self.pc }) else { return }
+                let frames: Double? = await withCheckedContinuation { k in
+                    pc.statistics { report in
+                        let v = report.statistics.values.first {
+                            $0.type == "inbound-rtp" && ($0.values["kind"] as? String) == "video"
+                        }
+                        k.resume(returning: (v?.values["framesDecoded"] as? NSNumber)?.doubleValue)
+                    }
+                }
+                if let changed = detector.sample(frames: frames) { self.continuation.yield(.remoteVideo(changed)) }
+            }
         }
-        if has { continuation.yield(.remoteVideo(true)) }
+        lock.withLock { monitor = task }
     }
 
     private static func flatten(_ s: RTCStatistics) -> RawStat {
@@ -276,9 +295,6 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
         func peerConnection(_ pc: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {
             owner?.continuation.yield(.localCandidate(
                 IceCandidate(sdp: candidate.sdp, sdpMid: candidate.sdpMid, sdpMLineIndex: candidate.sdpMLineIndex)))
-        }
-        func peerConnection(_ pc: RTCPeerConnection, didStartReceivingOn transceiver: RTCRtpTransceiver) {
-            if transceiver.mediaType == .video { owner?.continuation.yield(.remoteVideo(true)) }
         }
     }
 }

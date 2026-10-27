@@ -63,13 +63,14 @@ jobs:
           has() { [ "$all" = 1 ] || echo "$files" | grep -qE "$1"; }
           P=apps/apple/Packages
           appcore=false; localstore=false; serverkit=false; callcore=false; callmedia=false; messaging=false; app=false
-          if has "^$P/AppCore/"; then appcore=true; serverkit=true; callcore=true; messaging=true; app=true; fi
+          if has "^$P/AppCore/"; then appcore=true; serverkit=true; callcore=true; callmedia=true; messaging=true; app=true; fi
           if has "^$P/LocalStore/"; then localstore=true; messaging=true; app=true; fi
           if has "^$P/ServerKit/|^apps/apple/(serverkit-tests\.yml|ServerKitTestHost/)"; then serverkit=true; messaging=true; app=true; fi
           if has "^$P/SecureMessaging/"; then messaging=true; app=true; fi
           if has "^$P/Messaging/"; then messaging=true; app=true; fi
           if has "^$P/CallCore/"; then callcore=true; callmedia=true; app=true; fi
-          if has "^$P/(CallMedia|WebRTCBinary)/"; then callmedia=true; app=true; fi
+          # The app does not use CallMedia yet, so no app build for these.
+          if has "^$P/(CallMedia|WebRTCBinary)/"; then callmedia=true; fi
           if has "^apps/apple/(App|AppUITests|NotificationService|scripts)/|^apps/apple/project\.yml$"; then app=true; fi
           for k in appcore localstore serverkit callcore callmedia messaging app; do
             echo "$k=${!k}" >> "$GITHUB_OUTPUT"
@@ -163,7 +164,17 @@ jobs:
             apps/apple/Packages/*/.build
           key: spm-${{ runner.os }}-${{ hashFiles('apps/apple/Packages/*/Package.swift', 'apps/apple/Packages/*/Package.resolved') }}
           restore-keys: spm-${{ runner.os }}-
+      - name: Is the WebRTC release published?
+        id: gate
+        run: |
+          if grep -q 'checksum: "0\{64\}"' apps/apple/Packages/WebRTCBinary/Package.swift; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::CallMedia tests skipped: WebRTCBinary still has the placeholder checksum (WebRTC Task 6)."
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: CallMedia tests
+        if: steps.gate.outputs.ready == 'true'
         working-directory: apps/apple/Packages/CallMedia
         run: swift test
 
