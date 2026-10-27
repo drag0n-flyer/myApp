@@ -1,2 +1,22 @@
 knowledge/
 .superpowers/
+
+# Apple apps
+apps/apple/*.xcodeproj
+.build/
+DerivedData/
+
+# Go server
+server/bin/
+*.test
+*.out
+coverage.*
+
+# Local deployment state and secrets (never commit keys or credentials)
+.env
+.env.*
+!.env.example
+deploy/data/
+*.pem
+*.p8
+*.key
