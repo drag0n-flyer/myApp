@@ -45,7 +45,8 @@ struct CallView: View {
             }
         }
         .task(id: model.activeCall?.isEnded) {
-            guard model.activeCall?.isEnded == true else { return }
+            // UI tests keep the ended call on screen so they can read the final banner.
+            guard model.activeCall?.isEnded == true, !model.isUITesting else { return }
             try? await Task.sleep(for: .seconds(2))
             model.dismissEndedCall()
         }
