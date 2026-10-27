@@ -6,8 +6,8 @@ import FoundationNetworking
 public enum Auth: Sendable { case none, session }
 
 public actor ServerClient {
-    private let baseURL: URL
-    private let session: SessionStore
+    let baseURL: URL
+    let session: SessionStore
     private let transport: HTTPTransport
     private var onUnauthorized: (@Sendable () async -> Void)?
     /// Set once a 401 has been handled; stays set until the next `SessionStore.save`.
@@ -115,7 +115,7 @@ public actor ServerClient {
         throw err
     }
 
-    private func handleUnauthorized(sentAt: Int) async {
+    func handleUnauthorized(sentAt: Int) async {
         // A login (save) since the request was sent means the 401 is about an old token.
         guard session.generation == sentAt else { return }
         if signedOutAtGeneration == sentAt { return }
