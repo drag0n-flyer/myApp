@@ -300,3 +300,16 @@ func TestAndroidApps(t *testing.T) {
 		}
 	}
 }
+
+func TestAdminHosts(t *testing.T) {
+	cfg, _, err := Load(mapEnv(baseEnv()), noFiles)
+	if err != nil || len(cfg.AdminHosts) != 0 {
+		t.Fatalf("unset: %v %v", cfg.AdminHosts, err)
+	}
+	env := baseEnv()
+	env["APP_ADMIN_HOSTS"] = " Admin.Example.org ,,x.org"
+	cfg, _, err = Load(mapEnv(env), noFiles)
+	if err != nil || !reflect.DeepEqual(cfg.AdminHosts, []string{"admin.example.org", "x.org"}) {
+		t.Errorf("AdminHosts = %v, %v", cfg.AdminHosts, err)
+	}
+}
