@@ -25,7 +25,7 @@ func main() {
 	must(err)
 	pub, err := hpke.NewDHKEMPublicKey(sk.PublicKey())
 	must(err)
-	pt := `{"body":{"at":1700000000000,"id":"0b7e1c52-3c43-4c1b-9d7e-5f5a2f0c9a11","k":"text","t":"hello escrow","v":1},"conversationID":"conv-1","senderAccountID":"acc-ana","sentAt":1700000000000}`
+	pt := `{"body":{"at":1700000000000,"id":"0b7e1c52-3c43-4c1b-9d7e-5f5a2f0c9a11","k":"text","t":"hello escrow","v":1},"conversationID":"conv-1","senderAccountID":"acc-ana","sentAt":"2023-11-14T22:13:20.000Z"}`
 	sealed, err := hpke.Seal(pub, hpke.HKDFSHA256(), hpke.ChaCha20Poly1305(), []byte("escrow-v1"), []byte(pt))
 	must(err)
 	out, err := json.MarshalIndent(map[string]string{

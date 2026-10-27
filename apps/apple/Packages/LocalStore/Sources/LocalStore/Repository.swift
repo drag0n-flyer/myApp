@@ -351,6 +351,24 @@ public final class Repository: @unchecked Sendable {
             """, [.int(ms(at))], row: outRow)
     }
 
+    /// The oldest row of each chat (by enqueue order), when it is due. A newer message never overtakes an
+    /// older one that is waiting or backing off. Oldest chat head first.
+    public func dueOutboxHeads(at: Date) throws -> [OutboxRecord] {
+        try db.query("""
+            SELECT message_id, chat_id, envelope, attempts, next_attempt_at FROM outbox o
+            WHERE o.rowid = (SELECT MIN(rowid) FROM outbox WHERE chat_id = o.chat_id) AND next_attempt_at <= ?
+            ORDER BY o.rowid
+            """, [.int(ms(at))], row: outRow)
+    }
+
+    /// Sets the message status and deletes its outbox row in one transaction.
+    public func completeSend(id: String, status: String) throws {
+        try db.transaction { d in
+            try updateStatus(ids: [id], to: status)
+            try d.execute("DELETE FROM outbox WHERE message_id=?", [.text(id)])
+        }
+    }
+
     public func bumpOutbox(id: String, nextAttempt: Date) throws {
         try db.execute("UPDATE outbox SET attempts=attempts+1, next_attempt_at=? WHERE message_id=?", [.int(ms(nextAttempt)), .text(id)])
     }

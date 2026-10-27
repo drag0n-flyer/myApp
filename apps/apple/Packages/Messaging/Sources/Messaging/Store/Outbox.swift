@@ -9,24 +9,46 @@ import os
 
 /// Sends content that is not stored locally (receipts). Lane A's inbox processor uses it.
 public protocol ControlSender: Sendable {
-    func sendControl(_ body: ContentEnvelope.Body, chatID: String) async
+    /// Throws `OutboxError` when the message could not be sent (nothing is queued).
+    func sendControl(_ body: ContentEnvelope.Body, chatID: String) async throws
+}
+
+/// Why a send did not happen.
+public enum OutboxError: Error, Equatable, Sendable {
+    /// A network or server problem; trying again later may work.
+    case retryable
+    /// `inner_mode` is not known yet and the server is server-readable (Design 18).
+    case waitingForMode
+    /// The conversation's pinned mode and the server's mode disagree so that sending must stop.
+    case modeMismatch
+    /// The server refused the message with this error code.
+    case rejected(String)
+    /// The escrow copy could not be made.
+    case escrowFailed
 }
 
 /// The send queue (Design 3, 6, 18): one outbox row per stored message, retried with backoff.
 /// Every attempt encrypts afresh and posts with the envelope ID as `clientMsgID`, so a retry is
 /// idempotent on the server. Never logs message content, only IDs.
+///
+/// Public API for other lanes:
+/// - `send(_:in:)`: the one escrow-aware send (Design 18 table, seal, POST, one stale-epoch retry, one
+///   mode refresh). It throws `OutboxError` on any failure. Lane A's `announceMode` uses it.
+/// - `sendControl(_:chatID:)`: a non-stored message through the preferred conversation; throws.
+/// - `EscrowKeyProvider` and `Escrow.seal` / `Escrow.plaintext` are the shared sealing pieces.
 public actor Outbox: ControlSender {
     private let deps: MessagingDeps
     private let conversations: ConversationManaging
+    private let keys: EscrowKeyProvider
     private var flushing = false
-    private var cachedEscrowKey: Data?
 
-    public init(deps: MessagingDeps, conversations: ConversationManaging) {
+    public init(deps: MessagingDeps, conversations: ConversationManaging, keys: EscrowKeyProvider? = nil) {
         self.deps = deps
         self.conversations = conversations
+        self.keys = keys ?? EscrowKeyProvider(server: deps.server)
     }
 
-    // MARK: - Public
+    // MARK: - Queue
 
     /// Stores the message as `sending` and adds its outbox row, in one transaction.
     public func enqueue(_ envelope: ContentEnvelope, chatID: String) throws {
@@ -50,42 +72,65 @@ public actor Outbox: ControlSender {
             outbox: OutboxRecord(messageID: envelope.id, chatID: chatID, envelope: data, attempts: 0, nextAttemptAt: now))
     }
 
-    /// Tries every due item once (plus one immediate retry after a stale epoch or a mode refresh).
-    public func flush() async {
+    /// Sends what is due. Only the oldest queued message of a chat is eligible, so a newer message never
+    /// overtakes an older one that is waiting or backing off, in this flush or a later one. Throws when the
+    /// queue cannot be read or a result cannot be recorded.
+    public func flush() async throws {
         guard !flushing else { return }
         flushing = true
         defer { flushing = false }
-        let due = (try? deps.repo.dueOutbox(at: deps.now())) ?? []
-        var blockedChats: Set<String> = []   // keeps the order of a chat's messages
-        for item in due where !blockedChats.contains(item.chatID) {
-            let envelope = ContentEnvelope.decode(item.envelope)
-            switch await attempt(envelope, chatID: item.chatID) {
-            case .sent:
-                try? deps.repo.updateStatus(ids: [item.messageID], to: "sent")
-                try? deps.repo.removeOutbox(id: item.messageID)
-            case .failed:
-                try? deps.repo.updateStatus(ids: [item.messageID], to: "failed")
-                try? deps.repo.removeOutbox(id: item.messageID)
-            case .waiting:
-                blockedChats.insert(item.chatID)
-            case .retry:
-                let delay = min(pow(2, Double(item.attempts)), 300)
-                try? deps.repo.bumpOutbox(id: item.messageID, nextAttempt: deps.now().addingTimeInterval(delay))
-                blockedChats.insert(item.chatID)
+        var blockedChats: Set<String> = []
+        var progressed = true
+        while progressed {
+            progressed = false
+            for item in try deps.repo.dueOutboxHeads(at: deps.now()) where !blockedChats.contains(item.chatID) {
+                let envelope = ContentEnvelope.decode(item.envelope)
+                switch await attempt(envelope, chatID: item.chatID) {
+                case .sent:
+                    try deps.repo.completeSend(id: item.messageID, status: "sent")
+                    progressed = true
+                case .failed:
+                    try deps.repo.completeSend(id: item.messageID, status: "failed")
+                    progressed = true
+                case .waiting:
+                    blockedChats.insert(item.chatID)
+                case .retry:
+                    let delay = min(pow(2, Double(item.attempts)), 300)
+                    try deps.repo.bumpOutbox(id: item.messageID, nextAttempt: deps.now().addingTimeInterval(delay))
+                    blockedChats.insert(item.chatID)
+                }
             }
         }
     }
 
-    /// Not stored, sent immediately, best effort.
-    public func sendControl(_ body: ContentEnvelope.Body, chatID: String) async {
+    /// Not stored, sent now through the chat's preferred conversation. Throws on failure.
+    public func sendControl(_ body: ContentEnvelope.Body, chatID: String) async throws {
         let envelope = ContentEnvelope(
             id: UUID().uuidString.lowercased(), at: Int64((deps.now().timeIntervalSince1970 * 1000).rounded()), body: body)
-        _ = await attempt(envelope, chatID: chatID)
+        let conversation: ConversationRecord
+        do { conversation = try await conversations.preferredConversation(with: chatID) } catch { throw OutboxError.retryable }
+        try await send(envelope, in: conversation)
     }
 
     // MARK: - Sending
 
     private enum Outcome { case sent, failed, waiting, retry }
+
+    private func attempt(_ envelope: ContentEnvelope, chatID: String) async -> Outcome {
+        do {
+            let conversation = try await conversations.preferredConversation(with: chatID)
+            try await send(envelope, in: conversation)
+            return .sent
+        } catch let error as OutboxError {
+            switch error {
+            case .retryable: return .retry
+            case .waitingForMode: return .waiting
+            case .modeMismatch, .rejected, .escrowFailed: return .failed
+            }
+        } catch {
+            return .retry
+        }
+    }
 
     private enum Plan {
         case waiting
@@ -105,19 +150,20 @@ public actor Outbox: ControlSender {
         }
     }
 
-    private func attempt(_ envelope: ContentEnvelope, chatID: String) async -> Outcome {
-        var conversation: ConversationRecord
-        do { conversation = try await conversations.preferredConversation(with: chatID) } catch { return .retry }
+    /// Encrypts, adds the escrow copy when Design 18 says so, and posts. Throws `OutboxError`.
+    /// The envelope ID is the `clientMsgID`, so calling it again for the same envelope is idempotent.
+    public func send(_ envelope: ContentEnvelope, in start: ConversationRecord) async throws {
+        var conversation = start
         var staleRetried = false
         var modeRetried = false
         while true {
             let escrowWanted: Bool
             switch Self.plan(inner: conversation.innerMode, server: conversation.mode) {
             case .waiting:
-                return .waiting
+                throw OutboxError.waitingForMode
             case .fail:
                 noteMismatch(conversation)
-                return .failed
+                throw OutboxError.modeMismatch
             case .send(let escrow, let mismatch):
                 if mismatch { noteMismatch(conversation) }
                 escrowWanted = escrow
@@ -128,21 +174,30 @@ public actor Outbox: ControlSender {
             var escrowCopy: Data?
             do {
                 (ciphertext, epoch) = try await deps.mls.encrypt(envelope.encoded(), in: GroupID(raw: conversation.groupID))
-                if escrowWanted {
-                    guard let key = try await escrowKey() else { return .retry }
-                    escrowCopy = try deps.escrow.seal(try escrowPlaintext(envelope, conversation: conversation), to: key)
-                }
-            } catch is EscrowError {
-                return .failed
             } catch {
-                return .retry
+                throw OutboxError.retryable
+            }
+            if escrowWanted {
+                let key: Data
+                do { key = try await keys.key() } catch is EscrowKeyError { throw OutboxError.escrowFailed } catch {
+                    throw OutboxError.retryable
+                }
+                do {
+                    escrowCopy = try deps.escrow.seal(
+                        try Escrow.plaintext(for: envelope, conversationID: conversation.serverID,
+                                             senderAccountID: deps.me.accountID),
+                        to: key)
+                } catch {
+                    await keys.invalidate()   // a bad key may have been rotated; the next attempt refetches
+                    throw OutboxError.escrowFailed
+                }
             }
 
             do {
                 _ = try await deps.server.postMessage(
                     conversationID: conversation.serverID, epoch: epoch, ciphertext: ciphertext, escrow: escrowCopy,
                     clientMsgID: envelope.id)
-                return .sent
+                return
             } catch {
                 switch error.code {
                 case "stale_epoch" where !staleRetried:
@@ -150,49 +205,27 @@ public actor Outbox: ControlSender {
                     do {
                         try await conversations.handleStaleEpoch(conversation)
                         conversation = try deps.repo.conversation(serverID: conversation.serverID) ?? conversation
-                    } catch { return .retry }
+                    } catch { throw OutboxError.retryable }
                 case "stale_epoch":
-                    return .retry
+                    throw OutboxError.retryable
                 case "escrow_required", "escrow_forbidden":
                     guard !modeRetried else {
                         noteMismatch(conversation)
-                        return .failed
+                        throw OutboxError.rejected(error.code)
                     }
                     modeRetried = true
+                    await keys.invalidate()
                     do {
                         let fresh = try await deps.server.conversation(id: conversation.serverID)
                         try deps.repo.setServerMode(serverID: conversation.serverID, fresh.mode)
                         conversation = try deps.repo.conversation(serverID: conversation.serverID) ?? conversation
-                    } catch { return .retry }
+                    } catch { throw OutboxError.retryable }
                 default:
                     let transient = error.status == 0 || error.status >= 500 || error.status == 429 || error.status == 401
-                    return transient ? .retry : .failed
+                    throw transient ? OutboxError.retryable : OutboxError.rejected(error.code)
                 }
             }
         }
-    }
-
-    private func escrowKey() async throws -> Data? {
-        if let cachedEscrowKey { return cachedEscrowKey }
-        let info = try await deps.server.serverInfo()
-        guard let encoded = info.encryption.escrowKey, let key = Base64URLData(encoded: encoded)?.data else { return nil }
-        cachedEscrowKey = key
-        return key
-    }
-
-    private struct EscrowPlaintext: Encodable {
-        let conversationID: String
-        let senderAccountID: String
-        let sentAt: Int64
-        let body: ContentEnvelope
-    }
-
-    /// Design 10: `{"conversationID","senderAccountID","sentAt","body":<envelope>}`; `sentAt` is the envelope's `at`.
-    private func escrowPlaintext(_ envelope: ContentEnvelope, conversation: ConversationRecord) throws -> Data {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        return try encoder.encode(EscrowPlaintext(
-            conversationID: conversation.serverID, senderAccountID: deps.me.accountID, sentAt: envelope.at, body: envelope))
     }
 
     private func noteMismatch(_ conversation: ConversationRecord) {

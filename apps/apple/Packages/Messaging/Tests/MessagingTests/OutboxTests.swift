@@ -46,7 +46,7 @@ final class ProbeTransport: HTTPTransport, @unchecked Sendable {
                 return (false, _rejectAllWith)
             }
             if fail { throw URLError(.notConnectedToInternet) }
-            if let reject { return Self.reply(409, #"{"error":{"code":"\#(reject)","message":"x"}}"#, for: request) }
+            if let reject { return Self.reply(400, #"{"error":{"code":"\#(reject)","message":"x"}}"#, for: request) }
         }
         if method == "GET", path.hasPrefix("/v1/conversations/"), let mode = lock.withLock({ _lieMode }) {
             let id = String(path.dropFirst("/v1/conversations/".count))
@@ -124,7 +124,7 @@ struct Pair {
 
 /// ana and bob share one conversation (set up through the fake server). `serverMode` is the
 /// server's mode; `inner` is the pinned `inner_mode` ana has stored.
-func makePair(serverMode: String, inner: String?, clock: TestClock = TestClock()) async throws -> Pair {
+func makePair(serverMode: String, inner: String?, clock: TestClock = TestClock(), database: Database? = nil) async throws -> Pair {
     let server = FakeServer(now: { clock.now })
     await server.setDefaultMode(serverMode)
     let clockNow: @Sendable () -> Date = { clock.now }
@@ -141,6 +141,10 @@ func makePair(serverMode: String, inner: String?, clock: TestClock = TestClock()
                     token: "test.\(ana0.accountID).\(ana0.deviceID)"))),
         transport: probe)
     deps.escrow = sealer
+    if let database {
+        try migrate(database)
+        deps.repo = Repository(db: database, now: clockNow)
+    }
     let ana = TestDevice(accountID: ana0.accountID, deviceID: ana0.deviceID, deps: deps, notifier: ana0.notifier, directory: ana0.directory)
 
     _ = try await bob.deps.server.uploadKeyPackages(try await bob.deps.mls.makeKeyPackages(count: 2))
@@ -174,7 +178,7 @@ func makePair(serverMode: String, inner: String?, clock: TestClock = TestClock()
         let env = p.envelope("hello bob")
         try await p.outbox.enqueue(env, chatID: p.chatID)
         #expect(try p.repo.message(id: env.id)?.status == "sending")
-        await p.outbox.flush()
+        try await p.outbox.flush()
         #expect(try p.repo.message(id: env.id)?.status == "sent")
         #expect(try p.outboxRow(env.id) == nil)
         #expect(try await p.bobTexts() == ["hello bob"])
@@ -186,18 +190,18 @@ func makePair(serverMode: String, inner: String?, clock: TestClock = TestClock()
         try await p.outbox.enqueue(env, chatID: p.chatID)
         p.probe.failNext(2)
 
-        await p.outbox.flush()                                   // attempt 1 fails, next in 1 s
+        try await p.outbox.flush()                                   // attempt 1 fails, next in 1 s
         #expect(try p.outboxRow(env.id)?.attempts == 1)
-        await p.outbox.flush()                                   // not due yet
+        try await p.outbox.flush()                                   // not due yet
         #expect(p.messagePosts().count == 1)
         p.clock.advance(1)
-        await p.outbox.flush()                                   // attempt 2 fails, next in 2 s
+        try await p.outbox.flush()                                   // attempt 2 fails, next in 2 s
         #expect(try p.outboxRow(env.id)?.attempts == 2)
         p.clock.advance(1)
-        await p.outbox.flush()
+        try await p.outbox.flush()
         #expect(p.messagePosts().count == 2)                     // still backing off
         p.clock.advance(1)
-        await p.outbox.flush()                                   // third attempt succeeds
+        try await p.outbox.flush()                                   // third attempt succeeds
         #expect(p.messagePosts().count == 3)
         #expect(try p.repo.message(id: env.id)?.status == "sent")
         #expect(try p.outboxRow(env.id) == nil)
@@ -208,9 +212,9 @@ func makePair(serverMode: String, inner: String?, clock: TestClock = TestClock()
         let env = p.envelope("once only")
         try await p.outbox.enqueue(env, chatID: p.chatID)
         p.probe.failNext(1)
-        await p.outbox.flush()
+        try await p.outbox.flush()
         p.clock.advance(5)
-        await p.outbox.flush()
+        try await p.outbox.flush()
         let ids = p.messagePosts().compactMap { $0["clientMsgID"] as? String }
         #expect(ids == [env.id, env.id])
         #expect(try await p.bobTexts() == ["once only"])
@@ -234,7 +238,7 @@ func makePair(serverMode: String, inner: String?, clock: TestClock = TestClock()
         let p = try await makePair(serverMode: row.server, inner: row.inner)
         let env = p.envelope("table row")
         try await p.outbox.enqueue(env, chatID: p.chatID)
-        await p.outbox.flush()
+        try await p.outbox.flush()
 
         let posts = p.messagePosts()
         // `server_readable` inner with an e2ee server may legitimately be answered 400 by the fake: it must never carry escrow.
@@ -251,7 +255,7 @@ func makePair(serverMode: String, inner: String?, clock: TestClock = TestClock()
             let plain = try #require(JSONSerialization.jsonObject(with: bytes.dropFirst(prefix.count)) as? [String: Any])
             #expect(plain["conversationID"] as? String == p.conversation.serverID)
             #expect(plain["senderAccountID"] as? String == p.ana.accountID)
-            #expect(plain["sentAt"] as? Int64 == env.at)
+            #expect(plain["sentAt"] as? String == "2023-11-14T22:13:20.000Z")
             let body = try #require(plain["body"] as? NSDictionary)
             let expected = try #require(JSONSerialization.jsonObject(with: env.encoded()) as? NSDictionary)
             #expect(body == expected)
@@ -267,10 +271,10 @@ func makePair(serverMode: String, inner: String?, clock: TestClock = TestClock()
         p.probe.lie(mode: "server_readable", rejectingWith: "escrow_required")
         let first = p.envelope("one"), second = p.envelope("two")
         try await p.outbox.enqueue(first, chatID: p.chatID)
-        await p.outbox.flush()
+        try await p.outbox.flush()
         try await p.outbox.enqueue(second, chatID: p.chatID)
-        await p.outbox.flush()
-        await p.outbox.flush()
+        try await p.outbox.flush()
+        try await p.outbox.flush()
 
         #expect(p.messagePosts().allSatisfy { $0["escrow"] == nil })
         #expect(try p.repo.message(id: first.id)?.status == "failed")
@@ -286,12 +290,12 @@ func makePair(serverMode: String, inner: String?, clock: TestClock = TestClock()
         let p = try await makePair(serverMode: "server_readable", inner: nil)
         let env = p.envelope("hold on")
         try await p.outbox.enqueue(env, chatID: p.chatID)
-        await p.outbox.flush()
+        try await p.outbox.flush()
         #expect(p.messagePosts().isEmpty)
         #expect(try p.outboxRow(env.id)?.attempts == 0)
 
         #expect(try p.repo.pinInnerMode(serverID: p.conversation.serverID, mode: "server_readable"))
-        await p.outbox.flush()
+        try await p.outbox.flush()
         let posts = p.messagePosts()
         #expect(posts.count == 1)
         let sent = try #require(posts.first?["escrow"] as? String)
@@ -301,8 +305,77 @@ func makePair(serverMode: String, inner: String?, clock: TestClock = TestClock()
 
     @Test func controlMessagesAreSentButNotStored() async throws {
         let p = try await makePair(serverMode: "e2ee", inner: "e2ee")
-        await p.outbox.sendControl(.receipt(.delivered, ids: ["m1"]), chatID: p.chatID)
+        try await p.outbox.sendControl(.receipt(.delivered, ids: ["m1"]), chatID: p.chatID)
         #expect(p.messagePosts().count == 1)
         #expect(try p.repo.messages(chatID: p.chatID, before: nil, limit: 10).isEmpty)
+    }
+
+    @Test func newerMessageNeverOvertakesBackedOffOlderOne() async throws {
+        let p = try await makePair(serverMode: "e2ee", inner: "e2ee")
+        let older = p.envelope("older"), newer = p.envelope("newer")
+        try await p.outbox.enqueue(older, chatID: p.chatID)
+        p.probe.failNext(1)
+        try await p.outbox.flush()                       // older fails, backs off 1 s
+        try await p.outbox.enqueue(newer, chatID: p.chatID)
+        try await p.outbox.flush()                       // newer is due, older is not: nothing may be sent
+        #expect(p.messagePosts().count == 1)
+        #expect(try p.repo.message(id: newer.id)?.status == "sending")
+        p.clock.advance(1)
+        try await p.outbox.flush()                       // older first, then newer, in one flush
+        #expect(try p.repo.message(id: older.id)?.status == "sent")
+        #expect(try p.repo.message(id: newer.id)?.status == "sent")
+        #expect(try await p.bobTexts() == ["older", "newer"])
+    }
+
+    @Test func sendThrowsOnFailureAndAttachesEscrow() async throws {
+        let p = try await makePair(serverMode: "server_readable", inner: "server_readable")
+        let env = p.envelope("direct")
+        try await p.outbox.send(env, in: p.conversation)
+        #expect(p.messagePosts().first?["escrow"] != nil)
+
+        p.probe.failNext(1)
+        await #expect(throws: OutboxError.retryable) { try await p.outbox.send(p.envelope("x"), in: p.conversation) }
+
+        var waiting = p.conversation
+        waiting.innerMode = nil
+        await #expect(throws: OutboxError.waitingForMode) { try await p.outbox.send(p.envelope("y"), in: waiting) }
+        var e2ee = p.conversation
+        e2ee.innerMode = "e2ee"
+        await #expect(throws: OutboxError.modeMismatch) { try await p.outbox.send(p.envelope("z"), in: e2ee) }
+    }
+
+    @Test func sendControlReportsFailure() async throws {
+        let p = try await makePair(serverMode: "e2ee", inner: "e2ee")
+        p.probe.failNext(1)
+        await #expect(throws: OutboxError.retryable) {
+            try await p.outbox.sendControl(.receipt(.read, ids: ["m1"]), chatID: p.chatID)
+        }
+    }
+
+    @Test func escrowKeyProviderFetchesOnceAndDecodes() async throws {
+        let p = try await makePair(serverMode: "server_readable", inner: "server_readable")
+        let provider = EscrowKeyProvider(server: p.ana.deps.server)
+        let key = try await provider.key()
+        #expect(key == (await p.server.escrowKey))
+        #expect(try await provider.key() == key)
+    }
+
+    @Test func failedOutboxReadIsAnError() async throws {
+        let db = try Database.inMemory()
+        let p = try await makePair(serverMode: "e2ee", inner: "e2ee", database: db)
+        try db.execute("DROP TABLE outbox")
+        await #expect(throws: (any Error).self) { try await p.outbox.flush() }
+    }
+
+    @Test func markSentIsOneTransaction() async throws {
+        let db = try Database.inMemory()
+        let p = try await makePair(serverMode: "e2ee", inner: "e2ee", database: db)
+        let env = p.envelope("atomic")
+        try await p.outbox.enqueue(env, chatID: p.chatID)
+        try db.execute("CREATE TRIGGER no_status BEFORE UPDATE OF status ON messages BEGIN SELECT RAISE(ABORT, 'boom'); END")
+        await #expect(throws: (any Error).self) { try await p.outbox.flush() }
+        // The status write failed, so the outbox row must still be there (it is retried, never stuck).
+        #expect(try p.outboxRow(env.id) != nil)
+        #expect(try p.repo.message(id: env.id)?.status == "sending")
     }
 }

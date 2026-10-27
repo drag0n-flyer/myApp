@@ -30,6 +30,30 @@ public enum Escrow {
         #endif
     }
 
+    /// Design 10: `{"conversationID","senderAccountID","sentAt","body":<envelope>}`. `sentAt` is an RFC 3339 UTC
+    /// string with milliseconds, derived from the envelope's `at`.
+    public static func plaintext(for envelope: ContentEnvelope, conversationID: String, senderAccountID: String) throws -> Data {
+        struct Plain: Encodable {
+            let conversationID: String
+            let senderAccountID: String
+            let sentAt: String
+            let body: ContentEnvelope
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        return try encoder.encode(Plain(
+            conversationID: conversationID, senderAccountID: senderAccountID, sentAt: rfc3339(milliseconds: envelope.at),
+            body: envelope))
+    }
+
+    /// `2023-11-14T22:13:20.000Z` for 1700000000000.
+    public static func rfc3339(milliseconds: Int64) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        return formatter.string(from: Date(timeIntervalSince1970: Double(milliseconds) / 1000))
+    }
+
     #if canImport(CryptoKit)
     static let suite = HPKE.Ciphersuite(kem: .Curve25519_HKDF_SHA256, kdf: .HKDF_SHA256, aead: .chaChaPoly)
     #endif
