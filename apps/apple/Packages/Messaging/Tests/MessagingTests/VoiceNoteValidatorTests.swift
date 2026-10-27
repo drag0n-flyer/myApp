@@ -96,7 +96,7 @@ import Testing
 
     /// An Ogg Opus file with the given packets as-is (the writer would refuse an empty one).
     private func rawFile(packets: [[UInt8]], channels: Int = 1) throws -> [UInt8] {
-        let head = Array("OpusHead".utf8) + [1, UInt8(channels)] + le16(312) + le32(16_000) + le16(0) + [0]
+        let head: [UInt8] = ([Array("OpusHead".utf8), [1, UInt8(channels)], le16(312), le32(16_000), le16(0), [0]] as [[UInt8]]).flatMap { $0 }
         let tags = Array("OpusTags".utf8) + le32(0) + le32(0)
         var body: [UInt8] = [], segs: [UInt8] = []
         for p in packets { body += p; segs += OggPage.lacing(forPacketOf: p.count) }
