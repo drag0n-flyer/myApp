@@ -10,6 +10,19 @@ struct MessageBubbleView: View {
     let download: () -> Void
 
     var body: some View {
+        if case .system(let event) = message.content {
+            SystemEventText(event: event)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+        } else {
+            bubble
+        }
+    }
+
+    private var bubble: some View {
         HStack {
             if isMine { Spacer(minLength: 60) }
             VStack(alignment: .leading, spacing: 4) {
@@ -72,6 +85,30 @@ struct MessageBubbleView: View {
                       symbol: "doc.fill", isShown: showsMedia, identifier: "chat.media.download.\(message.id)", download: download)
         case .call:
             Label(message.previewText, systemImage: "phone")
+        case .deleted:
+            Text("This message was deleted")
+                .font(.body.italic())
+                .foregroundStyle(isMine ? Color.white.opacity(0.8) : Color.secondary)
+        case .unsupported:
+            Text("Update \(AppBrand.name) to see this message").font(.body)
+        case .system:
+            EmptyView()
+        }
+    }
+}
+
+/// The chat line for a device or safety change. Wording lives in the String Catalog.
+struct SystemEventText: View {
+    let event: SystemEvent
+
+    var body: some View {
+        switch event {
+        case .deviceAdded(let name?): Text("\(name) added a new device")
+        case .deviceAdded(nil): Text("You added a new device")
+        case .deviceRemoved(let name?): Text("\(name) removed a device")
+        case .deviceRemoved(nil): Text("You removed a device")
+        case .safetyNumberChanged: Text("Safety number changed")
+        case .messagesPaused: Text("Messages in this chat are paused. Open chat info for details.")
         }
     }
 }

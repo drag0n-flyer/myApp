@@ -19,7 +19,7 @@ import Foundation
     #expect(e.state?.isMuted == false)
 }
 
-@Test func recordCallAppendsHistory() {
+@MainActor @Test func recordCallAppendsHistory() {
     let store = SampleChatStore()
     let c = store.contacts[0]
     let chatID = store.ensureChat(with: c.id)
