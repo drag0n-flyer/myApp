@@ -7,6 +7,14 @@
 		<string>webcredentials:$(PASSKEY_DOMAINS)</string>
 		<string>applinks:$(DEFAULT_SERVER_HOST)</string>
 	</array>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.org.example.app</string>
+	</array>
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<key>com.apple.security.network.client</key>
+	<true/>
 	<key>keychain-access-groups</key>
 	<array>
 		<string>$(AppIdentifierPrefix)org.example.app.shared</string>
