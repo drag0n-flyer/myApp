@@ -50,6 +50,12 @@ public enum MediaPlan {
         public enum Outcome: Equatable, Sendable { case send, tooShort }
 
         public static func outcome(duration: Double) -> Outcome { duration < minDuration ? .tooShort : .send }
+        /// The length of a finished recording. `AVAudioRecorder.currentTime` is 0 once the recorder has
+        /// stopped by itself at the limit, so the time measured from the start is used when it is longer.
+        public static func finalDuration(recorderTime: Double, measured: Double) -> Double {
+            clamped(max(recorderTime, measured))
+        }
+
         public static func clamped(_ duration: Double) -> Double { min(max(duration, 0), maxDuration) }
     }
 }

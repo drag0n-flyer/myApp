@@ -10,6 +10,8 @@ packages:
     path: Packages/AppCore
   ServerKit:
     path: Packages/ServerKit
+  Messaging:
+    path: Packages/Messaging
 settings:
   base:
     SWIFT_VERSION: '6.0'
@@ -62,6 +64,8 @@ targets:
       - package: AppCore
       - package: ServerKit
         product: ServerKit
+      - package: Messaging
+        product: Messaging
   AppMac:
     type: application
     platform: macOS
@@ -89,6 +93,8 @@ targets:
       - package: AppCore
       - package: ServerKit
         product: ServerKit
+      - package: Messaging
+        product: Messaging
   AppiOSUITests:
     type: bundle.ui-testing
     platform: iOS

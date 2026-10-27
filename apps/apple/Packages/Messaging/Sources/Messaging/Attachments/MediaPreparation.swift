@@ -25,6 +25,7 @@ public enum MediaPreparation {
             thumb = try encode(thumbImage, quality: quality)
             if thumb.count <= MediaPlan.thumbnailMaxBytes { break }
         }
+        guard thumb.count <= MediaPlan.thumbnailMaxBytes else { throw MediaPreparationError.encodingFailed }
         return (main.width, main.height, thumb)
     }
 

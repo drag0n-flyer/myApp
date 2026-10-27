@@ -22,13 +22,15 @@ public final class VoiceRecorder {
     private let directory: URL
     private var recorder: AVAudioRecorder?
     private var fileURL: URL?
+    private var startedAt: TimeInterval = 0
 
     /// Recordings are written into `directory` (a temporary folder by default).
     public init(directory: URL = FileManager.default.temporaryDirectory) { self.directory = directory }
 
     public var isRecording: Bool { recorder?.isRecording ?? false }
     /// Seconds recorded so far.
-    public var elapsed: Double { recorder?.currentTime ?? 0 }
+    public var elapsed: Double { recorder == nil ? 0 : max(recorder?.currentTime ?? 0, measured) }
+    private var measured: Double { ProcessInfo.processInfo.systemUptime - startedAt }
 
     /// Asks for microphone access if needed. Returns false when it is denied.
     public static func requestPermission() async -> Bool {
@@ -53,13 +55,15 @@ public final class VoiceRecorder {
         }
         recorder = rec
         fileURL = url
+        startedAt = ProcessInfo.processInfo.systemUptime
     }
 
     /// Stops and returns the file and its length in seconds.
     @discardableResult
     public func stop() throws -> (URL, Double) {
         guard let rec = recorder, let url = fileURL else { throw VoiceRecorderError.notRecording }
-        let seconds = MediaPlan.Voice.clamped(rec.currentTime)
+        // Read before stopping; after an auto-stop at the limit the recorder reports 0.
+        let seconds = MediaPlan.Voice.finalDuration(recorderTime: rec.currentTime, measured: measured)
         rec.stop()
         recorder = nil
         fileURL = nil

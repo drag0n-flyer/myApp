@@ -82,7 +82,7 @@ struct ComposerView: View {
                 .accessibilityIdentifier("chat.composer.stopRecording")
             } else if isEmpty {
                 Button {
-                    if sendAttachment != nil, VoiceRecordingController.isAvailable {
+                    if sendAttachment != nil {
                         Task { await voice.start() }
                     } else {
                         sendSample(.voice(duration: 5))
@@ -112,6 +112,7 @@ struct ComposerView: View {
         }
         .padding(.horizontal, 10)
         .padding(.bottom, 6)
+        .onDisappear { voice.cancel() }
         .alert("Microphone access is off", isPresented: Binding(get: { voice.denied }, set: { _ in voice.dismissDenied() })) {
             Button("OK", role: .cancel) {}
         } message: {
