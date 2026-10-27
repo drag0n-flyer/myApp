@@ -54,6 +54,32 @@ final class ChatFlowTests: XCTestCase {
         XCTAssertEqual(info.label, "Not end-to-end encrypted: the server admin can read this chat")
     }
 
+    func testVerifyShowsSafetyNumber() {
+        let app = XCUIApplication.launched()
+        app.element("chatlist.chip.all").tap()
+        app.element("chatlist.row.chat-sam").tap()
+        XCTAssertTrue(app.element("chat.header").waitToExist())
+        app.element("chat.header").tap()
+        XCTAssertTrue(app.element("chatinfo.encryption").waitToExist())
+        app.buttons["Verify"].tap()
+        let groups = app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH 'verify.group.'"))
+        XCTAssertTrue(app.element("verify.group.0").waitToExist())
+        XCTAssertEqual(groups.count, 12)
+
+        let toggle = app.switches["verify.toggle"]
+        XCTAssertTrue(toggle.waitToExist())
+        XCTAssertEqual(toggle.value as? String, "0")
+        // The switch sits at the trailing edge of its row.
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertEqual(app.switches["verify.toggle"].value as? String, "1")
+
+        app.buttons["Done"].tap()
+        XCTAssertTrue(app.element("chatinfo.verified").waitToExist())
+        app.buttons["Verify"].tap()
+        XCTAssertTrue(app.switches["verify.toggle"].waitToExist())
+        XCTAssertEqual(app.switches["verify.toggle"].value as? String, "1")
+    }
+
     func testAcceptRequest() {
         let app = XCUIApplication.launched()
         app.element("chatlist.requests").tap()

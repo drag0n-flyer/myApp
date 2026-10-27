@@ -17,6 +17,8 @@ public protocol ChatStore: AnyObject {
     func folderChipTitle(_ folder: ChatFolder) -> String
     var messageRequests: [Chat] { get }
     var messageRequestsRowTitle: String? { get }
+    /// Account IDs this device has blocked (Settings > Privacy).
+    var blockedIDs: Set<String> { get }
     func chat(id: String) -> Chat?
     func contact(id: String) -> Contact?
     /// Called after any change to the store's data.

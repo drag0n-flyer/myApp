@@ -277,3 +277,6 @@ public actor Outbox: ControlSender {
         #endif
     }
 }
+
+/// `AttachmentService` queues its photo, voice and file envelopes through the outbox.
+extension Outbox: EnvelopeEnqueuing {}

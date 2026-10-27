@@ -19,10 +19,10 @@ public final class LiveChatStore: ChatStore {
     static let maxTextLength = 4096
     static let reportedMessageCount = 10
 
-    private let deps: MessagingDeps
+    let deps: MessagingDeps
     private let outbox: Outbox
     private let inbox: InboxProcessor
-    private let conversations: ConversationManaging
+    let conversations: ConversationManaging
     private let attachments: AttachmentService?
     private var repo: Repository { deps.repo }
 
@@ -169,6 +169,8 @@ public final class LiveChatStore: ChatStore {
         let count = messageRequests.count
         return count > 0 ? "Message requests · \(count)" : nil
     }
+
+    public var blockedIDs: Set<String> { Set((try? repo.blockedIDs()) ?? []) }
 
     public func chat(id: String) -> Chat? { allChats.first { $0.id == id } }
 

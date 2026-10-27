@@ -19,7 +19,9 @@ enum AppTab: Hashable {
 @MainActor
 @Observable
 final class AppModel {
-    let chatStore: SampleChatStore
+    /// `SampleChatStore` with `-sampleData` (and until the real messaging stack is available); `LiveChatStore`
+    /// once this device is signed in and the stack could be built (`installLiveStore`).
+    private(set) var chatStore: any ChatStore
     let calls: SimulatedCallEngine
     let account: any AccountService
     /// `nil` in `-sampleData` mode.
@@ -29,6 +31,8 @@ final class AppModel {
     /// Shown after the server ends this device's session.
     var deviceRemovedAlert = false
     private var connection: LiveConnection?
+    private let sessions: SessionStore?
+    private var messaging: LiveMessaging?
     private var liveTasks: [Task<Void, Never>] = []
     private var apnsToken: Data?
     private var registrar: PushRegistrar?
@@ -37,10 +41,16 @@ final class AppModel {
         didSet { calls.server = server }
     }
     var settings: UserSettings {
-        didSet { calls.settings = settings.call }
+        didSet {
+            calls.settings = settings.call
+            messaging?.autoDownload.value = settings.autoDownload
+        }
     }
     var network: NetworkType {
-        didSet { calls.setNetwork(network) }
+        didSet {
+            calls.setNetwork(network)
+            messaging?.network.value = network
+        }
     }
     var onboarding: OnboardingFlow
     var selectedTab: AppTab = .chats
@@ -74,6 +84,7 @@ final class AppModel {
         #endif
         let account: any AccountService
         var live: LiveAccountService?
+        var sessionStore: SessionStore?
         if launch.sampleData {
             account = SampleAccountService(platform: platform)
         } else {
@@ -86,17 +97,20 @@ final class AppModel {
                 approvalReason: String(localized: "Confirm to approve this new device."))
             account = service
             live = service
+            sessionStore = sessions
         }
         let server = account.defaultServer
         let settings = UserSettings.initial(from: server)
         self.account = account
         self.live = live
+        self.sessions = sessionStore
         self.isSampleData = launch.sampleData
         self.server = server
         self.settings = settings
         self.network = launch.network
         self.isUITesting = launch.isUITesting
-        self.chatStore = SampleChatStore()
+        let chatStore = SampleChatStore()
+        self.chatStore = chatStore
         self.calls = SimulatedCallEngine(server: server, settings: settings.call, network: launch.network)
         #if os(macOS)
         var flow = OnboardingFlow(platform: .mac)
@@ -115,6 +129,7 @@ final class AppModel {
         live?.onSignedOut = { [weak self] in self?.deviceWasRemoved() }
         if live?.isSignedIn == true { Task { await didSignIn() } }
         if let url = launch.openURL { handle(url: url) }
+        chatStore.onChange = { [weak self] in self?.revision += 1 }
         calls.onChange = { [weak self] state in
             self?.activeCall = state
         }
@@ -138,10 +153,11 @@ final class AppModel {
         let chats = chats(in: folder)
         let query = query.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else { return chats }
+        // Message matches come from the store's search (the whole history), not only the loaded messages.
+        let messageChatIDs = Set(chatStore.searchMessages(query, limit: 200).map(\.chatID))
         return chats.filter { chat in
             let name = chatStore.contact(id: chat.contactID)?.displayName ?? ""
-            return name.localizedCaseInsensitiveContains(query)
-                || chat.messages.contains { $0.previewText.localizedCaseInsensitiveContains(query) }
+            return name.localizedCaseInsensitiveContains(query) || messageChatIDs.contains(chat.id)
         }
     }
 
@@ -158,6 +174,8 @@ final class AppModel {
     func accept(requestID: String) { chatStore.accept(requestID: requestID); revision += 1 }
     func block(contactID: String) { chatStore.block(contactID: contactID); revision += 1 }
     func report(chatID: String) { chatStore.report(chatID: chatID); revision += 1 }
+    func safetyNumber(for chatID: String) -> SafetyNumber? { _ = revision; return chatStore.safetyNumber(for: chatID) }
+    func setVerified(_ verified: Bool, chatID: String) { chatStore.setVerified(verified, chatID: chatID); revision += 1 }
 
     @discardableResult
     func addContact(username: String) async -> Contact? {
@@ -233,6 +251,14 @@ final class AppModel {
     }
 
     private func resetToWelcome() {
+        // The live store belongs to the signed-out account. The sample store stands in until the next sign-in.
+        if messaging != nil {
+            messaging = nil
+            let sample = SampleChatStore()
+            sample.onChange = { [weak self] in self?.revision += 1 }
+            chatStore = sample
+            revision += 1
+        }
         #if os(macOS)
         onboarding = OnboardingFlow(platform: .mac)
         #else
@@ -254,7 +280,9 @@ final class AppModel {
     /// Call after any sign-in succeeds: loads devices, starts the live connection and registers for push.
     func didSignIn() async {
         await refreshDevices()
+        installLiveStore()
         await startLive()
+        await syncInbox()
         await registerForPushIfAllowed()
     }
 
@@ -269,6 +297,23 @@ final class AppModel {
         #endif
     }
 
+    /// Swaps the sample store for the real one when this device is signed in and the messaging stack could be
+    /// built. One escrow key provider is shared inside `LiveMessaging.make`.
+    private func installLiveStore() {
+        guard !isSampleData, messaging == nil, let session = sessions?.current, let client = live?.client,
+              let built = LiveMessaging.make(
+                session: session, client: client, network: network, settings: settings.autoDownload) else { return }
+        messaging = built
+        built.store.onChange = { [weak self] in self?.revision += 1 }
+        chatStore = built.store
+        revision += 1
+    }
+
+    /// Fetches and processes the inbox (a pushed item, or catching up after the socket was away).
+    private func syncInbox() async {
+        await messaging?.store.syncInbox()
+    }
+
     private func startLive() async {
         guard let live, live.isSignedIn, let client = live.client else { return }
         if connection == nil {
@@ -277,7 +322,11 @@ final class AppModel {
             liveTasks = [
                 Task { [weak self] in
                     for await event in c.events {
-                        if case .deviceRevoked = event { await self?.refreshDevices() }
+                        switch event {
+                        case .deviceRevoked: await self?.refreshDevices()
+                        case .inbox: await self?.syncInbox()
+                        default: break
+                        }
                     }
                 },
                 Task { [weak self] in
