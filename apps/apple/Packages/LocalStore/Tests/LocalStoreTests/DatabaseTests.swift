@@ -59,7 +59,10 @@ struct Boom: Error {}
     try migrate(db)
     try applyProtection(to: url, .untilFirstUnlock)
     let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
-    #expect(attrs[.protectionKey] as? FileProtectionType == .completeUntilFirstUserAuthentication)
+    // The iOS Simulator has no data protection and reports no key; a device reports the class that was set.
+    if let level = attrs[.protectionKey] as? FileProtectionType {
+        #expect(level == .completeUntilFirstUserAuthentication)
+    }
 }
 #endif
 
