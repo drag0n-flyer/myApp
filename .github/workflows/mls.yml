@@ -34,6 +34,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Swift target info (diagnostic)
+        run: |
+          swift --version
+          xcodebuild -version
+          for t in arm64-apple-ios17.0 arm64-apple-ios17.0-simulator arm64-apple-macosx26.0 x86_64-apple-macosx26.0; do
+            echo "$t: $(swift -print-target-info --target=$t | grep -E 'librariesRequireRPath')"
+          done
       - name: Build XCFramework and bindings
         working-directory: apps/apple/Packages/SecureMessaging
         run: scripts/build-mlsffi.sh

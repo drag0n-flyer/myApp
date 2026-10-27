@@ -13,6 +13,7 @@ rustup target add aarch64-apple-ios aarch64-apple-ios-sim aarch64-apple-darwin x
 
 cd "$CRATE"
 for target in aarch64-apple-ios aarch64-apple-ios-sim aarch64-apple-darwin x86_64-apple-darwin; do
+    echo "== cargo build $target"
     cargo build --release --lib --target "$target"
 done
 
