@@ -67,35 +67,66 @@ public actor Outbox: ControlSender {
             outbox: OutboxRecord(messageID: envelope.id, chatID: chatID, envelope: data, attempts: 0, nextAttemptAt: now))
     }
 
+    /// A queued message that failed this many attempts, or sat in the queue this long, is marked `failed`
+    /// (the UI shows it as not sent, with retry) so the chat's next message can go.
+    public static let maxAttempts = 10
+    public static let maxAge: TimeInterval = 24 * 3600
+
     /// Sends what is due. Only the oldest queued message of a chat is eligible, so a newer message never
     /// overtakes an older one that is waiting or backing off, in this flush or a later one. Throws when the
-    /// queue cannot be read or a result cannot be recorded.
+    /// queue cannot be read; an error recording one result is remembered, the other chats go on, and the first
+    /// such error is rethrown at the end.
     public func flush() async throws {
         guard !flushing else { return }
         flushing = true
         defer { flushing = false }
         var blockedChats: Set<String> = []
+        var firstError: Error?
         var progressed = true
         while progressed {
             progressed = false
             for item in try deps.repo.dueOutboxHeads(at: deps.now()) where !blockedChats.contains(item.chatID) {
-                let envelope = ContentEnvelope.decode(item.envelope)
-                switch await attempt(envelope, chatID: item.chatID) {
-                case .sent:
-                    try deps.repo.completeSend(id: item.messageID, status: "sent")
-                    progressed = true
-                case .failed:
-                    try deps.repo.completeSend(id: item.messageID, status: "failed")
-                    progressed = true
-                case .waiting:
+                do {
+                    if try await process(item) { progressed = true } else { blockedChats.insert(item.chatID) }
+                } catch {
                     blockedChats.insert(item.chatID)
-                case .retry:
-                    let delay = min(pow(2, Double(item.attempts)), 300)
-                    try deps.repo.bumpOutbox(id: item.messageID, nextAttempt: deps.now().addingTimeInterval(delay))
-                    blockedChats.insert(item.chatID)
+                    if firstError == nil { firstError = error }
                 }
             }
         }
+        if let firstError { throw firstError }
+    }
+
+    /// Returns true when the head left the queue (sent or failed).
+    private func process(_ item: OutboxRecord) async throws -> Bool {
+        let queuedAt = try deps.repo.message(id: item.messageID)?.receivedAt ?? deps.now()
+        if deps.now().timeIntervalSince(queuedAt) > Self.maxAge {
+            try deps.repo.completeSend(id: item.messageID, status: "failed")
+            return true
+        }
+        switch await attempt(ContentEnvelope.decode(item.envelope), chatID: item.chatID) {
+        case .sent:
+            try deps.repo.completeSend(id: item.messageID, status: "sent")
+            return true
+        case .failed:
+            try deps.repo.completeSend(id: item.messageID, status: "failed")
+            return true
+        case .waiting:
+            return false
+        case .retry:
+            if item.attempts + 1 >= Self.maxAttempts {
+                try deps.repo.completeSend(id: item.messageID, status: "failed")
+                return true
+            }
+            let delay = min(pow(2, Double(item.attempts)), 300)
+            try deps.repo.bumpOutbox(id: item.messageID, nextAttempt: deps.now().addingTimeInterval(delay))
+            return false
+        }
+    }
+
+    /// Manual retry of a failed message: it goes to the END of its chat's queue.
+    public func retry(messageID: String) throws {
+        try deps.repo.requeueSend(id: messageID)
     }
 
     /// Not stored, sent now through the chat's preferred conversation. Throws on failure.

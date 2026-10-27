@@ -374,6 +374,18 @@ public final class Repository: @unchecked Sendable {
         }
     }
 
+    /// Manual retry of a failed message: status back to `sending`, enqueue time reset, and a new outbox row at the
+    /// END of the chat's queue. Returns false when the message does not exist.
+    @discardableResult
+    public func requeueSend(id: String) throws -> Bool {
+        try db.transaction { d in
+            guard let m = try message(id: id) else { return false }
+            try d.execute("UPDATE messages SET status='sending', received_at=? WHERE id=?", [.int(ms(now())), .text(id)])
+            try enqueue(OutboxRecord(messageID: id, chatID: m.chatID, envelope: m.envelope, attempts: 0, nextAttemptAt: now()))
+            return true
+        }
+    }
+
     public func bumpOutbox(id: String, nextAttempt: Date) throws {
         try db.execute("UPDATE outbox SET attempts=attempts+1, next_attempt_at=? WHERE message_id=?", [.int(ms(nextAttempt)), .text(id)])
     }
