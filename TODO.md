@@ -5,7 +5,7 @@ Last updated: 2026-10-28 (late night).
 | Track | Done | % |
 |---|---|---|
 | iPhone/Mac Phase 1 | 119 / 128 | 93% |
-| Android | 28 / 43 | 65% |
+| Android | 29 / 43 | 67% |
 | Admin dashboard | 15 / 15 on `main`; admin accounts being added | 100% + extension |
 
 About 15 agents work in parallel. Mac CI runs only the jobs a change needs. Android CI uses Linux runners only.
@@ -55,7 +55,7 @@ The Apple apps workflow on `main` is red. The fix on `fix/swift62-ci` (Linux pac
 
 | Lane | Tasks | Done | Now |
 |---|---|---|---|
-| A, scaffold and UI | 9 | 7 | A1–A7 on `main`; A8 (onboarding, linking, QR) approved, merging; A9 (accessibility and languages) last |
+| A, scaffold and UI | 9 | 8 | A1–A8 on `main`; A9 (accessibility and languages) last |
 | B, networking and accounts | 7 | 5 | B1–B5 on `main` (B5: secure key store); B6 (passkeys, fingerprint unlock), B7 (live accounts) next |
 | C, MLS bindings | 4 | 4 | done |
 | D, storage and messaging | 7 | 4 | D1–D4 on `main`; D6 (attachments, voice notes) in its last re-review; D5, D7 next |
