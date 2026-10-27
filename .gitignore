@@ -28,3 +28,7 @@ deploy/data/
 *.pem
 *.p8
 *.key
+deploy/.env
+deploy/turnserver.rendered.conf
+deploy/secrets/
+deploy/certs/
