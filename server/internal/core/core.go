@@ -14,3 +14,11 @@ type Directory interface {
 	DeviceIDs(ctx context.Context, accountID string) ([]string, error)
 	AccountOf(ctx context.Context, deviceID string) (string, error) // ErrNotFound if none
 }
+
+// Principal identifies the authenticated caller of a request.
+type Principal struct{ AccountID, DeviceID string }
+
+// SessionVerifier turns a session token into the Principal it belongs to.
+type SessionVerifier interface {
+	Verify(ctx context.Context, token string) (Principal, error)
+}
