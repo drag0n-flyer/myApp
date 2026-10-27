@@ -1,0 +1,57 @@
+# Test-only project: hosts ServerKit's Apple tests (Keychain needs an entitlement, which unhosted
+# SwiftPM test bundles lack). Separate from project.yml because that file must never mention
+# the test-only ServerKitTesting library (scripts/check-test-only-libs.sh). Never shipped.
+# Generate: xcodegen generate --spec serverkit-tests.yml
+name: ServerKitTestHost
+options:
+  deploymentTarget:
+    iOS: '17.0'
+  developmentLanguage: en
+packages:
+  ServerKit:
+    path: Packages/ServerKit
+settings:
+  base:
+    SWIFT_VERSION: '6.0'
+    SWIFT_STRICT_CONCURRENCY: complete
+    GENERATE_INFOPLIST_FILE: 'YES'
+    MARKETING_VERSION: '0.1.0'
+    CURRENT_PROJECT_VERSION: '1'
+targets:
+  ServerKitTestHost:
+    type: application
+    platform: iOS
+    sources:
+      - path: ServerKitTestHost
+        excludes: ['*.entitlements']
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.example.app.serverkit-testhost
+        CODE_SIGN_ENTITLEMENTS: ServerKitTestHost/ServerKitTestHost.entitlements
+        TARGETED_DEVICE_FAMILY: '1'
+        INFOPLIST_KEY_UILaunchScreen_Generation: 'YES'
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: 'YES'
+  ServerKitHostedTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Packages/ServerKit/Tests/ServerKitAppleTests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.example.app.serverkit-testhost.tests
+        ENABLE_TESTABILITY: 'YES'
+    dependencies:
+      - target: ServerKitTestHost
+      - package: ServerKit
+        product: ServerKit
+      - package: ServerKit
+        product: ServerKitTesting
+schemes:
+  ServerKitHosted:
+    build:
+      targets:
+        ServerKitTestHost: all
+        ServerKitHostedTests: [test]
+    test:
+      targets:
+        - ServerKitHostedTests

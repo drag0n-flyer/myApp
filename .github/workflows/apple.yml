@@ -64,7 +64,7 @@ jobs:
           appcore=false; localstore=false; serverkit=false; callcore=false; messaging=false; app=false
           if has "^$P/AppCore/"; then appcore=true; serverkit=true; callcore=true; messaging=true; app=true; fi
           if has "^$P/LocalStore/"; then localstore=true; messaging=true; app=true; fi
-          if has "^$P/ServerKit/"; then serverkit=true; messaging=true; app=true; fi
+          if has "^$P/ServerKit/|^apps/apple/(serverkit-tests\.yml|ServerKitTestHost/)"; then serverkit=true; messaging=true; app=true; fi
           if has "^$P/SecureMessaging/"; then messaging=true; app=true; fi
           if has "^$P/Messaging/"; then messaging=true; app=true; fi
           if has "^$P/CallCore/"; then callcore=true; app=true; fi
@@ -162,6 +162,8 @@ jobs:
             apps/apple/Packages/*/.build
           key: spm-${{ runner.os }}-${{ hashFiles('apps/apple/Packages/*/Package.swift', 'apps/apple/Packages/*/Package.resolved') }}
           restore-keys: spm-${{ runner.os }}-
+      - name: Install XcodeGen
+        run: brew install xcodegen
       - name: ServerKit tests on an iOS simulator
         run: apps/apple/scripts/test-serverkit-ios.sh
       - name: Keep test results
@@ -169,7 +171,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: serverkit-ios-xcresult
-          path: ${{ runner.temp }}/serverkit-ios.xcresult
+          path: |
+            ${{ runner.temp }}/serverkit-ios.xcresult
+            ${{ runner.temp }}/serverkit-ios-hosted.xcresult
 
   # Full app builds and UI tests: when app code (or a package it uses) changed,
   # and only on main, pull requests and manual runs.
