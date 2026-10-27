@@ -1,0 +1,197 @@
+name: webrtc
+
+# Builds the custom WebRTC XCFramework (tools/webrtc). Every file under
+# tools/webrtc/ and this workflow need the owner's review before merge.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Publish a GitHub release after the smoke tests pass
+        type: boolean
+        default: false
+      slices:
+        description: JSON list of slices to build (a partial list skips package, smoke and release)
+        type: string
+        default: ""
+  push:
+    paths:
+      - "tools/webrtc/**"
+      - ".github/workflows/webrtc.yml"
+
+permissions:
+  contents: read
+
+env:
+  ALL_SLICES: '["ios-arm64","ios-sim-arm64","ios-sim-x64","mac-arm64","mac-x64"]'
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      slices: ${{ steps.slices.outputs.slices }}
+      full: ${{ steps.slices.outputs.full }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Opus probe
+        run: sh tools/webrtc/opus-probe/run-tests.sh
+      - name: Opus DNN list generator
+        run: python3 -m unittest tools/webrtc/opus/test_gen_dnn_gni.py
+      - name: apply.sh
+        run: sh tools/webrtc/apply_test.sh
+      - name: Build scripts (symbols, license scan, gn arguments)
+        run: sh tools/webrtc/build_scripts_test.sh
+      - name: Choose slices
+        id: slices
+        env:
+          REQUESTED: ${{ inputs.slices || vars.WEBRTC_SLICES }}
+        run: |
+          slices="${REQUESTED:-$ALL_SLICES}"
+          echo "slices=$slices" >> "$GITHUB_OUTPUT"
+          if [ "$(echo "$slices" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')" = 5 ]; then
+            echo "full=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "full=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: probe
+    runs-on: macos-26
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        slice: ${{ fromJSON(needs.probe.outputs.slices) }}
+    env:
+      WORK: /Users/runner/webrtc-work
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space
+        run: |
+          df -h /
+          selected=$(xcode-select -p | sed -E 's#(/Applications/[^/]+\.app)/.*#\1#')
+          echo "selected Xcode: $selected"
+          for x in /Applications/Xcode_*.app; do
+            [ "$x" = "$selected" ] || { echo "removing $x"; sudo rm -rf "$x"; }
+          done
+          sudo rm -rf ~/Library/Android /usr/local/share/dotnet
+          df -h /
+      - name: Build ${{ matrix.slice }}
+        run: sh tools/webrtc/build.sh "${{ matrix.slice }}" "$WORK"
+      - name: Disk after build
+        if: always()
+        run: df -h /
+      - name: Licenses
+        if: matrix.slice == 'ios-arm64'
+        run: |
+          cd "$WORK/src"
+          python3 tools_webrtc/libs/generate_licenses.py --target //sdk:framework_objc out/ios-arm64 "$WORK/licenses"
+          ls -l "$WORK/licenses"
+      - name: Pack the slice
+        run: tar -C "$WORK/artifacts" -cf "slice-${{ matrix.slice }}.tar" "${{ matrix.slice }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slice-${{ matrix.slice }}
+          path: slice-${{ matrix.slice }}.tar
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: matrix.slice == 'ios-arm64'
+        with:
+          name: licenses
+          path: /Users/runner/webrtc-work/licenses
+          if-no-files-found: error
+
+  package:
+    needs: [probe, build]
+    if: needs.probe.outputs.full == 'true'
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: downloaded
+      - name: Unpack slices
+        run: |
+          mkdir -p artifacts
+          for t in downloaded/slice-*/slice-*.tar; do tar -C artifacts -xf "$t"; done
+          mkdir -p artifacts/licenses
+          cp downloaded/licenses/* artifacts/licenses/
+          ls artifacts artifacts/licenses
+      - name: Package
+        run: sh tools/webrtc/package.sh artifacts release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: release
+          if-no-files-found: error
+
+  smoke:
+    needs: package
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: release
+      - name: Unzip the XCFramework into the package
+        run: |
+          ditto -x -k release/WebRTC.xcframework.zip apps/apple/Packages/WebRTCBinary
+          ls apps/apple/Packages/WebRTCBinary
+      - name: swift test (arm64)
+        working-directory: apps/apple/Packages/WebRTCBinary
+        env:
+          WEBRTC_LOCAL_XCFRAMEWORK: WebRTC.xcframework
+        run: swift test
+      - name: swift test (x86_64, Rosetta)
+        working-directory: apps/apple/Packages/WebRTCBinary
+        env:
+          WEBRTC_LOCAL_XCFRAMEWORK: WebRTC.xcframework
+        run: |
+          softwareupdate --install-rosetta --agree-to-license || true
+          swift test --arch x86_64
+      - name: xcodebuild test (iOS Simulator)
+        working-directory: apps/apple/Packages/WebRTCBinary
+        env:
+          WEBRTC_LOCAL_XCFRAMEWORK: WebRTC.xcframework
+        run: |
+          name="iPhone 17"
+          xcrun simctl list devices available | grep -q "$name (" || \
+            name=$(xcrun simctl list devices available | grep -m1 -o 'iPhone [^(]*' | sed 's/ *$//')
+          echo "simulator: $name"
+          xcodebuild test -scheme WebRTCBinary -destination "platform=iOS Simulator,name=$name"
+
+  release:
+    needs: [probe, smoke]
+    if: inputs.release && needs.probe.outputs.full == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: release
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          . tools/webrtc/VERSION
+          tag="webrtc-m${WEBRTC_MILESTONE}.${RELEASE}"
+          cat > notes.md <<NOTES
+          WebRTC M${WEBRTC_MILESTONE} (${WEBRTC_BRANCH}, commit ${WEBRTC_COMMIT}) with libopus ${OPUS_VERSION}.
+
+          Opus features: Deep PLC, OSCE (LACE and NoLACE), OSCE bandwidth extension. DRED is off.
+          Decoder complexity 7. Packet lengths up to 120 ms. Hardware H.264 only (software H.264 and dav1d are off).
+          Slices: iOS 17 device, iOS 17 simulator (arm64, x86_64), macOS 14 (arm64, x86_64).
+
+          Device check: pending (plan 5)
+          NOTES
+          cd release
+          gh release create "$tag" WebRTC.xcframework.zip WebRTC.dSYMs.zip LICENSE.md VERSION checksum.txt \
+            --title "WebRTC M${WEBRTC_MILESTONE} + Opus ${OPUS_VERSION} (${RELEASE})" --notes-file ../notes.md
