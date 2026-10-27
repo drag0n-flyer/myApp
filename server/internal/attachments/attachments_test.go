@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -211,8 +212,42 @@ func TestPrune(t *testing.T) {
 		t.Fatalf("%d files left", n)
 	}
 	var n int
-	x.d.DB.QueryRow(context.Background(), `select count(*) from attachments`).Scan(&n)
+	if err := x.d.DB.QueryRow(context.Background(), `select count(*) from attachments`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
 	if n != 0 {
 		t.Fatalf("%d rows left", n)
+	}
+}
+
+func TestPruneContinuesPastOneFailure(t *testing.T) {
+	x := setup(t)
+	for i := 0; i < 3; i++ {
+		if res := x.c.Do(&x.me, "POST", "/v1/attachments", []byte("secret")); res.Status != 200 {
+			t.Fatal(res)
+		}
+	}
+	// Make one blob undeletable: a non-empty directory where the file was.
+	// Prune goes in id order, so the first id is the one that fails first and
+	// a pass that stops at the first error never reaches the other two.
+	fs := files(t, x.root)
+	sort.Slice(fs, func(i, j int) bool { return filepath.Base(fs[i]) < filepath.Base(fs[j]) })
+	stuck := fs[0]
+	if err := os.Remove(stuck); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(stuck, "child"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	x.f.Clock.Advance(31 * 24 * time.Hour)
+	if err := x.m.PruneOnce(context.Background()); err == nil {
+		t.Fatal("expected the failure to be reported")
+	}
+	var n int
+	if err := x.d.DB.QueryRow(context.Background(), `select count(*) from attachments`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("%d rows left, want only the stuck one", n)
 	}
 }

@@ -98,7 +98,9 @@ func (p *Prober) probe(ctx context.Context, addr string) (time.Duration, error) 
 	}
 	defer c.Close()
 	if dl, ok := ctx.Deadline(); ok {
-		c.SetDeadline(dl)
+		if err := c.SetDeadline(dl); err != nil {
+			return 0, err // without a deadline the read below could hang
+		}
 	}
 	var tx [12]byte
 	if _, err := rand.Read(tx[:]); err != nil {

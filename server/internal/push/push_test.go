@@ -243,6 +243,35 @@ func TestGatewayErrorIsReturned(t *testing.T) {
 	}
 }
 
+func TestRedirectIsNotFollowed(t *testing.T) {
+	d, _, _ := setup(t, 200)
+	var hits int
+	var mu sync.Mutex
+	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		mu.Lock()
+		hits++
+		mu.Unlock()
+	}))
+	t.Cleanup(target.Close)
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/v1/push", http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(redirector.Close)
+	d.Config.PushGatewayURL = redirector.URL
+	m := push.New(d)
+	c := testkit.Serve(t, d, m)
+	p := testkit.Account(t, d, "alice")
+	putToken(t, c, p, "alert", []byte("h"))
+	if err := m.Push(context.Background(), p.DeviceID, core.PushMessage, []byte("x")); err == nil {
+		t.Fatal("a redirect answer must be an error")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if hits != 0 {
+		t.Fatalf("the signed request was replayed to the redirect target %d times", hits)
+	}
+}
+
 func TestKeygenCommand(t *testing.T) {
 	d, _, _ := setup(t, 200)
 	var out bytes.Buffer

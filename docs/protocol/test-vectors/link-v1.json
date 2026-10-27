@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "note": "TEST ONLY — published keys",
+  "info": "link-v1",
+  "recipientPrivateKeyHex": "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f",
+  "recipientPublicKeyB64": "Z13VdO13iTELPS52gfN5C0ZsdzsVIf7PNld5WDcepS8",
+  "cases": [
+    {
+      "plaintextJSON": "{\"blocked\":[\"a0000000-0000-4000-8000-000000000009\"],\"chats\":[{\"id\":\"c0000000-0000-4000-8000-000000000001\",\"isRequest\":false,\"muted\":true},{\"id\":\"c0000000-0000-4000-8000-000000000002\",\"isRequest\":true,\"muted\":false}],\"contacts\":[{\"accountID\":\"a0000000-0000-4000-8000-000000000002\",\"addedAt\":1793093400000,\"displayName\":\"Bob Ünal\",\"isContact\":true,\"username\":\"bob\"},{\"accountID\":\"a0000000-0000-4000-8000-000000000003\",\"addedAt\":1793093465000,\"displayName\":\"Carol\",\"isContact\":false,\"username\":\"carol\"}],\"folders\":[{\"chatIDs\":[\"c0000000-0000-4000-8000-000000000001\"],\"id\":\"f0000000-0000-4000-8000-000000000001\",\"name\":\"Family\",\"position\":0}],\"settings\":{\"setting.readReceipts\":\"ZmFsc2U=\"},\"v\":1}",
+      "sealedB64": "Ih2w6iAO66HjnTFFFsPxuzAh-R-8VpkKba6FtGhQSgi2p4DiggdaJpNaHFzBO-rs79mzkkAC5dmlGM4I9x0trarwD5mN6A4rwivzMTNFINH7rSR5lTdnVEOzMgkh8aNRHwGiOI0kNvt4mxXJq4Hj-7QmOByj3n4R80-_DcITGZudjY5LEQcJHmttcxwUWSMBnM4VdaeMn0Bz6jV1LRxBT2RxD9Pv2OoUOudcK9tfzPCTCAnOAYaar6kNauxrV3atzKP7k4HpEA3hExVrPsZwDpg3OeaobwCeoJUgQkd5CmpBb5_gefMR1z-IvpaebatN2g18qEy-plqKRXbkbOB55P7Bx6XLUu-8i0XaidS1psRSN8n03heVZj9yCGgcbEmIXx-lvdcIrHVWRwOPoo-nnb02ZrG89nqlEpyWNTUCwAnCGVXdtpufZjAvM50Dc0Pz5l_fBUv864r4bb9AU_WPkLHaCLkybXMq3qU0U8Du65BjenGr1NHZpMOorUiaSLE6AOuxQo7dCrP9D11YIn_nZoZcHcbN48TT222r5gO5k_CQ8NYxDjHSi_mOgSUU8OSpCyu8qE8q36pY_6xQ6NA-NNExB8-R5VGKP-e81rHt0wjTn3OW2395ZlDHN4M9v50BJ1WGsiG2KhdFLpkoGt7INTBj48guTF7kxr5ImxYwaAiHXBqVopmGIAWUMxmcv2XIdDRrcVgLo-zrgiICsd6M-ANj3_bKDP1W-AqsZhtibqvFUfwL7LueHtna0Lfcvj-NjKrq4pKP-lOWVa93JcWYJP8umJKSQAsFDlzjnBoY_nlIk6gMXj1wvGxOsMtMqEAIXGL40qv4TUrRQU5s1wav2JvtvsSYzLeVt5GHROSSNnYtjYp85Af0PG2Brz30h7tdxQ6UxpgYEa4D14LcCt-kbOwxfTuzYTSE9WaW8-feyGZ7zQHx7qiO_jnibxBgcAyweB12w2ZvUD0FNdCkQoSrR13fzJIp"
+    }
+  ]
+}

@@ -45,7 +45,7 @@ One Go module in `server/` produces two binaries.
 | `pushgw` | The push gateway: server registry, request signatures, sealed handles, APNs | D |
 | `social` | User lookup, email discovery, profile settings, blocks, reports | E |
 | `attachments` | Encrypted blob upload, download and expiry | E |
-| `serverinfo` | `GET /v1/server`, `/invite/{code}` page, apple-app-site-association | E |
+| `serverinfo` | `GET /v1/server`, `/invite/{code}` page, apple-app-site-association, assetlinks.json | E |
 
 Binaries: `server/cmd/appserver` and `server/cmd/pushgw`. Deployment files go in `deploy/`.
 
@@ -109,6 +109,7 @@ Environment variables (`APP_` prefix). Required ones are marked ★.
 | `APP_PUSH_SERVER_ID` | — | ID the gateway gave this server at registration |
 | `APP_ESCROW_KEY_FILE` | — | X25519 private key (PKCS#8 PEM); required only when the policy allows server-readable |
 | `APP_APPLE_APP_IDS` | — | Comma list `TEAMID.bundle.id` for apple-app-site-association |
+| `APP_ANDROID_APPS` | — | Comma list `package:<64 hex>` (the app's signing-certificate SHA-256) for `assetlinks.json` and Android passkey origins; empty accepts no Android origins |
 | `APP_TRUST_PROXY` | `false` | Use the last `X-Forwarded-For` hop as the client IP |
 | `APP_DOCS_DIR` | — | Operator documents served at `/.well-known/security.txt`, `/privacy`, `/terms` (plan 9) |
 
@@ -136,6 +137,8 @@ Migrations are embedded SQL files run in filename order. Prefixes are reserved p
 `0001_core.sql` (F):
 - `accounts(id uuid pk, username text unique not null, email text not null, email_lower text unique not null, display_name text not null default '', find_by_email bool not null default false, created_at timestamptz not null default now())`
 - `devices(id uuid pk, account_id uuid not null references accounts on delete cascade, name text not null, platform text not null check (platform in ('iphone','mac')), created_at timestamptz not null default now(), last_seen_at timestamptz not null default now())`
+
+`1003_android_platform.sql` (A): `devices.platform` and `link_requests.platform` also accept `android`.
 
 All later tables reference `accounts(id)` or `devices(id)` with `on delete cascade`. **Revoking a device deletes its row, and deleting an account deletes its row.** The cascade removes sessions, KeyPackages, inbox items, conversation membership, push tokens and blocks, with no code in other lanes.
 
@@ -166,7 +169,7 @@ Usernames: `^[a-z][a-z0-9_]{2,31}$` (same rule as AppCore `UsernameCheck`). Rese
 | `POST /v1/signup/start` | – | `{inviteCode?, username, email}` → `{signupID}`; sends the email code. Errors: `invite_required`, `invite_invalid`, `invalid_username`, `username_taken`, `invalid_email` |
 | `POST /v1/signup/verify` | – | `{signupID, code}` → `{}`; `code_invalid`, `expired`, `rate_limited` (after 5 wrong codes) |
 | `POST /v1/signup/passkey/options` | – | `{signupID}` (must be verified) → WebAuthn `PublicKeyCredentialCreationOptions` JSON |
-| `POST /v1/signup/finish` | – | `{signupID, credential?, deviceName, platform}` → `{accountID, deviceID, sessionToken}`. Uses up the invite and creates the account, device, passkey (if `credential` is given) and session in one transaction. `username_taken` if the name was taken meanwhile. `credential` is optional because iOS allows passkeys only for hosts in the app's associated domains: on other self-hosted servers the account signs in by email code (client plan 6) |
+| `POST /v1/signup/finish` | – | `{signupID, credential?, deviceName, platform}` → `{accountID, deviceID, sessionToken}`. Uses up the invite and creates the account, device, passkey (if `credential` is given) and session in one transaction. `platform` is `iphone`, `mac` or `android`. `username_taken` if the name was taken meanwhile. `credential` is optional because iOS allows passkeys only for hosts in the app's associated domains: on other self-hosted servers the account signs in by email code (client plan 6). Android passkeys are accepted only from origins `android:apk-key-hash:<base64url, no padding, of the fingerprint>` for the apps in `APP_ANDROID_APPS` (none by default) |
 | `POST /v1/signin/passkey/options` | – | `{}` → `{challengeID, options}` (discoverable credential, user verification required) |
 | `POST /v1/signin/passkey/finish` | – | `{challengeID, credential, deviceName, platform}` → `{accountID, deviceID, sessionToken}` (new device) |
 | `POST /v1/signin/email/start` | – | `{email}` → `202 {}` always, whether or not the email exists |
@@ -306,6 +309,7 @@ Besides the codes of section 7, the gateway also answers `conflict` (409, a repl
 | `GET /v1/server` | – | the server info document below |
 | `GET /invite/{code}` | – | small HTML page: "Open this invite in [App]" (target of the universal link) |
 | `GET /.well-known/apple-app-site-association` | – | `applinks` for `/invite/*` and `/link/*`, plus `webcredentials`, for `APP_APPLE_APP_IDS` |
+| `GET /.well-known/assetlinks.json` | – | Digital Asset Links for `APP_ANDROID_APPS`: one entry per package with relations `delegate_permission/common.get_login_creds` and `delegate_permission/common.handle_all_urls` and the fingerprints as upper-case colon hex; `[]` when unset |
 
 Server info document:
 ```json

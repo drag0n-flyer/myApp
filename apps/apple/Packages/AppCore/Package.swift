@@ -8,7 +8,7 @@ let package = Package(
         .library(name: "AppCore", targets: ["AppCore"]),
     ],
     targets: [
-        .target(name: "AppCore"),
+        .target(name: "AppCore", resources: [.copy("Resources/oss-notices.json")]),
         .testTarget(name: "AppCoreTests", dependencies: ["AppCore"]),
     ]
 )

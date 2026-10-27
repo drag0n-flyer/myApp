@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"slices"
 	"strings"
@@ -182,7 +183,7 @@ func claimOne(ctx context.Context, tx pgx.Tx, deviceID string) ([]byte, bool, er
 	err := tx.QueryRow(ctx,
 		`select id, data from key_packages where device_id = $1 order by id limit 1`,
 		deviceID).Scan(&id, &data)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, false, nil
 	}
 	if err != nil {

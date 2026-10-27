@@ -1,0 +1,29 @@
+name: vector-copies
+
+on:
+  workflow_dispatch:
+  push:
+    branches-ignore: [feat/server]
+    paths:
+      - 'docs/protocol/test-vectors/**'
+      - 'apps/apple/Packages/Messaging/Tests/MessagingTests/Resources/**'
+      - 'tools/vectors/**'
+      - 'scripts/check-vector-copies.sh'
+      - '.github/workflows/vector-copies.yml'
+  pull_request:
+    paths:
+      - 'docs/protocol/test-vectors/**'
+      - 'apps/apple/Packages/Messaging/Tests/MessagingTests/Resources/**'
+      - 'tools/vectors/**'
+      - 'scripts/check-vector-copies.sh'
+      - '.github/workflows/vector-copies.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  copies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/check-vector-copies.sh

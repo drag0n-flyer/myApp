@@ -28,7 +28,8 @@ public protocol MediaSession: AnyObject, Sendable {
     func rollback() async throws
     func add(_ candidate: IceCandidate) async throws
     func setAudioMaxBitrate(_ bps: Int) async
-    func setVideo(_ tier: VideoTier?) async
+    /// `ceiling` is the call's data-mode ceiling (own setting and peer's, whichever is lower); the tier must be clamped to it.
+    func setVideo(_ tier: VideoTier?, ceiling: DataMode) async
     func setMuted(_ on: Bool) async
     func setNoiseSuppression(_ mode: NoiseSuppression) async
     func stats() async -> MediaStats

@@ -47,7 +47,13 @@ var _ core.Pusher = (*Module)(nil)
 
 // New returns the push module.
 func New(d core.Deps) *Module {
-	return &Module{d: d, hc: &http.Client{Timeout: httpTimeout}}
+	// Never follow a redirect: the request is signed for one URL, and a
+	// redirect would send it and its handle to another host.
+	hc := &http.Client{
+		Timeout:       httpTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	return &Module{d: d, hc: hc}
 }
 
 func validKind(k string) bool { return k == "alert" || k == "voip" }

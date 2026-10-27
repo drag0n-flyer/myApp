@@ -1,6 +1,7 @@
 package serverinfo_test
 
 import (
+	"bytes"
 	"crypto/ecdh"
 	"crypto/rand"
 	"crypto/x509"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/drag0n-flyer/myApp/server/internal/config"
 	"github.com/drag0n-flyer/myApp/server/internal/core"
 	"github.com/drag0n-flyer/myApp/server/internal/serverinfo"
 	"github.com/drag0n-flyer/myApp/server/internal/testkit"
@@ -66,7 +68,9 @@ func TestServerInfoEscrowKey(t *testing.T) {
 	}
 	der, _ := x509.MarshalPKCS8PrivateKey(priv)
 	path := filepath.Join(t.TempDir(), "escrow.pem")
-	os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600)
+	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	// The key is published whenever a key file is set, even for e2ee policy.
 	e2ee := serve(t, func(d *core.Deps) { d.Config.EscrowKeyFile = path })
@@ -114,5 +118,34 @@ func TestAASA(t *testing.T) {
 	  "webcredentials":{"apps":["T.a.b","T.a.b.mac"]}}`)
 	if got := decode(t, string(res.Body)); !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %s", res.Body)
+	}
+}
+
+func TestAssetlinksListsConfiguredApps(t *testing.T) {
+	fp := bytes.Repeat([]byte{0xab}, 32)
+	c := serve(t, func(d *core.Deps) {
+		d.Config.AndroidApps = []config.AndroidApp{{Package: "org.a.b", Fingerprint: fp}}
+	})
+	res := c.Do(nil, "GET", "/.well-known/assetlinks.json", nil)
+	if res.Status != 200 || res.Header.Get("Content-Type") != "application/json" {
+		t.Fatalf("%s %v", res, res.Header)
+	}
+	var got any
+	if err := json.Unmarshal(res.Body, &got); err != nil {
+		t.Fatal(err)
+	}
+	var want any
+	_ = json.Unmarshal([]byte(`[{"relation":["delegate_permission/common.get_login_creds","delegate_permission/common.handle_all_urls"],
+	  "target":{"namespace":"android_app","package_name":"org.a.b","sha256_cert_fingerprints":["`+strings.TrimSuffix(strings.Repeat("AB:", 32), ":")+`"]}}]`), &want)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %s", res.Body)
+	}
+}
+
+func TestAssetlinksEmptyWhenUnset(t *testing.T) {
+	c := serve(t)
+	res := c.Do(nil, "GET", "/.well-known/assetlinks.json", nil)
+	if res.Status != 200 || strings.TrimSpace(string(res.Body)) != "[]" {
+		t.Fatalf("%s", res)
 	}
 }
