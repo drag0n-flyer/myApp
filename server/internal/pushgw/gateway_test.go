@@ -256,7 +256,7 @@ func TestPushDelivers(t *testing.T) {
 		t.Fatal("apns not called")
 	}
 	g := e.apns.got[0]
-	if g.h != goodHandle || g.kind != "message" || string(g.data) != "hello" {
+	if g.h != goodHandle || g.kind != "message" || !bytes.Equal(g.data, pushproto.Pad([]byte("hello"))) {
 		t.Fatalf("%+v", g)
 	}
 }

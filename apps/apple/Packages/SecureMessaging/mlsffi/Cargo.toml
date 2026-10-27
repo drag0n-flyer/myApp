@@ -1,0 +1,23 @@
+[package]
+name = "mlsffi"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "mlsffi"
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+
+[dependencies]
+mls-rs = { git = "https://github.com/awslabs/mls-rs", rev = "323bd84f52e410c9ecb0b1ccd84a5a9f7f191b5a" }
+mls-rs-core = { git = "https://github.com/awslabs/mls-rs", rev = "323bd84f52e410c9ecb0b1ccd84a5a9f7f191b5a" }
+mls-rs-crypto-rustcrypto = { git = "https://github.com/awslabs/mls-rs", rev = "323bd84f52e410c9ecb0b1ccd84a5a9f7f191b5a" }
+# Approved by owner ruling: needed only to name `Zeroizing` in the mls-rs-core trait signatures.
+# Already in the tree via mls-rs-core; not re-exported by any mls-rs crate.
+zeroize = "1"
+uniffi = { version = "0.31", features = ["cli"] }
+

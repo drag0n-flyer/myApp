@@ -1,0 +1,84 @@
+name: MLS client core
+
+on:
+  workflow_dispatch:
+  push:
+    branches-ignore: [feat/server]
+    paths:
+      - "apps/apple/Packages/SecureMessaging/**"
+      - "mlsffi/**"
+      - ".github/workflows/mls.yml"
+  pull_request:
+    paths:
+      - "apps/apple/Packages/SecureMessaging/**"
+      - "mlsffi/**"
+      - ".github/workflows/mls.yml"
+
+concurrency:
+  group: mls-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: cargo test (RustCrypto provider)
+        working-directory: apps/apple/Packages/SecureMessaging/mlsffi
+        run: cargo test --locked
+
+  apple:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build XCFramework and bindings
+        working-directory: apps/apple/Packages/SecureMessaging
+        run: scripts/build-mlsffi.sh
+      - name: cargo test (RustCrypto provider)
+        working-directory: apps/apple/Packages/SecureMessaging/mlsffi
+        run: cargo test --locked
+      - name: Check minimum OS versions
+        working-directory: apps/apple/Packages/SecureMessaging/mlsffi
+        run: |
+          set -euo pipefail
+          check() { # target, platform name, minos
+            d="$(mktemp -d)"; (cd "$d" && ar -x "$OLDPWD/target/$1/release/libmlsffi.a")
+            out="$(find "$d" -name '*.o' -exec vtool -show-build {} \; | grep -E ' platform | minos ' | sort | uniq -c)"
+            echo "$1:"; echo "$out"
+            grep -q "platform $2" <<<"$out"
+            grep -q "minos $3" <<<"$out"
+            ! grep ' minos ' <<<"$out" | grep -qv "minos $3"
+            ! grep ' platform ' <<<"$out" | grep -qv "platform $2"
+          }
+          check aarch64-apple-ios IOS 17.0
+          check aarch64-apple-ios-sim IOSSIMULATOR 17.0
+          check aarch64-apple-darwin MACOS 14.0
+          check x86_64-apple-darwin MACOS 14.0
+      - name: Binding drift check
+        working-directory: apps/apple/Packages/SecureMessaging
+        run: git diff --exit-code Sources/MLSFFIBindings
+      - name: Swift package builds with the XCFramework
+        working-directory: apps/apple/Packages/SecureMessaging
+        run: swift build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MLSFFI-xcframework
+          path: apps/apple/Packages/SecureMessaging/Artifacts/MLSFFI.xcframework
+
+  swift-linux:
+    runs-on: ubuntu-24.04
+    container: swift:6.0
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: SecureMessagingCore tests
+        working-directory: apps/apple/Packages/SecureMessaging
+        run: swift test

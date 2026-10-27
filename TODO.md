@@ -1,39 +1,51 @@
 # Phase 1 progress
 
-Last updated: 2026-10-28.
+Last updated: 2026-10-28 (evening).
 
-**Overall: 74 of 126 tasks done (59%).**
+**Overall: 106 of 127 tasks done (83%).** The total is now 127 because MLS task M7 was added.
 
-All Apple code (iPhone and Mac) is written on Linux and has never been compiled. A task with that code counts as done here once it is written and reviewed. It is checked for real only after Mac CI runs.
+About 10 agents work in parallel. Mac CI is on, and runs only the jobs a change needs.
 
-ETAs are estimates of agent working time. They count from when the blocker is cleared, not from today.
+Apple code (iPhone and Mac) is written on Linux. It counts as done here once it is written and reviewed. It is checked for real only when its Mac CI run is green.
+
+ETAs are agent working time from now.
 
 ## By plan
 
-| Plan | Done | % | Waiting on | ETA |
+| Plan | Done | % | Now | ETA |
 |---|---|---|---|---|
-| [Go server](docs/superpowers/plans/2026-10-27-go-server.md) | 27 / 27 | 100% | none (merged to `main`) | done |
-| [App UI on sample data](docs/superpowers/plans/2026-10-27-app-ui-sample-data.md) | 16 / 16 | 100% | Mac CI (tasks 7–16 never compiled) | 1 day of fixes after CI |
-| [Client networking](docs/superpowers/plans/2026-10-27-client-networking.md) | 12 / 14 | 86% | S2 review after first compile; S3 needs Mac CI | 0.5 day after CI |
-| [WebRTC + Opus build](docs/superpowers/plans/2026-10-27-webrtc-opus-build.md) | 4 / 6 | 67% | Tasks 5–6 need Mac CI | 1 day after CI |
-| [MLS client core](docs/superpowers/plans/2026-10-27-mls-client-core.md) | 3 / 6 | 50% | M3, M5, M6 need Mac CI | 1 day after CI |
-| [Client calling](docs/superpowers/plans/2026-10-27-client-calling.md) | 8 / 16 | 50% | lanes M and K and I1 need Mac CI and the WebRTC build | 2 days after CI |
-| [Security docs and release](docs/superpowers/plans/2026-10-27-security-docs-release.md) | 3 / 14 | 21% | Tasks 1 and 6: tool approval. Tasks 4, 5, 7, 10, 11, 13, 14: other plans | 1 day, spread over the phase |
-| [Client messaging](docs/superpowers/plans/2026-10-27-client-messaging.md) | 1 / 16 | 6% | F2 onward: merge MLS Swift and networking branches first | 2 days (can start now) |
-| [Call lab](docs/superpowers/plans/2026-10-27-call-lab.md) | 0 / 11 | 0% | L10: owner measures on devices with the audio adapters | 1.5 days of code, plus owner device time |
+| [Go server](docs/superpowers/plans/2026-10-27-go-server.md) | 27 / 27 | 100% | on `main` | done |
+| [App UI on sample data](docs/superpowers/plans/2026-10-27-app-ui-sample-data.md) | 16 / 16 | 100% | iPhone app builds and its UI tests pass; Mac app builds, with 1 Mac UI test left to fix | 0.5 day |
+| [Client networking](docs/superpowers/plans/2026-10-27-client-networking.md) | 12 / 14 | 86% | Linux tests green; 4 keychain tests need a small test app; Mac end-to-end test | 0.5 day |
+| [MLS client core](docs/superpowers/plans/2026-10-27-mls-client-core.md) | 5 / 7 | 71% | M1–M5 done; switching to RustCrypto on all targets (owner decision); then M6 and M7 (member keys, crash-safe decrypt, call-only check) | 1 day |
+| [WebRTC + Opus build](docs/superpowers/plans/2026-10-27-webrtc-opus-build.md) | 4 / 6 | 67% | Task 5: WebRTC builds on Mac CI (hours per build); then Task 6 (first release) | 1 day |
+| [Client calling](docs/superpowers/plans/2026-10-27-client-calling.md) | 12 / 16 | 75% | lanes P, S and K done; media lane M waits for the WebRTC build; then I1 | 1–1.5 days |
+| [Client messaging](docs/superpowers/plans/2026-10-27-client-messaging.md) | 15 / 16 | 94% | all four lanes done and on `main`; I1 (integration with calling, CI) in progress | 0.5 day |
+| [Security docs and release](docs/superpowers/plans/2026-10-27-security-docs-release.md) | 9 / 14 | 64% | Tasks 2, 3, 4, 7, 8, 9, 10, 11 done, 12 drafted; 1 and 6 need tool approval, 13 an owner decision, 14 comes last | owner items, then 0.5 day |
+| [Call lab](docs/superpowers/plans/2026-10-27-call-lab.md) | 6 / 11 | 55% | tooling and the noise bench done; lab app (L3) and Mac rig (L4) wait for WebRTC; scoring waits for approval | 1 day after WebRTC, plus owner device time |
 
-## What blocks the rest
+## Waiting on the owner
 
-1. **Mac CI.** Turn on GitHub Actions on `macos-26` runners. The repo is private, so these minutes are billed. Making the repo public makes them free. About 22 tasks wait on this.
-2. **Branch merges for messaging.** `feat/mls-swift` and `feat/client-networking` must be merged into `feat/client-messaging`. No owner action needed; ask to start.
-3. **Owner decisions still open:**
-   - wording for a paused chat
-   - approval for the docs tools (Tasks 1 and 6)
-   - a bot account for GitHub reviews
-   - the "owner to confirm" items in [rulings-2026-10-27.md](docs/superpowers/rulings-2026-10-27.md)
-4. **Owner review.** Code touching crypto, auth, push, calls and the WebRTC build gets one review at the end of Phase 1, before release.
+1. **Approve three Python libraries** for call-quality scoring: `numpy`, `onnxruntime` and `speequal`. Also choose the noise recordings: MUSAN or the DNS Challenge set.
+2. **Approve tools:** the document-check and security-gate tools (docs Tasks 1 and 6), and `age` for encrypting backups.
+3. **Decide:** code owners and branch protection (docs Task 13).
+4. **Confirm the voice-note limits:** notes under 0.5 seconds are discarded, and recording stops at 10 minutes.
+5. **Before App Store submission:** app icons, the Mac camera permission, and a privacy manifest. Apple must also grant the notification-filtering permission.
+6. **GitHub:** revoke the token stored in the repo's remote URL, and log in with `gh auth login` as `drag0n-flyer`.
+7. **The "owner to confirm" items** in [rulings-2026-10-27.md](docs/superpowers/rulings-2026-10-27.md).
+8. **End of Phase 1:**
+   - Run the call-lab measurements on real devices (about 9 hours).
+   - Submit the independent security review (docs Task 12; drafts are ready).
+   - Do one review of all code that touches encryption, sign-in, push and calls.
+
+## Owner decisions made today
+
+- The repo moved to `drag0n-flyer/myApp` (public). History was rewritten to the `drag0n-flyer` identity.
+- All reviewed work merges to `main`. Owner review of sensitive code waits until the end of Phase 1.
+- CI runs only what a change needs.
+- MLS uses RustCrypto on iPhone, Mac and Linux. The CryptoKit add-on was dropped because it needs macOS 26.
 
 ## ETA to the end of Phase 1
 
-- **Without Mac CI:** about 4 days of agent work can still be done: messaging, call-lab code, and docs. After that everything stops.
-- **With Mac CI on:** about 1 week of agent work after CI starts, including fix rounds for code that has never been compiled. The owner's device measurements (call lab L10) and the final owner review come on top.
+- **Agent work:** about 1–1.5 days. The WebRTC build sets the pace, because calling media and the lab app wait for it.
+- **After that:** the owner's device measurements, the security review submission, and the final owner review.

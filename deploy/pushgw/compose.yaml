@@ -1,0 +1,63 @@
+# The push gateway on its own host: postgres, pushgw and Caddy. It holds the
+# Apple push key, so nothing else runs here. Copy .env.example to .env first.
+#   docker compose up -d
+# PUSHGW_DB_PASSWORD must be set in .env: postgres refuses to start without it.
+# The .p8 file and the HPKE key are placed by the owner in /etc/pushgw/keys on
+# the host and mounted read-only; they are never in this repository.
+services:
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pushgw
+      POSTGRES_PASSWORD: ${PUSHGW_DB_PASSWORD:-}
+      POSTGRES_DB: pushgw
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pushgw -d pushgw"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  pushgw:
+    build:
+      context: ../../server
+      dockerfile: ../deploy/Dockerfile
+    entrypoint: ["/pushgw"]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PUSHGW_LISTEN: ":8081"
+      PUSHGW_DATABASE_URL: postgres://pushgw:${PUSHGW_DB_PASSWORD:-}@postgres:5432/pushgw?sslmode=disable
+      PUSHGW_HPKE_KEY_FILE: ${PUSHGW_HPKE_KEY_FILE:-/keys/pushgw-hpke.pem}
+      PUSHGW_APNS_KEY_FILE: ${PUSHGW_APNS_KEY_FILE:-/keys/apns.p8}
+      PUSHGW_APNS_KEY_ID: ${PUSHGW_APNS_KEY_ID:-}
+      PUSHGW_APNS_TEAM_ID: ${PUSHGW_APNS_TEAM_ID:-}
+      PUSHGW_BUNDLE_IDS: ${PUSHGW_BUNDLE_IDS:-}
+      PUSHGW_TRUST_PROXY: "true" # Caddy sets X-Forwarded-For
+    volumes:
+      - /etc/pushgw/keys:/keys:ro
+
+  caddy:
+    image: caddy:2.10
+    restart: unless-stopped
+    depends_on:
+      - pushgw
+    environment:
+      PUSH_HOST: ${PUSH_HOST:-push.example.org}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+
+volumes:
+  pgdata:
+  caddydata:
+  caddyconfig:

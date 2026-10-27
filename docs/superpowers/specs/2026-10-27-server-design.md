@@ -192,7 +192,7 @@ Phase 1 conversations have exactly two accounts. The server tracks which **devic
 |---|---|---|
 | `POST /v1/keypackages` | ✓ | `{keyPackages:[b64]}` → `{count}`; at most 16 KiB each, at most 100 stored per device |
 | `GET /v1/keypackages/count` | ✓ | → `{count}` |
-| `POST /v1/keypackages/claim` | ✓ | `{accountID}` → `{keyPackages:[{deviceID, keyPackage}]}`, one per device of that account. A device's last KeyPackage is returned without being removed. If the target blocked the caller, or does not exist: `not_found` |
+| `POST /v1/keypackages/claim` | ✓ | `{accountID, deviceIDs?}` → `{keyPackages:[{deviceID, keyPackage}]}`, one per device of that account, or only per device listed in the optional `deviceIDs` (omitted or empty: all; IDs that are not devices of the account are ignored). A device's last KeyPackage is returned without being removed. If the target blocked the caller, or does not exist: `not_found` |
 | `POST /v1/conversations` | ✓ | `{members:[accountID]}` (exactly one other account) → `{conversationID, mode, epoch:0}`. The caller's device is the only member device at epoch 0 |
 | `GET /v1/conversations/{id}` | ✓ (member device) | → `{conversationID, mode, epoch}`; a device that joined by Welcome learns the mode here. Non-members: `not_found` |
 | `POST /v1/conversations/{id}/commits` | ✓ (member device) | `{epoch, commit:b64, welcome?:b64, addDevices?:[id], removeDevices?:[id]}` → `{epoch}` (the new epoch). The commit is accepted only if `epoch` equals the current epoch; otherwise `409 stale_epoch` with `{"currentEpoch":n}` in `error.details`. Added devices must belong to the conversation's accounts |
@@ -252,9 +252,9 @@ Server endpoints: `PUT /v1/push/tokens/{kind}` (kind `alert` or `voip`) `{sealed
 **Padding:** the body is a 2-byte big-endian length, then the payload, then zeros up to the smallest bucket of 256, 512, 1024, 2048 or 3072 bytes. A payload over 3070 bytes is replaced by an empty one, and the device then fetches its inbox.
 
 **Server → gateway:**
-- The request is `POST {gateway}/v1/push` with body `{handle:b64, kind:"message"|"call", data:b64}`.
+- The request is `POST {gateway}/v1/push` with body `{handle:b64, kind:"message"|"call", data:b64, nonce?:string}`, where `b64` is standard base64 with padding, not base64url. Decision 3 covers client-facing fields only.
 - It carries three headers: `X-Server-ID`, `X-Timestamp` (Unix seconds) and `X-Signature`.
-- `X-Signature` is base64 Ed25519 over `"v1\n"+method+"\n"+path+"\n"+timestamp+"\n"+hex(sha256(body))`.
+- `X-Signature` is standard base64 (with padding) Ed25519 over `"v1\n"+method+"\n"+path+"\n"+timestamp+"\n"+hex(sha256(body))`.
 - If the gateway answers `410`, the server deletes that handle.
 
 **Gateway (`cmd/pushgw`):**

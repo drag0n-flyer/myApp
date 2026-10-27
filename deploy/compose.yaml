@@ -34,12 +34,36 @@ services:
       # interfaces so the published port works; the host side stays 127.0.0.1.
       APP_ADMIN_LISTEN: "0.0.0.0:9090"
       APP_DATA_DIR: /var/lib/appserver
+      # Caddy (below) sets X-Forwarded-For; the published ports are bound to
+      # 127.0.0.1, so only a proxy on this host can reach the server.
+      APP_TRUST_PROXY: ${APP_TRUST_PROXY:-true}
     ports:
       - "127.0.0.1:8080:8080"
       - "127.0.0.1:9090:9090" # admin: /healthz /readyz /debug/vars, never public
     volumes:
       - appdata:/var/lib/appserver
       - ./secrets:/secrets:ro
+      - ./docs:/docs:ro # operator documents, see APP_DOCS_DIR
+
+  # Optional: Caddy as the reverse proxy, with automatic HTTPS for APP_HOST.
+  # Start it with: docker compose --profile caddy up -d
+  # Leave it off if you already run your own proxy on ports 80 and 443.
+  caddy:
+    profiles: ["caddy"]
+    image: caddy:2.10
+    restart: unless-stopped
+    depends_on:
+      - appserver
+    environment:
+      APP_HOST: ${APP_HOST:?set APP_HOST in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
 
   coturn:
     image: coturn/coturn:4.18
@@ -82,3 +106,5 @@ services:
 volumes:
   pgdata:
   appdata:
+  caddydata:
+  caddyconfig:

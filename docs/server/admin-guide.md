@@ -19,6 +19,26 @@ You need a Linux host with Docker and the compose plugin, a DNS name pointing at
 
 The server policy (invite requirement, call quality limits, retention, upload limits, abuse contact) is a JSON file named by `APP_POLICY_FILE`; see section 5 of the design for the fields and defaults.
 
+## Security contact and legal pages
+
+The server serves four files from `APP_DOCS_DIR`, read on every request, so edits show without a restart. Under compose, `deploy/docs/` on the host is mounted read-only at `/docs` in the container, and `.env.example` already sets `APP_DOCS_DIR=/docs`.
+
+| URL | File in `deploy/docs/` |
+|---|---|
+| `/.well-known/security.txt` | `security.txt` |
+| `/legal/privacy` | `privacy.html` |
+| `/legal/terms` | `terms.html` |
+| `/legal/disclosure` | `disclosure.html` |
+
+A missing file gives 404. To publish a security contact:
+
+1. `cp docs/security.txt.example docs/security.txt`
+2. Edit `docs/security.txt`: set `Contact`, your host name in `Policy` and `Canonical`, and an `Expires` date less than a year ahead.
+3. Create `docs/disclosure.html` (the `Policy` line points to `/legal/disclosure`, which is 404 until it exists), or remove the `Policy` line.
+4. `docker compose up -d` (needed once, so the container picks up `APP_DOCS_DIR` and the mount; later edits to the files need no restart).
+
+At start the server logs a warning if `security.txt` has expired, expires within 30 days, or has no valid `Expires`. Renew the date before then (RFC 9116 treats an expired file as stale). The privacy and terms pages are drafts that need a lawyer's review before use.
+
 ## Reverse proxy
 
 The server speaks plain HTTP on `127.0.0.1:8080`. A reverse proxy terminates TLS. The `/v1/ws` endpoint is a WebSocket, so the proxy must pass the upgrade through. Caddy does this by default:
@@ -28,6 +48,8 @@ chat.example.org {
     reverse_proxy 127.0.0.1:8080
 }
 ```
+
+The compose file also has an optional Caddy service with this setup (`deploy/Caddyfile`, automatic HTTPS for `APP_HOST`): `docker compose --profile caddy up -d`. Leave it off if you run your own proxy on ports 80 and 443.
 
 With nginx, add `proxy_http_version 1.1; proxy_set_header Upgrade $http_upgrade; proxy_set_header Connection "upgrade";` and a long `proxy_read_timeout` for `/v1/ws`. Allow request bodies up to your `attachmentBytes` limit (100 MiB by default) on `/v1/attachments`.
 
@@ -99,6 +121,8 @@ docker run --rm -v deploy_appdata:/data -v "$PWD":/out alpine tar czf /out/appda
 ```
 
 (`deploy_appdata` is the volume behind `APP_DATA_DIR`; the prefix is your compose project name.) Also keep `.env`, `secrets/` and the policy file. Attachments are encrypted by the apps and expire after `attachmentDays`, so losing the directory costs only files still within that window.
+
+The scripts `deploy/scripts/backup.sh` and `restore.sh` do the same, write a dated folder with checksums, and keep 14 daily and 8 weekly backups (`sh scripts/backup.sh --dry-run` shows what it would do). For a fresh install, `sh scripts/restore.sh <backup folder>` does the restore steps below and runs the migrations. The beta operations runbook (`docs/ops/beta-runbook.md`) covers the drill that proves a backup works.
 
 **Restore** on a fresh install: start only postgres (`docker compose up -d postgres`), then `docker compose exec -T postgres pg_restore -U appserver -d appserver --clean --if-exists < backup.dump`, unpack the attachments archive into the data volume, and `docker compose up -d`.
 

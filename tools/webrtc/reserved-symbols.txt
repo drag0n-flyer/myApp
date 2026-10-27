@@ -1,0 +1,5 @@
+# Plain C symbols that other code in the app exports. The WebRTC framework must
+# never export these names (check-symbols.sh exits 5 if it does). One Mach-O
+# name per line, with the leading underscore. Plan 4 extends this list.
+_sign
+_signature_key_generate

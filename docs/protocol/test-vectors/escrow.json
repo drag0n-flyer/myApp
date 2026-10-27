@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "note": "TEST ONLY — published keys",
+  "suite": {
+    "kem": "DHKEM(X25519, HKDF-SHA256)",
+    "kdf": "HKDF-SHA256",
+    "aead": "ChaCha20Poly1305"
+  },
+  "info": "escrow-v1",
+  "recipientPrivateKeyHex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+  "recipientPublicKeyB64": "YFpyXSpK3-6xop4X7dYhwbdZPujNvESsbEq24vgF0jw",
+  "cases": [
+    {
+      "plaintextJSON": "{\"conversationID\":\"c0000000-0000-4000-8000-000000000001\",\"senderAccountID\":\"a0000000-0000-4000-8000-000000000001\",\"sentAt\":\"2026-10-27T09:30:00Z\",\"body\":{\"v\":1,\"id\":\"b0000000-0000-4000-8000-000000000001\",\"at\":1793093400000,\"k\":\"text\",\"t\":\"Lunch?\"}}",
+      "sealedB64": "EWFRFdZNF5JlSC65Ev_HGITpsa8b_FFUIAmHG4AsBDJevvWfxWDsNvV2Wis6qnYfMP2qkxN8UPxWLR-A9lpmv1FawPsdyoyi2do1OEAUeeRd22uM2BaSJf-XPdscgyX6dYk1aMGIt3w3cgNRtf5HVhTfDGtO3NMRnvcUhgq5BUtBVLAdAhyrPwAHBcwnsStY97yCZZb5xDhGayt1QY-3FCyzqrVicNZXurfc95fOq-Y1QyquiZF9iaLoojwDAytyV7PzhpW7tRhU4Lf1G645VnbAssD7Yc77ogNYX4_4w2sQgRRV03SgQOYW46t0sLss_NwQYVxnFYdnMHA5U6VHj80LNZ9UyQMevm8SObfrknbgCcbHxvqrGSnHr0e2tJSLaVolx1cbJGo"
+    },
+    {
+      "plaintextJSON": "{\"conversationID\":\"c0000000-0000-4000-8000-000000000001\",\"senderAccountID\":\"a0000000-0000-4000-8000-000000000002\",\"sentAt\":\"2026-10-27T09:31:05Z\",\"body\":{\"v\":1,\"id\":\"b0000000-0000-4000-8000-000000000002\",\"at\":1793093465000,\"k\":\"text\",\"t\":\"Ja, 12:30 — café ☕\"}}",
+      "sealedB64": "7qsRgMdH-bGpLntrGf8npRavpSI5kJuXKgxeMbL0j3aiVPmNH04571-RhIRKGg6ioRN_MfJSdj3n5pjrJYbzLTh5SBOuBxFGUFTQEOzRLSXyOSnBqqKGIDDGe95ko6xEk0bKNKM4PjAG01eQMhFzh920p6M7cue0OsJI3BrteKzM1Xe10y79pcLF6i_qJMuuLgbmaflgxFTwAbCch5lPGXAgDbYdNq_14KzCCGo8PVSesa0huubXCEtRWct7QJlvkUWb0tDeLkeB7uW_j24JR98WoP8rnQZGAyylbNMmjuACf2O73bZiCe0TjTaLbxAMlUdqYbHd1klHrIj9-gvNWxNakPbwsHuVOr1CcwXfQMc5VRSXs_WdnATSYz_CYZd1mxWeVYQJymwRfpcMAyEskdlFYbxJrvw_eg"
+    },
+    {
+      "plaintextJSON": "{\"conversationID\":\"c0000000-0000-4000-8000-000000000001\",\"senderAccountID\":\"a0000000-0000-4000-8000-000000000001\",\"sentAt\":\"2026-10-27T09:32:00Z\",\"body\":{\"k\":\"mode\",\"m\":\"server_readable\"}}",
+      "sealedB64": "puGjxYPOtNMbylFjBvZb_EAM-1esd85PP380pM-XFyEvSM_WZxM2JUnCkjpQzC8DeTfPi7i29Srr5IXXgp0897xoxbcy-6scJ3JfjZc_adWiYd-VF387TxAdSMvO8bfP1vk7RPg6ol8juYs6Q0zGaZX-OqhPr90ZyBC26lcqUcwVuc1sANs2nknLSjKVXB2oopHapHmWIGXFFTJ1vLnoHKJ_W0j_3qXs8xGZEFofrzTQL0rV0SAGh6iTgE5WIK7BJmjrBydjjqYlRaWQB_S7lqU-DvBDK1y40my2GPDZO2CIqMPG0m-4CBcQGos"
+    }
+  ],
+  "negative": [
+    {
+      "name": "wrong info",
+      "sealedB64": "EWFRFdZNF5JlSC65Ev_HGITpsa8b_FFUIAmHG4AsBDJevvWfxWDsNvV2Wis6qnYfMP2qkxN8UPxWLR-A9lpmv1FawPsdyoyi2do1OEAUeeRd22uM2BaSJf-XPdscgyX6dYk1aMGIt3w3cgNRtf5HVhTfDGtO3NMRnvcUhgq5BUtBVLAdAhyrPwAHBcwnsStY97yCZZb5xDhGayt1QY-3FCyzqrVicNZXurfc95fOq-Y1QyquiZF9iaLoojwDAytyV7PzhpW7tRhU4Lf1G645VnbAssD7Yc77ogNYX4_4w2sQgRRV03SgQOYW46t0sLss_NwQYVxnFYdnMHA5U6VHj80LNZ9UyQMevm8SObfrknbgCcbHxvqrGSnHr0e2tJSLaVolx1cbJGo",
+      "info": "wrong-info-v1"
+    },
+    {
+      "name": "one flipped byte in the ciphertext",
+      "sealedB64": "EWFRFdZNF5JlSC65Ev_HGITpsa8b_FFUIAmHG4AsBDJevvWfxWDsNvV2Wis6qnYfMP2qkxN8UPxWLR-A9lpmv1FawPsdyoyi2do1OEAUeeRd22uM2BaSJf-XPdscgyX6dYk1aMGIt3w3cgNRtf5HVhTfDGtO3NMRnvcUhgq5BUtBVLAdAhyrPwAHBcwnsStY97yCZZb5xDhGayt1QY-3FCyzqrVicNZXurfc95fOq-Y1QyquiZF9iaLoojwDAytyV7PzhpW7tRhU4Lf1G645VnbAssD7Yc77ogNYX4_4w2sQgRRV03SgQOYW46t0sLss_NwQYVxnFYdnMHA5U6VHj80LNZ9UyQMevm8SObfrknbgCcbHxvqrGSnHr0e2tJSLaVolx1cbJGs",
+      "info": "escrow-v1"
+    },
+    {
+      "name": "one flipped byte in the encapsulated key",
+      "sealedB64": "EGFRFdZNF5JlSC65Ev_HGITpsa8b_FFUIAmHG4AsBDJevvWfxWDsNvV2Wis6qnYfMP2qkxN8UPxWLR-A9lpmv1FawPsdyoyi2do1OEAUeeRd22uM2BaSJf-XPdscgyX6dYk1aMGIt3w3cgNRtf5HVhTfDGtO3NMRnvcUhgq5BUtBVLAdAhyrPwAHBcwnsStY97yCZZb5xDhGayt1QY-3FCyzqrVicNZXurfc95fOq-Y1QyquiZF9iaLoojwDAytyV7PzhpW7tRhU4Lf1G645VnbAssD7Yc77ogNYX4_4w2sQgRRV03SgQOYW46t0sLss_NwQYVxnFYdnMHA5U6VHj80LNZ9UyQMevm8SObfrknbgCcbHxvqrGSnHr0e2tJSLaVolx1cbJGo",
+      "info": "escrow-v1"
+    },
+    {
+      "name": "truncated by one byte",
+      "sealedB64": "EWFRFdZNF5JlSC65Ev_HGITpsa8b_FFUIAmHG4AsBDJevvWfxWDsNvV2Wis6qnYfMP2qkxN8UPxWLR-A9lpmv1FawPsdyoyi2do1OEAUeeRd22uM2BaSJf-XPdscgyX6dYk1aMGIt3w3cgNRtf5HVhTfDGtO3NMRnvcUhgq5BUtBVLAdAhyrPwAHBcwnsStY97yCZZb5xDhGayt1QY-3FCyzqrVicNZXurfc95fOq-Y1QyquiZF9iaLoojwDAytyV7PzhpW7tRhU4Lf1G645VnbAssD7Yc77ogNYX4_4w2sQgRRV03SgQOYW46t0sLss_NwQYVxnFYdnMHA5U6VHj80LNZ9UyQMevm8SObfrknbgCcbHxvqrGSnHr0e2tJSLaVolx1cbJA",
+      "info": "escrow-v1"
+    },
+    {
+      "name": "shorter than the encapsulated key",
+      "sealedB64": "EWFRFdZNF5JlSC65Ev_HGITpsa8b_FFUIAmHG4AsBA",
+      "info": "escrow-v1"
+    }
+  ]
+}
