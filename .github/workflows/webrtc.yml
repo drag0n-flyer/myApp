@@ -14,6 +14,10 @@ on:
         description: JSON list of slices to build (a partial list skips package, smoke and release)
         type: string
         default: ""
+      reuse_run:
+        description: Run id whose slice-* artifacts the package job also uses (so a rerun builds only the slices that failed)
+        type: string
+        default: ""
   push:
     paths:
       - "tools/webrtc/**"
@@ -32,6 +36,7 @@ jobs:
     outputs:
       slices: ${{ steps.slices.outputs.slices }}
       full: ${{ steps.slices.outputs.full }}
+      reuse: ${{ steps.slices.outputs.reuse }}
     steps:
       - uses: actions/checkout@v4
       - name: Opus probe
@@ -46,10 +51,12 @@ jobs:
         id: slices
         env:
           REQUESTED: ${{ inputs.slices || vars.WEBRTC_SLICES }}
+          REUSE: ${{ inputs.reuse_run || vars.WEBRTC_REUSE_RUN }}
         run: |
           slices="${REQUESTED:-$ALL_SLICES}"
           echo "slices=$slices" >> "$GITHUB_OUTPUT"
-          if [ "$(echo "$slices" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')" = 5 ]; then
+          echo "reuse=$REUSE" >> "$GITHUB_OUTPUT"
+          if [ -n "$REUSE" ] || [ "$(echo "$slices" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')" = 5 ]; then
             echo "full=true" >> "$GITHUB_OUTPUT"
           else
             echo "full=false" >> "$GITHUB_OUTPUT"
@@ -86,7 +93,7 @@ jobs:
         if: matrix.slice == 'ios-arm64'
         run: |
           cd "$WORK/src"
-          python3 tools_webrtc/libs/generate_licenses.py --target //sdk:framework_objc out/ios-arm64 "$WORK/licenses"
+          python3 tools_webrtc/libs/generate_licenses.py --target //sdk:framework_objc "$WORK/licenses" out/ios-arm64
           ls -l "$WORK/licenses"
       - name: Pack the slice
         run: tar -C "$WORK/artifacts" -cf "slice-${{ matrix.slice }}.tar" "${{ matrix.slice }}"
@@ -110,12 +117,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
+        if: needs.probe.outputs.reuse != ''
+        with:
+          pattern: slice-*
+          path: downloaded-old
+          run-id: ${{ needs.probe.outputs.reuse }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v4
         with:
           path: downloaded
       - name: Unpack slices
         run: |
           mkdir -p artifacts
-          for t in downloaded/slice-*/slice-*.tar; do tar -C artifacts -xf "$t"; done
+          # Slices from an earlier run first; this run's slices replace them.
+          for t in downloaded-old/slice-*/slice-*.tar downloaded/slice-*/slice-*.tar; do
+            [ -f "$t" ] && tar -C artifacts -xf "$t"
+          done
+          true
           mkdir -p artifacts/licenses
           cp downloaded/licenses/* artifacts/licenses/
           ls artifacts artifacts/licenses
