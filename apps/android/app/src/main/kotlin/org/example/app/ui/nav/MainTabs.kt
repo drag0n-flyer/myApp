@@ -61,6 +61,6 @@ fun MainTabs(
 
 /** Stands in until the tab's own screen exists. */
 @Composable
-private fun TabPlaceholder(tab: MainTab) {
+fun TabPlaceholder(tab: MainTab) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(stringResource(tab.label)) }
 }
