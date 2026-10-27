@@ -28,8 +28,8 @@ func validDevice(name, platform string) error {
 	if name == "" || len(name) > 64 {
 		return httpx.Err("bad_request", "deviceName must be 1 to 64 characters")
 	}
-	if platform != "iphone" && platform != "mac" {
-		return httpx.Err("bad_request", "platform must be iphone or mac")
+	if platform != "iphone" && platform != "mac" && platform != "android" {
+		return httpx.Err("bad_request", "platform must be iphone, mac or android")
 	}
 	return nil
 }
