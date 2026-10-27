@@ -4,6 +4,11 @@
 {
 	# Nobody needs the admin API of the proxy.
 	admin off
+	# No runtime or error log either: those lines can carry client addresses.
+	# To debug, remove this block for a while.
+	log {
+		output discard
+	}
 }
 
 {$APP_HOST} {

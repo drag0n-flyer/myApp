@@ -77,16 +77,24 @@ Create secrets on the machine that uses them. Never put them in the repository, 
 3. Create the push key on the app VM, after the first start (section 6), as in the admin guide: `docker compose exec appserver /appserver keygen push > secrets/push.pem`, then `sudo chown 65532:65532 secrets/push.pem && sudo chmod 0400 secrets/push.pem`. Check: `ls -l secrets/push.pem` shows owner `65532` and mode `-r--------`.
 4. Register the push key with your gateway (after the first start, section 6): `docker compose exec appserver /appserver push register --gateway https://push.example.org --name "beta server" --contact you@example.org`. It prints a server ID. Put it in `.env` as `APP_PUSH_SERVER_ID`, and set `APP_PUSH_GATEWAY_URL=https://push.example.org`, `APP_PUSH_KEY_FILE=/secrets/push.pem`. Then `docker compose up -d`. Check: `docker compose logs appserver | tail -5` shows no error.
 5. The escrow key, only if your policy allows server-readable chats (`"newConversations": "server_readable"`): follow "Escrow key" in the admin guide. Back it up separately from the database. If the policy keeps all chats end-to-end, skip this step.
-6. On the gateway VM only: make `/etc/pushgw/keys` (`sudo mkdir -p /etc/pushgw/keys`), copy the APNs `.p8` file and the HPKE key into it, then `sudo chown 65532:65532 /etc/pushgw/keys/* && sudo chmod 0400 /etc/pushgw/keys/*`. The `.p8` file never leaves the gateway VM. Check: `ls -l /etc/pushgw/keys` shows two files with mode `-r--------`.
-7. On each relay VM, render the coturn config in `deploy/relay/`. Use the relay's own name and public address:
+6. On the gateway VM only, make the gateway's two key files. Run `umask 077` first, then `sudo mkdir -p /etc/pushgw/keys`.
+   1. Make the HPKE key. The gateway has no command for it; it needs an X25519 key in PKCS#8 PEM form, which OpenSSL makes: `sudo sh -c 'umask 077; openssl genpkey -algorithm X25519 -out /etc/pushgw/keys/pushgw-hpke.pem'`. Check: `sudo head -1 /etc/pushgw/keys/pushgw-hpke.pem` prints `-----BEGIN PRIVATE KEY-----`. The key is created on the gateway VM only. Never copy it into the repository or paste it anywhere; do not print the whole file.
+   2. Copy the APNs `.p8` file from Apple to `/etc/pushgw/keys/apns.p8` (for example with `scp` to your home folder, then `sudo mv`). It never leaves the gateway VM afterwards.
+   3. Set owner and mode: `sudo chown 65532:65532 /etc/pushgw/keys/* && sudo chmod 0400 /etc/pushgw/keys/*`. Check: `ls -l /etc/pushgw/keys` shows two files, owner `65532`, mode `-r--------`.
+   4. After the gateway starts (section 6), check that it loaded the key: `curl https://push.example.org/v1/gateway-key` returns JSON with the public key.
+7. On each relay VM, render the coturn config in `deploy/relay/`. Use the relay's own name and public address. The secret is typed at a prompt, so it stays out of your shell history:
 
    ```
    cd deploy/relay
-   TURN_SECRET='<paste the secret>' TURN_REALM=turn1.example.org EXTERNAL_IP=<relay public ip> \
+   umask 077
+   read -r -s -p 'TURN secret: ' TURN_SECRET; export TURN_SECRET; echo
+   TURN_REALM=turn1.example.org EXTERNAL_IP=<relay public ip> \
      envsubst '${TURN_SECRET} ${TURN_REALM} ${EXTERNAL_IP}' < turnserver.conf > turnserver.rendered.conf
+   unset TURN_SECRET
+   sudo chown 65534:65534 turnserver.rendered.conf && sudo chmod 0400 turnserver.rendered.conf
    ```
 
-   Check: `grep -c '\${' turnserver.rendered.conf` prints `0`, and `ls -l turnserver.rendered.conf` shows mode `-rw-------`.
+   coturn runs as user 65534 (`nobody`) inside its container, so that user must own the file. Mode 0400 means no other user on the host can read the TURN secret. Check: `ls -ln turnserver.rendered.conf` shows owner `65534` and mode `-r--------`, and `sudo grep -c '\${' turnserver.rendered.conf` prints `0`. To render again later, run `sudo rm turnserver.rendered.conf` first.
 
 ## 6. First start
 
@@ -140,7 +148,7 @@ Pick the tool yourself. A self-hosted tool needs the project owner's approval, w
 1. Add an external HTTPS probe for `https://chat.example.org/v1/server` and one for `https://push.example.org/v1/gateway-key`. Alert if either fails twice in a row. Check: stop Caddy for a minute (`docker compose stop caddy`), see the alert arrive, then `docker compose start caddy`.
 2. Add disk and memory alerts on all four VMs: disk over 80 percent used, memory over 90 percent. Check: the tool shows current values for each VM.
 3. Once a week, look at the counters through an SSH tunnel to the admin port (never open port 9090 to the internet): `ssh -L 9090:127.0.0.1:9090 <user>@<app ip>`, then in another window `curl -s http://127.0.0.1:9090/debug/vars`. Look for growing error counts. Check: the command prints JSON.
-4. Logs hold no client addresses, message data or tokens by design. Look at the server log after a problem: `docker compose logs --since 1h appserver`.
+4. Nothing logs client addresses, by design. The app server never logs addresses, tokens or message data (`docker compose logs --since 1h appserver`). coturn and Caddy are set to write no logs at all, so `docker compose logs coturn` and `docker compose logs caddy` are empty. That also means they will not tell you what went wrong. To debug, remove the logging lines for a short time (in `turnserver.conf`: `no-stdout-log`, `log-file=/dev/null` and `simple-log`, then add `verbose` and render again; in the `Caddyfile`: the global `log` block), restart, reproduce the problem, and put the lines back. Logs taken this way can hold addresses: do not keep them or share them.
 
 ## 11. Updates
 
@@ -155,7 +163,7 @@ Keep this list where you can find it fast. Write down the time and what you did.
 1. **The TURN secret leaked.**
    1. Make a new secret (`openssl rand -base64 32`, with `umask 077`).
    2. Put it in `APP_TURN_SECRET` in `deploy/.env` on the app VM and run `docker compose up -d appserver`.
-   3. Render the relay config again on each relay VM (step 5.7) and run `docker compose restart coturn`.
+   3. Render the relay config again on each relay VM (step 5.7, removing the old rendered file first) and run `docker compose restart coturn`.
    4. Check: new credentials from `GET /v1/turn` work in the Trickle ICE test, and old ones do not.
 2. **The push key leaked.**
    1. Make a new key (step 5.3), replacing `secrets/push.pem`.
