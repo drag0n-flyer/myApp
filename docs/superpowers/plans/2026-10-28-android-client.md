@@ -65,6 +65,7 @@ None of these may be added before the owner approves this list. Versions are pin
 | SQLCipher for Android | `net.zetetic:sqlcipher-android` | BSD-3-Clause style (SQLCipher Community) | `:store` | Encrypted database |
 | WorkManager | `androidx.work:work-runtime-ktx` | Apache-2.0 | `:messaging` wiring, `:push` | Deferred and expedited work |
 | Credential Manager | `androidx.credentials:credentials`, `androidx.credentials:credentials-play-services-auth` | Apache-2.0 (the Play services part is Google's proprietary SDK) | `:auth` | Passkeys |
+| Biometric | `androidx.biometric:biometric` | Apache-2.0 | `:auth` | Fingerprint/face unlock (`BiometricGate`); approved 2026-10-28 |
 | OkHttp, MockWebServer | `com.squareup.okhttp3:okhttp`, `com.squareup.okhttp3:mockwebserver` (tests) | Apache-2.0 | `:net` | HTTP and WebSocket |
 | JNA | `net.java.dev.jna:jna` (`@aar` on Android, jar for JVM tests) | Apache-2.0 (dual with LGPL-2.1; we use Apache-2.0) | `:mls` | UniFFI Kotlin loads `libmlsffi.so` through it |
 | Firebase Cloud Messaging | `com.google.firebase:firebase-messaging` | Google proprietary SDK (Firebase terms) | `:push` | FCM data messages |
