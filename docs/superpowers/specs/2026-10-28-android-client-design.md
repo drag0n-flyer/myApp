@@ -369,7 +369,7 @@ Shared vectors read directly from `docs/protocol/test-vectors/`: `push-padding.j
 11. Moving `mlsffi` to a neutral path later.
 12. A `foss` build flavor without Firebase (for F-Droid), later.
 13. The `ceiling` encoding in call payloads: resolved 2026-10-28: string per [calls](../../protocol/calls.md) (`"balanced"`); the Swift app was changed to match.
-14. The voice-message format. The iPhone records Opus in CAF; Android's recorder writes Opus in Ogg (API 29) and its players cannot read CAF. One shared container (and who converts) is needed before voice messages work across platforms.
+14. Decided (owner, 2026-10-28): voice messages are Ogg Opus (RFC 7845) on every platform. The iPhone and Mac apps record Opus in CAF and repackage the packets as Ogg before sending; Android's recorder writes Ogg directly. Rules for receivers: [protocol README, Voice attachments](../../protocol/README.md#voice-attachments).
 15. The Play data safety answers and the web page for account deletion.
 16. Whether a self-hosted runner should automate Android↔iPhone media tests.
 

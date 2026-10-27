@@ -225,7 +225,7 @@ public actor AttachmentService {
         }
         switch kind {
         case "photo": return "jpg"
-        case "voice": return "caf"
+        case "voice": return MediaPlan.Voice.fileExtension
         default: return "bin"
         }
     }
