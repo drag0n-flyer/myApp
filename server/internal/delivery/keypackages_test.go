@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"net/http"
+	"sync"
 	"testing"
 
 	"github.com/velixio/myApp/server/internal/core"
@@ -174,5 +175,39 @@ func TestClaimRateLimit(t *testing.T) {
 	r := e.c.Do(&ana, "POST", "/v1/keypackages/claim", body)
 	if r.Status != 429 || r.Header.Get("Retry-After") == "" {
 		t.Fatalf("101st: %s", r)
+	}
+}
+
+func TestClaimConcurrentKeepsLastResort(t *testing.T) {
+	e := setup(t)
+	ana := testkit.Account(t, e.d, "ana")
+	bob1 := testkit.Account(t, e.d, "bob")
+	bob2 := testkit.Device(t, e.d, bob1.AccountID, "mac")
+	for _, p := range []core.Principal{bob1, bob2} {
+		e.upload(t, p, pkgs(2, 1))
+	}
+	const n = 8
+	var wg sync.WaitGroup
+	results := make([]*testkit.Response, n)
+	for i := range results {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results[i] = e.c.Do(&ana, "POST", "/v1/keypackages/claim", map[string]string{"accountID": bob1.AccountID})
+		}()
+	}
+	wg.Wait()
+	for i, r := range results {
+		var out claimed
+		if r.Status != 200 {
+			t.Fatalf("claim %d: %s", i, r)
+		}
+		r.Decode(t, &out)
+		if len(out.KeyPackages) != 2 {
+			t.Fatalf("claim %d got %d packages: %s", i, len(out.KeyPackages), r)
+		}
+	}
+	if a, b := e.count(t, bob1), e.count(t, bob2); a != 1 || b != 1 {
+		t.Fatalf("counts after concurrent claims = %d, %d; want 1, 1", a, b)
 	}
 }

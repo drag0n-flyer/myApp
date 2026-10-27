@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -131,6 +132,8 @@ func (m *Module) claimKeyPackages(w http.ResponseWriter, r *http.Request) error 
 		return err
 	}
 
+	// Lock devices in a fixed order so claims cannot deadlock each other.
+	slices.Sort(devices)
 	out := make([]claimedKeyPackage, 0, len(devices))
 	err = pgx.BeginFunc(ctx, m.d.DB, func(tx pgx.Tx) error {
 		out = out[:0]
@@ -154,28 +157,22 @@ func (m *Module) claimKeyPackages(w http.ResponseWriter, r *http.Request) error 
 	return nil
 }
 
-// claimOne takes the oldest unlocked KeyPackage of a device. It deletes the
-// package only when the device has another one, so the last one stays as the
-// device's last resort.
+// claimOne takes the oldest KeyPackage of a device. It deletes the package
+// only when the device has another one, so the last one stays as the device's
+// last resort. The device row is locked first (the same lock uploads take) so
+// concurrent claims on one device run one after another and each sees the
+// other's delete.
 func claimOne(ctx context.Context, tx pgx.Tx, deviceID string) ([]byte, bool, error) {
+	if _, err := tx.Exec(ctx, `select 1 from devices where id = $1 for update`, deviceID); err != nil {
+		return nil, false, err
+	}
 	var id int64
 	var data []byte
 	err := tx.QueryRow(ctx,
-		`select id, data from key_packages where device_id = $1 order by id limit 1 for update skip locked`,
+		`select id, data from key_packages where device_id = $1 order by id limit 1`,
 		deviceID).Scan(&id, &data)
 	if err == pgx.ErrNoRows {
-		// Either no packages, or the only one is locked by a concurrent claim.
-		// Hand out the last one without removing it.
-		err = tx.QueryRow(ctx,
-			`select id, data from key_packages where device_id = $1 order by id limit 1`,
-			deviceID).Scan(&id, &data)
-		if err == pgx.ErrNoRows {
-			return nil, false, nil
-		}
-		if err != nil {
-			return nil, false, err
-		}
-		return data, true, nil
+		return nil, false, nil
 	}
 	if err != nil {
 		return nil, false, err
