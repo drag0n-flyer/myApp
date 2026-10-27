@@ -125,16 +125,27 @@ func TestParallelUploadsRespectDailyBudget(t *testing.T) {
 	})
 	const n = 8
 	codes := make(chan int, n)
+	retry := make(chan string, n)
 	var wg sync.WaitGroup
 	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			codes <- x.c.Do(&x.me, "POST", "/v1/attachments", make([]byte, 100)).Status
+			res := x.c.Do(&x.me, "POST", "/v1/attachments", make([]byte, 100))
+			codes <- res.Status
+			if res.Status == 429 {
+				retry <- res.Header.Get("Retry-After")
+			}
 		}()
 	}
 	wg.Wait()
 	close(codes)
+	close(retry)
+	for h := range retry {
+		if h != "3600" {
+			t.Fatalf("Retry-After = %q", h)
+		}
+	}
 	ok, limited := 0, 0
 	for c := range codes {
 		switch c {
@@ -155,13 +166,16 @@ func TestParallelUploadsRespectDailyBudget(t *testing.T) {
 }
 
 func TestFailedUploadReleasesQuota(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
 	x := setup(t, func(d *core.Deps) { d.Policy.Limits.AttachmentBytesPerDay = 100 })
 	// Body shorter than its declared length: httptest cannot send that, so
 	// call the store-failing path by making the data dir unwritable.
 	if err := os.Chmod(x.root, 0o500); err != nil {
 		t.Fatal(err)
 	}
-	if res := x.c.Do(&x.me, "POST", "/v1/attachments", make([]byte, 100)); os.Geteuid() != 0 && res.Status != 500 {
+	if res := x.c.Do(&x.me, "POST", "/v1/attachments", make([]byte, 100)); res.Status != 500 {
 		t.Fatalf("disk failure: %s", res)
 	}
 	os.Chmod(x.root, 0o700)

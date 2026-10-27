@@ -58,6 +58,10 @@ func (m *Module) upload(w http.ResponseWriter, r *http.Request) error {
 	}
 	expires := now.Add(time.Duration(m.d.Policy.Retention.AttachmentDays) * 24 * time.Hour)
 	if err := m.reserve(r.Context(), id, me, size, now, expires); err != nil {
+		var e *httpx.Error
+		if errors.As(err, &e) && e.Code == "rate_limited" {
+			w.Header().Set("Retry-After", "3600")
+		}
 		return err
 	}
 	// MaxBytesReader stops a body longer than it declared; the body is streamed
