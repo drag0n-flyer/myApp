@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -237,10 +238,10 @@ class LiveConnectionTest {
         upgrade()
         val c = connection()
         c.start()
-        eventually("server socket") { serverSockets.poll() }
+        val sockForLateAck = eventually("server socket") { serverSockets.poll() }
         awaitState(c, ConnectionState.Connected)
         val r = async(Dispatchers.Default) { runCatching { c.send("call.status", JsonObject(emptyMap())) } }
-        awaitSleepers(2) // the 30 s stability timer and the 10 s send timer
+        awaitSleepers(3) // the 30 s stability timer, the 25 s liveness timer and the 10 s send timer
         clock.advance(9_999)
         Thread.sleep(100)
         assertTrue(r.isActive)
@@ -248,6 +249,8 @@ class LiveConnectionTest {
         val e = r.await().exceptionOrNull() as ServerException
         assertEquals("timeout", e.code)
         // A late ack for the timed-out id changes nothing.
+        sockForLateAck.send("""{"type":"ack","id":"c1","data":{}}""")
+        Thread.sleep(200)
         assertEquals(ConnectionState.Connected, c.states.value)
     }
 
@@ -274,7 +277,7 @@ class LiveConnectionTest {
         awaitSleepers(1)
         assertEquals(1, server.requestCount)
         // Random(1) draws; the wait is within [0, 1000] ms.
-        val wait = clock.requestedCopy().last { it != 30_000L }
+        val wait = clock.requestedCopy().last { it != 30_000L && it != 25_000L }
         assertTrue(wait in 0..1000, "wait=$wait")
         clock.advance(1000)
         eventually("second") { serverSockets.poll() }
@@ -292,7 +295,7 @@ class LiveConnectionTest {
             override fun nextBits(bitCount: Int) = -1 ushr (32 - bitCount)
             override fun nextDouble() = 1.0
         }).also { live = it }
-        fun backoffWaits() = clock.requestedCopy().filter { it != 30_000L && it != 10_000L }
+        fun backoffWaits() = clock.requestedCopy().filter { it != 30_000L && it != 10_000L && it != 25_000L }
         c.start()
         eventually("s1") { serverSockets.poll() }.close(1001, "x")
         awaitSleepers(1); eventually("w1") { if (backoffWaits().size == 1) 1 else null }
@@ -367,6 +370,7 @@ class LiveConnectionTest {
         awaitState(c, ConnectionState.Connected)
         c.stop()
         assertEquals(ConnectionState.Disconnected, c.states.value)
+        eventually("no timers left") { if (clock.sleepers() == 0) true else null }
         val before = server.requestCount
         clock.advance(120_000)
         Thread.sleep(300)
@@ -389,12 +393,111 @@ class LiveConnectionTest {
 
     @Test
     fun refusesRedirects() = runBlocking {
-        server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "http://evil.example/v1/ws"))
+        val target = MockWebServer().also { it.start() }
+        try {
+            server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", target.url("/v1/ws").toString()))
+            val c = connection()
+            c.start()
+            awaitSleepers(1) // fails and backs off; the token never leaves
+            assertEquals(1, server.requestCount)
+            assertEquals(0, target.requestCount)
+            assertEquals(ConnectionState.Disconnected, c.states.value)
+        } finally {
+            target.shutdown()
+        }
+    }
+
+    @Test
+    fun unansweredProbeCancelsSocketAfter10s() = runBlocking {
+        upgrade(); upgrade()
         val c = connection()
         c.start()
-        awaitSleepers(1) // fails and backs off; the token never leaves
-        assertEquals(1, server.requestCount)
-        assertEquals(ConnectionState.Disconnected, c.states.value)
+        eventually("server socket") { serverSockets.poll() }
+        awaitState(c, ConnectionState.Connected)
+        clock.advance(24_999)
+        Thread.sleep(100)
+        assertEquals(0, serverMessages.size)
+        clock.advance(1)
+        val frame = eventually("probe") { serverMessages.poll() }
+        val j = ServerJsonParse(frame)
+        assertEquals("ping", j["type"]!!.jsonPrimitive.content)
+        assertEquals("c1", j["id"]!!.jsonPrimitive.content)
+        clock.advance(9_999)
+        Thread.sleep(100)
+        assertEquals(ConnectionState.Connected, c.states.value)
+        clock.advance(1)
+        awaitState(c, ConnectionState.Disconnected)
+        awaitSleepers(1) // backoff, then a second connection
+        clock.advance(1000)
+        awaitState(c, ConnectionState.Connected)
+        Unit
+    }
+
+    @Test
+    fun probeErrorReplyKeepsSocketAlive() = runBlocking {
+        upgrade()
+        val c = connection()
+        c.start()
+        val ws = eventually("server socket") { serverSockets.poll() }
+        awaitState(c, ConnectionState.Connected)
+        clock.advance(25_000)
+        eventually("probe") { serverMessages.poll() }
+        ws.send("""{"type":"error","id":"c1","data":{"code":"bad_request"}}""")
+        Thread.sleep(200)
+        clock.advance(10_000)
+        Thread.sleep(200)
+        assertEquals(ConnectionState.Connected, c.states.value)
+        // The next probe is scheduled 25 s later.
+        clock.advance(25_000)
+        val second = eventually("second probe") { serverMessages.poll() }
+        assertEquals("c2", ServerJsonParse(second)["id"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun anyInboundFrameCountsAsAlive() = runBlocking {
+        upgrade()
+        val c = connection()
+        c.start()
+        val ws = eventually("server socket") { serverSockets.poll() }
+        awaitState(c, ConnectionState.Connected)
+        clock.advance(25_000)
+        eventually("probe") { serverMessages.poll() }
+        ws.send("""{"type":"inbox","data":{}}""")
+        Thread.sleep(200)
+        clock.advance(10_000)
+        Thread.sleep(200)
+        assertEquals(ConnectionState.Connected, c.states.value)
+    }
+
+    @Test
+    fun stopLeavesNoTimerAndNoProbe() = runBlocking {
+        upgrade()
+        val c = connection()
+        c.start()
+        eventually("server socket") { serverSockets.poll() }
+        awaitState(c, ConnectionState.Connected)
+        awaitSleepers(2)
+        c.stop()
+        eventually("no timers left") { if (clock.sleepers() == 0) true else null }
+        clock.advance(120_000)
+        Thread.sleep(200)
+        assertEquals(0, serverMessages.size)
+        assertEquals(0, clock.sleepers())
+    }
+
+    @Test
+    fun stopClearsBufferedEvents() = runBlocking {
+        upgrade(); upgrade()
+        val c = connection()
+        c.start()
+        val ws = eventually("server socket") { serverSockets.poll() }
+        awaitState(c, ConnectionState.Connected)
+        ws.send("""{"type":"call.ended","data":{"callID":"old","reason":"x"}}""")
+        Thread.sleep(300)
+        c.stop()
+        c.start()
+        awaitState(c, ConnectionState.Connected)
+        assertNull(withTimeoutOrNull(300) { c.events.first() })
     }
 
     @Test

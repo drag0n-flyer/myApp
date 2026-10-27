@@ -41,7 +41,13 @@ object SystemLiveClock : LiveClock {
  * visible or a call is active and [stop] otherwise. Push wakes the app in the background; there is no background socket.
  * Same host as the [ServerClient], no redirects, and nothing here logs the token or any frame.
  *
- * Pings are OkHttp's: one every [pingIntervalMillis]; a ping with no pong by the next tick drops the connection.
+ * Dead sockets are found by an app-level probe, not only by OkHttp's ping (which needs up to two ticks): every
+ * [PROBE_INTERVAL_MS] while connected the client sends `{"type":"ping","id":"cN"}`. The server does not know the type
+ * and answers `error bad_request` (realtime/module.go) without logging, so no server change is needed; an ack or an
+ * error with that id, or any other inbound frame, counts as alive. If nothing arrives within [PROBE_TIMEOUT_MS] the
+ * socket is cancelled and the normal reconnect and backoff runs. The probe timer lives only while a socket is open:
+ * it stops on [stop] and on disconnect, so nothing wakes the device when there is no connection. OkHttp's ping
+ * ([pingIntervalMillis]) stays as a backstop.
  */
 class LiveConnection internal constructor(
     private val client: org.example.app.net.ServerClient,
@@ -76,6 +82,11 @@ class LiveConnection internal constructor(
     private val pending = HashMap<String, CompletableDeferred<JsonObject?>>()
     private var stable = false
 
+    private companion object {
+        const val PROBE_INTERVAL_MS = 25_000L
+        const val PROBE_TIMEOUT_MS = 10_000L
+    }
+
     /** One collector at a time; events that arrive with no collector wait in the buffer. */
     override val events: Flow<ServerEvent> = eventChannel.receiveAsFlow()
     override val states: StateFlow<ConnectionState> = _states
@@ -96,12 +107,13 @@ class LiveConnection internal constructor(
             job = null
             val ws = socket
             socket = null
+            while (eventChannel.tryReceive().isSuccess) Unit // old events must not reach a later start()
+            _states.value = ConnectionState.Disconnected
             j to ws
         }
         j?.cancel()
         ws?.close(1000, null)
         failAllPending()
-        _states.value = ConnectionState.Disconnected
     }
 
     override suspend fun send(type: String, data: JsonObject): JsonObject? {
@@ -190,7 +202,8 @@ class LiveConnection internal constructor(
         val processor = launch {
             for (text in frames) handle(id, text)
         }
-        var stableTimer: Job? = null
+        val openJobs = java.util.concurrent.CopyOnWriteArrayList<Job>()
+        val inbound = java.util.concurrent.atomic.AtomicLong()
         val listener = object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 val ok = synchronized(lock) {
@@ -205,13 +218,27 @@ class LiveConnection internal constructor(
                     webSocket.close(1000, null)
                     return
                 }
-                stableTimer = launch {
+                openJobs += launch {
                     clock.delay(30_000)
                     synchronized(lock) { if (id == runId) stable = true }
+                }
+                openJobs += launch {
+                    while (true) {
+                        clock.delay(PROBE_INTERVAL_MS)
+                        val seen = inbound.get()
+                        val probeId = synchronized(lock) { nextId += 1; "c$nextId" }
+                        val sent = webSocket.send("""{"type":"ping","id":"$probeId"}""")
+                        if (sent) clock.delay(PROBE_TIMEOUT_MS)
+                        if (!sent || inbound.get() == seen) {
+                            webSocket.cancel()
+                            return@launch
+                        }
+                    }
                 }
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
+                inbound.incrementAndGet()
                 frames.trySend(text)
             }
 
@@ -232,7 +259,7 @@ class LiveConnection internal constructor(
         try {
             done.await()
         } finally {
-            stableTimer?.cancel()
+            openJobs.forEach { it.cancel() }
             if (!done.isCompleted) ws.cancel()
             synchronized(lock) { if (socket === ws) socket = null }
             frames.close()
