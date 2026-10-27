@@ -5,6 +5,7 @@ package serverinfo
 
 import (
 	"encoding/base64"
+	"github.com/drag0n-flyer/myApp/server/internal/push"
 	"html/template"
 	"net/http"
 	"os"
@@ -74,6 +75,14 @@ func (m *Module) info(w http.ResponseWriter, _ *http.Request) error {
 	if c.PushGatewayURL != "" {
 		gateway = &c.PushGatewayURL
 	}
+	var vapidKey *string
+	if c.VapidKeyFile != "" {
+		k, err := push.VAPIDPublicKey(c.VapidKeyFile)
+		if err != nil {
+			return err
+		}
+		vapidKey = &k
+	}
 	features := []string{"linking"}
 	if c.TURNSecret != "" {
 		features = []string{"calls", "video", "linking"}
@@ -89,7 +98,7 @@ func (m *Module) info(w http.ResponseWriter, _ *http.Request) error {
 			"defaultIPHiding": p.DefaultIPHiding,
 		},
 		"encryption": obj{"newConversations": p.Encryption.NewConversations, "escrowKey": escrow},
-		"push":       obj{"gateway": gateway},
+		"push":       obj{"gateway": gateway, "vapidKey": vapidKey},
 		"features":   features,
 		"federation": false,
 		"limits":     obj{"attachmentBytes": p.Limits.AttachmentBytes},
