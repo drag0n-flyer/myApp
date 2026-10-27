@@ -1,6 +1,6 @@
 // Command safety writes the safety-number test vector (Design 20). Standard library only.
 //
-//	cd tools/vectors && go run ./safety > ../../apps/apple/Packages/Messaging/Tests/MessagingTests/Resources/safety-v1.json
+//	cd tools/vectors && go run ./safety > ../../docs/protocol/test-vectors/safety-v1.json
 //
 // side(acct) = SHA-256("safety-v1" || 0x00 || acct || 0x00 || for each device of acct sorted by identity
 // bytes: u16be(len id) || id || u16be(len key) || key). The sides are ordered by account ID bytes; each

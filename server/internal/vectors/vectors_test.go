@@ -2,10 +2,14 @@ package vectors
 
 import (
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/hpke"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -511,5 +515,122 @@ func TestTURNCredential(t *testing.T) {
 	}
 	if !found {
 		t.Error("required case missing")
+	}
+}
+
+const (
+	fileLink       = "link-v1.json"
+	fileAttachment = "attachment-stream.json"
+)
+
+// TestLinkVector opens every link-v1 case with the published key. The info
+// is link-v1 and the plaintext must be a LinkSnapshot of version 1.
+func TestLinkVector(t *testing.T) {
+	var f Sealed
+	load(t, fileLink, &f)
+	checkHeader(t, f.Header)
+	if f.Info != "link-v1" || len(f.Cases) == 0 {
+		t.Fatalf("info %q, %d cases", f.Info, len(f.Cases))
+	}
+	priv := hpkePriv(t, unhex(t, f.RecipientPrivateKeyHex))
+	if got := b64.EncodeToString(priv.PublicKey().Bytes()); got != f.RecipientPublicKeyB64 {
+		t.Errorf("public key %s", got)
+	}
+	for i, c := range f.Cases {
+		sealed := unb64(t, c.SealedB64)
+		pt, err := hpke.Open(priv, hpke.HKDFSHA256(), hpke.ChaCha20Poly1305(), []byte(f.Info), sealed)
+		if err != nil {
+			t.Fatalf("case %d: %v", i, err)
+		}
+		if string(pt) != c.PlaintextJSON {
+			t.Errorf("case %d: plaintext differs", i)
+		}
+		var snap struct {
+			V        int               `json:"v"`
+			Contacts []json.RawMessage `json:"contacts"`
+			Chats    []json.RawMessage `json:"chats"`
+			Folders  []json.RawMessage `json:"folders"`
+			Blocked  []string          `json:"blocked"`
+			Settings map[string]string `json:"settings"`
+		}
+		if err := json.Unmarshal(pt, &snap); err != nil || snap.V != 1 || len(snap.Contacts) == 0 || len(snap.Chats) == 0 {
+			t.Errorf("case %d: not a LinkSnapshot v1: %v", i, err)
+		}
+		if len(sealed) != 32+len(pt)+16 {
+			t.Errorf("case %d: sealed length %d", i, len(sealed))
+		}
+		// Wrong info must not open.
+		if _, err := hpke.Open(priv, hpke.HKDFSHA256(), hpke.ChaCha20Poly1305(), []byte("escrow-v1"), sealed); err == nil {
+			t.Errorf("case %d: opened under the wrong info", i)
+		}
+	}
+}
+
+// attachmentSeal is plan 7 Design 7, written out again here so the vector is
+// checked by code that is not the generator: 65 536 plaintext bytes per chunk,
+// AES-256-GCM, nonce 0x00000000 || u64be(index), AAD 0x01 on the last chunk
+// and 0x00 otherwise. An empty file is one empty last chunk.
+func attachmentSeal(t testing.TB, key, plain []byte, chunk int) []byte {
+	t.Helper()
+	blk, err := aes.NewCipher(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err := cipher.NewGCM(blk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []byte
+	for idx, off := uint64(0), 0; ; idx++ {
+		end := min(off+chunk, len(plain))
+		last := end == len(plain)
+		nonce := make([]byte, 12)
+		binary.BigEndian.PutUint64(nonce[4:], idx)
+		aad := []byte{0}
+		if last {
+			aad[0] = 1
+		}
+		out = g.Seal(out, nonce, plain[off:end], aad)
+		if last {
+			return out
+		}
+		off = end
+	}
+}
+
+func TestAttachmentVector(t *testing.T) {
+	var f AttachmentStream
+	load(t, fileAttachment, &f)
+	if f.Version != 1 || f.ChunkSize != 65536 {
+		t.Fatalf("header %+v", f)
+	}
+	want := map[int]bool{0: false, 1: false, 65536: false, 65537: false}
+	for _, c := range f.Cases {
+		if c.PlaintextSeed != "i mod 251" {
+			t.Errorf("%s: seed %q", c.Name, c.PlaintextSeed)
+		}
+		plain := make([]byte, c.PlaintextLength)
+		for i := range plain {
+			plain[i] = byte(i % 251)
+		}
+		key := unhex(t, c.KeyHex)
+		ct := attachmentSeal(t, key, plain, f.ChunkSize)
+		chunks := max(1, (len(plain)+f.ChunkSize-1)/f.ChunkSize)
+		if len(ct) != len(plain)+16*chunks {
+			t.Errorf("%s: ciphertext length %d", c.Name, len(ct))
+		}
+		sum := sha256.Sum256(ct)
+		if hex.EncodeToString(sum[:]) != c.CiphertextSha256Hex {
+			t.Errorf("%s: ciphertext digest %x", c.Name, sum)
+		}
+		if base64.StdEncoding.EncodeToString(sum[:]) != c.DigestB64 {
+			t.Errorf("%s: digestB64", c.Name)
+		}
+		want[c.PlaintextLength] = true
+	}
+	for n, ok := range want {
+		if !ok {
+			t.Errorf("length %d missing", n)
+		}
 	}
 }
