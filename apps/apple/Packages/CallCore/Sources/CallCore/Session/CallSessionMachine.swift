@@ -233,12 +233,14 @@ public struct CallSessionMachine: Sendable {
             fx.append(.publish(state))
             return fx
         case .renegotiate:
-            guard device == answeringDevice, remoteDescriptionSet else { return [] }
+            guard device == answeringDevice, remoteDescriptionSet, answerSent else { return [] }
             // `renegotiate` without an SDP is a restart REQUEST from the callee: only the caller acts on it, and it
             // answers with its own ICE-restart offer. `renegotiate` with an SDP is an OFFER (mode change or restart).
             guard let sdp = p.sdp else {
                 guard outgoing else { return [] }
                 let now = clock.now
+                // Never start our own offer while we still owe an answer (have-remote-offer).
+                if let since = pendingRenegotiateSince, now.timeIntervalSince(since) < Self.staleAnswerAfter { return [] }
                 if renegotiateOutstanding, let since = outstandingSince, now.timeIntervalSince(since) < Self.restartWindow { return [] }
                 if let last = lastHonouredRequest, now.timeIntervalSince(last) < Self.restartWindow { return [] }
                 lastHonouredRequest = now
@@ -256,6 +258,9 @@ public struct CallSessionMachine: Sendable {
             if renegotiateOutstanding {
                 // Glare: the caller's offer wins. The caller ignores the callee's offer while its own is fresh;
                 // the callee (or a caller whose offer went stale) rolls its own offer back first.
+                // DEVIATION (owner to confirm): the plan only has the callee roll back. A caller rolls back too when
+                // its own offer is stale (>= restartWindow with no answer), so a lost answer cannot block the peer's
+                // offer forever. A fresh caller offer still always wins.
                 let fresh = outstandingSince.map { now.timeIntervalSince($0) < Self.restartWindow } ?? false
                 if outgoing && fresh { return [] }
                 fx.append(.rollback)
@@ -350,6 +355,8 @@ public struct CallSessionMachine: Sendable {
                 fx.append(.publish(state))
             case .restartIce:
                 let now = clock.now
+                // Never start our own offer while we still owe an answer (have-remote-offer).
+                if let since = pendingRenegotiateSince, now.timeIntervalSince(since) < Self.staleAnswerAfter { break }
                 if renegotiateOutstanding, let since = outstandingSince, now.timeIntervalSince(since) < Self.restartWindow { break }
                 renegotiateOutstanding = true
                 outstandingSince = now

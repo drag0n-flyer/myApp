@@ -201,6 +201,64 @@ private func peerOffer(_ f: String, sdpFP: String? = nil) -> CallSignalPayload {
         #expect(callee.state?.isEnded == false)
     }
 
+    @Test func callerDoesNotRestartWhileOwingAnAnswer() {
+        // The callee's mode-change offer is accepted; the caller now owes an answer.
+        var (n, c2) = callerActive()
+        #expect(n.handle(.remote(peerOffer(calleeFP), fromDeviceID: "d1")).contains { isAcceptOffer($0) })
+        c2.advance(1)
+        let req = CallSignalPayload(kind: .renegotiate, callID: "c1")
+        #expect(n.handle(.remote(req, fromDeviceID: "d1")).isEmpty)
+        // Its own policy restart is held back too.
+        _ = n.handle(.media(.iceState(.disconnected)))
+        c2.advance(2.5)
+        #expect(!n.handle(.tick).contains { isMakeOffer($0, restart: true) })
+        // Once the answer went out, restarts work again.
+        _ = n.handle(.localAnswer(sdp(callerFP)))
+        c2.advance(5)
+        #expect(n.handle(.tick).contains { isMakeOffer($0, restart: true) })
+    }
+
+    @Test func callerIgnoresRenegotiateBeforeFirstAnswerIsSent() {
+        var m = CallSessionMachine(context: ctx(), clock: ManualClock())
+        _ = m.handle(.start(contact: bob, video: false, callID: "c1"))
+        _ = m.handle(.server(.answered(callID: "c1", deviceID: "d1", payload: Data())))
+        _ = m.handle(.remote(CallSignalPayload(kind: .offer, callID: "c1", sdp: sdp(calleeFP), dtlsFingerprint: calleeFP), fromDeviceID: "d1"))
+        // The initial answer has not gone out yet: a second offer must not be accepted.
+        #expect(m.handle(.remote(peerOffer(calleeFP), fromDeviceID: "d1")).isEmpty)
+        // So the next localAnswer is still the initial answer.
+        #expect(signal(m.handle(.localAnswer(sdp(callerFP))), .answer) != nil)
+    }
+
+    @Test func bothSidesLowerCeilingAtOnceAndConverge() {
+        var (caller, _) = callerActive()
+        var (callee, _) = calleeActive()
+        let c1 = caller.handle(.setPreference(.fixed(.dataSaver)))
+        let c2 = callee.handle(.setPreference(.fixed(.dataSaver)))
+        #expect(c1.contains { isMakeOffer($0, restart: false) } && c2.contains { isMakeOffer($0, restart: false) })
+        // The ceiling signals cross; both are accepted from the right device.
+        let callerOut = caller.handle(.localOffer(sdp(callerFP)))
+        let calleeOut = callee.handle(.localOffer(sdp(calleeFP)))
+        guard let callerOffer = signal(callerOut, .renegotiate), let calleeOffer = signal(calleeOut, .renegotiate) else {
+            Issue.record("both sides should have an offer out"); return
+        }
+        // Delivery crosses: the caller's offer reaches the callee, the callee's reaches the caller.
+        let atCallee = callee.handle(.remote(callerOffer, fromDeviceID: "dA"))
+        let atCaller = caller.handle(.remote(calleeOffer, fromDeviceID: "d1"))
+        #expect(atCallee.first == .rollback && isAcceptOffer(atCallee[1]))   // caller's offer wins
+        #expect(atCaller.isEmpty)                                            // callee's offer is ignored
+        guard let answer = signal(callee.handle(.localAnswer(sdp(calleeFP))), .renegotiateAnswer) else {
+            Issue.record("no answer"); return
+        }
+        let accepted = caller.handle(.remote(answer, fromDeviceID: "d1"))
+        #expect(accepted.contains(.acceptAnswer(sdp: sdp(calleeFP), send: .for(.dataSaver))))
+        // Converged: neither side wants another offer for the same settings.
+        for i in 0..<3 {
+            #expect(!caller.handle(.stats(MediaStats(availableOutgoingBitrate: 5_000_000))).contains { isMakeOffer($0, restart: false) }, "caller \(i)")
+            #expect(!callee.handle(.stats(MediaStats(availableOutgoingBitrate: 5_000_000))).contains { isMakeOffer($0, restart: false) }, "callee \(i)")
+        }
+        #expect(caller.state?.isEnded == false && callee.state?.isEnded == false)
+    }
+
     // MARK: Reconnect, end
 
     @Test func reconnectFlow() {
