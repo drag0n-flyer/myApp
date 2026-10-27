@@ -178,3 +178,4 @@ The sample services stay. The launch argument `-sampleData` selects them, so the
 | 2026-10-27 | Plan 3 carries our own WebRTC patch for the capture post-processing hook (RNNoise). **Approved.** |
 | 2026-10-27 | Keep server-readable mode in Phase 1 (escrow copy, off by default, admin export is audit-logged). **Approved.** |
 | 2026-10-27 | Use mls-rs through our own thin Rust binding layer (`mlsffi`, plan 4) instead of `mls-rs-uniffi`; GOAL.md §3 and §5 updated. **Approved.** |
+| 2026-10-27 | Threat-model fixes (OPEN-18, OPEN-7, OPEN-24, OPEN-6): (1) chat mode bound inside the encrypted chat by its creator, clients never switch E2EE → server-readable; (2) adding a device to a chat shows "X added a new device" to the other members and notifies own devices; (3) link approval shows device name/type, requires Face ID/Touch ID, warns plainly; (4) real safety numbers derived from MLS keys. **Approved.** Added to plans 6 and 7. |
