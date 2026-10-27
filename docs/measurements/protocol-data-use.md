@@ -123,7 +123,7 @@ Do these in order, for each of the 3 runs of a cell.
 9. Score the voice quality:
 
     ```
-    python3 tools/call-lab/scoring/score.py visqol --ref stimulus.wav --deg tools/call-lab/runs/<run_id>/received.wav
+    tools/call-lab/scoring/.venv/bin/python tools/call-lab/scoring/score.py visqol --ref stimulus.wav --deg tools/call-lab/runs/<run_id>/received.wav
     ```
 
     Expected: one line like `{"visqol_moslqo": 4.1}`. Use the number as `visqol`. (If the scoring tools are not installed yet, follow `tools/call-lab/scoring/README.md` first.)

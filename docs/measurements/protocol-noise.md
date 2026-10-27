@@ -19,7 +19,7 @@ Devices: the A12 iPhone and the current iPhone. Do the whole protocol on each.
 1. Build the 150 files. Follow `tools/call-lab/corpus/` (fetch the corpus, then mix with `mix_noise.py`) and write down the folder you mixed them into.
    Expected: 150 WAV files, 10 per category per level.
 2. Set up the scoring tools by following `tools/call-lab/scoring/README.md`.
-   Expected: `python3 tools/call-lab/scoring/score.py dnsmos --in <any mixed file>` prints `{"sig": ..., "bak": ..., "ovrl": ...}`.
+   Expected: `tools/call-lab/scoring/.venv/bin/python tools/call-lab/scoring/score.py dnsmos --in <any mixed file>` prints `{"sig": ..., "bak": ..., "ovrl": ...}`.
 3. Wire the cable rig as in [README.md](README.md): Mac output into the iPhone's headset microphone input. Turn off Wi-Fi Assist, Bluetooth and Low Data Mode on the phone.
    Expected: the iPhone's NS bench screen shows input level moving when the Mac plays a sound.
 
@@ -35,22 +35,22 @@ Devices: the A12 iPhone and the current iPhone. Do the whole protocol on each.
    Expected: three entries.
 5. For each mode record the footprint delta (memory added by loading the model): `footprintBytesAfter - footprintBytesBefore`.
    Expected: a number of bytes. Convert to MB (1 MB = 1 000 000 bytes) for the result.
-6. Score the clips. After the run, the bench (Task L5) will write one WAV file per clip for each pass, in one subfolder per mode: `raw/<clip-id>.wav`, `vpio/<clip-id>.wav` and `rnnoise/<clip-id>.wav`, next to `bench.json`. Score each mode folder with one command (available after L8 scoring is approved; the L8 scoring tool will provide folder mode):
+6. Score the clips. After the run, the bench (Task L5) will write one WAV file per clip for each pass, in one subfolder per mode: `raw/<clip-id>.wav`, `vpio/<clip-id>.wav` and `rnnoise/<clip-id>.wav`, next to `bench.json`. Score each mode folder with one command (folder mode prints one JSON line per clip, with the `clip` id first):
 
    ```
-   python3 tools/call-lab/scoring/score.py dnsmos --in tools/call-lab/runs/<run_id>/vpio/
+   tools/call-lab/scoring/.venv/bin/python tools/call-lab/scoring/score.py dnsmos --in tools/call-lab/runs/<run_id>/vpio/
    ```
 
    Run it again with `raw/` and `rnnoise/`.
-   Expected: one `{"sig": x, "bak": y, "ovrl": z}` per clip, each value between 1 and 5, for 150 clips in each of the three folders.
-7. Score each mode folder against the clean references with ViSQOL (available after L8 scoring is approved). The clean references are the clean speech clips you gave to `mix_noise.py --clean` in "Before you start" step 1; keep them in one folder, named by the same `<clip-id>`, here called `<clean-folder>`:
+   Expected: one `{"clip": "<clip-id>", "sig": x, "bak": y, "ovrl": z}` per clip, each value between 1 and 5, for 150 clips in each of the three folders.
+7. Score each mode folder against the clean references with ViSQOL. The clean references are the clean speech clips you gave to `mix_noise.py --clean` in "Before you start" step 1; keep them in one folder, named by the same `<clip-id>`, here called `<clean-folder>`:
 
    ```
-   python3 tools/call-lab/scoring/score.py visqol --ref <clean-folder> --deg tools/call-lab/runs/<run_id>/rnnoise/
+   tools/call-lab/scoring/.venv/bin/python tools/call-lab/scoring/score.py visqol --ref <clean-folder> --deg tools/call-lab/runs/<run_id>/rnnoise/
    ```
 
    Run it again with `vpio/` for comparison.
-   Expected: a `{"visqol_moslqo": x}` per clip, matched by `<clip-id>`.
+   Expected: a `{"clip": "<clip-id>", "visqol_moslqo": x}` per clip, matched by `<clip-id>`. A clip with no clean reference is listed on stderr and the exit code is 1.
 8. Average SIG, BAK and OVRL per mode and per noise category. Then compute, per category, `OVRL(rnnoise) - OVRL(vpio)`.
    Expected: a 5-row table (one per category) with a difference column.
 9. Run the 30-minute bench loop for battery: charge to 80% or more, unplug, lock nothing (the bench must stay in front), start the NS bench loop in `rnnoise` mode for 30 minutes, then repeat with `vpio`. Read the battery % at start and end from the phone, and the `battery` column of the loop's `stats.csv` if present.

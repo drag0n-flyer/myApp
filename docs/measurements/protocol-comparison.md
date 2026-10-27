@@ -63,7 +63,7 @@ Repeat for every app, every profile, and 3 runs.
 8. Score the voice quality against the stimulus:
 
    ```
-   python3 tools/call-lab/scoring/score.py visqol --ref stimulus.wav --deg tools/call-lab/runs/<run>/received.wav
+   tools/call-lab/scoring/.venv/bin/python tools/call-lab/scoring/score.py visqol --ref stimulus.wav --deg tools/call-lab/runs/<run>/received.wav
    ```
 
    Expected: one line like `{"visqol_moslqo": 3.8}`.
