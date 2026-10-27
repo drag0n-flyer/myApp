@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -18,7 +19,9 @@ func PrincipalFrom(ctx context.Context) core.Principal {
 }
 
 // authenticate checks the "Authorization: Bearer <token>" header, and nothing
-// else, with the verifier. Any failure is the same 401.
+// else, with the verifier. A missing, malformed, unknown or revoked token is
+// the same 401. Any other verifier error (a database outage, say) is returned
+// as is and becomes a retryable 500, because clients treat 401 as signed out.
 func authenticate(v core.SessionVerifier, h HandlerFunc) HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
@@ -26,8 +29,11 @@ func authenticate(v core.SessionVerifier, h HandlerFunc) HandlerFunc {
 			return Err("unauthorized", "missing or malformed bearer token")
 		}
 		p, err := v.Verify(r.Context(), token)
-		if err != nil {
+		if errors.Is(err, core.ErrNotFound) {
 			return Err("unauthorized", "invalid session")
+		}
+		if err != nil {
+			return err
 		}
 		ctx := context.WithValue(r.Context(), principalKey{}, p)
 		return h(w, r.WithContext(ctx))

@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -13,7 +14,7 @@ import (
 
 // HandlerFunc is an HTTP handler that reports failure by returning an error.
 // An *Error is sent to the client as is; any other error becomes a 500
-// "internal" whose text is logged but never sent.
+// "internal"; its text is neither sent nor logged.
 type HandlerFunc func(w http.ResponseWriter, r *http.Request) error
 
 // Router maps Go 1.22 ServeMux patterns to HandlerFuncs.
@@ -39,7 +40,7 @@ func NewRouter(v core.SessionVerifier, log *slog.Logger) *Router {
 func (rt *Router) Public(pattern string, h HandlerFunc) {
 	rt.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 		if err := h(w, r); err != nil {
-			rt.fail(w, err)
+			rt.fail(w, r, err)
 		}
 	})
 }
@@ -53,10 +54,12 @@ func (rt *Router) Authed(pattern string, h HandlerFunc) {
 // ServeHTTP implements http.Handler.
 func (rt *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) { rt.mux.ServeHTTP(w, r) }
 
-func (rt *Router) fail(w http.ResponseWriter, err error) {
+func (rt *Router) fail(w http.ResponseWriter, r *http.Request, err error) {
 	var e *Error
 	if !errors.As(err, &e) {
-		rt.log.Error("request failed", "err", err)
+		// Error text can carry client IPs or URLs with tokens (section 8), so
+		// log only the route pattern and the error's Go type.
+		rt.log.Error("request failed", "route", r.Pattern, "errType", fmt.Sprintf("%T", err), "status", http.StatusInternalServerError)
 		e = Err("internal", "internal error")
 	}
 	writeError(w, e)

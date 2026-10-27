@@ -19,6 +19,9 @@ type Directory interface {
 type Principal struct{ AccountID, DeviceID string }
 
 // SessionVerifier turns a session token into the Principal it belongs to.
+// Implementations must return ErrNotFound (possibly wrapped) for an unknown,
+// expired or revoked token. Any other error means the check itself failed and
+// is reported to clients as a retryable 500, not as a sign-out.
 type SessionVerifier interface {
 	Verify(ctx context.Context, token string) (Principal, error)
 }

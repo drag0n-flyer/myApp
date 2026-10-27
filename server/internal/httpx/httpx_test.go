@@ -1,9 +1,13 @@
 package httpx
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -23,7 +27,7 @@ func (f fakeVerifier) Verify(_ context.Context, token string) (core.Principal, e
 	if token == f.token {
 		return f.p, nil
 	}
-	return core.Principal{}, errors.New("bad token")
+	return core.Principal{}, core.ErrNotFound
 }
 
 func newRouter() *Router {
@@ -240,3 +244,58 @@ func TestClientIP(t *testing.T) {
 		t.Errorf("no port: got %q", got)
 	}
 }
+
+type failingVerifier struct{ err error }
+
+func (f failingVerifier) Verify(context.Context, string) (core.Principal, error) {
+	return core.Principal{}, f.err
+}
+
+func TestVerifierErrors(t *testing.T) {
+	cases := []struct {
+		name   string
+		err    error
+		status int
+		code   string
+	}{
+		{"not found", core.ErrNotFound, 401, "unauthorized"},
+		{"wrapped not found", fmt.Errorf("lookup: %w", core.ErrNotFound), 401, "unauthorized"},
+		{"outage", errors.New("connection refused"), 500, "internal"},
+	}
+	for _, c := range cases {
+		rt := NewRouter(failingVerifier{c.err}, nil)
+		rt.Authed("GET /me", func(http.ResponseWriter, *http.Request) error { return nil })
+		rec := do(rt, "GET", "/me", "", map[string]string{"Authorization": "Bearer tok"})
+		if rec.Code != c.status || !strings.Contains(rec.Body.String(), `"code":"`+c.code+`"`) {
+			t.Errorf("%s: got %d %s", c.name, rec.Code, rec.Body)
+		}
+		if strings.Contains(rec.Body.String(), "connection refused") {
+			t.Errorf("%s: error text leaked to client", c.name)
+		}
+	}
+}
+
+func TestInternalErrorLogOmitsErrorText(t *testing.T) {
+	var buf bytes.Buffer
+	rt := NewRouter(newVerifier(), slog.New(slog.NewTextHandler(&buf, nil)))
+	rt.Public("GET /push/{id}", func(http.ResponseWriter, *http.Request) error {
+		return &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("secret-token-9f3a for 203.0.113.7")}
+	})
+	rec := do(rt, "GET", "/push/1", "", nil)
+	if rec.Code != 500 {
+		t.Fatalf("got %d", rec.Code)
+	}
+	out := buf.String()
+	for _, bad := range []string{"secret-token-9f3a", "203.0.113.7", "dial"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("log contains %q: %s", bad, out)
+		}
+	}
+	for _, want := range []string{"GET /push/{id}", "*net.OpError", "status=500"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log lacks %q: %s", want, out)
+		}
+	}
+}
+
+func newVerifier() core.SessionVerifier { return fakeVerifier{"good", core.Principal{}} }
