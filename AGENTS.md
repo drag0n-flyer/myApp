@@ -6,6 +6,7 @@ Rules for every coding agent (Claude, Codex) working in this repository.
 - [GOAL.md](GOAL.md): product goal, decisions, roadmap. Section 16 holds the AI-development rules below in full.
 - [UI design](docs/superpowers/specs/2026-10-27-app-ui-design.md) and its [mockups](docs/superpowers/specs/mockups/).
 - [UI build plan](docs/superpowers/plans/2026-10-27-app-ui-sample-data.md): work task by task, in order.
+- [Server design](docs/superpowers/specs/2026-10-27-server-design.md) and [server plan](docs/superpowers/plans/2026-10-27-go-server.md): work task by task, in order.
 
 Decisions in these documents were made by the project owner. Do not change them on your own; ask.
 
@@ -13,6 +14,7 @@ Decisions in these documents were made by the project owner. Do not change them 
 - Follow the plan's steps exactly: write the failing test, see it fail, implement, see it pass, commit.
 - Use the exact names, signatures, strings, and values given in the plan and the design.
 - Code is written on Linux. `AppCore` tests run locally: `cd apps/apple/Packages/AppCore && swift test`.
+- Server (Go, in `server/`) tests run locally and need Postgres: `cd server && TEST_DATABASE_URL='postgres:///postgres?host=/var/run/postgresql' go test ./...`. CI runs them in `.github/workflows/server.yml`.
 - iPhone and Mac builds and UI tests run in GitHub Actions on `macos-26` runners. Push, then check with `gh run watch` and `gh run view --log-failed`. Never claim an app task passes without a green run.
 
 ## Rules

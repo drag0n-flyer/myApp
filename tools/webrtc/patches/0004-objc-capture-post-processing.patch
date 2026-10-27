@@ -1,0 +1,284 @@
+diff --git a/sdk/BUILD.gn b/sdk/BUILD.gn
+index 45f734a..ed12815 100644
+--- a/sdk/BUILD.gn
++++ b/sdk/BUILD.gn
+@@ -981,6 +981,8 @@ if (is_ios || is_mac) {
+       ]
+       configs += [ "..:no_global_constructors" ]
+       sources = [
++        "objc/api/peerconnection/RTCAudioCapturePostProcessing.h",
++        "objc/api/peerconnection/RTCAudioCapturePostProcessing.mm",
+         "objc/api/peerconnection/RTCAudioSource+Private.h",
+         "objc/api/peerconnection/RTCAudioSource.h",
+         "objc/api/peerconnection/RTCAudioSource.mm",
+@@ -1171,6 +1173,7 @@ if (is_ios || is_mac) {
+         "../common_video",
+         "../media:media_constants",
+         "../modules/audio_coding:webrtc_opus",
++        "../modules/audio_processing:audio_buffer",
+         "../modules/video_coding:video_codec_interface",
+         "../pc:peer_connection_factory",
+         "../pc:webrtc_sdp",
+@@ -1390,6 +1393,7 @@ if (is_ios || is_mac) {
+           "objc/helpers/RTCCameraPreviewView.h",
+           "objc/helpers/RTCDispatcher.h",
+           "objc/helpers/UIDevice+RTCDevice.h",
++          "objc/api/peerconnection/RTCAudioCapturePostProcessing.h",
+           "objc/api/peerconnection/RTCAudioSource.h",
+           "objc/api/peerconnection/RTCAudioTrack.h",
+           "objc/api/peerconnection/RTCConfiguration.h",
+@@ -1507,6 +1511,7 @@ if (is_ios || is_mac) {
+         output_name = "WebRTC"
+ 
+         sources = [
++          "objc/api/peerconnection/RTCAudioCapturePostProcessing.h",
+           "objc/api/peerconnection/RTCAudioSource.h",
+           "objc/api/peerconnection/RTCAudioTrack.h",
+           "objc/api/peerconnection/RTCCertificate.h",
+diff --git a/sdk/objc/api/peerconnection/RTCAudioCapturePostProcessing.h b/sdk/objc/api/peerconnection/RTCAudioCapturePostProcessing.h
+new file mode 100644
+index 0000000..af03aa9
+--- /dev/null
++++ b/sdk/objc/api/peerconnection/RTCAudioCapturePostProcessing.h
+@@ -0,0 +1,67 @@
++/*
++ *  Application patch (tools/webrtc/patches/0004): a writable hook on captured
++ *  audio. The upstream Objective-C SDK only lets an app observe it.
++ *
++ *  The hook runs inside WebRTC's audio processing module, after its echo
++ *  cancellation and noise suppression. On iOS, echo cancellation itself happens
++ *  earlier, in Apple's voice-processing I/O unit, so the hook still sees
++ *  echo-cancelled audio.
++ */
++
++#import <Foundation/Foundation.h>
++
++#import "sdk/objc/api/peerconnection/RTCPeerConnectionFactory.h"
++#import "sdk/objc/base/RTCMacros.h"
++
++NS_ASSUME_NONNULL_BEGIN
++
++@protocol RTC_OBJC_TYPE
++(RTCVideoDecoderFactory);
++@protocol RTC_OBJC_TYPE
++(RTCVideoEncoderFactory);
++
++/** `processChannels:frames:channelCount:` is called on the audio thread, once per
++ *  10 ms frame; do not block or allocate in it. The other methods run on the
++ *  thread that is (re)starting the audio pipeline, which may be another thread. */
++RTC_OBJC_EXPORT
++@protocol RTC_OBJC_TYPE
++(RTCAudioCapturePostProcessing)<NSObject>
++
++/** Called before the first frame and again whenever the audio pipeline is
++ *  re-initialised. After any re-initialisation, `reset` follows. */
++- (void)initializeWithSampleRateHz:(NSInteger)sampleRateHz channels:(NSInteger)channels;
++
++/** Full-band float samples in [-1, 1], one buffer per channel; modify in place. */
++- (void)processChannels:(float *const _Nonnull *_Nonnull)channels
++                 frames:(NSInteger)frames
++           channelCount:(NSInteger)channelCount;
++
++/** Drop any history. Called after every re-initialisation, that is after each
++ *  `initializeWithSampleRateHz:channels:` except the first. */
++- (void)reset;
++
++@end
++
++@interface RTC_OBJC_TYPE (RTCPeerConnectionFactory) (AppCapturePostProcessing)
++
++/** YES in this build. Lets code check that the hook exists. */
++@property(class, nonatomic, readonly) BOOL hasCapturePostProcessingHook;
++
++/** Like `initWithEncoderFactory:decoderFactory:`, with a capture hook. The
++ *  factory holds `postProcessing` weakly; the caller keeps it alive for as long
++ *  as the factory lives. */
++- (instancetype)
++    initWithEncoderFactory:(nullable id<RTC_OBJC_TYPE(RTCVideoEncoderFactory)>)encoderFactory
++            decoderFactory:(nullable id<RTC_OBJC_TYPE(RTCVideoDecoderFactory)>)decoderFactory
++     capturePostProcessing:
++         (nullable id<RTC_OBJC_TYPE(RTCAudioCapturePostProcessing)>)postProcessing;
++
++/** Test hook: runs one 10 ms 48 kHz mono frame of constant 0.5 through an audio
++ *  processing module built with `postProcessing` and every built-in stage off,
++ *  and returns the output samples (empty if processing failed). */
+++ (NSArray<NSNumber *> *)selfTestCapturePostProcessing:
++    (id<RTC_OBJC_TYPE(RTCAudioCapturePostProcessing)>)postProcessing;
++
++@end
++
++NS_ASSUME_NONNULL_END
+diff --git a/sdk/objc/api/peerconnection/RTCAudioCapturePostProcessing.mm b/sdk/objc/api/peerconnection/RTCAudioCapturePostProcessing.mm
+new file mode 100644
+index 0000000..daea477
+--- /dev/null
++++ b/sdk/objc/api/peerconnection/RTCAudioCapturePostProcessing.mm
+@@ -0,0 +1,168 @@
++/*
++ *  Application patch (tools/webrtc/patches/0004). See
++ *  RTCAudioCapturePostProcessing.h.
++ */
++
++#import "RTCAudioCapturePostProcessing.h"
++
++#include <memory>
++#include <optional>
++#include <string>
++#include <utility>
++#include <vector>
++
++#import "RTCPeerConnectionFactory+Native.h"
++#import "RTCPeerConnectionFactory+Private.h"
++
++#import "base/RTCVideoDecoderFactory.h"
++#import "base/RTCVideoEncoderFactory.h"
++
++#include "api/audio/audio_device.h"
++#include "api/audio/audio_processing.h"
++#include "api/audio/builtin_audio_processing_builder.h"
++#include "api/audio_codecs/builtin_audio_decoder_factory.h"
++#include "api/audio_codecs/builtin_audio_encoder_factory.h"
++#include "api/environment/environment.h"
++#include "api/environment/environment_factory.h"
++#include "api/scoped_refptr.h"
++#include "modules/audio_processing/audio_buffer.h"
++#include "sdk/objc/native/api/video_decoder_factory.h"
++#include "sdk/objc/native/api/video_encoder_factory.h"
++#if defined(WEBRTC_IOS)
++#import "sdk/objc/native/api/audio_device_module.h"
++#endif
++
++namespace {
++
++// AudioBuffer holds samples in the FloatS16 range [-32768, 32767]. The hook
++// sees [-1, 1]. 32768 is a power of two, so scaling there and back is exact.
++constexpr float kToUnit = 1.0f / 32768.0f;
++constexpr float kFromUnit = 32768.0f;
++
++class CapturePostProcessingAdapter final : public webrtc::CustomProcessing {
++ public:
++  explicit CapturePostProcessingAdapter(id<RTC_OBJC_TYPE(RTCAudioCapturePostProcessing)> delegate)
++      : delegate_(delegate) {}
++
++  void Initialize(int sample_rate_hz, int num_channels) override {
++    id<RTC_OBJC_TYPE(RTCAudioCapturePostProcessing)> delegate = delegate_;
++    [delegate initializeWithSampleRateHz:sample_rate_hz channels:num_channels];
++    if (initialized_) {
++      [delegate reset];
++    }
++    initialized_ = true;
++  }
++
++  void Process(webrtc::AudioBuffer* audio) override {
++    id<RTC_OBJC_TYPE(RTCAudioCapturePostProcessing)> delegate = delegate_;
++    if (delegate == nil) {
++      return;  // The owner let go of the hook: audio passes through.
++    }
++    const size_t channels = audio->num_channels();
++    const size_t frames = audio->num_frames();
++    // The delegate edits the AudioBuffer's own channel pointers in place, so
++    // nothing is copied or allocated here.
++    float *const *data = audio->channels();
++    for (size_t c = 0; c < channels; ++c) {
++      for (size_t i = 0; i < frames; ++i) {
++        data[c][i] *= kToUnit;
++      }
++    }
++    [delegate processChannels:data
++                       frames:static_cast<NSInteger>(frames)
++                 channelCount:static_cast<NSInteger>(channels)];
++    for (size_t c = 0; c < channels; ++c) {
++      for (size_t i = 0; i < frames; ++i) {
++        data[c][i] *= kFromUnit;
++      }
++    }
++  }
++
++  std::string ToString() const override { return "AppCapturePostProcessing"; }
++
++ private:
++  __weak id<RTC_OBJC_TYPE(RTCAudioCapturePostProcessing)> delegate_;
++  bool initialized_ = false;
++};
++
++std::unique_ptr<webrtc::BuiltinAudioProcessingBuilder> MakeBuilder(
++    id<RTC_OBJC_TYPE(RTCAudioCapturePostProcessing)> postProcessing,
++    const webrtc::AudioProcessing::Config &config) {
++  auto builder = std::make_unique<webrtc::BuiltinAudioProcessingBuilder>(config);
++  if (postProcessing != nil) {
++    builder->SetCapturePostProcessing(
++        std::make_unique<CapturePostProcessingAdapter>(postProcessing));
++  }
++  return builder;
++}
++
++}  // namespace
++
++@implementation RTC_OBJC_TYPE (RTCPeerConnectionFactory) (AppCapturePostProcessing)
++
+++ (BOOL)hasCapturePostProcessingHook {
++  return YES;
++}
++
++- (instancetype)
++    initWithEncoderFactory:(nullable id<RTC_OBJC_TYPE(RTCVideoEncoderFactory)>)encoderFactory
++            decoderFactory:(nullable id<RTC_OBJC_TYPE(RTCVideoDecoderFactory)>)decoderFactory
++     capturePostProcessing:
++         (nullable id<RTC_OBJC_TYPE(RTCAudioCapturePostProcessing)>)postProcessing {
++  // Same set-up as initWithEncoderFactory:decoderFactory:audioDevice: with no
++  // custom audio device, plus our audio processing builder.
++  webrtc::PeerConnectionFactoryDependencies dependencies;
++  dependencies.env = webrtc::CreateEnvironment();
++  dependencies.audio_encoder_factory = webrtc::CreateBuiltinAudioEncoderFactory();
++  dependencies.audio_decoder_factory = webrtc::CreateBuiltinAudioDecoderFactory();
++  if (encoderFactory) {
++    dependencies.video_encoder_factory = webrtc::ObjCToNativeVideoEncoderFactory(encoderFactory);
++  }
++  if (decoderFactory) {
++    dependencies.video_decoder_factory = webrtc::ObjCToNativeVideoDecoderFactory(decoderFactory);
++  }
++#if defined(WEBRTC_IOS)
++  dependencies.adm = webrtc::CreateAudioDeviceModule(*dependencies.env);
++#endif
++  dependencies.audio_processing_builder =
++      MakeBuilder(postProcessing, webrtc::AudioProcessing::Config());
++  return [self initWithMediaAndDependencies:dependencies];
++}
++
+++ (NSArray<NSNumber *> *)selfTestCapturePostProcessing:
++    (id<RTC_OBJC_TYPE(RTCAudioCapturePostProcessing)>)postProcessing {
++  // Every built-in stage off, so the only thing that can change the frame is
++  // the hook.
++  webrtc::AudioProcessing::Config config;
++  config.pre_amplifier.enabled = false;
++  config.capture_level_adjustment.enabled = false;
++  config.high_pass_filter.enabled = false;
++  config.echo_canceller.enabled = false;
++  config.noise_suppression.enabled = false;
++  config.gain_controller1.enabled = false;
++  config.gain_controller2.enabled = false;
++
++  webrtc::scoped_refptr<webrtc::AudioProcessing> apm =
++      MakeBuilder(postProcessing, config)->Build(webrtc::CreateEnvironment());
++  if (!apm) {
++    return @[];
++  }
++
++  constexpr int kRateHz = 48000;
++  constexpr size_t kFrames = kRateHz / 100;  // 10 ms
++  std::vector<float> in(kFrames, 0.5f);
++  std::vector<float> out(kFrames, 0.0f);
++  const float *src[1] = {in.data()};
++  float *dest[1] = {out.data()};
++  const webrtc::StreamConfig stream(kRateHz, /*num_channels=*/1);
++  if (apm->ProcessStream(src, stream, stream, dest) != webrtc::AudioProcessing::kNoError) {
++    return @[];
++  }
++  NSMutableArray<NSNumber *> *result = [NSMutableArray arrayWithCapacity:kFrames];
++  for (float sample : out) {
++    [result addObject:@(sample)];
++  }
++  return result;
++}
++
++@end

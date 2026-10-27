@@ -3,12 +3,15 @@ name: MLS client core
 on:
   workflow_dispatch:
   push:
+    branches-ignore: [feat/server]
     paths:
       - "apps/apple/Packages/SecureMessaging/**"
+      - "mlsffi/**"
       - ".github/workflows/mls.yml"
   pull_request:
     paths:
       - "apps/apple/Packages/SecureMessaging/**"
+      - "mlsffi/**"
       - ".github/workflows/mls.yml"
 
 concurrency:
