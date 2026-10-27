@@ -43,7 +43,11 @@ final class AppModel {
     private(set) var revision = 0
 
     init(launch: LaunchOptions = .current) {
-        let account = SampleAccountService()
+        #if os(macOS)
+        let account = SampleAccountService(platform: .mac)
+        #else
+        let account = SampleAccountService(platform: .iPhone)
+        #endif
         let server = account.defaultServer
         let settings = UserSettings.initial(from: server)
         self.account = account
@@ -67,6 +71,7 @@ final class AppModel {
         calls.onChange = { [weak self] state in
             self?.activeCall = state
         }
+        Task { await refreshDevices() }
     }
 
     // MARK: - Chats (every read touches `revision` so SwiftUI tracks store changes)
@@ -152,17 +157,28 @@ final class AppModel {
     // MARK: - Account and devices
 
     var me: Contact { chatStore.me }
-    var linkedDevices: [LinkedDevice] = LinkedDevice.samples
+    var linkedDevices: [DeviceInfo] = []
 
-    func linkSampleDevice() {
-        linkedDevices.append(LinkedDevice(id: UUID().uuidString, name: String(localized: "New Mac"), symbol: "laptopcomputer",
-                                          lastActive: String(localized: "Just now"), isThisDevice: false))
+    func refreshDevices() async {
+        if let list = try? await account.devices() { linkedDevices = list }
     }
 
-    func removeDevice(id: String) { linkedDevices.removeAll { $0.id == id && !$0.isThisDevice } }
+    /// Sample build: stands in for scanning the new device's code and approving it.
+    func linkSampleDevice() async {
+        if let request = try? await account.linkRequest(qrText: SampleAccountService.sampleLinkText) {
+            try? await account.approveLink(request)
+        }
+        await refreshDevices()
+    }
+
+    func removeDevice(id: String) async {
+        try? await account.removeDevice(id: id)
+        await refreshDevices()
+    }
 
     /// Sample build: forgets the account and returns to the welcome screen.
     func deleteAccount() {
+        account.signOutLocally()
         #if os(macOS)
         onboarding = OnboardingFlow(platform: .mac)
         #else

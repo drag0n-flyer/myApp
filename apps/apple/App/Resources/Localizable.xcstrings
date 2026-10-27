@@ -1,6 +1,182 @@
 {
-  "sourceLanguage" : "en",
-  "strings" : {
+  "sourceLanguage": "en",
+  "strings": {
+    "This server needs an invite code.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This server needs an invite code."
+          }
+        }
+      }
+    },
+    "That invite code doesn't work. Check it and try again.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "That invite code doesn't work. Check it and try again."
+          }
+        }
+      }
+    },
+    "That username is taken.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "That username is taken."
+          }
+        }
+      }
+    },
+    "Use 3–32 lowercase letters, numbers, or _, starting with a letter.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use 3–32 lowercase letters, numbers, or _, starting with a letter."
+          }
+        }
+      }
+    },
+    "Enter a valid email address.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enter a valid email address."
+          }
+        }
+      }
+    },
+    "That code isn't right.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "That code isn't right."
+          }
+        }
+      }
+    },
+    "That code has expired. Ask for a new one.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "That code has expired. Ask for a new one."
+          }
+        }
+      }
+    },
+    "Too many tries. Try again in %lld min.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Too many tries. Try again in %lld min."
+          }
+        }
+      }
+    },
+    "Too many tries. Try again later.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Too many tries. Try again later."
+          }
+        }
+      }
+    },
+    "This code has expired. Start again on the new device.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This code has expired. Start again on the new device."
+          }
+        }
+      }
+    },
+    "This code is for a different server.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This code is for a different server."
+          }
+        }
+      }
+    },
+    "Passkeys aren't available on this server. Use an email code instead.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Passkeys aren't available on this server. Use an email code instead."
+          }
+        }
+      }
+    },
+    "Can't reach the server. Check your connection and try again.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Can't reach the server. Check your connection and try again."
+          }
+        }
+      }
+    },
+    "Something went wrong on the server. Try again later.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Something went wrong on the server. Try again later."
+          }
+        }
+      }
+    },
+    "Couldn't confirm it's you. Check Face ID or your passcode and try again.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't confirm it's you. Check Face ID or your passcode and try again."
+          }
+        }
+      }
+    },
+    "Couldn't check right now": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't check right now"
+          }
+        }
+      }
+    }
   },
-  "version" : "1.0"
+  "version": "1.0"
 }

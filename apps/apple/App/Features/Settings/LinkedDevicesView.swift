@@ -9,16 +9,21 @@ struct LinkedDevicesView: View {
             Section {
                 ForEach(model.linkedDevices) { device in
                     HStack(spacing: 12) {
-                        Image(systemName: device.symbol).font(.title2).frame(width: 34)
+                        Image(systemName: device.platform == .mac ? "laptopcomputer" : "iphone").font(.title2).frame(width: 34)
                         VStack(alignment: .leading) {
                             Text(device.name)
-                            Text(device.lastActive).font(.caption).foregroundStyle(.secondary)
+                            if device.isThisDevice {
+                                Text("Active now").font(.caption).foregroundStyle(.secondary)
+                            } else {
+                                Text(device.lastActive, style: .relative).font(.caption).foregroundStyle(.secondary)
+                            }
                         }
                     }
                     .deleteDisabled(device.isThisDevice)
                 }
                 .onDelete { offsets in
-                    offsets.map { model.linkedDevices[$0].id }.forEach(model.removeDevice)
+                    let ids = offsets.map { model.linkedDevices[$0].id }
+                    Task { for id in ids { await model.removeDevice(id: id) } }
                 }
             } footer: {
                 Text("Swipe to remove a device you no longer use.")
@@ -31,8 +36,9 @@ struct LinkedDevicesView: View {
             #endif
         }
         .navigationTitle("Linked devices")
+        .task { await model.refreshDevices() }
         .sheet(isPresented: $showingScanner) {
-            ScanLinkCodeView { model.linkSampleDevice() }
+            ScanLinkCodeView { Task { await model.linkSampleDevice() } }
         }
     }
 }

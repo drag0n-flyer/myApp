@@ -5,18 +5,28 @@ import SwiftUI
 /// The new device shows a QR code; the signed-in iPhone scans it (UI design §6.8).
 struct LinkDeviceView: View {
     let model: AppModel
+    @State private var qrText = ""
+    @State private var error: AccountError?
 
     var body: some View {
         OnboardingPage(title: "Link this device", message: "Open \(AppBrand.name) on your iPhone → Settings → Linked devices → Link a device, and scan this code.") {
-            QRCodeView(text: model.account.linkingCode)
+            QRCodeView(text: qrText)
                 .frame(width: 220, height: 220)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)
                 .accessibilityLabel("Linking QR code")
                 .accessibilityIdentifier("link.qr")
+            AccountErrorText(error: error)
         } buttons: {
-            // Sample build: stands in for the iPhone confirming the scan.
-            Button("I scanned it") { model.onboarding.linked() }
+            // Sample build: stands in for the iPhone confirming the scan (returns at once).
+            Button("I scanned it") {
+                Task {
+                    do {
+                        try await model.account.waitForLinkApproval()
+                        model.onboarding.linked()
+                    } catch { self.error = error }
+                }
+            }
                 .buttonStyle(PrimaryButtonStyle())
                 .accessibilityIdentifier("link.done")
             if model.onboarding.canCreateAccount {
@@ -25,6 +35,9 @@ struct LinkDeviceView: View {
                     .frame(minHeight: 44)
                     .accessibilityIdentifier("link.nodevice")
             }
+        }
+        .task {
+            do { qrText = try await model.account.makeLinkCode().qrText } catch { self.error = error }
         }
     }
 }
@@ -35,12 +48,19 @@ struct LostDeviceView: View {
     @State private var email = ""
     @State private var codeSent = false
     @State private var code = ""
-    @State private var wrong = false
+    @State private var error: AccountError?
 
     var body: some View {
         OnboardingPage(title: "Sign in on a new phone",
                        message: "Your account comes back, but old messages can only be restored from a backup.") {
-            Button("Sign in with passkey", systemImage: "person.badge.key") { model.onboarding.linked() }
+            Button("Sign in with passkey", systemImage: "person.badge.key") {
+                Task {
+                    do {
+                        try await model.account.signInWithPasskey()
+                        model.onboarding.recovered()
+                    } catch { self.error = error }
+                }
+            }
                 .buttonStyle(.bordered)
                 .controlSize(.large)
                 .frame(maxWidth: .infinity)
@@ -61,21 +81,21 @@ struct LostDeviceView: View {
                         .textContentType(.oneTimeCode)
                         .accessibilityIdentifier("lost.code")
                 }
-                if wrong {
-                    Text("That code didn't match. Try again.").font(.footnote).foregroundStyle(.red)
-                }
             }
+            AccountErrorText(error: error)
         } buttons: {
             Button(codeSent ? "Sign in" : "Send code") {
                 Task {
-                    if codeSent {
-                        let ok = await model.account.verifyEmail(code: code)
-                        wrong = !ok
-                        if ok { model.onboarding.linked() }
-                    } else {
-                        await model.account.sendEmailCode(to: email)
-                        codeSent = true
-                    }
+                    do {
+                        if codeSent {
+                            try await model.account.recover(email: email, code: code)
+                            model.onboarding.recovered()
+                        } else {
+                            try await model.account.sendRecoveryCode(to: email)
+                            codeSent = true
+                            error = nil
+                        }
+                    } catch { self.error = error }
                 }
             }
             .buttonStyle(PrimaryButtonStyle())

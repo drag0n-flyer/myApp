@@ -6,7 +6,7 @@ import UserNotifications
 struct InviteCodeView: View {
     let model: AppModel
     @State private var code = ""
-    @State private var wrong = false
+    @State private var error: AccountError?
     @State private var checking = false
 
     var body: some View {
@@ -17,9 +17,7 @@ struct InviteCodeView: View {
                     .accessibilityIdentifier("invite.field")
                     .onSubmit(submit)
             }
-            if wrong {
-                Text("That code didn't work. Check it and try again.").font(.footnote).foregroundStyle(.red)
-            }
+            AccountErrorText(error: error)
         } buttons: {
             Button("Continue", action: submit)
                 .buttonStyle(PrimaryButtonStyle())
@@ -31,10 +29,13 @@ struct InviteCodeView: View {
     private func submit() {
         checking = true
         Task {
-            let ok = await model.account.redeemInvite(code: code.trimmingCharacters(in: .whitespaces))
-            checking = false
-            wrong = !ok
-            if ok { model.onboarding.inviteAccepted() }
+            defer { checking = false }
+            do {
+                if try await model.account.redeemInvite(code: code.trimmingCharacters(in: .whitespaces)) {
+                    error = nil
+                    model.onboarding.inviteAccepted()
+                }
+            } catch { self.error = error }
         }
     }
 }
@@ -45,6 +46,7 @@ struct CreateAccountView: View {
     @State private var username = ""
     @State private var email = ""
     @State private var check: UsernameCheck?
+    @State private var error: AccountError?
 
     private var serverName: String {
         switch model.onboarding.server {
@@ -104,11 +106,15 @@ struct CreateAccountView: View {
             Text("Only used to recover your account. Nobody can find you by email unless you turn it on.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            AccountErrorText(error: error)
         } buttons: {
             Button("Continue") {
                 Task {
-                    await model.account.sendEmailCode(to: email)
-                    model.onboarding.accountSubmitted()
+                    do {
+                        try await model.account.startSignUp(username: username, email: email)
+                        error = nil
+                        model.onboarding.accountSubmitted()
+                    } catch { self.error = error }
                 }
             }
             .buttonStyle(PrimaryButtonStyle())
@@ -128,6 +134,7 @@ struct CreateAccountView: View {
         case .available: "✓ Available"
         case .taken: "Taken"
         case .invalid: "3–32 letters, numbers or _, starting with a letter"
+        case .unknown: "Couldn't check right now"
         }
     }
 }
@@ -135,7 +142,7 @@ struct CreateAccountView: View {
 struct VerifyEmailView: View {
     let model: AppModel
     @State private var code = ""
-    @State private var wrong = false
+    @State private var error: AccountError?
 
     var body: some View {
         OnboardingPage(title: "Check your email", message: "Enter the 6-digit code we sent you.") {
@@ -148,9 +155,7 @@ struct VerifyEmailView: View {
                     #endif
                     .accessibilityIdentifier("verify.field")
             }
-            if wrong {
-                Text("That code didn't match. Try again.").font(.footnote).foregroundStyle(.red)
-            }
+            AccountErrorText(error: error)
         } buttons: {
             Button("Verify", action: verify)
                 .buttonStyle(PrimaryButtonStyle())
@@ -162,15 +167,18 @@ struct VerifyEmailView: View {
 
     private func verify() {
         Task {
-            let ok = await model.account.verifyEmail(code: code)
-            wrong = !ok
-            if ok { model.onboarding.emailVerified() }
+            do {
+                try await model.account.verifyEmail(code: code)
+                error = nil
+                model.onboarding.emailVerified()
+            } catch { self.error = error }
         }
     }
 }
 
 struct PasskeyView: View {
     let model: AppModel
+    @State private var error: AccountError?
 
     private var title: LocalizedStringKey {
         #if os(macOS)
@@ -188,9 +196,18 @@ struct PasskeyView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 24)
                 .accessibilityHidden(true)
+            AccountErrorText(error: error)
         } buttons: {
-            // The real app runs ASAuthorizationPlatformPublicKeyCredentialProvider here.
-            Button("Create passkey") { model.onboarding.passkeyCreated() }
+            // On `.cancelled` the person stays on this screen.
+            Button("Create passkey") {
+                Task {
+                    do {
+                        try await model.account.finishSignUp()
+                        error = nil
+                        model.onboarding.passkeyCreated()
+                    } catch { self.error = error }
+                }
+            }
                 .buttonStyle(PrimaryButtonStyle())
                 .accessibilityIdentifier("passkey.create")
         }
