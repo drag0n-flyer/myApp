@@ -73,12 +73,12 @@ private final class LockProbe: @unchecked Sendable {
             session: SessionStore(storage: MemorySessionStorage(Session(
                 host: FakeServer.host, accountID: device.accountID, deviceID: device.deviceID,
                 token: "test.\(device.accountID).\(device.deviceID)"))),
-            transport: ProbeTransport(inner: await server.transport(for: device), probe: self))
+            transport: SyncProbeTransport(inner: await server.transport(for: device), probe: self))
         return TestDevice(accountID: device.accountID, deviceID: device.deviceID, deps: deps, notifier: device.notifier, directory: device.directory)
     }
 }
 
-private struct ProbeTransport: HTTPTransport {
+private struct SyncProbeTransport: HTTPTransport {
     let inner: HTTPTransport
     let probe: LockProbe
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
