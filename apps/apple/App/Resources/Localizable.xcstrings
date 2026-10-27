@@ -209,6 +209,17 @@
           }
         }
       }
+    },
+    "Confirm to approve this new device.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Confirm to approve this new device."
+          }
+        }
+      }
     }
   },
   "version": "1.0"

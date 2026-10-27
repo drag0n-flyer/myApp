@@ -20,15 +20,34 @@ private actor FakePasskey: PasskeyAuthenticating {
     }
 }
 
+private let qrKey = Data(repeating: 7, count: 32)
+private let qrKeyText = Base64URLData(qrKey).encoded
+
 private struct FakeCrypto: LinkCrypto {
-    func makeKeyPair() throws(AccountError) -> (publicKey: Data, privateKey: Data) { (Data([251, 255]), Data([9])) }
+    var openFails = false
+    func makeKeyPair() throws(AccountError) -> (publicKey: Data, privateKey: Data) { (qrKey, Data([9])) }
     func seal(_ snapshot: Data, to publicKey: Data) throws(AccountError) -> Data { Data("sealed:".utf8) + snapshot + publicKey }
-    func open(_ sealed: Data, privateKey: Data) throws(AccountError) -> Data { Data("opened".utf8) }
+    func open(_ sealed: Data, privateKey: Data) throws(AccountError) -> Data {
+        if openFails { throw .server }
+        return Data("opened".utf8)
+    }
 }
 
-private struct FakeBiometrics: BiometricConfirming {
-    var result: AccountError?
-    func confirm(reason: String) async throws(AccountError) { if let result { throw result } }
+private actor FakeBiometrics: BiometricConfirming {
+    let result: AccountError?
+    private(set) var reasons: [String] = []
+    init(result: AccountError? = nil) { self.result = result }
+    func confirm(reason: String) async throws(AccountError) {
+        reasons.append(reason)
+        if let result { throw result }
+    }
+}
+
+private final class ClockBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var t = Date(timeIntervalSince1970: 1_793_534_400)   // 2026-11-01T12:00:00Z
+    func now() -> Date { lock.withLock { t } }
+    func advance(_ d: Duration) { lock.withLock { t += Double(d.components.seconds) } }
 }
 
 private actor SleepLog {
@@ -48,18 +67,22 @@ private func err(_ code: String) -> String { #"{"error":{"code":"\#(code)","mess
     let passkey = FakePasskey()
     let service: LiveAccountService
     let sleeps = SleepLog()
+    let biometrics: FakeBiometrics
 
     init(host: String = "chat.test", signedIn: Bool = false, biometrics: FakeBiometrics = FakeBiometrics(),
+         crypto: FakeCrypto = FakeCrypto(),
          onSleep: @escaping @Sendable (Int, StubTransport) async -> Void = { _, _ in }) {
         if signedIn { try? store.save(Session(host: "chat.test", accountID: "a", deviceID: "d", token: "tok")) }
+        self.biometrics = biometrics
         let t = t, store = store, sleeps = sleeps
+        let clock = ClockBox()
         service = LiveAccountService(
             defaultHost: host, passkeyDomains: ["chat.test"], platform: .iPhone, deviceName: "Ana's iPhone",
             sessions: store,
             makeClient: { _ in ServerClient(baseURL: URL(string: "https://chat.test")!, session: store, transport: t) },
-            passkeys: passkey, biometrics: biometrics, linkCrypto: FakeCrypto(),
-            linkSnapshot: { Data("snap".utf8) },
-            sleep: { d in await sleeps.add(d); await onSleep(await sleeps.count, t) })
+            passkeys: passkey, biometrics: biometrics, approvalReason: "Approve this device", linkCrypto: crypto,
+            linkSnapshot: { Data("snap".utf8) }, now: { clock.now() },
+            sleep: { d in clock.advance(d); await sleeps.add(d); await onSleep(await sleeps.count, t) })
     }
 }
 
@@ -167,7 +190,7 @@ private func err(_ code: String) -> String { #"{"error":{"code":"\#(code)","mess
         await r.t.respond("POST", "/v1/link", status: 200, json: #"{"linkID":"L1","secret":"S1","claimToken":"C1","expiresAt":"2026-11-01T12:05:00Z"}"#)
         await r.t.respond("POST", "/v1/link/L1/claim", status: 202, json: "{}")
         let code = try await r.service.makeLinkCode()
-        #expect(code.qrText == "https://chat.test/link/L1#S1.-_8")
+        #expect(code.qrText == "https://chat.test/link/L1#S1.\(qrKeyText)")
         try await r.service.waitForLinkApproval()
         #expect(await r.sleeps.count == 2)
         #expect(await r.sleeps.total == .seconds(4))
@@ -188,9 +211,9 @@ private func err(_ code: String) -> String { #"{"error":{"code":"\#(code)","mess
 
     @Test func approveLinkRejectsOtherHost() async throws {
         let r = Rig(signedIn: true)
-        await #expect(throws: AccountError.wrongServer) { _ = try await r.service.linkRequest(qrText: "https://evil.test/link/L1#S1") }
+        await #expect(throws: AccountError.wrongServer) { _ = try await r.service.linkRequest(qrText: "https://evil.test/link/L1#S1.\(qrKeyText)") }
         await #expect(throws: AccountError.wrongServer) {
-            try await r.service.approveLink(LinkRequest(qrText: "https://evil.test/link/L1#S1", deviceName: "x", platform: .mac))
+            try await r.service.approveLink(LinkRequest(qrText: "https://evil.test/link/L1#S1.\(qrKeyText)", deviceName: "x", platform: .mac))
         }
         #expect(await r.t.requests.isEmpty)
     }
@@ -198,37 +221,79 @@ private func err(_ code: String) -> String { #"{"error":{"code":"\#(code)","mess
     @Test func linkRequestShowsDetails() async throws {
         let r = Rig(signedIn: true)
         await r.t.respond("POST", "/v1/link/L1/info", status: 200, json: #"{"deviceName":"New Mac","platform":"mac","createdAt":"2026-11-01T12:00:00Z"}"#)
-        let req = try await r.service.linkRequest(qrText: "https://chat.test/link/L1#S1")
+        let req = try await r.service.linkRequest(qrText: "https://chat.test/link/L1#S1.\(qrKeyText)")
         #expect(req.deviceName == "New Mac" && req.platform == .mac)
         #expect(try jsonBody(try #require(await r.t.requests.last)) as? [String: String] == ["secret": "S1"])
         await r.t.respond("POST", "/v1/link/L1/info", status: 403, json: err("forbidden"))
-        await #expect(throws: AccountError.linkExpired) { _ = try await r.service.linkRequest(qrText: "https://chat.test/link/L1#S1") }
+        await #expect(throws: AccountError.linkExpired) { _ = try await r.service.linkRequest(qrText: "https://chat.test/link/L1#S1.\(qrKeyText)") }
     }
 
-    @Test func approveLinkSendsSecret() async throws {
+    @Test func approveLinkSendsSecretAndSealedSnapshot() async throws {
         let r = Rig(signedIn: true)
         await r.t.respond("POST", "/v1/link/L1/approve", status: 204, json: "")
-        let req = LinkRequest(qrText: "https://chat.test/link/L1#S1", deviceName: "New Mac", platform: .mac)
+        let req = LinkRequest(qrText: "https://chat.test/link/L1#S1.\(qrKeyText)", deviceName: "New Mac", platform: .mac)
         try await r.service.approveLink(req)
         let sent = try #require(await r.t.requests.last)
         #expect(sent.url?.path == "/v1/link/L1/approve")
-        #expect(try jsonBody(sent) as? [String: String] == ["secret": "S1"])
+        let body = try jsonBody(sent)
+        #expect(body["secret"] as? String == "S1")
+        let sealed = try #require(Base64URLData(encoded: body["sealed"] as? String ?? "")).data
+        #expect(sealed == Data("sealed:snap".utf8) + qrKey)
+        #expect(await r.biometrics.reasons == ["Approve this device"])
     }
 
-    @Test func approveLinkSealsSnapshotToQRKey() async throws {
+    @Test func invalidQRKeysAreRejectedBeforeAnyRequest() async {
         let r = Rig(signedIn: true)
-        await r.t.respond("POST", "/v1/link/L1/approve", status: 204, json: "")
-        try await r.service.approveLink(LinkRequest(qrText: "https://chat.test/link/L1#S1.-_8", deviceName: "x", platform: .mac))
-        let body = try jsonBody(try #require(await r.t.requests.last))
-        let sealed = try #require(Base64URLData(encoded: body["sealed"] as? String ?? "")).data
-        #expect(sealed == Data("sealed:snap".utf8) + Data([251, 255]))
-        #expect(body["secret"] as? String == "S1")
+        let bad = ["https://chat.test/link/L1#S1", "https://chat.test/link/L1#S1.", "https://chat.test/link/L1#S1.AAAA",
+                   "https://chat.test/link/L1#.\(qrKeyText)", "https://chat.test/link/L1#S1.\(qrKeyText)."]
+        for text in bad {
+            await #expect(throws: AccountError.linkExpired) { _ = try await r.service.linkRequest(qrText: text) }
+            await #expect(throws: AccountError.linkExpired) {
+                try await r.service.approveLink(LinkRequest(qrText: text, deviceName: "x", platform: .mac))
+            }
+        }
+        #expect(await r.t.requests.isEmpty)
+        #expect(await r.biometrics.reasons.isEmpty)
+    }
+
+    @Test func signedOutLinkCallsFailBeforeHostCheck() async {
+        let r = Rig()
+        await #expect(throws: AccountError.server) { _ = try await r.service.linkRequest(qrText: "https://evil.test/link/L1#S1.\(qrKeyText)") }
+        await #expect(throws: AccountError.server) {
+            try await r.service.approveLink(LinkRequest(qrText: "https://evil.test/link/L1#S1.\(qrKeyText)", deviceName: "x", platform: .mac))
+        }
+    }
+
+    @Test func connectRefusesOtherHostWhileSignedIn() async {
+        let r = Rig(signedIn: true)
+        await #expect(throws: AccountError.wrongServer) { _ = try await r.service.connect(host: "evil.test") }
+        #expect(await r.t.requests.isEmpty)
+        #expect(r.store.current?.token == "tok")
+    }
+
+    @Test func failedOpenFailsClosedAndForgetsTicket() async throws {
+        let r = Rig(crypto: FakeCrypto(openFails: true))
+        await r.t.respond("POST", "/v1/link", status: 200, json: #"{"linkID":"L1","secret":"S1","claimToken":"C1","expiresAt":"2026-11-01T12:05:00Z"}"#)
+        await r.t.respond("POST", "/v1/link/L1/claim", status: 200, json: #"{"accountID":"a1","deviceID":"d1","sessionToken":"t1","sealed":"AQ"}"#)
+        _ = try await r.service.makeLinkCode()
+        await #expect(throws: AccountError.server) { try await r.service.waitForLinkApproval() }
+        #expect(r.store.current == nil)
+        #expect(!r.service.isSignedIn)
+        #expect(r.service.receivedLinkSnapshot == nil)
+        // The ticket is gone: waiting again needs a new code.
+        await #expect(throws: AccountError.linkExpired) { try await r.service.waitForLinkApproval() }
+    }
+
+    @Test func deviceBiometricsNeverFallsBackToPasscodeOnPlatformsWithoutIt() async {
+        #if !canImport(LocalAuthentication)
+        await #expect(throws: AccountError.biometricsUnavailable) { try await DeviceBiometrics().confirm(reason: "x") }
+        #endif
     }
 
     @Test func approveLinkNeedsBiometrics() async throws {
         let r = Rig(signedIn: true, biometrics: FakeBiometrics(result: .biometricsUnavailable))
         await #expect(throws: AccountError.biometricsUnavailable) {
-            try await r.service.approveLink(LinkRequest(qrText: "https://chat.test/link/L1#S1", deviceName: "x", platform: .mac))
+            try await r.service.approveLink(LinkRequest(qrText: "https://chat.test/link/L1#S1.\(qrKeyText)", deviceName: "x", platform: .mac))
         }
         #expect(await r.t.requests.isEmpty)
     }

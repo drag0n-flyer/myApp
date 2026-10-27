@@ -55,7 +55,8 @@ public struct DeviceLinkCrypto: LinkCrypto {
     #endif
 }
 
-/// Asks the person to confirm with Face ID, Touch ID or the device passcode.
+/// Asks the person to confirm with Face ID or Touch ID only (no passcode fallback). `reason` is the
+/// localized text the app shows in the system prompt.
 public protocol BiometricConfirming: Sendable {
     func confirm(reason: String) async throws(AccountError)
 }
@@ -67,10 +68,10 @@ public struct DeviceBiometrics: BiometricConfirming {
         #if canImport(LocalAuthentication)
         let context = LAContext()
         var probe: NSError?
-        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &probe) else { throw .biometricsUnavailable }
+        guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &probe) else { throw .biometricsUnavailable }
         let ok: Bool
         do {
-            ok = try await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason)
+            ok = try await context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason)
         } catch {
             if let e = error as? LAError, [.userCancel, .systemCancel, .appCancel].contains(e.code) { throw .cancelled }
             throw .biometricsUnavailable

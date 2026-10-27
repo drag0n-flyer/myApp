@@ -15,6 +15,8 @@ public final class LiveAccountService: AccountService {
     private let biometrics: any BiometricConfirming
     private let linkCrypto: any LinkCrypto
     private let linkSnapshot: @Sendable () async -> Data
+    private let approvalReason: String
+    private let now: @Sendable () -> Date
     private let sleep: @Sendable (Duration) async throws -> Void
 
     private var host: String
@@ -38,8 +40,10 @@ public final class LiveAccountService: AccountService {
                 sessions: SessionStore, makeClient: @escaping @Sendable (String) -> ServerClient,
                 passkeys: any PasskeyAuthenticating,
                 biometrics: any BiometricConfirming = DeviceBiometrics(),
+                approvalReason: String,
                 linkCrypto: any LinkCrypto = DeviceLinkCrypto(),
                 linkSnapshot: @escaping @Sendable () async -> Data = { Data() },
+                now: @escaping @Sendable () -> Date = { Date() },
                 sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) {
         self.defaultHost = defaultHost
         self.passkeyDomains = passkeyDomains
@@ -51,6 +55,8 @@ public final class LiveAccountService: AccountService {
         self.biometrics = biometrics
         self.linkCrypto = linkCrypto
         self.linkSnapshot = linkSnapshot
+        self.approvalReason = approvalReason
+        self.now = now
         self.sleep = sleep
         self.host = sessions.current?.host ?? defaultHost
         self.defaultServer = ServerPolicy(defaultPreference: .auto, maximum: .high, defaultIPHiding: .nonContacts,
@@ -63,7 +69,10 @@ public final class LiveAccountService: AccountService {
 
     // MARK: - Server
 
+    /// While signed in, the session token must never reach another host, so only the session's own
+    /// host can be connected to.
     public func connect(host: String) async throws(AccountError) -> ServerPolicy {
+        if let mine = sessions.current?.host, mine.lowercased() != host.lowercased() { throw .wrongServer }
         self.host = host
         adopt(makeClient(host))
         let c = await ready()
@@ -189,33 +198,40 @@ public final class LiveAccountService: AccountService {
         return LinkCode(qrText: "https://\(host)/link/\(t.linkID)#\(t.secret).\(key)", expiresAt: t.expiresAt)
     }
 
+    /// Polls every 2 s until approved or the ticket's expiry passes. Every exit path forgets the ticket
+    /// and the private key. If the approver's snapshot cannot be opened after a successful claim, this
+    /// fails closed: the session is NOT saved, the device stays signed out, and `.server` is thrown (the
+    /// claim is single-use, so the person starts linking again; the orphaned device can be removed from
+    /// Linked devices on the other device).
     public func waitForLinkApproval() async throws(AccountError) {
         guard let ticket else { throw .linkExpired }
+        let key = linkPrivateKey
+        defer { self.ticket = nil; linkPrivateKey = nil }
         let c = await ready()
-        let interval = Duration.seconds(2)
-        var waited = Duration.zero
         while true {
             let claim = try await call(link: true) { () async throws(ServerError) in
                 try await c.linkClaim(linkID: ticket.linkID, claimToken: ticket.claimToken)
             }
             if case .approved(let s, let sealed) = claim {
-                if let sealed, let key = linkPrivateKey { receivedLinkSnapshot = try linkCrypto.open(sealed, privateKey: key) }
-                self.ticket = nil
-                linkPrivateKey = nil
+                var snapshot: Data?
+                if let sealed {
+                    guard let key else { throw .server }
+                    snapshot = try linkCrypto.open(sealed, privateKey: key)
+                }
+                receivedLinkSnapshot = snapshot
                 try save(s)
                 return
             }
-            waited += interval
-            if waited >= .seconds(300) { self.ticket = nil; linkPrivateKey = nil; throw .linkExpired }
-            do { try await sleep(interval) } catch { throw .cancelled }
+            if now() >= ticket.expiresAt { throw .linkExpired }
+            do { try await sleep(.seconds(2)) } catch { throw .cancelled }
         }
     }
 
     // MARK: - Linking, approving device
 
     public func linkRequest(qrText: String) async throws(AccountError) -> LinkRequest {
-        let code = try parseLink(qrText)
         guard isSignedIn else { throw .server }
+        let code = try parseLink(qrText)
         let c = await ready()
         let info = try await call(link: true) { () async throws(ServerError) in
             try await c.linkInfo(linkID: code.linkID, secret: code.secret)
@@ -224,12 +240,11 @@ public final class LiveAccountService: AccountService {
     }
 
     public func approveLink(_ request: LinkRequest) async throws(AccountError) {
-        let code = try parseLink(request.qrText)
         guard isSignedIn else { throw .server }
+        let code = try parseLink(request.qrText)
         let c = await ready()
-        try await biometrics.confirm(reason: "Approve a new device")
-        var sealed: Data?
-        if let key = code.publicKey { sealed = try linkCrypto.seal(await linkSnapshot(), to: key) }
+        try await biometrics.confirm(reason: approvalReason)
+        let sealed = try linkCrypto.seal(await linkSnapshot(), to: code.publicKey)
         try await call(link: true) { () async throws(ServerError) in
             try await c.linkApprove(linkID: code.linkID, secret: code.secret, sealed: sealed)
         }
@@ -308,17 +323,20 @@ public final class LiveAccountService: AccountService {
         do throws(ServerError) { return try await body() } catch { throw Self.map(error, link: link) }
     }
 
-    private struct ParsedLink { let linkID: String; let secret: String; let publicKey: Data? }
+    private struct ParsedLink { let linkID: String; let secret: String; let publicKey: Data }
 
-    /// `https://<host>/link/<linkID>#<secret>[.<publicKey b64url>]`. The host must be this device's server.
+    /// `https://<host>/link/<linkID>#<secret>.<publicKey b64url>`. The host must be this device's server.
     private func parseLink(_ text: String) throws(AccountError) -> ParsedLink {
         guard let url = URL(string: text), let linkHost = url.host else { throw .linkExpired }
         guard let mine = sessions.current?.host, linkHost.lowercased() == mine.lowercased() else { throw .wrongServer }
         let parts = url.path.split(separator: "/")
         guard parts.count == 2, parts[0] == "link", let fragment = url.fragment, !fragment.isEmpty else { throw .linkExpired }
-        let bits = fragment.split(separator: ".", maxSplits: 1).map(String.init)
-        let key = bits.count == 2 ? Base64URLData(encoded: bits[1])?.data : nil
-        if bits.count == 2 && key == nil { throw .linkExpired }
+        // The QR public key is required and must be a 32-byte X25519 key; anything else is an invalid
+        // code (shown as "start again on the new device") and nothing is sent to the server.
+        let bits = fragment.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
+        guard bits.count == 2, !bits[0].isEmpty, let key = Base64URLData(encoded: bits[1])?.data, key.count == 32 else {
+            throw .linkExpired
+        }
         return ParsedLink(linkID: String(parts[1]), secret: bits[0], publicKey: key)
     }
 
