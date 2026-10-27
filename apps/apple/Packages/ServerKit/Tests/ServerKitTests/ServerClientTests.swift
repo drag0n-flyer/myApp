@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import Testing
 @_spi(Testing) @testable import ServerKit
 import ServerKitTesting
