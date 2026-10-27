@@ -71,8 +71,8 @@ gn_args() { # gn_args <abi>: one line, the gn arguments for the ABI
   case "$1" in
     arm64-v8a) cpu='target_cpu="arm64"' ;;
     # armeabi-v7a: NEON on (every ARMv7 phone we support has it), no dot-product (arm64 only).
-    # Opus 1.6 Deep PLC and OSCE are compiled for arm32 as generic C: patch 0001 adds the
-    # NEON neural sources for arm64 only.
+    # Opus 1.6 Deep PLC and OSCE are compiled for arm32 with the NEON neural kernels
+    # (patch 0001 adds dnn_neon_sources for arm and arm64).
     armeabi-v7a) cpu='target_cpu="arm" arm_use_neon=true' ;;
     x86_64) cpu='target_cpu="x64"' ;;
   esac

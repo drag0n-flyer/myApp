@@ -114,9 +114,9 @@ index 9b1fb42..864b110 100644
        "src/silk/arm/macros_armv5e.h",
      ]
 +
-+    if (current_cpu == "arm64") {
-+      sources += dnn_neon_sources
-+    }
++    # arm and arm64: arm32 also defines OPUS_ARM_PRESUME_NEON_INTR (arm_use_neon),
++    # so dnn/arm/dnn_arm.h calls compute_*_neon on both.
++    sources += dnn_neon_sources
    }
  }
  
