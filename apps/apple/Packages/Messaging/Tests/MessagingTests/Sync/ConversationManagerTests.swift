@@ -1,3 +1,6 @@
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import Foundation
 import LocalStore
 import SecureMessagingCore
@@ -272,5 +275,73 @@ private func syncInbox(_ device: TestDevice, joinWith joiner: ConversationManage
         #expect(json["sentAt"] as? String == "2023-11-14T22:13:20.000Z")
         #expect(json["conversationID"] as? String == record.serverID && json["senderAccountID"] as? String == "acc-ana")
         #expect((json["body"] as? [String: Any])?["k"] as? String == "mode")
+    }
+}
+
+/// Holds the process lock for a while after the commit POST is answered, as the notification extension would.
+private struct BusyLockAfterCommit: HTTPTransport {
+    let inner: HTTPTransport
+    let lockURL: URL
+    let hold: Duration
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let reply = try await inner.send(request)
+        guard request.httpMethod == "POST", request.url?.path.hasSuffix("/commits") == true else { return reply }
+        let ready = DispatchSemaphore(value: 0)
+        let seconds = Double(hold.components.seconds) + Double(hold.components.attoseconds) / 1e18
+        Thread {
+            try? ProcessLock(url: lockURL).withLock(timeout: .seconds(1)) {
+                ready.signal()
+                Thread.sleep(forTimeInterval: seconds)
+            }
+        }.start()
+        ready.wait()
+        return reply
+    }
+}
+
+@Suite("TestRejectedCommit") struct TestRejectedCommit {
+    private func post(hold: Duration) async throws -> (spy: SpyMLSEngine, result: Result<UInt64, Error>) {
+        let rig = try await Rig.make()
+        let device = rig.ana1
+        let spy = SpyMLSEngine(device.deps.mls)
+        var deps = device.deps
+        deps.mls = spy
+        deps.server = ServerClient(
+            host: FakeServer.host,
+            session: SessionStore(storage: MemorySessionStorage(Session(
+                host: FakeServer.host, accountID: device.accountID, deviceID: device.deviceID,
+                token: "test.\(device.accountID).\(device.deviceID)"))),
+            transport: BusyLockAfterCommit(
+                inner: await rig.server.transport(for: device),
+                lockURL: device.directory.appendingPathComponent("messaging.lock"), hold: hold))
+        let created = try await deps.server.createConversation(with: "acc-bob")
+        let group = try await deps.mls.createGroup()
+        let packages = try await rig.bob1.deps.mls.makeKeyPackages(count: 1)
+        let manager = ConversationManager(deps: deps, lockTimeout: .milliseconds(100))
+        do {
+            // The server answers 400: "dev-nope" is not a device.
+            let epoch = try await manager.postCommitWithRetry(
+                serverID: created.conversationID, group: group, addDevices: ["dev-nope"], removeDevices: []
+            ) { try await deps.mls.add(keyPackages: packages, to: group) }
+            return (spy, .success(epoch))
+        } catch {
+            return (spy, .failure(error))
+        }
+    }
+
+    @Test func discardIsRetriedWhenTheLockIsBusyAtFirst() async throws {
+        let (spy, result) = try await post(hold: .milliseconds(150))
+        #expect(spy.commitRejectedCount == 1)   // the second attempt got the lock
+        guard case .failure(let error) = result, let server = error as? ServerError else {
+            Issue.record("expected the server's rejection, got \(result)"); return
+        }
+        #expect(server.status == 400)
+    }
+
+    @Test func discardThatNeverGetsTheLockIsNotSwallowed() async throws {
+        let (spy, result) = try await post(hold: .seconds(2))
+        #expect(spy.commitRejectedCount == 0)
+        guard case .failure(let error) = result else { Issue.record("expected a failure"); return }
+        #expect(error is LockTimeout)   // the pending commit is still there: the caller must know
     }
 }
