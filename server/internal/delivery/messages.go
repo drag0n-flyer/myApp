@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -25,7 +26,7 @@ func (m *Module) postMessage(w http.ResponseWriter, r *http.Request) error {
 	p := httpx.PrincipalFrom(r.Context())
 	id := strings.ToLower(r.PathValue("id"))
 	var in struct {
-		Epoch       int64   `json:"epoch"`
+		Epoch       *int64  `json:"epoch"`
 		Ciphertext  string  `json:"ciphertext"`
 		Escrow      *string `json:"escrow"`
 		ClientMsgID string  `json:"clientMsgID"`
@@ -38,7 +39,7 @@ func (m *Module) postMessage(w http.ResponseWriter, r *http.Request) error {
 		return notFound
 	}
 	ciphertext, err := b64.DecodeString(in.Ciphertext)
-	if err != nil || len(ciphertext) == 0 || in.Epoch < 0 || in.ClientMsgID == "" || len(in.ClientMsgID) > maxClientMsgIDLen {
+	if err != nil || len(ciphertext) == 0 || in.Epoch == nil || *in.Epoch < 0 || in.ClientMsgID == "" || len(in.ClientMsgID) > maxClientMsgIDLen {
 		return httpx.Err("bad_request", "epoch, ciphertext and clientMsgID are required")
 	}
 	var escrow []byte
@@ -73,12 +74,12 @@ func (m *Module) postMessage(w http.ResponseWriter, r *http.Request) error {
 
 		// A repeated clientMsgID gets the first answer back, for 7 days.
 		now := m.d.Now()
-		if _, err := tx.Exec(ctx, `delete from client_messages where device_id = $1 and client_msg_id = $2 and created_at < $3`,
-			p.DeviceID, in.ClientMsgID, now.Add(-clientMsgTTL)); err != nil {
+		if _, err := tx.Exec(ctx, `delete from client_messages where device_id = $1 and conversation_id = $2 and client_msg_id = $3 and created_at < $4`,
+			p.DeviceID, id, in.ClientMsgID, now.Add(-clientMsgTTL)); err != nil {
 			return err
 		}
-		err = tx.QueryRow(ctx, `select seq from client_messages where device_id = $1 and client_msg_id = $2`,
-			p.DeviceID, in.ClientMsgID).Scan(&seq)
+		err = tx.QueryRow(ctx, `select seq from client_messages where device_id = $1 and conversation_id = $2 and client_msg_id = $3`,
+			p.DeviceID, id, in.ClientMsgID).Scan(&seq)
 		if err == nil {
 			return nil
 		}
@@ -86,7 +87,7 @@ func (m *Module) postMessage(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 
-		if in.Epoch > epoch {
+		if *in.Epoch > epoch {
 			return httpx.Err("bad_request", "epoch is ahead of the conversation")
 		}
 		// The mode is the conversation's own; a later policy change does not touch it.
@@ -101,8 +102,8 @@ func (m *Module) postMessage(w http.ResponseWriter, r *http.Request) error {
 			`update conversations set next_seq = next_seq + 1 where id = $1 returning next_seq - 1`, id).Scan(&seq); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `insert into client_messages (device_id, client_msg_id, seq, created_at) values ($1, $2, $3, $4)`,
-			p.DeviceID, in.ClientMsgID, seq, now); err != nil {
+		if _, err := tx.Exec(ctx, `insert into client_messages (device_id, conversation_id, client_msg_id, seq, created_at) values ($1, $2, $3, $4, $5)`,
+			p.DeviceID, id, in.ClientMsgID, seq, now); err != nil {
 			return err
 		}
 		if escrow != nil {
@@ -133,7 +134,7 @@ func (m *Module) postMessage(w http.ResponseWriter, r *http.Request) error {
 		}
 		s := seq
 		return m.deliver(ctx, tx, to, InboxItem{
-			Kind: "message", ConversationID: id, Seq: &s, Epoch: in.Epoch,
+			Kind: "message", ConversationID: id, Seq: &s, Epoch: *in.Epoch,
 			SenderAccountID: p.AccountID, SenderDeviceID: p.DeviceID, Payload: ciphertext, SentAt: now,
 		})
 	})
@@ -148,19 +149,22 @@ func (m *Module) postMessage(w http.ResponseWriter, r *http.Request) error {
 
 // PruneOnce deletes inbox rows older than retention.inboxDays, escrow copies
 // older than retention.escrowDays, and idempotency records older than 7 days.
+// A failing delete does not stop the others; the errors are joined.
 func (m *Module) PruneOnce(ctx context.Context) error {
 	now := m.d.Now()
 	day := 24 * time.Hour
-	if d := m.d.Policy.Retention.InboxDays; d > 0 {
-		if _, err := m.d.DB.Exec(ctx, `delete from inbox where sent_at < $1`, now.Add(-time.Duration(d)*day)); err != nil {
-			return err
+	var errs []error
+	del := func(sql string, cutoff time.Time) {
+		if _, err := m.d.DB.Exec(ctx, sql, cutoff); err != nil {
+			errs = append(errs, err)
 		}
+	}
+	if d := m.d.Policy.Retention.InboxDays; d > 0 {
+		del(`delete from inbox where sent_at < $1`, now.Add(-time.Duration(d)*day))
 	}
 	if d := m.d.Policy.Retention.EscrowDays; d > 0 {
-		if _, err := m.d.DB.Exec(ctx, `delete from escrow where created_at < $1`, now.Add(-time.Duration(d)*day)); err != nil {
-			return err
-		}
+		del(`delete from escrow where created_at < $1`, now.Add(-time.Duration(d)*day))
 	}
-	_, err := m.d.DB.Exec(ctx, `delete from client_messages where created_at < $1`, now.Add(-clientMsgTTL))
-	return err
+	del(`delete from client_messages where created_at < $1`, now.Add(-clientMsgTTL))
+	return errors.Join(errs...)
 }

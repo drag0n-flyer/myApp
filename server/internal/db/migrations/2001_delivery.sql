@@ -43,11 +43,12 @@ create table inbox (
 create index inbox_device_cursor_idx on inbox (device_id, cursor);
 
 create table client_messages (
-    device_id     uuid not null references devices (id) on delete cascade,
-    client_msg_id text not null,
-    seq           bigint not null,
-    created_at    timestamptz not null default now(),
-    primary key (device_id, client_msg_id)
+    device_id       uuid not null references devices (id) on delete cascade,
+    conversation_id uuid not null references conversations (id) on delete cascade,
+    client_msg_id   text not null,
+    seq             bigint not null,
+    created_at      timestamptz not null default now(),
+    primary key (device_id, conversation_id, client_msg_id)
 );
 
 create table escrow (

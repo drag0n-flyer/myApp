@@ -137,6 +137,7 @@ func TestFutureEpochRejected(t *testing.T) {
 		"no client id":  {"epoch": 1, "ciphertext": "AAAA"},
 		"bad b64":       {"epoch": 1, "ciphertext": "!!", "clientMsgID": "z"},
 		"neg epoch":     {"epoch": -1, "ciphertext": "AAAA", "clientMsgID": "z"},
+		"missing epoch": {"ciphertext": "AAAA", "clientMsgID": "z"},
 	} {
 		if r := w.c.Do(&w.ana1, "POST", "/v1/conversations/"+id+"/messages", body); r.Code() != "bad_request" {
 			t.Fatalf("%s: %s", name, r)
@@ -344,12 +345,16 @@ func TestInboxRetention(t *testing.T) {
 	// Escrow lives for 365 days.
 	sm := delivery.New(s.d)
 	s.f.Clock.Advance(31 * 24 * time.Hour)
-	sm.PruneOnce(ctx)
+	if err := sm.PruneOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
 	if n := s.escrowRows(t, sid); n != 1 {
 		t.Fatalf("escrow rows at 31 days = %d", n)
 	}
 	s.f.Clock.Advance(335 * 24 * time.Hour)
-	sm.PruneOnce(ctx)
+	if err := sm.PruneOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
 	if n := s.escrowRows(t, sid); n != 0 {
 		t.Fatalf("escrow rows at 366 days = %d", n)
 	}
@@ -376,5 +381,34 @@ func TestMessageRateLimit(t *testing.T) {
 	// Another device has its own bucket.
 	if r := w.post(t, w.bob1, id, 1, "m", "b1", nil); r.Status != 200 {
 		t.Fatalf("bob1: %s", r)
+	}
+}
+
+func TestClientMsgIDPerConversation(t *testing.T) {
+	w := newWorld(t)
+	id1 := w.joined(t)
+	id2 := w.newConvo(t)
+	if r := w.commit(t, w.ana1, id2, 0, []string{w.bob1.DeviceID}, nil, true); r.Status != 200 {
+		t.Fatalf("setup: %s", r)
+	}
+	a := w.seqOf(t, w.post(t, w.ana1, id1, 1, "one", "same", nil))
+	b := w.seqOf(t, w.post(t, w.ana1, id2, 1, "two", "same", nil))
+	if a != 1 || b != 1 {
+		t.Fatalf("each conversation numbers its own messages: %d, %d", a, b)
+	}
+	got := w.messages(t, w.bob1)
+	if len(got) != 2 || got[0].Payload != "one" || got[1].Payload != "two" {
+		t.Fatalf("bob1 = %+v", got)
+	}
+	// A retry in either conversation is still answered from that conversation.
+	if r := w.seqOf(t, w.post(t, w.ana1, id2, 1, "two", "same", nil)); r != 1 {
+		t.Fatalf("retry seq = %d", r)
+	}
+	if n := len(w.messages(t, w.bob1)); n != 2 {
+		t.Fatalf("retry added rows: %d", n)
+	}
+	// Two posts, so seq 2 in the first conversation is a fresh message.
+	if c := w.seqOf(t, w.post(t, w.ana1, id1, 1, "three", "other", nil)); c != 2 {
+		t.Fatalf("seq = %d", c)
 	}
 }

@@ -336,6 +336,7 @@ func TestCommitBadRequests(t *testing.T) {
 		"bad commit":  {"epoch": 0, "commit": "!!"},
 		"bad welcome": {"epoch": 0, "commit": "AAAA", "welcome": "!!"},
 		"neg epoch":   {"epoch": -1, "commit": "AAAA"},
+		"no epoch":    {"commit": "AAAA"},
 		"bad device":  {"epoch": 0, "commit": "AAAA", "addDevices": []string{"x"}},
 	} {
 		if r := w.c.Do(&p, "POST", "/v1/conversations/"+id+"/commits", body); r.Code() != "bad_request" {

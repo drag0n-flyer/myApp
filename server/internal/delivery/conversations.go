@@ -97,7 +97,7 @@ func (m *Module) postCommit(w http.ResponseWriter, r *http.Request) error {
 	p := httpx.PrincipalFrom(r.Context())
 	id := strings.ToLower(r.PathValue("id"))
 	var in struct {
-		Epoch         int64    `json:"epoch"`
+		Epoch         *int64   `json:"epoch"`
 		Commit        string   `json:"commit"`
 		Welcome       *string  `json:"welcome"`
 		AddDevices    []string `json:"addDevices"`
@@ -111,7 +111,7 @@ func (m *Module) postCommit(w http.ResponseWriter, r *http.Request) error {
 		return notFound
 	}
 	commit, err := b64.DecodeString(in.Commit)
-	if err != nil || len(commit) == 0 || in.Epoch < 0 {
+	if err != nil || len(commit) == 0 || in.Epoch == nil || *in.Epoch < 0 {
 		return httpx.Err("bad_request", "epoch and a base64url commit are required")
 	}
 	var welcome []byte
@@ -151,7 +151,7 @@ func (m *Module) postCommit(w http.ResponseWriter, r *http.Request) error {
 		// 1. Advance the epoch, only if the caller has the current one.
 		err = tx.QueryRow(ctx,
 			`update conversations set epoch = epoch + 1 where id = $1 and epoch = $2 returning epoch`,
-			id, in.Epoch).Scan(&newEpoch)
+			id, *in.Epoch).Scan(&newEpoch)
 		if err == pgx.ErrNoRows {
 			return httpx.ErrDetails("stale_epoch", "the conversation has moved on", map[string]int64{"currentEpoch": current})
 		}
@@ -238,7 +238,7 @@ func (m *Module) postCommit(w http.ResponseWriter, r *http.Request) error {
 		}
 		now := m.d.Now()
 		commitItem := InboxItem{
-			Kind: "commit", ConversationID: id, Epoch: in.Epoch,
+			Kind: "commit", ConversationID: id, Epoch: *in.Epoch,
 			SenderAccountID: p.AccountID, SenderDeviceID: p.DeviceID, Payload: commit, SentAt: now,
 		}
 		if err := m.deliver(ctx, tx, loud, commitItem); err != nil {
