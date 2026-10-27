@@ -62,7 +62,8 @@ class PushRegistrar(
         // A server that names another gateway could collect tokens through it: send it none.
         if (gatewayKey.isEmpty() || gatewayUrl.isEmpty()) return false
         val named = api.serverGatewayUrl() ?: return false
-        if (normalise(named) != normalise(gatewayUrl)) return false
+        val expected = normalise(gatewayUrl) ?: return false
+        if (normalise(named) != expected) return false
         val sealed = hpke.seal(gatewayKey, HpkeInfo.PUSH_HANDLE, FcmHandle.plaintext(token, appId))
         api.putFcm(sealed)
         deleteQuietly("unifiedpush")
@@ -77,10 +78,13 @@ class PushRegistrar(
         }
     }
 
-    private fun normalise(url: String): String {
-        val u = try { URI(url.trim()) } catch (_: Exception) { return url.trim() }
-        val host = u.host?.lowercase(Locale.ROOT) ?: return url.trim()
-        val port = if (u.port == -1 || (u.scheme.equals("https", true) && u.port == 443)) "" else ":${u.port}"
-        return "${u.scheme.lowercase(Locale.ROOT)}://$host$port${u.rawPath.trimEnd('/')}"
+    /** Null for anything unparseable, scheme-less, non-https or host-less: such a value matches nothing. */
+    private fun normalise(url: String): String? {
+        val u = try { URI(url.trim()) } catch (_: Exception) { return null }
+        val scheme = u.scheme?.lowercase(Locale.ROOT)
+        val host = u.host?.lowercase(Locale.ROOT)
+        if (scheme != "https" || host.isNullOrEmpty()) return null
+        val port = if (u.port == -1 || u.port == 443) "" else ":${u.port}"
+        return "https://$host$port${(u.rawPath ?: "").trimEnd('/')}"
     }
 }

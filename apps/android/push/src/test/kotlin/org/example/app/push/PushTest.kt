@@ -13,6 +13,9 @@ import org.example.app.contracts.Hpke
 import org.example.app.contracts.HpkeException
 import org.example.app.contracts.HpkeInfo
 import org.example.app.contracts.X25519KeyPair
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
@@ -149,5 +152,51 @@ class PushTest {
     @Test
     fun gatewayConfigNotHardCodedAppId() {
         assertTrue(BuildConfig.APP_ID.isNotEmpty())
+    }
+
+    @Test
+    fun unparseableOrUnsafeGatewayNamesMatchNothing() = runTest {
+        for (named in listOf("//evil.example/x", "http://push.example.net", "", "   ", "not a url", "https://", "push.example.net", "https:///x", "ftp://push.example.net")) {
+            val api = FakeApi(gateway = named)
+            assertFalse(registrar(api).register(PushTransport.Fcm, PushRegistration.Fcm("tok")), "named: '$named'")
+            assertTrue(api.calls.isEmpty(), "named: '$named'")
+        }
+        // A bad compiled-in URL matches nothing either.
+        val api = FakeApi(gateway = "//evil.example/x")
+        assertFalse(PushRegistrar(api, hpke, keys.publicKey, "//evil.example/x", appId).register(PushTransport.Fcm, PushRegistration.Fcm("tok")))
+    }
+
+    @Test
+    fun sealedHandleVectorLayoutIsEncThenCiphertext() {
+        var dir: java.io.File? = java.io.File("").absoluteFile
+        while (dir != null && !java.io.File(dir, "docs/protocol/test-vectors/sealed-handle.json").exists()) dir = dir.parentFile
+        val root = kotlinx.serialization.json.Json.parseToJsonElement(
+            java.io.File(checkNotNull(dir), "docs/protocol/test-vectors/sealed-handle.json").readText(),
+        ).jsonObject
+        assertEquals(HpkeInfo.PUSH_HANDLE, root["info"]!!.jsonPrimitive.content)
+        for (case in root["cases"]!!.jsonArray) {
+            val plain = case.jsonObject["plaintextJSON"]!!.jsonPrimitive.content.toByteArray()
+            val sealed = android.util.Base64.decode(
+                case.jsonObject["sealedB64"]!!.jsonPrimitive.content,
+                android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING,
+            )
+            // enc (32 bytes, X25519) || ciphertext (plaintext + 16-byte tag): the layout `Hpke.seal` must return.
+            assertEquals(32 + plain.size + 16, sealed.size)
+        }
+    }
+
+    @Test
+    fun mergedManifestHasNoBatteryExemptionAndNoAppForegroundService() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val info = context.packageManager.getPackageInfo(
+            context.packageName,
+            android.content.pm.PackageManager.GET_PERMISSIONS or android.content.pm.PackageManager.GET_SERVICES,
+        )
+        val permissions = info.requestedPermissions.orEmpty().toList()
+        assertFalse("android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" in permissions, "$permissions")
+        // Library services (WorkManager, the UnifiedPush connector's RaiseToForegroundService) are allowed for now;
+        // an app-declared one is not.
+        val own = info.services.orEmpty().map { it.name }.filter { it.startsWith(BuildConfig.APP_ID) }
+        assertTrue(own.isEmpty(), "app-declared services: $own")
     }
 }
