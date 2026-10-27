@@ -119,6 +119,22 @@ data class CallRecord(
 
 data class SearchHit(val chatId: String, val messageId: String)
 
+/** Allowed values of `ConversationRecord.mode` and `innerMode`. The iPhone enforces the same set with CHECK. */
+object ConversationMode {
+    const val E2EE = "e2ee"
+    const val SERVER_READABLE = "server_readable"
+    val all = setOf(E2EE, SERVER_READABLE)
+}
+
+/** Allowed values of `AttachmentRecord.state`. */
+object AttachmentState {
+    const val REMOTE = "remote"
+    const val DOWNLOADING = "downloading"
+    const val LOCAL = "local"
+    const val FAILED = "failed"
+    val all = setOf(REMOTE, DOWNLOADING, LOCAL, FAILED)
+}
+
 interface Repository {
     /** Runs [body] in one database transaction; an exception rolls everything back. */
     fun <T> transaction(body: () -> T): T
@@ -138,6 +154,7 @@ interface Repository {
     fun deleteChat(id: String)
 
     // conversations
+    /** @throws IllegalArgumentException when `mode` or `innerMode` is not a [ConversationMode] value. */
     fun upsertConversation(c: ConversationRecord)
     fun conversations(chatId: String): List<ConversationRecord>
     fun conversation(serverId: String): ConversationRecord?
@@ -194,7 +211,8 @@ interface Repository {
     fun rawItems(limit: Int): List<RawInboxRecord>
     fun deleteRaw(cursor: Long)
     /** [hash] is the SHA-256 of the payload (see `PayloadHash`). */
-    fun markProcessed(hash: ByteArray, at: Long)
+    /** Returns true when the hash is new, false when it was already recorded (dedupe in one step). */
+    fun markProcessed(hash: ByteArray, at: Long): Boolean
     fun isProcessed(hash: ByteArray): Boolean
     fun pruneProcessed(olderThan: Long)
 

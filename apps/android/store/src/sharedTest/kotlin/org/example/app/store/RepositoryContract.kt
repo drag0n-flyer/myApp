@@ -20,13 +20,14 @@ import kotlin.test.assertTrue
 /** Behaviour every [org.example.app.messaging.ports.Repository] on Room must have, whatever the open helper. */
 abstract class RepositoryContract {
     protected abstract fun openDatabase(): AppDatabase
+    protected open fun newRepository(db: AppDatabase) = RoomRepository(db)
 
     protected lateinit var db: AppDatabase
     protected lateinit var repo: RoomRepository
 
     @Before fun setUp() {
         db = openDatabase()
-        repo = RoomRepository(db)
+        repo = newRepository(db)
         repo.upsertChat(ChatRecord("chat1", isRequest = false, unread = 0, muted = false, lastActivity = 1))
     }
 
@@ -72,6 +73,55 @@ abstract class RepositoryContract {
         assertNotNull(repo.message("m1"))
         assertTrue(repo.isProcessed(PayloadHash.of(payload)))
         assertTrue(repo.rawItems(10).isEmpty())
+    }
+
+    @Test fun markProcessedReportsWhetherNew() {
+        val hash = PayloadHash.of("x".toByteArray())
+        assertTrue(repo.markProcessed(hash, 1))
+        assertFalse(repo.markProcessed(hash, 2))
+    }
+
+    @Test fun badModesAreRejectedAndNeverPinned() {
+        val bad = ConversationRecord("c1", "chat1", byteArrayOf(1), "bogus", null, false, 0, true, 1)
+        assertFailsWith<IllegalArgumentException> { repo.upsertConversation(bad) }
+        assertFailsWith<IllegalArgumentException> { repo.upsertConversation(bad.copy(mode = "e2ee", innerMode = "bogus")) }
+        repo.upsertConversation(bad.copy(mode = "e2ee"))
+        assertFailsWith<IllegalArgumentException> { repo.pinInnerMode("c1", "bogus") }
+        assertFailsWith<IllegalArgumentException> { repo.setServerMode("c1", "bogus") }
+        val c = repo.conversation("c1")!!
+        assertNull(c.innerMode)
+        assertFalse(c.modeMismatch)
+        assertEquals("e2ee", c.mode)
+    }
+
+    @Test fun badAttachmentStateIsRejected() {
+        repo.insertMessage(message("m1"))
+        val a = org.example.app.messaging.ports.AttachmentRecord("a1", "m1", "photo", byteArrayOf(1), byteArrayOf(2), 1, 2, "remote", 0, null)
+        assertFailsWith<IllegalArgumentException> { repo.upsertAttachment(a.copy(state = "bogus")) }
+        repo.upsertAttachment(a)
+        assertFailsWith<IllegalArgumentException> { repo.setAttachmentState("a1", "bogus", 0, null) }
+        assertEquals("remote", repo.attachment("a1")?.state)
+    }
+
+    @Test fun databaseRejectsBadValuesEvenBehindTheRepository() {
+        repo.upsertConversation(ConversationRecord("c1", "chat1", byteArrayOf(1), "e2ee", null, false, 0, true, 1))
+        val sqlite = db.openHelper.writableDatabase
+        assertFailsWith<android.database.SQLException> { sqlite.execSQL("UPDATE conversations SET inner_mode='bogus' WHERE server_id='c1'") }
+        assertFailsWith<android.database.SQLException> { sqlite.execSQL("UPDATE conversations SET mode='bogus' WHERE server_id='c1'") }
+        assertFailsWith<android.database.SQLException> {
+            sqlite.execSQL("INSERT INTO conversations VALUES('c2','chat1',x'02','bogus',NULL,0,0,1,1)")
+        }
+        repo.insertMessage(message("m1"))
+        assertFailsWith<android.database.SQLException> {
+            sqlite.execSQL("INSERT INTO attachments VALUES('a1','m1','photo',x'01',x'02',1,2,'bogus',0,NULL)")
+        }
+    }
+
+    @Test fun foreignKeysAreOn() {
+        db.openHelper.writableDatabase.query("PRAGMA foreign_keys").use {
+            assertTrue(it.moveToFirst())
+            assertEquals(1, it.getInt(0))
+        }
     }
 
     @Test fun processedHashDedups() {

@@ -6,6 +6,8 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
+import org.example.app.messaging.ports.AttachmentState
+import org.example.app.messaging.ports.ConversationMode
 import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
 
 @Database(
@@ -38,22 +40,29 @@ abstract class AppDatabase : RoomDatabase() {
             return Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, name)
                 .openHelperFactory(factory)
                 .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
-                .addCallback(callback)
+                .addCallback(callback(allowNoFts = false))
                 .build()
         }
 
-        /** The FTS5 index over `messages.folded`, kept in step by triggers. Room cannot declare FTS5 itself. */
-        internal val callback = object : Callback() {
+        /**
+         * Creates the value checks and the FTS5 index over `messages.folded`, kept in step by triggers. Room can
+         * declare neither CHECK nor FTS5. With [allowNoFts] false (every real open) a failure to create the index
+         * throws, so a build without the trigram tokenizer fails loudly. Only the JVM tests set it true, because
+         * Robolectric's SQLite has no FTS5; search then uses LIKE.
+         */
+        internal fun callback(allowNoFts: Boolean) = object : Callback() {
             override fun onCreate(db: SupportSQLiteDatabase) {
+                createValueChecks(db)
                 try {
                     db.execSQL(
                         "CREATE VIRTUAL TABLE $FTS_TABLE USING fts5(folded, content='messages', content_rowid='rowid', tokenize='trigram')",
                     )
                 } catch (e: SQLException) {
-                    // This SQLite has no FTS5 trigram tokenizer (the JVM test SQLite). Search then uses LIKE on the
-                    // folded column. The instrumented SqlCipherTest fails if the real build ever lands here.
+                    val noModule = e.message.orEmpty().let { "no such module" in it || "tokenizer" in it }
+                    if (!(allowNoFts && noModule)) throw e
                     return
                 }
+                // The triggers and `outbox ORDER BY rowid` rely on stable rowids: never VACUUM this database.
                 db.execSQL(
                     "CREATE TRIGGER messages_fts_insert AFTER INSERT ON messages BEGIN " +
                         "INSERT INTO $FTS_TABLE(rowid, folded) VALUES (new.rowid, new.folded); END",
@@ -70,8 +79,27 @@ abstract class AppDatabase : RoomDatabase() {
             }
 
             override fun onOpen(db: SupportSQLiteDatabase) {
+                // Cascades (chat -> messages, conversations, ...) need this on every connection.
+                db.query("PRAGMA foreign_keys=ON").close()
                 // Overwrite deleted content so a deleted message does not linger in free pages.
                 db.query("PRAGMA secure_delete=ON").close()
+            }
+        }
+
+        /** The iPhone's CHECK constraints, as triggers: `mode`, `inner_mode` and attachment `state` take only known values. */
+        private fun createValueChecks(db: SupportSQLiteDatabase) {
+            val modes = ConversationMode.all.joinToString(",") { "'$it'" }
+            val states = AttachmentState.all.joinToString(",") { "'$it'" }
+            val badConversation = "new.mode NOT IN ($modes) OR (new.inner_mode IS NOT NULL AND new.inner_mode NOT IN ($modes))"
+            for (event in listOf("INSERT", "UPDATE")) {
+                db.execSQL(
+                    "CREATE TRIGGER conversations_check_${event.lowercase()} BEFORE $event ON conversations WHEN $badConversation " +
+                        "BEGIN SELECT RAISE(ABORT, 'invalid conversation mode'); END",
+                )
+                db.execSQL(
+                    "CREATE TRIGGER attachments_check_${event.lowercase()} BEFORE $event ON attachments WHEN new.state NOT IN ($states) " +
+                        "BEGIN SELECT RAISE(ABORT, 'invalid attachment state'); END",
+                )
             }
         }
     }

@@ -2,9 +2,11 @@ package org.example.app.store
 
 import androidx.sqlite.db.SimpleSQLiteQuery
 import org.example.app.messaging.ports.AttachmentRecord
+import org.example.app.messaging.ports.AttachmentState
 import org.example.app.messaging.ports.CallRecord
 import org.example.app.messaging.ports.ChatRecord
 import org.example.app.messaging.ports.ContactRecord
+import org.example.app.messaging.ports.ConversationMode
 import org.example.app.messaging.ports.ConversationRecord
 import org.example.app.messaging.ports.FolderRecord
 import org.example.app.messaging.ports.MemberRecord
@@ -17,7 +19,7 @@ import org.example.app.messaging.ports.SafetyRecord
 import org.example.app.messaging.ports.SearchHit
 
 /** [Repository] on Room. Blocking calls; callers run them on an I/O dispatcher. */
-class RoomRepository(private val db: AppDatabase) : Repository {
+class RoomRepository(private val db: AppDatabase, allowLikeFallback: Boolean = false) : Repository {
     private val contacts = db.contacts()
     private val chats = db.chats()
     private val conversations = db.conversations()
@@ -26,8 +28,12 @@ class RoomRepository(private val db: AppDatabase) : Repository {
     private val outbox = db.outbox()
     private val misc = db.misc()
 
-    private val hasFts: Boolean by lazy {
+    /** False only when the database was made without FTS5, which is allowed solely for JVM tests. */
+    private val hasFts: Boolean =
         db.openHelper.readableDatabase.query("SELECT 1 FROM sqlite_master WHERE name = 'messages_fts'").use { it.moveToFirst() }
+
+    init {
+        check(hasFts || allowLikeFallback) { "The search index is missing; refusing to fall back to LIKE" }
     }
 
     override fun <T> transaction(body: () -> T): T = db.runInTransaction<T>(body)
@@ -50,15 +56,23 @@ class RoomRepository(private val db: AppDatabase) : Repository {
     }
 
     // conversations
-    override fun upsertConversation(c: ConversationRecord) = conversations.upsert(
+    override fun upsertConversation(c: ConversationRecord) {
+        requireMode(c.mode)
+        c.innerMode?.let(::requireMode)
+        conversations.upsert(
         ConversationEntity(c.serverId, c.chatId, c.groupId, c.mode, c.innerMode, c.modeMismatch, c.epoch, c.active, c.createdAt),
-    )
+        )
+    }
     override fun conversations(chatId: String) = conversations.forChat(chatId).map { it.toRecord() }
     override fun conversation(serverId: String) = conversations.get(serverId)?.toRecord()
     override fun conversationByGroup(groupId: ByteArray) = conversations.byGroup(groupId)?.toRecord()
     override fun preferredConversation(chatId: String) = conversations.preferred(chatId)?.toRecord()
     override fun setEpoch(serverId: String, epoch: Long) = conversations.setEpoch(serverId, epoch)
-    override fun pinInnerMode(serverId: String, mode: String): Boolean = transaction {
+    override fun pinInnerMode(serverId: String, mode: String): Boolean {
+        requireMode(mode)
+        return pin(serverId, mode)
+    }
+    private fun pin(serverId: String, mode: String): Boolean = transaction {
         val current = conversations.get(serverId)?.innerMode
         when {
             current == mode -> true
@@ -72,7 +86,10 @@ class RoomRepository(private val db: AppDatabase) : Repository {
             }
         }
     }
-    override fun setServerMode(serverId: String, mode: String) = conversations.setMode(serverId, mode)
+    override fun setServerMode(serverId: String, mode: String) {
+        requireMode(mode)
+        conversations.setMode(serverId, mode)
+    }
     override fun flagModeMismatch(serverId: String) = conversations.flagMismatch(serverId)
 
     // members and safety
@@ -131,13 +148,18 @@ class RoomRepository(private val db: AppDatabase) : Repository {
     }
 
     // attachments
-    override fun upsertAttachment(a: AttachmentRecord) = messages.upsertAttachment(
-        AttachmentEntity(a.id, a.messageId, a.kind, a.key, a.digest, a.size, a.cipherSize, a.state, a.downloaded, a.localPath),
-    )
+    override fun upsertAttachment(a: AttachmentRecord) {
+        requireState(a.state)
+        messages.upsertAttachment(
+            AttachmentEntity(a.id, a.messageId, a.kind, a.key, a.digest, a.size, a.cipherSize, a.state, a.downloaded, a.localPath),
+        )
+    }
     override fun attachment(id: String) = messages.attachment(id)?.toRecord()
     override fun attachmentForMessage(messageId: String) = messages.attachmentForMessage(messageId)?.toRecord()
-    override fun setAttachmentState(id: String, state: String, downloaded: Long, localPath: String?) =
+    override fun setAttachmentState(id: String, state: String, downloaded: Long, localPath: String?) {
+        requireState(state)
         messages.setAttachmentState(id, state, downloaded, localPath)
+    }
 
     // outbox
     override fun enqueue(o: OutboxRecord) = outbox.enqueue(o.toEntity())
@@ -164,7 +186,7 @@ class RoomRepository(private val db: AppDatabase) : Repository {
     override fun insertRaw(items: List<RawInboxRecord>) = outbox.insertRaw(items.map { it.toEntity() })
     override fun rawItems(limit: Int) = outbox.raw(limit).map { it.toRecord() }
     override fun deleteRaw(cursor: Long) = outbox.deleteRaw(cursor)
-    override fun markProcessed(hash: ByteArray, at: Long) = outbox.markProcessed(ProcessedEntity(hash, at))
+    override fun markProcessed(hash: ByteArray, at: Long): Boolean = outbox.markProcessed(ProcessedEntity(hash, at)) != -1L
     override fun isProcessed(hash: ByteArray) = outbox.processedCount(hash) > 0
     override fun pruneProcessed(olderThan: Long) = outbox.pruneProcessed(olderThan)
 
@@ -218,6 +240,9 @@ class RoomRepository(private val db: AppDatabase) : Repository {
         // Drop deleted content from the write-ahead log file as well.
         db.openHelper.writableDatabase.query("PRAGMA wal_checkpoint(TRUNCATE)").close()
     }
+
+    private fun requireMode(mode: String) = require(mode in ConversationMode.all) { "Unknown conversation mode" }
+    private fun requireState(state: String) = require(state in AttachmentState.all) { "Unknown attachment state" }
 
     private companion object {
         val STATUS_RANK = mapOf("sending" to 0, "sent" to 1, "delivered" to 2, "read" to 3)

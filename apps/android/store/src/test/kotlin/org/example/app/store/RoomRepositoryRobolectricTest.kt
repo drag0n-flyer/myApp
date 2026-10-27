@@ -13,9 +13,11 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 class RoomRepositoryRobolectricTest : RepositoryContract() {
+    override fun newRepository(db: AppDatabase) = RoomRepository(db, allowLikeFallback = true)
+
     override fun openDatabase(): AppDatabase =
         Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext(), AppDatabase::class.java)
             .allowMainThreadQueries()
-            .addCallback(AppDatabase.callback)
+            .addCallback(AppDatabase.callback(allowNoFts = true))
             .build()
 }

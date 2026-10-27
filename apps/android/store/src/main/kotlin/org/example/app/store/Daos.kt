@@ -113,7 +113,7 @@ interface OutboxDao {
     @Query("SELECT * FROM inbox_raw ORDER BY cursor LIMIT :limit") fun raw(limit: Int): List<InboxRawEntity>
     @Query("DELETE FROM inbox_raw WHERE cursor = :cursor") fun deleteRaw(cursor: Long)
 
-    @Insert(onConflict = OnConflictStrategy.IGNORE) fun markProcessed(p: ProcessedEntity)
+    @Insert(onConflict = OnConflictStrategy.IGNORE) fun markProcessed(p: ProcessedEntity): Long
     @Query("SELECT COUNT(*) FROM processed WHERE payload_hash = :hash") fun processedCount(hash: ByteArray): Int
     @Query("DELETE FROM processed WHERE processed_at < :before") fun pruneProcessed(before: Long)
 }

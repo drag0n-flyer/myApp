@@ -40,7 +40,17 @@ class SqlCipherTest {
         writeSomething()
         val file: File = context.getDatabasePath(name)
         assertTrue(file.exists())
-        val head = file.inputStream().use { it.readNBytes(16) }
+        // Not readNBytes: that is Java 11 and missing on API 29.
+        val head = ByteArray(16)
+        file.inputStream().use { input ->
+            var read = 0
+            while (read < head.size) {
+                val n = input.read(head, read, head.size - read)
+                if (n < 0) break
+                read += n
+            }
+            assertEquals(head.size, read)
+        }
         assertTrue(!head.contentEquals("SQLite format 3\u0000".toByteArray()), "database header must be encrypted")
         assertTrue(!String(file.readBytes(), Charsets.ISO_8859_1).contains("plaintext-marker-do-not-find"))
     }
@@ -54,6 +64,8 @@ class SqlCipherTest {
         } finally {
             runCatching { db.close() }
         }
+        // Losing the key must never make SQLCipher delete the user's file.
+        assertTrue(context.getDatabasePath(name).length() > 0)
     }
 
     @Test fun rightKeyReopens() {
@@ -74,6 +86,22 @@ class SqlCipherTest {
             sqlite.query("PRAGMA journal_mode").use { assertTrue(it.moveToFirst()); assertEquals("wal", it.getString(0).lowercase()) }
             sqlite.query("SELECT name FROM sqlite_master WHERE name = 'messages_fts'").use { assertTrue(it.moveToFirst()) }
             assertNotNull(RoomRepository(db))
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test fun foreignKeysAreOnAndCascadeUnderSqlCipher() {
+        val db = AppDatabase.open(context, key, name)
+        try {
+            val repo = RoomRepository(db)
+            db.openHelper.writableDatabase.query("PRAGMA foreign_keys").use { assertTrue(it.moveToFirst()); assertEquals(1, it.getInt(0)) }
+            repo.upsertChat(ChatRecord("chat1", false, 0, false, 1))
+            repo.insertMessage(
+                org.example.app.messaging.ports.MessageRecord("m1", "chat1", null, "alice", null, 1, 1, byteArrayOf(1), "sent", folded = "hello"),
+            )
+            db.openHelper.writableDatabase.execSQL("DELETE FROM chats WHERE id = 'chat1'")
+            assertEquals(null, repo.message("m1"))
         } finally {
             db.close()
         }
