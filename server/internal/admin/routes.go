@@ -50,6 +50,8 @@ func (m *Module) mux(wrap func(h apiFunc, public bool) http.Handler) *http.Serve
 	api := func(pattern string, h apiFunc) { mux.Handle(pattern, wrap(h, false)) }
 
 	mux.Handle("POST /admin/api/login", wrap(m.login, true))
+	mux.Handle("GET /admin/api/setup", wrap(m.setupNeeded, true))
+	mux.Handle("POST /admin/api/setup", wrap(m.setup, true))
 	api("POST /admin/api/logout", m.logout)
 	api("GET /admin/api/session", m.session)
 	api("GET /admin/api/overview", m.overview)
@@ -65,6 +67,12 @@ func (m *Module) mux(wrap func(h apiFunc, public bool) http.Handler) *http.Serve
 	api("POST /admin/api/reports/{id}/handle", m.handleReport)
 	api("GET /admin/api/server", m.serverInfo)
 	api("GET /admin/api/audit", m.listAudit)
+	api("GET /admin/api/admins", m.listAdmins)
+	api("POST /admin/api/admins", m.addAdmin)
+	api("POST /admin/api/admins/{id}/disable", m.disableAdmin)
+	api("POST /admin/api/admins/{id}/enable", m.enableAdmin)
+	api("POST /admin/api/admins/{id}/password", m.changeAdminPassword)
+	api("DELETE /admin/api/admins/{id}", m.removeAdmin)
 
 	m.static(mux)
 	return mux

@@ -214,6 +214,7 @@ const NAV = [
   ["accounts", "accounts.html", "Accounts"],
   ["reports", "reports.html", "Reports"],
   ["server", "server.html", "Server"],
+  ["admins", "admins.html", "Admins"],
   ["audit", "audit.html", "Audit log"],
 ];
 
@@ -242,7 +243,7 @@ function startPage() {
   if (page === "login") return Promise.resolve(null);
   return loadSession().then((s) => {
     const who = document.getElementById("who");
-    if (who) who.textContent = "Signed in as " + (s.label || "admin");
+    if (who) who.textContent = "Signed in as " + (s.username || s.label || "admin");
     return s;
   });
 }

@@ -13,16 +13,46 @@
     <p class="brand">Server admin</p>
 </header>
 <main id="main">
-<h1>Sign in</h1>
+<h1 id="title">Sign in</h1>
 <div id="notice"></div>
+<form id="setup-form" class="login" method="post" hidden>
+<p>There is no admin yet. Choose the username and password of the first admin. Anyone who can open this page can do this, so do it now.</p>
+<div class="field">
+<label for="setup-username">Username</label>
+<input type="text" id="setup-username" autocomplete="username" autocapitalize="off" spellcheck="false" required>
+<p class="hint">3 to 32 characters: letters, digits, dot, underscore or hyphen.</p>
+</div>
+<div class="field">
+<label for="setup-password">Password</label>
+<input type="password" id="setup-password" autocomplete="new-password" required>
+<p class="hint">At least 12 characters.</p>
+</div>
+<div class="field">
+<label for="setup-confirm">Confirm password</label>
+<input type="password" id="setup-confirm" autocomplete="new-password" required>
+</div>
+<button type="submit" id="create-first">Create admin</button>
+</form>
 <form id="login-form" class="login" method="post">
+<div class="field">
+<label for="username">Username</label>
+<input type="text" id="username" autocomplete="username" autocapitalize="off" spellcheck="false" required>
+</div>
+<div class="field">
+<label for="password">Password</label>
+<input type="password" id="password" autocomplete="current-password" required>
+</div>
+<button type="submit" id="sign-in">Sign in</button>
+</form>
+<p id="token-link"><button type="button" class="link" id="show-token">Sign in with a one-time token</button></p>
+<form id="token-form" class="login" method="post" hidden>
 <div class="field">
 <label for="token">Admin token</label>
 <input type="password" id="token" autocomplete="off" required>
 </div>
-<button type="submit" id="sign-in">Sign in</button>
-</form>
+<button type="submit" id="sign-in-token">Sign in with token</button>
 <p>Create a token on the server with <code>appserver admin token create</code>. Each token works once.</p>
+</form>
 </main>
 <noscript>This page needs JavaScript.</noscript>
 <script type="module" src="static/common.js"></script>

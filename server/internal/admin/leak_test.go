@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/pem"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -82,7 +83,9 @@ func randBytes(t *testing.T, n int) []byte {
 // the dashboard serves, including /session and /audit.
 func TestNoSecretsInResponses(t *testing.T) {
 	escrowPath, vapidPath := writeKeyFiles(t)
+	var logBuf bytes.Buffer
 	d, f := testkit.NewDeps(t, func(d *core.Deps) {
+		d.Log = slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 		c := &d.Config
 		c.SMTPURL = "smtp://u:SMTPPASS@h"
 		c.DatabaseURL = "postgres://app:DBPASS@db/app"
@@ -122,16 +125,28 @@ func TestNoSecretsInResponses(t *testing.T) {
 	mustExec(t, d, `insert into admin_tokens (id, token_hash, label, created_at, expires_at) values ($1, $2, 'lbl', $3, $4)`,
 		testSession.TokenID, adminHash[:], f.Clock.Now(), f.Clock.Now().Add(time.Hour))
 
+	// An admin account with a known password, and the hash stored for it.
+	const leakPassword = "LEAKPASSWORD-correct-horse"
+	if _, err := m.createAdmin(t.Context(), "leakadmin", leakPassword, Entry{Actor: "cli"}); err != nil {
+		t.Fatal(err)
+	}
+	var leakHash string
+	if err := d.DB.QueryRow(t.Context(), `select password_hash from admin_users where username = 'leakadmin'`).Scan(&leakHash); err != nil {
+		t.Fatal(err)
+	}
+	hashBody := strings.Split(leakHash, "$")
+
 	forbidden := map[string][]string{
-		"full email":    {fullEmail, `leak@example.org`},
-		"session token": append([]string{sessionToken}, variants(sessionHash[:])...),
-		"push handle":   variants(sealed),
-		"escrow bytes":  variants(escrow),
-		"report text":   {"SECRET-TEXT"},
-		"invite code":   {inviteCode, inviteCode[6:]},
-		"admin token":   append([]string{adminToken}, variants(adminHash[:])...),
-		"client IP":     {"203.0.113", "198.51.100"},
-		"config secret": {"SMTPPASS", "DBPASS", "TURNSECRET", "GWPASS", "GWQUERY", "GWFRAG", "/secrets/", escrowPath, vapidPath},
+		"admin password": {leakPassword, "LEAKPASSWORD", leakHash, "argon2", hashBody[len(hashBody)-1], hashBody[len(hashBody)-2], "password_hash", "passwordHash"},
+		"full email":     {fullEmail, `leak@example.org`},
+		"session token":  append([]string{sessionToken}, variants(sessionHash[:])...),
+		"push handle":    variants(sealed),
+		"escrow bytes":   variants(escrow),
+		"report text":    {"SECRET-TEXT"},
+		"invite code":    {inviteCode, inviteCode[6:]},
+		"admin token":    append([]string{adminToken}, variants(adminHash[:])...),
+		"client IP":      {"203.0.113", "198.51.100"},
+		"config secret":  {"SMTPPASS", "DBPASS", "TURNSECRET", "GWPASS", "GWQUERY", "GWFRAG", "/secrets/", escrowPath, vapidPath},
 	}
 
 	// Reads go through the real handler chain with a real session, so
@@ -142,6 +157,16 @@ func TestNoSecretsInResponses(t *testing.T) {
 		t.Fatalf("login = %d %s", lw.Code, lw.Body)
 	}
 	cookie := cookieOf(t, lw)
+	// Password sign-ins, good and bad, and a refused setup, go through the
+	// real chain too, so their log lines and audit rows are scanned.
+	for _, body := range []string{
+		`{"username":"leakadmin","password":"` + leakPassword + `"}`,
+		`{"username":"leakadmin","password":"` + leakPassword + `x"}`,
+		`{"username":"nobody","password":"` + leakPassword + `"}`,
+	} {
+		serveReq(h, req("POST", "/admin/api/login", body, nil))
+	}
+	serveReq(h, req("POST", "/admin/api/setup", `{"username":"late","password":"`+leakPassword+`"}`, nil))
 	get := func(path string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest("GET", "http://"+testHost+path, nil)
 		req.AddCookie(cookie)
@@ -171,6 +196,8 @@ func TestNoSecretsInResponses(t *testing.T) {
 		{"/admin/api/server"},
 		{"/admin/api/audit"},
 		{"/admin/api/session"},
+		{"/admin/api/admins"},
+		{"/admin/api/setup"},
 	}
 	for _, ep := range endpoints {
 		rec := get(ep.path)
@@ -185,6 +212,30 @@ func TestNoSecretsInResponses(t *testing.T) {
 					t.Errorf("GET %s leaks %s (%q): %s", ep.path, what, n, body)
 				}
 			}
+		}
+	}
+	// The admin list really lists the account, and the audit log really
+	// holds the sign-ins, so the scans above covered them.
+	if body := get("/admin/api/admins").Body.String(); !strings.Contains(body, "leakadmin") {
+		t.Errorf("admins list lacks the account: %s", body)
+	}
+	if body := get("/admin/api/audit").Body.String(); !strings.Contains(body, "login.failed") || !strings.Contains(body, "admin.add") {
+		t.Errorf("audit lacks the sign-in rows: %s", body)
+	}
+	// Nothing the server logged holds a password or a hash.
+	for _, n := range []string{leakPassword, "LEAKPASSWORD", leakHash, "argon2", hashBody[len(hashBody)-1]} {
+		if strings.Contains(logBuf.String(), n) {
+			t.Errorf("a log line holds %q", n)
+		}
+	}
+	// And the audit table itself, which the page may not show in full.
+	var auditText string
+	if err := d.DB.QueryRow(t.Context(), `select string_agg(action || target || detail::text, ' ') from admin_audit`).Scan(&auditText); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{leakPassword, "LEAKPASSWORD", leakHash, "argon2"} {
+		if strings.Contains(auditText, n) {
+			t.Errorf("the audit table holds %q", n)
 		}
 	}
 	// The info document must really be there, or its part is not scanned.

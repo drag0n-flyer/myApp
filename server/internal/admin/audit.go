@@ -7,10 +7,11 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// Entry is one audit log row. TokenID is empty when no token is involved.
+// Entry is one audit log row. TokenID and AdminUserID are empty when no token
+// or admin account is involved.
 type Entry struct {
-	Actor, TokenID, Action, Target string
-	Detail                         map[string]any
+	Actor, TokenID, AdminUserID, Action, Target string
+	Detail                                      map[string]any
 }
 
 // audit inserts one admin_audit row at the module clock's time. q is the pool
@@ -30,8 +31,12 @@ func (m *Module) audit(ctx context.Context, q interface {
 	if e.TokenID != "" {
 		tokenID = e.TokenID
 	}
+	var userID any
+	if e.AdminUserID != "" {
+		userID = e.AdminUserID
+	}
 	_, err = q.Exec(ctx,
-		`insert into admin_audit (at, actor, token_id, action, target, detail) values ($1, $2, $3, $4, $5, $6)`,
-		m.d.Now(), e.Actor, tokenID, e.Action, e.Target, b)
+		`insert into admin_audit (at, actor, token_id, admin_user_id, action, target, detail) values ($1, $2, $3, $4, $5, $6, $7)`,
+		m.d.Now(), e.Actor, tokenID, userID, e.Action, e.Target, b)
 	return err
 }

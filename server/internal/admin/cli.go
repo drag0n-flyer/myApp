@@ -18,8 +18,13 @@ import (
 // Commands returns the admin CLI commands.
 func (m *Module) Commands() map[string]core.Command {
 	return map[string]core.Command{
-		"admin token create": m.cmdTokenCreate,
-		"admin sessions end": m.cmdSessionsEnd,
+		"admin token create":        m.cmdTokenCreate,
+		"admin sessions end":        m.cmdSessionsEnd,
+		"admin user list":           m.cmdUserList,
+		"admin user add":            m.cmdUserAdd,
+		"admin user reset-password": m.cmdUserResetPassword,
+		"admin user disable":        m.cmdUserSetDisabled(true),
+		"admin user enable":         m.cmdUserSetDisabled(false),
 	}
 }
 

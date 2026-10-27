@@ -146,9 +146,10 @@ All paths are under `/admin/api`. JSON in and out, with the server's error envel
 
 | Method and path | Request → response |
 |---|---|
-| `POST /login` | `{token}` → `204` and `Set-Cookie`; `unauthorized`, `rate_limited` |
+| `POST /login` | `{token}` or `{username, password}` → `204` and `Set-Cookie`; `unauthorized`, `rate_limited` |
+| `GET /setup`, `POST /setup` | → `{needed}`; `{username, password}` → `204` and `Set-Cookie`, only while no admin exists (`conflict`, see 10a) |
 | `POST /logout` | → `204`, clears the cookie |
-| `GET /session` | → `{tokenID, label, csrf, idleTimeoutSeconds:900, expiresAt}` |
+| `GET /session` | → `{tokenID, label, username, csrf, idleTimeoutSeconds:900, expiresAt}` (`username` is `null` for a token session; `tokenID` and `label` are `null` for a password session) |
 | `GET /overview` | → `{version, goVersion, startedAt, uptimeSeconds, database:"ok"\|"down", counts:{accounts, devices, conversations, messagesToday}, connections, push:{enabled, sent, failed}, calls:{enabled, relays:[{host, region, healthy, rttMs}]}}` |
 | `GET /invites?state=&after=` | → `{invites:[{id, codePrefix, usesLeft, createdAt, expiresAt, revokedAt, state}], next}` |
 | `POST /invites` | `{uses, days}` → `{id, code, link, expiresAt}`; `bad_request` |
@@ -161,11 +162,16 @@ All paths are under `/admin/api`. JSON in and out, with the server's error envel
 | `GET /reports/{id}` | → `Report` (plus `{messages:[{sentAt, text}], note}` only if O-2 is approved) |
 | `POST /reports/{id}/handle` | → `204`; marking a handled report again is `204` and changes nothing |
 | `GET /server` | → `{policy, info, settings}` |
-| `GET /audit?action=&after=` | → `{entries:[{id, at, actor, tokenID, tokenLabel, action, target, detail}], next}` |
+| `GET /audit?action=&after=` | → `{entries:[{id, at, actor, tokenID, tokenLabel, adminID, username, action, target, detail}], next}` |
+| `GET /admins` | → `{admins:[{id, username, disabled, createdAt, lastLoginAt}]}` |
+| `POST /admins` | `{username, password}` → the new admin; `bad_request`, `conflict` |
+| `POST /admins/{id}/disable`, `/enable` | → `204`; `not_found`, `conflict` |
+| `POST /admins/{id}/password` | `{password}` → `204`; `bad_request`, `not_found` |
+| `DELETE /admins/{id}` | → `204`; `not_found`, `conflict` |
 
 `Report = {id, createdAt, reason, reportedAccountID, reportedUsername, reporterAccountID, reporterUsername, conversationID, messageCount, hasNote, handledAt, handledBy}`; usernames are `null` for a deleted account. `next` is an opaque cursor, or `null` on the last page.
 
-Static routes: `GET /admin/` (`index.html`, the overview), `GET /admin/{page}.html` for `login`, `invites`, `accounts`, `account`, `reports`, `report`, `server`, `audit`, and `GET /admin/static/{file}` for `admin.css`, `common.js` and one script per page. `GET /` on the admin listener redirects to `/admin/`. A page whose session check fails sends the browser to `login.html`.
+Static routes: `GET /admin/` (`index.html`, the overview), `GET /admin/{page}.html` for `login`, `invites`, `accounts`, `account`, `reports`, `report`, `server`, `admins`, `audit`, and `GET /admin/static/{file}` for `admin.css`, `common.js` and one script per page. `GET /` on the admin listener redirects to `/admin/`. A page whose session check fails sends the browser to `login.html`.
 
 ## 8. Audit log
 
@@ -218,6 +224,10 @@ Actions and targets:
 | `account.delete` | dashboard | account ID | `{reason}` |
 | `report.view` | dashboard | report ID | — |
 | `report.handle` | dashboard | report ID | — |
+| `admin.setup` | dashboard | admin ID | `{username}` |
+| `admin.add`, `admin.disable`, `admin.enable`, `admin.password`, `admin.remove` | dashboard or cli | admin ID | `{username}` |
+
+Admin accounts add one exception to "IDs only": `login`, `login.failed` (with the username tried, never the password) and the `admin.*` actions carry the admin username in `detail`, and `admin_audit.admin_user_id` names the admin who acted (no foreign key, like `token_id`).
 
 Targets are IDs only: no usernames, emails or search text, so the log keeps no personal data after an account is deleted. (planner's choice) The audit row is written in the same transaction as the change when the change is SQL in the admin package, and right after the owning module's function returns otherwise; if that second write fails, the server logs `admin audit write failed` with the action and target ID and answers `500`, so the operator sees that something went wrong. Entries are kept 365 days, then deleted by the hourly `Run` (owner decision O-4).
 
@@ -238,6 +248,17 @@ The app UI rules do not apply. Still:
 - a visible focus ring, a "Skip to content" link, and status messages in an `aria-live="polite"` region;
 - system fonts (`system-ui`), colors as CSS custom properties with a `prefers-color-scheme: dark` set, contrast at least 4.5:1;
 - plain words: "Live connections", "Pushes sent", "Call relays", "Mark handled". "Call relays" is the admin guide's own term for TURN hosts; otherwise no protocol jargon where a plain word works.
+
+## 10a. Admin accounts (added 2026-10-28)
+
+Owner decisions: admins sign in with a username and password; the one-time token sign-in stays as a recovery path.
+
+- **First visit.** With no admin account, the sign-in page shows "Create the first admin" (username, password, confirm). No setup code and no other check; the admin guide warns that until the first admin exists, anyone who can reach the admin port can create it. `GET /admin/api/setup` gives `{needed}`; `POST /admin/api/setup` creates the admin and signs in, once only (`409 conflict` after that, under one advisory lock so racing requests create one admin). Audited `admin.setup`.
+- **Storage.** `admin_users` (migration `6002_admin_users.sql`): lower-case unique username, argon2id PHC hash (19 MiB, 2 passes, 1 lane, 16-byte salt, 32-byte key), `disabled_at`, `last_login_at`, `password_changed_at`. Sessions gain a nullable `admin_user_id` (token sessions keep `token_id`); the audit log gains `admin_user_id`.
+- **Rules.** Username 3 to 32 characters of `[a-z0-9._-]`. Password 12 to 128 characters, not equal to the username, no other rules.
+- **Sign-in.** `POST /login` also takes `{username, password}`. Same per-address and global limits as the token, plus 10 an hour per username. Wrong user, wrong password and disabled give one identical `401`, and one argon2 verify always runs (against a dummy hash for an unknown user).
+- **Admins page and API.** `GET/POST /admins`, `POST /admins/{id}/disable|enable|password`, `DELETE /admins/{id}`. Disabling, removing or changing the password ends that admin's sessions. The last enabled admin cannot be disabled or removed; nobody can disable or remove themselves (`409 conflict`); anyone can change their own password. `GET /session` also returns `username` (`null` for a token session). Audited `admin.add`, `admin.disable`, `admin.enable`, `admin.password`, `admin.remove` with the target ID and username.
+- **CLI.** `admin user list|add|reset-password|disable|enable`, audited with actor `cli`. See the admin guide.
 
 ## 11. Owner to decide
 

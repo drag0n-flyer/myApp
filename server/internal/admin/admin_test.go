@@ -42,8 +42,9 @@ func TestMigrationTables(t *testing.T) {
 	d, _ := testkit.NewDeps(t)
 	want := map[string][]string{
 		"admin_tokens":   {"id", "token_hash", "label", "created_at", "expires_at", "used_at"},
-		"admin_sessions": {"id_hash", "token_id", "csrf_hash", "created_at", "last_seen_at", "expires_at"},
-		"admin_audit":    {"id", "at", "actor", "token_id", "action", "target", "detail"},
+		"admin_sessions": {"id_hash", "token_id", "admin_user_id", "csrf_hash", "created_at", "last_seen_at", "expires_at"},
+		"admin_audit":    {"id", "at", "actor", "token_id", "admin_user_id", "action", "target", "detail"},
+		"admin_users":    {"id", "username", "password_hash", "disabled_at", "created_at", "last_login_at", "password_changed_at"},
 	}
 	for table, cols := range want {
 		rows, err := d.DB.Query(context.Background(),

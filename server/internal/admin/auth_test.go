@@ -61,6 +61,7 @@ func login(t *testing.T, m *Module, h http.Handler) *http.Cookie {
 type sessionBody struct {
 	TokenID            string    `json:"tokenID"`
 	Label              string    `json:"label"`
+	Username           *string   `json:"username"`
 	CSRF               string    `json:"csrf"`
 	IdleTimeoutSeconds int       `json:"idleTimeoutSeconds"`
 	ExpiresAt          time.Time `json:"expiresAt"`

@@ -3,11 +3,13 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,6 +23,8 @@ import (
 // headers, the CSRF token from GET /admin/api/session, a JSON content type on
 // every write (body "{}" when there is none), and X-Admin-Background on the
 // page's own refreshes.
+var nextAddr atomic.Uint32
+
 type browser struct {
 	t      *testing.T
 	h      http.Handler
@@ -44,6 +48,10 @@ func (b *browser) do(method, path string, body any, background bool) *httptest.R
 	} else {
 		r.Header.Set("Content-Type", "application/json")
 	}
+	// A browser of its own address each time, so the per-address login limit
+	// does not stop a test that signs in many times.
+	n := nextAddr.Add(1)
+	r.RemoteAddr = fmt.Sprintf("10.%d.%d.%d:4000", n>>16&255, n>>8&255, n&255)
 	r.Header.Set("Accept", "application/json")
 	r.Header.Set("Origin", "http://"+testHost)
 	r.Header.Set("Sec-Fetch-Site", "same-origin")
@@ -122,6 +130,19 @@ func TestBrowserRequestsEveryWriteAction(t *testing.T) {
 	b.want(b.do("POST", "/admin/api/accounts/"+bob.AccountID+"/devices/"+mac.DeviceID+"/revoke", nil, false), 204, "sign out device")
 	b.want(b.do("POST", "/admin/api/reports/"+reportID+"/handle", nil, false), 204, "mark handled")
 	b.want(b.do("POST", "/admin/api/accounts/"+bob.AccountID+"/delete", map[string]string{"confirmUsername": "bob", "reason": "user_request"}, false), 204, "delete account")
+
+	// The Admins page: add, disable, enable, reset password, remove, built the
+	// way common.js builds them (a body of {} where there is none).
+	b.want(b.do("POST", "/admin/api/admins", map[string]string{"username": "erin", "password": "a long enough password"}, false), 200, "add first admin")
+	rec = b.do("POST", "/admin/api/admins", map[string]string{"username": "dana", "password": "a long enough password"}, false)
+	b.want(rec, 200, "add admin")
+	var dana struct{ ID string }
+	decodeBody(t, rec, &dana)
+	b.want(b.do("GET", "/admin/api/admins", nil, false), 200, "list admins")
+	b.want(b.do("POST", "/admin/api/admins/"+dana.ID+"/disable", nil, false), 204, "disable admin")
+	b.want(b.do("POST", "/admin/api/admins/"+dana.ID+"/enable", nil, false), 204, "enable admin")
+	b.want(b.do("POST", "/admin/api/admins/"+dana.ID+"/password", map[string]string{"password": "another long password"}, false), 204, "reset admin password")
+	b.want(b.do("DELETE", "/admin/api/admins/"+dana.ID, nil, false), 204, "remove admin")
 
 	// A write without a body or content type is refused, which is the C-1 failure.
 	r := req("POST", "/admin/api/invites/x/revoke", "", b.cookie)

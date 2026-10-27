@@ -14,8 +14,23 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Session is the signed-in admin token behind a request.
-type Session struct{ TokenID, Label string }
+// Session is the signed-in admin behind a request: a token session has TokenID
+// and Label; a username and password session has AdminUserID and Username.
+type Session struct{ TokenID, Label, AdminUserID, Username string }
+
+// ActorID is the ID that stands for the signed-in admin in records: the
+// admin's own ID, or the sign-in token's.
+func (s Session) ActorID() string {
+	if s.AdminUserID != "" {
+		return s.AdminUserID
+	}
+	return s.TokenID
+}
+
+// entry is an audit entry by this session's admin.
+func (s Session) entry(action, target string, detail map[string]any) Entry {
+	return Entry{Actor: "dashboard", TokenID: s.TokenID, AdminUserID: s.AdminUserID, Action: action, Target: target, Detail: detail}
+}
 
 type apiFunc func(w http.ResponseWriter, r *http.Request, s Session) error
 

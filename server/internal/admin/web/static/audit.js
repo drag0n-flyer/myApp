@@ -17,6 +17,12 @@ const ACTIONS = [
   ["account.delete", "Account deleted"],
   ["report.view", "Report viewed"],
   ["report.handle", "Report marked handled"],
+  ["admin.setup", "First admin created"],
+  ["admin.add", "Admin added"],
+  ["admin.disable", "Admin disabled"],
+  ["admin.enable", "Admin enabled"],
+  ["admin.password", "Admin password changed"],
+  ["admin.remove", "Admin removed"],
 ];
 const LABELS = new Map(ACTIONS);
 
@@ -29,6 +35,8 @@ let next = null;
 
 function who(e) {
   if (e.actor === "cli") return "Command line on the server";
+  if (e.username) return "Dashboard, admin " + e.username;
+  if (e.adminID) return "Dashboard, removed admin (" + e.adminID.slice(0, 8) + ")";
   const label = e.tokenLabel ? e.tokenLabel : "no label";
   const id = e.tokenID ? " (" + e.tokenID.slice(0, 8) + ")" : "";
   return "Dashboard, token " + label + id;
