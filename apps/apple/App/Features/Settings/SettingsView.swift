@@ -48,6 +48,10 @@ struct SettingsView: View {
                 Section {
                     NavigationLink { HelpView() } label: { row("Help", "questionmark.circle.fill", .gray) }
                 }
+                Section {
+                    NavigationLink { LicensesView() } label: { row("Open-source licenses", "doc.text.fill", .gray) }
+                        .accessibilityIdentifier("settings.licenses")
+                }
             }
             .navigationTitle("Settings")
         }
@@ -88,6 +92,7 @@ struct MacSettingsView: View {
             ChatFoldersView(model: model).tabItem { Label("Chat folders", systemImage: "folder") }
             LinkedDevicesView(model: model).tabItem { Label("Devices", systemImage: "laptopcomputer.and.iphone") }
             ProfileView(model: model).tabItem { Label("Account", systemImage: "person.crop.circle") }
+            NavigationStack { LicensesView() }.tabItem { Label("Licenses", systemImage: "doc.text") }
         }
         .frame(width: 560, height: 520)
     }

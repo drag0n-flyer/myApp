@@ -1,0 +1,3 @@
+Canonical license texts, one file per SPDX identifier.
+Source: https://github.com/spdx/license-list-data (text/<id>.txt), fetched 2026-10-28, unmodified.
+Used by scripts/generate-oss-notices.py. Add a file here when a shipped component needs another license.
