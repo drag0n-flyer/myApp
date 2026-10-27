@@ -78,7 +78,7 @@ private func encrypt(_ c: ChunkedAttachmentCipher, _ plain: Data, _ s: Scratch, 
     return (s.url(name), r.key, r.digest)
 }
 
-@Suite("TestAttachmentCipher") struct TestAttachmentCipher {
+@Suite("TestAttachmentCipher", .serialized) struct TestAttachmentCipher {
     @Test func roundTripSizes() throws {
         let cases: [(Int, Int)] = [(0, 16), (1, 17), (65_535, 65_551), (65_536, 65_552), (65_537, 65_569), (200_000, 200_064)]
         for (name, c) in ciphers() {
@@ -254,18 +254,20 @@ private func encrypt(_ c: ChunkedAttachmentCipher, _ plain: Data, _ s: Scratch, 
 
     // MARK: memory
 
-    private func residentBytes() -> Int {
+    /// Process high-water mark of resident memory, in bytes (0 if unavailable).
+    private func peakResidentBytes() -> Int {
         #if canImport(Darwin)
         var info = mach_task_basic_info()
         var count = mach_msg_type_number_t(MemoryLayout<mach_task_basic_info>.size / MemoryLayout<natural_t>.size)
         let kr = withUnsafeMutablePointer(to: &info) {
             $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(MACH_TASK_BASIC_INFO), $0, &count) }
         }
-        return kr == KERN_SUCCESS ? Int(info.resident_size) : 0
+        return kr == KERN_SUCCESS ? Int(info.resident_size_max) : 0
         #else
-        guard let s = try? String(contentsOfFile: "/proc/self/statm", encoding: .utf8),
-              let pages = s.split(separator: " ").dropFirst().first.flatMap({ Int($0) }) else { return 0 }
-        return pages * 4096
+        guard let s = try? String(contentsOfFile: "/proc/self/status", encoding: .utf8),
+              let line = s.split(separator: "\n").first(where: { $0.hasPrefix("VmHWM:") }),
+              let kb = line.split(separator: " ").dropFirst().first.flatMap({ Int($0) }) else { return 0 }
+        return kb * 1024
         #endif
     }
 
@@ -285,12 +287,11 @@ private func encrypt(_ c: ChunkedAttachmentCipher, _ plain: Data, _ s: Scratch, 
         for _ in 0..<(total >> 20) { try h.write(contentsOf: block) }
         try h.close()
 
-        let before = residentBytes()
-        var peak = before
+        let before = peakResidentBytes()
+        #expect(before > 0)
         let r = try c.encrypt(file: src, to: s.url("big.enc"))
-        peak = max(peak, residentBytes())
         try c.decrypt(file: s.url("big.enc"), to: s.url("big.out"), key: r.key, digest: r.digest)
-        peak = max(peak, residentBytes())
+        let peak = peakResidentBytes()
         #expect(r.size == Int64(total))
         #expect(try FileManager.default.attributesOfItem(atPath: s.url("big.out").path)[.size] as? Int == total)
         #expect(peak - before < 4 * 1024 * 1024, "grew by \(peak - before) bytes")

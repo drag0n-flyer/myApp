@@ -1,5 +1,15 @@
 import Foundation
 
+/// Releases per-chunk temporaries at once on Apple platforms, so memory stays flat on big files.
+@inline(__always)
+func withChunkPool<T>(_ body: () throws -> T) rethrows -> T {
+    #if canImport(ObjectiveC)
+    return try autoreleasepool(invoking: body)
+    #else
+    return try body()
+    #endif
+}
+
 public enum AttachmentError: Error, Equatable, Sendable {
     /// The key is not 32 bytes.
     case badKey
@@ -60,17 +70,18 @@ public struct ChunkedAttachmentCipher: AttachmentCipher {
         var cipherSize: Int64 = 0
         var index: UInt64 = 0
         var current = try Self.readChunk(input, Self.chunkSize)
-        while true {
-            let next = current.count == Self.chunkSize ? try Self.readChunk(input, Self.chunkSize) : Data()
-            let last = next.isEmpty
-            let sealed = try aead.seal(current, key: key, nonce: Self.nonce(index: index), aad: Self.aad(last: last))
-            try output.write(contentsOf: sealed)
-            hasher.update(sealed)
-            size += Int64(current.count)
-            cipherSize += Int64(sealed.count)
-            if last { break }
-            current = next
-            index += 1
+        var done = false
+        while !done {
+            try withChunkPool {
+                let next = current.count == Self.chunkSize ? try Self.readChunk(input, Self.chunkSize) : Data()
+                let last = next.isEmpty
+                let sealed = try aead.seal(current, key: key, nonce: Self.nonce(index: index), aad: Self.aad(last: last))
+                try output.write(contentsOf: sealed)
+                hasher.update(sealed)
+                size += Int64(current.count)
+                cipherSize += Int64(sealed.count)
+                if last { done = true } else { current = next; index += 1 }
+            }
         }
         return (key, hasher.finalize(), size, cipherSize)
     }
@@ -82,11 +93,14 @@ public struct ChunkedAttachmentCipher: AttachmentCipher {
         let hashInput = try FileHandle(forReadingFrom: file)
         var hasher = StreamingSHA256()
         var length: Int64 = 0
-        while true {
-            let block = try Self.readChunk(hashInput, Self.sealedChunkSize)
-            if block.isEmpty { break }
-            hasher.update(block)
-            length += Int64(block.count)
+        var hashed = false
+        while !hashed {
+            try withChunkPool {
+                let block = try Self.readChunk(hashInput, Self.sealedChunkSize)
+                if block.isEmpty { hashed = true; return }
+                hasher.update(block)
+                length += Int64(block.count)
+            }
         }
         try? hashInput.close()
         guard hasher.finalize() == digest else { throw AttachmentError.digest }
@@ -104,20 +118,21 @@ public struct ChunkedAttachmentCipher: AttachmentCipher {
 
             var index: UInt64 = 0
             var current = try Self.readChunk(input, Self.sealedChunkSize)
-            while true {
-                guard current.count >= Self.tagSize else { throw AttachmentError.format }
-                let next = current.count == Self.sealedChunkSize ? try Self.readChunk(input, Self.sealedChunkSize) : Data()
-                let last = next.isEmpty
-                let plain: Data
-                do {
-                    plain = try aead.open(current, key: key, nonce: Self.nonce(index: index), aad: Self.aad(last: last))
-                } catch {
-                    throw AttachmentError.authentication
+            var done = false
+            while !done {
+                try withChunkPool {
+                    guard current.count >= Self.tagSize else { throw AttachmentError.format }
+                    let next = current.count == Self.sealedChunkSize ? try Self.readChunk(input, Self.sealedChunkSize) : Data()
+                    let last = next.isEmpty
+                    let plain: Data
+                    do {
+                        plain = try aead.open(current, key: key, nonce: Self.nonce(index: index), aad: Self.aad(last: last))
+                    } catch {
+                        throw AttachmentError.authentication
+                    }
+                    try output.write(contentsOf: plain)
+                    if last { done = true } else { current = next; index += 1 }
                 }
-                try output.write(contentsOf: plain)
-                if last { break }
-                current = next
-                index += 1
             }
         } catch {
             try? FileManager.default.removeItem(at: temp)
