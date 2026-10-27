@@ -207,7 +207,7 @@ Fan-out rules:
 - A welcome goes to each added device.
 - A message goes to every member device except the sender.
 - Each delivery is one inbox row plus `Notify(device, Event{Type:"inbox", Data:item, Push:PushMessage, PushPayload:payload})`.
-- When a recipient's account has blocked the sender's account, the server skips that recipient silently and the sender still gets `200`.
+- When a recipient's account has blocked the sender's account, the server skips that recipient silently and the sender still gets `200`. For a **welcome**, the blocked recipient's device is skipped and not added to the conversation. For a **commit** in an existing conversation, the row is still delivered (skipping it would break the recipient's encryption state) but with no push.
 
 Inbox rows older than `retention.inboxDays` are deleted hourly.
 
