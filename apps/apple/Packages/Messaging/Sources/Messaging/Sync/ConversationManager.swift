@@ -67,7 +67,7 @@ public actor ConversationManager: ConversationManaging {
 
     // The creator's conversation is stored with `inner_mode` set, so "the mode envelope has not been
     // sent yet" is an explicit marker in the `kv` table: `mode-pending:<serverID>` (non-empty = pending).
-    private func pendingKey(_ serverID: String) -> String { "mode-pending:\(serverID)" }
+    func pendingKey(_ serverID: String) -> String { "mode-pending:\(serverID)" }
 
     func isModePending(_ serverID: String) throws -> Bool {
         !(try deps.repo.get(pendingKey(serverID)) ?? Data()).isEmpty

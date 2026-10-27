@@ -490,6 +490,14 @@ public final class Repository: @unchecked Sendable {
         try db.execute("INSERT OR REPLACE INTO kv(key, value) VALUES (?,?)", [.text(key), .blob(value)])
     }
 
+    /// Every `kv` entry whose key starts with `prefix` (used for the link snapshot's settings).
+    public func entries(prefix: String) throws -> [String: Data] {
+        let rows = try db.query("SELECT key, value FROM kv WHERE substr(key, 1, ?) = ?", [.int(Int64(prefix.utf8.count)), .text(prefix)]) {
+            ($0.text(0), $0.blob(1))
+        }
+        return Dictionary(rows, uniquingKeysWith: { $1 })
+    }
+
     // MARK: wipe
 
     /// Deletes every row in every table (sign-out / reset).
