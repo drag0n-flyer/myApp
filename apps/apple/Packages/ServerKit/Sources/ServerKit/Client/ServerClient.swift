@@ -70,6 +70,13 @@ public actor ServerClient {
         try await perform(method, path, body: body, contentType: contentType, headers: headers, auth: auth)
     }
 
+    /// Raw request without a body (downloads).
+    func requestRaw(
+        _ method: String, _ path: String, headers: [String: String], auth: Auth
+    ) async throws(ServerError) -> (Data, HTTPURLResponse) {
+        try await perform(method, path, body: nil, contentType: "", headers: headers, auth: auth)
+    }
+
     // MARK: - Pipeline
 
     private static func encode(_ body: (some Encodable)?) throws(ServerError) -> Data? {
