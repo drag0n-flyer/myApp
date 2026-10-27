@@ -200,7 +200,7 @@ type fcmBody struct {
 // Send delivers one data message. kind is "message" or "call". A padded
 // payload over 2048 bytes would not fit FCM's 4096-byte limit once encoded, so
 // it is replaced by the 256-byte empty payload (the device then fetches its
-// inbox); the gateway needs no plaintext for this. gone is true for 404 and
+// inbox); the gateway needs no plaintext for this. gone is true only for
 // UNREGISTERED. Errors never include the token or the payload.
 func (c *fcmClient) Send(ctx context.Context, h pushproto.Handle, kind string, data []byte) (bool, error) {
 	if h.Token == "" || len(h.Token) > 1024 {
@@ -260,10 +260,10 @@ func (c *fcmClient) Send(ctx context.Context, h pushproto.Handle, kind string, d
 	switch {
 	case resp.StatusCode == http.StatusOK:
 		return false, nil
-	case code == "UNREGISTERED",
-		resp.StatusCode == http.StatusNotFound && code == "NOT_FOUND":
-		// A bare or unknown 404 (a wrong URL, a proxy) is a gateway-side
-		// error and must not delete the device's handle.
+	case code == "UNREGISTERED":
+		// Only UNREGISTERED proves the token is dead. A bare 404 or NOT_FOUND
+		// can come from a wrong URL, proxy or project and must not delete
+		// every device's handle.
 		return true, nil
 	case resp.StatusCode == http.StatusUnauthorized:
 		c.forgetToken()

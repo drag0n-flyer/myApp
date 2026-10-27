@@ -190,7 +190,8 @@ func TestUnregisteredBecomes410(t *testing.T) {
 		reply  string
 		gone   bool
 	}{
-		{"404 NOT_FOUND", 404, `{"error":{"code":404,"status":"NOT_FOUND"}}`, true},
+		// A wrong project also answers NOT_FOUND; only UNREGISTERED proves the token is dead.
+		{"404 NOT_FOUND without UNREGISTERED", 404, `{"error":{"code":404,"status":"NOT_FOUND"}}`, false},
 		{"bare 404", 404, ``, false},
 		{"html 404", 404, `<html>not found</html>`, false},
 		{"unknown 404 status", 404, `{"error":{"code":404,"status":"SOMETHING_ELSE"}}`, false},

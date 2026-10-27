@@ -104,7 +104,7 @@ The extension's memory budget is about 24 MB. The visible alert text is not auth
 
 ## Android pushes through FCM
 
-The gateway sends an `fcm` handle as an FCM HTTP v1 data message: `{"message":{"token":"<t>","data":{"k":"message"|"call","d":"<std base64 of the padded payload>"},"android":{"priority":"HIGH","ttl":"86400s"|"45s"}}}`. A call expires after 45 seconds (the ring timeout), a message after one day. FCM `UNREGISTERED`, or a `404` whose error body says `NOT_FOUND`, becomes `410` to the server, which deletes the handle; a bare or unknown `404` is a gateway error (`502`) and keeps the handle. The gateway authenticates with an OAuth access token minted from the owner's service-account key (RS256 JWT, cached until 5 minutes before expiry); it follows no redirects and logs neither tokens nor payloads. Details: [server design §7.4](../superpowers/specs/2026-10-27-server-design.md#74-push-lane-d).
+The gateway sends an `fcm` handle as an FCM HTTP v1 data message: `{"message":{"token":"<t>","data":{"k":"message"|"call","d":"<std base64 of the padded payload>"},"android":{"priority":"HIGH","ttl":"86400s"|"45s"}}}`. A call expires after 45 seconds (the ring timeout), a message after one day. FCM `UNREGISTERED` becomes `410` to the server, which deletes the handle; any other `404`, including `NOT_FOUND`, is a gateway error (`502`) and keeps the handle. The gateway authenticates with an OAuth access token minted from the owner's service-account key (RS256 JWT, cached until 5 minutes before expiry); it follows no redirects and logs neither tokens nor payloads. Details: [server design §7.4](../superpowers/specs/2026-10-27-server-design.md#74-push-lane-d).
 
 ## iOS VoIP pushes
 
