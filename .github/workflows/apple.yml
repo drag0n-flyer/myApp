@@ -20,6 +20,9 @@ jobs:
       - name: AppCore tests
         working-directory: apps/apple/Packages/AppCore
         run: swift test --no-parallel
+      - name: ServerKit tests
+        working-directory: apps/apple/Packages/ServerKit
+        run: swift test --no-parallel
 
   ios:
     runs-on: macos-26
