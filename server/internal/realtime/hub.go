@@ -26,6 +26,8 @@ type conn struct {
 	done chan struct{}
 	once sync.Once
 	hub  *hub
+	// cancel cancels the context frame handlers run with; close calls it.
+	cancel context.CancelFunc
 }
 
 // hub holds at most one connection per device.
@@ -86,6 +88,9 @@ func (h *hub) closeAll(code int, reason string) {
 func (c *conn) close(code int, reason string) {
 	c.once.Do(func() {
 		close(c.done)
+		if c.cancel != nil {
+			c.cancel()
+		}
 		c.hub.remove(c)
 		go func() {
 			if err := c.ws.Close(websocket.StatusCode(code), reason); err != nil {

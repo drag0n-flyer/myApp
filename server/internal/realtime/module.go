@@ -105,13 +105,18 @@ func (m *Module) serveWS(w http.ResponseWriter, r *http.Request) error {
 		return nil // Accept already wrote the HTTP error
 	}
 	ws.SetReadLimit(maxFrameBytes)
-	c := &conn{ws: ws, dev: p.DeviceID, send: make(chan []byte, sendBuffer), done: make(chan struct{}), hub: m.hub}
+	// ctx drives the socket I/O and must outlive close() so the close
+	// handshake can finish; hctx is what handlers get and is cancelled the
+	// moment the connection is closed.
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	hctx, hcancel := context.WithCancel(ctx)
+	defer hcancel()
+	c := &conn{ws: ws, dev: p.DeviceID, send: make(chan []byte, sendBuffer), done: make(chan struct{}), hub: m.hub, cancel: hcancel}
 	if !m.hub.add(c) {
 		ws.Close(websocket.StatusGoingAway, "server shutting down")
 		return nil
 	}
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
 	go c.writeLoop(ctx)
 	go c.pingLoop(ctx, m.pingEvery)
 	defer func() {
@@ -119,15 +124,22 @@ func (m *Module) serveWS(w http.ResponseWriter, r *http.Request) error {
 		ws.CloseNow()
 	}()
 	for {
+		// After close() the loop keeps reading so the close handshake can
+		// finish, but dispatch drops every frame.
 		_, b, err := ws.Read(ctx)
 		if err != nil {
 			return nil
 		}
-		m.dispatch(ctx, c, p, b)
+		m.dispatch(hctx, c, p, b)
 	}
 }
 
 func (m *Module) dispatch(ctx context.Context, c *conn, p core.Principal, b []byte) {
+	select {
+	case <-c.done:
+		return // closed (revoked or replaced): never run handlers
+	default:
+	}
 	typ, id, data, err := decodeFrame(b)
 	if err != nil {
 		m.reply(c, "error", id, map[string]string{"code": "bad_request"})

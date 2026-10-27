@@ -134,6 +134,31 @@ func TestDisconnectRevoked(t *testing.T) {
 	}
 }
 
+func TestNoDispatchAfterDisconnect(t *testing.T) {
+	e := setup(t)
+	called := make(chan struct{}, 1)
+	e.m.HandleFrame("echo", func(context.Context, core.Principal, json.RawMessage) (any, error) {
+		called <- struct{}{}
+		return nil, nil
+	})
+	c := e.dial(t, e.p)
+	e.m.Disconnect(e.p.DeviceID, 4003, "revoked")
+	// Keep sending until the close lands; none may reach the handler.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	for i := 0; i < 20; i++ {
+		c.Write(ctx, websocket.MessageText, []byte(`{"type":"echo","id":"1"}`))
+	}
+	if code := closeCode(t, c); code != 4003 {
+		t.Fatalf("code %d", code)
+	}
+	select {
+	case <-called:
+		t.Fatal("handler ran after disconnect")
+	default:
+	}
+}
+
 func TestFrameRouting(t *testing.T) {
 	e := setup(t)
 	e.m.HandleFrame("echo", func(context.Context, core.Principal, json.RawMessage) (any, error) {
