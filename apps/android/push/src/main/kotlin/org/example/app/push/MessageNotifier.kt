@@ -36,9 +36,9 @@ class MessageNotifier(private val context: Context) {
         }
     }
 
-    /** The call ended before it was answered: replaces that chat's notification. */
+    /** The call ended before it was answered. Own tag, so it does not replace the chat's unread-message notification. */
     fun showMissedCall(chatId: String, callerName: String) =
-        post(NotificationChannels.MESSAGES, "chat:$chatId", callerName, context.getString(R.string.push_missed_call_body), chatId)
+        post(NotificationChannels.MESSAGES, "call:$chatId", callerName, context.getString(R.string.push_missed_call_body), chatId)
 
     /** A ring from a non-contact never rang. Quiet, on the requests channel, and names nobody. */
     fun showStrangerMissedCall() =
@@ -63,8 +63,7 @@ class MessageNotifier(private val context: Context) {
             .setContentText(text)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setAutoCancel(true)
-            .setOnlyAlertOnce(true)
-        if (quiet) builder.setPriority(NotificationCompat.PRIORITY_LOW).setSilent(true)
+        if (quiet) builder.setPriority(NotificationCompat.PRIORITY_LOW).setSilent(true).setOnlyAlertOnce(true)
         context.packageManager.getLaunchIntentForPackage(context.packageName)?.let { launch ->
             chatId?.let { launch.putExtra(EXTRA_CHAT_ID, it) }
             builder.setContentIntent(

@@ -64,7 +64,7 @@ private class FakeRing : IncomingCallSink {
     override fun ring(outcome: RingOutcome.Ring) { rung += outcome }
 }
 
-private class FakeEffects : PushEffects {
+private class FakeEffects(private val monitor: MissedPushMonitor? = null) : PushEffects {
     val shown = mutableListOf<NotificationOutcome>()
     var fetches = 0
     val fetchPriorities = mutableListOf<Boolean>()
@@ -73,11 +73,14 @@ private class FakeEffects : PushEffects {
     val missed = mutableListOf<Pair<String, String>>()
     val pushes = mutableListOf<Pair<Boolean, Boolean>>()
     override fun show(outcome: NotificationOutcome) { shown += outcome }
-    override fun enqueueInboxFetch(highPriority: Boolean) { fetches++; fetchPriorities += highPriority }
+    override fun enqueueInboxFetch(highPriority: Boolean) { fetches++; fetchPriorities += highPriority; monitor?.fetchQueued(highPriority) }
     override fun showMissedCall(chatId: String, callerName: String) { missedShown += chatId to callerName }
     override fun showStrangerMissedCall() { strangerShown++ }
     override suspend fun recordMissedCall(callId: String, fromAccountId: String) { missed += callId to fromAccountId }
-    override fun pushHandled(highPriority: Boolean, showedSomething: Boolean) { pushes += highPriority to showedSomething }
+    override fun pushHandled(highPriority: Boolean, showedSomething: Boolean) {
+        pushes += highPriority to showedSomething
+        monitor?.pushHandled(highPriority, showedSomething)
+    }
 }
 
 @RunWith(RobolectricTestRunner::class)
@@ -188,8 +191,26 @@ class PushWakeTest {
         dispatcher(budgetMs = 8_000).onFcm(mapOf("k" to "message", "d" to b64(pad(ByteArray(1)))), highPriority = true)
         assertEquals(1, effects.fetches)
         assertTrue(effects.shown.single() === NotificationOutcome.Generic, "the budget ran out: post the generic notice")
-        assertEquals(listOf(true to true), effects.pushes)
+        assertTrue(effects.pushes.isEmpty(), "the fetch counts this push")
         assertEquals(8_000, testScheduler.currentTime)
+    }
+
+    @Test
+    fun timeoutThenGenericFetchCountsThePushOnce() = runTest {
+        val monitor = MissedPushMonitor(context)
+        val real = FakeEffects(monitor)
+        handler.message = NotificationOutcome.Message("c", "Ana", "hi")
+        handler.delayMs = 60_000
+        PushDispatcher(handler, ring, real, 8_000)
+            .onFcm(mapOf("k" to "message", "d" to b64(pad(ByteArray(1)))), highPriority = true)
+        PushRuntime.inboxFetcher = fetcherReturning(NotificationOutcome.Nothing)
+        try {
+            InboxFetchRunner.run(context)
+        } finally {
+            PushRuntime.inboxFetcher = null
+        }
+        assertEquals(1, monitor.highPriorityCount())
+        assertEquals(0, monitor.quietHighPriorityCount())
     }
 
     @Test
@@ -385,11 +406,11 @@ class PushWakeTest {
     }
 
     @Test
-    fun missedCallReplacesTheChatsNotification() {
+    fun missedCallShowsNextToTheChatsNotification() {
         val notifier = MessageNotifier(context)
         notifier.show(NotificationOutcome.Message("c1", "Ana", "hello"))
         notifier.showMissedCall("c1", "Ana")
-        val n = active().single()
+        val n = active().single { it.extras.getString("android.text") == "Missed call" }
         assertEquals("messages", n.channelId)
         assertEquals("Ana", n.extras.getString("android.title"))
         assertEquals("Missed call", n.extras.getString("android.text"))
@@ -519,6 +540,40 @@ class PushWakeTest {
     }
 
     @Test
+    fun failedFetchWithNoPushPendingStaysQuiet() = runTest {
+        PushRuntime.inboxFetcher = object : InboxFetcher { override suspend fun fetch(): List<NotificationOutcome> = error("offline") }
+        try {
+            assertFalse(InboxFetchRunner.run(context))
+        } finally {
+            PushRuntime.inboxFetcher = null
+        }
+        assertTrue(active().isEmpty())
+    }
+
+    @Test
+    fun onlyTheQuietStrangerNoticeAlertsOnce() {
+        val notifier = MessageNotifier(context)
+        notifier.show(NotificationOutcome.Message("c", "Bo", "yo"))
+        notifier.show(NotificationOutcome.Request("r"))
+        notifier.show(NotificationOutcome.Generic)
+        notifier.show(NotificationOutcome.NewOwnDevice("Pixel"))
+        notifier.showMissedCall("c", "Bo")
+        notifier.showStrangerMissedCall()
+        val once = android.app.Notification.FLAG_ONLY_ALERT_ONCE
+        val flagged = active().filter { it.flags and once != 0 }
+        assertEquals(1, flagged.size, "only the stranger missed-call notice alerts once")
+        assertEquals("requests", flagged.single().channelId)
+    }
+
+    @Test
+    fun missedCallKeepsTheUnreadMessageNotification() {
+        val notifier = MessageNotifier(context)
+        notifier.show(NotificationOutcome.Message("c", "Bo", "yo"))
+        notifier.showMissedCall("c", "Bo")
+        assertEquals(2, active().size)
+    }
+
+    @Test
     fun runnerWithoutFetcherIsQuiet() = runTest {
         PushRuntime.inboxFetcher = null
         InboxFetchRunner.run(context)
@@ -527,6 +582,7 @@ class PushWakeTest {
 
     @Test
     fun runnerFailureRetriesAndAnnounces() = runTest {
+        MissedPushMonitor(context).fetchQueued(highPriority = true)
         PushRuntime.inboxFetcher = object : InboxFetcher { override suspend fun fetch(): List<NotificationOutcome> = error("offline") }
         try {
             assertFalse(InboxFetchRunner.run(context))

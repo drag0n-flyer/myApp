@@ -108,8 +108,9 @@ class PushDispatcher(
         when (outcome) {
             // Out of time: announce now, as the iPhone does. The fetch replaces it with the real notification.
             null -> {
+                // The fetch counts this push when it ends, so the notice is not counted here.
                 effects.enqueueInboxFetch(highPriority)
-                show(NotificationOutcome.Generic, highPriority)
+                effects.show(NotificationOutcome.Generic)
             }
             NotificationOutcome.FetchInbox -> fetchLater(highPriority)
             NotificationOutcome.Nothing -> effects.pushHandled(highPriority, showedSomething = false)

@@ -31,8 +31,7 @@ object InboxFetchRunner {
             throw e
         } catch (_: Exception) {
             // A push is behind this fetch: say so, as the iPhone does. A later retry replaces the notice.
-            notifier.show(NotificationOutcome.Generic)
-            monitor.fetchFinished(showedSomething = true)
+            if (monitor.fetchFinished(showedSomething = true) > 0) notifier.show(NotificationOutcome.Generic)
             return false
         }
         val real = outcomes.filter { it != NotificationOutcome.Nothing && it != NotificationOutcome.FetchInbox }
