@@ -5,7 +5,7 @@ plugins {
 
 dependencies {
     api(project(":contracts"))
-    implementation(project(":core"))
+    api(project(":core"))
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)
     testImplementation(libs.junit)

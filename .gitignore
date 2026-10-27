@@ -1,6 +1,7 @@
 knowledge/
 .superpowers/
 .vscode
+.playwright-mcp/
 
 # Apple apps
 apps/apple/*.xcodeproj
@@ -18,6 +19,9 @@ target/
 
 # Go server
 server/bin/
+/bin/
+/data/
+server/run/
 *.test
 *.out
 coverage.*

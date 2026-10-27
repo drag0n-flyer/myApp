@@ -2,6 +2,11 @@ package org.example.app.contracts
 
 import java.util.concurrent.ConcurrentHashMap
 
+/**
+ * Wrapped secrets. [load] returns `null` only for a secret that was never saved. It throws [SecretStoreUnavailable]
+ * (transient: retry), [SecretsLost] (key gone: full wipe), or another exception such as `AEADBadTagException` or
+ * `IOException` (that one item is corrupt: do not regenerate it over the top; rule 3).
+ */
 interface SecretStore {
     fun load(name: String): ByteArray?
     fun save(name: String, value: ByteArray)

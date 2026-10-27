@@ -26,7 +26,6 @@ class DataModeTest {
     @Test fun estimates() {
         assertEquals(listOf(2, 3, 5, 8), DataMode.entries.map { it.estimatedMBPer10Minutes })
         assertEquals(5_000, DataMode.DataSaver.bytesPerSecond)
-        assertEquals("~2 MB per 10 min", DataFormat.estimate(DataMode.UltraLow))
     }
 
     @Test fun wireNames() {

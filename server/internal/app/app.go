@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/drag0n-flyer/myApp/server/internal/admin"
 	"github.com/drag0n-flyer/myApp/server/internal/attachments"
 	"github.com/drag0n-flyer/myApp/server/internal/calls"
 	"github.com/drag0n-flyer/myApp/server/internal/core"
@@ -34,7 +35,8 @@ const readyTimeout = 2 * time.Second
 type App struct {
 	deps     core.Deps
 	router   *httpx.Router
-	modules  []any // each has Routes; some have Run and Commands
+	admin    *admin.Module // admin listener only; it has no public routes
+	modules  []any         // each has Routes; some have Run and Commands
 	commands map[string]core.Command
 }
 
@@ -65,10 +67,21 @@ func New(d core.Deps) *App {
 	at := attachments.New(d)
 	si := serverinfo.New(d)
 
+	ad := admin.New(d, admin.Sources{
+		Started:  d.Now(),
+		Live:     rt,
+		Push:     pu,
+		Relays:   tn,
+		Identity: id,
+		Reports:  soc,
+		Info:     si,
+	})
+
 	a := &App{
 		deps:     d,
 		router:   httpx.NewRouter(id, d.Log),
-		modules:  []any{soc, pu, rt, id, dl, cl, tn, at, si},
+		admin:    ad,
+		modules:  []any{soc, pu, rt, id, dl, cl, tn, at, si, ad},
 		commands: map[string]core.Command{},
 	}
 	for _, m := range a.modules {
@@ -114,8 +127,8 @@ func Validate(d core.Deps) error {
 // Handler returns the public HTTP handler.
 func (a *App) Handler() http.Handler { return a.router }
 
-// AdminHandler returns the handler for the admin listener: /healthz, /readyz
-// and /debug/vars. It must not be exposed publicly.
+// AdminHandler returns the handler for the admin listener: /healthz, /readyz,
+// /debug/vars and the dashboard under /admin/. It must not be exposed publicly.
 func (a *App) AdminHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -134,6 +147,10 @@ func (a *App) AdminHandler() http.Handler {
 		_, _ = io.WriteString(w, "ok\n")
 	})
 	mux.Handle("GET /debug/vars", expvar.Handler())
+	mux.Handle("/admin/", a.admin.Handler())
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/admin/", http.StatusFound)
+	})
 	return mux
 }
 
@@ -169,11 +186,11 @@ func (a *App) Wait(ctx context.Context) {
 	}
 }
 
-// Command runs the admin subcommand named by the first two words of args (or
-// the first word, for a one-word command), giving it the remaining words. It
+// Command runs the admin subcommand named by the first three words of args, or
+// the first two, or the first (longest match wins), giving it the remaining words. It
 // returns "unknown command: <args>" if no module provides one.
 func (a *App) Command(ctx context.Context, args []string, out io.Writer) error {
-	for n := min(2, len(args)); n >= 1; n-- {
+	for n := min(3, len(args)); n >= 1; n-- {
 		if cmd, ok := a.commands[strings.Join(args[:n], " ")]; ok {
 			return cmd(ctx, args[n:], out)
 		}

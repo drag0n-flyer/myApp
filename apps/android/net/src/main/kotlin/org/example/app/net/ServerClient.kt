@@ -188,6 +188,20 @@ class ServerClient internal constructor(
         throw outcome
     }
 
+    /** The WebSocket upgrade request (`GET /v1/ws`, same host, Bearer header); null when signed out. */
+    internal fun liveEndpoint(): LiveEndpoint? {
+        val url = resolveSameHost("/v1/ws")
+        val sentAt = session.generation
+        val s = session.current ?: return null
+        val request = Request.Builder().url(url).header("Authorization", "Bearer ${s.token}").build()
+        return LiveEndpoint(request, sentAt)
+    }
+
+    /** Close code 4003 or a 401 on the upgrade: same effect as a 401 on an authenticated call. */
+    internal suspend fun handleRevoked(generation: Int) = handleUnauthorized(generation)
+
+    internal class LiveEndpoint(val request: Request, val generation: Int)
+
     private suspend fun handleUnauthorized(sentAt: Int) {
         val first = unauthorizedLock.withLock {
             // A login (save) since the request was sent means the 401 is about an old token.
