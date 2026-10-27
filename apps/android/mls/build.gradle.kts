@@ -5,7 +5,24 @@ plugins {
 android {
     namespace = "org.example.app.mls"
 
-    defaultConfig { consumerProguardFiles("consumer-rules.pro") }
+    defaultConfig {
+        consumerProguardFiles("consumer-rules.pro")
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    // The device smoke test loads the real libmlsffi.so for the emulator ABI (x86_64) from src/main/jniLibs,
+    // which scripts/build-mlsffi-android.sh fills. API 36 runs through the CI emulator step, not a managed device.
+    testOptions {
+        managedDevices {
+            localDevices {
+                create("pixel6Api29") {
+                    device = "Pixel 6"
+                    apiLevel = 29
+                    systemImageSource = "aosp"
+                }
+            }
+        }
+    }
 
     lint {
         // The generated bindings are not edited by hand: scope lint off for them, not for :mls.
@@ -22,6 +39,12 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.kotlin.test.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    androidTestImplementation(libs.kotlin.test.junit)
+    androidTestImplementation(libs.kotlinx.coroutines.test)
+    androidTestImplementation(libs.androidx.test.core)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.rules)
+    androidTestImplementation(libs.androidx.test.ext.junit)
 }
 
 // JVM tests load the host libmlsffi.so through JNA. Build it with
