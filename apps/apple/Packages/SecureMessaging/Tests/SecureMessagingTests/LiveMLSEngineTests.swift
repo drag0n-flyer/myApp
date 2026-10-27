@@ -88,7 +88,8 @@ private func makeGroup(creator: any MLSEngine, joiners: [any MLSEngine]) async t
 
     @Test func testLockFreeAfterEveryOperation() async throws {
         let dir = tempDir()
-        let a = try live(alice, dir: dir), b = try live(bob)
+        let bDir = tempDir()
+        let a = try live(alice, dir: dir), b = try live(bob, dir: bDir)
         let probe = CrossProcessLock(url: dir.appendingPathComponent("mls.lock"), timeout: .zero)
         func free() throws { try probe.withLock {} }
         try free()
@@ -101,6 +102,7 @@ private func makeGroup(creator: any MLSEngine, joiners: [any MLSEngine]) async t
         try await a.commitAccepted(g); try free()
         let (ct, _) = try await a.encrypt(utf8("x"), in: g); try free()
         _ = try await b.process(try #require(bundle.welcome)); _ = ct
+        try CrossProcessLock(url: bDir.appendingPathComponent("mls.lock"), timeout: .zero).withLock {}
         await #expect(throws: MLSError.malformed) { _ = try await a.process(utf8("garbage")) }; try free()
         #expect(try await a.epoch(of: g) == 1); try free()
         _ = try await a.exportSecret(group: g, label: "l", length: 8); try free()
@@ -111,12 +113,22 @@ private func makeGroup(creator: any MLSEngine, joiners: [any MLSEngine]) async t
     @Test func testBusyWhenLockHeld() async throws {
         let dir = tempDir()
         let a = try LiveMLSEngine(identity: alice, storage: dir, keys: InMemorySigningKeyStore(), lockTimeout: .milliseconds(50))
-        let holder = CrossProcessLock(url: dir.appendingPathComponent("mls.lock"), timeout: .seconds(1))
-        try holder.withLock {
-            let blocked = Task { try await a.createGroup() }
-            let result = await blocked.result
-            if case .failure(let error) = result { #expect(error as? MLSError == .busy) } else { Issue.record("expected busy") }
+        // Hold the lock on a background thread (`withLock` takes a synchronous closure), so the
+        // engine call below runs in this task while the lock is taken.
+        let acquired = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
+        let holder = CrossProcessLock(url: dir.appendingPathComponent("mls.lock"), timeout: .seconds(5))
+        let thread = Thread {
+            try? holder.withLock {
+                acquired.signal()
+                release.wait()
+            }
         }
+        thread.start()
+        acquired.wait()
+        await #expect(throws: MLSError.busy) { _ = try await a.createGroup() }
+        release.signal()
+        // Once the holder lets go the engine works again.
+        _ = try await LiveMLSEngine(identity: alice, storage: dir, keys: InMemorySigningKeyStore()).createGroup()
     }
 
     #if os(iOS)
