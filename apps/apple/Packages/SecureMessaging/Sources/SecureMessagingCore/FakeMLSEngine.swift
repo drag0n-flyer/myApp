@@ -37,6 +37,21 @@ public final class FakeMLSEngine: MLSEngine, @unchecked Sendable {
         var pending: (epoch: UInt64, members: [String])?
         var seen: Set<Data> = []
         var removed = false
+
+        func isSame(as other: GroupState) -> Bool {
+            epoch == other.epoch && members == other.members && seen == other.seen
+                && removed == other.removed && pending?.epoch == other.pending?.epoch
+                && pending?.members == other.pending?.members
+        }
+    }
+
+    /// What a staged message needs at confirm time: the state it was staged against and the state
+    /// it leads to. (`nil` = the group did not exist.)
+    private final class Token {
+        let before: GroupState?
+        let after: GroupState?
+        var closed = false   // guarded by the engine's `lock`
+        init(before: GroupState?, after: GroupState?) { self.before = before; self.after = after }
     }
 
     private let identity: String
@@ -142,12 +157,58 @@ public final class FakeMLSEngine: MLSEngine, @unchecked Sendable {
 
     public func process(_ message: Data) async throws -> Incoming {
         let wire = try decode(message)
-        switch wire.fake {
-        case "welcome": return try processWelcome(wire)
-        case "commit": return try processCommit(wire)
-        case "app": return try processApplication(wire, raw: message)
-        default: throw MLSError.malformed   // includes key packages
+        return try lock.withLock { try processLocked(wire, raw: message) }
+    }
+
+    public func memberKeys(of group: GroupID) async throws -> [MemberKey] {
+        try lock.withLock {
+            try activeState(group).members
+                .sorted { $0.utf8.lexicographicallyPrecedes($1.utf8) }
+                .map { MemberKey(identity: $0, signatureKey: Data("fake-sig:\($0)".utf8)) }
         }
+    }
+
+    public func stageProcess(_ group: GroupID, _ message: Data) async throws -> StagedProcess {
+        let wire = try decode(message)
+        guard try groupID(wire) == group else { throw MLSError.malformed }
+        return try lock.withLock {
+            // Run the real processing on the live table, then put the table back.
+            let before = groups[group]
+            let saved = groups
+            defer { groups = saved }
+            let incoming = try processLocked(wire, raw: message)
+            return StagedProcess(group: group, incoming: incoming, token: Token(before: before, after: groups[group]))
+        }
+    }
+
+    public func confirm(_ staged: StagedProcess) async throws {
+        guard let token = staged.token as? Token else { throw MLSError.malformed }
+        try lock.withLock {
+            guard !token.closed else { throw MLSError.stale }
+            let now = groups[staged.group]
+            switch (now, token.before) {
+            case (nil, nil): break
+            case let (now?, before?) where now.isSame(as: before): break
+            default: throw MLSError.stale
+            }
+            groups[staged.group] = token.after
+            token.closed = true
+        }
+    }
+
+    public func discard(_ staged: StagedProcess) {
+        guard let token = staged.token as? Token else { return }
+        lock.withLock { token.closed = true }
+    }
+
+    public func decryptApplication(_ group: GroupID, _ message: Data) async throws -> ApplicationMessage {
+        let wire = try decode(message)
+        guard wire.fake == "app" else { throw MLSError.notApplication }   // before anything is touched
+        guard try groupID(wire) == group else { throw MLSError.malformed }
+        guard case let .application(_, sender, plaintext, epoch) = try await process(message) else {
+            throw MLSError.notApplication
+        }
+        return ApplicationMessage(sender: sender, plaintext: plaintext, epoch: epoch)
     }
 
     public func epoch(of group: GroupID) async throws -> UInt64 {
@@ -170,15 +231,25 @@ public final class FakeMLSEngine: MLSEngine, @unchecked Sendable {
 
     // MARK: Processing
 
+    /// Must be called with `lock` held.
+    private func processLocked(_ wire: Wire, raw: Data) throws -> Incoming {
+        switch wire.fake {
+        case "welcome": return try processWelcome(wire)
+        case "commit": return try processCommit(wire)
+        case "app": return try processApplication(wire, raw: raw)
+        default: throw MLSError.malformed   // includes key packages
+        }
+    }
+
     private func processWelcome(_ wire: Wire) throws -> Incoming {
         let group = try groupID(wire)
         guard let epoch = wire.epoch, let members = wire.members else { throw MLSError.malformed }
-        return try lock.withLock {
+        return try { () throws -> Incoming in
             if let existing = groups[group], !existing.removed { throw MLSError.duplicate }
             guard members.contains(identity) else { throw MLSError.notMember }
             groups[group] = GroupState(epoch: epoch, members: members)
             return .joined(group: group, epoch: epoch)
-        }
+        }()
     }
 
     private func processCommit(_ wire: Wire) throws -> Incoming {
@@ -186,7 +257,7 @@ public final class FakeMLSEngine: MLSEngine, @unchecked Sendable {
         guard let newEpoch = wire.epoch, let members = wire.members, let sender = wire.sender else {
             throw MLSError.malformed
         }
-        return try lock.withLock {
+        return try { () throws -> Incoming in
             var state = try activeState(group)
             if sender == identity {
                 // Our own commit came back (the 200 was lost): apply it if it is the pending one.
@@ -210,14 +281,14 @@ public final class FakeMLSEngine: MLSEngine, @unchecked Sendable {
             state.removed = removedMe
             groups[group] = state
             return .commit(group: group, newEpoch: newEpoch, removedMe: removedMe)
-        }
+        }()
     }
 
     private func processApplication(_ wire: Wire, raw: Data) throws -> Incoming {
         let group = try groupID(wire)
         guard let epoch = wire.epoch, let sender = wire.sender, let body = wire.body,
               let plaintext = Data(base64Encoded: body) else { throw MLSError.malformed }
-        return try lock.withLock {
+        return try { () throws -> Incoming in
             var state = try activeState(group)
             if sender == identity { throw MLSError.duplicate }   // cannot process our own message
             guard epoch <= state.epoch else {
@@ -229,7 +300,7 @@ public final class FakeMLSEngine: MLSEngine, @unchecked Sendable {
             guard state.seen.insert(raw).inserted else { throw MLSError.duplicate }
             groups[group] = state
             return .application(group: group, sender: sender, plaintext: plaintext, epoch: epoch)
-        }
+        }()
     }
 
     // MARK: Helpers

@@ -27,6 +27,7 @@ use mls_rs::{
     CipherSuite, CipherSuiteProvider, Client, CryptoProvider, ExtensionList, Group, MlsMessage,
     WireFormat,
 };
+use mls_rs_core::group::GroupStateStorage;
 use zeroize::Zeroizing;
 
 use crate::error::FfiError;
@@ -102,7 +103,33 @@ impl fmt::Debug for Encrypted {
     }
 }
 
-#[derive(uniffi::Enum)]
+/// An application message decrypted by `decrypt_application`.
+#[derive(uniffi::Record)]
+pub struct ApplicationMessage {
+    pub sender: String,
+    pub plaintext: Vec<u8>,
+    /// The epoch it was sent in.
+    pub epoch: u64,
+}
+
+impl fmt::Debug for ApplicationMessage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ApplicationMessage")
+            .field("sender", &self.sender)
+            .field("plaintext_len", &self.plaintext.len())
+            .field("epoch", &self.epoch)
+            .finish()
+    }
+}
+
+/// A group member's identity and MLS signature public key (the leaf's).
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
+pub struct MemberKey {
+    pub identity: String,
+    pub signature_key: Vec<u8>,
+}
+
+#[derive(uniffi::Enum, PartialEq)]
 pub enum Processed {
     Application {
         group_id: Vec<u8>,
@@ -119,6 +146,98 @@ pub enum Processed {
         group_id: Vec<u8>,
         epoch: u64,
     },
+}
+
+impl Processed {
+    fn group_id(&self) -> &[u8] {
+        match self {
+            Processed::Application { group_id, .. }
+            | Processed::Commit { group_id, .. }
+            | Processed::Joined { group_id, .. } => group_id,
+        }
+    }
+}
+
+/// The result of [`EngineCore::stage_process`]: what `process` would return,
+/// plus what is needed to apply it later. Holds no key material and nothing is
+/// persisted for it. `confirm` re-runs the processing against the stored state
+/// and applies it only if the state is the one this was staged against.
+#[derive(uniffi::Object)]
+pub struct StagedProcess {
+    message: Vec<u8>,
+    /// The suite's hash of the group's stored state at staging time (`None`
+    /// when there was none). This is a conservative extra check, not what makes
+    /// confirm safe: safety comes from `confirm` re-processing the message from
+    /// fresh storage under the lock, so it can never write stale ratchet state.
+    /// The hash only turns "something changed since staging" into `Stale`
+    /// (it covers the state file only, so an A to B to A change passes).
+    base: Option<Vec<u8>>,
+    processed: Processed,
+    /// Set by `discard` and by a successful `confirm`.
+    closed: Mutex<bool>,
+}
+
+#[uniffi::export]
+impl StagedProcess {
+    /// Drops this staged message (same as `Engine::discard`). Nothing was persisted.
+    pub fn discard(&self) {
+        self.close();
+    }
+
+    /// What `process` would return for this message.
+    pub fn incoming(&self) -> Processed {
+        match &self.processed {
+            Processed::Application {
+                group_id,
+                sender,
+                plaintext,
+                epoch,
+            } => Processed::Application {
+                group_id: group_id.clone(),
+                sender: sender.clone(),
+                plaintext: plaintext.clone(),
+                epoch: *epoch,
+            },
+            Processed::Commit {
+                group_id,
+                new_epoch,
+                removed_me,
+            } => Processed::Commit {
+                group_id: group_id.clone(),
+                new_epoch: *new_epoch,
+                removed_me: *removed_me,
+            },
+            Processed::Joined { group_id, epoch } => Processed::Joined {
+                group_id: group_id.clone(),
+                epoch: *epoch,
+            },
+        }
+    }
+}
+
+impl StagedProcess {
+    fn close(&self) {
+        *self.closed.lock().unwrap_or_else(|p| p.into_inner()) = true;
+    }
+    fn is_closed(&self) -> bool {
+        *self.closed.lock().unwrap_or_else(|p| p.into_inner())
+    }
+}
+
+impl fmt::Debug for StagedProcess {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("StagedProcess")
+            .field("incoming", &self.processed)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A message processed in memory only: nothing of it is in storage yet.
+struct Prepared<P: CryptoProvider + Clone> {
+    group: EngineGroup<P>,
+    processed: Processed,
+    base: Option<Vec<u8>>,
+    is_welcome: bool,
 }
 
 impl fmt::Debug for Processed {
@@ -373,8 +492,7 @@ impl<P: CryptoProvider + Clone> EngineCore<P> {
     ) -> Result<CommitBundle, FfiError> {
         let _g = self.lock();
         let mut group = self.load(&group_id)?;
-        // First, so the answer does not depend on how far the pending commit got: a member it
-        // adds is not in the roster yet.
+        // Same order as `add` and the fake engine: a pending commit wins over member lookup.
         if group.has_pending_commit() {
             return Err(FfiError::PendingCommit);
         }
@@ -438,31 +556,63 @@ impl<P: CryptoProvider + Clone> EngineCore<P> {
         })
     }
 
-    pub fn process(&self, message: Vec<u8>) -> Result<Processed, FfiError> {
-        let _g = self.lock();
-        let message = MlsMessage::from_bytes(&message).map_err(|_| FfiError::Malformed)?;
+    /// Hash of the group's stored state, or `None` when there is none. Used to
+    /// detect that the state changed between `stage_process` and `confirm`.
+    fn state_base(&self, group_id: &[u8]) -> Result<Option<Vec<u8>>, FfiError> {
+        let Some(bytes) = self.storage.state(group_id)? else {
+            return Ok(None);
+        };
+        let suite = self
+            .crypto
+            .cipher_suite_provider(CIPHER_SUITE)
+            .ok_or_else(|| FfiError::Crypto("cipher suite unavailable".into()))?;
+        suite
+            .hash(&bytes)
+            .map(Some)
+            .map_err(|e| FfiError::Crypto(format!("{e:?}")))
+    }
+
+    /// Processes `message` in memory: reads storage, writes nothing that
+    /// matters (the epoch repair in `load` only deletes records that were never
+    /// valid history). The caller decides whether to [`Self::finish`].
+    fn prepare(&self, message: &[u8]) -> Result<Prepared<P>, FfiError> {
+        // Callers other than `decrypt_application` treat any content we do not
+        // handle (standalone proposals and the like) as malformed.
+        self.prepare_raw(message).map_err(|e| match e {
+            FfiError::NotApplication => FfiError::Malformed,
+            other => other,
+        })
+    }
+
+    /// Like `prepare`, but content that is neither application data nor a
+    /// commit (a proposal, ...) is reported as `NotApplication`.
+    fn prepare_raw(&self, message: &[u8]) -> Result<Prepared<P>, FfiError> {
+        let message = MlsMessage::from_bytes(message).map_err(|_| FfiError::Malformed)?;
         match message.wire_format() {
             WireFormat::Welcome => {
-                let (mut group, _info) = self
+                let (group, _info) = self
                     .client
                     .join_group(None, &message, None)
                     .map_err(map_mls)?;
-                // A Welcome replaces any earlier state for this group (for
-                // example after we were removed and then re-added): old epoch
-                // records belong to the old history. Delete them all first.
-                for id in self.storage.stored_epochs(group.group_id())? {
-                    self.storage.delete_epoch(group.group_id(), id)?;
-                }
-                // Also deletes the KeyPackage this Welcome consumed.
-                group.write_to_storage().map_err(map_mls)?;
-                Ok(Processed::Joined {
-                    group_id: group.group_id().to_vec(),
+                let group_id = group.group_id().to_vec();
+                // A Welcome replaces any earlier state for this group; the base
+                // is that earlier state, so a change to it makes a staged join stale.
+                let base = self.state_base(&group_id)?;
+                let processed = Processed::Joined {
+                    group_id,
                     epoch: group.current_epoch(),
+                };
+                Ok(Prepared {
+                    group,
+                    processed,
+                    base,
+                    is_welcome: true,
                 })
             }
             WireFormat::PrivateMessage | WireFormat::PublicMessage => {
                 let group_id = message.group_id().ok_or(FfiError::Malformed)?.to_vec();
                 let mut group = self.load(&group_id)?;
+                let base = self.state_base(&group_id)?;
                 let message_epoch = message.epoch().ok_or(FfiError::Malformed)?;
                 if message_epoch > group.current_epoch() {
                     // A commit was missed; the caller must resync.
@@ -496,20 +646,154 @@ impl<P: CryptoProvider + Clone> EngineCore<P> {
                             epoch: message_epoch,
                         }
                     }
-                    ReceivedMessage::Commit(description) => Processed::Commit {
-                        group_id: group_id.clone(),
-                        // A commit at epoch N creates epoch N + 1. mls-rs leaves a removed member's
-                        // group at its old epoch, so do not read it back from the group.
-                        new_epoch: message_epoch + 1,
-                        removed_me: matches!(description.effect, CommitEffect::Removed { .. }),
-                    },
+                    ReceivedMessage::Commit(description) => {
+                        let removed_me = matches!(description.effect, CommitEffect::Removed { .. });
+                        Processed::Commit {
+                            group_id: group_id.clone(),
+                            // A removed device's stored group stays at the old epoch;
+                            // report the epoch the commit creates either way.
+                            new_epoch: if removed_me {
+                                message_epoch + 1
+                            } else {
+                                group.current_epoch()
+                            },
+                            removed_me,
+                        }
+                    }
                     // Standalone proposals, GroupInfo, KeyPackage: never sent by our clients.
-                    _ => return Err(FfiError::Malformed),
+                    _ => return Err(FfiError::NotApplication),
                 };
-                group.write_to_storage().map_err(map_mls)?;
-                Ok(processed)
+                Ok(Prepared {
+                    group,
+                    processed,
+                    base,
+                    is_welcome: false,
+                })
             }
             _ => Err(FfiError::Malformed),
+        }
+    }
+
+    /// Refuses a message whose clear-text group id is not `group_id`.
+    fn check_group(message: &[u8], group_id: &[u8]) -> Result<(), FfiError> {
+        let parsed = MlsMessage::from_bytes(message).map_err(|_| FfiError::Malformed)?;
+        match parsed.group_id() {
+            Some(id) if id != group_id => Err(FfiError::Malformed),
+            _ => Ok(()),
+        }
+    }
+
+    /// Persists a prepared message: the one and only durable write of processing.
+    fn finish(&self, mut prepared: Prepared<P>) -> Result<Processed, FfiError> {
+        if prepared.is_welcome {
+            // A Welcome replaces any earlier state for this group (for
+            // example after we were removed and then re-added): old epoch
+            // records belong to the old history. Delete them all first.
+            let group_id = prepared.group.group_id().to_vec();
+            for id in self.storage.stored_epochs(&group_id)? {
+                self.storage.delete_epoch(&group_id, id)?;
+            }
+        }
+        // For a Welcome this also deletes the KeyPackage it consumed.
+        prepared.group.write_to_storage().map_err(map_mls)?;
+        Ok(prepared.processed)
+    }
+
+    pub fn process(&self, message: Vec<u8>) -> Result<Processed, FfiError> {
+        let _g = self.lock();
+        let prepared = self.prepare(&message)?;
+        self.finish(prepared)
+    }
+
+    /// Decrypts or validates `message` for `group_id` and persists NOTHING. The
+    /// result carries what `process` would return; `confirm` applies it.
+    pub fn stage_process(
+        &self,
+        group_id: Vec<u8>,
+        message: Vec<u8>,
+    ) -> Result<Arc<StagedProcess>, FfiError> {
+        let _g = self.lock();
+        // Cheap check first, before any decryption (a Welcome has no group id
+        // in the clear; it is checked after joining below).
+        Self::check_group(&message, &group_id)?;
+        let prepared = self.prepare(&message)?;
+        // The caller names the group the message is for; refuse anything else.
+        if prepared.processed.group_id() != group_id.as_slice() {
+            return Err(FfiError::Malformed);
+        }
+        Ok(Arc::new(StagedProcess {
+            message,
+            base: prepared.base,
+            processed: prepared.processed,
+            closed: Mutex::new(false),
+        }))
+    }
+
+    /// Persists a staged message, if the group's stored state is exactly what it
+    /// was when staged; otherwise `Stale` and nothing is written. The message is
+    /// processed again from the stored state (deterministic for equal state and
+    /// message) and the outcome must equal the staged one.
+    pub fn confirm(&self, staged: &StagedProcess) -> Result<(), FfiError> {
+        let _g = self.lock();
+        if staged.is_closed() {
+            return Err(FfiError::Stale);
+        }
+        let prepared = match self.prepare(&staged.message) {
+            Ok(p) => p,
+            // Storage and crypto failures are real errors (retryable). Anything
+            // else means the state moved on (the same message succeeded when staged).
+            Err(e @ (FfiError::Storage(_) | FfiError::Crypto(_))) => return Err(e),
+            Err(_) => return Err(FfiError::Stale),
+        };
+        if prepared.base != staged.base || prepared.processed != staged.processed {
+            return Err(FfiError::Stale);
+        }
+        self.finish(prepared)?;
+        staged.close();
+        Ok(())
+    }
+
+    /// Drops a staged message. Nothing was persisted, so there is nothing to undo.
+    pub fn discard(&self, staged: &StagedProcess) {
+        staged.close();
+    }
+
+    /// Decrypts an application message and nothing else. Welcomes, public
+    /// messages (which cannot carry application data) and anything that turns
+    /// out to be a commit or proposal are refused with `NotApplication` before
+    /// any state is written; the decrypted application message is then persisted
+    /// like `process` does (its ratchet key is consumed).
+    pub fn decrypt_application(
+        &self,
+        group_id: Vec<u8>,
+        message: Vec<u8>,
+    ) -> Result<ApplicationMessage, FfiError> {
+        let _g = self.lock();
+        let parsed = MlsMessage::from_bytes(&message).map_err(|_| FfiError::Malformed)?;
+        if parsed.wire_format() != WireFormat::PrivateMessage {
+            return Err(FfiError::NotApplication);
+        }
+        Self::check_group(&message, &group_id)?;
+        // Content type is inside the encryption: stage in memory, inspect, then persist or drop.
+        let prepared = self.prepare_raw(&message)?;
+        if prepared.processed.group_id() != group_id.as_slice() {
+            return Err(FfiError::Malformed);
+        }
+        if !matches!(prepared.processed, Processed::Application { .. }) {
+            return Err(FfiError::NotApplication); // `prepared` dropped: nothing was written
+        }
+        match self.finish(prepared)? {
+            Processed::Application {
+                sender,
+                plaintext,
+                epoch,
+                ..
+            } => Ok(ApplicationMessage {
+                sender,
+                plaintext,
+                epoch,
+            }),
+            _ => Err(FfiError::NotApplication),
         }
     }
 
@@ -541,6 +825,27 @@ impl<P: CryptoProvider + Clone> EngineCore<P> {
             .members_iter()
             .map(|m| identity_string(&m.signing_identity))
             .collect()
+    }
+}
+
+impl<P: CryptoProvider + Clone> EngineCore<P> {
+    /// Every member's identity and leaf signature public key, sorted by identity
+    /// (UTF-8 byte order); includes this device.
+    pub fn member_keys(&self, group_id: Vec<u8>) -> Result<Vec<MemberKey>, FfiError> {
+        let _g = self.lock();
+        let group = self.load(&group_id)?;
+        let mut keys = group
+            .roster()
+            .members_iter()
+            .map(|m| {
+                Ok(MemberKey {
+                    identity: identity_string(&m.signing_identity)?,
+                    signature_key: m.signing_identity.signature_key.as_bytes().to_vec(),
+                })
+            })
+            .collect::<Result<Vec<_>, FfiError>>()?;
+        keys.sort_by(|a, b| a.identity.as_bytes().cmp(b.identity.as_bytes()));
+        Ok(keys)
     }
 }
 
@@ -632,5 +937,37 @@ impl Engine {
     /// Current members as "<accountID>/<deviceID>" (README contract: `members(of:)`).
     pub fn members(&self, group_id: Vec<u8>) -> Result<Vec<String>, FfiError> {
         self.core.members(group_id)
+    }
+
+    /// Every member's identity and leaf signature public key, sorted by identity.
+    pub fn member_keys(&self, group_id: Vec<u8>) -> Result<Vec<MemberKey>, FfiError> {
+        self.core.member_keys(group_id)
+    }
+
+    /// Decrypts and validates without persisting anything; see `confirm`.
+    pub fn stage_process(
+        &self,
+        group_id: Vec<u8>,
+        message: Vec<u8>,
+    ) -> Result<Arc<StagedProcess>, FfiError> {
+        self.core.stage_process(group_id, message)
+    }
+
+    /// Persists a staged message; `Stale` if the group's state changed since staging.
+    pub fn confirm(&self, staged: Arc<StagedProcess>) -> Result<(), FfiError> {
+        self.core.confirm(&staged)
+    }
+
+    pub fn discard(&self, staged: Arc<StagedProcess>) {
+        self.core.discard(&staged)
+    }
+
+    /// Decrypts an application message; anything else is `NotApplication`.
+    pub fn decrypt_application(
+        &self,
+        group_id: Vec<u8>,
+        message: Vec<u8>,
+    ) -> Result<ApplicationMessage, FfiError> {
+        self.core.decrypt_application(group_id, message)
     }
 }

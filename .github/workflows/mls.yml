@@ -68,7 +68,7 @@ jobs:
       - name: Swift package builds with the XCFramework
         working-directory: apps/apple/Packages/SecureMessaging
         run: swift build
-      - name: swift test (macOS)
+      - name: SecureMessaging tests with the real engine
         working-directory: apps/apple/Packages/SecureMessaging
         run: swift test
       - name: xcodebuild test (iOS simulator)
