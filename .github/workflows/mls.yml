@@ -1,6 +1,7 @@
 name: MLS client core
 
 on:
+  workflow_dispatch:
   push:
     paths:
       - "apps/apple/Packages/SecureMessaging/**"
