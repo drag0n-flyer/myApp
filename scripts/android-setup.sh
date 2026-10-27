@@ -16,7 +16,7 @@ PLATFORM="platforms;android-36"
 BUILD_TOOLS="build-tools;36.0.0"
 NDK="ndk;28.2.13676358"
 EMULATOR_PACKAGES=("emulator" "system-images;android-29;default;x86_64" "system-images;android-36;aosp_atd;x86_64")
-RUST_TARGETS=(aarch64-linux-android x86_64-linux-android)
+RUST_TARGETS=(aarch64-linux-android armv7-linux-androideabi x86_64-linux-android)
 
 DRY_RUN=0
 WITH_EMULATOR=0

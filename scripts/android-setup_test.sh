@@ -9,7 +9,7 @@ check() { if "${@:2}"; then echo "PASS $1"; else echo "FAIL $1"; fails=$((fails+
 out="$("$here/android-setup.sh" --dry-run 2>&1)"; rc=$?
 check "dry-run exits 0" test "$rc" = 0
 for want in "platforms;android-36" "build-tools;" "ndk;" "cargo install --locked --version 4.1.2 cargo-ndk" \
-  "aarch64-linux-android" "x86_64-linux-android" "Temurin 17" "cmdline-tools" "sha256"; do
+  "aarch64-linux-android" "x86_64-linux-android" "armv7-linux-androideabi" "Temurin 17" "cmdline-tools" "sha256"; do
   check "dry-run lists $want" grep -qF -- "$want" <<<"$out"
 done
 check "dry-run has NDK r28 or newer" bash -c 'grep -oE "ndk;[0-9]+" <<<"$1" | head -1 | cut -d";" -f2 | awk "{exit !(\$1>=28)}"' _ "$out"
@@ -31,6 +31,12 @@ mkdir "$tmp/dir"; cp "$tmp/good.so" "$tmp/dir/"
 check "directory of good libraries passes" bash -c '"$1" "$2" >/dev/null' _ "$here/check-16kb.sh" "$tmp/dir"
 cp "$tmp/bad.so" "$tmp/dir/"
 check "directory with one bad library fails" bash -c '! "$1" "$2" >/dev/null' _ "$here/check-16kb.sh" "$tmp/dir"
+mkdir -p "$tmp/abi/armeabi-v7a" "$tmp/abi/arm64-v8a"; cp "$tmp/bad.so" "$tmp/abi/armeabi-v7a/"; cp "$tmp/good.so" "$tmp/abi/arm64-v8a/"
+check "4 KB armeabi-v7a library is exempt" bash -c '"$1" "$2" >/dev/null' _ "$here/check-16kb.sh" "$tmp/abi"
+mkdir -p "$tmp/abi64/arm64-v8a"; cp "$tmp/bad.so" "$tmp/abi64/arm64-v8a/"
+check "4 KB arm64-v8a library still fails" bash -c '! "$1" "$2" >/dev/null' _ "$here/check-16kb.sh" "$tmp/abi64"
+mkdir -p "$tmp/abi/x86_64"; cp "$tmp/bad.so" "$tmp/abi/x86_64/"
+check "4 KB x86_64 library fails" bash -c '! "$1" "$2" >/dev/null' _ "$here/check-16kb.sh" "$tmp/abi"
 
 # change detection
 flags() { printf '%s\n' "$@" | "$here/android-changes.sh"; }
