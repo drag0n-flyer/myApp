@@ -19,10 +19,9 @@ extension AppModel {
         case .file(let url): chatStore.sendAttachment(url, kind: .file, in: chatID)
         case .voice(let url, let duration): chatStore.sendVoice(url, duration: duration, in: chatID)
         }
-        revision += 1
     }
 
-    private static func fileSize(_ url: URL) -> Int {
-        (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+    private static func fileSize(_ url: URL) -> Int64 {
+        Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
     }
 }
