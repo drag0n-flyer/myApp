@@ -16,6 +16,7 @@ Copy this file to `docs/measurements/YYYY-MM-DD-<topic>.md` and fill in every fi
 | Server and coturn host (and the interface name netem used) | |
 | Comparison apps and version numbers (WhatsApp, Signal, Telegram) | n/a |
 | Rig (cable, or acoustic fallback) | |
+| capture_setup (`both phones on Internet Sharing`, `fallback: callee on another network`, or `rvictl`) | |
 | Room temperature | |
 | Wi-Fi Assist and Low Data Mode off on both phones? | yes / no |
 | Background App Refresh off? | yes / no |

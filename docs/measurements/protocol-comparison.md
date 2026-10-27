@@ -57,7 +57,8 @@ Repeat for every app, every profile, and 3 runs.
    python3 tools/call-lab/pcap/pcapbytes.py tools/call-lab/runs/<run>.pcap --local <caller IP> --peer <peer IP> --exclude-ports 53,5353 --udp-only
    ```
 
-   Port 443 is not excluded: some apps send call audio over UDP port 443, and excluding it would hide them. `--udp-only` drops TCP 443 signaling and other web traffic. `--peer` keeps only the call flow. `duration_s` runs from the first to the last media packet.
+   Port 443 is not excluded (for these apps there is no single-host setup to worry about): some apps send call audio over UDP port 443, and excluding it would hide them. `--udp-only` drops TCP 443 signaling and other web traffic. `--peer` keeps only the call flow. `duration_s` runs from the first to the last media packet.
+   If the capture is made on the day-one fallback setup (see [protocol-data-use.md](protocol-data-use.md), Day-one check), write it in the `capture_setup` field of the result.
    Expected: one line of JSON with `duration_s` near 300 and non-zero `up_bytes` and `down_bytes`.
 8. Score the voice quality against the stimulus:
 

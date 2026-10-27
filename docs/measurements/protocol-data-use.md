@@ -40,6 +40,23 @@ That is 24 audio-only cells plus 12 video cells: 36 cells, 108 runs of 5 minutes
 
    Expected: no output, no error.
 
+### Day-one check (once, before any measured run)
+
+Check that the Internet Sharing capture sees both directions of a direct call.
+
+1. Start a short direct call between the two phones on the Mac's Wi-Fi, with a capture running: `sudo tcpdump -i bridge100 -w tools/call-lab/runs/daycheck.pcap`. Let it run for 30 seconds, then hang up and press Control-C.
+   Expected: a `daycheck.pcap` file that is not empty.
+2. Count it:
+
+   ```
+   python3 tools/call-lab/pcap/pcapbytes.py tools/call-lab/runs/daycheck.pcap --local <caller IP> --peer <callee IP> --exclude-ports 53,5353 --udp-only
+   ```
+
+   Expected: both `up_bytes` and `down_bytes` are above 0.
+3. If either is 0, the Mac only sees one direction of phone-to-phone traffic. Use the fallback: put the callee on a different network (cellular, or another Wi-Fi) so the media must cross the Mac's uplink, and capture on `bridge100` for the caller only. Repeat steps 1 and 2 with the callee's public address as `--peer` (found in the capture's biggest UDP flow).
+   Expected: both byte counts are above 0.
+4. Write which setup you used (`both phones on Internet Sharing` or `fallback: callee on another network`) in the `capture_setup` field of the result.
+
 ### Setup B: for each cell
 
 8. Set the network profile.
@@ -85,13 +102,23 @@ Do these in order, for each of the 3 runs of a cell.
    Expected: tcpdump prints `packets captured` and a count that is not 0.
 7. Export both phones' run folders from Call Lab (Export button, saves a zip) and unzip them into `tools/call-lab/runs/<run_id>/`. Put the Mac's `received.wav` there too.
    Expected: the folder holds `stats.csv`, `events.csv` and `received.wav`.
-8. Count the bytes:
+8. Count the bytes. Pick the command for the path.
+
+   Path `direct` (audio and video go over UDP):
 
    ```
-   python3 tools/call-lab/pcap/pcapbytes.py tools/call-lab/runs/<run>.pcap --local <caller IP> --peer <peer IP> --exclude-ports 53,5353 --udp-only
+   python3 tools/call-lab/pcap/pcapbytes.py tools/call-lab/runs/<run>.pcap --local <caller IP> --peer <callee IP> --exclude-ports 53,5353 --udp-only
    ```
 
-   What the options mean: `--local` is the phone you captured on. `--peer` keeps only traffic with the other end of the call, so notifications and updates are not counted. For path `direct`, `<peer IP>` is `<callee IP>`. For path `relay`, `<peer IP>` is the IP address of the TURN (coturn) server, from the server config, or the other end of the biggest UDP flow in the capture (Wireshark: Statistics, Conversations, UDP, sort by Bytes). `--udp-only` drops TCP traffic such as signaling. `--exclude-ports 53,5353` leaves out name lookups (53) and local-network discovery (5353). `duration_s` is counted from the first to the last media packet. It prints one line of JSON.
+   Path `relay` (the relay can carry media over UDP or TCP, so count both; no `--udp-only`). Use `<TURN IP>`, the IP address of the TURN (coturn) server, from the server config:
+
+   ```
+   python3 tools/call-lab/pcap/pcapbytes.py tools/call-lab/runs/<run>.pcap --local <caller IP> --peer <TURN IP> --exclude-ports 53,5353,443
+   ```
+
+   Which `--exclude-ports` to use for `relay`: check whether the TURN IP is the same as the app server's IP. If it is the same (single-host setup), TLS relay media uses port 5349 and port 443 belongs to the app's own signaling, so exclude 443 as shown. If TURN runs on its own host, use `--exclude-ports 53,5353` only (TURN may then use 443 for media).
+
+   What the options mean: `--local` is the phone you captured on. `--peer` keeps only traffic with the other end of the call, so notifications and updates are not counted. `--udp-only` drops TCP traffic such as signaling. `--exclude-ports 53,5353` leaves out name lookups (53) and local-network discovery (5353). `duration_s` is counted from the first to the last media packet. It prints one line of JSON.
    Expected: JSON with `duration_s` close to 300, and `up_bytes`, `down_bytes`, `bytes_per_min` and `mb_per_10min` filled in. If it prints an error, note the message and see "If something fails" below.
 9. Score the voice quality:
 

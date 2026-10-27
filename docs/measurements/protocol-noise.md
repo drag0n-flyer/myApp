@@ -10,7 +10,7 @@ In plain words: OVRL is DNSMOS's overall score. RTF (real-time factor) is proces
 
 ## What is measured
 
-The Mac rig plays 150 mixed files over the cable into the iPhone's headset microphone, and the noise bench (the NS bench screen in the iPhone Call Lab) records them. The set is 150 mixed files through the cable rig: 5 categories (fan, traffic, keyboard, wind, babble) x 10 clips x 3 noise levels (SNR 0, 5 and 10 dB; a lower number is noisier). It records three passes per run: `raw.wav` (no processing), `vpio.wav` (Apple VPIO), and `rnnoise.wav` (RNNoise).
+The Mac rig plays 150 mixed files over the cable into the iPhone's headset microphone, and the noise bench (the NS bench screen in the iPhone Call Lab) records them. The set is 150 mixed files: 5 categories (fan, traffic, keyboard, wind, babble) x 10 clips x 3 noise levels (SNR 0, 5 and 10 dB; a lower number is noisier). It records three passes per run, each in its own folder: `raw/` (no processing), `vpio/` (Apple VPIO), and `rnnoise/` (RNNoise).
 
 Devices: the A12 iPhone and the current iPhone. Do the whole protocol on each.
 
@@ -30,24 +30,26 @@ Devices: the A12 iPhone and the current iPhone. Do the whole protocol on each.
 2. On the Mac, start the rig playing the playlist, then tap Start on the NS bench screen.
    Expected: the bench works through the files and shows progress, and finishes with a "done" state.
 3. Export the run folder from the phone and unzip it into `tools/call-lab/runs/<run_id>/`.
-   Expected: the folder holds `raw.wav`, `vpio.wav`, `rnnoise.wav` and `bench.json`.
+   Expected: the folder holds `raw/`, `vpio/` and `rnnoise/` (one WAV per clip in each) and `bench.json`.
 4. Read `bench.json`. It holds one entry per mode (`raw`, `vpio`, `rnnoise`) with `realTimeFactor`, `cpuSeconds`, `footprintBytesBefore` and `footprintBytesAfter`.
    Expected: three entries.
 5. For each mode record the footprint delta (memory added by loading the model): `footprintBytesAfter - footprintBytesBefore`.
    Expected: a number of bytes. Convert to MB (1 MB = 1 000 000 bytes) for the result.
-6. Score the clips. The bench writes one WAV file per clip, named `<clip-id>.wav`, for each pass, next to `bench.json`. Score the whole folder with one command (available after L8 scoring is approved; the L8 scoring tool provides folder mode):
+6. Score the clips. After the run, the bench (Task L5) will write one WAV file per clip for each pass, in one subfolder per mode: `raw/<clip-id>.wav`, `vpio/<clip-id>.wav` and `rnnoise/<clip-id>.wav`, next to `bench.json`. Score each mode folder with one command (available after L8 scoring is approved; the L8 scoring tool will provide folder mode):
 
    ```
-   python3 tools/call-lab/scoring/score.py dnsmos --in tools/call-lab/runs/<run_id>/
+   python3 tools/call-lab/scoring/score.py dnsmos --in tools/call-lab/runs/<run_id>/vpio/
    ```
 
-   Expected: one `{"sig": x, "bak": y, "ovrl": z}` line per clip (or one JSON list), each value between 1 and 5, for all 150 clips in each of `raw`, `vpio` and `rnnoise`.
-7. Score RNNoise against the clean reference with ViSQOL, over the folder in the same way (available after L8 scoring is approved):
+   Run it again with `raw/` and `rnnoise/`.
+   Expected: one `{"sig": x, "bak": y, "ovrl": z}` per clip, each value between 1 and 5, for 150 clips in each of the three folders.
+7. Score each mode folder against the clean references with ViSQOL (available after L8 scoring is approved). The clean references are the clean speech clips you gave to `mix_noise.py --clean` in "Before you start" step 1; keep them in one folder, named by the same `<clip-id>`, here called `<clean-folder>`:
 
    ```
-   python3 tools/call-lab/scoring/score.py visqol --ref <folder of clean clips> --deg tools/call-lab/runs/<run_id>/
+   python3 tools/call-lab/scoring/score.py visqol --ref <clean-folder> --deg tools/call-lab/runs/<run_id>/rnnoise/
    ```
 
+   Run it again with `vpio/` for comparison.
    Expected: a `{"visqol_moslqo": x}` per clip, matched by `<clip-id>`.
 8. Average SIG, BAK and OVRL per mode and per noise category. Then compute, per category, `OVRL(rnnoise) - OVRL(vpio)`.
    Expected: a 5-row table (one per category) with a difference column.
