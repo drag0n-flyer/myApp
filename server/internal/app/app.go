@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"expvar"
 	"fmt"
 	"io"
@@ -38,7 +39,8 @@ type App struct {
 }
 
 // New wires the modules in dependency order and registers their routes. d.Blocks,
-// d.Push, d.Notify and d.Live are filled in here from the modules that provide them.
+// d.Notify and d.Live are filled in here from the modules that provide them, and
+// so is d.Push unless the caller already set one (tests do, with a fake).
 //
 // Modules are discovered by method, so a module that gains Run or Commands is
 // picked up without changing this file.
@@ -49,7 +51,9 @@ func New(d core.Deps) *App {
 	soc := social.New(d)
 	d.Blocks = soc
 	pu := push.New(d)
-	d.Push = pu
+	if d.Push == nil { // tests inject a fake; production leaves it nil
+		d.Push = pu
+	}
 	rt := realtime.New(d)
 	d.Notify = rt
 	d.Live = rt
@@ -83,6 +87,23 @@ func New(d core.Deps) *App {
 		}
 	}
 	return a
+}
+
+// Validate checks the configuration that serving depends on beyond what
+// config.Load can see. When new conversations are server-readable it parses the
+// escrow key, so a missing or invalid key stops startup with a clear error
+// instead of failing on the first message.
+func Validate(d core.Deps) error {
+	if d.Policy.Encryption.NewConversations != "server_readable" {
+		return nil
+	}
+	if d.Config.EscrowKeyFile == "" {
+		return errors.New("escrow key: encryption.newConversations is server_readable but no escrow key file is configured")
+	}
+	if _, err := delivery.EscrowPublicKey(d.Config.EscrowKeyFile); err != nil {
+		return err
+	}
+	return nil
 }
 
 // Handler returns the public HTTP handler.
@@ -121,6 +142,24 @@ func (a *App) Run(ctx context.Context) {
 		}
 	}
 	wg.Wait()
+}
+
+// Wait blocks until the modules' detached background work (such as outgoing
+// email) has finished, or ctx is done. Call it after Run has returned.
+func (a *App) Wait(ctx context.Context) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for _, m := range a.modules {
+			if w, ok := m.(interface{ WaitBackground() }); ok {
+				w.WaitBackground()
+			}
+		}
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
 }
 
 // Command runs the admin subcommand named by the first two words of args (or

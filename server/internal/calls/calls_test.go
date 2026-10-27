@@ -104,7 +104,7 @@ func code(err error) string {
 }
 
 func (w *world) invite(t *testing.T, id string) error {
-	_, err := w.call(t, w.ana, "call.invite", map[string]any{"callID": id, "to": w.bob1.AccountID, "video": true, "payload": []byte("offer")})
+	_, err := w.call(t, w.ana, "call.invite", map[string]any{"callID": id, "to": w.bob1.AccountID, "video": true, "payload": httpx.Bytes("offer")})
 	return err
 }
 
@@ -175,7 +175,7 @@ func TestBlockedCalleeCannotActOnCall(t *testing.T) {
 func TestAnswerFlow(t *testing.T) {
 	w := setup(t)
 	w.invite(t, "c1")
-	if _, err := w.call(t, w.bob1, "call.answer", map[string]any{"callID": "c1", "payload": []byte("answer")}); err != nil {
+	if _, err := w.call(t, w.bob1, "call.answer", map[string]any{"callID": "c1", "payload": httpx.Bytes("answer")}); err != nil {
 		t.Fatal(err)
 	}
 	a := w.fr.to(w.ana.DeviceID, "call.answered")
@@ -187,7 +187,7 @@ func TestAnswerFlow(t *testing.T) {
 		t.Fatalf("%v", e)
 	}
 	// signals now flow only between ana and bob1
-	w.call(t, w.ana, "call.signal", map[string]any{"callID": "c1", "payload": []byte("ice")})
+	w.call(t, w.ana, "call.signal", map[string]any{"callID": "c1", "payload": httpx.Bytes("ice")})
 	s := w.fr.to(w.bob1.DeviceID, "call.signal")
 	if len(s) != 1 || s[0].Data["fromDeviceID"] != w.ana.DeviceID {
 		t.Fatalf("%v", s)
@@ -195,7 +195,7 @@ func TestAnswerFlow(t *testing.T) {
 	if len(w.fr.to(w.bob2.DeviceID, "call.signal")) != 0 {
 		t.Fatal("bob2 got a signal")
 	}
-	if _, err := w.call(t, w.bob2, "call.signal", map[string]any{"callID": "c1", "payload": []byte("x")}); code(err) != "not_found" {
+	if _, err := w.call(t, w.bob2, "call.signal", map[string]any{"callID": "c1", "payload": httpx.Bytes("x")}); code(err) != "not_found" {
 		t.Fatalf("%v", err)
 	}
 }
@@ -203,11 +203,11 @@ func TestAnswerFlow(t *testing.T) {
 func TestRevokedAnswererStopsReceiving(t *testing.T) {
 	w := setup(t)
 	w.invite(t, "c1")
-	w.call(t, w.bob1, "call.answer", map[string]any{"callID": "c1", "payload": []byte("a")})
+	w.call(t, w.bob1, "call.answer", map[string]any{"callID": "c1", "payload": httpx.Bytes("a")})
 	if _, err := w.m.d.DB.Exec(context.Background(), `delete from devices where id = $1`, w.bob1.DeviceID); err != nil {
 		t.Fatal(err)
 	}
-	_, err := w.call(t, w.ana, "call.signal", map[string]any{"callID": "c1", "payload": []byte("ice")})
+	_, err := w.call(t, w.ana, "call.signal", map[string]any{"callID": "c1", "payload": httpx.Bytes("ice")})
 	if code(err) != "bad_request" {
 		t.Fatalf("%v", err)
 	}
@@ -246,7 +246,7 @@ func TestStrangerCannotAct(t *testing.T) {
 	w := setup(t)
 	w.invite(t, "c1")
 	for _, typ := range []string{"call.hangup", "call.decline", "call.answer", "call.signal", "call.status"} {
-		if _, err := w.call(t, w.carol, typ, map[string]any{"callID": "c1", "payload": []byte("x")}); code(err) != "not_found" {
+		if _, err := w.call(t, w.carol, typ, map[string]any{"callID": "c1", "payload": httpx.Bytes("x")}); code(err) != "not_found" {
 			t.Errorf("%s: %v", typ, err)
 		}
 	}
@@ -273,9 +273,9 @@ func TestDuplicateCallID(t *testing.T) {
 func TestInviteValidation(t *testing.T) {
 	w := setup(t)
 	for name, data := range map[string]map[string]any{
-		"no id":   {"to": w.bob1.AccountID, "payload": []byte("x")},
-		"no to":   {"callID": "c", "payload": []byte("x")},
-		"self":    {"callID": "c", "to": w.ana.AccountID, "payload": []byte("x")},
+		"no id":   {"to": w.bob1.AccountID, "payload": httpx.Bytes("x")},
+		"no to":   {"callID": "c", "payload": httpx.Bytes("x")},
+		"self":    {"callID": "c", "to": w.ana.AccountID, "payload": httpx.Bytes("x")},
 		"payload": {"callID": "c", "to": w.bob1.AccountID},
 	} {
 		if _, err := w.call(t, w.ana, "call.invite", data); code(err) != "bad_request" {
@@ -330,7 +330,7 @@ func TestSlowLookupDoesNotBlockOtherCalls(t *testing.T) {
 	}()
 	w.invite(t, "c1") // ana -> bob (lookup not slow yet)
 	sd.account = w.carol.AccountID
-	if _, err := w.call(t, w.carol, "call.invite", map[string]any{"callID": "c2", "to": w.ana.AccountID, "payload": []byte("x")}); err != nil {
+	if _, err := w.call(t, w.carol, "call.invite", map[string]any{"callID": "c2", "to": w.ana.AccountID, "payload": httpx.Bytes("x")}); err != nil {
 		t.Fatal(err)
 	}
 	sd.account = w.bob1.AccountID
@@ -344,7 +344,7 @@ func TestSlowLookupDoesNotBlockOtherCalls(t *testing.T) {
 	go func() {
 		_, err := w.call(t, w.ana, "call.status", map[string]any{"callID": "c2"})
 		if err == nil {
-			_, err = w.call(t, w.ana, "call.invite", map[string]any{"callID": "c3", "to": w.carol.AccountID, "payload": []byte("x")})
+			_, err = w.call(t, w.ana, "call.invite", map[string]any{"callID": "c3", "to": w.carol.AccountID, "payload": httpx.Bytes("x")})
 		}
 		other <- err
 	}()
@@ -360,4 +360,49 @@ func TestSlowLookupDoesNotBlockOtherCalls(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
+}
+
+// Payloads are base64url without padding in both directions (spec section 2).
+func TestPayloadIsBase64URLWithoutPadding(t *testing.T) {
+	w := setup(t)
+	call := func(p core.Principal, typ, body string) {
+		t.Helper()
+		if _, err := w.callRaw(t, p, typ, body); err != nil {
+			t.Fatalf("%s: %v", typ, err)
+		}
+	}
+	call(w.ana, "call.invite", `{"callID":"c9","to":"`+w.bob1.AccountID+`","payload":"-_8"}`)
+	ring := w.fr.to(w.bob1.DeviceID, "call.ring")
+	if len(ring) != 1 || string(mustJSON(t, ring[0].Data["payload"])) != `"-_8"` {
+		t.Fatalf("ring %v", ring)
+	}
+	call(w.bob1, "call.answer", `{"callID":"c9","payload":"-_8"}`)
+	ans := w.fr.to(w.ana.DeviceID, "call.answered")
+	if len(ans) != 1 || string(mustJSON(t, ans[0].Data["payload"])) != `"-_8"` {
+		t.Fatalf("answered %v", ans)
+	}
+	call(w.ana, "call.signal", `{"callID":"c9","payload":"-_8"}`)
+	sig := w.fr.to(w.bob1.DeviceID, "call.signal")
+	if len(sig) != 1 || string(mustJSON(t, sig[0].Data["payload"])) != `"-_8"` {
+		t.Fatalf("signal %v", sig)
+	}
+	for _, bad := range []string{`"+/8="`, `"-_8="`} {
+		if _, err := w.callRaw(t, w.ana, "call.invite", `{"callID":"c10","to":"`+w.bob1.AccountID+`","payload":`+bad+`}`); code(err) != "bad_request" {
+			t.Fatalf("%s: %v", bad, err)
+		}
+	}
+}
+
+func (w *world) callRaw(t *testing.T, from core.Principal, typ, body string) (any, error) {
+	t.Helper()
+	return w.fr.handlers[typ](context.Background(), from, json.RawMessage(body))
+}
+
+func mustJSON(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }

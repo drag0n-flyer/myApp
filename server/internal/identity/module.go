@@ -99,3 +99,7 @@ func (m *Module) usernameAvailable(w http.ResponseWriter, r *http.Request) error
 	httpx.JSON(w, http.StatusOK, map[string]bool{"available": available})
 	return nil
 }
+
+// WaitBackground waits for detached work started by handlers, such as the
+// email sign-in code send. App calls it at shutdown, with a timeout.
+func (m *Module) WaitBackground() { m.bg.Wait() }

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/velixio/myApp/server/internal/core"
+	"github.com/velixio/myApp/server/internal/httpx"
 	"github.com/velixio/myApp/server/internal/push"
 	"github.com/velixio/myApp/server/internal/pushproto"
 	"github.com/velixio/myApp/server/internal/testkit"
@@ -83,7 +84,7 @@ func testkitNow() time.Time { return clock.Now() }
 
 func putToken(t *testing.T, c *testkit.Client, p core.Principal, kind string, sealed []byte) *testkit.Response {
 	t.Helper()
-	return c.Do(&p, "PUT", "/v1/push/tokens/"+kind, map[string][]byte{"sealed": sealed})
+	return c.Do(&p, "PUT", "/v1/push/tokens/"+kind, map[string]httpx.Bytes{"sealed": sealed})
 }
 
 func count(t *testing.T, d core.Deps, dev string) (n int) {
@@ -118,7 +119,7 @@ func TestTokenUpsert(t *testing.T) {
 	if r := putToken(t, c, p, "voip", nil); r.Status != 400 {
 		t.Fatalf("empty sealed: %v", r)
 	}
-	if r := c.Do(nil, "PUT", "/v1/push/tokens/alert", map[string][]byte{"sealed": []byte("x")}); r.Status != 401 {
+	if r := c.Do(nil, "PUT", "/v1/push/tokens/alert", map[string]httpx.Bytes{"sealed": []byte("x")}); r.Status != 401 {
 		t.Fatal(r)
 	}
 	if r := c.Do(&p, "DELETE", "/v1/push/tokens/alert", nil); r.Status != 204 {
@@ -308,5 +309,24 @@ func TestIdenticalPushesSignDifferently(t *testing.T) {
 	}
 	if rs[0].req.Header.Get("X-Signature") == rs[1].req.Header.Get("X-Signature") || bytes.Equal(rs[0].body, rs[1].body) {
 		t.Fatal("identical requests would be treated as a replay")
+	}
+}
+
+func TestPutTokenAcceptsBase64URLWithoutPadding(t *testing.T) {
+	d, _ := testkit.NewDeps(t)
+	c := testkit.Serve(t, d, push.New(d))
+	p := testkit.Account(t, d, "ana")
+	// 0xfb 0xff encodes as "-_8": '-' and '_' and no padding (standard base64 is "+/8=").
+	if r := c.Do(&p, "PUT", "/v1/push/tokens/alert", []byte(`{"sealed":"-_8"}`)); r.Status != 204 {
+		t.Fatalf("base64url: %s", r)
+	}
+	var got []byte
+	if err := d.DB.QueryRow(context.Background(), `select sealed from push_tokens where device_id=$1 and kind='alert'`, p.DeviceID).Scan(&got); err != nil || string(got) != "\xfb\xff" {
+		t.Fatalf("stored %x %v", got, err)
+	}
+	for _, bad := range []string{`{"sealed":"+/8="}`, `{"sealed":"-_8="}`} {
+		if r := c.Do(&p, "PUT", "/v1/push/tokens/alert", []byte(bad)); r.Status != 400 {
+			t.Fatalf("%s: %s", bad, r)
+		}
 	}
 }

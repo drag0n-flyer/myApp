@@ -3,17 +3,13 @@
 package serverinfo
 
 import (
-	"crypto/ecdh"
-	"crypto/x509"
 	"encoding/base64"
-	"encoding/pem"
-	"errors"
 	"html/template"
 	"net/http"
-	"os"
 	"sync"
 
 	"github.com/velixio/myApp/server/internal/core"
+	"github.com/velixio/myApp/server/internal/delivery"
 	"github.com/velixio/myApp/server/internal/httpx"
 )
 
@@ -71,32 +67,19 @@ func (m *Module) info(w http.ResponseWriter, _ *http.Request) error {
 	return nil
 }
 
-// escrowPublicKey reads the X25519 private key (PKCS#8 PEM) and returns its
-// public key as base64url. Until lane B's delivery.EscrowPublicKey is merged
-// this small reader stands in for it.
+// escrowPublicKey returns the escrow public key as base64url, read once from
+// the key file by delivery.EscrowPublicKey and cached after the first good read.
 func (m *Module) escrowPublicKey() (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.escrowKey != "" {
 		return m.escrowKey, nil
 	}
-	data, err := os.ReadFile(m.d.Config.EscrowKeyFile)
+	pub, err := delivery.EscrowPublicKey(m.d.Config.EscrowKeyFile)
 	if err != nil {
 		return "", err
 	}
-	blk, _ := pem.Decode(data)
-	if blk == nil {
-		return "", errors.New("serverinfo: escrow key is not PEM")
-	}
-	k, err := x509.ParsePKCS8PrivateKey(blk.Bytes)
-	if err != nil {
-		return "", err
-	}
-	priv, ok := k.(*ecdh.PrivateKey)
-	if !ok || priv.Curve() != ecdh.X25519() {
-		return "", errors.New("serverinfo: escrow key is not X25519")
-	}
-	m.escrowKey = base64.RawURLEncoding.EncodeToString(priv.PublicKey().Bytes())
+	m.escrowKey = base64.RawURLEncoding.EncodeToString(pub)
 	return m.escrowKey, nil
 }
 

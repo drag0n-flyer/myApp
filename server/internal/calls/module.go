@@ -108,10 +108,10 @@ func expired(c *Call, now time.Time) bool {
 }
 
 type frameData struct {
-	CallID  string `json:"callID"`
-	To      string `json:"to"`
-	Video   bool   `json:"video"`
-	Payload []byte `json:"payload"`
+	CallID  string      `json:"callID"`
+	To      string      `json:"to"`
+	Video   bool        `json:"video"`
+	Payload httpx.Bytes `json:"payload"`
 }
 
 func decode(data json.RawMessage) (frameData, error) {
@@ -151,7 +151,7 @@ func (m *Module) invite(ctx context.Context, from core.Principal, data json.RawM
 		return nil, nil // the caller learns only by the timeout
 	}
 	ring := map[string]any{"callID": c.ID, "fromAccountID": c.CallerAccount,
-		"fromDeviceID": c.CallerDevice, "video": c.Video, "payload": f.Payload}
+		"fromDeviceID": c.CallerDevice, "video": c.Video, "payload": httpx.Bytes(f.Payload)}
 	for _, dev := range slices.Compact(slices.Clone(devs)) {
 		if !m.frames.Send(dev, "call.ring", ring) {
 			m.pushRing(dev, f.Payload)
@@ -267,7 +267,7 @@ func (m *Module) deliver(_ context.Context, e *entry, outs []Output) {
 			if e.blocked && dev != e.call.CallerDevice {
 				continue
 			}
-			m.frames.Send(dev, o.Type, o.Data)
+			m.frames.Send(dev, o.Type, wirePayload(o.Data))
 		}
 	}
 }
@@ -320,4 +320,23 @@ func (m *Module) status(_ context.Context, from core.Principal, data json.RawMes
 		out["reason"] = e.call.Reason
 	}
 	return out, nil
+}
+
+// wirePayload returns data with a []byte payload replaced by httpx.Bytes, so it
+// goes out as base64url without padding like every client-facing binary field.
+func wirePayload(data any) any {
+	m, ok := data.(map[string]any)
+	if !ok {
+		return data
+	}
+	p, ok := m["payload"].([]byte)
+	if !ok {
+		return data
+	}
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	out["payload"] = httpx.Bytes(p)
+	return out
 }

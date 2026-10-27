@@ -62,7 +62,7 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	a := app.New(core.Deps{
+	deps := core.Deps{
 		DB:        pool,
 		Config:    cfg,
 		Policy:    policy,
@@ -70,9 +70,17 @@ func run(ctx context.Context, args []string) error {
 		Now:       time.Now,
 		Mail:      mailer,
 		Directory: db.NewDirectory(pool),
-	})
+	}
+	serving := len(args) == 0 || (len(args) == 1 && args[0] == "serve")
+	if serving {
+		// Refuse to start with a missing or invalid escrow key.
+		if err := app.Validate(deps); err != nil {
+			return err
+		}
+	}
+	a := app.New(deps)
 
-	if len(args) == 0 || (len(args) == 1 && args[0] == "serve") {
+	if serving {
 		return serve(ctx, a, cfg, pool, log)
 	}
 	return a.Command(ctx, args, os.Stdout)
@@ -120,6 +128,7 @@ func serve(ctx context.Context, a *app.App, cfg config.Config, pool *pgxpool.Poo
 		}
 	}
 	wg.Wait()
+	a.Wait(sctx) // let detached work, such as sign-in emails, finish
 	return serveErr
 }
 

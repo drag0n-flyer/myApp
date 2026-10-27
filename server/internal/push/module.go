@@ -61,7 +61,7 @@ func (m *Module) putToken(w http.ResponseWriter, r *http.Request) error {
 		return httpx.Err("bad_request", "kind must be alert or voip")
 	}
 	var body struct {
-		Sealed []byte `json:"sealed"`
+		Sealed httpx.Bytes `json:"sealed"`
 	}
 	if err := httpx.Decode(r, &body); err != nil {
 		return err
