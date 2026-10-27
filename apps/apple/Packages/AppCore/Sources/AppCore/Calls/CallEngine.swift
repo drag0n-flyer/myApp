@@ -51,6 +51,16 @@ public struct CallState: Equatable, Sendable {
     public var effectiveMode: DataMode
     public var network: NetworkType
 
+    public init(contact: Contact, phase: CallPhase, isVideoCall: Bool, isVideoOn: Bool, isMuted: Bool = false,
+                isSpeakerOn: Bool = false, quality: CallQuality = .good, banner: CallBanner? = nil,
+                elapsed: Double = 0, bytesUsed: Int64 = 0, inCallPreference: ModePreference? = nil,
+                effectiveMode: DataMode, network: NetworkType) {
+        self.contact = contact; self.phase = phase; self.isVideoCall = isVideoCall; self.isVideoOn = isVideoOn
+        self.isMuted = isMuted; self.isSpeakerOn = isSpeakerOn; self.quality = quality; self.banner = banner
+        self.elapsed = elapsed; self.bytesUsed = bytesUsed; self.inCallPreference = inCallPreference
+        self.effectiveMode = effectiveMode; self.network = network
+    }
+
     /// "04:12", or "1:02:05" past an hour.
     public var elapsedText: String {
         let total = Int(elapsed)

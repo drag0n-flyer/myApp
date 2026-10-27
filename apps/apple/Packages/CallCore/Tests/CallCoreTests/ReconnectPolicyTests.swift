@@ -79,6 +79,15 @@ private func at(_ s: Double) -> Date { t0.addingTimeInterval(s) }
         #expect(p.ice(.connected, at: at(32)) == [])
     }
 
+    @Test func closedIsTerminal() {
+        var p = ReconnectPolicy(isCaller: true)
+        _ = p.ice(.disconnected, at: t0)
+        #expect(p.ice(.closed, at: at(1)) == [])
+        #expect(p.pathChanged(at: at(2)) == [])
+        #expect(p.tick(at: at(10)) == [])
+        #expect(p.ice(.disconnected, at: at(11)) == [])
+    }
+
     @Test func meaningfulPathChange() {
         let wifi = PathSnapshot(interface: "wifi", isSatisfied: true)
         let cell = PathSnapshot(interface: "cellular", isSatisfied: true)

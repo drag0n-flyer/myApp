@@ -13,13 +13,14 @@ public struct ReconnectPolicy: Sendable {
     private var disconnectedSince: Date?
     private var lastRestart: Date?
     private var gaveUp = false
+    private var closed = false
 
     public init(isCaller: Bool) { self.isCaller = isCaller }
 
     private var restart: ReconnectAction { isCaller ? .restartIce : .requestRestart }
 
     public mutating func ice(_ s: IceState, at t: Date) -> [ReconnectAction] {
-        guard !gaveUp else { return [] }
+        guard !gaveUp, !closed else { return [] }
         switch s {
         case .disconnected, .failed:
             var out: [ReconnectAction] = []
@@ -39,6 +40,7 @@ public struct ReconnectPolicy: Sendable {
             lastRestart = nil
             return [.recovered]
         case .closed:
+            closed = true
             disconnectedSince = nil
             lastRestart = nil
             return []
@@ -48,13 +50,13 @@ public struct ReconnectPolicy: Sendable {
     }
 
     public mutating func pathChanged(at t: Date) -> [ReconnectAction] {
-        guard !gaveUp else { return [] }
+        guard !gaveUp, !closed else { return [] }
         if disconnectedSince != nil { lastRestart = t }
         return [restart]
     }
 
     public mutating func tick(at t: Date) -> [ReconnectAction] {
-        guard !gaveUp, let since = disconnectedSince else { return [] }
+        guard !gaveUp, !closed, let since = disconnectedSince else { return [] }
         if t.timeIntervalSince(since) >= Self.giveUpAfter {
             gaveUp = true
             return [.giveUp]

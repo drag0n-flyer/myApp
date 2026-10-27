@@ -107,6 +107,9 @@ public struct QualityAdaptor: Sendable {
         return output(avail: avail)
     }
 
+    public var currentMode: DataMode { current.mode }
+    public var currentTier: VideoTier? { current.tier }
+
     // MARK: - Private
 
     /// Best first: video tiers at the ceiling mode, then audio only from the ceiling mode down.
