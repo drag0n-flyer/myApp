@@ -1,6 +1,22 @@
 package org.example.app.ui.onboarding
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxSize
@@ -67,6 +83,7 @@ fun accountErrorText(error: AccountError): String = when (error) {
     is AccountError.TooManyAttempts ->
         error.retryAfterSeconds?.let { stringResource(R.string.err_too_many_minutes, (it + 59) / 60) } ?: stringResource(R.string.err_too_many)
     AccountError.LinkExpired -> stringResource(R.string.err_link_expired)
+    AccountError.InvalidServerAddress -> stringResource(R.string.err_invalid_address)
     AccountError.WrongServer -> stringResource(R.string.err_wrong_server)
     AccountError.PasskeyUnavailable -> stringResource(R.string.err_passkey_unavailable)
     AccountError.BiometricsUnavailable -> stringResource(R.string.err_biometrics)
@@ -83,4 +100,24 @@ fun AccountErrorText(error: AccountError?, modifier: Modifier = Modifier) {
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.error,
     )
+}
+
+/** An address or link field that opens under the options, with its own confirm and cancel. Focused on open; Done confirms. */
+@Composable
+fun TextEntry(hint: Int, confirm: Int, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+    var text by rememberSaveable { mutableStateOf("") }
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(
+            text, { text = it }, Modifier.fillMaxWidth().focusRequester(focus), singleLine = true,
+            placeholder = { Text(stringResource(hint)) },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { if (text.isNotBlank()) onConfirm(text) }),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), modifier = Modifier.fillMaxWidth()) {
+            TextButton(onDismiss) { Text(stringResource(R.string.cancel)) }
+            TextButton({ onConfirm(text) }, enabled = text.isNotBlank()) { Text(stringResource(confirm)) }
+        }
+    }
 }

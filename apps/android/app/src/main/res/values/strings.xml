@@ -196,6 +196,9 @@
     <string name="ob_perm_camera">Camera</string>
     <string name="ob_perm_camera_reason">So you can scan a QR code. Nothing is recorded.</string>
     <string name="ob_perm_camera_allow">Allow camera</string>
+    <string name="ob_perm_camera_denied">Camera access is off. Turn it on in Settings to scan.</string>
+    <string name="ob_perm_camera_settings">Open Settings</string>
+    <string name="qr_camera_unavailable">The camera isn\'t available right now. Close other apps that use it and try again.</string>
 
     <string name="link_title">Link this device</string>
     <string name="link_message">Open %1$s on your other phone, go to Settings, Linked devices, Link a device, and scan this code.</string>
@@ -216,6 +219,7 @@
     <string name="link_scan_title">Scan the code on your new device</string>
     <string name="link_confirm_title">Confirm it\'s you</string>
     <string name="link_confirm_subtitle">Approving a device needs your fingerprint or face.</string>
+    <string name="link_confirm_use_lock">Use screen lock</string>
     <string name="platform_iphone">iPhone</string>
     <string name="platform_mac">Mac</string>
     <string name="platform_android">Android</string>
@@ -239,6 +243,7 @@
     <string name="err_too_many_minutes">Too many tries. Try again in %1$d min.</string>
     <string name="err_too_many">Too many tries. Try again later.</string>
     <string name="err_link_expired">This code has expired. Start again on the new device.</string>
+    <string name="err_invalid_address">That isn\'t a valid server address. Use a name like chat.example.org, with an optional port.</string>
     <string name="err_wrong_server">This code is for a different server.</string>
     <string name="err_passkey_unavailable">Passkeys aren\'t available on this server. Use an email code instead.</string>
     <string name="err_biometrics">Couldn\'t confirm it\'s you. Check your fingerprint or face and try again.</string>

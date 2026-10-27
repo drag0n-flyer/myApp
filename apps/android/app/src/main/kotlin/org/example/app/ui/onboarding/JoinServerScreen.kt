@@ -139,20 +139,3 @@ private fun Option(icon: Int, title: Int, subtitle: Int, onClick: () -> Unit) {
         modifier = Modifier.clickable(role = Role.Button, onClick = onClick),
     )
 }
-
-/** An address or link field that opens under the options, with its own confirm and cancel. */
-@Composable
-private fun TextEntry(hint: Int, confirm: Int, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
-    var text by rememberSaveable { mutableStateOf("") }
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedTextField(
-            text, { text = it }, Modifier.fillMaxWidth(), singleLine = true,
-            placeholder = { Text(stringResource(hint)) },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), modifier = Modifier.fillMaxWidth()) {
-            TextButton(onDismiss) { Text(stringResource(R.string.cancel)) }
-            TextButton({ onConfirm(text) }, enabled = text.isNotBlank()) { Text(stringResource(confirm)) }
-        }
-    }
-}

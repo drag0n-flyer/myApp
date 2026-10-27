@@ -3,6 +3,7 @@ package org.example.app.ui.onboarding
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import kotlin.test.assertEquals
+import org.example.app.ui.qr.CameraGate
 import org.example.app.ui.qr.CameraPermissionGate
 import kotlin.test.assertTrue
 import org.example.app.ui.theme.AppTheme
@@ -52,7 +53,7 @@ class PasskeyAndPermissionsTest {
     @Test
     fun cameraReasonComesBeforeTheCameraPrompt() {
         var asked = 0
-        rule.setContent { AppTheme { CameraPermissionGate(granted = false, onRequest = { asked++ }) { androidx.compose.material3.Text("preview") } } }
+        rule.setContent { AppTheme { CameraPermissionGate(CameraGate.Ask, onRequest = { asked++ }, onOpenSettings = {}) { androidx.compose.material3.Text("preview") } } }
         rule.onNodeWithText("So you can scan a QR code. Nothing is recorded.").assertExists()
         rule.onNodeWithText("preview").assertDoesNotExist()
         rule.onNodeWithText("Allow camera").performClick()
@@ -61,7 +62,19 @@ class PasskeyAndPermissionsTest {
 
     @Test
     fun grantedCameraShowsThePreview() {
-        rule.setContent { AppTheme { CameraPermissionGate(granted = true, onRequest = {}) { androidx.compose.material3.Text("preview") } } }
+        rule.setContent { AppTheme { CameraPermissionGate(CameraGate.Granted, onRequest = {}, onOpenSettings = {}) { androidx.compose.material3.Text("preview") } } }
         rule.onNodeWithText("preview").assertExists()
+    }
+
+    @Test
+    fun permanentlyDeniedCameraOffersSettingsNotADeadButton() {
+        var asked = 0; var settings = 0
+        rule.setContent {
+            AppTheme { CameraPermissionGate(CameraGate.OpenSettings, onRequest = { asked++ }, onOpenSettings = { settings++ }) { androidx.compose.material3.Text("preview") } }
+        }
+        rule.onNodeWithText("Camera access is off. Turn it on in Settings to scan.").assertExists()
+        rule.onNodeWithText("Allow camera").assertDoesNotExist()
+        rule.onNodeWithText("Open Settings").performClick()
+        assertEquals(1, settings); assertEquals(0, asked)
     }
 }

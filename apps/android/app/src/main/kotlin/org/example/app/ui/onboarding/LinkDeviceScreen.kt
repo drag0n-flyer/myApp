@@ -13,6 +13,10 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
@@ -32,9 +36,10 @@ fun LinkDeviceScreen(
     error: AccountError?,
     canCreateAccount: Boolean,
     onNewCode: () -> Unit,
-    onChangeServer: () -> Unit,
+    onChangeServer: (String) -> Unit,
     onNoOldDevice: () -> Unit,
 ) {
+    var changing by rememberSaveable { mutableStateOf(false) }
     OnboardingPage(
         stringResource(R.string.link_title),
         message = stringResource(R.string.link_message, stringResource(R.string.app_name)),
@@ -47,7 +52,13 @@ fun LinkDeviceScreen(
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Icon(painterResource(R.drawable.ic_server), contentDescription = null, Modifier.size(20.dp))
             Text(stringResource(R.string.link_server, serverHost), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-            TextButton(onChangeServer) { Text(stringResource(R.string.link_change)) }
+            TextButton({ changing = true }) { Text(stringResource(R.string.link_change)) }
+        }
+        if (changing) {
+            TextEntry(R.string.ob_server_address_hint, R.string.ob_continue, onDismiss = { changing = false }) {
+                changing = false
+                onChangeServer(it)
+            }
         }
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (code != null) QrImage(code.qrText, stringResource(R.string.link_qr_description))

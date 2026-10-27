@@ -1,25 +1,22 @@
 package org.example.app.ui.onboarding
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
-import androidx.compose.foundation.layout.safeDrawingPadding
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import org.example.app.R
 import org.example.app.core.account.OnboardingStep
 import org.example.app.ui.qr.PermissionedQrScanner
@@ -30,13 +27,13 @@ fun OnboardingHost(vm: OnboardingViewModel, onFinished: () -> Unit) {
     val state by vm.state.collectAsState()
     LaunchedEffect(state.step) { if (state.step == OnboardingStep.Done) onFinished() }
     BackHandler(enabled = state.step != OnboardingStep.Welcome && state.step != OnboardingStep.Done) { vm.back() }
-    var changingServer by rememberSaveable { mutableStateOf(false) }
     // The link code is shown from the moment the screen opens, and only while it is the current step.
-    LaunchedEffect(state.step) { if (state.step == OnboardingStep.LinkDevice) vm.startLinking() }
+    // Opening the screen again (rotation) keeps the code that is already there.
+    LaunchedEffect(state.step) { if (state.step == OnboardingStep.LinkDevice) vm.ensureLinking() }
 
     Scaffold(Modifier.fillMaxSize()) { padding ->
         val page = Modifier.padding(padding).safeDrawingPadding()
-        androidx.compose.foundation.layout.Box(page) {
+        Box(page) {
             when (state.step) {
                 OnboardingStep.Welcome -> WelcomeScreen(state.canCreateAccount, vm::getStarted, vm::alreadyHaveAccount)
                 OnboardingStep.JoinServer -> JoinServerScreen(state.error, vm::chooseDefaultServer, vm::chooseInviteText, vm::chooseAddress)
@@ -49,7 +46,7 @@ fun OnboardingHost(vm: OnboardingViewModel, onFinished: () -> Unit) {
                 OnboardingStep.Permissions -> PermissionsStep(vm::permissionsHandled)
                 OnboardingStep.LinkDevice -> LinkDeviceScreen(
                     state.serverHost, state.linkCode, state.linkExpired, state.error, state.canCreateAccount,
-                    onNewCode = vm::startLinking, onChangeServer = { changingServer = true }, onNoOldDevice = vm::noOldDevice,
+                    onNewCode = vm::startLinking, onChangeServer = vm::changeLinkServer, onNoOldDevice = vm::noOldDevice,
                 )
                 OnboardingStep.LostDevice -> LostDeviceScreen(
                     state.recoveryCodeSent, state.error, state.busy, vm::signInWithPasskey, vm::sendRecoveryCode, vm::recover,
@@ -58,58 +55,43 @@ fun OnboardingHost(vm: OnboardingViewModel, onFinished: () -> Unit) {
             }
         }
     }
-
-    if (changingServer) {
-        var host by rememberSaveable { mutableStateOf("") }
-        AlertDialog(
-            onDismissRequest = { changingServer = false },
-            title = { Text(stringResource(R.string.ob_server_address)) },
-            text = {
-                OutlinedTextField(host, { host = it }, singleLine = true, placeholder = { Text(stringResource(R.string.ob_server_address_hint)) })
-            },
-            confirmButton = {
-                TextButton({ changingServer = false; vm.changeLinkServer(host) }, enabled = host.isNotBlank()) { Text(stringResource(R.string.ob_continue)) }
-            },
-            dismissButton = { TextButton({ changingServer = false }) { Text(stringResource(R.string.cancel)) } },
-        )
-    }
 }
 
 /**
- * Approving phone: scan the new device's code, show who is asking, confirm with a fingerprint or
- * face, approve. [scanner] is the camera view (a fake in tests).
+ * Approving phone: scan the new device's code, show who is asking, confirm with a fingerprint,
+ * face or screen lock, approve. [scanner] is the camera view and [confirm] the biometric prompt
+ * (fakes in tests). The prompt runs here, with the current Activity, not in the view model.
  */
 @Composable
 fun LinkApprovalFlow(
     vm: LinkApprovalViewModel,
     onDone: () -> Unit,
     scanner: @Composable (onResult: (String) -> Unit) -> Unit = { PermissionedQrScanner(it) },
+    confirm: (suspend () -> BiometricResult)? = null,
 ) {
     val state by vm.state.collectAsState()
+    val platformConfirm = rememberBiometricConfirm()
+    val runConfirm = confirm ?: platformConfirm
     LaunchedEffect(state.approved) { if (state.approved) onDone() }
+    // If the screen is recreated while the prompt is up, the prompt is asked again here.
+    LaunchedEffect(state.awaitingBiometric) {
+        if (state.awaitingBiometric) vm.biometricResult(runConfirm())
+    }
     val request = state.request
     if (request == null) {
         Scaffold { padding ->
-            androidx.compose.foundation.layout.Column(Modifier.padding(padding).fillMaxSize()) {
-                androidx.compose.material3.Text(
-                    stringResource(R.string.link_scan_title), Modifier.padding(16.dp),
-                    style = androidx.compose.material3.MaterialTheme.typography.titleMedium,
-                )
+            Column(Modifier.padding(padding).fillMaxSize()) {
+                Text(stringResource(R.string.link_scan_title), Modifier.padding(16.dp), style = MaterialTheme.typography.titleMedium)
                 AccountErrorText(state.error, Modifier.padding(horizontal = 16.dp))
-                androidx.compose.foundation.layout.Box(Modifier.weight(1f)) { scanner(vm::scanned) }
+                // A new scanner for each rejected code, so the person can try again.
+                Box(Modifier.weight(1f)) { key(state.rejections) { scanner(vm::scanned) } }
             }
         }
     } else {
         Scaffold { padding ->
-            androidx.compose.foundation.layout.Box(Modifier.padding(padding)) {
+            Box(Modifier.padding(padding)) {
                 LinkApprovalScreen(request, state.error, state.busy, vm::approve, onCancel = { vm.reset(); onDone() })
             }
         }
     }
-}
-
-@Composable
-fun rememberLinkApprovalConfirm(): suspend () -> Boolean {
-    val context = LocalContext.current
-    return { confirmWithStrongBiometric(context) }
 }

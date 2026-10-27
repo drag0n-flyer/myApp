@@ -48,7 +48,7 @@ class LinkScreensTest {
     fun linkDeviceShowsQrServerAndNewCodeWhenExpired() {
         var fresh = 0
         rule.setContent {
-            AppTheme { LinkDeviceScreen("home.example.org", LinkCode("https://home.example.org/link/a#b", Instant.now()), true, null, canCreateAccount = true, onNewCode = { fresh++ }, onChangeServer = {}, onNoOldDevice = {}) }
+            AppTheme { LinkDeviceScreen("home.example.org", LinkCode("https://home.example.org/link/a#b", Instant.now()), true, null, canCreateAccount = true, onNewCode = { fresh++ }, onChangeServer = { _ -> }, onNoOldDevice = {}) }
         }
         rule.onNodeWithContentDescription("Linking QR code").assertExists()
         rule.onNodeWithText("Server: home.example.org").assertExists()
@@ -70,5 +70,65 @@ class LinkScreensTest {
         rule.onNodeWithText("Code").performTextInput("123456")
         rule.onNodeWithText("Sign in").performClick()
         assertEquals(listOf("a@example.com" to "123456"), signed)
+    }
+
+    @Test
+    fun changeServerIsAnInlineFieldNotADialog() {
+        val hosts = mutableListOf<String>()
+        rule.setContent {
+            AppTheme { LinkDeviceScreen("home.example.org", null, false, null, canCreateAccount = true, onNewCode = {}, onChangeServer = { hosts += it }, onNoOldDevice = {}) }
+        }
+        rule.onNodeWithText("Change").performClick()
+        rule.onNode(isDialog()).assertDoesNotExist()
+        rule.onNode(hasSetTextAction()).performTextInput("other.example.net")
+        rule.onNodeWithText("Continue").performClick()
+        assertEquals(listOf("other.example.net"), hosts)
+    }
+
+    private fun flow(vm: LinkApprovalViewModel, codes: MutableList<String>, bio: BiometricResult, done: () -> Unit) = rule.setContent {
+        AppTheme {
+            LinkApprovalFlow(
+                vm, onDone = done, confirm = { bio },
+                scanner = { onResult -> androidx.compose.material3.Button({ onResult(codes.removeAt(0)) }) { androidx.compose.material3.Text("scan") } },
+            )
+        }
+    }
+
+    @Test
+    fun wrongCodeThenRightCodeIsReadByTheSameScreen() {
+        val vm = LinkApprovalViewModel(org.example.app.core.account.SampleAccountService())
+        flow(vm, mutableListOf("https://other.example.net/link/x#y", "https://home.example.org/link/x#y"), BiometricResult.Success) {}
+        rule.onNodeWithText("scan").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithText("This code is for a different server.").assertExists()
+        rule.onNodeWithText("scan").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithText("Approve").assertExists()
+    }
+
+    @Test
+    fun approveRunsTheScreensBiometricThenFinishes() {
+        var done = 0
+        val vm = LinkApprovalViewModel(org.example.app.core.account.SampleAccountService())
+        flow(vm, mutableListOf("https://home.example.org/link/x#y"), BiometricResult.Success) { done++ }
+        rule.onNodeWithText("scan").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithText("Approve").performClick()
+        rule.waitForIdle()
+        assertEquals(1, done)
+    }
+
+    @Test
+    fun cancellingTheBiometricStaysOnTheApprovalWithoutAnError() {
+        var done = 0
+        val vm = LinkApprovalViewModel(org.example.app.core.account.SampleAccountService())
+        flow(vm, mutableListOf("https://home.example.org/link/x#y"), BiometricResult.Cancelled) { done++ }
+        rule.onNodeWithText("scan").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithText("Approve").performClick()
+        rule.waitForIdle()
+        assertEquals(0, done)
+        rule.onNodeWithText("Couldn't confirm it's you. Check your fingerprint or face and try again.").assertDoesNotExist()
+        rule.onNodeWithText("Approve").assertExists()
     }
 }

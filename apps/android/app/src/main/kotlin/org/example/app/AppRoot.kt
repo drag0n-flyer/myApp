@@ -20,10 +20,12 @@ import org.example.app.ui.onboarding.LinkApprovalFlow
 import org.example.app.ui.onboarding.LinkApprovalViewModel
 import org.example.app.ui.onboarding.OnboardingHost
 import org.example.app.ui.onboarding.OnboardingViewModel
-import org.example.app.ui.onboarding.rememberLinkApprovalConfirm
 import org.example.app.ui.theme.AppTheme
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.createSavedStateHandle
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 
 private const val MAIN = "main"
 private const val CHAT = "chat/{id}"
@@ -49,12 +51,13 @@ fun AppRoot(
         val idArg = listOf(navArgument("id") { type = NavType.StringType })
         NavHost(nav, startDestination = if (startWithOnboarding) ONBOARDING else MAIN) {
             composable(ONBOARDING) {
-                val vm = viewModel<OnboardingViewModel>(factory = factory { OnboardingViewModel(graph.accountService) })
+                val vm = viewModel<OnboardingViewModel>(
+                    factory = viewModelFactory { initializer { OnboardingViewModel(graph.accountService, saved = createSavedStateHandle()) } },
+                )
                 OnboardingHost(vm, onFinished = { nav.navigate(MAIN) { popUpTo(ONBOARDING) { inclusive = true } } })
             }
             composable(LINK_SCAN) {
-                val confirm = rememberLinkApprovalConfirm()
-                val vm = viewModel<LinkApprovalViewModel>(factory = factory { LinkApprovalViewModel(graph.accountService, confirm) })
+                val vm = viewModel<LinkApprovalViewModel>(factory = factory { LinkApprovalViewModel(graph.accountService) })
                 LinkApprovalFlow(vm, onDone = { nav.popBackStack() })
             }
             composable(MAIN) {
