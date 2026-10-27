@@ -10,8 +10,8 @@ MPL-2.0 is file-level copyleft. It is allowed only for unmodified use; the owner
 
 Denied: GPL-*, AGPL-*, LGPL-* (App Store static linking), SSPL, BUSL, and unknown licenses.
 
-The Rust crate check (`scripts/check-rust-licenses.py`) reads crate licenses from `cargo metadata`. An SPDX `OR` passes if one side is allowed. It also allows Unicode-3.0 (permissive; used by `unicode-ident`). **Pending owner confirmation.**
-Rust crates using MPL-2.0: the eight `uniffi*` crates, used unmodified.
+The Rust crate check (`scripts/check-rust-licenses.py`) reads crate licenses from `cargo metadata`. An SPDX `OR` passes if one side is allowed. It also allows Unicode-3.0 (permissive; used by `unicode-ident`). Approved by the owner 2026-10-28.
+Rust crates using MPL-2.0: the eight `uniffi*` crates, used unmodified. Approved by the owner 2026-10-28; list them on the app's open-source licenses page.
 
 ## go-modules
 

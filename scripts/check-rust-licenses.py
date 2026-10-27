@@ -24,7 +24,7 @@ DEFAULT_MANIFEST = REPO_ROOT / "apps/apple/Packages/SecureMessaging/mlsffi/Cargo
 ALLOWED = {
     "Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Zlib", "0BSD",
     "Unlicense", "MPL-2.0",
-    # Rust extra, pending owner confirmation: permissive, needed by unicode-ident.
+    # Rust extra, approved by the owner 2026-10-28: permissive, needed by unicode-ident.
     "Unicode-3.0",
 }
 
