@@ -23,12 +23,27 @@ public enum AppliedIncoming: Sendable, Equatable {
     case ignored
 }
 
-/// Lane A's `IncomingHandler` conforms (see the D2 report for the merge note).
+/// `IncomingHandler` conforms (below). `memberKeys` is the group's members after a commit, read under the
+/// process lock before the transaction.
 public protocol IncomingApplying: Sendable {
-    func apply(_ incoming: Incoming, raw: RawInboxRecord, db: Repository) throws -> AppliedIncoming
+    func applyIncoming(_ incoming: Incoming, raw: RawInboxRecord, db: Repository, memberKeys: [MemberKey]?) throws -> AppliedIncoming
 }
 
-/// Lane A's `InboxProcessor` conforms.
+extension IncomingHandler: IncomingApplying {
+    public func applyIncoming(
+        _ incoming: Incoming, raw: RawInboxRecord, db: Repository, memberKeys: [MemberKey]?
+    ) throws -> AppliedIncoming {
+        let result: AppliedResult = try apply(incoming, raw: raw, db: db, memberKeys: memberKeys)
+        switch result {
+        case .stored(let message): return .stored(message)
+        case .callSignal(let payload, let sender): return .callSignal(payload, sender: sender)
+        case .ownDeviceAdded(let ids): return .ownDeviceAdded(deviceIDs: ids)
+        case .joined, .commit, .removedMe, .ignored: return .ignored
+        }
+    }
+}
+
+/// `InboxProcessor` conforms (below).
 public protocol InboxSyncing: Sendable {
     func syncOnce(maxItems: Int) async throws -> Int
 }
@@ -73,6 +88,8 @@ public struct NotificationProcessor: Sendable {
     /// The thread ID for the "New device added" notice.
     public static let devicesThreadID = "devices"
     static let lockTimeout: Duration = .seconds(2)
+    /// `receipt.pending.<messageID>` = chat ID: a message the extension stored whose delivered receipt the app sends.
+    public static let receiptPendingPrefix = "receipt.pending."
     static let previewLimit = 140
 
     private let deps: MessagingDeps
@@ -138,7 +155,8 @@ public struct NotificationProcessor: Sendable {
         let hash = PortableSHA256.hash(payload)
         if try deps.repo.isProcessed(hash: hash) { return .drop }
 
-        let applied: (Incoming, AppliedIncoming)? = try await withProcessLock(deps.lock, timeout: Self.lockTimeout) {
+        let repo = deps.repo
+        let applied: (Incoming, AppliedIncoming)? = try await deps.lock.withAsyncLock(timeout: Self.lockTimeout) {
             // Re-check under the lock: the app may have processed it while we waited.
             if try deps.repo.isProcessed(hash: hash) { return nil }
             let incoming = try await deps.mls.process(payload)
@@ -147,8 +165,21 @@ public struct NotificationProcessor: Sendable {
                try deps.repo.conversation(groupID: group.raw) == nil {
                 throw LeaveForApp()
             }
-            let result = try handler.apply(incoming, raw: rawRecord(for: incoming, payload: payload), db: deps.repo)
-            try deps.repo.markProcessed(hash: hash)
+            let raw = try rawRecord(for: incoming, payload: payload)
+            // The group's members after a commit, read before the transaction. A failure only skips the device
+            // lines: the MLS state has advanced, so the payload must not be processed again.
+            var keys: [MemberKey]?
+            if case .commit(let group, _, false) = incoming { keys = try? await Membership(deps: deps).keys(of: group) }
+            // The rows and the processed mark are written together or not at all.
+            let result = try repo.transaction { () throws -> AppliedIncoming in
+                let result = try handler.applyIncoming(incoming, raw: raw, db: repo, memberKeys: keys)
+                try repo.markProcessed(hash: hash)
+                // The app sends the delivered receipt on its next sync (the extension never sends).
+                if case .stored(let message) = result, message.senderAccount != deps.me.accountID, !message.undecryptable {
+                    try repo.set(Self.receiptPendingPrefix + message.id, Data(message.chatID.utf8))
+                }
+                return result
+            }
             return (incoming, result) as (Incoming, AppliedIncoming)?
         }
         guard let (incoming, result) = applied else { return .drop }

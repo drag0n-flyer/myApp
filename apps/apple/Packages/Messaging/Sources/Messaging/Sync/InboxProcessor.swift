@@ -174,12 +174,27 @@ public actor InboxProcessor {
             }
         }
         release(.drain)
+        // Messages the notification extension stored: it never sends, so their receipts go out now.
+        let pendingReceipts = ((try? deps.repo.entries(prefix: NotificationProcessor.receiptPendingPrefix)) ?? [:])
+            .filter { !$0.value.isEmpty }
+        var pendingByChat: [String: [String]] = [:]
+        for (key, value) in pendingReceipts.sorted(by: { $0.key < $1.key }) {
+            let id = String(key.dropFirst(NotificationProcessor.receiptPendingPrefix.count))
+            pendingByChat[String(decoding: value, as: UTF8.self), default: []].append(id)
+        }
+        for (chatID, ids) in pendingByChat { newMessages[chatID, default: []].append(contentsOf: ids) }
         // Network calls (device names, receipts) go after the lock and the gate are released.
         await noticeOwnDevices()
         if let controls {
             for (chatID, ids) in newMessages.sorted(by: { $0.key < $1.key }) {
                 // Best effort: a lost delivered receipt only delays the tick.
-                try? await controls.sendControl(.receipt(.delivered, ids: ids), chatID: chatID)
+                do {
+                    try await controls.sendControl(.receipt(.delivered, ids: ids), chatID: chatID)
+                    // Sent: the extension's markers for this chat are done. A failed send keeps them for the next drain.
+                    for id in pendingByChat[chatID] ?? [] {
+                        try? deps.repo.set(NotificationProcessor.receiptPendingPrefix + id, Data())
+                    }
+                } catch {}
             }
         }
     }
@@ -355,3 +370,5 @@ public actor InboxProcessor {
         }
     }
 }
+
+extension InboxProcessor: InboxSyncing {}

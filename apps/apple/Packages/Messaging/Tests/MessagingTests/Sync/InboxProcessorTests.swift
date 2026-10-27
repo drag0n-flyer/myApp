@@ -259,6 +259,22 @@ private func raw(_ conv: ConversationRecord, cursor: Int64 = 900, kind: String =
         #expect(sent[0].body == .receipt(.delivered, ids: ["t1", "t2"]))
     }
 
+    @Test func pendingReceiptsFromTheNotificationExtensionAreSent() async throws {
+        let rig = try await Rig.make()
+        let bob = Side(rig.bob1)
+        // The extension applied these two messages and left a marker (value = chat ID) for the app.
+        try bob.deps.repo.set("receipt.pending.x1", Data("acc-ana".utf8))
+        try bob.deps.repo.set("receipt.pending.x2", Data("acc-ana".utf8))
+        await bob.processor.drainRaw()
+        let sent = await bob.controls.sent
+        #expect(sent.count == 1 && sent[0].chatID == "acc-ana")
+        #expect(sent[0].body == .receipt(.delivered, ids: ["x1", "x2"]))
+        let left = try bob.deps.repo.entries(prefix: "receipt.pending.").filter { !$0.value.isEmpty }
+        #expect(left.isEmpty)
+        await bob.processor.drainRaw()
+        #expect(await bob.controls.sent.count == 1)   // sent once
+    }
+
     @Test func removedMeDeactivates() async throws {
         let rig = try await Rig.make()
         let record = try await startChat(rig)

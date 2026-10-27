@@ -12,7 +12,9 @@ import MessagingTestKit
 private struct TestHandler: IncomingApplying {
     var ownDeviceIDs: [String] = []
 
-    func apply(_ incoming: Incoming, raw: RawInboxRecord, db: Repository) throws -> AppliedIncoming {
+    var keysSeen: KeysSeen?
+    func applyIncoming(_ incoming: Incoming, raw: RawInboxRecord, db: Repository, memberKeys: [MemberKey]?) throws -> AppliedIncoming {
+        keysSeen?.record(incoming, memberKeys)
         switch incoming {
         case .application(let group, let sender, let plaintext, _):
             let account = String(sender.split(separator: "/").first ?? "")
@@ -35,6 +37,25 @@ private struct TestHandler: IncomingApplying {
         case .commit: return ownDeviceIDs.isEmpty ? .ignored : .ownDeviceAdded(deviceIDs: ownDeviceIDs)
         case .joined: return .ignored
         }
+    }
+}
+
+private final class KeysSeen: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [[MemberKey]?] = []
+    func record(_ incoming: Incoming, _ keys: [MemberKey]?) {
+        if case .commit = incoming { lock.withLock { values.append(keys) } }
+    }
+    var commits: [[MemberKey]?] { lock.withLock { values } }
+}
+
+private struct ApplyFailure: Error {}
+
+/// Writes the message row, then fails: the row must not survive.
+private struct FailingHandler: IncomingApplying {
+    func applyIncoming(_ incoming: Incoming, raw: RawInboxRecord, db: Repository, memberKeys: [MemberKey]?) throws -> AppliedIncoming {
+        _ = try TestHandler().applyIncoming(incoming, raw: raw, db: db, memberKeys: memberKeys)
+        throw ApplyFailure()
     }
 }
 
@@ -202,6 +223,34 @@ private struct NSEPair {
         let pair = try await NSEPair()
         let outcome = await pair.processor().process(pushData: padded(Data()), deadline: NSEPair.deadline)
         #expect(outcome == .fallback)
+    }
+
+    @Test func testApplyAndMarkProcessedAreOneTransaction() async throws {
+        let pair = try await NSEPair()
+        let data = try await pair.push(.text("hi", replyTo: nil))
+        let processor = NotificationProcessor(
+            deps: pair.bob.deps, handler: FailingHandler(), inbox: pair.inbox, conversations: NoConversations())
+        let outcome = await processor.process(pushData: data, deadline: NSEPair.deadline)
+        #expect(outcome == .fallback)
+        #expect(try pair.bob.deps.repo.message(id: "m1") == nil)   // rolled back with the failed apply
+    }
+
+    @Test func testStoredMessageLeavesAReceiptMarkerForTheApp() async throws {
+        let pair = try await NSEPair()
+        _ = await pair.processor().process(pushData: try await pair.push(.text("hi", replyTo: nil)), deadline: NSEPair.deadline)
+        #expect(try pair.bob.deps.repo.get("receipt.pending.m1") == Data("acc-ana".utf8))
+    }
+
+    @Test func testCommitIsAppliedWithTheGroupsMemberKeys() async throws {
+        let pair = try await NSEPair()
+        let carol = await makeDevice(FakeServer(), account: "acc-carol", username: "carol")
+        let bundle = try await pair.ana.deps.mls.add(keyPackages: try await carol.deps.mls.makeKeyPackages(count: 1), to: pair.group)
+        let seen = KeysSeen()
+        var handler = TestHandler()
+        handler.keysSeen = seen
+        _ = await pair.processor(handler: handler).process(pushData: padded(bundle.commit), deadline: NSEPair.deadline)
+        let keys = try #require(seen.commits.first ?? nil)
+        #expect(keys.contains { $0.identity == "acc-carol/\(carol.deviceID)" })
     }
 
     @Test func testDeadlinePassed() async throws {
