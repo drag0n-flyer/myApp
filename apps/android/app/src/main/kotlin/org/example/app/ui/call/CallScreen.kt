@@ -1,5 +1,7 @@
 package org.example.app.ui.call
 
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.app.Activity
 import android.content.ContextWrapper
 import androidx.activity.compose.BackHandler
@@ -37,7 +39,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -140,9 +141,9 @@ fun CallScreen(
     onThemeResolved: (ColorScheme) -> Unit = {},
 ) {
     CallTheme(onResolved = onThemeResolved) {
-        val call by viewModel.call.collectAsState()
+        val call by viewModel.call.collectAsStateWithLifecycle()
         val current = call ?: return@CallTheme
-        var showData by remember { mutableStateOf(false) }
+        var showData by rememberSaveable { mutableStateOf(false) }
         CallBackHandler(onMinimise)
 
         if (ticking) {
@@ -293,7 +294,7 @@ private fun VideoStage() {
 /** Sample build only: plays network conditions. */
 @Composable
 private fun SimulateMenu(viewModel: CallViewModel, modifier: Modifier = Modifier) {
-    var open by remember { mutableStateOf(false) }
+    var open by rememberSaveable { mutableStateOf(false) }
     Box(modifier) {
         IconButton(onClick = { open = true }) {
             Icon(painterResource(R.drawable.ic_sync), contentDescription = stringResource(R.string.call_simulate), tint = Color.White)

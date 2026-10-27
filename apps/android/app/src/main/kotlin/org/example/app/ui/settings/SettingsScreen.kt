@@ -1,5 +1,6 @@
 package org.example.app.ui.settings
 
+import androidx.compose.ui.semantics.Role
 import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
 import androidx.compose.foundation.clickable
@@ -63,7 +64,7 @@ fun SettingsScreen(
             items(SettingsPage.entries.toList(), key = { it.name }) { page ->
                 val title = stringResource(page.title)
                 ListItem(
-                    modifier = Modifier.fillMaxWidth().clickable { onOpen(page) },
+                    modifier = Modifier.fillMaxWidth().clickable(role = Role.Button) { onOpen(page) },
                     leadingContent = { Icon(painterResource(page.icon), contentDescription = null) },
                     headlineContent = { Text(title) },
                     trailingContent = when (page) {

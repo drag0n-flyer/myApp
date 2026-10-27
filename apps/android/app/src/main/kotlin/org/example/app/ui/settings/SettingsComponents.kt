@@ -96,7 +96,7 @@ fun <T> ChoiceRow(title: String, choices: List<Choice<T>>, selected: T, onSelect
     var open by rememberSaveable { mutableStateOf(false) }
     val current = choices.firstOrNull { it.value == selected }?.title.orEmpty()
     ListItem(
-        modifier = Modifier.clickable { open = true },
+        modifier = Modifier.clickable(role = Role.Button) { open = true },
         headlineContent = { Text(title) },
         trailingContent = { Text(current, color = MaterialTheme.colorScheme.onSurfaceVariant) },
     )

@@ -1,5 +1,6 @@
 package org.example.app.ui.chatinfo
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -24,7 +25,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -59,8 +59,8 @@ fun ChatInfoScreen(
     onBlocked: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val chats by store.chats.collectAsState()
-    val requests by store.requests.collectAsState()
+    val chats by store.chats.collectAsStateWithLifecycle()
+    val requests by store.requests.collectAsStateWithLifecycle()
     var revision by remember { mutableIntStateOf(0) }
     // Read again after the lists change or the verified flag is toggled.
     val chat = remember(chats, requests, revision) { store.chat(chatId) }
@@ -123,7 +123,7 @@ fun ChatInfoScreen(
             }
             if (store.supportsSafetyNumbers) {
                 ListItem(
-                    modifier = Modifier.clickable { showVerify = true },
+                    modifier = Modifier.clickable(role = Role.Button) { showVerify = true },
                     leadingContent = { Icon(painterResource(R.drawable.ic_verified), contentDescription = null) },
                     headlineContent = { Text(stringResource(R.string.info_verify)) },
                 )
@@ -135,11 +135,11 @@ fun ChatInfoScreen(
             )
             HorizontalDivider()
             ListItem(
-                modifier = Modifier.clickable { confirmReport = true },
+                modifier = Modifier.clickable(role = Role.Button) { confirmReport = true },
                 headlineContent = { Text(stringResource(R.string.info_report), color = MaterialTheme.colorScheme.error) },
             )
             ListItem(
-                modifier = Modifier.clickable { confirmBlock = true },
+                modifier = Modifier.clickable(role = Role.Button) { confirmBlock = true },
                 headlineContent = { Text(stringResource(R.string.info_block, contact.displayName), color = MaterialTheme.colorScheme.error) },
             )
         }
