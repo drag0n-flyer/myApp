@@ -4,6 +4,14 @@ plugins {
 
 android {
     namespace = "org.example.app.mls"
+
+    defaultConfig { consumerProguardFiles("consumer-rules.pro") }
+
+    lint {
+        // The generated bindings are not edited by hand: scope lint off for them, not for :mls.
+        // (mlsffi.kt targets Android's cleaner via uniffi.toml; any remaining finding is generator output.)
+        lintConfig = file("lint.xml")
+    }
 }
 
 dependencies {
