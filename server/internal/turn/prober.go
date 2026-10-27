@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/velixio/myApp/server/internal/config"
+	"github.com/drag0n-flyer/myApp/server/internal/config"
 )
 
 const (

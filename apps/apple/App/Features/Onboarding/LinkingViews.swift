@@ -37,6 +37,7 @@ struct LinkDeviceView: View {
                 .frame(width: 220, height: 220)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)
+                .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Linking QR code")
                 .accessibilityIdentifier("link.qr")
             AccountErrorText(error: error)

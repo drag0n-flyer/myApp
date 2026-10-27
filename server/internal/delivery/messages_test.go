@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/velixio/myApp/server/internal/core"
-	"github.com/velixio/myApp/server/internal/delivery"
-	"github.com/velixio/myApp/server/internal/testkit"
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/delivery"
+	"github.com/drag0n-flyer/myApp/server/internal/testkit"
 )
 
 func (w world) post(t *testing.T, p core.Principal, id string, epoch int64, text, clientMsgID string, escrow *string) *testkit.Response {

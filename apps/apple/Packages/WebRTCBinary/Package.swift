@@ -12,7 +12,7 @@ let local = Context.environment["WEBRTC_LOCAL_XCFRAMEWORK"]
 let webrtc: Target = local.map { .binaryTarget(name: "WebRTC", path: $0) }
     ?? .binaryTarget(
         name: "WebRTC",
-        url: "https://github.com/velixio/myApp/releases/download/webrtc-m156.1/WebRTC.xcframework.zip",
+        url: "https://github.com/drag0n-flyer/myApp/releases/download/webrtc-m156.1/WebRTC.xcframework.zip",
         checksum: "0000000000000000000000000000000000000000000000000000000000000000")
 
 let package = Package(

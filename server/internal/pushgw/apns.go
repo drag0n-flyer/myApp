@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/velixio/myApp/server/internal/pushproto"
+	"github.com/drag0n-flyer/myApp/server/internal/pushproto"
 )
 
 const (

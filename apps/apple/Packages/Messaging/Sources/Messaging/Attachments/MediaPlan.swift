@@ -45,7 +45,7 @@ public enum MediaPlan {
         /// A recording shorter than this is treated as an accidental tap and discarded.
         public static let minDuration = 0.5
         /// Recording stops by itself at this length.
-        public static let maxDuration = 600.0
+        public static let maxDuration = 1_800.0   // 30 minutes (owner, 2026-10-28)
 
         public enum Outcome: Equatable, Sendable { case send, tooShort }
 

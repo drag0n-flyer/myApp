@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/velixio/myApp/server/internal/testkit"
+	"github.com/drag0n-flyer/myApp/server/internal/testkit"
 )
 
 func TestDBPoolIsCappedAndDropped(t *testing.T) {

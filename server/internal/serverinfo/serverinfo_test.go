@@ -13,9 +13,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/velixio/myApp/server/internal/core"
-	"github.com/velixio/myApp/server/internal/serverinfo"
-	"github.com/velixio/myApp/server/internal/testkit"
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/serverinfo"
+	"github.com/drag0n-flyer/myApp/server/internal/testkit"
 )
 
 func serve(t *testing.T, opts ...func(*core.Deps)) *testkit.Client {

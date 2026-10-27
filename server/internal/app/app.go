@@ -14,17 +14,17 @@ import (
 	"sync"
 	"time"
 
-	"github.com/velixio/myApp/server/internal/attachments"
-	"github.com/velixio/myApp/server/internal/calls"
-	"github.com/velixio/myApp/server/internal/core"
-	"github.com/velixio/myApp/server/internal/delivery"
-	"github.com/velixio/myApp/server/internal/httpx"
-	"github.com/velixio/myApp/server/internal/identity"
-	"github.com/velixio/myApp/server/internal/push"
-	"github.com/velixio/myApp/server/internal/realtime"
-	"github.com/velixio/myApp/server/internal/serverinfo"
-	"github.com/velixio/myApp/server/internal/social"
-	"github.com/velixio/myApp/server/internal/turn"
+	"github.com/drag0n-flyer/myApp/server/internal/attachments"
+	"github.com/drag0n-flyer/myApp/server/internal/calls"
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/delivery"
+	"github.com/drag0n-flyer/myApp/server/internal/httpx"
+	"github.com/drag0n-flyer/myApp/server/internal/identity"
+	"github.com/drag0n-flyer/myApp/server/internal/push"
+	"github.com/drag0n-flyer/myApp/server/internal/realtime"
+	"github.com/drag0n-flyer/myApp/server/internal/serverinfo"
+	"github.com/drag0n-flyer/myApp/server/internal/social"
+	"github.com/drag0n-flyer/myApp/server/internal/turn"
 )
 
 // readyTimeout bounds the database ping behind /readyz.

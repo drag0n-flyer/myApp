@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/velixio/myApp/server/internal/ratelimit"
+	"github.com/drag0n-flyer/myApp/server/internal/ratelimit"
 )
 
 const (

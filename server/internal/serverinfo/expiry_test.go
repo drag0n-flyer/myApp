@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/velixio/myApp/server/internal/serverinfo"
+	"github.com/drag0n-flyer/myApp/server/internal/serverinfo"
 )
 
 func TestSecurityTxtWarning(t *testing.T) {

@@ -128,7 +128,7 @@ step "gn gen $out"
 gn gen "$out" --args="$(gn_args "$slice")"
 step "build $target"
 if [ -x third_party/siso/cipd/siso ]; then
-  third_party/siso/cipd/siso ninja -C "$out" "${target#//sdk:}" || third_party/siso/cipd/siso ninja -C "$out" "$target"
+  third_party/siso/cipd/siso ninja -C "$out" "${target#//}"
 else
   autoninja -C "$out" "$target"
 fi

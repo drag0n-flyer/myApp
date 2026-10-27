@@ -76,8 +76,8 @@ check "webrtc.gni has rtc_opus_support_120ms_ptime" has "^  rtc_opus_support_120
 d="$repo/modules/audio_coding/codecs/opus"
 check "0002: complexity constant is 7" has "kAppOpusDecoderComplexity = 7;" "$d/app_opus_config.h"
 check "0002: BWE constant is 1" has "kAppOpusOsceBwe = 1;" "$d/app_opus_config.h"
-check "0002: DecoderCreate sets complexity" has "OPUS_SET_COMPLEXITY(kAppOpusDecoderComplexity)" "$d/opus_interface.cc"
-check "0002: DecoderCreate sets OSCE BWE" has "OPUS_SET_OSCE_BWE(kAppOpusOsceBwe)" "$d/opus_interface.cc"
+check "0002: DecoderCreate sets complexity" has "OPUS_SET_COMPLEXITY(webrtc::kAppOpusDecoderComplexity)" "$d/opus_interface.cc"
+check "0002: DecoderCreate sets OSCE BWE" has "OPUS_SET_OSCE_BWE(webrtc::kAppOpusOsceBwe)" "$d/opus_interface.cc"
 check "0002: ctl results are DCHECKed" has "RTC_DCHECK_EQ(ret, OPUS_OK)" "$d/opus_interface.cc"
 check "0002: getter declared" has "int WebRtcOpus_DecoderGetComplexity(OpusDecInst\* inst);" "$d/opus_interface.h"
 

@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/velixio/myApp/server/internal/core"
-	"github.com/velixio/myApp/server/internal/httpx"
-	"github.com/velixio/myApp/server/internal/ratelimit"
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/httpx"
+	"github.com/drag0n-flyer/myApp/server/internal/ratelimit"
 )
 
 var _ core.SessionVerifier = (*Module)(nil)

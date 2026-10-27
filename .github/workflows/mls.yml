@@ -37,31 +37,29 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Swift target info (diagnostic)
-        run: |
-          ls -d /Applications/Xcode* 
-          for x in /Applications/Xcode*.app; do
-            echo "== $x"
-            for t in arm64-apple-ios17.0 arm64-apple-ios17.0-simulator; do
-              echo "$t: $(DEVELOPER_DIR=$x/Contents/Developer xcrun swift -print-target-info --target=$t 2>&1 | grep -E 'librariesRequireRPath|compilerVersion' | tr -d '\n')"
-            done
-          done
-          swift --version
-          xcodebuild -version
-          for t in arm64-apple-ios17.0 arm64-apple-ios17.0-simulator arm64-apple-macosx26.0 x86_64-apple-macosx26.0; do
-            echo "$t: $(swift -print-target-info --target=$t | grep -E 'librariesRequireRPath')"
-          done
       - name: Build XCFramework and bindings
         working-directory: apps/apple/Packages/SecureMessaging
         run: scripts/build-mlsffi.sh
-      - name: cargo test (CryptoKit provider, interop)
+      - name: cargo test (RustCrypto provider)
         working-directory: apps/apple/Packages/SecureMessaging/mlsffi
         run: cargo test --locked
-      - name: Upstream CryptoKit provider suite
+      - name: Check minimum OS versions
+        working-directory: apps/apple/Packages/SecureMessaging/mlsffi
         run: |
-          git clone https://github.com/awslabs/mls-rs
-          git -C mls-rs checkout 323bd84f52e410c9ecb0b1ccd84a5a9f7f191b5a
-          cargo test --manifest-path mls-rs/mls-rs-crypto-cryptokit/Cargo.toml
+          set -euo pipefail
+          check() { # target, platform name, minos
+            d="$(mktemp -d)"; (cd "$d" && ar -x "$OLDPWD/target/$1/release/libmlsffi.a")
+            out="$(find "$d" -name '*.o' -exec vtool -show-build {} \; | grep -E ' platform | minos ' | sort | uniq -c)"
+            echo "$1:"; echo "$out"
+            grep -q "platform $2" <<<"$out"
+            grep -q "minos $3" <<<"$out"
+            ! grep ' minos ' <<<"$out" | grep -qv "minos $3"
+            ! grep ' platform ' <<<"$out" | grep -qv "platform $2"
+          }
+          check aarch64-apple-ios IOS 17.0
+          check aarch64-apple-ios-sim IOSSIMULATOR 17.0
+          check aarch64-apple-darwin MACOS 14.0
+          check x86_64-apple-darwin MACOS 14.0
       - name: Binding drift check
         working-directory: apps/apple/Packages/SecureMessaging
         run: git diff --exit-code Sources/MLSFFIBindings

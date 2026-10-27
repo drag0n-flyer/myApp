@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/velixio/myApp/server/internal/core"
-	"github.com/velixio/myApp/server/internal/ratelimit"
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/ratelimit"
 )
 
 type fakeVerifier struct {

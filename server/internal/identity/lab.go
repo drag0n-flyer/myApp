@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/drag0n-flyer/myApp/server/internal/core"
 	"github.com/jackc/pgx/v5"
-	"github.com/velixio/myApp/server/internal/core"
 )
 
 // labSessionCommand is the lab-only "lab session" command: it creates a

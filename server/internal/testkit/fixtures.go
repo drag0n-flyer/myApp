@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/velixio/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/core"
 )
 
 // Account creates an account with email <username>@example.org and one iphone

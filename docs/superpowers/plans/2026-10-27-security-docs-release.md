@@ -44,7 +44,7 @@ Steps that need secrets, accounts or legal judgment are **owner-run** and marked
    - a repo script over `Package.resolved` for Swift license allowlisting
    - `gremlins` (Apache-2.0) for Go mutation testing, weekly and not blocking
    - Swift mutation testing deferred, because Muter needs macOS minutes; revisit after plan 7
-2. **Solo-owner review problem.** If agents push and open pull requests with the owner's own GitHub identity, GitHub never lets the owner approve them, so "required code-owner review" would block every merge. Proposal: agents open PRs from a **machine-user account** (for example `velixio-bot`, with a fine-grained token scoped to this repo), and the owner approves. The alternative is a ruleset that lets the owner bypass. Task 13 implements the machine user unless the owner picks the bypass.
+2. **Solo-owner review problem.** If agents push and open pull requests with the owner's own GitHub identity, GitHub never lets the owner approve them, so "required code-owner review" would block every merge. Proposal: agents open PRs from a **machine-user account** (for example `drag0n-flyer-bot`, with a fine-grained token scoped to this repo), and the owner approves. The alternative is a ruleset that lets the owner bypass. Task 13 implements the machine user unless the owner picks the bypass.
 3. **MLS profile:**
    - cipher suite `MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519` (0x0001) for all groups
    - basic credentials holding `"<accountID>/<deviceID>"` (roadmap)
@@ -407,7 +407,7 @@ A missing directory or file gives 404 `not_found`. Files are read on each reques
 
 **Required sections** (it is a memo and checklist):
 1. **What the apps contain:**
-   - MLS through mls-rs (AES-128-GCM, X25519, Ed25519, SHA-256)
+   - MLS through mls-rs with the RustCrypto provider (AES-128-GCM, X25519, Ed25519, SHA-256)
    - DTLS-SRTP inside the project's own WebRTC build (BoringSSL)
    - HPKE through CryptoKit (OS-provided)
    - TLS through URLSession (OS-provided)
@@ -586,7 +586,7 @@ A missing directory or file gives 404 `not_found`. Files are read on each reques
 - Create: `scripts/setup-branch-protection.sh`, `docs/ops/repo-setup.md`
 
 **Values:**
-- **CODEOWNERS additions,** owned by `@velixio`:
+- **CODEOWNERS additions,** owned by `@drag0n-flyer`:
   - `/apps/apple/Packages/SecureMessaging/`, `/apps/apple/Packages/WebRTCBinary/`
   - `/apps/apple/Packages/ServerKit/Sources/ServerKit/Auth/`, `/apps/apple/Packages/ServerKit/Sources/ServerKit/Push/`
   - `/apps/apple/NotificationService/`

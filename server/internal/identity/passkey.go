@@ -9,7 +9,7 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 
-	"github.com/velixio/myApp/server/internal/config"
+	"github.com/drag0n-flyer/myApp/server/internal/config"
 )
 
 // This file is the only importer of go-webauthn. Everything it exposes is
