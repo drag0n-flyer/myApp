@@ -6,7 +6,7 @@ apps/apple/*.xcodeproj
 .build/
 DerivedData/
 tools/call-lab/*.xcodeproj
-tools/call-lab/corpus/
+tools/call-lab/corpus/data/
 tools/call-lab/runs/
 
 # Rust (MLS bindings) and built frameworks
