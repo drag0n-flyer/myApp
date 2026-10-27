@@ -1,0 +1,6 @@
+{ "protocol": 1, "host": "chat.example.org", "requiresInvite": true,
+  "policy": { "defaultMode": "auto", "maxMode": "high", "defaultIPHiding": "nonContacts" },
+  "encryption": { "newConversations": "e2ee", "escrowKey": null },
+  "push": { "gateway": "https://push.example.org" },
+  "features": ["calls", "video", "linking"], "federation": false,
+  "limits": { "attachmentBytes": 104857600 } }

@@ -14,7 +14,7 @@ let package = Package(
     targets: [
         .target(name: "ServerKit", dependencies: [.product(name: "AppCore", package: "AppCore")]),
         .target(name: "ServerKitTesting", dependencies: ["ServerKit"]),
-        .testTarget(name: "ServerKitTests", dependencies: ["ServerKit", "ServerKitTesting"]),
+        .testTarget(name: "ServerKitTests", dependencies: ["ServerKit", "ServerKitTesting"], resources: [.copy("Fixtures")]),
         .testTarget(name: "ServerKitAppleTests", dependencies: ["ServerKit", "ServerKitTesting"]),
         .testTarget(name: "ServerKitE2ETests", dependencies: ["ServerKit", "ServerKitTesting"]),
     ]
