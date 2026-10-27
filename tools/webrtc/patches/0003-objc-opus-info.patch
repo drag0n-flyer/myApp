@@ -105,7 +105,7 @@ index 0000000..6c38b1d
 +@interface RTC_OBJC_TYPE (RTCOpusInfo) : NSObject
 +
 +/** libopus version string, for example "libopus 1.6". */
-+@property(class, nonatomic, readonly) NSString *version;
++@property(class, nonatomic, readonly) NSString *opusVersion;
 +
 +/** YES if the deep packet-loss concealment changes decoded audio. */
 +@property(class, nonatomic, readonly) BOOL deepPLCActive;
@@ -164,7 +164,7 @@ index 0000000..223acf2
 +
 +@implementation RTC_OBJC_TYPE (RTCOpusInfo)
 +
-++ (NSString *)version {
+++ (NSString *)opusVersion {
 +  const char *v = app_opus_version();
 +  return v ? [NSString stringWithUTF8String:v] : @"";
 +}

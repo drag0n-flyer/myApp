@@ -83,7 +83,7 @@ check "0002: getter declared" has "int WebRtcOpus_DecoderGetComplexity(OpusDecIn
 
 # 0003, 0004
 o="$repo/sdk/objc/api/peerconnection"
-for sym in version deepPLCActive osceActive bweActive webRTCDecoderComplexity opusPLCFieldTrial maxPacketMs; do
+for sym in opusVersion deepPLCActive osceActive bweActive webRTCDecoderComplexity opusPLCFieldTrial maxPacketMs; do
   check "0003: RTCOpusInfo.$sym" has "(class, nonatomic, readonly).*[ *]$sym;" "$o/RTCOpusInfo.h"
 done
 check "0003: encoderFrameMsForPtime" has "+ (NSInteger)encoderFrameMsForPtime:(NSInteger)ptime;" "$o/RTCOpusInfo.h"

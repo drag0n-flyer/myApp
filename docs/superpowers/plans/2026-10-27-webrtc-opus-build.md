@@ -319,7 +319,7 @@ The probe algorithm. The signal and settings are fixed, so the result is determi
 ```objc
 RTC_OBJC_EXPORT
 @interface RTC_OBJC_TYPE(RTCOpusInfo) : NSObject
-@property(class, nonatomic, readonly) NSString *version;          // app_opus_version()
+@property(class, nonatomic, readonly) NSString *opusVersion;         // app_opus_version()
 @property(class, nonatomic, readonly) BOOL deepPLCActive;         // app_opus_deep_plc_active() == 1
 @property(class, nonatomic, readonly) BOOL osceActive;
 @property(class, nonatomic, readonly) BOOL bweActive;
@@ -401,7 +401,7 @@ The patches are written against the pinned commit. Fetch the touched files from 
 
 - [ ] **Step 1: Write the tests** (Swift Testing, `import WebRTC`).
   - `OpusBuildTests` (a `@Suite`):
-    - `opusVersionIsFloat16`: `#expect(RTCOpusInfo.version == "libopus 1.6")`
+    - `opusVersionIsFloat16`: `#expect(RTCOpusInfo.opusVersion == "libopus 1.6")`
     - `deepPLCActive`: `#expect(RTCOpusInfo.deepPLCActive)`
     - `osceActive`: `#expect(RTCOpusInfo.osceActive)`
     - `bweActive`: `#expect(RTCOpusInfo.bweActive)`

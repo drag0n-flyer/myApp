@@ -5,9 +5,8 @@ import WebRTC
 @Suite("Opus build", .timeLimit(.minutes(1)))
 struct OpusBuildTests {
     @Test func opusVersionIsFloat16() {
-        // Also proves `version` imports as a Swift String and is not shadowed by
-        // NSObject's +version (an NSInteger).
-        let version: String = RTCOpusInfo.version
+        // Named opusVersion because NSObject already has a class method +version.
+        let version: String = RTCOpusInfo.opusVersion
         #expect(version == "libopus 1.6")
     }
 
