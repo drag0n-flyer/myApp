@@ -21,7 +21,7 @@ import org.junit.runner.RunWith
 
 /**
  * Records about one second on a real device or emulator with the AudioRecord + MediaCodec Opus path and validates
- * the file with the rules a receiver applies. Runs once the emulator CI job (task G3) lands; until then it only compiles.
+ * the file with the rules a receiver applies. Runs in the emulator CI job (task G3) on API 29 and 36.
  */
 @RunWith(AndroidJUnit4::class)
 class VoiceRecorderInstrumentedTest {
@@ -39,9 +39,24 @@ class VoiceRecorderInstrumentedTest {
         return "api=${Build.VERSION.SDK_INT} opusEncoders=$encoders minBuffer=$minBuffer"
     }
 
+    private fun platformHasOpusEncoder(): Boolean = MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos
+        .any { it.isEncoder && it.supportedTypes.any { t -> t.equals(MediaFormat.MIMETYPE_AUDIO_OPUS, true) } }
+
+    /**
+     * Some platforms (the API 29 AOSP emulator) have no Opus encoder. Until task "E5b: bundled Opus fallback encoder"
+     * lands, the recorder must fail safe with Failed(Encoder) there. When E5b lands, delete this branch so the
+     * no-encoder case runs the full test below instead.
+     */
+    private fun assertFailsSafeWithoutEncoder(recorder: VoiceRecorder) {
+        val started = recorder.start()
+        assertEquals(StartResult.Failed(VoiceFailure.Encoder), started, "start() returned $started; ${diagnostics()}")
+        assertEquals(emptyList(), dir.list()?.toList() ?: emptyList())
+    }
+
     @Test fun oneSecondRecordingIsValidOggOpus() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val recorder = VoiceRecorder(context, dir)
+        if (!platformHasOpusEncoder()) return assertFailsSafeWithoutEncoder(recorder)
         val started = recorder.start()
         assertIs<StartResult.Started>(started, "start() returned ${(started as? StartResult.Failed)?.reason ?: started}; ${diagnostics()}")
         assertTrue(recorder.isRecording)
@@ -60,6 +75,7 @@ class VoiceRecorderInstrumentedTest {
     @Test fun immediateStopIsTooShortNotNull() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val recorder = VoiceRecorder(context, dir)
+        if (!platformHasOpusEncoder()) return assertFailsSafeWithoutEncoder(recorder)
         val started = recorder.start()
         assertIs<StartResult.Started>(started, "start() returned ${(started as? StartResult.Failed)?.reason ?: started}; ${diagnostics()}")
         val result = recorder.stop()
