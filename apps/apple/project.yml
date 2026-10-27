@@ -63,6 +63,7 @@ targets:
       base:
         PRODUCT_NAME: App
         PRODUCT_BUNDLE_IDENTIFIER: org.example.app
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: 'YES'
         CODE_SIGN_ENTITLEMENTS: App/AppiOS.entitlements
         TARGETED_DEVICE_FAMILY: '1'
         INFOPLIST_KEY_UILaunchScreen_Generation: 'YES'
@@ -97,6 +98,7 @@ targets:
       base:
         PRODUCT_NAME: App
         PRODUCT_BUNDLE_IDENTIFIER: org.example.app.mac
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: 'YES'
         CODE_SIGN_ENTITLEMENTS: App/AppMac.entitlements
         INFOPLIST_KEY_NSMicrophoneUsageDescription: So people can hear you on calls and in voice messages.
         INFOPLIST_KEY_NSCameraUsageDescription: For video calls.
@@ -126,6 +128,7 @@ targets:
       base:
         PRODUCT_NAME: NotificationService
         PRODUCT_BUNDLE_IDENTIFIER: org.example.app.nse
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: 'YES'
         CODE_SIGN_ENTITLEMENTS: NotificationService/NSE-iOS$(NSE_FILTERING_$(NSE_FILTERING)_SUFFIX).entitlements
         TARGETED_DEVICE_FAMILY: '1'
         SKIP_INSTALL: 'YES'
@@ -155,6 +158,7 @@ targets:
       base:
         PRODUCT_NAME: NotificationService
         PRODUCT_BUNDLE_IDENTIFIER: org.example.app.mac.nse
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: 'YES'
         CODE_SIGN_ENTITLEMENTS: NotificationService/NSE-Mac$(NSE_FILTERING_$(NSE_FILTERING)_SUFFIX).entitlements
         ENABLE_HARDENED_RUNTIME: 'YES'
         SKIP_INSTALL: 'YES'

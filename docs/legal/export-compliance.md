@@ -21,7 +21,7 @@ Every item uses standard, published algorithms (IETF RFCs). Nothing is proprieta
 - In App Store Connect's export compliance questions, answer that the app uses standard encryption algorithms that are not provided by Apple's OS (same source).
 - For that answer, Apple asks for the French encryption declaration, and only if the app is distributed on the App Store in France. A CCATS is listed only for apps with proprietary algorithms, which does not apply here ([Apple: export compliance documentation for encryption](https://developer.apple.com/help/app-store-connect/reference/export-compliance-documentation-for-encryption/)).
 - After Apple approves the documents, Apple issues an `ITSEncryptionExportComplianceCode`. Add it to `apps/apple/project.yml`. 👤
-- **Pending:** adding `INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: YES` to `project.yml` for both app targets and both NSE targets. This needs the app UI branch and is not done in this change. Until it is, App Store Connect asks the question on every build.
+- **Done:** `INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: 'YES'` is set in `project.yml` for both app targets and both NSE targets. `scripts/check-release-config.py` checks it for the apps. Still 👤: the `ITSEncryptionExportComplianceCode`, once Apple issues it.
 
 ## 3. United States (EAR)
 
