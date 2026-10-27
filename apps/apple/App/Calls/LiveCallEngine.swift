@@ -48,7 +48,7 @@ final class LiveCallEngine {
     var voip: VoIPPushCenter?
     /// Server call ID to the CallKit UUID that VoIP push made for it (push calls only).
     private var pushKitIDs: [String: UUID] = [:]
-    private var callKitEndedIt = false
+    private var endLatch = SystemEndLatch()
     #else
     var ringer: MacRinger?
     #endif
@@ -116,6 +116,9 @@ final class LiveCallEngine {
             log: { log.debug("\($0, privacy: .public)") })
         runner = r
         shownToUI = false
+        #if os(iOS)
+        endLatch.begin()
+        #endif
         reportedConnected = false
         onStats?(nil)
         return r
@@ -199,10 +202,9 @@ final class LiveCallEngine {
     private func platformEnded(callID: String, reason: CallEndReason) {
         #if os(iOS)
         if let kit = kitID(callID) {
-            if !callKitEndedIt { callKit?.reportEnded(callID: kit, reason: CXCallEndedReason(CallKitEndKind(reason))) }
+            if endLatch.shouldReportEnd() { callKit?.reportEnded(callID: kit, reason: CXCallEndedReason(CallKitEndKind(reason))) }
             if let pushKit = pushKitIDs.removeValue(forKey: callID) { voip?.pushCallFinished(kitCallID: pushKit) }
         }
-        callKitEndedIt = false
         #else
         ringer?.ended(callID: callID)
         #endif
@@ -300,7 +302,7 @@ extension LiveCallEngine: CallKitCallHandling {
 
     func callKitEnd(callID: UUID) {
         if matches(callID) != nil {
-            callKitEndedIt = true
+            endLatch.systemEnded(liveCall: hasLiveCall)
             runner?.handle(.hangup)
         } else {
             earlyActions[callID.uuidString.lowercased()] = .end
@@ -315,7 +317,7 @@ extension LiveCallEngine: CallKitCallHandling {
     func callKitAudioDidDeactivate(_ session: AVAudioSession) { audio.didDeactivate(session) }
 
     func callKitReset() {
-        callKitEndedIt = true
+        endLatch.systemEnded(liveCall: hasLiveCall)
         runner?.handle(.hangup)
         earlyActions = [:]
     }
@@ -354,9 +356,9 @@ extension LiveCallEngine: VoIPPushHandling {
         case .answeredElsewhere: "answered_elsewhere"
         case .failed, .remoteEnded: "hangup"
         }
-        pushKitIDs[callID] = kitCallID
-        if runner?.callID == callID {
-            callKitEndedIt = true   // the system call is already ended
+        if runner?.callID == callID, hasLiveCall {
+            pushKitIDs[callID] = kitCallID
+            endLatch.systemEnded(liveCall: true)   // the system call is already ended
             runner?.handle(.server(.ended(callID: callID, reason: why)))
         } else {
             voip?.pushCallFinished(kitCallID: kitCallID)

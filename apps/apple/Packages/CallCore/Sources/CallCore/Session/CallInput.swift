@@ -27,6 +27,8 @@ public enum CallInput: Sendable {
     case localAnswer(String)
     case stats(MediaStats)
     case pathChanged
+    /// Media, ICE or sealing failed on this device. Ends as failed; a ringing callee does not touch the server.
+    case localFailure
     case tick
     case contextChanged(CallContext)
 }

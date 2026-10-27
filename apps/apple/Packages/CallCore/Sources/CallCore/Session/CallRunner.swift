@@ -126,7 +126,7 @@ public final class CallRunner {
                 log("call effect failed: \(type(of: error))")
                 if isCritical(effect) {
                     // The rest of this batch no longer makes sense (no invite without media, no answer without an SDP).
-                    handle(.hangup)
+                    handle(.localFailure)
                     return
                 }
             }

@@ -43,6 +43,7 @@ final class AppModel {
     private let callSealer = UnavailableCallSignalSealer()   // plan 7's `LiveChatStore` provides the MLS sealer
     private var pathMonitor: PathMonitor?
     private var isBackground = false
+    private var connectionState: ConnectionState = .idle
     /// Newest stats of the running call, for the call info sheet.
     private(set) var callStats: MediaStats?
     #if os(iOS)
@@ -321,7 +322,11 @@ final class AppModel {
         let c = LiveConnection(client: client, transport: URLSessionWebSocketTransport())
         connection = c
         let signaling = LiveCallSignaling(connection: c, client: client)
-        let engine = LiveCallEngine(chat: chatStore, signaling: signaling, sealer: callSealer,
+        // A VoIP push can wake a suspended iPhone whose socket was stopped: every call request first starts it.
+        let gated = GatedCallSignaling(base: signaling, connection: AppCallConnection(
+            isConnected: { [weak self] in await self?.connectionState == .connected },
+            connect: { [weak self] in if let self { await self.startLive() } }))
+        let engine = LiveCallEngine(chat: chatStore, signaling: gated, sealer: callSealer,
                                     server: server, settings: settings, network: network)
         engine.onChange = { [weak self] state in self?.callStateChanged(state) }
         engine.onStats = { [weak self] stats in self?.callStats = stats }
@@ -344,10 +349,15 @@ final class AppModel {
             },
             Task { [weak self] in
                 // `.revoked` also reaches the client's 401 path, which calls `deviceWasRemoved`.
-                for await state in c.states where state == .revoked { await self?.stopLive() }
+                for await state in c.states {
+                    await self?.setConnectionState(state)
+                    if state == .revoked { await self?.stopLive() }
+                }
             },
         ]
     }
+
+    private func setConnectionState(_ state: ConnectionState) { connectionState = state }
 
     private func startPathMonitor() {
         let monitor = PathMonitor()
@@ -388,6 +398,7 @@ final class AppModel {
 
     private func stopLive() async {
         await connection?.stop()
+        connectionState = .idle
         if live?.isSignedIn != true {   // signed out: drop the connection and its listeners
             liveTasks.forEach { $0.cancel() }
             liveTasks = []

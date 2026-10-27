@@ -7,7 +7,7 @@ public enum CallServerEvent: Sendable, Equatable {
     case ended(callID: String, reason: String)
 }
 public enum CallStatus: Sendable, Equatable { case ringing, answered, ended(reason: String), unknown }
-public enum CallError: Error, Equatable { case disabled, fingerprintMismatch, notFound }
+public enum CallError: Error, Equatable { case disabled, fingerprintMismatch, notFound, notConnected }
 
 public protocol CallSignaling: Sendable {
     var events: AsyncStream<CallServerEvent> { get }
