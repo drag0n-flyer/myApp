@@ -34,16 +34,43 @@ tasks.register("checkR8KeepRules") {
     group = "verification"
     dependsOn("minifyReleaseWithR8")
     val dir = mappingDir.get().asFile
+    // AGP 9 leaves only a partitioned mapping.prt in outputs/; the plain mapping.txt stays in intermediates.
+    val mappingTxt = layout.buildDirectory.file("intermediates/mapping/release/minifyReleaseWithR8/mapping.txt").get()
     doLast {
         val seeds = dir.resolve("seeds.txt").readLines()
-        val mapping = dir.resolve("mapping.txt").readLines().filter { !it.startsWith(" ") && it.contains(" -> ") }
+        val mapping = mappingTxt.asFile.readLines().filter { !it.startsWith(" ") && it.contains(" -> ") }
+        check(mapping.isNotEmpty()) { "mapping.txt has no class entries; R8 output is empty or truncated" }
         // FfiConverter extends no JNA type, so only the explicit ffi keep rule retains it.
         check(seeds.contains("org.example.app.mls.ffi.FfiConverter")) { "R8 did not keep the UniFFI bindings" }
         for (prefix in listOf("org.example.app.mls.ffi.", "com.sun.jna.")) {
             check(seeds.any { it.startsWith(prefix) }) { "R8 did not keep any $prefix class" }
-            val renamed = mapping.filter { it.startsWith(prefix) && it.substringBefore(" -> ") != it.substringAfter(" -> ").removeSuffix(":") }
+            val renamed = mapping.filter { it.startsWith(prefix) && !it.contains("\$\$ExternalSynthetic") && it.substringBefore(" -> ") != it.substringAfter(" -> ").removeSuffix(":") }
             check(renamed.isEmpty()) { "R8 renamed $prefix classes: ${renamed.take(3)}" }
         }
+    }
+}
+
+// MLS state is single-process: no component of the merged release manifest may declare android:process
+// (a library could add one through manifest merging).
+tasks.register("checkNoComponentProcess") {
+    group = "verification"
+    dependsOn("processReleaseManifest")
+    val manifest = layout.buildDirectory.file("intermediates/merged_manifests/release/processReleaseManifest/AndroidManifest.xml").get()
+    doLast {
+        // Parse the XML (not regex) so single quotes, attribute order and <application> are all covered.
+        val doc = javax.xml.parsers.DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
+            .newDocumentBuilder().parse(manifest.asFile)
+        val androidNs = "http://schemas.android.com/apk/res/android"
+        val offenders = mutableListOf<String>()
+        val all = doc.getElementsByTagName("*")
+        for (i in 0 until all.length) {
+            val el = all.item(i) as org.w3c.dom.Element
+            if (el.tagName in setOf("application", "activity", "activity-alias", "service", "receiver", "provider") &&
+                el.hasAttributeNS(androidNs, "process")) {
+                offenders += "<${el.tagName} android:name=${el.getAttributeNS(androidNs, "name")} android:process=${el.getAttributeNS(androidNs, "process")}>"
+            }
+        }
+        check(offenders.isEmpty()) { "Merged release manifest declares android:process: $offenders" }
     }
 }
 
