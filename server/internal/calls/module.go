@@ -65,24 +65,35 @@ func (m *Module) Run(ctx context.Context) {
 	}
 }
 
-// tick times out ringing calls and drops expired ones.
+// tick times out ringing calls and drops expired ones. Directory lookups run
+// outside the lock; the call is re-checked under it before it is ended.
 func (m *Module) tick(ctx context.Context) {
 	now := m.d.Now()
+	type due struct {
+		id string
+		e  *entry
+	}
+	var dues []due
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	for id, e := range m.calls {
-		if expired(e.call, now) {
+		switch {
+		case expired(e.call, now):
 			delete(m.calls, id)
-			continue
+		case e.call.State == Ringing && now.Sub(e.call.Started) >= ringTimeout:
+			dues = append(dues, due{id, e})
 		}
-		if e.call.State != Ringing || now.Sub(e.call.Started) < ringTimeout {
-			continue
-		}
-		devs, err := m.d.Directory.DeviceIDs(ctx, e.call.CalleeAccount)
+	}
+	m.mu.Unlock()
+	for _, du := range dues {
+		devs, err := m.d.Directory.DeviceIDs(ctx, du.e.call.CalleeAccount)
 		if err != nil {
 			continue // retried next second
 		}
-		m.deliver(ctx, e, e.call.Tick(devs, now))
+		m.mu.Lock()
+		if m.calls[du.id] == du.e && du.e.call.State == Ringing {
+			m.deliver(ctx, du.e, du.e.call.Tick(devs, m.d.Now()))
+		}
+		m.mu.Unlock()
 	}
 }
 
@@ -163,31 +174,50 @@ func (m *Module) pushRing(dev string, payload []byte) {
 
 // op looks up the call, checks the caller may touch it, and runs fn with the
 // callee's current devices. Anything that is not the caller's device or an
-// account device of the callee gets not_found.
+// account device of the callee gets not_found. Directory lookups happen
+// outside m.mu (a slow database must not stall other calls); the entry is
+// looked up again under the lock before anything changes.
 func (m *Module) op(ctx context.Context, from core.Principal, data json.RawMessage,
 	fn func(e *entry, devs []string, now time.Time) ([]Output, error)) (any, error) {
 	f, err := decode(data)
 	if err != nil {
 		return nil, err
 	}
+	notFound := httpx.Err("not_found", "no such call")
+
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	now := m.d.Now()
-	e := m.lookup(f.CallID, now)
+	e := m.lookup(f.CallID, m.d.Now())
 	if e == nil || !m.mayAct(e, from) {
-		return nil, httpx.Err("not_found", "no such call")
+		m.mu.Unlock()
+		return nil, notFound
 	}
-	devs, err := m.d.Directory.DeviceIDs(ctx, e.call.CalleeAccount)
+	calleeAccount, callerDevice, answered := e.call.CalleeAccount, e.call.CallerDevice, e.call.State == Answered
+	m.mu.Unlock()
+
+	devs, err := m.d.Directory.DeviceIDs(ctx, calleeAccount)
 	if err != nil {
 		return nil, err
 	}
-	if m.reap(ctx, e, devs, now) {
+	callerGone := false
+	if answered {
+		if _, err := m.d.Directory.AccountOf(ctx, callerDevice); errors.Is(err, core.ErrNotFound) {
+			callerGone = true
+		}
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := m.d.Now()
+	if m.lookup(f.CallID, now) != e {
+		return nil, notFound // forgotten while we looked
+	}
+	if m.reap(ctx, e, devs, callerGone, now) {
 		return nil, httpx.Err("bad_request", "call is no longer active")
 	}
 	outs, err := fn(e, devs, now)
 	switch {
 	case errors.Is(err, ErrNotParticipant):
-		return nil, httpx.Err("not_found", "no such call")
+		return nil, notFound
 	case errors.Is(err, ErrWrongState):
 		return nil, httpx.Err("bad_request", "call is not in a state that allows this")
 	case err != nil:
@@ -199,19 +229,13 @@ func (m *Module) op(ctx context.Context, from core.Principal, data json.RawMessa
 
 // reap ends an answered call as failed when either connected device has been
 // revoked, so a dead device never keeps receiving signals. It reports whether
-// it ended the call.
-func (m *Module) reap(ctx context.Context, e *entry, devs []string, now time.Time) bool {
+// it ended the call. Call it with m.mu held; it does no I/O but Send.
+func (m *Module) reap(ctx context.Context, e *entry, devs []string, callerGone bool, now time.Time) bool {
 	c := e.call
 	if c.State != Answered {
 		return false
 	}
-	gone := !slices.Contains(devs, c.AnsweredBy)
-	if !gone {
-		if _, err := m.d.Directory.AccountOf(ctx, c.CallerDevice); errors.Is(err, core.ErrNotFound) {
-			gone = true
-		}
-	}
-	if !gone {
+	if !callerGone && slices.Contains(devs, c.AnsweredBy) {
 		return false
 	}
 	m.deliver(ctx, e, c.end(ReasonFailed, devs, now))

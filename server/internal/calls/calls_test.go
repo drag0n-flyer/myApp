@@ -69,10 +69,11 @@ type world struct {
 	carol           core.Principal
 }
 
-func setup(t *testing.T) *world {
+func setup(t *testing.T, opts ...func(*core.Deps)) *world {
 	t.Helper()
 	pushes := make(chan [2]any, 10)
-	d, f := testkit.NewDeps(t, func(d *core.Deps) { d.Push = chanPusher{pushes} })
+	opts = append([]func(*core.Deps){func(d *core.Deps) { d.Push = chanPusher{pushes} }}, opts...)
+	d, f := testkit.NewDeps(t, opts...)
 	fr := &fakeFrames{handlers: map[string]realtime.FrameHandler{}, online: map[string]bool{}}
 	w := &world{m: New(d, fr), fr: fr, f: f, pushes: pushes}
 	w.ana = testkit.Account(t, d, "ana")
@@ -298,5 +299,65 @@ func TestTickDropsOldCalls(t *testing.T) {
 	w.m.mu.Unlock()
 	if n != 0 {
 		t.Fatalf("%d calls kept", n)
+	}
+}
+
+// slowDir blocks DeviceIDs for one account until released.
+type slowDir struct {
+	core.Directory
+	account string
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (s *slowDir) DeviceIDs(ctx context.Context, acct string) ([]string, error) {
+	if acct == s.account {
+		s.entered <- struct{}{}
+		<-s.release
+	}
+	return s.Directory.DeviceIDs(ctx, acct)
+}
+
+func TestSlowLookupDoesNotBlockOtherCalls(t *testing.T) {
+	sd := &slowDir{entered: make(chan struct{}, 4), release: make(chan struct{})}
+	w := setup(t, func(d *core.Deps) { sd.Directory = d.Directory; d.Directory = sd })
+	defer func() {
+		select {
+		case <-sd.release:
+		default:
+			close(sd.release)
+		}
+	}()
+	w.invite(t, "c1") // ana -> bob (lookup not slow yet)
+	sd.account = w.carol.AccountID
+	if _, err := w.call(t, w.carol, "call.invite", map[string]any{"callID": "c2", "to": w.ana.AccountID, "payload": []byte("x")}); err != nil {
+		t.Fatal(err)
+	}
+	sd.account = w.bob1.AccountID
+	done := make(chan error, 1)
+	go func() {
+		_, err := w.call(t, w.bob1, "call.hangup", map[string]any{"callID": "c1"})
+		done <- err
+	}()
+	<-sd.entered // the bob lookup is now stuck
+	other := make(chan error, 1)
+	go func() {
+		_, err := w.call(t, w.ana, "call.status", map[string]any{"callID": "c2"})
+		if err == nil {
+			_, err = w.call(t, w.ana, "call.invite", map[string]any{"callID": "c3", "to": w.carol.AccountID, "payload": []byte("x")})
+		}
+		other <- err
+	}()
+	select {
+	case err := <-other:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("unrelated call operation blocked behind a slow directory lookup")
+	}
+	close(sd.release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }
