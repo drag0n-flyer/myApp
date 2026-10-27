@@ -1,9 +1,24 @@
 public enum CallEndReason: Equatable, Sendable {
-    case hungUp, connectionLost
+    case hungUp, connectionLost, declined, missed, answeredElsewhere, failed
+
+    public var text: String {
+        switch self {
+        case .hungUp: "Call ended"
+        case .connectionLost: "Call ended: connection lost"
+        case .declined: "Call declined"
+        case .missed: "No answer"
+        case .answeredElsewhere: "Answered on another device"
+        case .failed: "Call failed"
+        }
+    }
 }
 
 public enum CallPhase: Equatable, Sendable {
     case connecting, active, reconnecting
+    /// Outgoing call, waiting for the other person to answer.
+    case ringing
+    /// A ringing call shown in-app (Mac).
+    case incoming
     case ended(CallEndReason)
 }
 
@@ -67,4 +82,9 @@ public protocol CallEngine: AnyObject {
     func setSpeaker(_ on: Bool)
     func setVideo(_ on: Bool)
     func end()
+    func answer(video: Bool)
+    func decline()
+    func setNetwork(_ type: NetworkType)
+    func reset()
+    var onChange: ((CallState?) -> Void)? { get set }
 }

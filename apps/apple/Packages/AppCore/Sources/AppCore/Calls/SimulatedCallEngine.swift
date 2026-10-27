@@ -33,6 +33,28 @@ public final class SimulatedCallEngine: CallEngine {
         recompute()
     }
 
+    /// Sample build: a call rings in-app.
+    public func simulateIncoming(from contact: Contact, video: Bool) {
+        condition = .good
+        reconnectingFor = 0
+        state = CallState(contact: contact, phase: .incoming, isVideoCall: video, isVideoOn: false,
+                          isMuted: false, isSpeakerOn: video, quality: .good, banner: nil, elapsed: 0,
+                          bytesUsed: 0, inCallPreference: nil, effectiveMode: .ultraLow, network: network)
+        recompute()
+    }
+
+    public func answer(video: Bool) {
+        guard state?.phase == .incoming else { return }
+        update {
+            $0.phase = .active
+            $0.isVideoOn = video && $0.isVideoCall && !(self.network == .mobile && self.settings.videoOffOnMobile)
+        }
+    }
+
+    public func decline() {
+        update { $0.phase = .ended(.declined); $0.banner = nil }
+    }
+
     public func setPreference(_ preference: ModePreference) {
         update { $0.inCallPreference = preference }
     }
@@ -98,7 +120,7 @@ public final class SimulatedCallEngine: CallEngine {
                     s.phase = .ended(.connectionLost)
                     s.banner = .connectionLost
                 }
-            case .ended:
+            case .ringing, .incoming, .ended:
                 break
             }
         }
