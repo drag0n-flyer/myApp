@@ -49,12 +49,22 @@ type APNs interface {
 	Send(ctx context.Context, h pushproto.Handle, kind string, data []byte) (gone bool, err error)
 }
 
+// FCM delivers one push to Firebase Cloud Messaging. gone is true when FCM says
+// the registration token is no longer valid.
+type FCM interface {
+	Send(ctx context.Context, h pushproto.Handle, kind string, data []byte) (gone bool, err error)
+}
+
 // GatewayConfig is the gateway's configuration.
 type GatewayConfig struct {
 	HPKEKey    hpke.PrivateKey // must be DHKEM(X25519)
 	HPKEPublic []byte          // the raw X25519 public key of HPKEKey
 	BundleIDs  []string
-	Now        func() time.Time
+	// FCM sends to Android handles; with nil, fcm handles are refused.
+	FCM FCM
+	// AndroidAppIDs are the application IDs allowed in fcm handles.
+	AndroidAppIDs []string
+	Now           func() time.Time
 	// TrustProxy keys per-IP limits on the last X-Forwarded-For entry.
 	TrustProxy bool
 }
@@ -298,14 +308,24 @@ func (g *gateway) push(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return apiErr("bad_request", "handle cannot be opened")
 	}
-	if !slices.Contains(g.cfg.BundleIDs, h.Bundle) {
-		return apiErr("bad_request", "bundle not allowed")
-	}
-	if (h.Kind != "alert" && h.Kind != "voip") || (h.Env != "production" && h.Env != "sandbox") || h.Token == "" {
+	if h.Kind != "alert" && h.Kind != "voip" && h.Kind != "fcm" {
 		return apiErr("bad_request", "handle is not valid")
 	}
-	if req.Kind == "message" && h.Kind != "alert" {
-		return apiErr("bad_request", "a message needs an alert handle")
+	allowed := g.cfg.BundleIDs
+	if h.Kind == "fcm" {
+		allowed = g.cfg.AndroidAppIDs
+		if g.cfg.FCM == nil {
+			return apiErr("bad_request", "handle is not valid")
+		}
+	}
+	if !slices.Contains(allowed, h.Bundle) {
+		return apiErr("bad_request", "bundle not allowed")
+	}
+	if (h.Env != "production" && h.Env != "sandbox") || h.Token == "" {
+		return apiErr("bad_request", "handle is not valid")
+	}
+	if req.Kind == "message" && h.Kind != "alert" && h.Kind != "fcm" {
+		return apiErr("bad_request", "a message needs an alert or fcm handle")
 	}
 	// Unpad only validates. The padded bytes go on to APNs unchanged, so Apple
 	// cannot see the true size; the device unpads.
@@ -320,9 +340,14 @@ func (g *gateway) push(w http.ResponseWriter, r *http.Request) error {
 		return apiErr("rate_limited", "handle over its limit")
 	}
 
-	gone, err := g.apns.Send(r.Context(), h, req.Kind, req.Data)
+	var sender APNs = g.apns
+	provider := "apns"
+	if h.Kind == "fcm" {
+		sender, provider = g.cfg.FCM, "fcm"
+	}
+	gone, err := sender.Send(r.Context(), h, req.Kind, req.Data)
 	if err != nil {
-		g.log.Error("apns send failed", "errType", errTypeName(err))
+		g.log.Error("push send failed", "provider", provider, "errType", errTypeName(err))
 		return apiErr("upstream", "push provider failed")
 	}
 	if gone {
