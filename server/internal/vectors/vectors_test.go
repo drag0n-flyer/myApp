@@ -7,6 +7,7 @@ import (
 	"crypto/hpke"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"net/http"
 	"net/http/httptest"
@@ -128,7 +129,20 @@ func genPadding(t *testing.T) {
 			PaddedHex:  hex.EncodeToString(pushproto.Pad(p)),
 		})
 	}
+	f.Negative = []PaddingNegative{
+		{"non-zero byte in the padding", hex.EncodeToString(dirty(10))},
+		{"non-zero last byte", hex.EncodeToString(dirty(255))},
+		{"length beyond the bucket", "ffff" + hex.EncodeToString(make([]byte, 254))},
+		{"not a bucket size", hex.EncodeToString(make([]byte, 300))},
+		{"empty", ""},
+	}
 	write(t, filePadding, f)
+}
+
+func dirty(at int) []byte {
+	b := pushproto.Pad([]byte("hi"))
+	b[at] = 1
+	return b
 }
 
 func sigCases() []struct {
@@ -140,10 +154,32 @@ func sigCases() []struct {
 		body             []byte
 	}{
 		{"POST", "/v1/push", "1767225600", []byte("{}")},
-		{"POST", "/v1/push", "1767225601", []byte(`{"handle":"AAEC","kind":"message","data":"AAAA","nonce":"n1"}`)},
+		{"POST", "/v1/push", "1767225601", pushRequestBody(nil)},
 		{"POST", "/v1/push", "1767225602", nil},
 		{"POST", "/v1/push", "1767225603", []byte("ünïcode body ✓")},
 	}
+}
+
+func pushRequestFields() PushRequestFields {
+	return PushRequestFields{
+		HandleB64: base64.StdEncoding.EncodeToString(seq(0xc0, 48)),
+		Kind:      "message",
+		DataB64:   base64.StdEncoding.EncodeToString(pushproto.Pad([]byte{0xfb, 0xff, 0xfe, 0x01})),
+		Nonce:     "n-0001",
+	}
+}
+
+// pushRequestBody is the exact body the server sends: json.Marshal of
+// pushproto.PushRequest (padded standard base64 for the byte fields).
+func pushRequestBody(_ testing.TB) []byte {
+	f := pushRequestFields()
+	h, _ := base64.StdEncoding.DecodeString(f.HandleB64)
+	d, _ := base64.StdEncoding.DecodeString(f.DataB64)
+	b, err := json.Marshal(pushproto.PushRequest{Handle: h, Kind: f.Kind, Data: d, Nonce: f.Nonce})
+	if err != nil {
+		panic(err)
+	}
+	return b
 }
 
 func signedReq(method, path, ts string, body []byte, key ed25519.PrivateKey) (*http.Request, time.Time) {
@@ -160,8 +196,13 @@ func genSignature(t *testing.T) {
 		PublicKeyB64: b64.EncodeToString(key.Public().(ed25519.PublicKey))}
 	for _, c := range sigCases() {
 		req, _ := signedReq(c.method, c.path, c.ts, c.body, key)
+		var pr *PushRequestFields
+		if c.ts == "1767225601" {
+			x := pushRequestFields()
+			pr = &x
+		}
 		f.Cases = append(f.Cases, SignatureCase{
-			Method: c.method, Path: c.path, Timestamp: c.ts, BodyB64: b64.EncodeToString(c.body),
+			Method: c.method, Path: c.path, Timestamp: c.ts, BodyB64: b64.EncodeToString(c.body), PushRequest: pr,
 			SigningString: string(pushproto.SigningString(c.method, c.path, c.ts, c.body)),
 			// X-Signature as the Go code writes it: padded standard base64 (see the report).
 			SignatureB64: req.Header.Get("X-Signature"),
@@ -272,6 +313,14 @@ func TestPadding(t *testing.T) {
 			t.Errorf("%s: unpad mismatch", c.Name)
 		}
 	}
+	if len(f.Negative) < 3 {
+		t.Error("too few negative padding cases")
+	}
+	for _, n := range f.Negative {
+		if _, err := pushproto.Unpad(unhex(t, n.PaddedHex)); err == nil {
+			t.Errorf("negative %q unpadded", n.Name)
+		}
+	}
 	for _, n := range []int{0, 1, 254, 255, 1000, 3070, 3071} {
 		if !lens[n] {
 			t.Errorf("missing length %d", n)
@@ -295,10 +344,23 @@ func TestRequestSignature(t *testing.T) {
 	if len(f.Cases) < 3 {
 		t.Fatal("need at least 3 cases")
 	}
-	empty := false
+	empty, sawReq := false, false
 	for _, c := range f.Cases {
 		body := unb64(t, c.BodyB64)
 		empty = empty || len(body) == 0
+		if c.PushRequest != nil {
+			sawReq = true
+			if want := pushRequestBodyFrom(t, *c.PushRequest); !bytes.Equal(want, body) {
+				t.Errorf("push request body mismatch: %s", body)
+			}
+			var pr pushproto.PushRequest
+			if err := json.Unmarshal(body, &pr); err != nil || len(pr.Handle) != 48 || pr.Nonce == "" {
+				t.Errorf("body does not decode as a push request: %v", err)
+			}
+			if _, err := pushproto.Unpad(pr.Data); err != nil {
+				t.Errorf("data is not padded payload: %v", err)
+			}
+		}
 		if got := string(pushproto.SigningString(c.Method, c.Path, c.Timestamp, body)); got != c.SigningString {
 			t.Errorf("signing string mismatch: %q", got)
 		}
@@ -321,6 +383,23 @@ func TestRequestSignature(t *testing.T) {
 	if !empty {
 		t.Error("no empty-body case")
 	}
+	if !sawReq {
+		t.Error("no push request case")
+	}
+}
+
+func pushRequestBodyFrom(t testing.TB, f PushRequestFields) []byte {
+	t.Helper()
+	h, err1 := base64.StdEncoding.DecodeString(f.HandleB64)
+	d, err2 := base64.StdEncoding.DecodeString(f.DataB64)
+	if err1 != nil || err2 != nil {
+		t.Fatal("pushRequest fields are not standard base64")
+	}
+	b, err := json.Marshal(pushproto.PushRequest{Handle: h, Kind: f.Kind, Data: d, Nonce: f.Nonce})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }
 
 func checkHeader(t *testing.T, h Header) {

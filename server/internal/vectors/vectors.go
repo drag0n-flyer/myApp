@@ -28,20 +28,38 @@ type PaddingCase struct {
 	PaddedHex  string `json:"paddedHex"`
 }
 
+// PaddingNegative is padded data that Unpad must reject.
+type PaddingNegative struct {
+	Name      string `json:"name"`
+	PaddedHex string `json:"paddedHex"`
+}
+
 // PushPadding is push-padding.json.
 type PushPadding struct {
 	Header
-	Cases []PaddingCase `json:"cases"`
+	Cases    []PaddingCase     `json:"cases"`
+	Negative []PaddingNegative `json:"negative"`
 }
 
 // SignatureCase is one request-signature case.
 type SignatureCase struct {
-	Method        string `json:"method"`
-	Path          string `json:"path"`
-	Timestamp     string `json:"timestamp"`
-	BodyB64       string `json:"bodyB64"`
-	SigningString string `json:"signingString"`
-	SignatureB64  string `json:"signatureB64"`
+	Method    string `json:"method"`
+	Path      string `json:"path"`
+	Timestamp string `json:"timestamp"`
+	BodyB64   string `json:"bodyB64"`
+	// PushRequest, when set, is the structure the body is the JSON encoding of.
+	PushRequest   *PushRequestFields `json:"pushRequest,omitempty"`
+	SigningString string             `json:"signingString"`
+	SignatureB64  string             `json:"signatureB64"`
+}
+
+// PushRequestFields are the fields of a POST /v1/push body. HandleB64 and
+// DataB64 are standard base64 with padding, as the Go encoding of []byte.
+type PushRequestFields struct {
+	HandleB64 string `json:"handleB64"`
+	Kind      string `json:"kind"`
+	DataB64   string `json:"dataB64"`
+	Nonce     string `json:"nonce"`
 }
 
 // RequestSignature is request-signature.json.

@@ -82,7 +82,7 @@ func Pad(payload []byte) []byte {
 	return out
 }
 
-// Unpad reverses Pad. It requires a bucket-sized input and a consistent length.
+// Unpad reverses Pad. It requires a bucket-sized input, a consistent length and zero padding.
 func Unpad(b []byte) ([]byte, error) {
 	ok := false
 	for _, s := range buckets {
@@ -96,6 +96,11 @@ func Unpad(b []byte) ([]byte, error) {
 	n := int(binary.BigEndian.Uint16(b))
 	if n > len(b)-2 {
 		return nil, errors.New("pushproto: bad padded length")
+	}
+	for _, c := range b[2+n:] {
+		if c != 0 {
+			return nil, errors.New("pushproto: non-zero padding")
+		}
 	}
 	return append([]byte(nil), b[2:2+n]...), nil
 }

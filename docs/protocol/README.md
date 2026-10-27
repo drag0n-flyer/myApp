@@ -28,10 +28,11 @@ TODO(plan 7): replace the link above with the schema document once plan 7 publis
 
 ## Conventions
 
-- **Binary data in JSON** is base64url without padding (RFC 4648 §5): KeyPackages, commits, Welcomes, ciphertexts, escrow copies, sealed blobs, push handles, public keys, call payloads and the push field `d`. Writers MUST NOT add padding. There are three exceptions, each stated where it applies:
+- **Binary data in JSON** is base64url without padding (RFC 4648 §5): KeyPackages, commits, Welcomes, ciphertexts, escrow copies, sealed blobs, push handles, public keys and call payloads. Writers MUST NOT add padding. This rule covers client-facing fields only. There are four exceptions, each stated where it applies:
   - the TURN credential is standard base64 with padding, because coturn's shared-secret scheme defines it that way ([calls](calls.md#turn-credentials))
   - the binary fields inside a `MessageBody` use standard base64, because that object is client-internal (plan 7)
   - DTLS fingerprints are colon-separated hex, as in SDP
+  - the server-to-gateway request and the APNs payload use standard base64 with padding (Go's default for a byte string in JSON): `handle` and `data` in the push request body, the `X-Signature` header, and the APNs field `d` ([push](push.md#server-to-gateway))
 - **Text is UTF-8** everywhere: JSON bodies (no byte-order mark), MLS credential identities, HPKE `info` strings and signing strings. Strings are compared and signed as their exact UTF-8 bytes, with no terminator and no normalization.
 - **Identifiers** (accounts, devices, conversations) are lowercase UUID strings made by the server. Call IDs are UUID strings and message IDs are lowercase UUIDs, both made by clients. Every identifier is an opaque string to the receiver ([versioning](versioning.md#federation-ready-identifiers)).
 - **Times:** a `Time` field made by the server (`sentAt`, `createdAt`) is RFC 3339 in UTC. A `MessageBody` time (`at`) is an integer count of milliseconds since 1970. The push header `X-Timestamp` and a TURN expiry are decimal Unix seconds.
@@ -64,7 +65,7 @@ These rules and values are in this folder but are not fixed by the server design
 | The credential's device must equal the offering device or `fromDeviceID` | [Calls](calls.md#what-the-receiver-must-check) |
 | `renegotiate` without `sdp` asks the caller to restart ICE; restart after 2.5 s, retry every 5 s, give up at 30 s | [Calls](calls.md#ice-restarts-and-reconnection) |
 | Reuse cached TURN credentials only with at least 4 hours left | [Calls](calls.md#turn-credentials) |
-| Strict unpadding; the gateway forwards padded bytes; `X-Signature` and `d` are base64url without padding | [Push](push.md) |
+| Strict unpadding; the gateway forwards padded bytes; `X-Signature`, `handle`, `data` and `d` are standard base64 with padding | [Push](push.md) |
 | Notification extension: 2 second lock wait, 25 second deadline, at most 20 inbox items | [Push](push.md#what-the-notification-extension-does-with-d) |
 | Escrow `sentAt` is RFC 3339 | [Escrow](escrow.md#the-plaintext) |
 | After `escrow_required` or `escrow_forbidden` the client refreshes the server mode and retries once (plan 7 step 7); it still follows the pinned-mode table | [Escrow](escrow.md#when-an-escrow-copy-is-sent) |

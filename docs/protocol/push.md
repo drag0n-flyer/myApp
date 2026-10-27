@@ -52,7 +52,7 @@ The padded bytes travel unchanged through the gateway to the device, where the n
 
 ## Server to gateway
 
-The server sends `POST {gateway}/v1/push` with the body `{"handle": "<base64url>", "kind": "message" or "call", "data": "<base64url of the padded payload>"}`. The endpoints, the gateway's registration and its replies are in the server design.
+The server sends `POST {gateway}/v1/push` with the body `{"handle": "<base64>", "kind": "message" or "call", "data": "<base64 of the padded payload>", "nonce": "<text>"}`. `handle` and `data` are **standard base64 with padding** (Go's default for a byte string in JSON), and `nonce` is optional text that makes every body, and so every signature, unique within one second. The gateway ignores it. The base64url rule of the [README](README.md#conventions) covers client-facing fields only, and this request is not one. The endpoints, the gateway's registration and its replies are in the server design.
 
 Three headers authenticate the request:
 
@@ -60,7 +60,7 @@ Three headers authenticate the request:
 |---|---|
 | `X-Server-ID` | The ID the gateway gave this server at registration |
 | `X-Timestamp` | The sender's clock, in decimal Unix seconds |
-| `X-Signature` | An Ed25519 signature over the signing string below, in base64url without padding |
+| `X-Signature` | An Ed25519 signature over the signing string below, in standard base64 with padding |
 
 The signing string is five lines joined by `\n`, with no trailing newline:
 
@@ -84,7 +84,7 @@ The gateway's checks before it sends, the order they run in, and its limits per 
 
 ## What the notification extension does with `d`
 
-APNs delivers `d`: the padded payload in base64url. For a message, the alert push has `mutable-content`, so the notification extension runs before anything is shown.
+APNs delivers `d`: the padded payload in standard base64 with padding. For a message, the alert push has `mutable-content`, so the notification extension runs before anything is shown.
 
 1. Decode `d` and unpad it. If that fails, show the generic text from the push (`[App]`, "New message").
 2. **Empty payload:** fetch the inbox, at most 20 items, and show the newest stored message, or the generic text.
@@ -116,8 +116,7 @@ The rows are in the threat model's [section 5.5](../security/threat-model.md#55-
 ## Open points
 
 - **Plan 2 D3 and the padding:** its test says the fake APNs receives "the unpadded data". The server design and plans 4, 7 and 8 have the device unpad, so the gateway forwards padded bytes. Unpadding at the gateway would show Apple the true size and make the extension reject the payload.
-- **Encodings:** plan 2 D1 declares the gateway's `handle` and `data` as Go `[]byte` fields, which encode as padded standard base64 unless a custom marshaller is used. Plan 7 reads `d` as plain base64. This document says base64url without padding for all of them.
-- **`X-Signature` encoding** is "base64" in the server design. This document says base64url without padding, like the other binary fields.
+- **Encodings (decided by the owner, 2026-10-28):** the spec follows the code. `handle`, `data`, `X-Signature` and `d` are standard base64 with padding, which is what Go's `[]byte` JSON encoding and `pushproto.Sign` produce. Only client-facing fields are base64url without padding.
 - **Gateway key custody:** replacing the gateway's HPKE key needs an app release ([OPEN-13](../security/threat-model.md#open-13-push-gateway-key-custody)).
 
 Test vectors: [push-padding.json](test-vectors/push-padding.json), [request-signature.json](test-vectors/request-signature.json), [sealed-handle.json](test-vectors/sealed-handle.json).
