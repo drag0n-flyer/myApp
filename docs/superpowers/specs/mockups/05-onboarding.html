@@ -1,0 +1,119 @@
+<style>
+  .phones { display:flex; gap:22px; flex-wrap:wrap; justify-content:center; }
+  .phone { width:260px; height:560px; border-radius:42px; border:9px solid #1c1c1e; overflow:hidden; position:relative; font-family:-apple-system,"SF Pro Text","Helvetica Neue",Arial,sans-serif; background:#fff; color:#000; box-shadow:0 10px 30px rgba(0,0,0,.25); }
+  .grad { background:radial-gradient(120% 70% at 50% 0%,#DCE9FF 0%,#F3F0FF 45%,#fff 80%); }
+  .glass { background:rgba(255,255,255,.6); backdrop-filter:blur(18px) saturate(190%); -webkit-backdrop-filter:blur(18px) saturate(190%); border:1px solid rgba(255,255,255,.85); box-shadow:0 6px 22px rgba(0,0,0,.1), inset 0 1px 0 rgba(255,255,255,.95); }
+  .sb { height:38px; display:flex; justify-content:space-between; align-items:center; padding:6px 24px 0; font-size:12.5px; font-weight:600; }
+  .pad { padding:0 18px; }
+  .logo { width:84px; height:84px; border-radius:22px; margin:56px auto 18px; background:linear-gradient(135deg,#0A84FF,#5E5CE6); display:flex; align-items:center; justify-content:center; font-size:40px; color:#fff; box-shadow:0 10px 30px rgba(10,132,255,.35); }
+  .h1 { font-size:26px; font-weight:700; text-align:center; letter-spacing:-.4px; }
+  .h2 { font-size:22px; font-weight:700; letter-spacing:-.3px; margin:10px 0 6px; }
+  .p { font-size:13.5px; color:#6D6D72; text-align:center; line-height:1.4; margin-top:8px; }
+  .pl { font-size:13px; color:#6D6D72; line-height:1.4; }
+  .feat { margin:26px 6px 0; }
+  .f { display:flex; gap:12px; align-items:flex-start; margin-bottom:14px; font-size:13px; }
+  .f .e { font-size:20px; width:26px; text-align:center; }
+  .f b { display:block; font-size:13.5px; }
+  .f span { color:#6D6D72; }
+  .btm { position:absolute; left:16px; right:16px; bottom:30px; }
+  .btn { height:48px; border-radius:24px; background:#007AFF; color:#fff; font-weight:600; font-size:15.5px; display:flex; align-items:center; justify-content:center; box-shadow:0 6px 16px rgba(0,122,255,.3), inset 0 1px 0 rgba(255,255,255,.3); }
+  .btn2 { height:44px; border-radius:22px; color:#007AFF; font-weight:600; font-size:15px; display:flex; align-items:center; justify-content:center; margin-top:8px; }
+  .nav { display:flex; align-items:center; padding:0 12px; height:40px; }
+  .circ { width:34px; height:34px; border-radius:50%; display:flex; align-items:center; justify-content:center; color:#007AFF; font-size:18px; }
+  .card { border-radius:16px; padding:12px; margin-bottom:10px; display:flex; gap:12px; align-items:center; font-size:14px; background:#F2F2F7; }
+  .card .e { width:40px; height:40px; border-radius:12px; display:flex; align-items:center; justify-content:center; font-size:20px; color:#fff; flex-shrink:0; }
+  .card small { display:block; color:#6D6D72; font-size:11.5px; margin-top:1px; }
+  .chev { color:#C4C4C7; margin-left:auto; }
+  .field { background:#F2F2F7; border-radius:12px; padding:11px 12px; font-size:14px; margin-bottom:6px; }
+  .field .l { font-size:11px; color:#6D6D72; display:block; margin-bottom:2px; }
+  .ok { color:#34C759; font-size:11.5px; margin:0 0 12px 4px; }
+  .hint { font-size:11.5px; color:#6D6D72; margin:0 0 12px 4px; line-height:1.35; }
+  .srv { display:flex; align-items:center; gap:8px; font-size:12px; color:#6D6D72; background:#F2F2F7; border-radius:12px; padding:8px 10px; margin-bottom:14px; }
+  .key { font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:13px; letter-spacing:.5px; background:#F2F2F7; border-radius:14px; padding:14px; line-height:1.9; text-align:center; margin:14px 0 10px; }
+  .warn { background:#FFF4E5; color:#8A5300; font-size:12px; border-radius:12px; padding:9px 11px; line-height:1.35; }
+  .home { position:absolute; bottom:6px; left:50%; transform:translateX(-50%); width:100px; height:4px; border-radius:3px; background:#000; opacity:.85; }
+  .cap { text-align:center; max-width:260px; margin-top:10px; }
+  .cap h3 { margin:0 0 4px; }
+  .cap p { margin:0; font-size:13.5px; }
+</style>
+
+<h2>Welcome and sign-up, v2</h2>
+<p class="subtitle">Four steps: welcome, pick a server, create the account, save the recovery key.</p>
+
+<div class="phones">
+  <!-- 1 Welcome -->
+  <div>
+    <div class="phone grad">
+      <div class="sb"><span>9:41</span><span>🔋</span></div>
+      <div class="pad">
+        <div class="logo">◐</div>
+        <div class="h1">Welcome to [App]</div>
+        <div class="p">Clear calls and private chats,<br>even on a weak network.</div>
+        <div class="feat">
+          <div class="f"><div class="e">📶</div><div><b>Uses very little data</b><span>Calls keep working on bad networks.</span></div></div>
+          <div class="f"><div class="e">🔒</div><div><b>Private by default</b><span>Your personal chats stay between you and the people you talk to.</span></div></div>
+          <div class="f"><div class="e">🏠</div><div><b>Your own server</b><span>Join a server you trust, or run one yourself.</span></div></div>
+        </div>
+      </div>
+      <div class="btm"><div class="btn">Get started</div><div class="btn2">I already have an account</div></div>
+      <div class="home"></div>
+    </div>
+    <div class="cap"><h3>1 · Welcome</h3><p>Three short points. "Already have an account" leads to linking this device.</p></div>
+  </div>
+
+  <!-- 2 Choose server -->
+  <div>
+    <div class="phone">
+      <div class="sb"><span>9:41</span><span>🔋</span></div>
+      <div class="nav"><div class="circ glass">‹</div></div>
+      <div class="pad">
+        <div class="h2">Join a server</div>
+        <div class="pl" style="margin-bottom:12px">Your chats live on a server. Use ours, or join one you trust.</div><div class="card" style="background:linear-gradient(135deg,#E6F0FF,#EEE9FF);border:1.5px solid #007AFF;flex-wrap:wrap"><div class="e" style="background:linear-gradient(135deg,#0A84FF,#5E5CE6)">◐</div><div>[App] server <span style="font-size:10px;font-weight:700;color:#007AFF;background:#fff;border-radius:6px;padding:1px 5px;margin-left:2px">RECOMMENDED</span><small>Run by the [App] team · Asia, Europe, US</small></div><span class="chev">›</span><div style="width:100%;font-size:11px;color:#6D6D72;margin-top:6px;padding-left:52px">Invite code needed during the beta</div></div><div style="font-size:11px;color:#6D6D72;text-transform:uppercase;margin:12px 4px 6px">Or join another server</div>
+        <div class="card" style="padding:9px 12px"><div class="e" style="background:#007AFF;width:34px;height:34px">⌁</div><div>Scan invite QR code<small>From a friend's phone or a printed card</small></div><span class="chev">›</span></div>
+        <div class="card" style="padding:9px 12px"><div class="e" style="background:#34C759;width:34px;height:34px">🔗</div><div>Paste invite link<small>Opened automatically if you tapped a link</small></div><span class="chev">›</span></div>
+        <div class="card" style="padding:9px 12px"><div class="e" style="background:#8E8E93;width:34px;height:34px">⌨︎</div><div>Enter server address<small>For example chat.example.org</small></div><span class="chev">›</span></div>
+        
+      </div>
+      <div class="home"></div>
+    </div>
+    <div class="cap"><h3>2 · Pick a server</h3><p>The default [App] server first and recommended. Below it: QR code, invite link, or a server address.</p></div>
+  </div>
+
+  <!-- 3 Create account -->
+  <div>
+    <div class="phone">
+      <div class="sb"><span>9:41</span><span>🔋</span></div>
+      <div class="nav"><div class="circ glass">‹</div></div>
+      <div class="pad">
+        <div class="h2">Create your account</div>
+        <div class="srv"><span style="color:#34C759">●</span> Joining <b style="color:#000">home.example.org</b></div>
+        <div class="field"><span class="l">Name</span>Your Name</div>
+        <div class="hint">Shown to people you chat with.</div>
+        <div class="field"><span class="l">Username</span>@yourname</div>
+        <div class="ok">✓ Available</div>
+        <div class="field"><span class="l">Email</span>you@example.com</div>
+        <div class="hint">Only used to recover your account. Nobody can find you by email unless you turn it on.</div>
+      </div>
+      <div class="btm"><div class="btn">Continue</div></div>
+      <div class="home"></div>
+    </div>
+    <div class="cap"><h3>3 · Account</h3><p>Name, username, email for recovery only. Short help under each field.</p></div>
+  </div>
+
+  <!-- 4 Recovery key -->
+  <div>
+    <div class="phone">
+      <div class="sb"><span>9:41</span><span>🔋</span></div>
+      <div class="nav"><div class="circ glass">‹</div></div>
+      <div class="pad">
+        <div class="h2">Save your recovery key</div>
+        <div class="pl">This key is the only way to get your <b>message history</b> back if you lose this phone.</div>
+        <div class="key">K7QP-4MZD-9XWA-T2HC<br>R8NV-6JLE-3BYU-F5SG<br>W1KT-ZQ9M-H4DP-C7XA<br>N2LR-8EVB-5JUS-Y6FW</div>
+        <div class="warn">⚠︎ We can't recover it for you. Your email gets your account back, but not your old messages.</div>
+      </div>
+      <div class="btm"><div class="btn">Save to Passwords</div><div class="btn2">I wrote it down</div></div>
+      <div class="home"></div>
+    </div>
+    <div class="cap"><h3>4 · Recovery key</h3><p>Save to Apple Passwords/iCloud Keychain, or write it down. Can be skipped and done later in Settings.</p></div>
+  </div>
+</div>

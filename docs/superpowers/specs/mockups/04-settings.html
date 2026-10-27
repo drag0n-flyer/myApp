@@ -1,0 +1,148 @@
+<style>
+  .phones { display:flex; gap:28px; flex-wrap:wrap; justify-content:center; }
+  .phone { width:290px; height:610px; border-radius:46px; border:10px solid #1c1c1e; overflow:hidden; position:relative; font-family:-apple-system,"SF Pro Text","Helvetica Neue",Arial,sans-serif; background:#F2F2F7; color:#000; box-shadow:0 10px 30px rgba(0,0,0,.25); }
+  .glass { background:rgba(255,255,255,.6); backdrop-filter:blur(18px) saturate(190%); -webkit-backdrop-filter:blur(18px) saturate(190%); border:1px solid rgba(255,255,255,.8); box-shadow:0 6px 22px rgba(0,0,0,.12), inset 0 1px 0 rgba(255,255,255,.95); }
+  .sb { height:40px; display:flex; justify-content:space-between; align-items:center; padding:6px 26px 0; font-size:13px; font-weight:600; }
+  .nav { display:flex; align-items:center; gap:8px; padding:0 12px; height:42px; }
+  .circ { width:34px; height:34px; border-radius:50%; display:flex; align-items:center; justify-content:center; color:#007AFF; font-size:18px; }
+  .navt { flex:1; text-align:center; font-weight:600; font-size:15px; margin-right:42px; }
+  .lt { font-size:30px; font-weight:700; padding:0 16px 8px; }
+  .scroll { position:absolute; top:84px; left:0; right:0; bottom:0; overflow:hidden; padding-bottom:90px; }
+  .grp { background:#fff; border-radius:14px; margin:0 12px 14px; overflow:hidden; }
+  .gh { font-size:11.5px; color:#6D6D72; text-transform:uppercase; padding:0 28px 5px; letter-spacing:.2px; }
+  .gf { font-size:11.5px; color:#6D6D72; padding:0 28px 12px; margin-top:-8px; line-height:1.35; }
+  .it { display:flex; align-items:center; gap:10px; padding:9px 12px; font-size:14.5px; position:relative; }
+  .it + .it::before { content:""; position:absolute; top:0; left:50px; right:0; border-top:.5px solid #C6C6C8; }
+  .it.ni + .it.ni::before, .grp.ni .it + .it::before { left:12px; }
+  .ic { width:28px; height:28px; border-radius:7px; display:flex; align-items:center; justify-content:center; font-size:15px; color:#fff; flex-shrink:0; }
+  .lbl { flex:1; }
+  .val { color:#8E8E93; font-size:14px; }
+  .chev { color:#C4C4C7; font-size:16px; margin-left:4px; }
+  .chk { color:#007AFF; font-weight:600; }
+  .sub { font-size:11.5px; color:#8E8E93; display:block; margin-top:1px; }
+  .tog { width:46px; height:28px; border-radius:15px; background:#E9E9EA; position:relative; flex-shrink:0; }
+  .tog::after { content:""; position:absolute; top:2px; left:2px; width:24px; height:24px; border-radius:50%; background:#fff; box-shadow:0 2px 4px rgba(0,0,0,.2); }
+  .tog.on { background:#34C759; }
+  .tog.on::after { left:20px; }
+  .prof { display:flex; align-items:center; gap:12px; padding:12px; }
+  .pav { width:56px; height:56px; border-radius:50%; background:linear-gradient(135deg,#BF5AF2,#5E5CE6); color:#fff; display:flex; align-items:center; justify-content:center; font-size:22px; font-weight:600; }
+  .pn { font-size:18px; font-weight:600; }
+  .pu { font-size:13px; color:#8E8E93; }
+  .dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:#34C759; margin-right:4px; }
+  .dock { position:absolute; left:12px; right:12px; bottom:22px; display:flex; gap:8px; z-index:6; }
+  .tabbar { flex:1; height:56px; border-radius:30px; display:flex; justify-content:space-around; align-items:center; }
+  .tab { font-size:10px; text-align:center; color:#8E8E93; padding:5px 8px; border-radius:22px; line-height:1.15; }
+  .tab .i { font-size:18px; display:block; filter:grayscale(1); opacity:.7; }
+  .tab.on { background:rgba(255,255,255,.95); color:#007AFF; font-weight:600; }
+  .tab.on .i { filter:none; opacity:1; }
+  .sbtn { width:56px; height:56px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:19px; }
+  .home { position:absolute; bottom:7px; left:50%; transform:translateX(-50%); width:110px; height:4px; border-radius:3px; background:#000; opacity:.85; z-index:7; }
+  .cap { text-align:center; max-width:290px; margin-top:10px; }
+  .cap h3 { margin:0 0 4px; }
+  .cap p { margin:0; font-size:14px; }
+  .bar { height:8px; border-radius:4px; background:#E5E5EA; overflow:hidden; display:flex; margin-top:6px; }
+</style>
+
+<h2>Settings</h2>
+<p class="subtitle">Main Settings page, Data &amp; Storage, and Privacy. Standard Apple grouped lists with the glass bars.</p>
+
+<div class="phones">
+  <!-- 1. Settings main -->
+  <div>
+    <div class="phone">
+      <div class="sb"><span>9:41</span><span>4G ▮▮▯ 🔋</span></div>
+      <div class="lt" style="padding-top:4px">Settings</div>
+      <div class="scroll" style="top:90px">
+        <div class="grp"><div class="prof"><div class="pav">Y</div><div style="flex:1"><div class="pn">Your Name</div><div class="pu">@yourname</div></div><span class="chev">›</span></div></div>
+        <div class="grp">
+          <div class="it"><div class="ic" style="background:#5856D6">🏠</div><span class="lbl">Server<span class="sub"><span class="dot"></span>home.example.org</span></span><span class="chev">›</span></div>
+          <div class="it"><div class="ic" style="background:#8E8E93">💻</div><span class="lbl">Linked devices</span><span class="val">2</span><span class="chev">›</span></div>
+        </div>
+        <div class="grp">
+          <div class="it"><div class="ic" style="background:#007AFF">🔐</div><span class="lbl">Privacy</span><span class="chev">›</span></div>
+          <div class="it"><div class="ic" style="background:#34C759">◐</div><span class="lbl">Data &amp; Storage</span><span class="val">Data saver</span><span class="chev">›</span></div>
+          <div class="it"><div class="ic" style="background:#FF3B30">🔔</div><span class="lbl">Notifications</span><span class="chev">›</span></div>
+          <div class="it"><div class="ic" style="background:#FF9500">🗂</div><span class="lbl">Chat folders</span><span class="chev">›</span></div>
+          <div class="it"><div class="ic" style="background:#30B0C7">🎙</div><span class="lbl">Calls &amp; Audio</span><span class="chev">›</span></div>
+          <div class="it"><div class="ic" style="background:#636366">🎨</div><span class="lbl">Appearance</span><span class="chev">›</span></div>
+        </div>
+        <div class="grp">
+          <div class="it"><div class="ic" style="background:#FFCC00">🔑</div><span class="lbl">Backup &amp; recovery key</span><span class="chev">›</span></div>
+          <div class="it"><div class="ic" style="background:#8E8E93">❓</div><span class="lbl">Help</span><span class="chev">›</span></div>
+        </div>
+      </div>
+      <div class="dock">
+        <div class="tabbar glass">
+          <div class="tab"><span class="i">👤</span>Contacts</div>
+          <div class="tab"><span class="i">📞</span>Calls</div>
+          <div class="tab"><span class="i">💬</span>Chats</div>
+          <div class="tab on"><span class="i">⚙️</span>Settings</div>
+        </div>
+        <div class="sbtn glass">🔍</div>
+      </div>
+      <div class="home"></div>
+    </div>
+    <div class="cap"><h3>1 · Settings</h3><p>Profile, your server, linked devices, then the usual Apple-style sections.</p></div>
+  </div>
+
+  <!-- 2. Data & Storage -->
+  <div>
+    <div class="phone">
+      <div class="sb"><span>9:41</span><span>4G ▮▮▯ 🔋</span></div>
+      <div class="nav"><div class="circ glass">‹</div><div class="navt">Data &amp; Storage</div></div>
+      <div class="scroll" style="top:86px">
+        <div class="gh">Calls</div>
+        <div class="grp">
+          <div class="it ni"><span class="lbl">Call data mode</span><span class="val">Auto</span><span class="chev">›</span></div>
+          <div class="it ni"><span class="lbl">Limit on mobile data</span><span class="val">Data saver</span><span class="chev">›</span></div>
+          <div class="it ni"><span class="lbl">Start video calls with video off on mobile</span><div class="tog on"></div></div>
+        </div>
+        <div class="gf">Server default: Balanced · Server maximum: High quality</div>
+        <div class="gh">Auto-download media</div>
+        <div class="grp">
+          <div class="it ni"><span class="lbl">On Wi-Fi</span><span class="val">All</span><span class="chev">›</span></div>
+          <div class="it ni"><span class="lbl">On mobile data</span><span class="val">None</span><span class="chev">›</span></div>
+          <div class="it ni"><span class="lbl">Voice messages</span><span class="val">Always</span><span class="chev">›</span></div>
+        </div>
+        <div class="gh">This month</div>
+        <div class="grp">
+          <div class="it ni" style="display:block"><div style="display:flex;justify-content:space-between"><span>Mobile data used</span><span class="val">84 MB</span></div>
+            <div class="bar"><div style="width:42%;background:#34C759"></div><div style="width:28%;background:#007AFF"></div><div style="width:12%;background:#FF9500"></div></div>
+            <div style="font-size:11px;color:#8E8E93;margin-top:5px">● Calls 42 MB &nbsp; ● Media 28 MB &nbsp; ● Messages 12 MB</div></div>
+          <div class="it ni"><span class="lbl">Storage on this iPhone</span><span class="val">312 MB</span><span class="chev">›</span></div>
+        </div>
+      </div>
+      <div class="home"></div>
+    </div>
+    <div class="cap"><h3>2 · Data &amp; Storage</h3><p>Default call mode, a limit for mobile data, auto-download rules, and how much data the app used.</p></div>
+  </div>
+
+  <!-- 3. Privacy -->
+  <div>
+    <div class="phone">
+      <div class="sb"><span>9:41</span><span>4G ▮▮▯ 🔋</span></div>
+      <div class="nav"><div class="circ glass">‹</div><div class="navt">Privacy</div></div>
+      <div class="scroll" style="top:86px">
+        <div class="gh">Hide my IP address in calls</div>
+        <div class="grp">
+          <div class="it ni"><span class="lbl">Never<span class="sub">Fastest; the other person may see your IP</span></span></div>
+          <div class="it ni"><span class="lbl">With people not in my contacts<span class="sub">Recommended</span></span><span class="chk">✓</span></div>
+          <div class="it ni"><span class="lbl">Always<span class="sub">Calls may be slightly slower</span></span></div>
+        </div>
+        <div class="gh">Who can find me</div>
+        <div class="grp">
+          <div class="it ni"><span class="lbl">By username</span><div class="tog on"></div></div>
+          <div class="it ni"><span class="lbl">By email</span><div class="tog"></div></div>
+        </div>
+        <div class="gh">Messages</div>
+        <div class="grp">
+          <div class="it ni"><span class="lbl">Read receipts</span><div class="tog on"></div></div>
+          <div class="it ni"><span class="lbl">Disappearing messages</span><span class="val">Off</span><span class="chev">›</span></div>
+          <div class="it ni"><span class="lbl">Blocked</span><span class="val">0</span><span class="chev">›</span></div>
+        </div>
+      </div>
+      <div class="home"></div>
+    </div>
+    <div class="cap"><h3>3 · Privacy</h3><p>Call relay in plain words ("Hide my IP"), who can find you, receipts, disappearing messages, blocked list.</p></div>
+  </div>
+</div>

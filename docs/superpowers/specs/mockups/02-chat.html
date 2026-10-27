@@ -1,0 +1,102 @@
+<style>
+  .phones { display:flex; gap:32px; flex-wrap:wrap; justify-content:center; }
+  .phone { width:300px; height:620px; border-radius:46px; border:10px solid #1c1c1e; overflow:hidden; position:relative; font-family:-apple-system,"SF Pro Text","Helvetica Neue",Arial,sans-serif; box-shadow:0 10px 30px rgba(0,0,0,.25); }
+  .light { background:linear-gradient(180deg,#F4F6FB,#EEF1F7); color:#000; --sub:#8E8E93; --glass:rgba(255,255,255,.6); --gborder:rgba(255,255,255,.8); --ghi:rgba(255,255,255,.95); --in:#fff; --intext:#000; --field:rgba(118,118,128,.12); }
+  .dark  { background:linear-gradient(180deg,#0B0B0D,#121216); color:#fff; --sub:#8D8D93; --glass:rgba(44,44,48,.58); --gborder:rgba(255,255,255,.14); --ghi:rgba(255,255,255,.18); --in:#26262A; --intext:#fff; --field:rgba(118,118,128,.24); }
+  .glass { background:var(--glass); backdrop-filter:blur(18px) saturate(190%); -webkit-backdrop-filter:blur(18px) saturate(190%); border:1px solid var(--gborder); box-shadow:0 6px 22px rgba(0,0,0,.14), inset 0 1px 0 var(--ghi); }
+  .sb { position:absolute; top:0; left:0; right:0; height:40px; display:flex; justify-content:space-between; align-items:center; padding:6px 26px 0; font-size:13px; font-weight:600; z-index:6; }
+  .hdr { position:absolute; top:42px; left:10px; right:10px; z-index:5; display:flex; align-items:center; gap:8px; }
+  .circ { width:36px; height:36px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:17px; color:#007AFF; flex-shrink:0; }
+  .who { flex:1; height:44px; border-radius:22px; display:flex; align-items:center; gap:8px; padding:0 10px 0 5px; min-width:0; }
+  .av { width:34px; height:34px; border-radius:50%; display:flex; align-items:center; justify-content:center; color:#fff; font-weight:600; font-size:14px; flex-shrink:0; }
+  .nm { font-size:14.5px; font-weight:600; line-height:1.1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .st { font-size:10.5px; color:var(--sub); }
+  .acts { display:flex; gap:6px; }
+  .feed { position:absolute; top:96px; left:0; right:0; bottom:84px; padding:0 10px; display:flex; flex-direction:column; gap:6px; overflow:hidden; }
+  .notice { align-self:center; font-size:10.5px; text-align:center; border-radius:12px; padding:6px 10px; max-width:240px; line-height:1.3; margin:4px 0 6px; }
+  .notice.safe { background:rgba(52,199,89,.12); color:#1F8A3A; }
+  .dark .notice.safe { color:#30D158; background:rgba(48,209,88,.14); }
+  .notice.warn { background:rgba(255,149,0,.16); color:#C26A00; border:1px solid rgba(255,149,0,.5); }
+  .dark .notice.warn { color:#FF9F0A; }
+  .day { align-self:center; font-size:10.5px; color:var(--sub); padding:3px 9px; border-radius:10px; }
+  .bub { max-width:72%; padding:7px 10px 5px; border-radius:18px; font-size:14px; line-height:1.3; position:relative; }
+  .in { align-self:flex-start; background:var(--in); color:var(--intext); border-bottom-left-radius:6px; box-shadow:0 1px 1px rgba(0,0,0,.06); }
+  .out { align-self:flex-end; background:linear-gradient(180deg,#2E8CFF,#007AFF); color:#fff; border-bottom-right-radius:6px; }
+  .meta { font-size:10px; opacity:.7; text-align:right; margin-top:2px; }
+  .sender { font-size:11.5px; font-weight:600; color:#FF9500; margin-bottom:1px; }
+  .reply { border-left:3px solid rgba(255,255,255,.8); padding:2px 6px; margin-bottom:4px; font-size:12px; opacity:.9; background:rgba(255,255,255,.15); border-radius:4px; }
+  .react { position:absolute; bottom:-10px; left:8px; font-size:11px; background:var(--in); border-radius:10px; padding:1px 5px; box-shadow:0 1px 3px rgba(0,0,0,.15); }
+  .voice { display:flex; align-items:center; gap:7px; }
+  .play { width:26px; height:26px; border-radius:50%; background:rgba(255,255,255,.25); display:flex; align-items:center; justify-content:center; font-size:11px; }
+  .in .play { background:#007AFF; color:#fff; }
+  .wave { display:flex; gap:2px; align-items:center; height:20px; }
+  .wave i { display:block; width:2.5px; border-radius:2px; background:currentColor; opacity:.75; }
+  .photo { width:180px; height:120px; border-radius:12px; background:linear-gradient(135deg,#9FB7D9,#C8A7D8 60%,#F2C6A0); filter:blur(5px); }
+  .pwrap { position:relative; overflow:hidden; border-radius:12px; margin-bottom:3px; }
+  .dl { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; color:#fff; font-size:11.5px; font-weight:600; gap:4px; text-shadow:0 1px 2px rgba(0,0,0,.4); }
+  .dl .c { width:38px; height:38px; border-radius:50%; background:rgba(0,0,0,.35); backdrop-filter:blur(6px); display:flex; align-items:center; justify-content:center; font-size:16px; }
+  .composer { position:absolute; left:10px; right:10px; bottom:24px; display:flex; gap:7px; align-items:center; z-index:5; }
+  .field { flex:1; height:42px; border-radius:21px; display:flex; align-items:center; padding:0 14px; font-size:14px; color:var(--sub); justify-content:space-between; }
+  .home { position:absolute; bottom:7px; left:50%; transform:translateX(-50%); width:110px; height:4px; border-radius:3px; background:currentColor; opacity:.85; z-index:7; }
+  .cap { text-align:center; max-width:300px; margin-top:10px; }
+  .cap h3 { margin:0 0 4px; }
+  .cap p { margin:0; font-size:14px; }
+</style>
+
+<h2>Chat screen (approved)</h2>
+<p class="subtitle">No encryption labels in the chat. The encryption type is shown only on the chat info page.</p>
+
+<div class="phones">
+  <!-- Private E2EE chat, light -->
+  <div>
+    <div class="phone light">
+      <div class="sb"><span>9:41</span><span>4G ▮▮▯ 🔋</span></div>
+      <div class="hdr">
+        <div class="circ glass">‹</div>
+        <div class="who glass"><div class="av" style="background:linear-gradient(135deg,#5AC8FA,#007AFF)">R</div><div style="min-width:0"><div class="nm">Riya</div><div class="st">online</div></div></div>
+        <div class="acts"><div class="circ glass">📞</div><div class="circ glass">📹</div></div>
+      </div>
+      <div class="feed">
+                <div class="day glass">Today</div>
+        <div class="bub in">Are you coming tonight?<div class="meta">9:30</div></div>
+        <div class="bub out">Yes! Around 6 🙂<div class="meta">9:31 ✓✓</div></div>
+        <div class="bub in" style="margin-bottom:8px"><div class="voice"><div class="play">▶</div><div class="wave"><i style="height:6px"></i><i style="height:12px"></i><i style="height:18px"></i><i style="height:9px"></i><i style="height:15px"></i><i style="height:7px"></i><i style="height:13px"></i><i style="height:17px"></i><i style="height:8px"></i><i style="height:11px"></i><i style="height:5px"></i><i style="height:14px"></i></div><span style="font-size:11px;opacity:.7">0:14</span></div><div class="meta">9:34</div><span class="react">❤️</span></div>
+        <div class="bub in" style="padding:4px 4px 5px"><div class="pwrap"><div class="photo"></div><div class="dl"><div class="c">↓</div>Photo · 240 KB</div></div><div class="meta" style="padding-right:6px">9:36</div></div>
+        <div class="bub out"><div class="reply">Riya: Are you coming tonight?</div>Call me when you leave<div class="meta">9:38 ✓✓</div></div>
+      </div>
+      <div class="composer">
+        <div class="circ glass" style="width:42px;height:42px;font-size:22px">＋</div>
+        <div class="field glass"><span>Message</span><span>🙂</span></div>
+        <div class="circ glass" style="width:42px;height:42px">🎤</div>
+      </div>
+      <div class="home"></div>
+    </div>
+    <div class="cap"><h3>Private chat</h3><p>Header, bubbles, voice, reply, reaction, tap-to-download photo.</p></div>
+  </div>
+
+  <!-- Server-readable group, dark -->
+  <div>
+    <div class="phone dark">
+      <div class="sb"><span>9:41</span><span>4G ▮▮▯ 🔋</span></div>
+      <div class="hdr">
+        <div class="circ glass">‹</div>
+        <div class="who glass"><div class="av" style="background:linear-gradient(135deg,#FFB340,#FF9500)">W</div><div style="min-width:0"><div class="nm">Work team</div><div class="st">Sam, Priya, You</div></div></div>
+        <div class="acts"><div class="circ glass">📞</div></div>
+      </div>
+      <div class="feed">
+                <div class="day glass">Yesterday</div>
+        <div class="bub in"><div class="sender">Sam</div>Report is uploaded to the shared folder<div class="meta">18:02</div></div>
+        <div class="bub in"><div class="sender" style="color:#64D2FF">Priya</div>Thanks, checking now<div class="meta">18:05</div></div>
+        <div class="bub out">I'll review it in the morning<div class="meta">18:10 ✓✓</div></div>
+        <div class="bub in" style="padding:4px 4px 5px"><div class="sender" style="padding:2px 6px 0">Sam</div><div class="pwrap"><div class="photo" style="background:linear-gradient(135deg,#4A5A7A,#7A6A9A 60%,#A08070)"></div><div class="dl"><div class="c">↓</div>Document preview · 1.2 MB</div></div><div class="meta" style="padding-right:6px">18:14</div></div>
+      </div>
+      <div class="composer">
+        <div class="circ glass" style="width:42px;height:42px;font-size:22px">＋</div>
+        <div class="field glass"><span>Message</span><span>🙂</span></div>
+        <div class="circ glass" style="width:42px;height:42px">🎤</div>
+      </div>
+      <div class="home"></div>
+    </div>
+    <div class="cap"><h3>Server-readable group</h3><p>Looks the same as any other chat.</p></div>
+  </div>
+</div>

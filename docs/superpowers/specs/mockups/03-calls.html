@@ -1,0 +1,114 @@
+<style>
+  .phones { display:flex; gap:28px; flex-wrap:wrap; justify-content:center; }
+  .phone { width:290px; height:610px; border-radius:46px; border:10px solid #1c1c1e; overflow:hidden; position:relative; font-family:-apple-system,"SF Pro Text","Helvetica Neue",Arial,sans-serif; color:#fff; box-shadow:0 10px 30px rgba(0,0,0,.25); }
+  .bg1 { background:radial-gradient(120% 80% at 50% 20%,#3A4A7A 0%,#1B2240 55%,#0B0E1C 100%); }
+  .bg2 { background:linear-gradient(160deg,#5B4B3A 0%,#2E3B4F 45%,#1A2230 100%); }
+  .glass { background:rgba(255,255,255,.16); backdrop-filter:blur(20px) saturate(180%); -webkit-backdrop-filter:blur(20px) saturate(180%); border:1px solid rgba(255,255,255,.22); box-shadow:0 6px 22px rgba(0,0,0,.25), inset 0 1px 0 rgba(255,255,255,.3); }
+  .sb { position:absolute; top:0; left:0; right:0; height:40px; display:flex; justify-content:space-between; align-items:center; padding:6px 26px 0; font-size:13px; font-weight:600; z-index:6; }
+  .center { position:absolute; top:90px; left:0; right:0; text-align:center; }
+  .bigav { width:110px; height:110px; border-radius:50%; margin:0 auto 14px; background:linear-gradient(135deg,#5AC8FA,#007AFF); display:flex; align-items:center; justify-content:center; font-size:44px; font-weight:600; box-shadow:0 0 0 8px rgba(255,255,255,.06), 0 0 0 18px rgba(255,255,255,.03); }
+  .cname { font-size:26px; font-weight:600; }
+  .ctime { font-size:15px; opacity:.75; margin-top:4px; }
+  .enc { font-size:11.5px; opacity:.7; margin-top:6px; }
+  .pills { display:flex; gap:8px; justify-content:center; margin-top:18px; }
+  .pill { font-size:12px; padding:6px 11px; border-radius:16px; display:flex; align-items:center; gap:5px; }
+  .bars { display:inline-flex; gap:2px; align-items:flex-end; height:11px; }
+  .bars i { width:3px; background:#30D158; border-radius:1px; display:block; }
+  .controls { position:absolute; left:14px; right:14px; bottom:28px; border-radius:34px; padding:14px 10px; display:flex; justify-content:space-around; }
+  .cb { text-align:center; font-size:10px; opacity:.95; }
+  .cb .k { width:50px; height:50px; border-radius:50%; background:rgba(255,255,255,.18); display:flex; align-items:center; justify-content:center; font-size:20px; margin:0 auto 4px; }
+  .cb .k.on { background:#fff; color:#000; }
+  .cb .k.end { background:#FF3B30; }
+  .home { position:absolute; bottom:7px; left:50%; transform:translateX(-50%); width:110px; height:4px; border-radius:3px; background:#fff; opacity:.85; z-index:7; }
+  .sheet { position:absolute; left:8px; right:8px; bottom:8px; border-radius:30px; padding:10px 14px 20px; background:rgba(40,40,46,.72); backdrop-filter:blur(24px) saturate(180%); -webkit-backdrop-filter:blur(24px) saturate(180%); border:1px solid rgba(255,255,255,.14); z-index:8; }
+  .grab { width:36px; height:5px; border-radius:3px; background:rgba(255,255,255,.35); margin:0 auto 10px; }
+  .sh { font-size:16px; font-weight:600; text-align:center; margin-bottom:2px; }
+  .ss { font-size:11.5px; opacity:.6; text-align:center; margin-bottom:10px; }
+  .opt { display:flex; justify-content:space-between; align-items:center; padding:9px 12px; border-radius:14px; font-size:14px; margin-bottom:4px; }
+  .opt small { display:block; font-size:11px; opacity:.6; }
+  .opt.sel { background:rgba(10,132,255,.35); border:1px solid rgba(10,132,255,.7); }
+  .opt .r { font-size:11.5px; opacity:.75; text-align:right; }
+  .dim { position:absolute; inset:0; background:rgba(0,0,0,.35); z-index:7; }
+  .self { position:absolute; top:52px; right:14px; width:78px; height:112px; border-radius:16px; background:linear-gradient(160deg,#6E7F99,#3C4A60); border:1px solid rgba(255,255,255,.3); z-index:5; display:flex; align-items:flex-end; justify-content:center; font-size:10px; padding-bottom:5px; }
+  .banner { position:absolute; top:50px; left:12px; right:104px; border-radius:16px; padding:8px 10px; font-size:11.5px; line-height:1.3; z-index:5; }
+  .banner b { color:#FFD60A; }
+  .person { position:absolute; left:50%; top:46%; transform:translate(-50%,-50%); width:170px; height:220px; border-radius:50% 50% 40% 40%; background:radial-gradient(60% 45% at 50% 30%,#C9A58A 0%,#A07C64 60%,transparent 61%), radial-gradient(90% 60% at 50% 100%,#4B5C78 0%,#4B5C78 60%,transparent 61%); opacity:.9; filter:blur(1.5px); }
+  .cap { text-align:center; max-width:290px; margin-top:10px; }
+  .cap h3 { margin:0 0 4px; }
+  .cap p { margin:0; font-size:14px; }
+</style>
+
+<h2>Call screens</h2>
+<p class="subtitle">Audio call, changing the data mode during a call, and a video call on a weak network.</p>
+
+<div class="phones">
+  <!-- 1. Audio call -->
+  <div>
+    <div class="phone bg1">
+      <div class="sb"><span>9:41</span><span>4G ▮▮▯ 🔋</span></div>
+      <div class="center">
+        <div class="bigav">R</div>
+        <div class="cname">Riya</div>
+        <div class="ctime">04:12</div>
+        <div class="pills">
+          <div class="pill glass"><span class="bars"><i style="height:4px"></i><i style="height:7px"></i><i style="height:10px"></i><i style="height:11px;opacity:.3"></i></span> Good</div>
+          <div class="pill glass">● Auto · Data saver</div>
+        </div>
+        <div class="pills" style="margin-top:8px"><div class="pill glass" style="opacity:.85">≈ 1.2 MB used</div></div>
+      </div>
+      <div class="controls glass">
+        <div class="cb"><div class="k">🔊</div>Speaker</div>
+        <div class="cb"><div class="k">🎙</div>Mute</div>
+        <div class="cb"><div class="k">📹</div>Video</div>
+        <div class="cb"><div class="k">◐</div>Data</div>
+        <div class="cb"><div class="k end">✕</div>End</div>
+      </div>
+      <div class="home"></div>
+    </div>
+    <div class="cap"><h3>1 · Audio call</h3><p>Network quality, current data mode, and data used so far, always visible.</p></div>
+  </div>
+
+  <!-- 2. Data mode sheet -->
+  <div>
+    <div class="phone bg1">
+      <div class="sb"><span>9:41</span><span>4G ▮▮▯ 🔋</span></div>
+      <div class="center">
+        <div class="bigav">R</div>
+        <div class="cname">Riya</div>
+        <div class="ctime">04:20</div>
+      </div>
+      <div class="dim"></div>
+      <div class="sheet">
+        <div class="grab"></div>
+        <div class="sh">Data for this call</div>
+        <div class="ss">This call only · audio, both directions, estimated</div>
+        <div class="opt sel"><span>Auto<small>Best your network allows</small></span><span class="r">✓</span></div>
+        <div class="opt"><span>Ultra-low<small>Voice only, smallest data</small></span><span class="r">~2 MB<br>per 10 min</span></div>
+        <div class="opt"><span>Data saver<small>Clear voice, low data</small></span><span class="r">~3 MB<br>per 10 min</span></div>
+        <div class="opt"><span>Balanced</span><span class="r">~5 MB<br>per 10 min</span></div>
+        <div class="opt"><span>High quality</span><span class="r">~8 MB<br>per 10 min</span></div>
+      </div>
+      <div class="home"></div>
+    </div>
+    <div class="cap"><h3>2 · Change data mode</h3><p>Tap "Data" during a call. Estimated data per 10 minutes next to each mode.</p></div>
+  </div>
+
+  <!-- 3. Video call, weak network -->
+  <div>
+    <div class="phone bg2">
+      <div class="sb"><span>9:41</span><span>4G ▮▯▯ 🔋</span></div>
+      <div class="person"></div>
+      <div class="self">You</div>
+      <div class="banner glass">📶 <b>Weak network</b><br>Video lowered to save your voice quality.</div>
+      <div class="controls glass">
+        <div class="cb"><div class="k">🔄</div>Flip</div>
+        <div class="cb"><div class="k">🎙</div>Mute</div>
+        <div class="cb"><div class="k on">📹</div>Video</div>
+        <div class="cb"><div class="k">◐</div>Data</div>
+        <div class="cb"><div class="k end">✕</div>End</div>
+      </div>
+      <div class="home"></div>
+    </div>
+    <div class="cap"><h3>3 · Video, weak network</h3><p>Banner explains what the app did. If it gets worse: "Switched to audio only", then "Reconnecting…".</p></div>
+  </div>
+</div>
