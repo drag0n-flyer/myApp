@@ -88,6 +88,9 @@ func jsonBody(_ r: URLRequest) throws -> [String: Any] {
         #expect(try jsonBody(await t.requests[0])["members"] as? [String] == ["a2"])
         #expect(try await c.conversation(id: "c1").epoch == 3)
         #expect(try await c.claimKeyPackages(accountID: "a2") == [ClaimedKeyPackage(deviceID: "d2", keyPackage: Data([1, 2]))])
+        #expect(try jsonBody(await t.requests.last!)["deviceIDs"] == nil)
+        _ = try await c.claimKeyPackages(accountID: "a2", deviceIDs: ["d2"])
+        #expect(try jsonBody(await t.requests.last!)["deviceIDs"] as? [String] == ["d2"])
         #expect(try await c.uploadKeyPackages([Data([1])]) == 2)
         try await c.ackInbox(upTo: 7)
     }

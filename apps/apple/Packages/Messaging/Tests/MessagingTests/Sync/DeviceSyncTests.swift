@@ -50,6 +50,60 @@ private final class ProcessorBox: @unchecked Sendable {
     }
 }
 
+/// Records where the process lock is (not) held. MLS state changes must be under it; network calls must not.
+private final class LockProbe: @unchecked Sendable {
+    private let guardLock = NSLock()
+    private var found: [String] = []
+    var problems: [String] { guardLock.withLock { found } }
+    private var file: ProcessLock?
+    private var armed = false
+    /// Test setup talks to the engine and server directly; checks start here.
+    func arm() { guardLock.withLock { armed = true } }
+
+    private func held() -> Bool { (try? file?.withLock(timeout: .milliseconds(30)) { false }) ?? true }
+    func expectHeld(_ what: String) { if guardLock.withLock({ armed }), !held() { guardLock.withLock { found.append("\(what) without the lock") } } }
+    func expectFree(_ what: String) { if guardLock.withLock({ armed }), held() { guardLock.withLock { found.append("\(what) under the lock") } } }
+
+    func wrap(_ device: TestDevice, server: FakeServer) async -> TestDevice {
+        file = ProcessLock(url: device.directory.appendingPathComponent("messaging.lock"))
+        var deps = device.deps
+        deps.mls = ProbeEngine(FakeMLSEngine(identity: "\(device.accountID)/\(device.deviceID)"), probe: self)
+        deps.server = ServerClient(
+            host: FakeServer.host,
+            session: SessionStore(storage: MemorySessionStorage(Session(
+                host: FakeServer.host, accountID: device.accountID, deviceID: device.deviceID,
+                token: "test.\(device.accountID).\(device.deviceID)"))),
+            transport: ProbeTransport(inner: await server.transport(for: device), probe: self))
+        return TestDevice(accountID: device.accountID, deviceID: device.deviceID, deps: deps, notifier: device.notifier, directory: device.directory)
+    }
+}
+
+private struct ProbeTransport: HTTPTransport {
+    let inner: HTTPTransport
+    let probe: LockProbe
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        probe.expectFree("\(request.httpMethod ?? "") \(request.url?.path ?? "")")
+        return try await inner.send(request)
+    }
+}
+
+private final class ProbeEngine: MLSEngine, @unchecked Sendable {
+    let inner: MLSEngine
+    let probe: LockProbe
+    init(_ inner: MLSEngine, probe: LockProbe) { self.inner = inner; self.probe = probe }
+    func makeKeyPackages(count: Int) async throws -> [Data] { probe.expectHeld("makeKeyPackages"); return try await inner.makeKeyPackages(count: count) }
+    func createGroup() async throws -> GroupID { probe.expectHeld("createGroup"); return try await inner.createGroup() }
+    func add(keyPackages: [Data], to group: GroupID) async throws -> CommitBundle { probe.expectHeld("add"); return try await inner.add(keyPackages: keyPackages, to: group) }
+    func remove(members: [String], from group: GroupID) async throws -> CommitBundle { probe.expectHeld("remove"); return try await inner.remove(members: members, from: group) }
+    func commitAccepted(_ group: GroupID) async throws { probe.expectHeld("commitAccepted"); try await inner.commitAccepted(group) }
+    func commitRejected(_ group: GroupID) async throws { probe.expectHeld("commitRejected"); try await inner.commitRejected(group) }
+    func encrypt(_ plaintext: Data, in group: GroupID) async throws -> (ciphertext: Data, epoch: UInt64) { probe.expectHeld("encrypt"); return try await inner.encrypt(plaintext, in: group) }
+    func process(_ message: Data) async throws -> Incoming { probe.expectHeld("process"); return try await inner.process(message) }
+    func epoch(of group: GroupID) async throws -> UInt64 { try await inner.epoch(of: group) }
+    func exportSecret(group: GroupID, label: String, length: Int) async throws -> Data { try await inner.exportSecret(group: group, label: label, length: length) }
+    func members(of group: GroupID) async throws -> [String] { try await inner.members(of: group) }
+}
+
 private func keyPackages(_ device: TestDevice, count: Int = 5) async throws {
     _ = try await device.deps.server.uploadKeyPackages(try await device.deps.mls.makeKeyPackages(count: count))
 }
@@ -60,10 +114,11 @@ private struct Rig {
     let conversationIDs: [String]
 
     /// ana1 has one conversation with bob and one with carol; ana2 has joined both.
-    static func make(mode: String = "e2ee") async throws -> Rig {
+    static func make(mode: String = "e2ee", probe: LockProbe? = nil) async throws -> Rig {
         let server = FakeServer()
         await server.setDefaultMode(mode)
-        let a1 = await makeDevice(server, account: "acc-ana", username: "ana")
+        var a1 = await makeDevice(server, account: "acc-ana", username: "ana")
+        if let probe { a1 = await probe.wrap(a1, server: server) }
         let a2 = await makeDevice(server, account: "acc-ana", username: "ana")
         let b1 = await makeDevice(server, account: "acc-bob", username: "bob")
         let c1 = await makeDevice(server, account: "acc-carol", username: "carol")
@@ -171,7 +226,7 @@ private final class CountingTransport: HTTPTransport, @unchecked Sendable {
             session: SessionStore(storage: MemorySessionStorage(Session(
                 host: FakeServer.host, accountID: "acc-ana", deviceID: device.deviceID, token: "test.acc-ana.\(device.deviceID)"))),
             transport: counting)
-        let sync = DeviceSync(deps: deps, conversations: ConversationManager(deps: deps))
+        let sync = DeviceSync(deps: deps, conversations: ConversationManager(deps: deps), wipeMLS: {})
 
         try await keyPackages(device, count: 4)
         let setup = counting.requests.count
@@ -197,7 +252,7 @@ private final class CountingTransport: HTTPTransport, @unchecked Sendable {
         let server = FakeServer()
         let device = await makeDevice(server, account: "acc-ana", username: "ana")
         try await keyPackages(device, count: 12)
-        try await DeviceSync(deps: device.deps, conversations: ConversationManager(deps: device.deps)).replenishKeyPackages()
+        try await DeviceSync(deps: device.deps, conversations: ConversationManager(deps: device.deps), wipeMLS: {}).replenishKeyPackages()
         #expect(try await device.deps.server.keyPackageCount() == 12)
     }
 
@@ -220,8 +275,8 @@ private final class CountingTransport: HTTPTransport, @unchecked Sendable {
             receivedAt: testEpochDate, envelope: Data("{}".utf8), status: "delivered", replyTo: nil, editedAt: nil,
             deleted: false, undecryptable: false, folded: "hi"))
 
-        let data = try await DeviceSync(deps: a1.deps, conversations: ConversationManager(deps: a1.deps)).exportSnapshot()
-        let fresh = DeviceSync(deps: a4.deps, conversations: ConversationManager(deps: a4.deps))
+        let data = try await DeviceSync(deps: a1.deps, conversations: ConversationManager(deps: a1.deps), wipeMLS: {}).exportSnapshot()
+        let fresh = DeviceSync(deps: a4.deps, conversations: ConversationManager(deps: a4.deps), wipeMLS: {})
         try await fresh.importSnapshot(data)
 
         let r2 = a4.deps.repo
@@ -251,5 +306,45 @@ private final class CountingTransport: HTTPTransport, @unchecked Sendable {
             #expect(theirs.innerMode == "server_readable")
             #expect(theirs.innerMode == mine.innerMode)
         }
+    }
+
+    @Test func claimsOnlyMissingDevices() async throws {
+        let rig = try await Rig.make()
+        let ana3 = try await rig.addAna3()
+        let c1 = try await rig.ana1.device.deps.server.keyPackageCount()
+        let c2 = try await rig.ana2.device.deps.server.keyPackageCount()
+        let c3 = try await ana3.device.deps.server.keyPackageCount()
+        try await rig.ana1.sync.reconcileOwnDevices()
+        // Neither this device nor ana2 (already in both groups) lost a KeyPackage; ana3 gave one per conversation.
+        #expect(try await rig.ana1.device.deps.server.keyPackageCount() == c1)
+        #expect(try await rig.ana2.device.deps.server.keyPackageCount() == c2)
+        #expect(try await ana3.device.deps.server.keyPackageCount() == c3 - 2)
+    }
+
+    @Test func lockOnMLSChangesNeverAcrossNetwork() async throws {
+        let probe = LockProbe()
+        let rig = try await Rig.make(probe: probe)
+        let ana3 = try await rig.addAna3()
+        probe.arm()
+        try await rig.ana1.sync.reconcileOwnDevices()
+        try await rig.ana1.sync.handleRevoked(deviceID: ana3.device.deviceID)
+        try await rig.ana1.sync.replenishKeyPackages()
+        try await rig.ana1.conversations.handleStaleEpoch(try #require(try rig.ana1.device.deps.repo.conversation(serverID: rig.conversationIDs[0])))
+        #expect(probe.problems == [], "\(probe.problems)")
+    }
+
+    @Test func lockedProcessBlocksChangesAndWipe() async throws {
+        let rig = try await Rig.make()
+        let device = rig.ana1.device
+        let manager = ConversationManager(deps: device.deps, lockTimeout: .milliseconds(100))
+        let sync = DeviceSync(deps: device.deps, conversations: manager, wipeMLS: {}, lockTimeout: .milliseconds(100))
+        let record = try #require(try device.deps.repo.conversation(serverID: rig.conversationIDs[0]))
+        try await device.deps.lock.withAsyncLock(timeout: .seconds(2)) {
+            await #expect(throws: LockTimeout.self) { try await sync.wipeLocalData() }
+            await #expect(throws: LockTimeout.self) { try await sync.replenishKeyPackages() }
+            await #expect(throws: LockTimeout.self) { try await manager.handleStaleEpoch(record) }
+            await #expect(throws: LockTimeout.self) { _ = try await manager.create(with: "acc-bob") }
+        }
+        #expect(try !device.deps.repo.chats().isEmpty)
     }
 }

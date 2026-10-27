@@ -49,13 +49,15 @@ public actor DeviceSync {
     private let deps: MessagingDeps
     private let conversations: ConversationManager
     private let wipeMLS: @Sendable () async throws -> Void
+    private let lockTimeout: Duration
 
     /// - Parameter wipeMLS: deletes the MLS engine's storage. `MLSEngine` has no such call, so the app
-    ///   passes one that removes the engine's database. The default does nothing.
+    ///   passes one that removes the engine's database. Required: a revoked device must not keep key material.
     public init(
         deps: MessagingDeps, conversations: ConversationManager,
-        wipeMLS: @escaping @Sendable () async throws -> Void = {}
+        wipeMLS: @escaping @Sendable () async throws -> Void, lockTimeout: Duration = .seconds(5)
     ) {
+        self.lockTimeout = lockTimeout
         self.deps = deps
         self.conversations = conversations
         self.wipeMLS = wipeMLS
@@ -95,12 +97,13 @@ public actor DeviceSync {
         let todo = try await missing()
         if todo.isEmpty { return }
 
-        let claimed = try await deps.server.claimKeyPackages(accountID: deps.me.accountID).filter { todo.contains($0.deviceID) }
+        // Only the missing devices (never this one, never one already in the group).
+        let claimed = try await deps.server.claimKeyPackages(accountID: deps.me.accountID, deviceIDs: todo)
+            .filter { todo.contains($0.deviceID) }
         guard !claimed.isEmpty else { throw SyncError.noKeyPackages }
 
-        let newEpoch: UInt64
         do {
-            newEpoch = try await conversations.postCommitWithRetry(
+            _ = try await conversations.postCommitWithRetry(
                 serverID: serverID, group: group, addDevices: claimed.map(\.deviceID), removeDevices: []
             ) {
                 // After a stale epoch the inbox has been read: another own device may have added them.
@@ -112,7 +115,7 @@ public actor DeviceSync {
         } catch is AlreadyDone {
             return
         }
-        try deps.repo.setEpoch(serverID: serverID, Int64(newEpoch))  // the echo of this commit is then skipped (Design 17)
+        // `postCommitWithRetry` merged the commit and stored the epoch in one locked step.
 
         // The committer sends the mode again (Design 18). The marker makes a failed send retry on the next send.
         guard let fresh = try deps.repo.conversation(serverID: serverID), fresh.innerMode != nil else { return }
@@ -139,9 +142,8 @@ public actor DeviceSync {
         let deps = self.deps
         let group = GroupID(raw: conversation.groupID)
         guard try await deps.mls.members(of: group).contains(identity) else { return }
-        let newEpoch: UInt64
         do {
-            newEpoch = try await conversations.postCommitWithRetry(
+            _ = try await conversations.postCommitWithRetry(
                 serverID: conversation.serverID, group: group, addDevices: [], removeDevices: [deviceID]
             ) {
                 guard try await deps.mls.members(of: group).contains(identity) else { throw AlreadyDone() }
@@ -150,7 +152,6 @@ public actor DeviceSync {
         } catch is AlreadyDone {
             return
         }
-        try deps.repo.setEpoch(serverID: conversation.serverID, Int64(newEpoch))
     }
 
     // MARK: KeyPackages
@@ -163,7 +164,11 @@ public actor DeviceSync {
             return
         }
         if try await deps.server.keyPackageCount() < Self.lowWater {
-            _ = try await deps.server.uploadKeyPackages(try await deps.mls.makeKeyPackages(count: Self.refill))
+            // Generating stores private keys in the MLS storage (lock); the upload is a network call (no lock).
+            let packages = try await deps.lock.withAsyncLock(timeout: lockTimeout) {
+                try await deps.mls.makeKeyPackages(count: Self.refill)
+            }
+            _ = try await deps.server.uploadKeyPackages(packages)
         }
         // Only a completed check counts; a failure above is retried on the next call.
         let ms = Int64((now.timeIntervalSince1970 * 1000).rounded())
@@ -175,15 +180,19 @@ public actor DeviceSync {
     /// Deletes the database rows, the media directory and the MLS storage. Every step runs; the first
     /// error is thrown at the end.
     public func wipeLocalData() async throws {
-        var failure: Error?
-        do { try deps.repo.wipe() } catch { failure = error }
-        do {
-            if FileManager.default.fileExists(atPath: deps.mediaDirectory.path) {
-                try FileManager.default.removeItem(at: deps.mediaDirectory)
-            }
-        } catch { failure = failure ?? error }
-        do { try await wipeMLS() } catch { failure = failure ?? error }
-        if let failure { throw failure }
+        // No network inside: the whole wipe is one locked step, so the notification extension cannot
+        // process an item into a half-deleted store.
+        try await deps.lock.withAsyncLock(timeout: lockTimeout) {
+            var failure: Error?
+            do { try deps.repo.wipe() } catch { failure = error }
+            do {
+                if FileManager.default.fileExists(atPath: deps.mediaDirectory.path) {
+                    try FileManager.default.removeItem(at: deps.mediaDirectory)
+                }
+            } catch { failure = failure ?? error }
+            do { try await wipeMLS() } catch { failure = failure ?? error }
+            if let failure { throw failure }
+        }
     }
 
     // MARK: Link snapshot
