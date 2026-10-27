@@ -11,7 +11,10 @@ import org.example.app.core.chats.Contact
 import org.example.app.core.settings.ServerPolicy
 import org.example.app.core.settings.UserSettings
 
-/** Milliseconds since the epoch. Injected so the machine is deterministic in tests. */
+/**
+ * Monotonic milliseconds from an arbitrary origin (the engine injects `SystemClock.elapsedRealtime()`, not wall
+ * time), so a clock change cannot trigger or skip a deadline. Injected so the machine is deterministic in tests.
+ */
 fun interface Clock {
     fun nowMs(): Long
 }
@@ -76,11 +79,6 @@ sealed interface CallEvent {
     /** A `call.status` result for this call. */
     data class Status(val callID: String, val status: CallStatus) : CallEvent
 
-    /** An opened payload from the expected contact. `fromDeviceID` is the server-reported sender device. */
-    data class Remote(val payload: CallSignalPayload, val fromDeviceID: String) : CallEvent
-
-    /** A payload from `fromDeviceID` that failed to open. Only the answering device can end the call this way. */
-    data class RemoteRejected(val error: CallSealException, val fromDeviceID: String) : CallEvent
 
     data class Media(val event: MediaEvent) : CallEvent
     data class LocalOffer(val sdp: String) : CallEvent
@@ -94,3 +92,13 @@ sealed interface CallEvent {
     data object Tick : CallEvent
     data class ContextChanged(val context: CallContext) : CallEvent
 }
+
+/**
+ * Internal: server frames reach the machine through [CallMachine.ingest], which gates the frame kind and call ID
+ * before an opened payload becomes this. An opened payload from the expected contact; `fromDeviceID` is the
+ * server-reported sender device (already checked against the MLS credential when the sealer reports one).
+ */
+internal data class RemoteSignal(val payload: CallSignalPayload, val fromDeviceID: String) : CallEvent
+
+/** Internal: a payload from `fromDeviceID` that failed to open. Only the answering device can end the call this way. */
+internal data class RemoteSignalRejected(val error: CallSealException, val fromDeviceID: String) : CallEvent

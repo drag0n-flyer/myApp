@@ -57,8 +57,22 @@ sealed class CallSealException : Exception() {
     object Undecryptable : CallSealException()
 }
 
+/**
+ * A call payload that [CallSignalSealer.open] accepted. [senderDeviceID] is the device part of the sender's MLS
+ * credential identity (`<accountID>/<deviceID>`, docs/protocol/mls-profile.md#identity). Null only when the
+ * sealer cannot tell; a machine then trusts the server's `fromDeviceID`.
+ */
+class OpenedCallSignal(val payload: CallSignalPayload, val senderDeviceID: String? = null)
+
 interface CallSignalSealer {
     /** [to] is a contact account ID. */
     suspend fun seal(payload: CallSignalPayload, to: String): ByteArray
-    suspend fun open(data: ByteArray, from: String): CallSignalPayload
+
+    /**
+     * Opens a call frame sent by the account [from]. It must return application messages only: a commit, a
+     * proposal or a Welcome that arrives on a call channel must be rejected (throw [CallSealException]) before
+     * any group state changes. The sender account and device come from the MLS credential, never from
+     * server-stated fields.
+     */
+    suspend fun open(data: ByteArray, from: String): OpenedCallSignal
 }

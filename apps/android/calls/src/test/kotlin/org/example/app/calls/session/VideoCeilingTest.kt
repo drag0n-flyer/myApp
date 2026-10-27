@@ -25,7 +25,7 @@ class VideoCeilingTest {
         val m = machine()
         m.handle(CallEvent.Start(bob, true, "c1"))
         m.handle(CallEvent.Server(CallServerEvent.Answered("c1", "d1")))
-        m.handle(CallEvent.Remote(offer(peerCeiling), "d1"))
+        m.handle(RemoteSignal(offer(peerCeiling), "d1"))
         m.handle(CallEvent.LocalAnswer(sdp("sha-256 AB:CD")))
         m.handle(CallEvent.Media(MediaEvent.IceStateChanged(IceState.Connected)))
         return m
@@ -55,10 +55,10 @@ class VideoCeilingTest {
         val m = machine()
         m.handle(CallEvent.Start(bob, true, "c1"))
         m.handle(CallEvent.Server(CallServerEvent.Answered("c1", "d1")))
-        val v = m.handle(CallEvent.Remote(offer(DataMode.Balanced), "d1")).videoEffects()
+        val v = m.handle(RemoteSignal(offer(DataMode.Balanced), "d1")).videoEffects()
         assertTrue(v.any { it.within(DataMode.Balanced, VideoTier.P270) })
         val m2 = caller(peerCeiling = null)
-        val fx2 = m2.handle(CallEvent.Remote(CallSignalPayload(Kind.modeChange, "c1", ceiling = DataMode.UltraLow), "d1"))
+        val fx2 = m2.handle(RemoteSignal(CallSignalPayload(Kind.modeChange, "c1", ceiling = DataMode.UltraLow), "d1"))
         assertTrue(fx2.videoEffects().all { it.ceiling == DataMode.UltraLow })
     }
 
@@ -67,7 +67,7 @@ class VideoCeilingTest {
         val m = machine()
         m.handle(CallEvent.Start(bob, true, "c1"))
         m.handle(CallEvent.Server(CallServerEvent.Answered("c1", "d1")))
-        assertEquals(listOf(CallEffect.SetVideo(VideoTier.P360, DataMode.High)), m.handle(CallEvent.Remote(offer(null), "d1")).videoEffects())
+        assertEquals(listOf(CallEffect.SetVideo(VideoTier.P360, DataMode.High)), m.handle(RemoteSignal(offer(null), "d1")).videoEffects())
     }
 
     /** The callee's first answer from the caller sends the tier with the call's ceiling, peer's ceiling from the ring included. */
@@ -77,7 +77,7 @@ class VideoCeilingTest {
         m.handle(CallEvent.LocalOffer(sdp(CALLEE_FP)))
         m.handle(CallEvent.Answer(true))
         val ans = CallSignalPayload(Kind.answer, "c1", sdp = sdp("sha-256 AB:CD"), dtlsFingerprint = "sha-256 AB:CD")
-        assertEquals(listOf(CallEffect.SetVideo(VideoTier.P270, DataMode.Balanced)), m.handle(CallEvent.Remote(ans, "dA")).videoEffects())
+        assertEquals(listOf(CallEffect.SetVideo(VideoTier.P270, DataMode.Balanced)), m.handle(RemoteSignal(ans, "dA")).videoEffects())
     }
 
     /** Every ceiling change re-sends a running tier, also when the tier itself stays the same. */
@@ -85,12 +85,12 @@ class VideoCeilingTest {
         val m = caller(peerCeiling = DataMode.Balanced)   // running at p270 under balanced
         val fx = m.handle(CallEvent.SetPreference(ModePreference.Fixed(CoreMode.Balanced)))   // own drops high -> balanced; min unchanged
         assertTrue(fx.videoEffects().isEmpty())
-        val up = m.handle(CallEvent.Remote(CallSignalPayload(Kind.modeChange, "c1", ceiling = DataMode.High), "d1"))
+        val up = m.handle(RemoteSignal(CallSignalPayload(Kind.modeChange, "c1", ceiling = DataMode.High), "d1"))
         assertTrue(up.videoEffects().isEmpty())   // min(own balanced, peer high) is still balanced
-        val down = m.handle(CallEvent.Remote(CallSignalPayload(Kind.modeChange, "c1", ceiling = DataMode.DataSaver), "d1"))
+        val down = m.handle(RemoteSignal(CallSignalPayload(Kind.modeChange, "c1", ceiling = DataMode.DataSaver), "d1"))
         assertEquals(DataMode.DataSaver, down.videoEffects().single().ceiling)
         // p180 is the top tier at both data saver and ultra low: same tier, new ceiling, still re-sent.
-        val lower = m.handle(CallEvent.Remote(CallSignalPayload(Kind.modeChange, "c1", ceiling = DataMode.UltraLow), "d1"))
+        val lower = m.handle(RemoteSignal(CallSignalPayload(Kind.modeChange, "c1", ceiling = DataMode.UltraLow), "d1"))
         assertEquals(listOf(CallEffect.SetVideo(VideoTier.P180, DataMode.UltraLow)), lower.videoEffects())
     }
 }

@@ -33,7 +33,7 @@ internal fun callerActive(video: Boolean = false, clock: ManualClock = ManualClo
     val m = CallMachine(ctx(), PlainSealer(), clock)
     m.handle(CallEvent.Start(bob, video, "c1"))
     m.handle(CallEvent.Server(CallServerEvent.Answered("c1", "d1")))
-    m.handle(CallEvent.Remote(CallSignalPayload(Kind.offer, "c1", sdp = sdp(CALLEE_FP), dtlsFingerprint = CALLEE_FP), "d1"))
+    m.handle(RemoteSignal(CallSignalPayload(Kind.offer, "c1", sdp = sdp(CALLEE_FP), dtlsFingerprint = CALLEE_FP), "d1"))
     m.handle(CallEvent.LocalAnswer(sdp(CALLER_FP)))
     m.handle(CallEvent.Media(MediaEvent.IceStateChanged(IceState.Connected)))
     return m
@@ -45,7 +45,7 @@ private fun calleeActive(clock: ManualClock = ManualClock()): CallMachine {
     m.handle(CallEvent.Incoming("c1", bob, "dA", CallSignalPayload(Kind.ring, "c1", video = false)))
     m.handle(CallEvent.LocalOffer(sdp(CALLEE_FP)))
     m.handle(CallEvent.Answer(false))
-    m.handle(CallEvent.Remote(CallSignalPayload(Kind.answer, "c1", sdp = sdp(CALLER_FP), dtlsFingerprint = CALLER_FP), "dA"))
+    m.handle(RemoteSignal(CallSignalPayload(Kind.answer, "c1", sdp = sdp(CALLER_FP), dtlsFingerprint = CALLER_FP), "dA"))
     m.handle(CallEvent.Media(MediaEvent.IceStateChanged(IceState.Connected)))
     return m
 }
@@ -56,7 +56,7 @@ class MidCallTest {
         val m = machine()
         m.handle(CallEvent.Start(bob, false, "c1"))
         m.handle(CallEvent.Server(CallServerEvent.Answered("c1", "d1")))
-        val fx = m.handle(CallEvent.RemoteRejected(CallSealException.WrongSender, "d1"))
+        val fx = m.handle(RemoteSignalRejected(CallSealException.WrongSender, "d1"))
         assertEquals(CallPhase.Ended(CallEndReason.Failed), m.state?.phase)
         assertTrue(hangupFrame in fx && CallEffect.End(CallEndReason.Failed) in fx)
         assertFalse(fx.hasSetRemote())
@@ -66,7 +66,7 @@ class MidCallTest {
         val m = machine()
         m.handle(CallEvent.Start(bob, false, "c1"))
         m.handle(CallEvent.Server(CallServerEvent.Answered("c1", "d1")))
-        val fx = m.handle(CallEvent.Remote(CallSignalPayload(Kind.offer, "c1", sdp = sdp("sha-256 99"), dtlsFingerprint = CALLEE_FP), "d1"))
+        val fx = m.handle(RemoteSignal(CallSignalPayload(Kind.offer, "c1", sdp = sdp("sha-256 99"), dtlsFingerprint = CALLEE_FP), "d1"))
         assertEquals(CallPhase.Ended(CallEndReason.Failed), m.state?.phase)
         assertFalse(fx.hasAcceptOffer())
     }
@@ -94,13 +94,13 @@ class MidCallTest {
         assertEquals(sdp(CALLER_FP), re?.sdp)
         assertEquals(CALLER_FP, re?.dtlsFingerprint)
         val ans = CallSignalPayload(Kind.renegotiateAnswer, "c1", sdp = sdp(CALLEE_FP), dtlsFingerprint = CALLEE_FP)
-        assertTrue(CallEffect.AcceptAnswer(sdp(CALLEE_FP), profile(DataMode.DataSaver)) in m.handle(CallEvent.Remote(ans, "d1")))
+        assertTrue(CallEffect.AcceptAnswer(sdp(CALLEE_FP), profile(DataMode.DataSaver)) in m.handle(RemoteSignal(ans, "d1")))
         assertFalse(m.handle(CallEvent.Stats(MediaStats(availableOutgoingBitrate = 40_000.0))).hasMakeOffer(restart = false))
     }
 
     @Test fun calleeAnswersModeChangeRenegotiate() {
         val callee = calleeActive()
-        assertTrue(callee.handle(CallEvent.Remote(peerOffer(CALLER_FP), "dA")).hasAcceptOffer())
+        assertTrue(callee.handle(RemoteSignal(peerOffer(CALLER_FP), "dA")).hasAcceptOffer())
         assertEquals(CALLEE_FP, callee.handle(CallEvent.LocalAnswer(sdp(CALLEE_FP))).signal(Kind.renegotiateAnswer)?.dtlsFingerprint)
     }
 
@@ -120,8 +120,8 @@ class MidCallTest {
     @Test fun peerCeilingCaps() {
         val m = callerActive()
         val mc = CallSignalPayload(Kind.modeChange, "c1", ceiling = DataMode.DataSaver)
-        assertTrue(m.handle(CallEvent.Remote(mc, "d2")).isEmpty())
-        val fx = m.handle(CallEvent.Remote(mc, "d1"))
+        assertTrue(m.handle(RemoteSignal(mc, "d2")).isEmpty())
+        val fx = m.handle(RemoteSignal(mc, "d1"))
         assertTrue(m.state!!.effectiveMode <= CoreMode.DataSaver && CallEffect.SetAudioMaxBitrate(16_000) in fx)
         m.handle(CallEvent.Stats(MediaStats(availableOutgoingBitrate = 5_000_000.0)))
         assertTrue(m.state!!.effectiveMode <= CoreMode.DataSaver)
@@ -133,7 +133,7 @@ class MidCallTest {
         val m = calleeActive()
         m.handle(CallEvent.SetPreference(ModePreference.Fixed(CoreMode.DataSaver)))
         m.handle(CallEvent.LocalOffer(sdp(CALLEE_FP)))
-        val fx = m.handle(CallEvent.Remote(peerOffer(CALLER_FP), "dA"))
+        val fx = m.handle(RemoteSignal(peerOffer(CALLER_FP), "dA"))
         assertEquals(CallEffect.Rollback, fx.first())
         assertTrue(fx[1] is CallEffect.AcceptOffer)
         assertNotNull(m.handle(CallEvent.LocalAnswer(sdp(CALLEE_FP))).signal(Kind.renegotiateAnswer))
@@ -150,32 +150,32 @@ class MidCallTest {
         val callerOffer = caller.handle(CallEvent.LocalOffer(sdp(CALLER_FP))).signal(Kind.renegotiate) ?: fail("caller offer")
         val calleeOffer = callee.handle(CallEvent.LocalOffer(sdp(CALLEE_FP))).signal(Kind.renegotiate) ?: fail("callee offer")
         // The caller ignores the callee's offer; the callee rolls its own back and takes the caller's.
-        assertTrue(caller.handle(CallEvent.Remote(calleeOffer, "d1")).isEmpty())
-        val atCallee = callee.handle(CallEvent.Remote(callerOffer, "dA"))
+        assertTrue(caller.handle(RemoteSignal(calleeOffer, "d1")).isEmpty())
+        val atCallee = callee.handle(RemoteSignal(callerOffer, "dA"))
         assertEquals(listOf(CallEffect.Rollback), atCallee.take(1))
         assertTrue(atCallee[1] is CallEffect.AcceptOffer)
         val answer = callee.handle(CallEvent.LocalAnswer(sdp(CALLEE_FP))).signal(Kind.renegotiateAnswer) ?: fail("answer")
-        assertTrue(caller.handle(CallEvent.Remote(answer, "d1")).hasAcceptAnswer())
+        assertTrue(caller.handle(RemoteSignal(answer, "d1")).hasAcceptAnswer())
         assertFalse(caller.state!!.isEnded || callee.state!!.isEnded)
     }
 
     @Test fun callerAcceptsCalleeModeChangeOffer() {
         val m = callerActive()
-        val fx = m.handle(CallEvent.Remote(peerOffer(CALLEE_FP), "d1"))
+        val fx = m.handle(RemoteSignal(peerOffer(CALLEE_FP), "d1"))
         assertTrue(fx.hasAcceptOffer() && CallEffect.Rollback !in fx)
         assertEquals(CALLER_FP, m.handle(CallEvent.LocalAnswer(sdp(CALLER_FP))).signal(Kind.renegotiateAnswer)?.dtlsFingerprint)
     }
 
     @Test fun callerChecksCalleeOffer() {
         val a = callerActive()
-        assertTrue(a.handle(CallEvent.Remote(peerOffer(CALLEE_FP), "d2")).isEmpty())
+        assertTrue(a.handle(RemoteSignal(peerOffer(CALLEE_FP), "d2")).isEmpty())
         assertFalse(a.state!!.isEnded)
         val b = callerActive()
-        val bad = b.handle(CallEvent.Remote(peerOffer(CALLEE_FP, sdpFP = "sha-256 99"), "d1"))
+        val bad = b.handle(RemoteSignal(peerOffer(CALLEE_FP, sdpFP = "sha-256 99"), "d1"))
         assertEquals(CallPhase.Ended(CallEndReason.Failed), b.state?.phase)
         assertTrue(hangupFrame in bad)
         val c = callerActive()
-        val unpinned = c.handle(CallEvent.Remote(peerOffer("sha-256 77"), "d1"))
+        val unpinned = c.handle(RemoteSignal(peerOffer("sha-256 77"), "d1"))
         assertEquals(CallPhase.Ended(CallEndReason.Failed), c.state?.phase)
         assertFalse(unpinned.hasAcceptOffer())
     }
@@ -184,10 +184,10 @@ class MidCallTest {
     @Test fun renegotiateKeepsFingerprint() {
         // Same key, different case and spacing: still the pinned fingerprint.
         val ok = callerActive()
-        assertTrue(ok.handle(CallEvent.Remote(peerOffer("sha-256 11:22:33", sdpFP = "SHA-256  11:22:33"), "d1")).hasSetRemote())
+        assertTrue(ok.handle(RemoteSignal(peerOffer("sha-256 11:22:33", sdpFP = "SHA-256  11:22:33"), "d1")).hasSetRemote())
         // A new, self-consistent key mid-call: the call ends, the SDP is never applied.
         val swapped = callerActive()
-        val fx = swapped.handle(CallEvent.Remote(peerOffer("sha-256 44:55:66"), "d1"))
+        val fx = swapped.handle(RemoteSignal(peerOffer("sha-256 44:55:66"), "d1"))
         assertFalse(fx.hasSetRemote())
         assertEquals(CallPhase.Ended(CallEndReason.Failed), swapped.state?.phase)
         assertTrue(hangupFrame in fx)
@@ -196,48 +196,48 @@ class MidCallTest {
         callee.handle(CallEvent.SetPreference(ModePreference.Fixed(CoreMode.DataSaver)))
         callee.handle(CallEvent.LocalOffer(sdp(CALLEE_FP)))
         val swappedAnswer = CallSignalPayload(Kind.renegotiateAnswer, "c1", sdp = sdp("sha-256 44:55:66"), dtlsFingerprint = "sha-256 44:55:66")
-        assertFalse(callee.handle(CallEvent.Remote(swappedAnswer, "dA")).hasSetRemote())
+        assertFalse(callee.handle(RemoteSignal(swappedAnswer, "dA")).hasSetRemote())
         assertEquals(CallPhase.Ended(CallEndReason.Failed), callee.state?.phase)
         // A renegotiate without a claimed fingerprint fails too.
         val missing = callerActive()
-        assertFalse(missing.handle(CallEvent.Remote(CallSignalPayload(Kind.renegotiate, "c1", sdp = sdp(CALLEE_FP)), "d1")).hasSetRemote())
+        assertFalse(missing.handle(RemoteSignal(CallSignalPayload(Kind.renegotiate, "c1", sdp = sdp(CALLEE_FP)), "d1")).hasSetRemote())
         assertEquals(CallPhase.Ended(CallEndReason.Failed), missing.state?.phase)
     }
 
     @Test fun callerOneRenegotiationAtATime() {
         val m = callerActive()
-        assertTrue(m.handle(CallEvent.Remote(peerOffer(CALLEE_FP), "d1")).hasAcceptOffer())
-        assertTrue(m.handle(CallEvent.Remote(peerOffer(CALLEE_FP), "d1")).isEmpty())
+        assertTrue(m.handle(RemoteSignal(peerOffer(CALLEE_FP), "d1")).hasAcceptOffer())
+        assertTrue(m.handle(RemoteSignal(peerOffer(CALLEE_FP), "d1")).isEmpty())
         m.handle(CallEvent.LocalAnswer(sdp(CALLER_FP)))
-        assertTrue(m.handle(CallEvent.Remote(peerOffer(CALLEE_FP), "d1")).hasAcceptOffer())
+        assertTrue(m.handle(RemoteSignal(peerOffer(CALLEE_FP), "d1")).hasAcceptOffer())
     }
 
     @Test fun callerOfferWinsGlareAgainstCalleeOffer() {
         val clock = ManualClock()
         val m = callerActive(clock = clock)
         val req = CallSignalPayload(Kind.renegotiate, "c1")
-        assertTrue(m.handle(CallEvent.Remote(req, "d1")).hasMakeOffer(restart = true))
+        assertTrue(m.handle(RemoteSignal(req, "d1")).hasMakeOffer(restart = true))
         m.handle(CallEvent.LocalOffer(sdp(CALLER_FP)))
         clock.advance(1.0)
-        assertTrue(m.handle(CallEvent.Remote(peerOffer(CALLEE_FP), "d1")).isEmpty())
+        assertTrue(m.handle(RemoteSignal(peerOffer(CALLEE_FP), "d1")).isEmpty())
         clock.advance(10.0)
-        val fx = m.handle(CallEvent.Remote(peerOffer(CALLEE_FP), "d1"))
+        val fx = m.handle(RemoteSignal(peerOffer(CALLEE_FP), "d1"))
         assertEquals(CallEffect.Rollback, fx.first())
         assertTrue(fx[1] is CallEffect.AcceptOffer)
     }
 
     @Test fun requestWithoutSDPIsOnlyARestartRequest() {
         val callee = calleeActive()
-        assertTrue(callee.handle(CallEvent.Remote(CallSignalPayload(Kind.renegotiate, "c1"), "dA")).isEmpty())
+        assertTrue(callee.handle(RemoteSignal(CallSignalPayload(Kind.renegotiate, "c1"), "dA")).isEmpty())
         assertFalse(callee.state!!.isEnded)
     }
 
     @Test fun callerDoesNotRestartWhileOwingAnAnswer() {
         val c2 = ManualClock()
         val n = callerActive(clock = c2)
-        assertTrue(n.handle(CallEvent.Remote(peerOffer(CALLEE_FP), "d1")).hasAcceptOffer())
+        assertTrue(n.handle(RemoteSignal(peerOffer(CALLEE_FP), "d1")).hasAcceptOffer())
         c2.advance(1.0)
-        assertTrue(n.handle(CallEvent.Remote(CallSignalPayload(Kind.renegotiate, "c1"), "d1")).isEmpty())
+        assertTrue(n.handle(RemoteSignal(CallSignalPayload(Kind.renegotiate, "c1"), "d1")).isEmpty())
         n.handle(CallEvent.Media(MediaEvent.IceStateChanged(IceState.Disconnected)))
         c2.advance(2.5)
         assertFalse(n.handle(CallEvent.Tick).hasMakeOffer(restart = true))
@@ -250,8 +250,8 @@ class MidCallTest {
         val m = machine()
         m.handle(CallEvent.Start(bob, false, "c1"))
         m.handle(CallEvent.Server(CallServerEvent.Answered("c1", "d1")))
-        m.handle(CallEvent.Remote(CallSignalPayload(Kind.offer, "c1", sdp = sdp(CALLEE_FP), dtlsFingerprint = CALLEE_FP), "d1"))
-        assertTrue(m.handle(CallEvent.Remote(peerOffer(CALLEE_FP), "d1")).isEmpty())
+        m.handle(RemoteSignal(CallSignalPayload(Kind.offer, "c1", sdp = sdp(CALLEE_FP), dtlsFingerprint = CALLEE_FP), "d1"))
+        assertTrue(m.handle(RemoteSignal(peerOffer(CALLEE_FP), "d1")).isEmpty())
         assertNotNull(m.handle(CallEvent.LocalAnswer(sdp(CALLER_FP))).signal(Kind.answer))
     }
 
@@ -263,13 +263,13 @@ class MidCallTest {
         assertTrue(c1.hasMakeOffer(restart = false) && c2.hasMakeOffer(restart = false))
         val callerOffer = caller.handle(CallEvent.LocalOffer(sdp(CALLER_FP))).signal(Kind.renegotiate) ?: fail("caller offer")
         val calleeOffer = callee.handle(CallEvent.LocalOffer(sdp(CALLEE_FP))).signal(Kind.renegotiate) ?: fail("callee offer")
-        val atCallee = callee.handle(CallEvent.Remote(callerOffer, "dA"))
-        val atCaller = caller.handle(CallEvent.Remote(calleeOffer, "d1"))
+        val atCallee = callee.handle(RemoteSignal(callerOffer, "dA"))
+        val atCaller = caller.handle(RemoteSignal(calleeOffer, "d1"))
         assertEquals(CallEffect.Rollback, atCallee.first())
         assertTrue(atCallee[1] is CallEffect.AcceptOffer)
         assertTrue(atCaller.isEmpty())
         val answer = callee.handle(CallEvent.LocalAnswer(sdp(CALLEE_FP))).signal(Kind.renegotiateAnswer) ?: fail("no answer")
-        assertTrue(CallEffect.AcceptAnswer(sdp(CALLEE_FP), profile(DataMode.DataSaver)) in caller.handle(CallEvent.Remote(answer, "d1")))
+        assertTrue(CallEffect.AcceptAnswer(sdp(CALLEE_FP), profile(DataMode.DataSaver)) in caller.handle(RemoteSignal(answer, "d1")))
         repeat(3) { i ->
             assertFalse(caller.handle(CallEvent.Stats(MediaStats(availableOutgoingBitrate = 5_000_000.0))).hasMakeOffer(false), "caller $i")
             assertFalse(callee.handle(CallEvent.Stats(MediaStats(availableOutgoingBitrate = 5_000_000.0))).hasMakeOffer(false), "callee $i")
@@ -320,7 +320,7 @@ class MidCallTest {
             CallEvent.SetVideo(true), CallEvent.SetMuted(true), CallEvent.SetSpeaker(true),
             CallEvent.Server(CallServerEvent.Answered("c1", "d1")), CallEvent.Server(CallServerEvent.Ended("c1", "missed")),
             CallEvent.Status("c1", CallStatus.Ended("missed")),
-            CallEvent.Remote(peerOffer(CALLEE_FP), "d1"), CallEvent.RemoteRejected(CallSealException.Undecryptable, "d1"),
+            RemoteSignal(peerOffer(CALLEE_FP), "d1"), RemoteSignalRejected(CallSealException.Undecryptable, "d1"),
             CallEvent.Media(MediaEvent.IceStateChanged(IceState.Disconnected)), CallEvent.Media(MediaEvent.LocalCandidate(cand(1))),
             CallEvent.LocalOffer(sdp(CALLER_FP)), CallEvent.LocalAnswer(sdp(CALLER_FP)),
             CallEvent.Stats(MediaStats(availableOutgoingBitrate = 1.0)), CallEvent.PathChanged, CallEvent.Tick, CallEvent.LocalFailure,
@@ -365,9 +365,9 @@ class MidCallTest {
                             candidate = if (rng.nextBoolean()) cand(rng.nextInt(100)) else null,
                             ceiling = modes.random(rng),
                         )
-                        CallEvent.Remote(p, devices.random(rng))
+                        RemoteSignal(p, devices.random(rng))
                     }
-                    12 -> CallEvent.RemoteRejected(CallSealException.Undecryptable, devices.random(rng))
+                    12 -> RemoteSignalRejected(CallSealException.Undecryptable, devices.random(rng))
                     13, 14 -> CallEvent.Media(MediaEvent.IceStateChanged(listOf(IceState.Connected, IceState.Disconnected, IceState.Failed, IceState.Checking, IceState.Closed).random(rng)))
                     15 -> CallEvent.Media(MediaEvent.LocalCandidate(cand(rng.nextInt(100))))
                     16 -> CallEvent.LocalOffer(sdp(fps.random(rng)))

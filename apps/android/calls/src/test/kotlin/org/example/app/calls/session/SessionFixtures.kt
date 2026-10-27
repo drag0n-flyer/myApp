@@ -7,6 +7,7 @@ import org.example.app.contracts.CallSignalPayload
 import org.example.app.contracts.CallSignalSealer
 import org.example.app.contracts.DataMode
 import org.example.app.contracts.IceCandidate
+import org.example.app.contracts.OpenedCallSignal
 import org.example.app.core.calls.ModePreference
 import org.example.app.core.calls.NetworkType
 import org.example.app.core.chats.Contact
@@ -44,15 +45,21 @@ internal class PlainSealer(private val me: String = "me") : CallSignalSealer {
     override suspend fun seal(payload: CallSignalPayload, to: String): ByteArray =
         "$me|${json.encodeToString(CallSignalPayload.serializer(), payload)}".encodeToByteArray()
 
-    override suspend fun open(data: ByteArray, from: String): CallSignalPayload {
+    override suspend fun open(data: ByteArray, from: String): OpenedCallSignal {
         val text = data.decodeToString()
-        val sender = text.substringBefore('|', missingDelimiterValue = "")
+        val credential = text.substringBefore('|', missingDelimiterValue = "")
+        val sender = credential.substringBefore('/')
+        val device = if ('/' in credential) credential.substringAfter('/') else null
         val body = text.substringAfter('|', missingDelimiterValue = "")
         val p = runCatching { json.decodeFromString(CallSignalPayload.serializer(), body) }
             .getOrElse { throw CallSealException.Undecryptable }
         if (sender != from) throw CallSealException.WrongSender
-        return p
+        return OpenedCallSignal(p, device)
     }
+
+    /** Sealed as if sent by `account`'s device `device` (the credential identity `account/device`). */
+    fun from(account: String, device: String, p: CallSignalPayload): ByteArray =
+        "$account/$device|${json.encodeToString(CallSignalPayload.serializer(), p)}".encodeToByteArray()
 
     /** Sealed as if sent by `account`. */
     fun from(account: String, p: CallSignalPayload): ByteArray =

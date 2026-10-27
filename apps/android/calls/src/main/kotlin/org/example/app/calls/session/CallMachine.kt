@@ -51,6 +51,16 @@ class CallMachine(context: CallContext, private val sealer: CallSignalSealer, pr
         private const val RESTART_WINDOW_MS = ReconnectPolicy.RETRY_EVERY_MS
         private const val STALE_ANSWER_AFTER_MS = 10_000L
 
+        /** The server ends an unanswered ring as `missed` after 45 s; a caller waits that long plus a grace period. */
+        const val SERVER_RING_LIMIT_MS = 45_000L
+        const val RING_GRACE_MS = 5_000L
+        const val RING_DEADLINE_MS = SERVER_RING_LIMIT_MS + RING_GRACE_MS
+
+        /** From `call.answered` (caller) or the user's answer (callee) until the call is Active. */
+        const val SETUP_DEADLINE_MS = 30_000L
+
+        private const val MAX_REMEMBERED_ENDED_CALLS = 32
+
         /** `offer` travels only in `call.answer` (so it arrives with `call.answered`); the rest only in `call.signal`. */
         private val answeredKinds = setOf(Kind.offer)
         private val signalKinds = setOf(Kind.answer, Kind.candidate, Kind.renegotiate, Kind.renegotiateAnswer, Kind.modeChange)
@@ -93,6 +103,10 @@ class CallMachine(context: CallContext, private val sealer: CallSignalSealer, pr
     /** Remote candidates received before we can use them, by sending device. */
     private val earlyRemoteCandidates = LinkedHashMap<String, MutableList<IceCandidate>>()
     private var activeSince: Long? = null
+    private var ringingSince: Long? = null     // caller: when the ring went out
+    private var setupSince: Long? = null       // caller: call.answered; callee: the user answered
+    /** Calls that ended on this device, so a replayed ring for one of them does nothing. */
+    private val endedCalls = LinkedHashSet<String>()
     private var everActive = false
     private var lastSentMode: DataMode? = null
     private var lastSentTier: VideoTier? = null
@@ -111,8 +125,8 @@ class CallMachine(context: CallContext, private val sealer: CallSignalSealer, pr
         is CallEvent.SetSpeaker -> live { it.copy(isSpeakerOn = event.on) } ?: emptyList()
         is CallEvent.Server -> server(event.event)
         is CallEvent.Status -> status(event.callID, event.status)
-        is CallEvent.Remote -> remote(event.payload, event.fromDeviceID)
-        is CallEvent.RemoteRejected -> {
+        is RemoteSignal -> remote(event.payload, event.fromDeviceID)
+        is RemoteSignalRejected -> {
             val answering = answeringDevice
             if (answering != null && event.fromDeviceID == answering) end(CallEndReason.Failed, notifyServer = true) else emptyList()
         }
@@ -128,7 +142,7 @@ class CallMachine(context: CallContext, private val sealer: CallSignalSealer, pr
 
     /**
      * A server frame for this call. Payloads are opened as sent by the call's contact before [handle] sees them;
-     * one that fails to open becomes [CallEvent.RemoteRejected]. Rings are the engine's business and are ignored.
+     * one that fails to open becomes [RemoteSignalRejected]. Rings are the engine's business and are ignored.
      */
     suspend fun ingest(event: CallServerEvent): List<CallEffect> {
         if (event is CallServerEvent.Ring || event.callID != callID || !isLive) return emptyList()
@@ -148,17 +162,21 @@ class CallMachine(context: CallContext, private val sealer: CallSignalSealer, pr
     }
 
     private suspend fun open(frameCallID: String, device: String, data: ByteArray, allowed: Set<Kind>): List<CallEffect> {
-        val p = try {
+        val opened = try {
             sealer.open(data, contactID)
         } catch (e: CancellationException) {
             throw e
         } catch (e: CallSealException) {
-            return handle(CallEvent.RemoteRejected(e, device))
+            return handle(RemoteSignalRejected(e, device))
         } catch (e: Exception) {
-            return handle(CallEvent.RemoteRejected(CallSealException.Undecryptable, device))
+            return handle(RemoteSignalRejected(CallSealException.Undecryptable, device))
         }
+        // docs/protocol/calls.md check 2: the device in the MLS credential must be the frame's device.
+        val credentialDevice = opened.senderDeviceID
+        if (credentialDevice != null && credentialDevice != device) return emptyList()
+        val p = opened.payload
         if (p.callID != frameCallID || p.kind !in allowed) return emptyList()
-        return handle(CallEvent.Remote(p, device))
+        return handle(RemoteSignal(p, device))
     }
 
     // Inputs
@@ -172,6 +190,7 @@ class CallMachine(context: CallContext, private val sealer: CallSignalSealer, pr
     private fun start(contact: Contact, video: Boolean, id: String): List<CallEffect> {
         if (isLive) return emptyList()
         resetCall(id, contact.id, isOutgoing = true)
+        ringingSince = clock.nowMs()
 
         val ceiling = ownCeiling
         val videoOn = video && !startsOff(ceiling)
@@ -201,13 +220,14 @@ class CallMachine(context: CallContext, private val sealer: CallSignalSealer, pr
         outstandingSince = null; lastHonouredRequest = null; negotiatedSend = null
         pinnedFingerprint = null; renegotiateOutstanding = false
         pendingLocalCandidates.clear(); earlyRemoteCandidates.clear()
-        activeSince = null; everActive = false; lastSentMode = null; lastSentTier = null; lastSentCeiling = null
+        activeSince = null; ringingSince = null; setupSince = null
+        everActive = false; lastSentMode = null; lastSentTier = null; lastSentCeiling = null
         videoStartsOff = false
         reconnect = ReconnectPolicy(isCaller = isOutgoing)
     }
 
     private fun incoming(id: String, contact: Contact, device: String, ring: CallSignalPayload): List<CallEffect> {
-        if (isLive) return emptyList()
+        if (isLive || id in endedCalls) return emptyList()
         if (ring.kind != Kind.ring || ring.callID != id) return emptyList()
         resetCall(id, contact.id, isOutgoing = false)
         answeringDevice = device              // bound to the caller's device from the ring; empty after a push
@@ -233,6 +253,7 @@ class CallMachine(context: CallContext, private val sealer: CallSignalSealer, pr
     private fun answer(video: Boolean): List<CallEffect> {
         if (!isLive || outgoing || state?.phase != CallPhase.Incoming || answerRequested) return emptyList()
         answerRequested = true
+        setupSince = clock.nowMs()
         val on = video && state?.isVideoCall == true && !videoStartsOff
         adaptor = QualityAdaptor(effectiveCeiling, on)   // fresh start with the answer's video choice
         val tier = adaptor.currentTier
@@ -286,6 +307,7 @@ class CallMachine(context: CallContext, private val sealer: CallSignalSealer, pr
         is CallServerEvent.Answered -> {
             if (outgoing && e.callID == callID && isLive && answeringDevice == null) {
                 answeringDevice = e.deviceID
+                setupSince = clock.nowMs()
                 // Keep only the answering device's buffered candidates.
                 earlyRemoteCandidates.keys.retainAll(setOf(e.deviceID))
             }
@@ -549,8 +571,25 @@ class CallMachine(context: CallContext, private val sealer: CallSignalSealer, pr
                 fx += CallEffect.Publish(state)
             }
         }
+        val expired = deadline()
+        if (expired != null) return fx + expired
         fx += reconnectActions(reconnect.tick(clock.nowMs()))
         return fx
+    }
+
+    /** A caller's unanswered ring, or any call that is answered but never connects, ends here. */
+    private fun deadline(): List<CallEffect>? {
+        val now = clock.nowMs()
+        val phase = state?.phase
+        val setup = setupSince
+        if (setup != null && (phase == CallPhase.Ringing || phase == CallPhase.Connecting) && now - setup >= SETUP_DEADLINE_MS) {
+            return end(CallEndReason.Failed, notifyServer = true)
+        }
+        val rang = ringingSince
+        if (outgoing && setup == null && phase == CallPhase.Ringing && rang != null && now - rang >= RING_DEADLINE_MS) {
+            return end(CallEndReason.Missed, notifyServer = true)   // cancels the ring
+        }
+        return null
     }
 
     private fun stats(event: CallEvent.Stats): List<CallEffect> {
@@ -710,6 +749,8 @@ class CallMachine(context: CallContext, private val sealer: CallSignalSealer, pr
     private fun end(reason: CallEndReason, notifyServer: Boolean): List<CallEffect> {
         val s = state
         if (!isLive || s == null) return emptyList()
+        endedCalls += callID
+        if (endedCalls.size > MAX_REMEMBERED_ENDED_CALLS) endedCalls.remove(endedCalls.first())
         val duration = activeSince?.let { (clock.nowMs() - it) / 1000.0 } ?: 0.0
         val wasActive = everActive
         update {

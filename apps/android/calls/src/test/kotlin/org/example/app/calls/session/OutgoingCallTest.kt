@@ -47,7 +47,7 @@ class OutgoingCallTest {
     private fun activeMachine(): Started {
         val s = started()
         s.m.answered()
-        s.m.handle(CallEvent.Remote(offer(), "d1"))
+        s.m.handle(RemoteSignal(offer(), "d1"))
         s.m.handle(CallEvent.LocalAnswer(sdp(FP)))
         s.m.handle(CallEvent.Media(MediaEvent.IceStateChanged(IceState.Connected)))
         return s
@@ -81,7 +81,7 @@ class OutgoingCallTest {
     @Test fun answeredOfferIsAccepted() {
         val s = started()
         s.m.answered()
-        val fx = s.m.handle(CallEvent.Remote(offer(), "d1"))
+        val fx = s.m.handle(RemoteSignal(offer(), "d1"))
         val send = profile(DataMode.valueOf(s.m.state!!.effectiveMode.name))
         assertTrue(CallEffect.AcceptOffer(sdp(FP), send, profile(ownCeiling)) in fx)
         val fx2 = s.m.handle(CallEvent.LocalAnswer(sdp("sha-256 11:22")))
@@ -95,7 +95,7 @@ class OutgoingCallTest {
     @Test fun fingerprintMismatchEndsCall() {
         val s = started()
         s.m.answered()
-        val fx = s.m.handle(CallEvent.Remote(offer(f = "sha-256 00:00", sdpFP = FP), "d1"))
+        val fx = s.m.handle(RemoteSignal(offer(f = "sha-256 00:00", sdpFP = FP), "d1"))
         assertEquals(CallPhase.Ended(CallEndReason.Failed), s.m.state?.phase)
         assertTrue(CallEffect.End(CallEndReason.Failed) in fx && hangupFrame in fx)
         assertFalse(fx.hasAcceptOffer())
@@ -106,16 +106,16 @@ class OutgoingCallTest {
         val s = started()
         s.m.answered()
         val forged = offer(f = FP, sdpFP = "sha-256 66:66:66")
-        val fx = s.m.handle(CallEvent.Remote(forged, "d1"))
+        val fx = s.m.handle(RemoteSignal(forged, "d1"))
         assertFalse(fx.hasSetRemote())
         assertEquals(CallPhase.Ended(CallEndReason.Failed), s.m.state?.phase)
         assertTrue(hangupFrame in fx)
-        assertTrue(s.m.handle(CallEvent.Remote(forged, "d1")).isEmpty())
+        assertTrue(s.m.handle(RemoteSignal(forged, "d1")).isEmpty())
         // An SDP with a second, different fingerprint line fails too: every line must match.
         val t = started()
         t.m.answered()
         val twoLines = "v=0\r\na=fingerprint:$FP\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=fingerprint:sha-256 66:66:66\r\n"
-        val fx2 = t.m.handle(CallEvent.Remote(CallSignalPayload(Kind.offer, "c1", sdp = twoLines, dtlsFingerprint = FP), "d1"))
+        val fx2 = t.m.handle(RemoteSignal(CallSignalPayload(Kind.offer, "c1", sdp = twoLines, dtlsFingerprint = FP), "d1"))
         assertFalse(fx2.hasSetRemote())
         assertEquals(CallPhase.Ended(CallEndReason.Failed), t.m.state?.phase)
     }
@@ -125,7 +125,7 @@ class OutgoingCallTest {
         s.m.answered()
         // The SDP has lower-case hex and an upper-case hash name; the claim is the canonical form.
         val fx = s.m.handle(
-            CallEvent.Remote(CallSignalPayload(Kind.offer, "c1", sdp = sdp("SHA-256 ab:cd:ef"), dtlsFingerprint = FP), "d1"),
+            RemoteSignal(CallSignalPayload(Kind.offer, "c1", sdp = sdp("SHA-256 ab:cd:ef"), dtlsFingerprint = FP), "d1"),
         )
         assertTrue(fx.hasAcceptOffer())
         assertFalse(s.m.state!!.isEnded)
@@ -134,7 +134,7 @@ class OutgoingCallTest {
     @Test fun offerWithoutFingerprintEndsCall() {
         val s = started()
         s.m.answered()
-        val fx = s.m.handle(CallEvent.Remote(CallSignalPayload(Kind.offer, "c1", sdp = "v=0\r\n", dtlsFingerprint = FP), "d1"))
+        val fx = s.m.handle(RemoteSignal(CallSignalPayload(Kind.offer, "c1", sdp = "v=0\r\n", dtlsFingerprint = FP), "d1"))
         assertFalse(fx.hasSetRemote())
         assertEquals(CallPhase.Ended(CallEndReason.Failed), s.m.state?.phase)
     }
@@ -142,7 +142,7 @@ class OutgoingCallTest {
     @Test fun peerCeilingLimitsSendMode() {
         val s = started()
         s.m.answered()
-        val fx = s.m.handle(CallEvent.Remote(offer(ceiling = DataMode.DataSaver), "d1"))
+        val fx = s.m.handle(RemoteSignal(offer(ceiling = DataMode.DataSaver), "d1"))
         assertTrue(fx.any { it is CallEffect.AcceptOffer && it.send.mode == DataMode.DataSaver })
     }
 
@@ -176,7 +176,7 @@ class OutgoingCallTest {
         val c = cand(1)
         assertTrue(s.m.handle(CallEvent.Media(MediaEvent.LocalCandidate(c))).isEmpty())
         s.m.answered()
-        s.m.handle(CallEvent.Remote(offer(), "d1"))
+        s.m.handle(RemoteSignal(offer(), "d1"))
         val fx = s.m.handle(CallEvent.LocalAnswer(sdp(FP)))
         val candidateSignal = signalFrame(CallSignalPayload(Kind.candidate, "c1", candidate = c))
         assertTrue(candidateSignal in fx)
@@ -193,24 +193,24 @@ class OutgoingCallTest {
         val s = started()
         val a = CallSignalPayload(Kind.candidate, "c1", candidate = IceCandidate("A", "0", 0))
         val b = CallSignalPayload(Kind.candidate, "c1", candidate = IceCandidate("B", "0", 0))
-        assertTrue(s.m.handle(CallEvent.Remote(a, "d1")).isEmpty())
-        assertTrue(s.m.handle(CallEvent.Remote(b, "d2")).isEmpty())
+        assertTrue(s.m.handle(RemoteSignal(a, "d1")).isEmpty())
+        assertTrue(s.m.handle(RemoteSignal(b, "d2")).isEmpty())
         s.m.answered("d2")
-        val fx = s.m.handle(CallEvent.Remote(offer(), "d2"))
+        val fx = s.m.handle(RemoteSignal(offer(), "d2"))
         assertTrue(CallEffect.AddCandidate(b.candidate!!) in fx)
         assertFalse(CallEffect.AddCandidate(a.candidate!!) in fx)
-        assertTrue(s.m.handle(CallEvent.Remote(a, "d1")).isEmpty())
-        assertEquals(listOf<CallEffect>(CallEffect.AddCandidate(b.candidate!!)), s.m.handle(CallEvent.Remote(b, "d2")))
+        assertTrue(s.m.handle(RemoteSignal(a, "d1")).isEmpty())
+        assertEquals(listOf<CallEffect>(CallEffect.AddCandidate(b.candidate!!)), s.m.handle(RemoteSignal(b, "d2")))
     }
 
     /** Brief: several callee devices signal before the answer; only the answering device's buffer survives. */
     @Test fun callerBuffersSignalsPerDevice() {
         val s = started()
-        for (n in 0 until 3) s.m.handle(CallEvent.Remote(candPayload(n), "d1"))
-        for (n in 10 until 12) s.m.handle(CallEvent.Remote(candPayload(n), "d2"))
-        s.m.handle(CallEvent.Remote(candPayload(20), "d3"))
+        for (n in 0 until 3) s.m.handle(RemoteSignal(candPayload(n), "d1"))
+        for (n in 10 until 12) s.m.handle(RemoteSignal(candPayload(n), "d2"))
+        s.m.handle(RemoteSignal(candPayload(20), "d3"))
         s.m.answered("d2")
-        val fx = s.m.handle(CallEvent.Remote(offer(), "d2"))
+        val fx = s.m.handle(RemoteSignal(offer(), "d2"))
         assertEquals(listOf(cand(10), cand(11)), fx.filterIsInstance<CallEffect.AddCandidate>().map { it.candidate })
         // The SetRemote comes before the buffered candidates.
         assertTrue(fx.indexOfFirst { it is CallEffect.SetRemote } < fx.indexOfFirst { it is CallEffect.AddCandidate })
@@ -221,16 +221,16 @@ class OutgoingCallTest {
         val s = started()
         s.m.answered("d1")
         // An offer from another callee device: dropped, the call goes on.
-        assertTrue(s.m.handle(CallEvent.Remote(offer(), "d2")).isEmpty())
+        assertTrue(s.m.handle(RemoteSignal(offer(), "d2")).isEmpty())
         assertFalse(s.m.state!!.isEnded)
         // Even a forged one does not end the call: it is not from the device we talk to.
-        assertTrue(s.m.handle(CallEvent.Remote(offer(sdpFP = "sha-256 66:66"), "d2")).isEmpty())
+        assertTrue(s.m.handle(RemoteSignal(offer(sdpFP = "sha-256 66:66"), "d2")).isEmpty())
         assertFalse(s.m.state!!.isEnded)
-        assertTrue(s.m.handle(CallEvent.Remote(offer(), "d1")).hasSetRemote())
+        assertTrue(s.m.handle(RemoteSignal(offer(), "d1")).hasSetRemote())
         s.m.handle(CallEvent.LocalAnswer(sdp("sha-256 11:22")))
-        assertTrue(s.m.handle(CallEvent.Remote(candPayload(1), "d2")).isEmpty())
-        assertTrue(s.m.handle(CallEvent.Remote(CallSignalPayload(Kind.modeChange, "c1", ceiling = DataMode.UltraLow), "d2")).isEmpty())
-        assertTrue(s.m.handle(CallEvent.Remote(CallSignalPayload(Kind.renegotiate, "c1"), "d2")).isEmpty())
+        assertTrue(s.m.handle(RemoteSignal(candPayload(1), "d2")).isEmpty())
+        assertTrue(s.m.handle(RemoteSignal(CallSignalPayload(Kind.modeChange, "c1", ceiling = DataMode.UltraLow), "d2")).isEmpty())
+        assertTrue(s.m.handle(RemoteSignal(CallSignalPayload(Kind.renegotiate, "c1"), "d2")).isEmpty())
     }
 
     /** Brief + calls.md check 3: a payload whose callID is not the frame's (or the call's) is dropped. */
@@ -243,12 +243,12 @@ class OutgoingCallTest {
         assertTrue(m.ingest(CallServerEvent.Answered("c1", "d1", wrong)).none { it is CallEffect.SetRemote })
         assertFalse(m.state!!.isEnded)
         // Opened directly with another call ID: dropped.
-        assertTrue(m.handle(CallEvent.Remote(offer().copy(callID = "c2"), "d1")).isEmpty())
+        assertTrue(m.handle(RemoteSignal(offer().copy(callID = "c2"), "d1")).isEmpty())
         // Frames for another call are not even opened.
         assertTrue(m.ingest(CallServerEvent.Signal("c2", "d1", byteArrayOf(1, 2))).isEmpty())
         // The right one goes through.
         val right = sealer.from("bob", offer())
-        assertTrue(m.handle(CallEvent.Remote(offer(), "d1")).hasSetRemote())
+        assertTrue(m.handle(RemoteSignal(offer(), "d1")).hasSetRemote())
         assertTrue(m.ingest(CallServerEvent.Signal("c1", "d1", right)).isEmpty())   // an offer is never a call.signal
     }
 
@@ -263,9 +263,9 @@ class OutgoingCallTest {
         val n = CallMachine(outCtx(), sealer, ManualClock())
         n.handle(CallEvent.Start(bob, false, "c1"))
         assertTrue(n.ingest(CallServerEvent.Answered("c1", "d1", sealer.from("bob", candPayload(1)))).isEmpty())
-        n.handle(CallEvent.Remote(offer(), "d1"))
+        n.handle(RemoteSignal(offer(), "d1"))
         n.handle(CallEvent.LocalAnswer(sdp("sha-256 11:22")))
-        assertTrue(n.handle(CallEvent.Remote(candPayload(2), "d1")) == listOf<CallEffect>(CallEffect.AddCandidate(cand(2))))
+        assertTrue(n.handle(RemoteSignal(candPayload(2), "d1")) == listOf<CallEffect>(CallEffect.AddCandidate(cand(2))))
     }
 
     @Test fun ingestOpensAnsweredOffer() = runTest {
@@ -294,7 +294,7 @@ class OutgoingCallTest {
     @Test fun elapsedCountsFromActive() {
         val s = started()
         s.m.answered()
-        s.m.handle(CallEvent.Remote(offer(), "d1"))
+        s.m.handle(RemoteSignal(offer(), "d1"))
         s.m.handle(CallEvent.LocalAnswer(sdp(FP)))
         s.clock.advance(3.0)
         s.m.handle(CallEvent.Tick)
@@ -308,7 +308,7 @@ class OutgoingCallTest {
     @Test fun hangupAfterActiveRecordsDuration() {
         val s = started(video = true, context = outCtx(network = NetworkType.Wifi))
         s.m.answered()
-        s.m.handle(CallEvent.Remote(offer(), "d1"))
+        s.m.handle(RemoteSignal(offer(), "d1"))
         s.m.handle(CallEvent.LocalAnswer(sdp(FP)))
         s.m.handle(CallEvent.Media(MediaEvent.IceStateChanged(IceState.Connected)))
         s.clock.advance(7.0)
@@ -343,7 +343,7 @@ class OutgoingCallTest {
     @Test fun statsDriveAdaptorAndBytes() {
         val s = started(video = true, context = outCtx(network = NetworkType.Wifi))
         s.m.answered()
-        s.m.handle(CallEvent.Remote(offer(), "d1"))
+        s.m.handle(RemoteSignal(offer(), "d1"))
         s.m.handle(CallEvent.LocalAnswer(sdp(FP)))
         s.m.handle(CallEvent.Media(MediaEvent.IceStateChanged(IceState.Connected)))
         val fx = s.m.handle(
@@ -369,7 +369,7 @@ class OutgoingCallTest {
     @Test fun remoteRejectedEndsCall() {
         val s = started()
         s.m.answered()
-        val fx = s.m.handle(CallEvent.RemoteRejected(CallSealException.WrongSender, "d1"))
+        val fx = s.m.handle(RemoteSignalRejected(CallSealException.WrongSender, "d1"))
         assertEquals(CallPhase.Ended(CallEndReason.Failed), s.m.state?.phase)
         assertTrue(hangupFrame in fx)
     }
@@ -379,27 +379,27 @@ class OutgoingCallTest {
     @Test fun renegotiateAnswerAccepted() {
         val s = activeMachine()
         renegotiating(s.m, s.clock)
-        assertTrue(s.m.handle(CallEvent.Remote(reAnswer(FP), "d1")).hasAcceptAnswer())
-        assertTrue(s.m.handle(CallEvent.Remote(reAnswer(FP), "d1")).isEmpty())
+        assertTrue(s.m.handle(RemoteSignal(reAnswer(FP), "d1")).hasAcceptAnswer())
+        assertTrue(s.m.handle(RemoteSignal(reAnswer(FP), "d1")).isEmpty())
     }
 
     @Test fun renegotiateAnswerFromOtherDeviceIgnored() {
         val s = activeMachine()
         renegotiating(s.m, s.clock)
-        assertTrue(s.m.handle(CallEvent.Remote(reAnswer(FP), "d2")).isEmpty())
+        assertTrue(s.m.handle(RemoteSignal(reAnswer(FP), "d2")).isEmpty())
         assertFalse(s.m.state!!.isEnded)
     }
 
     @Test fun renegotiateAnswerWithoutOutstandingIgnored() {
         val s = activeMachine()
-        assertTrue(s.m.handle(CallEvent.Remote(reAnswer(FP), "d1")).isEmpty())
+        assertTrue(s.m.handle(RemoteSignal(reAnswer(FP), "d1")).isEmpty())
         assertFalse(s.m.state!!.isEnded)
     }
 
     @Test fun renegotiateAnswerFingerprintNotMatchingSdpEnds() {
         val s = activeMachine()
         renegotiating(s.m, s.clock)
-        val fx = s.m.handle(CallEvent.Remote(reAnswer(FP, sdpFP = "sha-256 99:99"), "d1"))
+        val fx = s.m.handle(RemoteSignal(reAnswer(FP, sdpFP = "sha-256 99:99"), "d1"))
         assertEquals(CallPhase.Ended(CallEndReason.Failed), s.m.state?.phase)
         assertTrue(hangupFrame in fx)
     }
@@ -407,7 +407,7 @@ class OutgoingCallTest {
     @Test fun renegotiateAnswerFingerprintNotPinnedEnds() {
         val s = activeMachine()
         renegotiating(s.m, s.clock)
-        val fx = s.m.handle(CallEvent.Remote(reAnswer("sha-256 77:77"), "d1"))
+        val fx = s.m.handle(RemoteSignal(reAnswer("sha-256 77:77"), "d1"))
         assertEquals(CallPhase.Ended(CallEndReason.Failed), s.m.state?.phase)
         assertTrue(hangupFrame in fx)
         assertFalse(fx.hasAcceptAnswer())
@@ -416,25 +416,25 @@ class OutgoingCallTest {
     @Test fun modeChangeOnlyFromAnsweringDevice() {
         val s = activeMachine()
         val mc = CallSignalPayload(Kind.modeChange, "c1", ceiling = DataMode.UltraLow)
-        assertTrue(s.m.handle(CallEvent.Remote(mc, "d2")).isEmpty())
-        assertTrue(s.m.handle(CallEvent.Remote(mc, "d1")).isNotEmpty())
+        assertTrue(s.m.handle(RemoteSignal(mc, "d2")).isEmpty())
+        assertTrue(s.m.handle(RemoteSignal(mc, "d1")).isNotEmpty())
         assertEquals(CoreMode.UltraLow, s.m.state?.effectiveMode)
     }
 
     @Test fun remoteRejectedOnlyFromAnsweringDevice() {
         val s = started()
-        assertTrue(s.m.handle(CallEvent.RemoteRejected(CallSealException.Undecryptable, "d1")).isEmpty())
+        assertTrue(s.m.handle(RemoteSignalRejected(CallSealException.Undecryptable, "d1")).isEmpty())
         s.m.answered()
-        assertTrue(s.m.handle(CallEvent.RemoteRejected(CallSealException.Undecryptable, "d2")).isEmpty())
+        assertTrue(s.m.handle(RemoteSignalRejected(CallSealException.Undecryptable, "d2")).isEmpty())
         assertFalse(s.m.state!!.isEnded)
-        s.m.handle(CallEvent.RemoteRejected(CallSealException.Undecryptable, "d1"))
+        s.m.handle(RemoteSignalRejected(CallSealException.Undecryptable, "d1"))
         assertEquals(CallPhase.Ended(CallEndReason.Failed), s.m.state?.phase)
     }
 
     @Test fun recoverBeforeActiveStartsClock() {
         val s = started()
         s.m.answered()
-        s.m.handle(CallEvent.Remote(offer(), "d1"))
+        s.m.handle(RemoteSignal(offer(), "d1"))
         s.m.handle(CallEvent.LocalAnswer(sdp(FP)))
         s.m.handle(CallEvent.Media(MediaEvent.IceStateChanged(IceState.Disconnected)))
         s.m.handle(CallEvent.Media(MediaEvent.IceStateChanged(IceState.Connected)))
@@ -448,7 +448,7 @@ class OutgoingCallTest {
     @Test fun endClearsBuffers() {
         val s = started()
         s.m.handle(CallEvent.Media(MediaEvent.LocalCandidate(cand(1))))
-        s.m.handle(CallEvent.Remote(candPayload(1), "d1"))
+        s.m.handle(RemoteSignal(candPayload(1), "d1"))
         s.m.answered()
         assertTrue(s.m.hasBufferedState)
         s.m.handle(CallEvent.Hangup)
@@ -468,7 +468,7 @@ class OutgoingCallTest {
     @Test fun localAnswerWithoutFingerprintEndsCall() {
         val s = started()
         s.m.answered()
-        s.m.handle(CallEvent.Remote(offer(), "d1"))
+        s.m.handle(RemoteSignal(offer(), "d1"))
         val fx = s.m.handle(CallEvent.LocalAnswer("v=0\r\n"))
         assertEquals(CallPhase.Ended(CallEndReason.Failed), s.m.state?.phase)
         assertTrue(fx.signal(Kind.answer) == null && hangupFrame in fx)
