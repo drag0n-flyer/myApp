@@ -46,7 +46,7 @@ final class CandidateRelay: @unchecked Sendable {
 }
 
 final class LoopbackTests: XCTestCase {
-    private static let tone = ToneProcessor()
+    static let tone = ToneProcessor()
     private let relay = CandidateRelay()
     override class func setUp() { MediaFactory.captureProcessor = tone }  // before the first shared()
 
@@ -84,15 +84,16 @@ final class LoopbackTests: XCTestCase {
         return cond()
     }
 
-    private func connected(send: DataMode = .balanced) async throws -> (WebRTCMediaSession, WebRTCMediaSession) {
+    /// `send` is what A may send (applied to B's answer); B asks to receive `peerReceive`.
+    private func connected(send: DataMode = .balanced, peerReceive: DataMode? = nil) async throws -> (WebRTCMediaSession, WebRTCMediaSession) {
         let a = WebRTCMediaSession(), b = WebRTCMediaSession()
         try await a.configure(iceServers: [], policy: .all, video: false)
         try await b.configure(iceServers: [], policy: .all, video: false)
         relay.register("A", a); relay.register("B", b)
         pump("A", a, peer: "B"); pump("B", b, peer: "A")
-        let p = AudioProfile.for(send)
+        let p = AudioProfile.for(send), pb = AudioProfile.for(peerReceive ?? send)
         let offer = try await a.makeOffer(receive: p, iceRestart: false)
-        let answer = try await b.acceptOffer(offer, send: p, receive: p)
+        let answer = try await b.acceptOffer(offer, send: p, receive: pb)
         await relay.remoteDescriptionSet(on: "B")
         try await a.acceptAnswer(answer, send: p)
         await relay.remoteDescriptionSet(on: "A")
@@ -118,10 +119,11 @@ final class LoopbackTests: XCTestCase {
     }
 
     /// With the tone playing, an encoder that ignored the profile would send 30 kbps or more
-    /// (Opus default). The cap comes only from the munged remote SDP (`maxaveragebitrate=10000`),
-    /// so this fails if that munge is removed.
+    /// (Opus default). B asks to receive `.high`, so its answer does not carry the 10 kbps cap itself:
+    /// the cap on A can only come from the munge A applies to the remote answer (`send: .ultraLow`),
+    /// and this fails if that munge is removed.
     func testSendProfileReachesEncoder() async throws {
-        let (a, b) = try await connected(send: .ultraLow)
+        let (a, b) = try await connected(send: .ultraLow, peerReceive: .high)
         let up = await wait(10) { self.has("A", .connected) }
         XCTAssertTrue(up, "the call must connect")
         let s0 = await a.stats()
@@ -129,12 +131,13 @@ final class LoopbackTests: XCTestCase {
         try await Task.sleep(nanoseconds: 5_000_000_000)
         let s1 = await a.stats()
         // The hook runs only if the runner captures audio. Without an input device there is no source,
-        // and the assertions below would not mean anything.
-        try XCTSkipIf(Self.tone.frames == f0, "no audio capture on this runner, so the tone never played")
+        // and the assertions below would not mean anything (the skip comes after closing the sessions).
+        let toneRan = Self.tone.frames != f0
         let bps = Double(s1.bytesSent - s0.bytesSent) * 8 / 5
+        await a.close(); await b.close()   // close before a possible skip
+        try XCTSkipIf(!toneRan, "no audio capture on this runner, so the tone never played")
         XCTAssertGreaterThan(bps, 2_000, "the tone must be sent")
         XCTAssertLessThanOrEqual(bps, 14_000)
-        await a.close(); await b.close()
     }
 
     func testRelayOnlyGathersOnlyRelayCandidates() async throws {

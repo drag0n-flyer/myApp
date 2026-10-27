@@ -1,6 +1,8 @@
 import Foundation
 import AVFoundation
+import AppCore
 import CallCore
+import CoreMedia
 import WebRTC
 
 /// Camera capture and sender limits for a video tier. UNVERIFIED against WebRTC M156 (not compiled here).
@@ -24,8 +26,9 @@ final class VideoController: @unchecked Sendable {
         return VideoFormatPicker.index(in: sizes, for: tier).map { available[$0] }
     }
 
-    func setVideo(_ tier: VideoTier?) async {
-        guard let tier else {
+    /// `ceiling` is the data mode in effect for the call; the tier is clamped to what it allows.
+    func setVideo(_ requested: VideoTier?, ceiling: DataMode?) async {
+        guard let tier = MediaLogic.effectiveTier(requested, ceiling: ceiling) else {
             track.isEnabled = false
             sender.track = nil   // no frames, so the peer sees the video stop
             await withCheckedContinuation { (k: CheckedContinuation<Void, Never>) in capturer.stopCapture { k.resume() } }

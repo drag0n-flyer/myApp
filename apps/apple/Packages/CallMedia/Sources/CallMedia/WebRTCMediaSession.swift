@@ -149,8 +149,8 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
     }
 
     public func setVideo(_ tier: VideoTier?) async {
-        guard let controller = lock.withLock({ videoController }) else { return }
-        await controller.setVideo(tier)
+        let (controller, ceiling) = lock.withLock { (videoController, sendProfile?.mode) }
+        await controller?.setVideo(tier, ceiling: ceiling)
     }
 
     public func setMuted(_ on: Bool) async {
