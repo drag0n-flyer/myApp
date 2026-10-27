@@ -19,4 +19,4 @@ xcrun simctl bootstatus "$UDID" -b
 RESULT="${RUNNER_TEMP:-/tmp}/serverkit-ios.xcresult"
 rm -rf "$RESULT"
 xcodebuild -scheme ServerKit-Package -destination "id=$UDID" \
-  -resultBundlePath "$RESULT" CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES test
+  -skip-testing:ServerKitE2ETests -resultBundlePath "$RESULT" CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES test

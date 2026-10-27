@@ -101,7 +101,8 @@ jobs:
       - name: ServerKit tests
         if: needs.changes.outputs.serverkit == 'true'
         working-directory: apps/apple/Packages/ServerKit
-        run: swift test --no-parallel
+        # The end-to-end tests need the real server: the e2e job runs them.
+        run: swift test --no-parallel --skip ServerKitE2ETests
       - name: CallCore tests
         if: needs.changes.outputs.callcore == 'true'
         working-directory: apps/apple/Packages/CallCore
@@ -167,6 +168,40 @@ jobs:
         with:
           name: serverkit-ios-xcresult
           path: ${{ runner.temp }}/serverkit-ios.xcresult
+
+  # ServerKit against the real Go server (Postgres and a mail sink on the runner).
+  e2e:
+    needs: changes
+    if: needs.changes.outputs.serverkit == 'true'
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+          cache-dependency-path: server/go.sum
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm
+            ~/Library/org.swift.swiftpm
+            apps/apple/Packages/*/.build
+          key: spm-${{ runner.os }}-${{ hashFiles('apps/apple/Packages/*/Package.swift', 'apps/apple/Packages/*/Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+      - name: End-to-end tests against the Go server
+        run: apps/apple/scripts/e2e-server.sh
+      - name: Keep server logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs
+          path: |
+            ${{ runner.temp }}/e2e/*.log
+            ${{ runner.temp }}/e2e/mail
 
   # Full app builds and UI tests: when app code (or a package it uses) changed,
   # and only on main, pull requests and manual runs.
