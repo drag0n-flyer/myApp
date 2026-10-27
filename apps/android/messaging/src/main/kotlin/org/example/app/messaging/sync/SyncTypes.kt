@@ -20,8 +20,13 @@ sealed class SyncException(message: String) : Exception(message) {
     object NoPeer : SyncException("noPeer")
     /** No escrow sealer, so a server-readable conversation's escrow copy cannot be made. */
     object EscrowKeyUnavailable : SyncException("escrowKeyUnavailable")
-    /** My earlier commit is still pending and the server has applied it; its echo has not been processed yet. */
+    /**
+     * My earlier commit is still pending: neither its echo nor another device's commit has arrived. It is kept
+     * (never discarded, never posted again); try later.
+     */
     object CommitInFlight : SyncException("commitInFlight")
+    /** A Welcome labelled with a conversation ID that is already bound to another group. */
+    object ConversationRebound : SyncException("conversationRebound")
 }
 
 /** What `IncomingHandler.apply` did with one processed item. */

@@ -13,11 +13,16 @@ import kotlinx.coroutines.sync.withLock
 /**
  * An [MlsEngine] for tests and sample data. It does no cryptography: plaintext passes through
  * inside a small tagged frame. The signature key of a member is `"fake-sig:<identity>"`.
+ *
+ * Like mls-rs, our own commit is applied only by merging it while it is still pending: through `commitAccepted`,
+ * or by processing its echo. An echo of a commit that is no longer pending (rejected, or cleared by another
+ * device's commit) fails with [MlsException.Crypto], and the group stays where it was.
  */
 class FakeMlsEngine(private val identity: String) : MlsEngine {
     private class Group(var epoch: Long, var members: List<String>, var pending: Pending? = null)
 
-    private class Pending(val newEpoch: Long, val members: List<String>)
+    /** A commit of ours, made but not merged. Only these exact bytes merge it when they come back. */
+    private class Pending(val newEpoch: Long, val members: List<String>, var commit: ByteArray = ByteArray(0))
 
     private val lock = Mutex()
     private val groups = HashMap<GroupId, Group>()
@@ -46,10 +51,9 @@ class FakeMlsEngine(private val identity: String) : MlsEngine {
         }
         val members = (group.members + added).sorted()
         val newEpoch = group.epoch + 1
-        group.pending = Pending(newEpoch, members)
-        val commit = frame(COMMIT) {
-            putBytes(to.raw); writeLong(newEpoch); putStrings(added); putStrings(emptyList())
-        }
+        val pending = Pending(newEpoch, members)
+        val commit = commitFrame(to, newEpoch, added, emptyList())
+        group.pending = pending.also { it.commit = commit }
         val welcome = frame(WELCOME) { putBytes(to.raw); writeLong(newEpoch); putStrings(members) }
         CommitBundle(commit, welcome, newEpoch)
     }
@@ -60,10 +64,8 @@ class FakeMlsEngine(private val identity: String) : MlsEngine {
         if (members.isEmpty() || members.any { it !in group.members }) throw MlsException.NotMember
         val remaining = group.members.filter { it !in members }
         val newEpoch = group.epoch + 1
-        group.pending = Pending(newEpoch, remaining)
-        val commit = frame(COMMIT) {
-            putBytes(from.raw); writeLong(newEpoch); putStrings(emptyList()); putStrings(members)
-        }
+        val commit = commitFrame(from, newEpoch, emptyList(), members)
+        group.pending = Pending(newEpoch, remaining, commit)
         CommitBundle(commit, null, newEpoch)
     }
 
@@ -99,9 +101,18 @@ class FakeMlsEngine(private val identity: String) : MlsEngine {
             COMMIT -> readFrame(message, COMMIT) {
                 val id = GroupId(takeBytes()); val newEpoch = readLong()
                 val added = takeStrings(); val removed = takeStrings()
+                val committer = readUTF(); readLong() // nonce: every commit is distinct
                 val group = groupOrThrow(id)
                 if (newEpoch <= group.epoch) throw MlsException.Duplicate
                 if (newEpoch != group.epoch + 1) throw MlsException.EpochGap
+                if (committer == identity) {
+                    val pending = group.pending
+                    if (pending == null || !pending.commit.contentEquals(message)) throw MlsException.Crypto("own commit is not pending")
+                    group.epoch = pending.newEpoch
+                    group.members = pending.members
+                    group.pending = null
+                    return@readFrame Incoming.Commit(id, newEpoch, false)
+                }
                 val removedMe = identity in removed
                 if (removedMe) {
                     groups.remove(id)
@@ -146,6 +157,13 @@ class FakeMlsEngine(private val identity: String) : MlsEngine {
 
     override suspend fun memberKeys(group: GroupId): List<MemberKey> = lock.withLock {
         groupOrThrow(group).members.sorted().map { MemberKey(it, "fake-sig:$it".toByteArray()) }
+    }
+
+    private fun commitFrame(group: GroupId, newEpoch: Long, added: List<String>, removed: List<String>): ByteArray {
+        counter += 1
+        return frame(COMMIT) {
+            putBytes(group.raw); writeLong(newEpoch); putStrings(added); putStrings(removed); writeUTF(identity); writeLong(counter)
+        }
     }
 
     private fun groupOrThrow(id: GroupId): Group = groups[id] ?: throw MlsException.UnknownGroup

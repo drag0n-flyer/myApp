@@ -18,6 +18,8 @@ class SpyMlsEngine(private val inner: MlsEngine, private val lockHeld: () -> Boo
         private set
     /** Throws its result instead of processing, when not null. */
     var failProcess: ((ByteArray) -> Throwable?)? = null
+    /** Throws its result instead of reading the members, when not null. */
+    var failMembers: ((GroupId) -> Throwable?)? = null
     /** When set, the next `process` call waits for it (after running). */
     var holdProcess: CompletableDeferred<Unit>? = null
     /** Completed when a held `process` call has run. */
@@ -46,6 +48,12 @@ class SpyMlsEngine(private val inner: MlsEngine, private val lockHeld: () -> Boo
     }
     override suspend fun epoch(group: GroupId) = inner.epoch(group)
     override suspend fun exportSecret(group: GroupId, label: String, length: Int) = inner.exportSecret(group, label, length)
-    override suspend fun members(group: GroupId) = inner.members(group)
-    override suspend fun memberKeys(group: GroupId): List<MemberKey> = inner.memberKeys(group)
+    override suspend fun members(group: GroupId): List<String> {
+        failMembers?.invoke(group)?.let { throw it }
+        return inner.members(group)
+    }
+    override suspend fun memberKeys(group: GroupId): List<MemberKey> {
+        failMembers?.invoke(group)?.let { throw it }
+        return inner.memberKeys(group)
+    }
 }

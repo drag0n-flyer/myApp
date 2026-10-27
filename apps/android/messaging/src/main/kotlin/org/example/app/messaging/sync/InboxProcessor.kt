@@ -59,8 +59,7 @@ class InboxProcessor(
 
     /**
      * Fetches the inbox from the stored cursor, stores and acknowledges it, then drains. Returns the number of items
-     * fetched. [maxItems] stops fetching after that many (rounded up to a page). Items stored before a failure are
-     * still drained.
+     * fetched. [maxItems] stops fetching after exactly that many. Items stored before a failure are still drained.
      */
     suspend fun sync(maxItems: Int = Int.MAX_VALUE): Int {
         var fetched = 0
@@ -120,10 +119,12 @@ class InboxProcessor(
         try {
             val hash = PayloadHash.of(raw.payload)
             if (repo.isProcessed(hash)) {
+                accepted.remove(raw.cursor)
                 repo.deleteRaw(raw.cursor)
                 return Step.Done(null)
             }
             if (handler.isEchoedOwnCommit(raw, repo)) {
+                accepted.remove(raw.cursor)
                 drop(raw, hash)
                 return Step.Done(null)
             }
@@ -136,12 +137,14 @@ class InboxProcessor(
                     serverMode = server.conversation(raw.conversationId).mode
                 } catch (e: ServerException) {
                     if (!ConversationManager.isDefiniteRejection(e.status)) return Step.Stop
-                    repo.transaction { handler.storePlaceholder(raw, repo); markAndDelete(raw, hash) }
+                    accepted.remove(raw.cursor)
+                    repo.transaction { placeholderOrPark(raw, "welcome_lookup_${e.status}"); markAndDelete(raw, hash) }
                     return Step.Done(null)
                 }
-                // A value outside the allowed set would fail the conversation write on every retry: never guess, drop.
+                // A value outside the allowed set would fail the conversation write on every retry: never guess.
+                // Kept and logged, not processed (the owner decides what a newer mode should do).
                 if (serverMode !in ConversationMode.all) {
-                    drop(raw, hash)
+                    repo.transaction { handler.park(raw, repo, "unknown_mode"); markAndDelete(raw, hash) }
                     return Step.Done(null)
                 }
             }
@@ -174,23 +177,33 @@ class InboxProcessor(
             throw e // possibly temporary (disk): the raw row stays
         } catch (_: MlsException) {
             // Anything else the engine rejects is permanent for this payload.
-            repo.transaction { handler.storePlaceholder(raw, repo); markAndDelete(raw, hash) }
+            repo.transaction { placeholderOrPark(raw, "mls_error"); markAndDelete(raw, hash) }
             return null
         }
         accepted[raw.cursor] = incoming
 
         val result: AppliedResult?
         if (incoming is Incoming.Joined) {
-            // Never guess the mode (Design 18). A Welcome the server labelled otherwise has no server mode: drop it.
+            // Never guess the mode (Design 18). A Welcome the server labelled otherwise has no server mode.
+            // A failure that will not go away (anything but a storage error) must not hold up every other chat: the
+            // item is parked with a "couldn't open this chat" placeholder and the queue moves on.
+            var failure: String? = if (serverMode == null) "not_welcome" else null
             val plan = if (serverMode == null) null else try {
                 conversations.planJoin(incoming.group, raw.conversationId, serverMode)
-            } catch (_: SyncException.NoPeer) {
+            } catch (e: MlsException.Storage) {
+                throw e // possibly temporary (disk): the raw row stays, the accepted result is kept
+            } catch (e: Exception) {
+                failure = e.javaClass.simpleName.ifEmpty { "error" }
                 null
             }
             result = repo.transaction {
                 if (!repo.markProcessed(hash, clock.now())) return@transaction null.also { repo.deleteRaw(raw.cursor) }
                 repo.deleteRaw(raw.cursor)
-                if (plan == null) return@transaction null
+                if (plan == null) {
+                    handler.park(raw, repo, "join_failed:$failure")
+                    handler.storeJoinFailed(raw, repo)
+                    return@transaction null
+                }
                 plan.store(repo)
                 handler.apply(incoming, raw, repo, plan.keys)
             }
@@ -216,6 +229,10 @@ class InboxProcessor(
     /** M7: `confirmIncoming`, after the rows are written. Nothing to do today. */
     @Suppress("UNUSED_PARAMETER")
     private suspend fun confirm(incoming: Incoming) = Unit
+
+    private fun placeholderOrPark(raw: RawInboxRecord, reason: String) {
+        if (!handler.storePlaceholder(raw, repo)) handler.park(raw, repo, reason)
+    }
 
     private fun drop(raw: RawInboxRecord, hash: ByteArray) = repo.transaction { markAndDelete(raw, hash) }
 

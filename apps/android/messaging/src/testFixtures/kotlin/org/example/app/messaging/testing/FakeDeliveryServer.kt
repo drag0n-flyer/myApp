@@ -41,7 +41,21 @@ class FakeDeliveryServer(var defaultMode: String = "e2ee") {
 
     var rejectNextCommits = 0
     var loseNextCommitResponses = 0
+
+    /**
+     * The next commit requests time out on the client before they reach the server: the client gets a network
+     * error and nothing is applied. They stay in flight until [releaseHeldCommits] lands them (a request that
+     * arrives after the client gave up), or for ever.
+     */
+    var holdNextCommitRequests = 0
+
+    private class HeldCommit(val identity: String, val id: String, val epoch: Long, val commit: ByteArray, val welcome: ByteArray?, val add: List<String>, val remove: List<String>)
+    private val held = mutableListOf<HeldCommit>()
+
+    /** Runs right after a commit is applied, before the reply leaves (a test throws here to model a kill). */
+    var afterCommitApplied: (() -> Unit)? = null
     var failNextMessages = 0
+    var failNextInboxReads = 0
     var failConversationLookup: ServerException? = null
 
     /** Runs on every call, before it is served (lock checks, blocking). */
@@ -72,6 +86,38 @@ class FakeDeliveryServer(var defaultMode: String = "e2ee") {
     }
 
     fun api(accountId: String, deviceId: String): DeliveryApi = Api(accountId, deviceId)
+
+    /** Lands every held commit request, in order. Returns each one's outcome: the new epoch, or the error. */
+    fun releaseHeldCommits(): List<Result<Long>> = synchronized(lock) {
+        val out = held.map { h -> runCatching { applyCommit(h.identity, h.id, h.epoch, h.commit, h.welcome, h.add, h.remove) } }
+        held.clear()
+        out
+    }
+
+    private fun accountOf(deviceId: String): String =
+        keyPackages.entries.firstOrNull { deviceId in it.value }?.key ?: error("unknown device $deviceId")
+
+    /** The server's commit handling. Call with [lock] held. */
+    private fun applyCommit(
+        identity: String, id: String, epoch: Long, commit: ByteArray, welcome: ByteArray?, addDevices: List<String>, removeDevices: List<String>,
+    ): Long {
+        commitPosts += Triple(identity, id, epoch)
+        val c = conversations[id] ?: throw ServerException(404, "not_found", null, null)
+        if (rejectNextCommits > 0) {
+            rejectNextCommits -= 1
+            throw ServerException(409, "stale_epoch", null, null)
+        }
+        if (epoch != c.epoch) throw ServerException(409, "stale_epoch", null, null)
+        val before = c.members.toList()
+        val added = addDevices.map { "${accountOf(it)}/$it" }
+        val removed = c.members.filter { m -> removeDevices.any { m.endsWith("/$it") } }
+        before.forEach { deliver(it, "commit", id, epoch, identity, commit) }
+        c.members.removeAll(removed.toSet())
+        c.members.addAll(added)
+        c.epoch += 1
+        if (welcome != null) added.forEach { deliver(it, "welcome", id, c.epoch, identity, welcome) }
+        return c.epoch
+    }
 
     private inner class Api(val account: String, val device: String) : DeliveryApi {
         val identity = "$account/$device"
@@ -126,33 +172,22 @@ class FakeDeliveryServer(var defaultMode: String = "e2ee") {
             }
         }
 
-        private fun accountOf(deviceId: String): String =
-            keyPackages.entries.firstOrNull { deviceId in it.value }?.key ?: error("unknown device $deviceId")
-
         override suspend fun postCommit(
             id: String, epoch: Long, commit: ByteArray, welcome: ByteArray?, addDevices: List<String>, removeDevices: List<String>,
         ): Long {
             call("postCommit")
             var lose = false
             val newEpoch = synchronized(lock) {
-                commitPosts += Triple(identity, id, epoch)
-                val c = conversations[id] ?: throw ServerException(404, "not_found", null, null)
-                if (rejectNextCommits > 0) {
-                    rejectNextCommits -= 1
-                    throw ServerException(409, "stale_epoch", null, null)
+                if (holdNextCommitRequests > 0) {
+                    holdNextCommitRequests -= 1
+                    held += HeldCommit(identity, id, epoch, commit, welcome, addDevices, removeDevices)
+                    throw ServerException(0, "timeout", null, null)
                 }
-                if (epoch != c.epoch) throw ServerException(409, "stale_epoch", null, null)
-                val before = c.members.toList()
-                val added = addDevices.map { "${accountOf(it)}/$it" }
-                val removed = c.members.filter { m -> removeDevices.any { m.endsWith("/$it") } }
-                before.forEach { deliver(it, "commit", id, epoch, identity, commit) }
-                c.members.removeAll(removed.toSet())
-                c.members.addAll(added)
-                c.epoch += 1
-                if (welcome != null) added.forEach { deliver(it, "welcome", id, c.epoch, identity, welcome) }
+                val e = applyCommit(identity, id, epoch, commit, welcome, addDevices, removeDevices)
                 if (loseNextCommitResponses > 0) { loseNextCommitResponses -= 1; lose = true }
-                c.epoch
+                e
             }
+            afterCommitApplied?.invoke()
             if (lose) throw ServerException(0, "network", null, null)
             return newEpoch
         }
@@ -176,6 +211,10 @@ class FakeDeliveryServer(var defaultMode: String = "e2ee") {
         override suspend fun inbox(after: Long?, limit: Int): InboxPage {
             call("inbox")
             return synchronized(lock) {
+                if (failNextInboxReads > 0) {
+                    failNextInboxReads -= 1
+                    throw ServerException(503, "unavailable", null, null)
+                }
                 val all = inboxes[identity].orEmpty().filter { after == null || it.cursor > after }.sortedBy { it.cursor }
                 InboxPage(all.take(limit), all.size > limit)
             }

@@ -9,6 +9,7 @@ import org.example.app.messaging.content.ContentEnvelope
 import org.example.app.messaging.content.ReceiptKind
 import org.example.app.messaging.ports.AttachmentRecord
 import org.example.app.messaging.ports.AttachmentState
+import org.example.app.messaging.ports.ChatRecord
 import org.example.app.messaging.ports.Clock
 import org.example.app.messaging.ports.ConversationRecord
 import org.example.app.messaging.ports.MessageRecord
@@ -55,13 +56,18 @@ class IncomingHandler(
             is Incoming.Commit -> {
                 val conversation = repo.conversationByGroup(incoming.group.raw)
                 when {
-                    conversation == null -> AppliedResult.Ignored
+                    conversation == null -> AppliedResult.Ignored.also { park(raw, repo, "unknown_group") }
                     incoming.removedMe -> {
                         repo.upsertConversation(conversation.copy(active = false))
                         AppliedResult.RemovedMe(conversation.serverId)
                     }
                     else -> {
                         repo.setEpoch(conversation.serverId, incoming.newEpoch)
+                        // The echo of my own add commit for a conversation I created: it is settled, so it becomes usable.
+                        if (PendingCreate.isPending(repo, conversation.serverId)) {
+                            repo.upsertConversation(conversation.copy(epoch = incoming.newEpoch, active = true))
+                            PendingCreate.clear(repo, conversation.serverId)
+                        }
                         memberKeys?.let { Membership.write(me, it, conversation, repo) }
                         AppliedResult.Commit(conversation.serverId, incoming.newEpoch)
                     }
@@ -69,21 +75,48 @@ class IncomingHandler(
             }
             is Incoming.Application -> {
                 val conversation = repo.conversationByGroup(incoming.group.raw)
-                if (conversation == null) AppliedResult.Ignored
+                // Never dropped silently: a placeholder where the server says it belongs, else kept.
+                if (conversation == null) AppliedResult.Ignored.also { if (!storePlaceholder(raw, repo)) park(raw, repo, "unknown_group") }
                 else applyApplication(incoming.sender, incoming.plaintext, raw, conversation, repo)
             }
         }
 
     /**
-     * An MLS failure: one placeholder row (`undecryptable`, ID `undecryptable-<cursor>`) in the chat the server named,
-     * or nothing when that conversation is not known (a failed Welcome).
+     * An MLS failure: one placeholder row (`undecryptable`, ID `undecryptable-<cursor>`) in the chat the server named.
+     * Returns false when that conversation is not known; the caller then [park]s the item.
      */
-    fun storePlaceholder(raw: RawInboxRecord, repo: Repository) {
-        val conversation = repo.conversation(raw.conversationId) ?: return
-        val id = "undecryptable-${raw.cursor}"
-        val envelope = """{"at":${raw.sentAt},"id":"$id","k":"undecryptable","v":1}""".encodeToByteArray()
+    fun storePlaceholder(raw: RawInboxRecord, repo: Repository): Boolean {
+        val conversation = repo.conversation(raw.conversationId) ?: return false
+        insertPlaceholder("undecryptable-${raw.cursor}", "undecryptable", conversation.chatId, conversation.serverId, raw, repo)
+        return true
+    }
+
+    /**
+     * A Welcome whose chat could not be set up (a permanent failure): one placeholder row (`joinFailed`, ID
+     * `join-failed-<cursor>`, shown as "Couldn't open this chat") in the chat of the account the server names as
+     * the sender, created as a request when it is not a contact. Nothing for a Welcome the server says I sent.
+     * The item itself is [park]ed by the caller.
+     */
+    fun storeJoinFailed(raw: RawInboxRecord, repo: Repository) {
+        val chatId = raw.senderAccount
+        if (chatId == me.accountId || chatId.isEmpty()) return
+        if (repo.chat(chatId) == null) {
+            val isContact = repo.contact(chatId)?.isContact ?: false
+            repo.upsertChat(ChatRecord(chatId, isRequest = !isContact, unread = 0, muted = false, lastActivity = clock.now()))
+        }
+        insertPlaceholder("join-failed-${raw.cursor}", "joinFailed", chatId, null, raw, repo)
+    }
+
+    /** Keeps an item that cannot be applied (see [Parked]) and logs its IDs, never its content. */
+    fun park(raw: RawInboxRecord, repo: Repository, reason: String) {
+        Parked.save(repo, raw, reason)
+        log("${if (raw.kind == "welcome") "join_parked" else "item_parked"} reason=$reason conversation=${raw.conversationId} cursor=${raw.cursor}")
+    }
+
+    private fun insertPlaceholder(id: String, kind: String, chatId: String, conversationId: String?, raw: RawInboxRecord, repo: Repository) {
+        val envelope = """{"at":${raw.sentAt},"id":"$id","k":"$kind","v":1}""".encodeToByteArray()
         val record = MessageRecord(
-            id = id, chatId = conversation.chatId, conversationId = conversation.serverId, senderAccount = raw.senderAccount,
+            id = id, chatId = chatId, conversationId = conversationId, senderAccount = raw.senderAccount,
             senderDevice = raw.senderDevice, sentAt = raw.sentAt, receivedAt = clock.now(), envelope = envelope,
             status = "delivered", undecryptable = true,
         )

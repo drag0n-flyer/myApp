@@ -309,6 +309,51 @@ class InboxProcessorTest {
         rig.bob1.processor.sync()
         assertEquals(null, rig.bob1.repo.conversation(record.serverId))
         assertTrue(rig.bob1.repo.rawItems(10).isEmpty(), "nothing blocks the queue")
+        assertTrue(rig.bob1.logs.any { "conversation=${record.serverId}" in it }, "logged with the conversation ID")
+        assertTrue(rig.bob1.repo.entries("parked:").isNotEmpty(), "kept, not dropped")
+    }
+
+    /** bob1 cannot read the members of ana's group (a permanent, non-MLS error). carol's chat still arrives. */
+    @Test
+    fun permanentJoinFailureIsParkedAndInboxContinues() = runTest {
+        val rig = Rig().start()
+        val carol = TestDevice(rig.server, "acc-carol", "carol1")
+        carol.api.uploadKeyPackages(carol.mls.makeKeyPackages(2))
+        val fromAna = rig.ana1.manager.create("acc-bob")
+        val fromCarol = carol.manager.create("acc-bob")
+        carol.send(fromCarol, ContentEnvelope.Text("c-1", NOW, "hello"))
+        val anaGroup = GroupId(fromAna.groupId)
+        rig.bob1.mls.failMembers = { g -> if (g == anaGroup) IllegalStateException("unreadable credential") else null }
+        val welcomeCursor = rig.server.pending("acc-bob/bob1").first { it.conversationId == fromAna.serverId && it.kind == "welcome" }.cursor
+
+        rig.bob1.processor.sync()
+        assertNotNull(rig.bob1.repo.message("c-1"), "the other chat's message is processed")
+        assertTrue(rig.bob1.repo.rawItems(10).isEmpty(), "nothing blocks the queue")
+        assertEquals(null, rig.bob1.repo.conversation(fromAna.serverId))
+        val placeholder = assertNotNull(rig.bob1.repo.message("join-failed-$welcomeCursor"), "a placeholder in plain words")
+        assertTrue(placeholder.undecryptable)
+        assertEquals("acc-ana", placeholder.chatId)
+        assertEquals(true, rig.bob1.repo.chat("acc-ana")?.isRequest)
+        assertTrue(rig.bob1.logs.any { it.startsWith("join_parked") && "conversation=${fromAna.serverId}" in it })
+        // ana's mode envelope for that group has no conversation: kept, not silently dropped.
+        assertTrue(rig.bob1.repo.entries("parked:").size >= 2)
+        rig.assertLockDiscipline()
+    }
+
+    /** A temporary engine error while planning the join stops the queue and is retried; nothing is parked. */
+    @Test
+    fun temporaryJoinFailureRetries() = runTest {
+        val rig = Rig().start()
+        val record = rig.ana1.manager.create("acc-bob")
+        var fail = true
+        rig.bob1.mls.failMembers = { if (fail) { fail = false; MlsException.Storage("disk busy") } else null }
+        rig.bob1.processor.sync()
+        assertEquals(null, rig.bob1.repo.conversation(record.serverId))
+        assertTrue(rig.bob1.repo.rawItems(10).isNotEmpty())
+        rig.bob1.processor.sync()
+        assertNotNull(rig.bob1.repo.conversation(record.serverId))
+        assertEquals("e2ee", rig.bob1.repo.conversation(record.serverId)?.innerMode)
+        assertTrue(rig.bob1.repo.entries("parked:").isEmpty())
     }
 
     @Test

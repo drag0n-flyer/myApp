@@ -115,6 +115,8 @@ class InMemoryRepository : Repository {
     private fun requireMode(m: String) = require(m in ConversationMode.all) { "mode" }
     override fun upsertConversation(c: ConversationRecord) = tx {
         requireMode(c.mode); c.innerMode?.let(::requireMode)
+        // Room's unique index on group_id.
+        require(s.conversations.values.none { it.serverId != c.serverId && it.groupId.contentEquals(c.groupId) }) { "group_id" }
         s.conversations[c.serverId] = c
     }
     override fun conversations(chatId: String) = tx { s.conversations.values.filter { it.chatId == chatId } }
