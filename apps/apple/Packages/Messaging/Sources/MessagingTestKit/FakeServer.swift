@@ -212,7 +212,7 @@ public actor FakeServer {
     // MARK: - Delivery
 
     private struct KeyPackagesBody: Decodable { let keyPackages: [Base64URLData] }
-    private struct ClaimBody: Decodable { let accountID: String }
+    private struct ClaimBody: Decodable { let accountID: String; let deviceIDs: [String]? }
     private struct MembersBody: Decodable { let members: [String] }
     private struct CommitBody: Decodable {
         let epoch: UInt64
@@ -244,7 +244,7 @@ public actor FakeServer {
             return failure(404, "not_found")
         }
         var entries: [ClaimEntry] = []
-        for device in target.devices {
+        for device in target.devices where b.deviceIDs?.contains(device) ?? true {
             guard var list = keyPackages[device], let first = list.first else { continue }
             // A device's last KeyPackage is handed out without being removed.
             if list.count > 1 { list.removeFirst(); keyPackages[device] = list }
