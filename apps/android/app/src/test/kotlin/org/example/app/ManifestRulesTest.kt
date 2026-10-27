@@ -59,4 +59,10 @@ class ManifestRulesTest {
         assertEquals(setOf("cloud-backup", "device-transfer"), excluded.keys)
         for ((name, set) in excluded) assertEquals(domains.toSet(), set, name)
     }
+
+    @Test
+    fun incomingCallsMayUseFullScreenIntent() {
+        val info = context.packageManager.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_PERMISSIONS)
+        assertTrue(info.requestedPermissions.orEmpty().contains("android.permission.USE_FULL_SCREEN_INTENT"))
+    }
 }

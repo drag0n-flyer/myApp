@@ -33,7 +33,7 @@ class ChatViewModelTest {
     fun aChangeToAnotherChatDoesNotRecomputeThisChatsState() {
         val inner = storeWith(listOf(msg("1", "riya", MessageContent.Text("hi"))))
         val store = CountingStore(inner)
-        val vm = ChatViewModel(store, "chat-riya", NetworkType.Wifi, AutoDownloadSettings())
+        val vm = ChatViewModel(store, "chat-riya", NetworkType.Wifi) { AutoDownloadSettings() }
         val reads = store.chatReads
         // Another contact's message changes the chat list but not this chat.
         val stranger = inner.contacts.value.first { it.id != "riya" }
@@ -51,7 +51,7 @@ class ChatViewModelTest {
         val store = object : ChatStore by inner {
             override fun download(messageId: String, chatId: String) { downloads += messageId }
         }
-        val vm = ChatViewModel(store, "chat-riya", NetworkType.Wifi, AutoDownloadSettings())
+        val vm = ChatViewModel(store, "chat-riya", NetworkType.Wifi) { AutoDownloadSettings() }
         vm.requestAutoDownload("1", MediaKind.Photo)
         vm.requestAutoDownload("1", MediaKind.Photo)
         assertEquals(listOf("1"), downloads)
@@ -67,7 +67,7 @@ class ChatViewModelTest {
         val store = object : ChatStore by inner {
             override fun download(messageId: String, chatId: String) { downloads += messageId }
         }
-        val vm = ChatViewModel(store, "chat-riya", NetworkType.Mobile, AutoDownloadSettings())
+        val vm = ChatViewModel(store, "chat-riya", NetworkType.Mobile) { AutoDownloadSettings() }
         vm.requestAutoDownload("1", MediaKind.Photo)
         assertEquals(emptyList(), downloads)
     }

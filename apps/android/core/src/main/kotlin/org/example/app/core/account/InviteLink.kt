@@ -4,7 +4,7 @@ import java.net.URI
 
 /**
  * An invite: the code (`XXXXX-XXXXX`) and, when it came from an app link, the server host
- * (`https://<host>/invite/<code>`).
+ * (`https://<host>[:port]/invite/<code>`). The host keeps its port, if the link has one.
  */
 data class InviteLink(val host: String?, val code: String) {
     companion object {
@@ -20,8 +20,9 @@ data class InviteLink(val host: String?, val code: String) {
 
         private fun parseLink(text: String): InviteLink? {
             val uri = try { URI(text) } catch (_: Exception) { return null }
-            val host = uri.host
-            if (uri.scheme != "https" || host.isNullOrEmpty()) return null
+            val name = uri.host
+            if (uri.scheme != "https" || name.isNullOrEmpty()) return null
+            val host = if (uri.port != -1) "$name:${uri.port}" else name
             val parts = (uri.path ?: "").split('/').filter { it.isNotEmpty() }
             if (parts.size != 2 || parts[0] != "invite") return null
             return validCode(parts[1].uppercase())?.let { InviteLink(host, it) }

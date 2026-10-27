@@ -21,6 +21,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/drag0n-flyer/myApp/server/internal/config"
@@ -51,6 +52,8 @@ type Module struct {
 	upDevices map[string]*upDevice
 	upHosts   map[string]int
 	upWG      sync.WaitGroup
+
+	sent, failed atomic.Uint64 // gateway outcomes since start
 }
 
 var _ core.Pusher = (*Module)(nil)
@@ -290,10 +293,16 @@ func (m *Module) Push(ctx context.Context, deviceID string, kind core.PushKind, 
 	pushproto.Sign(key, req, body, m.d.Config.PushServerID, m.d.Now())
 	resp, err := m.hc.Do(req)
 	if err != nil {
+		m.failed.Add(1)
 		return errors.New("push: gateway request failed")
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
+	if resp.StatusCode/100 == 2 {
+		m.sent.Add(1)
+	} else {
+		m.failed.Add(1)
+	}
 	switch {
 	case resp.StatusCode == http.StatusGone:
 		_, err := m.d.DB.Exec(ctx,

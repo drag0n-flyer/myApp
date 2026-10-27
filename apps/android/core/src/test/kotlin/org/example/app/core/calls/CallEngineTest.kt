@@ -66,10 +66,10 @@ class CallEngineTest {
         val e = engine()
         e.start("riya", video = false)
         e.advance(62.0)
-        assertEquals("01:02", e.state.value!!.elapsedText)
+        assertEquals(62L, e.state.value!!.elapsedSeconds)
         assertTrue(e.state.value!!.bytesUsed > 0)
         e.advance(3600.0)
-        assertEquals("1:01:02", e.state.value!!.elapsedText)
+        assertEquals(3662L, e.state.value!!.elapsedSeconds)
     }
 
     @Test fun incomingCanBeAnsweredOrDeclined() {
