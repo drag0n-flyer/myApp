@@ -134,3 +134,37 @@ func FuzzOpenHandle(f *testing.F) {
 	f.Add([]byte{})
 	f.Fuzz(func(t *testing.T, b []byte) { _, _ = OpenHandle(priv, b) })
 }
+
+func TestVerifyRejectsTamperedAndMalformed(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	now := time.Unix(1767225600, 0)
+	body := []byte(`{"kind":"call"}`)
+	signed := func() *http.Request {
+		r := httptest.NewRequest("POST", "http://gw/v1/push", bytes.NewReader(body))
+		Sign(priv, r, body, "srv1", now)
+		return r
+	}
+	if err := Verify(pub, signed(), body, now); err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]func(*http.Request){
+		"method":        func(r *http.Request) { r.Method = "PUT" },
+		"path":          func(r *http.Request) { r.URL.Path = "/v1/servers" },
+		"timestamp":     func(r *http.Request) { r.Header.Set("X-Timestamp", strconv.FormatInt(now.Unix()+1, 10)) },
+		"bad timestamp": func(r *http.Request) { r.Header.Set("X-Timestamp", "soon") },
+		"no timestamp":  func(r *http.Request) { r.Header.Del("X-Timestamp") },
+		"bad base64":    func(r *http.Request) { r.Header.Set("X-Signature", "!!!") },
+		"short sig":     func(r *http.Request) { r.Header.Set("X-Signature", "AAAA") },
+		"no signature":  func(r *http.Request) { r.Header.Del("X-Signature") },
+	}
+	for name, mutate := range cases {
+		r := signed()
+		mutate(r)
+		if err := Verify(pub, r, body, now); err == nil {
+			t.Errorf("%s: verified", name)
+		}
+	}
+	if err := Verify(ed25519.PublicKey("short"), signed(), body, now); err == nil {
+		t.Error("short public key verified")
+	}
+}

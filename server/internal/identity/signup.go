@@ -2,6 +2,7 @@ package identity
 
 import (
 	"crypto/subtle"
+	"errors"
 	"net/http"
 	"regexp"
 	"time"
@@ -110,11 +111,11 @@ func (m *Module) signupVerify(w http.ResponseWriter, r *http.Request) error {
 		`update signups set attempts = attempts + 1
 		 where id = $1 and attempts < $2 and expires_at > $3
 		 returning code_hash`, in.SignupID, codeMaxAttempts, now).Scan(&hash)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		var expires time.Time
 		err = m.d.DB.QueryRow(ctx, `select expires_at from signups where id = $1`, in.SignupID).Scan(&expires)
 		switch {
-		case err == pgx.ErrNoRows:
+		case errors.Is(err, pgx.ErrNoRows):
 			return httpx.Err("not_found", "no such sign-up")
 		case err != nil:
 			return err
