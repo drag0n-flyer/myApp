@@ -296,7 +296,9 @@ func TestLogout(t *testing.T) {
 	m, _ := newTestModule(t)
 	h := m.Handler()
 	c := login(t, m, h)
-	w := serveReq(h, req("POST", "/admin/api/logout", "{}", c))
+	r := req("POST", "/admin/api/logout", "{}", c)
+	r.Header.Set("X-CSRF-Token", getSession(t, h, c).CSRF)
+	w := serveReq(h, r)
 	if w.Code != 204 {
 		t.Fatalf("logout = %d %s", w.Code, w.Body)
 	}

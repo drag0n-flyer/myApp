@@ -102,6 +102,10 @@ func retryAfter(w http.ResponseWriter, wait time.Duration) {
 
 // login exchanges a one-time token for a session cookie.
 func (m *Module) login(w http.ResponseWriter, r *http.Request, _ Session) error {
+	// The login has no session yet, so no token, but the header checks stay.
+	if err := m.verifyCSRF(r, false); err != nil {
+		return err
+	}
 	l := m.limits()
 	if ok, wait := l.perAddr.Allow(httpx.ClientIP(r, m.d.Config.TrustProxy)); !ok {
 		retryAfter(w, wait)
