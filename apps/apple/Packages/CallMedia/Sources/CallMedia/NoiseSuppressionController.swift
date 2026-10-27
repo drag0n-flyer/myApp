@@ -3,7 +3,15 @@ import Foundation
 
 /// Where the RNNoise processor is installed in the audio pipeline (the WebRTC post-processing hook).
 /// The WebRTC-backed implementation lives with the media session (Task M1); it registers itself
-/// in `PostProcessingHookRegistry`. The hook calls the processor with 480-sample frames.
+/// in `PostProcessingHookRegistry`.
+///
+/// Contract:
+/// - The hook delivers 48 kHz, mono, 480-sample (10 ms) frames of normalized floats, buffering to
+///   that size itself.
+/// - The hook OWNS the processor from `setProcessor` on. It must keep it alive, and when the processor
+///   is replaced or removed it must not release it while the audio thread is inside `process`.
+///   `setProcessor` must not return until the old processor is quiesced. `AudioProcessorSlot` does this;
+///   implement the hook on top of one (`setProcessor` calls `slot.set`, the audio callback calls `slot.process`).
 public protocol AudioPostProcessingHook: AnyObject, Sendable {
     /// Installs the processor, or removes it (bypass) when nil.
     func setProcessor(_ processor: RNNoiseProcessor?)
@@ -25,22 +33,29 @@ public enum PostProcessingHookRegistry {
 /// Applies the noise-suppression setting. Only one suppressor runs at a time: when the system's
 /// Voice Isolation is active, or the pipeline has no hook, `.enhanced` behaves like `.standard`.
 public final class NoiseSuppressionController: @unchecked Sendable {
-    private let hook: AudioPostProcessingHook?
+    private let injectedHook: AudioPostProcessingHook?
     private let voiceIsolationActive: @Sendable () -> Bool
     private let lock = NSLock()
     private var processor: RNNoiseProcessor?
     private var mode: NoiseSuppression = .standard
 
+    /// Pass `hook` to pin one; with nil the controller uses whatever `PostProcessingHookRegistry` holds
+    /// at each `apply`, so a hook that registers after the controller exists is picked up.
     public init(
-        hook: AudioPostProcessingHook? = PostProcessingHookRegistry.current,
+        hook: AudioPostProcessingHook? = nil,
         voiceIsolationActive: @escaping @Sendable () -> Bool = { VoiceIsolation.isActive }
     ) {
-        self.hook = hook
+        self.injectedHook = hook
         self.voiceIsolationActive = voiceIsolationActive
     }
 
-    /// True when the pipeline has a post-processing hook, so `.enhanced` can run.
+    private var hook: AudioPostProcessingHook? { injectedHook ?? PostProcessingHookRegistry.current }
+
+    /// True when the registry has a post-processing hook, so `.enhanced` can run for controllers that resolve it there.
     public static var enhancedAvailable: Bool { PostProcessingHookRegistry.hasPostProcessingHook }
+
+    /// Same question for this controller: true when it has a hook (pinned or registered) right now.
+    public var canRunEnhanced: Bool { hook != nil }
 
     public var isVoiceIsolationActive: Bool { voiceIsolationActive() }
 
@@ -49,11 +64,13 @@ public final class NoiseSuppressionController: @unchecked Sendable {
 
     public func apply(_ requested: NoiseSuppression) {
         lock.withLock {
-            if requested == .enhanced, hook != nil, !isVoiceIsolationActive {
+            let hook = self.hook
+            if requested == .enhanced, let hook, !isVoiceIsolationActive {
                 if processor == nil { processor = RNNoiseProcessor() }
-                hook?.setProcessor(processor)
+                hook.setProcessor(processor)
                 mode = .enhanced
             } else {
+                // The hook owns the processor now; it releases it only once the audio thread is done with it.
                 processor = nil
                 hook?.setProcessor(nil)
                 mode = requested == .enhanced ? .standard : requested

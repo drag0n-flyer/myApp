@@ -20,15 +20,17 @@ public final class RNNoiseProcessor: @unchecked Sendable {
     /// Denoises one 480-sample frame in place.
     public func process(_ frame: inout [Float]) {
         precondition(frame.count == Self.frameSize, "frame must hold \(Self.frameSize) samples")
-        frame.withUnsafeMutableBufferPointer { process($0.baseAddress!) }
+        frame.withUnsafeMutableBufferPointer { process($0.baseAddress!, count: $0.count) }
     }
 
-    /// Pointer variant for the real-time audio hook; `samples` must point at 480 floats.
-    public func process(_ samples: UnsafeMutablePointer<Float>) {
+    /// Pointer variant for the real-time audio hook. `count` must be 480 (48 kHz mono, 10 ms);
+    /// the hook buffers to this size itself. Output is clamped to -1...1.
+    public func process(_ samples: UnsafeMutablePointer<Float>, count: Int = RNNoiseProcessor.frameSize) {
+        precondition(count == Self.frameSize, "frame must hold \(Self.frameSize) samples")
         for i in 0..<Self.frameSize { scratch[i] = samples[i] * 32768 }
         scratch.withUnsafeMutableBufferPointer { buf in
             _ = rnnoise_process_frame(state, buf.baseAddress, buf.baseAddress)
         }
-        for i in 0..<Self.frameSize { samples[i] = scratch[i] / 32768 }
+        for i in 0..<Self.frameSize { samples[i] = min(1, max(-1, scratch[i] / 32768)) }
     }
 }

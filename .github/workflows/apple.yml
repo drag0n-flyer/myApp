@@ -30,6 +30,7 @@ jobs:
       serverkit: ${{ steps.pick.outputs.serverkit }}
       callcore: ${{ steps.pick.outputs.callcore }}
       messaging: ${{ steps.pick.outputs.messaging }}
+      callmedia: ${{ steps.pick.outputs.callmedia }}
       app: ${{ steps.pick.outputs.app }}
     steps:
       - uses: actions/checkout@v4
@@ -61,15 +62,17 @@ jobs:
           echo "$files" | grep -qx '.github/workflows/apple.yml' && all=1
           has() { [ "$all" = 1 ] || echo "$files" | grep -qE "$1"; }
           P=apps/apple/Packages
-          appcore=false; localstore=false; serverkit=false; callcore=false; messaging=false; app=false
+          appcore=false; localstore=false; serverkit=false; callcore=false; messaging=false; app=false; callmedia=false
           if has "^$P/AppCore/"; then appcore=true; serverkit=true; callcore=true; messaging=true; app=true; fi
           if has "^$P/LocalStore/"; then localstore=true; messaging=true; app=true; fi
           if has "^$P/ServerKit/|^apps/apple/(serverkit-tests\.yml|ServerKitTestHost/)"; then serverkit=true; messaging=true; app=true; fi
           if has "^$P/SecureMessaging/"; then messaging=true; app=true; fi
           if has "^$P/Messaging/"; then messaging=true; app=true; fi
           if has "^$P/CallCore/"; then callcore=true; app=true; fi
+          if has "^$P/CallMedia/"; then callmedia=true; fi
+          if has "^$P/AppCore/"; then callmedia=true; fi
           if has "^apps/apple/(App|AppUITests|NotificationService|scripts)/|^apps/apple/project\.yml$"; then app=true; fi
-          for k in appcore localstore serverkit callcore messaging app; do
+          for k in appcore localstore serverkit callcore messaging callmedia app; do
             echo "$k=${!k}" >> "$GITHUB_OUTPUT"
             echo "$k=${!k}"
           done
@@ -80,7 +83,7 @@ jobs:
     if: >-
       needs.changes.outputs.appcore == 'true' || needs.changes.outputs.localstore == 'true' ||
       needs.changes.outputs.serverkit == 'true' || needs.changes.outputs.callcore == 'true' ||
-      needs.changes.outputs.messaging == 'true'
+      needs.changes.outputs.messaging == 'true' || needs.changes.outputs.callmedia == 'true'
     runs-on: ubuntu-24.04
     container: swift:6.0
     timeout-minutes: 30
@@ -110,6 +113,12 @@ jobs:
         if: needs.changes.outputs.messaging == 'true'
         working-directory: apps/apple/Packages/Messaging
         run: swift test --no-parallel
+      - name: CallMedia tests
+        if: needs.changes.outputs.callmedia == 'true'
+        working-directory: apps/apple/Packages/CallMedia
+        run: |
+          ./scripts/fetch-rnnoise-model.sh
+          swift test --no-parallel
 
   # Only what needs Apple frameworks: CryptoKit paths, SQLite file protection, the simulator.
   packages-macos:
