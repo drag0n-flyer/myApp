@@ -47,7 +47,7 @@ public enum SDPMunger {
             audioEnd += 1
         }
 
-        // 3. ptime / maxptime, right after the last rtpmap line.
+        // 3. ptime / maxptime, right after the last payload attribute line (rtpmap, fmtp, rtcp-fb).
         var i = audioEnd - 1
         while i > audioStart {
             if lines[i].hasPrefix("a=ptime:") || lines[i].hasPrefix("a=maxptime:") {
@@ -55,8 +55,10 @@ public enum SDPMunger {
             }
             i -= 1
         }
-        let lastRtpmap = (audioStart..<audioEnd).last { lines[$0].hasPrefix("a=rtpmap:") } ?? (audioEnd - 1)
-        lines.insert(contentsOf: ["a=ptime:\(p.ptime)", "a=maxptime:\(p.ptime)"], at: lastRtpmap + 1)
+        let lastPayload = (audioStart..<audioEnd).last {
+            lines[$0].hasPrefix("a=rtpmap:") || lines[$0].hasPrefix("a=fmtp:") || lines[$0].hasPrefix("a=rtcp-fb:")
+        } ?? (audioEnd - 1)
+        lines.insert(contentsOf: ["a=ptime:\(p.ptime)", "a=maxptime:\(p.ptime)"], at: lastPayload + 1)
 
         return join(lines, trailing: hadTrailingEOL)
     }

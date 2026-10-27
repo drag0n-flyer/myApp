@@ -52,14 +52,21 @@ private func section(_ sdp: String, _ kind: String) -> [String] {
     }
 
     @Test func nonDefaultPayloadType() throws {
-        let out = SDPMunger.apply(.for(.ultraLow), to: try fixture("ios-webrtc-offer"))
+        let out = SDPMunger.apply(.for(.ultraLow), to: try fixture("firefox-offer"))
         let l = lines(out)
-        #expect(l.contains { $0.hasPrefix("a=fmtp:109 ") && $0.contains("maxaveragebitrate=10000") && $0.contains("useinbandfec=0") })
+        let fmtp = try #require(l.first { $0.hasPrefix("a=fmtp:109 ") })
+        #expect(fmtp.contains("maxaveragebitrate=10000") && fmtp.contains("useinbandfec=0"))
+        #expect(fmtp.contains("stereo=0") && !fmtp.contains("stereo=1"))
+        #expect(fmtp.contains("maxplaybackrate=16000") && !fmtp.contains("maxplaybackrate=48000"))
+        for key in ["maxaveragebitrate", "useinbandfec", "usedtx", "maxplaybackrate", "stereo"] {
+            #expect(fmtp.components(separatedBy: key + "=").count == 2, "\(key) duplicated")
+        }
+        #expect(l.filter { $0.hasPrefix("a=fmtp:109 ") }.count == 1)
         #expect(section(out, "audio").filter { $0 == "a=ptime:60" }.count == 1)
     }
 
     @Test func idempotent() throws {
-        for name in ["chrome-offer", "ios-webrtc-offer"] {
+        for name in ["chrome-offer", "ios-webrtc-offer", "firefox-offer"] {
             let s = try fixture(name)
             let once = SDPMunger.apply(.for(.balanced), to: s)
             #expect(SDPMunger.apply(.for(.balanced), to: once) == once)
@@ -76,5 +83,24 @@ private func section(_ sdp: String, _ kind: String) -> [String] {
         let fp = SDPMunger.fingerprint(in: try fixture("chrome-offer"))
         #expect(fp?.hasPrefix("sha-256 AB:CD:EF:01") == true)
         #expect(SDPMunger.fingerprint(in: "v=0\r\n") == nil)
+    }
+
+    @Test func ptimeAfterLastPayloadAttribute() throws {
+        for name in ["chrome-offer", "ios-webrtc-offer", "firefox-offer"] {
+            let audio = section(SDPMunger.apply(.for(.dataSaver), to: try fixture(name)), "audio")
+            let pi = try #require(audio.firstIndex { $0.hasPrefix("a=ptime:") })
+            #expect(audio[pi + 1].hasPrefix("a=maxptime:"))
+            let lastPayload = try #require(audio.lastIndex {
+                $0.hasPrefix("a=rtpmap:") || $0.hasPrefix("a=fmtp:") || $0.hasPrefix("a=rtcp-fb:")
+            })
+            #expect(pi == lastPayload + 1)
+        }
+    }
+
+    @Test func lfOnlyInputBecomesCRLF() throws {
+        let lf = try fixture("chrome-offer").replacingOccurrences(of: "\r\n", with: "\n")
+        let out = SDPMunger.apply(.for(.balanced), to: lf)
+        #expect(out.replacingOccurrences(of: "\r\n", with: "").contains("\n") == false)
+        #expect(out.contains("\r\n"))
     }
 }
