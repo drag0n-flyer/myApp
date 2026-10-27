@@ -191,6 +191,10 @@ public actor InboxProcessor {
             pendingByChat[String(decoding: value, as: UTF8.self), default: []].append(id)
         }
         for (chatID, ids) in pendingByChat { newMessages[chatID, default: []].append(contentsOf: ids) }
+        if controls == nil {
+            // No way to send from here (the notification extension): leave the receipts for the app.
+            for (chatID, ids) in newMessages { for id in ids { try? deps.repo.set(NotificationProcessor.receiptPendingPrefix + id, Data(chatID.utf8)) } }
+        }
         // Network calls (device names, receipts) go after the lock and the gate are released.
         await noticeOwnDevices()
         if let controls {

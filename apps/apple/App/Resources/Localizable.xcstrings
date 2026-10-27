@@ -452,6 +452,17 @@
         }
       }
     },
+    "Not sent" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not sent"
+          }
+        }
+      }
+    },
     "OK" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -591,6 +602,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Send a message first to see the safety number."
+          }
+        }
+      }
+    },
+    "Sends this message again" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sends this message again"
           }
         }
       }
@@ -811,6 +833,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Too many tries. Try again later."
+          }
+        }
+      }
+    },
+    "Try again" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Try again"
           }
         }
       }

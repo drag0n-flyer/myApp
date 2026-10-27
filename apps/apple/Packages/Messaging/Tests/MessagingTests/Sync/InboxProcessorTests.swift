@@ -259,6 +259,18 @@ private func raw(_ conv: ConversationRecord, cursor: Int64 = 900, kind: String =
         #expect(sent[0].body == .receipt(.delivered, ids: ["t1", "t2"]))
     }
 
+    @Test func withoutAControlSenderTheReceiptsAreLeftAsMarkers() async throws {
+        // The notification extension syncs a Welcome's batch with no outbox: the app sends those receipts later.
+        let rig = try await Rig.make()
+        let record = try await startChat(rig)
+        let side = Side(rig.bob1)
+        let quiet = InboxProcessor(
+            deps: side.deps, conversations: ConversationManager(deps: side.deps), handler: side.handler, controls: nil)
+        try await send(rig.ana1, record, .text("x", replyTo: nil), id: "t1")
+        _ = try await quiet.syncOnce()
+        #expect(try side.deps.repo.get("receipt.pending.t1") == Data("acc-ana".utf8))
+    }
+
     @Test func pendingReceiptsFromTheNotificationExtensionAreSent() async throws {
         let rig = try await Rig.make()
         let bob = Side(rig.bob1)
