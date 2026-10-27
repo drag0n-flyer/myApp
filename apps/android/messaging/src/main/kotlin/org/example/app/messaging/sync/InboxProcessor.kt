@@ -193,8 +193,19 @@ class InboxProcessor(
             val plan = if (serverMode == null) null else try {
                 conversations.planJoin(incoming.group, raw.conversationId, serverMode)
             } catch (e: Exception) {
-                if (!isPermanentJoinFailure(e)) throw e
-                failure = e.javaClass.simpleName.ifEmpty { "error" }
+                val name = e.javaClass.simpleName.ifEmpty { "error" }
+                if (isPermanentJoinFailure(e)) {
+                    failure = name
+                } else {
+                    // Temporary as far as we can tell: retried, but not forever. The count is stored, so it survives
+                    // a restart; the fifth failed drain of the same item parks it like a permanent failure.
+                    val tries = failCount(raw.cursor) + 1
+                    if (tries < MAX_JOIN_TRIES) {
+                        repo.set(failKey(raw.cursor), tries.toString().encodeToByteArray())
+                        throw e
+                    }
+                    failure = "retries_exhausted:$name"
+                }
                 null
             }
             result = repo.transaction {
@@ -205,6 +216,7 @@ class InboxProcessor(
                     handler.storeJoinFailed(raw, repo)
                     return@transaction null
                 }
+                if (failCount(raw.cursor) != 0) repo.set(failKey(raw.cursor), "0".encodeToByteArray())
                 plan.store(repo)
                 handler.apply(incoming, raw, repo, plan.keys)
             }
@@ -223,6 +235,10 @@ class InboxProcessor(
         confirm(incoming)
         return result
     }
+
+    private fun failKey(cursor: Long) = "$FAIL_PREFIX$cursor"
+
+    private fun failCount(cursor: Long): Int = repo.get(failKey(cursor))?.decodeToString()?.toIntOrNull() ?: 0
 
     /** M7: `stageIncoming`. Today the engine's `process`, which commits its state at once. */
     private suspend fun stage(payload: ByteArray): Incoming = mls.process(payload)
@@ -266,6 +282,10 @@ class InboxProcessor(
             else -> false
         }
         const val PAGE_SIZE = 100
+
+        /** Failed drains of one item (an unknown error while planning a join) before it is parked. */
+        const val MAX_JOIN_TRIES = 5
+        private const val FAIL_PREFIX = "inbox.fail."
 
         fun raw(item: InboxItem) = RawInboxRecord(
             cursor = item.cursor, kind = item.kind, conversationId = item.conversationId, seq = item.seq, epoch = item.epoch,

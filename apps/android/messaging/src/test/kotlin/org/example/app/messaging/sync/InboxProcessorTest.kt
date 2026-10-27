@@ -385,6 +385,48 @@ class InboxProcessorTest {
         assertTrue(rig.bob1.repo.allMessages().none { it.id.startsWith("join-failed-") })
     }
 
+    /** An unknown join error is retried four times; the fifth failed drain parks the Welcome and the inbox moves on. */
+    @Test
+    fun unknownJoinFailureParksAfterFiveTries() = runTest {
+        val rig = Rig().start()
+        val record = rig.ana1.manager.create("acc-bob")
+        val welcome = rig.server.pending("acc-bob/bob1").single { it.conversationId == record.serverId && it.kind == "welcome" }
+        rig.bob1.mls.failMembers = { IllegalStateException("odd") }
+        repeat(4) {
+            rig.bob1.processor.sync()
+            assertTrue(rig.bob1.repo.rawItems(10).isNotEmpty(), "still retried after failure ${it + 1}")
+            assertTrue(rig.bob1.repo.entries("parked:").isEmpty())
+        }
+        rig.bob1.processor.sync()
+        assertTrue(rig.bob1.repo.rawItems(10).isEmpty(), "the fifth failure parks it")
+        assertNotNull(rig.bob1.repo.get("parked:${welcome.cursor}"))
+        assertNotNull(rig.bob1.repo.message("join-failed-${welcome.cursor}"), "the placeholder")
+        assertTrue(rig.bob1.logs.any { it.startsWith("join_parked") && "cursor=${welcome.cursor}" in it })
+        // The inbox continues: a later item is processed.
+        rig.bob1.mls.failMembers = { null }
+        val carol = TestDevice(rig.server, "acc-carol", "carol1")
+        carol.api.uploadKeyPackages(carol.mls.makeKeyPackages(2))
+        val other = carol.manager.create("acc-bob")
+        rig.bob1.processor.sync()
+        assertNotNull(rig.bob1.repo.conversation(other.serverId))
+    }
+
+    /** Two failures then a success: the count starts over. */
+    @Test
+    fun joinFailureCountResetsOnSuccess() = runTest {
+        val rig = Rig().start()
+        val record = rig.ana1.manager.create("acc-bob")
+        var failures = 2
+        rig.bob1.mls.failMembers = { if (failures > 0) { failures--; IllegalStateException("odd") } else null }
+        rig.bob1.processor.sync()
+        rig.bob1.processor.sync()
+        assertTrue(rig.bob1.repo.rawItems(10).isNotEmpty())
+        rig.bob1.processor.sync()
+        assertNotNull(rig.bob1.repo.conversation(record.serverId), "joined on the third try")
+        assertTrue(rig.bob1.repo.entries("parked:").isEmpty())
+        assertTrue(rig.bob1.repo.entries("inbox.fail.").values.all { it.decodeToString() == "0" })
+    }
+
     /** A temporary engine error while planning the join stops the queue and is retried; nothing is parked. */
     @Test
     fun temporaryJoinFailureRetries() = runTest {
