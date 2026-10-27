@@ -94,31 +94,9 @@ jobs:
             if grep -q "$pat" out/LICENSE.md; then echo "error: LICENSE.md names $pat"; exit 1; fi
           done
       - name: 16 KB page alignment
-        run: |
-          # armeabi-v7a is exempt on purpose: the 16 KB page rule covers 64-bit ABIs only.
-          if [ -f scripts/check-16kb.sh ]; then
-            for so in out/arm64-v8a/*.so out/x86_64/*.so; do sh scripts/check-16kb.sh "$so"; done
-          else
-            # armeabi-v7a is exempt on purpose: the 16 KB page rule covers 64-bit ABIs only.
-            # scripts/check-16kb.sh (task G1) is not on this branch yet: same rule, inline.
-            python3 - out/arm64-v8a/*.so out/x86_64/*.so <<'PY'
-          import subprocess, sys
-          bad = 0
-          for so in sys.argv[1:]:
-              n = 0
-              for line in subprocess.check_output(["readelf", "-lW", so], text=True).splitlines():
-                  f = line.split()
-                  if f and f[0] == "LOAD":
-                      n += 1
-                      if int(f[-1], 16) < 16384:
-                          print(so, "LOAD alignment", f[-1]); bad = 1
-              if not n:
-                  print(so, "no LOAD segment"); bad = 1
-              else:
-                  print(so, "ok")
-          sys.exit(bad)
-          PY
-          fi
+        # The paths keep the ABI directory: scripts/check-16kb.sh skips /armeabi-v7a/ (32-bit
+        # ABIs are exempt) and checks the 64-bit ones.
+        run: bash scripts/check-16kb.sh out/arm64-v8a out/armeabi-v7a out/x86_64
       - name: Unpacked listing
         run: |
           mkdir -p /tmp/aar && cd /tmp/aar && unzip -q "$GITHUB_WORKSPACE/out/libwebrtc.aar" && find . -type f | sort

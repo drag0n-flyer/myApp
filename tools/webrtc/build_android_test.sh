@@ -85,7 +85,7 @@ check "build-android: no Apple arguments" sh -c '! grep -q "ios\|mac_\|enable_ds
 # The whole line, exactly. An added or dropped argument fails here.
 common='target_os="android" is_debug=false is_component_build=false rtc_include_tests=false android_static_analysis="off" use_siso=true symbol_level=1 rtc_use_h264=false rtc_include_dav1d_in_internal_decoder_factory=false rtc_opus_support_120ms_ptime=true'
 check "build-android: arm64-v8a exact args" test "$(cat "$work/args-arm64-v8a.txt")" = "$common target_cpu=\"arm64\""
-check "build-android: armeabi-v7a exact args" test "$(cat "$work/args-armeabi-v7a.txt")" = "$common target_cpu=\"arm\""
+check "build-android: armeabi-v7a exact args" test "$(cat "$work/args-armeabi-v7a.txt")" = "$common target_cpu=\"arm\" arm_use_neon=true"
 check "build-android: x86_64 exact args" test "$(cat "$work/args-x86_64.txt")" = "$common target_cpu=\"x64\""
 # The exact gn arguments of the brief, in the exact form.
 for a in 'rtc_use_h264=false' 'rtc_include_dav1d_in_internal_decoder_factory=false' \
