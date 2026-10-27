@@ -1,16 +1,5 @@
 public enum CallEndReason: Equatable, Sendable {
     case hungUp, connectionLost, declined, missed, answeredElsewhere, failed
-
-    public var text: String {
-        switch self {
-        case .hungUp: "Call ended"
-        case .connectionLost: "Call ended: connection lost"
-        case .declined: "Call declined"
-        case .missed: "No answer"
-        case .answeredElsewhere: "Answered on another device"
-        case .failed: "Call failed"
-        }
-    }
 }
 
 public enum CallPhase: Equatable, Sendable {

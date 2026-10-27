@@ -19,13 +19,6 @@ import Foundation
     #expect(e.state?.isMuted == false)
 }
 
-@Test func endReasonTexts() {
-    #expect(CallEndReason.declined.text == "Call declined")
-    #expect(CallEndReason.missed.text == "No answer")
-    #expect(CallEndReason.answeredElsewhere.text == "Answered on another device")
-    #expect(CallEndReason.failed.text == "Call failed")
-}
-
 @Test func recordCallAppendsHistory() {
     let store = SampleChatStore()
     let c = store.contacts[0]
@@ -36,4 +29,19 @@ import Foundation
     #expect(last?.content == .call(.missedAudio) && last?.senderID == c.id && last?.sentAt == d)
     store.recordCall(.audio(duration: 3), contactID: c.id, outgoing: true, at: d)
     #expect(store.chat(id: chatID)?.messages.last?.senderID == store.me.id)
+}
+
+@Test func declineOnActiveCallDoesNothing() {
+    let e = engine()
+    e.start(with: riya, video: false)
+    e.advance(by: 1)
+    e.decline()
+    #expect(e.state?.phase == .active)
+}
+
+@Test func simulateIncomingDoesNotOverwriteLiveCall() {
+    let e = engine()
+    e.start(with: riya, video: false)
+    e.simulateIncoming(from: Contact(id: "x", displayName: "X", username: "x"), video: true)
+    #expect(e.state?.contact == riya && e.state?.phase == .connecting)
 }

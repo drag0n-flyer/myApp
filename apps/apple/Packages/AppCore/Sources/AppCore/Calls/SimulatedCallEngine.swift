@@ -35,6 +35,7 @@ public final class SimulatedCallEngine: CallEngine {
 
     /// Sample build: a call rings in-app.
     public func simulateIncoming(from contact: Contact, video: Bool) {
+        if let current = state, !current.isEnded { return }
         condition = .good
         reconnectingFor = 0
         state = CallState(contact: contact, phase: .incoming, isVideoCall: video, isVideoOn: false,
@@ -52,6 +53,7 @@ public final class SimulatedCallEngine: CallEngine {
     }
 
     public func decline() {
+        guard state?.phase == .incoming else { return }
         update { $0.phase = .ended(.declined); $0.banner = nil }
     }
 
