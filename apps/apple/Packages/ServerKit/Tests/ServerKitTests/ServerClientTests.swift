@@ -85,4 +85,54 @@ private actor Counter { var n = 0; func inc() { n += 1 } }
         let _: Ping = try await c.request("GET", "/v1/x", auth: .none)
         #expect(await t.requests[0].url?.absoluteString == "https://chat.test/v1/x")
     }
+
+    @Test func reloginRacingInFlight401KeepsNewSession() async {
+        let store = makeStore()
+        struct Racing: HTTPTransport {
+            let store: SessionStore
+            func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+                try? store.save(Session(host: "chat.test", accountID: "a", deviceID: "d2", token: "new"))
+                let r = HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!
+                return (Data(#"{"error":{"code":"unauthorized","message":"x"}}"#.utf8), r)
+            }
+        }
+        let c = ServerClient(baseURL: URL(string: "https://chat.test")!, session: store, transport: Racing(store: store))
+        let counter = Counter()
+        await c.setOnUnauthorized { await counter.inc() }
+        let _: Ping? = try? await c.request("GET", "/v1/x", auth: .session)
+        #expect(await counter.n == 0)
+        #expect(store.current?.token == "new")
+    }
+
+    @Test func cancellationIsNotNetwork() async {
+        let t = StubTransport()
+        await t.fail("GET", "/v1/x", with: URLError(.cancelled))
+        do {
+            let _: Ping = try await client(t, makeStore()).request("GET", "/v1/x", auth: .none)
+            Issue.record("expected error")
+        } catch {
+            #expect(error.code == "cancelled")
+        }
+    }
+
+    @Test func failedClearKeepsCacheAndDiskConsistent() throws {
+        struct Failing: SessionStorage {
+            let inner = MemorySessionStorage(Session(host: "h", accountID: "a", deviceID: "d", token: "t"))
+            func load() throws -> Session? { try inner.load() }
+            func save(_ s: Session) throws { try inner.save(s) }
+            func clear() throws { throw URLError(.cannotWriteToFile) }
+        }
+        let store = SessionStore(storage: Failing())
+        #expect(throws: URLError.self) { try store.clear() }
+        #expect(store.current?.token == "t")
+    }
+
+    @Test func loadFailureIsSurfaced() {
+        struct Bad: SessionStorage {
+            func load() throws -> Session? { throw URLError(.cannotOpenFile) }
+            func save(_ s: Session) throws {}
+            func clear() throws {}
+        }
+        #expect(SessionStore(storage: Bad()).loadFailureType == "URLError")
+    }
 }

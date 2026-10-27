@@ -95,10 +95,15 @@ public actor ServerClient {
             req.setValue("Bearer \(s.token)", forHTTPHeaderField: "Authorization")
         }
 
+        let sentAt = session.generation
         let data: Data
         let response: HTTPURLResponse
         do {
             (data, response) = try await transport.send(req)
+        } catch is CancellationError {
+            throw ServerError.cancelled
+        } catch let e as URLError where e.code == .cancelled {
+            throw ServerError.cancelled
         } catch {
             throw ServerError.network
         }
@@ -106,15 +111,18 @@ public actor ServerClient {
         if (200..<300).contains(response.statusCode) { return (data, response) }
 
         let err = Self.mapError(data: data, response: response)
-        if response.statusCode == 401 && auth == .session { await handleUnauthorized() }
+        if response.statusCode == 401 && auth == .session { await handleUnauthorized(sentAt: sentAt) }
         throw err
     }
 
-    private func handleUnauthorized() async {
-        let gen = session.generation
-        if signedOutAtGeneration == gen { return }
-        signedOutAtGeneration = gen
-        session.clear()
+    private func handleUnauthorized(sentAt: Int) async {
+        // A login (save) since the request was sent means the 401 is about an old token.
+        guard session.generation == sentAt else { return }
+        if signedOutAtGeneration == sentAt { return }
+        signedOutAtGeneration = sentAt
+        // If the storage delete fails the cache is kept consistent with disk; the app is still
+        // told to sign out and may retry clear().
+        try? session.clear()
         await onUnauthorized?()
     }
 

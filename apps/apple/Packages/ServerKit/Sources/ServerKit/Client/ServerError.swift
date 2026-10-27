@@ -14,6 +14,7 @@ public struct ServerError: Error, Equatable, Sendable {
     }
 
     static let network = ServerError(status: 0, code: "network")
+    static let cancelled = ServerError(status: 0, code: "cancelled")
     static func decoding() -> ServerError { ServerError(status: 0, code: "decoding") }
 }
 

@@ -38,9 +38,18 @@ public final class SessionStore: @unchecked Sendable {
     private var cached: Session?
     private var saves = 0
 
+    /// Type name of the error if loading the stored session failed at init (never its contents).
+    public let loadFailureType: String?
+
     public init(storage: SessionStorage) {
         self.storage = storage
-        self.cached = try? storage.load()
+        do {
+            self.cached = try storage.load()
+            self.loadFailureType = nil
+        } catch {
+            self.cached = nil
+            self.loadFailureType = String(describing: type(of: error))
+        }
     }
 
     public var current: Session? { lock.withLock { cached } }
@@ -55,9 +64,11 @@ public final class SessionStore: @unchecked Sendable {
         }
     }
 
-    public func clear() {
-        lock.withLock {
-            try? storage.clear()
+    /// Clears disk first; the cache is only dropped once the storage delete succeeded,
+    /// so disk and cache never disagree.
+    public func clear() throws {
+        try lock.withLock {
+            try storage.clear()
             cached = nil
         }
     }
