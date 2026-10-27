@@ -32,6 +32,7 @@ final class AppModel {
     var openChatID: String?
     private(set) var activeCall: CallState?
     var pendingInvite: InviteLink?
+    let isUITesting: Bool
 
     /// Bumped after every store change so views that read store data refresh.
     private(set) var revision = 0
@@ -44,6 +45,7 @@ final class AppModel {
         self.server = server
         self.settings = settings
         self.network = launch.network
+        self.isUITesting = launch.isUITesting
         self.chatStore = SampleChatStore()
         self.calls = SimulatedCallEngine(server: server, settings: settings.call, network: launch.network)
         #if os(macOS)
@@ -167,9 +169,11 @@ final class AppModel {
     }
 }
 
-/// Launch arguments used by UI tests: `-skipOnboarding`, `-network mobile|wifi`, `-openURL <url>`.
+/// Launch arguments used by UI tests: `-skipOnboarding`, `-uiTesting`, `-network mobile|wifi`, `-openURL <url>`.
 struct LaunchOptions {
     var skipOnboarding = false
+    /// Skips system permission prompts so UI tests aren't blocked by alerts.
+    var isUITesting = false
     var network: NetworkType = .mobile
     var openURL: URL?
 
@@ -177,6 +181,7 @@ struct LaunchOptions {
         let args = ProcessInfo.processInfo.arguments
         var options = LaunchOptions()
         options.skipOnboarding = args.contains("-skipOnboarding")
+        options.isUITesting = args.contains("-uiTesting")
         if let i = args.firstIndex(of: "-network"), i + 1 < args.count {
             options.network = args[i + 1] == "wifi" ? .wifi : .mobile
         }
