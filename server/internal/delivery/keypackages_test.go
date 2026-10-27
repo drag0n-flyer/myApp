@@ -116,6 +116,68 @@ func TestClaimOnePerDevice(t *testing.T) {
 	}
 }
 
+func TestClaimDeviceFilter(t *testing.T) {
+	e := setup(t)
+	ana := testkit.Account(t, e.d, "ana")
+	bob1 := testkit.Account(t, e.d, "bob")
+	bob2 := testkit.Device(t, e.d, bob1.AccountID, "mac")
+	bob3 := testkit.Device(t, e.d, bob1.AccountID, "iphone")
+	cat := testkit.Account(t, e.d, "cat")
+	for i, p := range []core.Principal{bob1, bob2, bob3, cat} {
+		e.upload(t, p, pkgs(3, byte(i)))
+	}
+	claim := func(body map[string]any) claimed {
+		t.Helper()
+		body["accountID"] = bob1.AccountID
+		r := e.c.Do(&ana, "POST", "/v1/keypackages/claim", body)
+		if r.Status != 200 {
+			t.Fatalf("claim: %s", r)
+		}
+		var out claimed
+		r.Decode(t, &out)
+		return out
+	}
+	counts := func() [4]int {
+		return [4]int{e.count(t, bob1), e.count(t, bob2), e.count(t, bob3), e.count(t, cat)}
+	}
+
+	// Only the listed device loses a package; duplicates collapse.
+	out := claim(map[string]any{"deviceIDs": []string{bob2.DeviceID, bob2.DeviceID}})
+	if len(out.KeyPackages) != 1 || out.KeyPackages[0].DeviceID != bob2.DeviceID {
+		t.Fatalf("filtered claim = %+v", out)
+	}
+	if c := counts(); c != [4]int{3, 2, 3, 3} {
+		t.Fatalf("counts = %v", c)
+	}
+
+	// A device of another account is ignored.
+	out = claim(map[string]any{"deviceIDs": []string{cat.DeviceID, bob3.DeviceID, "not-a-device"}})
+	if len(out.KeyPackages) != 1 || out.KeyPackages[0].DeviceID != bob3.DeviceID {
+		t.Fatalf("foreign claim = %+v", out)
+	}
+	if c := counts(); c != [4]int{3, 2, 2, 3} {
+		t.Fatalf("counts = %v", c)
+	}
+
+	// Omitted or empty filter claims from every device.
+	for _, body := range []map[string]any{{}, {"deviceIDs": []string{}}} {
+		if out := claim(body); len(out.KeyPackages) != 3 {
+			t.Fatalf("unfiltered claim = %+v", out)
+		}
+	}
+	if c := counts(); c != [4]int{1, 1, 1, 3} {
+		t.Fatalf("counts = %v", c)
+	}
+
+	// Only foreign IDs: nothing is claimed.
+	if out := claim(map[string]any{"deviceIDs": []string{cat.DeviceID}}); len(out.KeyPackages) != 0 {
+		t.Fatalf("foreign-only claim = %+v", out)
+	}
+	if c := counts(); c != [4]int{1, 1, 1, 3} {
+		t.Fatalf("counts = %v", c)
+	}
+}
+
 func TestClaimKeepsLastResort(t *testing.T) {
 	e := setup(t)
 	ana := testkit.Account(t, e.d, "ana")
