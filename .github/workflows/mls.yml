@@ -66,6 +66,21 @@ jobs:
       - name: Swift package builds with the XCFramework
         working-directory: apps/apple/Packages/SecureMessaging
         run: swift build
+      - name: swift test (macOS)
+        working-directory: apps/apple/Packages/SecureMessaging
+        run: swift test
+      - name: xcodebuild test (iOS simulator)
+        working-directory: apps/apple/Packages/SecureMessaging
+        run: |
+          set -euo pipefail
+          # Resolve an available iPhone simulator at run time; never hard-code a model.
+          udid="$(xcrun simctl list devices available iPhone | grep -m1 -oE '[0-9A-F]{8}(-[0-9A-F]{4}){3}-[0-9A-F]{12}')"
+          test -n "$udid"
+          xcrun simctl list devices available iPhone | head -5
+          xcodebuild test -scheme SecureMessaging-Package \
+            -destination "platform=iOS Simulator,id=$udid" \
+            -skipPackagePluginValidation | tail -n 80
+          exit "${PIPESTATUS[0]}"
       - uses: actions/upload-artifact@v4
         with:
           name: MLSFFI-xcframework
