@@ -66,6 +66,7 @@ struct RigView: View {
         case .running(let s): return s
         case .done(let s): return s
         case .failed(let s): return "Failed: \(s)"
+        case .stopped: return "Stopped. Nothing was saved."
         }
     }
 }
