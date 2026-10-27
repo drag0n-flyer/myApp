@@ -15,10 +15,10 @@ The device seals this JSON object to the gateway's public key:
 
 | Key | Value |
 |---|---|
-| `t` | The APNs device token, as hex |
-| `k` | `alert` or `voip` |
+| `t` | The APNs device token, as hex; for `fcm`, the FCM registration token as text |
+| `k` | `alert`, `voip` or `fcm` |
 | `e` | `production` or `sandbox` |
-| `b` | The bundle ID of the app that owns the token |
+| `b` | The bundle ID of the app that owns the token; for `fcm`, the Android application ID |
 
 ```json
 {"t":"00ff","k":"alert","e":"sandbox","b":"org.example.app"}
@@ -29,6 +29,7 @@ The device seals this JSON object to the gateway's public key:
 - **Upload:** `PUT /v1/push/tokens/{kind}` with `{"sealed": "<base64url>"}`. The server stores the bytes as received and cannot read them. The `k` inside the handle is the one the gateway enforces.
 - **Where the key comes from:** the gateway's public key and URL are compiled into the app. If a server's info document names a different gateway, the app registers no push tokens with that server. A dishonest server therefore cannot collect raw tokens through a fake gateway (plan 6, decision 3).
 - **Bundle IDs:** the iPhone app and the Mac app each have their own, and the gateway allows only the ones it is configured with (`PUSHGW_BUNDLE_IDS`). A VoIP push goes to the topic `<bundle>.voip`.
+- **Android:** an `fcm` handle is `{"t":"<FCM token>","k":"fcm","e":"production","b":"<applicationId>"}`. The gateway allows only the application IDs in `PUSHGW_ANDROID_APP_IDS`, refuses `fcm` handles when it has no FCM key, and requires `e` to be `production` for them. A `message` push needs an `alert` or `fcm` handle; a `call` push may use `voip`, `alert` or `fcm`.
 
 ## Padding
 
@@ -49,6 +50,8 @@ The payload that the server hands to push is the same bytes as the inbox item's 
 | 3071 (replaced by an empty payload) | 256 |
 
 The padded bytes travel unchanged through the gateway to the device, where the notification extension unpads them. The gateway does not unpad.
+
+**FCM exception:** FCM data messages are limited to 4096 bytes, and the 3072 bucket is 4096 characters in base64. For an `fcm` handle the gateway therefore replaces a padded payload over 2048 bytes by the 256-byte empty one (length 0), and the device fetches its inbox. The decision uses only the padded length, which the gateway already sees. The 2048 bucket (2732 characters) is forwarded unchanged.
 
 ## Server to gateway
 
@@ -98,6 +101,27 @@ APNs delivers `d`: standard base64 with padding of the **padded** payload, exact
 6. After a 25-second deadline, or on any error, show the generic text.
 
 The extension's memory budget is about 24 MB. The visible alert text is not authenticated: it is whatever the sender of the push chose, and only text that decrypts under MLS is trusted ([threat model](../security/threat-model.md#59-notification-service-extension), NSE-S-01).
+
+## Android pushes through FCM
+
+The gateway sends an `fcm` handle as an FCM HTTP v1 data message: `{"message":{"token":"<t>","data":{"k":"message"|"call","d":"<std base64 of the padded payload>"},"android":{"priority":"HIGH","ttl":"86400s"|"45s"}}}`. A call expires after 45 seconds (the ring timeout), a message after one day. FCM `UNREGISTERED` becomes `410` to the server, which deletes the handle; any other `404`, including `NOT_FOUND`, is a gateway error (`502`) and keeps the handle. The gateway authenticates with an OAuth access token minted from the owner's service-account key (RS256 JWT, cached until 5 minutes before expiry); it follows no redirects and logs neither tokens nor payloads. Details: [server design §7.4](../superpowers/specs/2026-10-27-server-design.md#74-push-lane-d).
+
+## Android pushes through UnifiedPush
+
+A device that uses UnifiedPush uploads `PUT /v1/push/tokens/unifiedpush {"endpoint":"https://...","p256dh":"<b64url>","auth":"<b64url>"}` instead of a sealed handle. The server must read it, so it is not sealed. The endpoint is at most 1024 characters, `https` only, port 443 only, with no user info. `p256dh` is the receiver's uncompressed P-256 public key (65 bytes) and `auth` is its 16-byte Web Push secret. The server refuses the upload with `bad_request` when it has no VAPID key. A device has one transport: uploading `unifiedpush` deletes its `fcm` handle and the reverse.
+
+The server sends directly, with no gateway: `POST <endpoint>` with the body encrypted as RFC 8291 `aes128gcm` (one record), and these headers:
+
+| Header | Value |
+|---|---|
+| `Content-Encoding` | `aes128gcm` |
+| `TTL` | `45` for a call, `86400` for a message |
+| `Urgency` | `high` |
+| `Authorization` | `vapid t=<JWT>, k=<server public key>` (RFC 8292: ES256, `aud` is the endpoint's origin, `exp` 12 hours out, `sub` is `https://<host>`) |
+
+The plaintext is one kind byte (`0x01` message, `0x02` call) followed by the padded payload (see Padding; the device unpads it, the distributor sees only ciphertext). The server's VAPID public key is `push.vapidKey` in `/v1/server` (base64url, 65 bytes), from `APP_VAPID_KEY_FILE` (`appserver keygen vapid`). `404` and `410` delete the registration; other failures are errors that keep it.
+
+The endpoint is untrusted. The server refuses any address that is private, loopback, link-local, multicast, unspecified or in 100.64.0.0/10 (including IPv4-mapped IPv6 forms and the cloud metadata address), checked on the resolved address when it connects, so DNS rebinding does not help. It follows no redirects and uses no proxy. It has 10-second timeouts, and reads at most 16 KiB of the answer. It logs no endpoints, keys or payloads.
 
 ## iOS VoIP pushes
 

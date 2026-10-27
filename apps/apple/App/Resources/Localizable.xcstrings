@@ -45,6 +45,17 @@
         }
       }
     },
+    "Android" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Android"
+          }
+        }
+      }
+    },
     "Answer" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -210,6 +221,17 @@
         }
       }
     },
+    "Couldn't load the licenses." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't load the licenses."
+          }
+        }
+      }
+    },
     "Data used" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -353,6 +375,17 @@
         }
       }
     },
+    "Licenses" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Licenses"
+          }
+        }
+      }
+    },
     "Link a device" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -470,6 +503,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "OK"
+          }
+        }
+      }
+    },
+    "Open-source licenses" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open-source licenses"
           }
         }
       }
@@ -712,6 +756,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "That username is taken."
+          }
+        }
+      }
+    },
+    "The full license text is added with this component's first release." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The full license text is added with this component's first release."
           }
         }
       }

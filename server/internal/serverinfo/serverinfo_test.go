@@ -1,7 +1,10 @@
 package serverinfo_test
 
 import (
+	"bytes"
 	"crypto/ecdh"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
@@ -13,7 +16,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/drag0n-flyer/myApp/server/internal/config"
 	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/push"
 	"github.com/drag0n-flyer/myApp/server/internal/serverinfo"
 	"github.com/drag0n-flyer/myApp/server/internal/testkit"
 )
@@ -42,7 +47,7 @@ func TestServerInfoDocument(t *testing.T) {
 	want := decode(t, `{ "protocol": 1, "host": "chat.test", "requiresInvite": true,
 	  "policy": { "defaultMode": "auto", "maxMode": "high", "defaultIPHiding": "nonContacts" },
 	  "encryption": { "newConversations": "e2ee", "escrowKey": null },
-	  "push": { "gateway": "https://push.example.org" },
+	  "push": { "gateway": "https://push.example.org", "vapidKey": null },
 	  "features": ["calls", "video", "linking"], "federation": false,
 	  "limits": { "attachmentBytes": 104857600 } }`)
 	if got := decode(t, string(res.Body)); !reflect.DeepEqual(got, want) {
@@ -66,7 +71,9 @@ func TestServerInfoEscrowKey(t *testing.T) {
 	}
 	der, _ := x509.MarshalPKCS8PrivateKey(priv)
 	path := filepath.Join(t.TempDir(), "escrow.pem")
-	os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600)
+	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	// The key is published whenever a key file is set, even for e2ee policy.
 	e2ee := serve(t, func(d *core.Deps) { d.Config.EscrowKeyFile = path })
@@ -114,5 +121,56 @@ func TestAASA(t *testing.T) {
 	  "webcredentials":{"apps":["T.a.b","T.a.b.mac"]}}`)
 	if got := decode(t, string(res.Body)); !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %s", res.Body)
+	}
+}
+
+func TestAssetlinksListsConfiguredApps(t *testing.T) {
+	fp := bytes.Repeat([]byte{0xab}, 32)
+	c := serve(t, func(d *core.Deps) {
+		d.Config.AndroidApps = []config.AndroidApp{{Package: "org.a.b", Fingerprint: fp}}
+	})
+	res := c.Do(nil, "GET", "/.well-known/assetlinks.json", nil)
+	if res.Status != 200 || res.Header.Get("Content-Type") != "application/json" {
+		t.Fatalf("%s %v", res, res.Header)
+	}
+	var got any
+	if err := json.Unmarshal(res.Body, &got); err != nil {
+		t.Fatal(err)
+	}
+	var want any
+	_ = json.Unmarshal([]byte(`[{"relation":["delegate_permission/common.get_login_creds","delegate_permission/common.handle_all_urls"],
+	  "target":{"namespace":"android_app","package_name":"org.a.b","sha256_cert_fingerprints":["`+strings.TrimSuffix(strings.Repeat("AB:", 32), ":")+`"]}}]`), &want)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %s", res.Body)
+	}
+}
+
+func TestAssetlinksEmptyWhenUnset(t *testing.T) {
+	c := serve(t)
+	res := c.Do(nil, "GET", "/.well-known/assetlinks.json", nil)
+	if res.Status != 200 || strings.TrimSpace(string(res.Body)) != "[]" {
+		t.Fatalf("%s", res)
+	}
+}
+
+func TestServerInfoVapidKey(t *testing.T) {
+	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "vapid.pem")
+	var buf bytes.Buffer
+	if err := push.WriteVAPIDKey(&buf, k); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := serve(t, func(d *core.Deps) { d.Config.VapidKeyFile = path })
+	got := decode(t, string(c.Do(nil, "GET", "/v1/server", nil).Body))
+	pub, _ := k.PublicKey.ECDH()
+	want := base64.RawURLEncoding.EncodeToString(pub.Bytes())
+	if got["push"].(map[string]any)["vapidKey"] != want {
+		t.Fatalf("push %v", got["push"])
 	}
 }

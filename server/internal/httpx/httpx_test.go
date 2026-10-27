@@ -299,3 +299,56 @@ func TestInternalErrorLogOmitsErrorText(t *testing.T) {
 }
 
 func newVerifier() core.SessionVerifier { return fakeVerifier{"good", core.Principal{}} }
+
+func TestBearerSchemeIsCaseInsensitive(t *testing.T) {
+	rt := newRouter()
+	rt.Authed("GET /me", func(w http.ResponseWriter, r *http.Request) error { return nil })
+	for _, scheme := range []string{"Bearer", "bearer", "BEARER"} {
+		if rec := do(rt, "GET", "/me", "", map[string]string{"Authorization": scheme + " good"}); rec.Code != 200 {
+			t.Errorf("%s: got %d", scheme, rec.Code)
+		}
+	}
+	if rec := do(rt, "GET", "/me", "", map[string]string{"Authorization": "Bearerx good"}); rec.Code != 401 {
+		t.Errorf("Bearerx: got %d", rec.Code)
+	}
+}
+
+// A request with the wrong method on a known path falls to the catch-all, so
+// it gets the 404 envelope, not a plain-text 405.
+func TestWrongMethodUsesNotFoundEnvelope(t *testing.T) {
+	rt := newRouter()
+	rt.Public("GET /thing", func(http.ResponseWriter, *http.Request) error { return nil })
+	rec := do(rt, "POST", "/thing", "", nil)
+	if rec.Code != 404 || !strings.Contains(rec.Body.String(), `"code":"not_found"`) {
+		t.Fatalf("got %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestClientIPKeysIPv6ByPrefix(t *testing.T) {
+	at := func(addr string) string {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.RemoteAddr = addr
+		return ClientIP(r, false)
+	}
+	a := at("[2001:db8:1:2::1]:443")
+	b := at("[2001:db8:1:2:ffff:ffff:ffff:ffff]:443")
+	c := at("[2001:db8:1:3::1]:443")
+	if a != b {
+		t.Errorf("same /64 got different keys: %q %q", a, b)
+	}
+	if a == c {
+		t.Errorf("different /64s share a key: %q", a)
+	}
+	if got := at("192.0.2.7:1"); got != "192.0.2.7" {
+		t.Errorf("IPv4 changed: %q", got)
+	}
+	if got := at("[::ffff:192.0.2.7]:1"); got != "192.0.2.7" {
+		t.Errorf("IPv4-mapped: %q", got)
+	}
+	// Through a trusted proxy the same rule applies.
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Header.Set("X-Forwarded-For", "9.9.9.9, 2001:db8:1:2::77")
+	if got := ClientIP(r, true); got != a {
+		t.Errorf("forwarded IPv6: got %q, want %q", got, a)
+	}
+}

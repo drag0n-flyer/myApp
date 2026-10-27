@@ -3,6 +3,8 @@
 package config
 
 import (
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -16,11 +18,37 @@ type Relay struct{ Host, Region string }
 type Config struct {
 	Host, Listen, AdminListen, DatabaseURL, DataDir, SMTPURL, MailFrom, TURNSecret string
 	Relays                                                                         []Relay
-	PushGatewayURL, PushKeyFile, PushServerID, EscrowKeyFile                       string
+	PushGatewayURL, PushKeyFile, PushServerID, VapidKeyFile, EscrowKeyFile         string
 	AppleAppIDs                                                                    []string
-	DocsDir                                                                        string // APP_DOCS_DIR: operator security.txt and legal pages; empty serves none
+	AndroidApps                                                                    []AndroidApp // APP_ANDROID_APPS; empty accepts no Android passkey origins
+	DocsDir                                                                        string       // APP_DOCS_DIR: operator security.txt and legal pages; empty serves none
 	TrustProxy                                                                     bool
-	LabMode                                                                        bool // APP_LAB_MODE=1: lab-only session command; never on a real server
+	AdminHosts                                                                     []string // APP_ADMIN_HOSTS: extra Host names the admin listener accepts (lowercase)
+	LabMode                                                                        bool     // APP_LAB_MODE=1: lab-only session command; never on a real server
+}
+
+// AndroidApp is an Android app the operator trusts for passkeys: its package
+// name and the SHA-256 fingerprint (32 bytes) of its signing certificate.
+type AndroidApp struct {
+	Package     string
+	Fingerprint []byte
+}
+
+// ColonFingerprint returns the fingerprint as upper-case hex pairs joined by
+// colons, the form assetlinks.json uses.
+func (a AndroidApp) ColonFingerprint() string {
+	h := strings.ToUpper(hex.EncodeToString(a.Fingerprint))
+	parts := make([]string, 0, len(a.Fingerprint))
+	for i := 0; i+2 <= len(h); i += 2 {
+		parts = append(parts, h[i:i+2])
+	}
+	return strings.Join(parts, ":")
+}
+
+// Origin returns the WebAuthn origin Android reports for the app:
+// android:apk-key-hash: and the unpadded base64url of the fingerprint bytes.
+func (a AndroidApp) Origin() string {
+	return "android:apk-key-hash:" + base64.RawURLEncoding.EncodeToString(a.Fingerprint)
 }
 
 // Policy is the operator policy file, with defaults from DefaultPolicy.
@@ -99,8 +127,14 @@ func Load(getenv func(string) string, readFile func(string) ([]byte, error)) (Co
 	c.PushGatewayURL = getenv("APP_PUSH_GATEWAY_URL")
 	c.PushKeyFile = getenv("APP_PUSH_KEY_FILE")
 	c.PushServerID = getenv("APP_PUSH_SERVER_ID")
+	c.VapidKeyFile = getenv("APP_VAPID_KEY_FILE")
 	c.EscrowKeyFile = getenv("APP_ESCROW_KEY_FILE")
 	c.AppleAppIDs = splitList(getenv("APP_APPLE_APP_IDS"))
+	apps, err := parseAndroidApps(getenv("APP_ANDROID_APPS"))
+	if err != nil {
+		return Config{}, Policy{}, err
+	}
+	c.AndroidApps = apps
 	c.DocsDir = getenv("APP_DOCS_DIR")
 	if v := getenv("APP_TRUST_PROXY"); v != "" {
 		b, err := strconv.ParseBool(v)
@@ -108,6 +142,10 @@ func Load(getenv func(string) string, readFile func(string) ([]byte, error)) (Co
 			return Config{}, Policy{}, fmt.Errorf("config: APP_TRUST_PROXY must be true or false")
 		}
 		c.TrustProxy = b
+	}
+
+	for _, h := range splitList(getenv("APP_ADMIN_HOSTS")) {
+		c.AdminHosts = append(c.AdminHosts, strings.ToLower(h))
 	}
 
 	c.LabMode = getenv("APP_LAB_MODE") == "1"
@@ -190,6 +228,38 @@ func orDefault(v, def string) string {
 		return def
 	}
 	return v
+}
+
+// parseAndroidApps parses "package:<64 hex>[,...]". The package must look like
+// an Android application ID and the fingerprint must be 32 bytes of hex.
+func parseAndroidApps(s string) ([]AndroidApp, error) {
+	var out []AndroidApp
+	for _, item := range splitList(s) {
+		pkg, fp, ok := strings.Cut(item, ":")
+		if !ok || !validAndroidPackage(pkg) {
+			return nil, fmt.Errorf("config: APP_ANDROID_APPS entry %q must be package:<64 hex characters>", item)
+		}
+		b, err := hex.DecodeString(fp)
+		if err != nil || len(b) != 32 {
+			return nil, fmt.Errorf("config: APP_ANDROID_APPS entry %q must be package:<64 hex characters>", item)
+		}
+		out = append(out, AndroidApp{Package: pkg, Fingerprint: b})
+	}
+	return out, nil
+}
+
+func validAndroidPackage(p string) bool {
+	if p == "" || len(p) > 255 {
+		return false
+	}
+	for _, r := range p {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '_':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // splitList splits a comma list, trimming spaces and dropping empty items.

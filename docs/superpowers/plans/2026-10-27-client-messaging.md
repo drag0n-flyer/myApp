@@ -37,7 +37,7 @@
    - Digest: SHA-256 over the whole ciphertext, carried in the envelope.
    - This is the STREAM construction and it allows Range-resumed downloads. Owner review: cryptography.
 8. **Call history is local per device** (plan 8): `recordCall` writes a `calls` row and a `.call(summary)` message on this device only. No `call` envelope kind exists.
-9. **Photo data saving:** photos are re-encoded to JPEG with a maximum side of 1 600 px and quality 0.7. The envelope carries an inline thumbnail (32 px maximum side, JPEG quality 0.4, at most 1 536 bytes) that is shown blurred until download. Voice messages are recorded as Opus in CAF, 16 kHz mono, at 16 kbps.
+9. **Photo data saving:** photos are re-encoded to JPEG with a maximum side of 1 600 px and quality 0.7. The envelope carries an inline thumbnail (32 px maximum side, JPEG quality 0.4, at most 1 536 bytes) that is shown blurred until download. Voice messages are recorded as Opus, 16 kHz mono, at 16 kbps. The Apple recorder writes CAF and the app converts it to Ogg Opus (RFC 7845) before sending (owner decision, 2026-10-28).
 10. **Escrow copies** (server-readable conversations only) are sealed by `Escrow.seal(_:serverKey:)` in `Messaging` (plan 9 needs a single Swift owner of escrow sealing). It lives here, not in `SecureMessaging`, which only wraps the MLS binary; escrow is plain CryptoKit HPKE used only by the outbox. Sealing uses CryptoKit HPKE: Curve25519 / HKDF-SHA256 / ChaCha20-Poly1305, `info = "escrow-v1"`.
    - The output is `encapsulatedKey (32) ‖ ciphertext`, the framing Go's `hpke.Open` expects.
    - The plaintext is `{"conversationID","senderAccountID","sentAt","body":<ContentEnvelope object>}`.
@@ -688,7 +688,7 @@ Owner review: `Crypto/AttachmentCipher.swift`. Test commands: `swift test --filt
 
 **Interfaces — Produces:**
 - `public enum MediaPreparation { static func preparePhoto(_ url: URL, to: URL) throws -> (w: Int, h: Int, thumb: Data) }` (Design 9)
-- `public final class VoiceRecorder` with `start()`, `stop() -> (URL, Double)` and `cancel()`. It records Opus in CAF (`kAudioFormatOpus`, 16 000 Hz, 1 channel, `AVEncoderBitRateKey 16000`).
+- `public final class VoiceRecorder` with `start()`, `stop() -> (URL, Double)` and `cancel()`. It records Opus in CAF (`kAudioFormatOpus`, 16 000 Hz, 1 channel, `AVEncoderBitRateKey 16000`); `stop()` converts the CAF to Ogg Opus and returns the `.ogg` file.
 
 - [ ] **Step 1: Failing tests.**
   - `TestPhotoResized`: a 4 000×3 000 PNG → a JPEG of 1 600×1 200.

@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"regexp"
 	"strings"
@@ -83,7 +84,7 @@ func (m *Module) getConversation(w http.ResponseWriter, r *http.Request) error {
 		`select c.id::text, c.mode, c.epoch from conversations c
 		 join conversation_devices cd on cd.conversation_id = c.id
 		 where c.id = $1 and cd.device_id = $2`, id, p.DeviceID).Scan(&out.ConversationID, &out.Mode, &out.Epoch)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		return notFound
 	}
 	if err != nil {
@@ -132,7 +133,7 @@ func (m *Module) postCommit(w http.ResponseWriter, r *http.Request) error {
 		// non-member learns nothing, not even the epoch.
 		var current int64
 		err := tx.QueryRow(ctx, `select epoch from conversations where id = $1 for update`, id).Scan(&current)
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return notFound
 		}
 		if err != nil {
@@ -152,7 +153,7 @@ func (m *Module) postCommit(w http.ResponseWriter, r *http.Request) error {
 		err = tx.QueryRow(ctx,
 			`update conversations set epoch = epoch + 1 where id = $1 and epoch = $2 returning epoch`,
 			id, *in.Epoch).Scan(&newEpoch)
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.ErrDetails("stale_epoch", "the conversation has moved on", map[string]int64{"currentEpoch": current})
 		}
 		if err != nil {

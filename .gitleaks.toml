@@ -1,0 +1,42 @@
+title = "myApp gitleaks config"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "pem-private-key"
+description = "PEM private key block"
+regex = '''-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----[\s\S]{40,}?-----END (?:[A-Z]+ )?PRIVATE KEY-----'''
+keywords = ["private key"]
+
+[[rules]]
+id = "apns-p8-content"
+description = "APNs .p8 key content (PKCS#8 base64 body)"
+regex = '''MIGTAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBHkwdwIBAQQg[A-Za-z0-9+/=\s]{60,}'''
+keywords = ["migtagea"]
+
+[[rules]]
+id = "app-turn-secret"
+description = "APP_TURN_SECRET with a literal value"
+regex = '''APP_TURN_SECRET=['"]?([^\s'"$<>{}]{8,})'''
+secretGroup = 1
+keywords = ["app_turn_secret"]
+
+[[rules.allowlists]]
+description = "Plan text that names the APP_TURN_SECRET= pattern in prose (reviewed, not a secret)"
+paths = ['''^docs/superpowers/plans/2026-10-27-security-docs-release\.md$''']
+
+[[rules]]
+id = "app-smtp-url-credentials"
+description = "APP_SMTP_URL with user:pass credentials"
+regex = '''APP_SMTP_URL=['"]?smtps?://[^\s:@/'"]+:([^\s@/'"]+)@'''
+secretGroup = 1
+keywords = ["app_smtp_url"]
+
+[[allowlists]]
+description = "Published test keys and placeholder env files"
+paths = [
+  '''^docs/protocol/test-vectors/.*''',
+  '''(^|/)\.env\.example$''',
+]
+

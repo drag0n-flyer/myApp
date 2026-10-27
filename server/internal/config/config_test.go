@@ -278,3 +278,38 @@ func TestLoadLabMode(t *testing.T) {
 		}
 	}
 }
+
+func TestAndroidApps(t *testing.T) {
+	fp := strings.Repeat("ab", 32)
+	env := baseEnv()
+	env["APP_ANDROID_APPS"] = "org.a.b:" + fp + ", org.c.d:" + strings.ToUpper(fp) + ","
+	cfg, _, err := Load(mapEnv(env), noFiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.AndroidApps) != 2 || cfg.AndroidApps[0].Package != "org.a.b" || len(cfg.AndroidApps[1].Fingerprint) != 32 {
+		t.Fatalf("%+v", cfg.AndroidApps)
+	}
+	if got := cfg.AndroidApps[0].ColonFingerprint(); !strings.HasPrefix(got, "AB:AB:") || len(got) != 95 {
+		t.Fatalf("%s", got)
+	}
+	for _, bad := range []string{"org.a.b", "org.a.b:abcd", ":" + fp, "org.a.b:" + strings.Repeat("zz", 32), "bad pkg:" + fp} {
+		env["APP_ANDROID_APPS"] = bad
+		if _, _, err := Load(mapEnv(env), noFiles); err == nil || !strings.Contains(err.Error(), "APP_ANDROID_APPS") {
+			t.Errorf("%q accepted: %v", bad, err)
+		}
+	}
+}
+
+func TestAdminHosts(t *testing.T) {
+	cfg, _, err := Load(mapEnv(baseEnv()), noFiles)
+	if err != nil || len(cfg.AdminHosts) != 0 {
+		t.Fatalf("unset: %v %v", cfg.AdminHosts, err)
+	}
+	env := baseEnv()
+	env["APP_ADMIN_HOSTS"] = " Admin.Example.org ,,x.org"
+	cfg, _, err = Load(mapEnv(env), noFiles)
+	if err != nil || !reflect.DeepEqual(cfg.AdminHosts, []string{"admin.example.org", "x.org"}) {
+		t.Errorf("AdminHosts = %v, %v", cfg.AdminHosts, err)
+	}
+}

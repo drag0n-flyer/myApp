@@ -1,4 +1,6 @@
 name	url	sha256	license
 librispeech-test-clean	https://www.openslr.org/resources/12/test-clean.tar.gz	39fde525e59672dc6d1551919b1478f724438a95aa55f874b576be21967e6c23	CC BY 4.0
-#noise-musan	https://www.openslr.org/resources/17/musan.tar.gz	TODO-verify	Mixed per clip (see MUSAN README); owner decision 5
-#noise-dns-challenge	TODO-verify	TODO-verify	TODO-verify; owner decision 5
+# Noise set (owner decision 5): MUSAN noise subset chosen over the DNS Challenge noise set. OpenSLR 17 lists CC BY 4.0; musan/README says every file is under a Creative Commons license or USA Public Domain and none forbids commercial use; noise/free-sound is all Public Domain, noise/sound-bible is Public Domain or CC BY 3.0 per its LICENSE file (attribution only). We only run local measurements and never redistribute the audio. Archive is 11,086,114,085 bytes. Verified 2026-10-28: a second full streaming download gave MD5 0c472d4fc0c5141eca47ad1ffeb2a7df (equals OpenSLR checksum.md5) and the same SHA-256 as pinned.
+noise-musan	https://www.openslr.org/resources/17/musan.tar.gz	86d1061c7e15b5c9e906777685c519701df51bfde3001e1070dcc9ffac955ee1	CC BY 4.0 (OpenSLR 17); files Public Domain or CC BY 3.0 (musan/noise/*/LICENSE)
+#noise-dns-challenge	not used	not used	not chosen: MUSAN's license permits our use (see above)
+dnsmos-sig-bak-ovr	https://raw.githubusercontent.com/microsoft/DNS-Challenge/591184a9fcb2cbdec02520fed81a32bbbf9d73ff/DNSMOS/DNSMOS/sig_bak_ovr.onnx	269fbebdb513aa23cddfbb593542ecc540284a91849ac50516870e1ac78f6edd	CC BY 4.0 (DNS-Challenge repo LICENSE; code MIT in LICENSE-CODE)

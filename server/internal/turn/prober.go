@@ -98,7 +98,9 @@ func (p *Prober) probe(ctx context.Context, addr string) (time.Duration, error) 
 	}
 	defer c.Close()
 	if dl, ok := ctx.Deadline(); ok {
-		c.SetDeadline(dl)
+		if err := c.SetDeadline(dl); err != nil {
+			return 0, err // without a deadline the read below could hang
+		}
 	}
 	var tx [12]byte
 	if _, err := rand.Read(tx[:]); err != nil {
@@ -155,5 +157,17 @@ func (p *Prober) Healthy() []config.Relay {
 		}
 		return 1
 	})
+	return out
+}
+
+// status lists every relay in configured order with its current state.
+func (p *Prober) status() []RelayStatus {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make([]RelayStatus, 0, len(p.relays))
+	for _, r := range p.relays {
+		s := p.state[r.Host]
+		out = append(out, RelayStatus{Host: r.Host, Region: r.Region, Healthy: !s.down, RTT: s.rtt})
+	}
 	return out
 }

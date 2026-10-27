@@ -203,7 +203,7 @@ private func published(_ fx: [CallEffect]) -> CallState? {
         let fx = m.handle(.stats(MediaStats(availableOutgoingBitrate: 20_000, bytesSent: 1000, bytesReceived: 500,
                                             packetsSent: 10, packetsReceived: 5)))
         #expect(m.state?.effectiveMode == .ultraLow && m.state?.quality == .weak)
-        #expect(fx.contains(.setAudioMaxBitrate(10_000)) && fx.contains(.setVideo(nil)))
+        #expect(fx.contains(.setAudioMaxBitrate(10_000)) && fx.contains(.setVideo(nil, ceiling: .high)))
         #expect(m.state?.bytesUsed == Int64(1500 + 28 * 15))
     }
 

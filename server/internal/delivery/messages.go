@@ -56,7 +56,7 @@ func (m *Module) postMessage(w http.ResponseWriter, r *http.Request) error {
 		var mode string
 		var epoch int64
 		err := tx.QueryRow(ctx, `select mode, epoch from conversations where id = $1 for update`, id).Scan(&mode, &epoch)
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return notFound
 		}
 		if err != nil {
@@ -83,7 +83,7 @@ func (m *Module) postMessage(w http.ResponseWriter, r *http.Request) error {
 		if err == nil {
 			return nil
 		}
-		if err != pgx.ErrNoRows {
+		if !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
 

@@ -15,6 +15,8 @@ All plans needed to reach the GOAL.md Phase 1 exit: an invite-only private beta.
 | 7 | [Client messaging](2026-10-27-client-messaging.md) | 1 | 4, 6 | up to 4 lanes | MLS use, NSE, escrow |
 | 8 | [Client calling](2026-10-27-client-calling.md) | 1 | 3, 4, 6 | up to 4 lanes | CallKit/PushKit, media keys |
 | 9 | [Security, docs, release](2026-10-27-security-docs-release.md) | 1 (beta gate) | 2, 7, 8 for final checks | 1 + owner | all |
+| 10 | [Android client](2026-10-28-android-client.md) ([design](../specs/2026-10-28-android-client-design.md)) | 1 (in parallel, owner decision 2026-10-28) | 2 (spec; lanes B1, F1, F2 change it), 3 (pin and scripts), 4 (`mlsffi`), 7 (vectors, envelope) | 7 lanes + 1 integration (about 7 at once) | auth, keys, MLS use, push and gateway, WebRTC build, Telecom |
+| 11 | [Admin dashboard](2026-10-28-admin-dashboard.md) ([design](../specs/2026-10-28-admin-dashboard-design.md)) | 1 (owner request 2026-10-28) | 2 | 1 foundation → 3 lanes → 1 | authentication (admin login, sessions, CSRF), identity revoke and delete |
 
 ## Running order (at most 5 coding agents at once)
 
@@ -54,6 +56,7 @@ tools/call-lab/                  plan 5 (app, CallLabKit, RNNoiseLab, rig and sc
 docs/protocol/                   plan 9 (protocol spec, test vectors)
 docs/security/ docs/legal/ docs/release/ docs/ops/   plan 9
 docs/measurements/               plan 5
+apps/android/                    plan 10 (Gradle modules: contracts, core, app, net, auth, mls, messaging, store, calls, calls-android, webrtc, push)
 ```
 
 ### Identifiers
@@ -161,6 +164,7 @@ The sample services stay. The launch argument `-sampleData` selects them, so the
 | Lab-only scoring: numpy, onnxruntime, ViSQOL/speequal, DNSMOS models; LibriSpeech + MUSAN/DNS noise corpora | various, to check | 5 | asked in plan 5; never shipped |
 | CI tools: markdownlint-cli2, lychee, gitleaks, go-licenses, gremlins | various | 9 | asked in plan 9 |
 | SQLite | public domain, ships with Apple OSes | 7 | system library: no new dependency |
+| Android libraries and tools (AndroidX, Compose, Room, SQLCipher, OkHttp, kotlinx, JNA, WorkManager, Credential Manager, Firebase Messaging, UnifiedPush connector, CameraX, ZXing, Robolectric, cargo-ndk) | see plan 10 | 10 | asked in plan 10, "Dependencies needing owner approval" |
 
 ## Cross-plan changes outside the owning plan
 
@@ -191,3 +195,16 @@ The sample services stay. The launch argument `-sampleData` selects them, so the
 | 2026-10-28 | Device measurements (call lab L10) are replaced for now by automated test calls on GitHub Mac runners: the server runs on the runner; the Mac app and an iOS Simulator call each other with recorded speech as the microphone, under emulated bad networks; data use, connect time and network-switch survival are measured. Battery, real cellular, Bluetooth and real microphones are left for a later, optional device run. **Owner decision.** |
 | 2026-10-28 | Approved: call-lab scoring dependencies `numpy`, `onnxruntime`, `speequal` (plan 5 decision 4); noise set MUSAN "noise" subset if its license allows, else the DNS Challenge noise set (decision 5, controller call). Approved: docs tools `markdownlint-cli2`, `lychee` (docs Task 1) and `gitleaks`, `go-licenses` plus the Swift license check (docs Task 6). **Owner decision.** |
 | 2026-10-28 | Code owner is `@drag0n-flyer` (the repo owner). The end-of-Phase-1 owner review of sensitive code and the independent security review submission are set aside for now; agent reviews of each task continue. **Owner decision.** |
+| 2026-10-28 | Approved licenses: Unicode-3.0 (`unicode-ident`, Rust) and MPL-2.0 for the eight `uniffi*` crates, used unmodified and listed on the app's open-source licenses page. **Owner decision.** |
+| 2026-10-28 | Android starts now, in parallel with Phase 1 (moved up from Phase 3). Kotlin + Jetpack Compose (GOAL.md). Encryption reuses the Rust MLS layer (`mlsffi`) through its UniFFI Kotlin bindings; UI, storage, networking and calls stay native Kotlin. Minimum Android 10 (API 29); the owner's OnePlus 5 (Android 10) is a reference device. Push: FCM data messages through the project gateway, plus UnifiedPush (GOAL.md). **Owner decision.** |
+| 2026-10-28 | Call-lab noise clips come from MUSAN (license checked: public domain or attribution-only): wind, city ambiance, truck idle, pen clicking, and babble mixed from MUSAN speech; no fan or keyboard category exists in MUSAN. **Owner decision.** |
+| 2026-10-28 | Per-IP rate limits key IPv6 clients by their /64 prefix (IPv4 by full address): one subscriber usually holds a whole /64, so per-address keys were trivially bypassed. The spec only says "per IP". Controller ruling; owner may revisit. |
+| 2026-10-28 | Privacy manifest and policy also declare: phone number (optional, linked), device ID (server-assigned, linked) and crash data (not linked), all for app functionality, none for tracking. IP addresses have no Apple manifest category; the privacy policy covers them (seen transiently, never logged). Crash reporting is not built yet; its transport and retention are TO BE FILLED IN. **Owner decision.** |
+| 2026-10-28 | Android: voice messages use Ogg Opus (RFC 7845) on every platform, so the iPhone/Mac app moves from CAF to Ogg; full sign-up on Android (same invite + email-code flow); HPKE for push handles, escrow and linking comes from new functions in the Rust `mlsffi` layer (no Tink). Android dependency list: pending the owner's questions on UnifiedPush and FCM. **Owner decision.** |
+| 2026-10-28 | Android dependency list approved as listed in the Android plan's "Dependencies needing owner approval", with Firebase Cloud Messaging for push (free; no paid Firebase services) and every other library on that list, including the UnifiedPush connector. **Owner decision.** |
+| 2026-10-28 | The app ID is read from one file per platform so it can be changed easily: Android `apps/android/app-id.properties` (`applicationId`; Kotlin package names stay `org.example.app`); iPhone/Mac `apps/apple/AppID.xcconfig` (bundle IDs, app group, keychain group; Swift code reads it from Info.plist). A check fails if the ID is hard-coded elsewhere. Placeholder `org.example.app` until the owner picks the final ID. **Owner decision.** |
+| 2026-10-28 | Android: support 32-bit phones (`armeabi-v7a`) alongside arm64-v8a and x86_64. Passkeys work on any server that lists the Android app in its `assetlinks.json` (operators opt in with `APP_ANDROID_APPS`). Battery-optimised from day one: the app never asks for the battery-optimisation exemption and has no always-connected mode; it relies on push. The call payload's `ceiling` follows the protocol spec (fix the iPhone side). App icons: generated by the agents as placeholders until the owner provides final art. **Owner decision.** |
+| 2026-10-28 | Admin dashboard: emails always masked (never sent in full to the browser); report text not shown in Phase 1; policy page read-only; audit log kept 365 days (privacy policy to mention it); no email to a user deleted by the operator in Phase 1. Controller rulings on the planner's recommendations; owner may override. |
+| 2026-10-28 | Text and edit messages are limited to 4096 grapheme clusters on every platform, truncated when composing (iPhone already does); receivers are lenient up to a 64 KiB UTF-8 backstop. Controller ruling. |
+| 2026-10-28 | MLS profile "Commits" step 5 gains one exception: after an unknown outcome, the first commit of a new conversation (epoch 0, when the creating device is the only member device) MAY be resent byte for byte with the same Welcome and `addDevices`; a `stale_epoch` reply to that resend means it was applied, a `404` means the conversation is gone. No other commit is ever resent. Lets Android recover a create whose reply was lost without making a second group. Cost if wrong: iOS would need to adopt the same rule. Controller ruling; owner to confirm. |
+| 2026-10-28 | Android: `androidx.biometric` approved for fingerprint/face unlock (`BiometricGate`, lane B). **Owner decision.** |

@@ -1,5 +1,14 @@
 public enum DevicePlatform: Sendable {
-    case iPhone, mac
+    case iPhone, mac, android
+
+    /// SF Symbol for this kind of device. SF Symbols has no Android symbol, so Android uses a generic phone.
+    public var symbolName: String {
+        switch self {
+        case .iPhone: "iphone"
+        case .mac: "laptopcomputer"
+        case .android: "candybarphone"
+        }
+    }
 }
 
 public enum ServerChoice: Equatable, Sendable {
