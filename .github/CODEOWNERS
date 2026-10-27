@@ -1,4 +1,7 @@
 /apps/apple/Packages/ServerKit/Sources/ServerKit/Session/   @velixio
 /apps/apple/Packages/ServerKit/Sources/ServerKit/Passkeys/  @velixio
 /apps/apple/Packages/ServerKit/Sources/ServerKit/Push/      @velixio
+/apps/apple/Packages/ServerKit/Sources/ServerKit/Presence/  @velixio
 /apps/apple/Packages/ServerKit/Sources/ServerKit/Account/   @velixio
+/apps/apple/Packages/ServerKit/Sources/ServerKit/API/ServerClient+Identity.swift  @velixio
+/apps/apple/Packages/ServerKit/Sources/ServerKit/Models/IdentityModels.swift      @velixio
