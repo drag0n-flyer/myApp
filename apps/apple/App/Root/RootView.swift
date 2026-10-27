@@ -3,6 +3,7 @@ import SwiftUI
 /// Onboarding until the account is ready, then the main app.
 struct RootView: View {
     @Bindable var model: AppModel
+    @AppStorage("appearance") private var appearance = AppearanceChoice.system.rawValue
     #if os(macOS)
     @Environment(\.openWindow) private var openWindow
     #endif
@@ -19,6 +20,7 @@ struct RootView: View {
                 OnboardingView(model: model)
             }
         }
+        .preferredColorScheme(AppearanceChoice(rawValue: appearance)?.colorScheme)
         #if os(iOS)
         .fullScreenCover(isPresented: isCallPresented) {
             CallView(model: model)

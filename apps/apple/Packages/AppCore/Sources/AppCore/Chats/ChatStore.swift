@@ -26,4 +26,9 @@ public protocol ChatStore: AnyObject {
     func addContact(username: String) -> Contact?
     /// The chat with this contact, created empty if there is none yet.
     func ensureChat(with contactID: String) -> String
+    /// Custom folders only; All and Unread are fixed.
+    func addFolder(name: String, chatIDs: Set<String>) -> ChatFolder
+    func renameFolder(id: String, to name: String)
+    func deleteFolder(id: String)
+    func moveFolder(id: String, toCustomIndex index: Int)
 }

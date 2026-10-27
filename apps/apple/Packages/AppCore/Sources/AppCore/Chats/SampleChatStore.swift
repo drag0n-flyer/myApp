@@ -107,6 +107,35 @@ public final class SampleChatStore: ChatStore {
         return chatIDCreatingRequestIfNeeded(for: contact)
     }
 
+    public func addFolder(name: String, chatIDs: Set<String>) -> ChatFolder {
+        let folder = ChatFolder(id: "folder-\(makeID())", name: name, kind: .custom)
+        folders.append(folder)
+        for i in allChats.indices where chatIDs.contains(allChats[i].id) {
+            allChats[i].folderIDs.insert(folder.id)
+        }
+        return folder
+    }
+
+    public func renameFolder(id: String, to name: String) {
+        guard let i = folders.firstIndex(where: { $0.id == id && $0.kind == .custom }) else { return }
+        folders[i].name = name
+    }
+
+    public func deleteFolder(id: String) {
+        guard let i = folders.firstIndex(where: { $0.id == id && $0.kind == .custom }) else { return }
+        folders.remove(at: i)
+        for c in allChats.indices { allChats[c].folderIDs.remove(id) }
+    }
+
+    public func moveFolder(id: String, toCustomIndex index: Int) {
+        let fixed = folders.filter { $0.kind != .custom }
+        var custom = folders.filter { $0.kind == .custom }
+        guard let from = custom.firstIndex(where: { $0.id == id }) else { return }
+        let folder = custom.remove(at: from)
+        custom.insert(folder, at: max(0, min(index, custom.count)))
+        folders = fixed + custom
+    }
+
     // MARK: - Private
 
     private var requestSenders: [String: Contact] = [:]

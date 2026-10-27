@@ -83,3 +83,19 @@ func msg(_ c: MessageContent) -> Message {
     #expect(s.ensureChat(with: neha.id) == id)
     #expect(s.ensureChat(with: "riya") == "chat-riya")
 }
+
+@Test func editFolders() {
+    let s = SampleChatStore()
+    let family = s.addFolder(name: "Family", chatIDs: ["chat-riya", "chat-arjun"])
+    #expect(s.folders.map(\.name) == ["All", "Unread", "Personal", "Work", "Family"])
+    #expect(Set(s.chats(in: family).map(\.id)) == ["chat-riya", "chat-arjun"])
+    s.renameFolder(id: family.id, to: "Home")
+    #expect(s.folders.last?.name == "Home")
+    s.moveFolder(id: family.id, toCustomIndex: 0)
+    #expect(s.folders.map(\.name) == ["All", "Unread", "Home", "Personal", "Work"])
+    s.deleteFolder(id: family.id)
+    #expect(s.folders.map(\.name) == ["All", "Unread", "Personal", "Work"])
+    s.deleteFolder(id: ChatFolder.all.id)
+    s.renameFolder(id: ChatFolder.unread.id, to: "x")
+    #expect(s.folders.prefix(2).map(\.name) == ["All", "Unread"])
+}

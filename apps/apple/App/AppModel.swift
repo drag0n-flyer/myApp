@@ -109,6 +109,43 @@ final class AppModel {
         return (chatStore.chats(in: .all) + chatStore.messageRequests).first { $0.contactID == contactID }?.id
     }
 
+    // MARK: - Folders
+
+    @discardableResult
+    func addFolder(name: String, chatIDs: Set<String>) -> ChatFolder {
+        defer { revision += 1 }
+        return chatStore.addFolder(name: name, chatIDs: chatIDs)
+    }
+    func renameFolder(id: String, to name: String) { chatStore.renameFolder(id: id, to: name); revision += 1 }
+    func deleteFolder(id: String) {
+        chatStore.deleteFolder(id: id)
+        if selectedFolder.id == id { selectedFolder = .all }
+        revision += 1
+    }
+    func moveFolder(id: String, toCustomIndex index: Int) { chatStore.moveFolder(id: id, toCustomIndex: index); revision += 1 }
+
+    // MARK: - Account and devices
+
+    var me: Contact { chatStore.me }
+    var linkedDevices: [LinkedDevice] = LinkedDevice.samples
+
+    func linkSampleDevice() {
+        linkedDevices.append(LinkedDevice(id: UUID().uuidString, name: String(localized: "New Mac"), symbol: "laptopcomputer",
+                                          lastActive: String(localized: "Just now"), isThisDevice: false))
+    }
+
+    func removeDevice(id: String) { linkedDevices.removeAll { $0.id == id && !$0.isThisDevice } }
+
+    /// Sample build: forgets the account and returns to the welcome screen.
+    func deleteAccount() {
+        #if os(macOS)
+        onboarding = OnboardingFlow(platform: .mac)
+        #else
+        onboarding = OnboardingFlow(platform: .iPhone)
+        #endif
+        selectedTab = .chats
+    }
+
     // MARK: - Calls
 
     var stripLabel: String { DataModePolicy.stripLabel(server: server, settings: settings.call, network: network) }
