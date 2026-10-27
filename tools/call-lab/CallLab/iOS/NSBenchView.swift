@@ -23,12 +23,12 @@ struct NSBenchView: View {
                 .disabled(bench.running)
                 .accessibilityLabel("Record raw, voice-processing and RNNoise passes")
                 Text(bench.status)
-                    .accessibilityLabel("Status")
             }
             Section("Results") {
                 ForEach(Array(bench.results.enumerated()), id: \.offset) { _, r in
                     VStack(alignment: .leading) {
                         Text(r.mode).font(.headline)
+                        if let e = r.error { Text(e).foregroundStyle(.red) }
                         Text("CPU \(r.cpuSeconds, specifier: "%.3f") s of \(r.seconds, specifier: "%.1f") s (RTF \(r.realTimeFactor, specifier: "%.4f"))")
                         Text("Memory \(r.footprintBytesBefore / 1_000_000) to \(r.footprintBytesAfter / 1_000_000) MB")
                     }

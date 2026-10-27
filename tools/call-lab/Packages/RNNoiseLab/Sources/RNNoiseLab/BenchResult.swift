@@ -7,9 +7,12 @@ public struct BenchResult: Codable, Equatable, Sendable {
     public var realTimeFactor: Double
     public var footprintBytesBefore: UInt64
     public var footprintBytesAfter: UInt64
+    /// Set when the pass was refused or failed; the other numbers are then zero.
+    public var error: String?
 
     public init(mode: String, seconds: Double, cpuSeconds: Double, realTimeFactor: Double,
-                footprintBytesBefore: UInt64, footprintBytesAfter: UInt64) {
+                footprintBytesBefore: UInt64, footprintBytesAfter: UInt64, error: String? = nil) {
+        self.error = error
         self.mode = mode
         self.seconds = seconds
         self.cpuSeconds = cpuSeconds
@@ -20,10 +23,11 @@ public struct BenchResult: Codable, Equatable, Sendable {
 
     /// realTimeFactor = cpuSeconds / seconds (below 1 means faster than real time).
     public init(mode: String, seconds: Double, cpuSeconds: Double,
-                footprintBytesBefore: UInt64, footprintBytesAfter: UInt64) {
+                footprintBytesBefore: UInt64, footprintBytesAfter: UInt64, error: String? = nil) {
         self.init(mode: mode, seconds: seconds, cpuSeconds: cpuSeconds,
                   realTimeFactor: seconds > 0 ? cpuSeconds / seconds : 0,
-                  footprintBytesBefore: footprintBytesBefore, footprintBytesAfter: footprintBytesAfter)
+                  footprintBytesBefore: footprintBytesBefore, footprintBytesAfter: footprintBytesAfter,
+                  error: error)
     }
 }
 
@@ -57,5 +61,17 @@ public enum BenchLayout {
     public static func readJSON(runDir: URL) throws -> [BenchResult] {
         try JSONDecoder().decode([BenchResult].self,
                                  from: Data(contentsOf: runDir.appendingPathComponent(jsonName)))
+    }
+}
+
+/// Sample-rate rule for the bench. RNNoise only works at 48 kHz, and the bench refuses
+/// (rather than resamples, which would pollute the CPU and quality measurement).
+public enum BenchRate {
+    public static let required = 48_000.0
+
+    /// Returns an error message when the pass must be refused, nil when it may run.
+    public static func refusal(mode: String, sampleRate: Double) -> String? {
+        guard mode == "rnnoise", sampleRate != required else { return nil }
+        return "RNNoise needs a 48000 Hz input but the input is \(Int(sampleRate)) Hz; pass refused"
     }
 }

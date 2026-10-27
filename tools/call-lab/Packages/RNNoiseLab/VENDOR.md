@@ -3,8 +3,9 @@
 - Upstream: https://github.com/xiph/rnnoise
 - Pinned commit: `70f1d256acd4b34a572f999a05c87bf00b67730d` (2025-02-22)
 - License: BSD-3-Clause, full text in `COPYING` (copied unmodified from the pinned commit)
-- Compiled without upstream's autotools `config.h` (no `HAVE_CONFIG_H`); generic C path, no x86 SIMD sources, no runtime CPU dispatch. Only `NDEBUG` is defined.
-- Source files are unmodified copies from upstream `src/` (and `include/`).
+- Compiled without upstream's autotools `config.h` (no `HAVE_CONFIG_H`); no x86 SIMD `.c` sources and no runtime CPU dispatch. Only `NDEBUG` is defined.
+- Source files are unmodified copies from upstream `src/` (and `include/`), except `rnnoise_data.h`, which is NOT in the git repo: it comes from the model tarball (same archive as `rnnoise_data.c`, below). SHA-256 of the committed `rnnoise_data.h`: `09ff880bddd0fc74a2ae0e5ec6c8d65714031b08d0c3f672493acd9e189c5855`. If the pin changes, refresh both files from the new archive.
+- On arm64 (iPhone, Apple-silicon Mac) `vec.h` selects the NEON kernels; on x86 it selects SSE2/AVX. Linux x86 tests do not exercise the NEON path, so read CPU numbers from device runs.
 
 ## Model weights
 

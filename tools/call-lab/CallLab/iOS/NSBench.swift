@@ -44,9 +44,14 @@ final class NSBench: ObservableObject {
                 let r = try await Self.recordPass(mode: mode, url: url, duration: duration)
                 all.append(r)
                 results = all
+                if let e = r.error { status = "Refused \(mode): \(e)" }
             }
             try BenchLayout.writeJSON(all, runDir: dir)
-            status = "Done: \(dir.lastPathComponent)"
+            if let e = all.last(where: { $0.error != nil })?.error {
+                status = "Done with a refused pass: \(e)"
+            } else {
+                status = "Done: \(dir.lastPathComponent)"
+            }
         } catch {
             status = "Failed: \(error.localizedDescription)"
         }
@@ -54,10 +59,10 @@ final class NSBench: ObservableObject {
 
     // MARK: - One pass
 
-    private static func recordPass(mode: String, url: URL, duration: TimeInterval) async throws -> BenchResult {
+    nonisolated private static func recordPass(mode: String, url: URL, duration: TimeInterval) async throws -> BenchResult {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: mode == "vpio" ? .voiceChat : .measurement,
-                                options: [.allowBluetooth])
+                                options: [])
         try session.setPreferredSampleRate(48_000)
         try session.setActive(true)
 
@@ -66,6 +71,13 @@ final class NSBench: ObservableObject {
         try input.setVoiceProcessingEnabled(mode == "vpio")
 
         let format = input.outputFormat(forBus: 0)
+        // RNNoise needs 48 kHz. We refuse instead of resampling (a converter would pollute the
+        // CPU and quality numbers). The refusal is recorded in bench.json and shown in the UI.
+        if let why = BenchRate.refusal(mode: mode, sampleRate: format.sampleRate) {
+            try? session.setActive(false)
+            return BenchResult(mode: mode, seconds: 0, cpuSeconds: 0,
+                               footprintBytesBefore: 0, footprintBytesAfter: 0, error: why)
+        }
         // Output file is mono Float32 at the engine rate; rnnoise is fed 48 kHz.
         let fileFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: format.sampleRate,
                                        channels: 1, interleaved: false)!
@@ -75,7 +87,8 @@ final class NSBench: ObservableObject {
         let tap = TapState(mode: mode, file: file, format: fileFormat)
         let footprintAfterModel = phys_footprint()  // Denoiser is created inside TapState, after `before`
 
-        input.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, _ in
+        // @Sendable: must not inherit main-actor isolation; AVAudioEngine calls it on an audio thread.
+        input.installTap(onBus: 0, bufferSize: 4096, format: format) { @Sendable buffer, _ in
             tap.handle(buffer)
         }
         engine.prepare()
@@ -85,7 +98,6 @@ final class NSBench: ObservableObject {
         let seconds = Date().timeIntervalSince(start)
         input.removeTap(onBus: 0)
         engine.stop()
-        tap.finish()
 
         let cpu = tap.cpuSeconds
         return BenchResult(mode: mode, seconds: seconds, cpuSeconds: cpu,
@@ -103,7 +115,6 @@ private final class TapState: @unchecked Sendable {
     let format: AVAudioFormat
     let denoiser: Denoiser?
     private var pending: [Float] = []
-    private var lock = os_unfair_lock_s()
     private var cpuNanos: UInt64 = 0
 
     init(mode: String, file: AVAudioFile, format: AVAudioFormat) {
@@ -147,8 +158,6 @@ private final class TapState: @unchecked Sendable {
         buf.floatChannelData![0].update(from: samples.baseAddress!, count: samples.count)
         try? file.write(from: buf)
     }
-
-    func finish() {}
 }
 
 private func threadCPUNanos() -> UInt64 {
