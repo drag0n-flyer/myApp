@@ -110,6 +110,7 @@ Environment variables (`APP_` prefix). Required ones are marked ★.
 | `APP_ESCROW_KEY_FILE` | — | X25519 private key (PKCS#8 PEM); required only when the policy allows server-readable |
 | `APP_APPLE_APP_IDS` | — | Comma list `TEAMID.bundle.id` for apple-app-site-association |
 | `APP_TRUST_PROXY` | `false` | Use the last `X-Forwarded-For` hop as the client IP |
+| `APP_DOCS_DIR` | — | Operator documents served at `/.well-known/security.txt`, `/privacy`, `/terms` (plan 9) |
 
 Policy file (`config.Policy`), with defaults:
 
@@ -165,7 +166,7 @@ Usernames: `^[a-z][a-z0-9_]{2,31}$` (same rule as AppCore `UsernameCheck`). Rese
 | `POST /v1/signup/start` | – | `{inviteCode?, username, email}` → `{signupID}`; sends the email code. Errors: `invite_required`, `invite_invalid`, `invalid_username`, `username_taken`, `invalid_email` |
 | `POST /v1/signup/verify` | – | `{signupID, code}` → `{}`; `code_invalid`, `expired`, `rate_limited` (after 5 wrong codes) |
 | `POST /v1/signup/passkey/options` | – | `{signupID}` (must be verified) → WebAuthn `PublicKeyCredentialCreationOptions` JSON |
-| `POST /v1/signup/finish` | – | `{signupID, credential, deviceName, platform}` → `{accountID, deviceID, sessionToken}`. Uses up the invite and creates the account, device, passkey and session in one transaction. `username_taken` if the name was taken meanwhile |
+| `POST /v1/signup/finish` | – | `{signupID, credential?, deviceName, platform}` → `{accountID, deviceID, sessionToken}`. Uses up the invite and creates the account, device, passkey (if `credential` is given) and session in one transaction. `username_taken` if the name was taken meanwhile. `credential` is optional because iOS allows passkeys only for hosts in the app's associated domains: on other self-hosted servers the account signs in by email code (client plan 6) |
 | `POST /v1/signin/passkey/options` | – | `{}` → `{challengeID, options}` (discoverable credential, user verification required) |
 | `POST /v1/signin/passkey/finish` | – | `{challengeID, credential, deviceName, platform}` → `{accountID, deviceID, sessionToken}` (new device) |
 | `POST /v1/signin/email/start` | – | `{email}` → `202 {}` always, whether or not the email exists |
@@ -176,7 +177,7 @@ Usernames: `^[a-z][a-z0-9_]{2,31}$` (same rule as AppCore `UsernameCheck`). Rese
 | `DELETE /v1/me` | ✓ | → `204`; deletes the account and everything that cascades from it |
 | `GET /v1/devices` | ✓ | → `{devices:[{id, name, platform, createdAt, lastSeenAt, current}]}` |
 | `DELETE /v1/devices/{id}` | ✓ | → `204`; own devices only (`not_found` otherwise); sends `device.revoked` to the remaining devices |
-| `POST /v1/link` | – | `{deviceName, platform}` → `{linkID, secret, claimToken, expiresAt}`; the new device shows `linkID.secret` as a QR code |
+| `POST /v1/link` | – | `{deviceName, platform}` → `{linkID, secret, claimToken, expiresAt}`. The new device also makes an X25519 key pair and shows the QR code `https://<host>/link/<linkID>#<secret>.<publicKey b64url>`; the approver seals `sealed` to that key (HPKE, same suite as escrow, `info = "link-v1"`), so the server cannot read the link data |
 | `POST /v1/link/{linkID}/approve` | ✓ | `{secret, sealed?}` → `204`. `sealed` is at most 64 KiB of opaque data handed to the new device |
 | `POST /v1/link/{linkID}/claim` | – | `{claimToken}` → `202 {}` while pending; once approved, `200 {accountID, deviceID, sessionToken, sealed}`, exactly once; `expired` after 5 minutes or after a claim |
 
@@ -192,6 +193,7 @@ Phase 1 conversations have exactly two accounts. The server tracks which **devic
 | `GET /v1/keypackages/count` | ✓ | → `{count}` |
 | `POST /v1/keypackages/claim` | ✓ | `{accountID}` → `{keyPackages:[{deviceID, keyPackage}]}`, one per device of that account. A device's last KeyPackage is returned without being removed. If the target blocked the caller, or does not exist: `not_found` |
 | `POST /v1/conversations` | ✓ | `{members:[accountID]}` (exactly one other account) → `{conversationID, mode, epoch:0}`. The caller's device is the only member device at epoch 0 |
+| `GET /v1/conversations/{id}` | ✓ (member device) | → `{conversationID, mode, epoch}`; a device that joined by Welcome learns the mode here. Non-members: `not_found` |
 | `POST /v1/conversations/{id}/commits` | ✓ (member device) | `{epoch, commit:b64, welcome?:b64, addDevices?:[id], removeDevices?:[id]}` → `{epoch}` (the new epoch). The commit is accepted only if `epoch` equals the current epoch; otherwise `409 stale_epoch` with `{"currentEpoch":n}` in `error.details`. Added devices must belong to the conversation's accounts |
 | `POST /v1/conversations/{id}/messages` | ✓ (member device) | `{epoch, ciphertext:b64, escrow?:b64, clientMsgID}` → `{seq}`. Idempotent per (device, clientMsgID) for 7 days. `epoch` above the current epoch → `bad_request`. Mode `e2ee` with an escrow copy → `escrow_forbidden`; mode `server_readable` without one → `escrow_required` |
 | `GET /v1/inbox?after=<cursor>&limit=<n>` | ✓ | → `{items:[InboxItem], more:bool}`; `limit` defaults to 100, maximum 500 |
@@ -200,7 +202,7 @@ Phase 1 conversations have exactly two accounts. The server tracks which **devic
 `InboxItem = {cursor:int64, kind:"message"|"commit"|"welcome", conversationID, seq?, epoch, senderAccountID, senderDeviceID, payload:b64, sentAt}`
 
 Fan-out rules:
-- A commit goes to every member device present *before* the commit, except the sender.
+- A commit goes to every member device present *before* the commit, **including the sender** (so a sender that lost the `200` can tell its commit won; client plan 4).
 - A welcome goes to each added device.
 - A message goes to every member device except the sender.
 - Each delivery is one inbox row plus `Notify(device, Event{Type:"inbox", Data:item, Push:PushMessage, PushPayload:payload})`.

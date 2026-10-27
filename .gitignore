@@ -5,6 +5,14 @@ knowledge/
 apps/apple/*.xcodeproj
 .build/
 DerivedData/
+tools/call-lab/*.xcodeproj
+tools/call-lab/corpus/
+tools/call-lab/runs/
+
+# Rust (MLS bindings) and built frameworks
+target/
+*.xcframework/
+*.xcframework.zip
 
 # Go server
 server/bin/
