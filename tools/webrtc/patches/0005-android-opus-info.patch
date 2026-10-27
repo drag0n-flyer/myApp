@@ -1,0 +1,193 @@
+diff --git a/sdk/android/BUILD.gn b/sdk/android/BUILD.gn
+index 2522e5a..d88ba6c 100644
+--- a/sdk/android/BUILD.gn
++++ b/sdk/android/BUILD.gn
+@@ -35,6 +35,7 @@ if (is_android) {
+     requires_android = true
+ 
+     deps = [
++      ":app_opus_java",
+       ":audio_api_java",
+       ":base_java",
+       ":builtin_audio_codecs_java",
+@@ -116,6 +117,7 @@ if (is_android) {
+       "software_video_codecs",  # TODO(bugs.webrtc.org/7925): Remove.
+     ]
+     public_deps = [  # no-presubmit-check TODO(webrtc:8603)
++      ":app_opus_jni",
+       ":base_jni",
+       ":builtin_audio_codecs_jni",
+       ":default_video_codec_factory_jni",
+@@ -505,6 +507,17 @@ if (is_android) {
+     ]
+   }
+ 
++  # App patch (tools/webrtc/patches/0005): OpusInfo.
++  rtc_android_library("app_opus_java") {
++    visibility = [ "*" ]
++    sources = [ "api/org/webrtc/OpusInfo.java" ]
++
++    deps = [
++      ":generated_app_opus_jni_java",
++      "//third_party/jni_zero:jni_zero_java",
++    ]
++  }
++
+   rtc_android_library("screencapturer_java") {
+     visibility = [ "*" ]
+     sources = [ "api/org/webrtc/ScreenCapturerAndroid.java" ]
+@@ -673,6 +686,28 @@ if (current_os == "linux" || is_android) {
+     ]
+   }
+ 
++  # App patch (tools/webrtc/patches/0005): OpusInfo. opus_probe.c and
++  # opus_probe.h are written by tools/webrtc/apply.sh, not upstream.
++  rtc_library("app_opus_jni") {
++    visibility = [ "*" ]
++    allow_poison = [ "audio_codecs" ]
++    sources = [
++      "src/jni/app/opus_info.cc",
++      "src/jni/app/opus_probe.c",
++      "src/jni/app/opus_probe.h",
++    ]
++
++    deps = [
++      ":base_jni",
++      ":generated_app_opus_jni",
++      ":native_api_jni",
++      "../../api/audio_codecs:audio_codecs_api",
++      "../../api/audio_codecs/opus:audio_encoder_opus",
++      "../../modules/audio_coding:webrtc_opus",
++      "//third_party/opus",
++    ]
++  }
++
+   rtc_library("builtin_audio_codecs_jni") {
+     visibility = [ "*" ]
+     allow_poison = [ "audio_codecs" ]
+@@ -1602,6 +1637,12 @@ if (current_os == "linux" || is_android) {
+     namespace = "webrtc::jni"
+   }
+ 
++  # App patch (tools/webrtc/patches/0005): OpusInfo.
++  generate_jni("generated_app_opus_jni") {
++    sources = [ "api/org/webrtc/OpusInfo.java" ]
++    namespace = "webrtc::jni"
++  }
++
+   generate_jni("generated_builtin_audio_codecs_jni") {
+     sources = [
+       "api/org/webrtc/BuiltinAudioDecoderFactoryFactory.java",
+diff --git a/sdk/android/api/org/webrtc/OpusInfo.java b/sdk/android/api/org/webrtc/OpusInfo.java
+new file mode 100644
+index 0000000..578cac3
+--- /dev/null
++++ b/sdk/android/api/org/webrtc/OpusInfo.java
+@@ -0,0 +1,50 @@
++/*
++ *  Application patch (tools/webrtc/patches/0005): reports what the Opus inside
++ *  this WebRTC build can do, so the app and its tests can check the build
++ *  instead of trusting it. The Android form of RTCOpusInfo (patch 0003).
++ *
++ *  The methods call into libjingle_peerconnection_so, so the library must be
++ *  loaded first (PeerConnectionFactory.initialize does it).
++ */
++
++package org.webrtc;
++
++import org.jni_zero.NativeMethods;
++
++public final class OpusInfo {
++  private OpusInfo() {}
++
++  /**
++   * The complexity of a decoder made the way WebRTC makes one (48 kHz, mono), or -1 if no
++   * decoder could be made. 7 in this build.
++   */
++  public static int decoderComplexity() {
++    return OpusInfoJni.get().decoderComplexity();
++  }
++
++  /** True if the deep packet-loss concealment changes decoded audio. */
++  public static boolean hasDeepPlc() {
++    return OpusInfoJni.get().hasDeepPlc();
++  }
++
++  /** True if the OSCE speech enhancement (LACE, NoLACE) changes decoded audio. */
++  public static boolean hasOsce() {
++    return OpusInfoJni.get().hasOsce();
++  }
++
++  /**
++   * The longest packet length in ms the Opus encoder accepts: 120, or 60 when WebRTC is built
++   * without 120 ms support.
++   */
++  public static int maxPacketMs() {
++    return OpusInfoJni.get().maxPacketMs();
++  }
++
++  @NativeMethods
++  interface Natives {
++    int decoderComplexity();
++    boolean hasDeepPlc();
++    boolean hasOsce();
++    int maxPacketMs();
++  }
++}
+diff --git a/sdk/android/src/jni/app/opus_info.cc b/sdk/android/src/jni/app/opus_info.cc
+new file mode 100644
+index 0000000..5c68eac
+--- /dev/null
++++ b/sdk/android/src/jni/app/opus_info.cc
+@@ -0,0 +1,51 @@
++/*
++ *  Application patch (tools/webrtc/patches/0005). See
++ *  api/org/webrtc/OpusInfo.java.
++ */
++
++#include <jni.h>
++
++#include <optional>
++#include <string>
++
++#include "api/audio_codecs/audio_format.h"
++#include "api/audio_codecs/opus/audio_encoder_opus.h"
++#include "modules/audio_coding/codecs/opus/opus_interface.h"
++#include "sdk/android/generated_app_opus_jni/OpusInfo_jni.h"
++#include "sdk/android/src/jni/app/opus_probe.h"
++
++namespace webrtc {
++namespace jni {
++
++static jint JNI_OpusInfo_DecoderComplexity(JNIEnv* env) {
++  OpusDecInst* inst = nullptr;
++  if (WebRtcOpus_DecoderCreate(&inst, /*channels=*/1, /*sample_rate_hz=*/48000) != 0 || !inst) {
++    return -1;
++  }
++  const int complexity = WebRtcOpus_DecoderGetComplexity(inst);
++  WebRtcOpus_DecoderFree(inst);
++  return complexity;
++}
++
++static jboolean JNI_OpusInfo_HasDeepPlc(JNIEnv* env) {
++  static const bool active = app_opus_deep_plc_active() == 1;
++  return active;
++}
++
++static jboolean JNI_OpusInfo_HasOsce(JNIEnv* env) {
++  static const bool active = app_opus_osce_active() == 1;
++  return active;
++}
++
++static jint JNI_OpusInfo_MaxPacketMs(JNIEnv* env) {
++  // WebRTC rounds an unsupported ptime up to the longest supported length, so
++  // asking for 120 reports 120 with 120 ms support and 60 without.
++  SdpAudioFormat format("opus", 48000, 2, {{"ptime", "120"}});
++  std::optional<AudioEncoderOpusConfig> config = AudioEncoderOpus::SdpToConfig(format);
++  return config ? config->frame_size_ms : 0;
++}
++
++}  // namespace jni
++}  // namespace webrtc
++
++DEFINE_JNI(OpusInfo)

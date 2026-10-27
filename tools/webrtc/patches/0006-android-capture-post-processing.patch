@@ -1,0 +1,397 @@
+diff --git a/sdk/android/BUILD.gn b/sdk/android/BUILD.gn
+index 2522e5a..56f8b3c 100644
+--- a/sdk/android/BUILD.gn
++++ b/sdk/android/BUILD.gn
+@@ -39,6 +39,7 @@ if (is_android) {
+       ":base_java",
+       ":builtin_audio_codecs_java",
+       ":camera_java",
++      ":capture_post_processing_java",
+       ":default_video_codec_factory_java",
+       ":environment_java",
+       ":filevideo_java",
+@@ -118,6 +119,7 @@ if (is_android) {
+     public_deps = [  # no-presubmit-check TODO(webrtc:8603)
+       ":base_jni",
+       ":builtin_audio_codecs_jni",
++      ":capture_post_processing_jni",
+       ":default_video_codec_factory_jni",
+       ":environment_jni",
+       ":java_audio_device_module_jni",
+@@ -379,6 +381,18 @@ if (is_android) {
+ 
+   # Modules, in alphabetical order.
+ 
++  # App patch (tools/webrtc/patches/0006): AudioCapturePostProcessing.
++  rtc_android_library("capture_post_processing_java") {
++    visibility = [ "*" ]
++    sources = [ "api/org/webrtc/AudioCapturePostProcessing.java" ]
++
++    deps = [
++      ":generated_capture_post_processing_jni_java",
++      ":peerconnection_java",
++      "//third_party/jni_zero:jni_zero_java",
++    ]
++  }
++
+   rtc_android_library("camera_java") {
+     visibility = [ "*" ]
+     sources = [
+@@ -690,6 +704,30 @@ if (current_os == "linux" || is_android) {
+     ]
+   }
+ 
++  # App patch (tools/webrtc/patches/0006): AudioCapturePostProcessing.
++  rtc_library("capture_post_processing_jni") {
++    visibility = [ "*" ]
++    allow_poison = [ "environment_construction" ]
++    sources = [
++      "src/jni/app/audio_capture_post_processing.cc",
++      "src/jni/app/audio_capture_processor.h",
++    ]
++
++    deps = [
++      ":base_jni",
++      ":generated_capture_post_processing_jni",
++      ":native_api_jni",
++      "../../api:scoped_refptr",
++      "../../api/audio:audio_processing",
++      "../../api/audio:builtin_audio_processing_builder",
++      "../../api/environment",
++      "../../api/environment:environment_factory",
++      "../../modules/audio_processing:audio_buffer",
++      "../../rtc_base:checks",
++      "//third_party/jni_zero",
++    ]
++  }
++
+   rtc_library("video_jni") {
+     visibility = [ "*" ]
+     sources = [
+@@ -1482,6 +1520,12 @@ if (current_os == "linux" || is_android) {
+     namespace = "webrtc::jni"
+   }
+ 
++  # App patch (tools/webrtc/patches/0006): AudioCapturePostProcessing.
++  generate_jni("generated_capture_post_processing_jni") {
++    sources = [ "api/org/webrtc/AudioCapturePostProcessing.java" ]
++    namespace = "webrtc::jni"
++  }
++
+   generate_jni("generated_video_jni") {
+     sources = [
+       "api/org/webrtc/EncodedImage.java",
+diff --git a/sdk/android/api/org/webrtc/AudioCapturePostProcessing.java b/sdk/android/api/org/webrtc/AudioCapturePostProcessing.java
+new file mode 100644
+index 0000000..4182d5c
+--- /dev/null
++++ b/sdk/android/api/org/webrtc/AudioCapturePostProcessing.java
+@@ -0,0 +1,60 @@
++/*
++ *  Application patch (tools/webrtc/patches/0006): a writable hook on captured
++ *  audio. The upstream Java SDK has no way to edit it. The Android form of
++ *  RTCAudioCapturePostProcessing (patch 0004).
++ *
++ *  The hook runs inside WebRTC's audio processing module, after its echo
++ *  cancellation and noise suppression. Pass an instance to
++ *  PeerConnectionFactory.Builder.setAudioProcessingFactory.
++ *
++ *  The processor is native code behind a C struct (see
++ *  src/jni/app/audio_capture_processor.h in the WebRTC source, and
++ *  AppAudioCaptureProcessor), so audio frames never cross JNI into Java.
++ *  `nativeProcessor` is the address of that struct. createNative reads the
++ *  struct and from then on the audio processing module owns `context` and calls
++ *  `destroy` when it is freed. If createNative is never called, the caller still
++ *  owns the context.
++ */
++
++package org.webrtc;
++
++import org.jni_zero.NativeMethods;
++
++public class AudioCapturePostProcessing implements AudioProcessingFactory {
++  private final long nativeProcessor;
++
++  /** @param nativeProcessor address of an AppAudioCaptureProcessor, not 0 */
++  public AudioCapturePostProcessing(long nativeProcessor) {
++    if (nativeProcessor == 0) {
++      throw new IllegalArgumentException("nativeProcessor must not be 0");
++    }
++    this.nativeProcessor = nativeProcessor;
++  }
++
++  /** Always true in this build. Lets code check that the hook exists. */
++  public static boolean hasCapturePostProcessingHook() {
++    return true;
++  }
++
++  @Override
++  public long createNative(long webrtcEnvRef) {
++    return AudioCapturePostProcessingJni.get().create(webrtcEnvRef, nativeProcessor);
++  }
++
++  /**
++   * Test hook: runs one 10 ms 48 kHz mono frame of constant 0.5 through an audio processing
++   * module built with the processor and every built-in stage off, and returns the output samples
++   * (empty if processing failed). With `nativeProcessor` 0 a built-in processor that halves the
++   * samples is used, so the result is 480 samples of 0.25. A real processor is consumed, as in
++   * createNative.
++   */
++  public static float[] selfTest(long nativeProcessor) {
++    return AudioCapturePostProcessingJni.get().selfTest(nativeProcessor);
++  }
++
++  @NativeMethods
++  interface Natives {
++    long create(long webrtcEnvRef, long nativeProcessor);
++    float[] selfTest(long nativeProcessor);
++  }
++}
+diff --git a/sdk/android/src/jni/app/audio_capture_post_processing.cc b/sdk/android/src/jni/app/audio_capture_post_processing.cc
+new file mode 100644
+index 0000000..27aa747
+--- /dev/null
++++ b/sdk/android/src/jni/app/audio_capture_post_processing.cc
+@@ -0,0 +1,164 @@
++/*
++ *  Application patch (tools/webrtc/patches/0006). See
++ *  api/org/webrtc/AudioCapturePostProcessing.java and audio_capture_processor.h.
++ */
++
++#include <jni.h>
++#include <stddef.h>
++
++#include <memory>
++#include <string>
++#include <vector>
++
++#include "api/audio/audio_processing.h"
++#include "api/audio/builtin_audio_processing_builder.h"
++#include "api/environment/environment.h"
++#include "api/environment/environment_factory.h"
++#include "api/scoped_refptr.h"
++#include "modules/audio_processing/audio_buffer.h"
++#include "rtc_base/checks.h"
++#include "sdk/android/generated_capture_post_processing_jni/AudioCapturePostProcessing_jni.h"
++#include "sdk/android/native_api/jni/java_types.h"
++#include "sdk/android/src/jni/app/audio_capture_processor.h"
++#include "third_party/jni_zero/jni_zero.h"
++
++namespace webrtc {
++namespace jni {
++namespace {
++
++// AudioBuffer holds samples in the FloatS16 range [-32768, 32767]. The
++// processor sees [-1, 1]. 32768 is a power of two, so scaling there and back is
++// exact.
++constexpr float kToUnit = 1.0f / 32768.0f;
++constexpr float kFromUnit = 32768.0f;
++
++// Owns the processor's context from construction on.
++class CapturePostProcessingAdapter final : public CustomProcessing {
++ public:
++  explicit CapturePostProcessingAdapter(const AppAudioCaptureProcessor& processor)
++      : processor_(processor) {}
++  ~CapturePostProcessingAdapter() override {
++    if (processor_.destroy) {
++      processor_.destroy(processor_.context);
++    }
++  }
++
++  void Initialize(int sample_rate_hz, int num_channels) override {
++    if (processor_.initialize) {
++      processor_.initialize(processor_.context, sample_rate_hz, num_channels);
++    }
++    if (initialized_ && processor_.reset) {
++      processor_.reset(processor_.context);
++    }
++    initialized_ = true;
++  }
++
++  void Process(AudioBuffer* audio) override {
++    const size_t channels = audio->num_channels();
++    const size_t frames = audio->num_frames();
++    // The processor edits the AudioBuffer's own channel pointers in place, so
++    // nothing is copied or allocated here.
++    float* const* data = audio->channels();
++    for (size_t c = 0; c < channels; ++c) {
++      for (size_t i = 0; i < frames; ++i) {
++        data[c][i] *= kToUnit;
++      }
++    }
++    processor_.process(processor_.context, data, frames, channels);
++    for (size_t c = 0; c < channels; ++c) {
++      for (size_t i = 0; i < frames; ++i) {
++        data[c][i] *= kFromUnit;
++      }
++    }
++  }
++
++  std::string ToString() const override { return "AppCapturePostProcessing"; }
++
++ private:
++  const AppAudioCaptureProcessor processor_;
++  bool initialized_ = false;
++};
++
++// The processor `selfTest(0)` uses: halves every sample.
++void HalveProcess(void*, float* const* channels, size_t num_frames, size_t num_channels) {
++  for (size_t c = 0; c < num_channels; ++c) {
++    for (size_t i = 0; i < num_frames; ++i) {
++      channels[c][i] *= 0.5f;
++    }
++  }
++}
++
++scoped_refptr<AudioProcessing> Build(const Environment& env,
++                                     const AppAudioCaptureProcessor& processor,
++                                     const AudioProcessing::Config& config) {
++  RTC_CHECK_EQ(processor.abi_version, APP_AUDIO_CAPTURE_PROCESSOR_ABI_VERSION)
++      << "AppAudioCaptureProcessor has the wrong abi_version";
++  RTC_CHECK(processor.process != nullptr) << "AppAudioCaptureProcessor.process is null";
++  BuiltinAudioProcessingBuilder builder(config);
++  builder.SetCapturePostProcessing(std::make_unique<CapturePostProcessingAdapter>(processor));
++  return builder.Build(env);
++}
++
++}  // namespace
++
++// Returns an owning pointer to the AudioProcessing: the reference is taken over
++// by PeerConnectionFactory (see peer_connection_factory.cc, same patch).
++static jlong JNI_AudioCapturePostProcessing_Create(JNIEnv* env,
++                                                   jlong webrtc_env_ref,
++                                                   jlong native_processor) {
++  const Environment* webrtc_env = reinterpret_cast<Environment*>(webrtc_env_ref);
++  RTC_CHECK(webrtc_env != nullptr);
++  const AppAudioCaptureProcessor* processor =
++      reinterpret_cast<const AppAudioCaptureProcessor*>(native_processor);
++  RTC_CHECK(processor != nullptr);
++  scoped_refptr<AudioProcessing> apm = Build(*webrtc_env, *processor, AudioProcessing::Config());
++  RTC_CHECK(apm) << "Failed to create the audio processing module";
++  return NativeToJavaPointer(apm.release());
++}
++
++static jni_zero::ScopedJavaLocalRef<jfloatArray> JNI_AudioCapturePostProcessing_SelfTest(
++    JNIEnv* env,
++    jlong native_processor) {
++  AppAudioCaptureProcessor builtin = {APP_AUDIO_CAPTURE_PROCESSOR_ABI_VERSION,
++                                      nullptr,
++                                      nullptr,
++                                      &HalveProcess,
++                                      nullptr,
++                                      nullptr};
++  const AppAudioCaptureProcessor* processor =
++      native_processor == 0 ? &builtin
++                            : reinterpret_cast<const AppAudioCaptureProcessor*>(native_processor);
++
++  // Every built-in stage off, so the only thing that can change the frame is
++  // the processor.
++  AudioProcessing::Config config;
++  config.pre_amplifier.enabled = false;
++  config.capture_level_adjustment.enabled = false;
++  config.high_pass_filter.enabled = false;
++  config.echo_canceller.enabled = false;
++  config.noise_suppression.enabled = false;
++  config.gain_controller1.enabled = false;
++  config.gain_controller2.enabled = false;
++
++  scoped_refptr<AudioProcessing> apm = Build(CreateEnvironment(), *processor, config);
++  if (!apm) {
++    return jni_zero::ToJavaFloatArray(env, static_cast<const float*>(nullptr), 0);
++  }
++
++  constexpr int kRateHz = 48000;
++  constexpr size_t kFrames = kRateHz / 100;  // 10 ms
++  std::vector<float> in(kFrames, 0.5f);
++  std::vector<float> out(kFrames, 0.0f);
++  const float* src[1] = {in.data()};
++  float* dest[1] = {out.data()};
++  const StreamConfig stream(kRateHz, /*num_channels=*/1);
++  if (apm->ProcessStream(src, stream, stream, dest) != AudioProcessing::kNoError) {
++    return jni_zero::ToJavaFloatArray(env, static_cast<const float*>(nullptr), 0);
++  }
++  return jni_zero::ToJavaFloatArray(env, out.data(), out.size());
++}
++
++}  // namespace jni
++}  // namespace webrtc
++
++DEFINE_JNI(AudioCapturePostProcessing)
+diff --git a/sdk/android/src/jni/app/audio_capture_processor.h b/sdk/android/src/jni/app/audio_capture_processor.h
+new file mode 100644
+index 0000000..c860695
+--- /dev/null
++++ b/sdk/android/src/jni/app/audio_capture_processor.h
+@@ -0,0 +1,54 @@
++/*
++ *  Application patch (tools/webrtc/patches/0006): the C interface a native
++ *  library implements to edit captured audio. It is plain C so that a separate
++ *  shared library (libjingle_peerconnection_so exports nothing but its JNI
++ *  functions) can fill in the struct without linking against WebRTC.
++ *
++ *  The app passes the address of an AppAudioCaptureProcessor to the Java class
++ *  org.webrtc.AudioCapturePostProcessing as a long. Audio frames stay in native
++ *  memory: nothing is copied to Java.
++ */
++
++#ifndef SDK_ANDROID_SRC_JNI_APP_AUDIO_CAPTURE_PROCESSOR_H_
++#define SDK_ANDROID_SRC_JNI_APP_AUDIO_CAPTURE_PROCESSOR_H_
++
++#include <stddef.h>
++#include <stdint.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++/* Version 1. */
++#define APP_AUDIO_CAPTURE_PROCESSOR_ABI_VERSION 1
++
++typedef struct AppAudioCaptureProcessor {
++  /* Must be APP_AUDIO_CAPTURE_PROCESSOR_ABI_VERSION. */
++  uint32_t abi_version;
++
++  /* Passed to every function below. */
++  void* context;
++
++  /* Called before the first frame and again whenever the audio pipeline is
++   * re-initialised. After any re-initialisation, `reset` follows. May run on
++   * a thread other than the audio thread. */
++  void (*initialize)(void* context, int sample_rate_hz, int num_channels);
++
++  /* Called on the audio thread, once per 10 ms frame; must not block or
++   * allocate. Full-band float samples in [-1, 1], one buffer per channel;
++   * modify in place. */
++  void (*process)(void* context, float* const* channels, size_t num_frames, size_t num_channels);
++
++  /* Drop any history. Called after every re-initialisation, that is after each
++   * `initialize` except the first. */
++  void (*reset)(void* context);
++
++  /* Called once, when WebRTC's audio processing is destroyed. */
++  void (*destroy)(void* context);
++} AppAudioCaptureProcessor;
++
++#ifdef __cplusplus
++}  /* extern "C" */
++#endif
++
++#endif  /* SDK_ANDROID_SRC_JNI_APP_AUDIO_CAPTURE_PROCESSOR_H_ */
+diff --git a/sdk/android/src/jni/pc/peer_connection_factory.cc b/sdk/android/src/jni/pc/peer_connection_factory.cc
+index 905c61e..edb1456 100644
+--- a/sdk/android/src/jni/pc/peer_connection_factory.cc
++++ b/sdk/android/src/jni/pc/peer_connection_factory.cc
+@@ -361,8 +361,11 @@ JNI_PeerConnectionFactory_CreatePeerConnectionFactory(
+     jlong native_audio_frame_processor) {
+   const Environment* env = reinterpret_cast<Environment*>(webrtc_env_ref);
+   RTC_CHECK(env != nullptr);
+-  scoped_refptr<AudioProcessing> audio_processor(
+-      reinterpret_cast<AudioProcessing*>(native_audio_processor));
++  // App patch (tools/webrtc/patches/0006): createNative returns an owning
++  // reference, so take it over. Constructing a scoped_refptr from the raw
++  // pointer would add a second reference and leak the module.
++  scoped_refptr<AudioProcessing> audio_processor =
++      TakeOwnershipOfRefPtr<AudioProcessing>(native_audio_processor);
+   return CreatePeerConnectionFactoryForJava(
+       jni, jcontext, joptions, *env,
+       scoped_refptr<AudioDeviceModule>(
