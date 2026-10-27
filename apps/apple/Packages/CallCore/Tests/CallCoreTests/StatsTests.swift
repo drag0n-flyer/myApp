@@ -56,6 +56,12 @@ final class StatsTests: XCTestCase {
         }
     }
 
+    func testTierNeverExceedsCeiling() {
+        XCTAssertEqual(MediaLogic.clampTier(.p360, ceiling: .balanced), .p270)
+        XCTAssertEqual(MediaLogic.clampTier(.p360, ceiling: .ultraLow), .p180)
+        XCTAssertEqual(MediaLogic.clampTier(.p270, ceiling: .high), .p270)
+    }
+
     func testVideoTierFormat() {
         let sizes = [VideoSize(width: 192, height: 144), VideoSize(width: 352, height: 288), VideoSize(width: 480, height: 270),
                      VideoSize(width: 640, height: 360), VideoSize(width: 1280, height: 720)]

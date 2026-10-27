@@ -29,6 +29,11 @@ public enum MediaLogic {
         max(0, min(bps, profile.maxAverageBitrate))
     }
 
+    /// A tier never exceeds what the data-mode ceiling allows.
+    public static func clampTier(_ tier: VideoTier, ceiling: DataMode) -> VideoTier {
+        min(tier, VideoLadder.allowed(ceiling: ceiling) ?? .p180)
+    }
+
     /// Video tier -> size, max bitrate and fps, from the `VideoLadder` table (the plan's single source).
     public static func videoParameters(_ tier: VideoTier) -> (width: Int, height: Int, maxBitrate: Int, fps: Int) {
         let l = VideoLadder.spec(tier)
