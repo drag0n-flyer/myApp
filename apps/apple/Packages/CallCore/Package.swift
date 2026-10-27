@@ -12,6 +12,6 @@ let package = Package(
     ],
     targets: [
         .target(name: "CallCore", dependencies: [.product(name: "AppCore", package: "AppCore")]),
-        .testTarget(name: "CallCoreTests", dependencies: ["CallCore"]),
+        .testTarget(name: "CallCoreTests", dependencies: ["CallCore"], resources: [.copy("Fixtures")]),
     ]
 )
