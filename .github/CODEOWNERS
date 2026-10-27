@@ -1,0 +1,7 @@
+/server/internal/identity/ @velixio
+/server/internal/delivery/ @velixio
+/server/internal/calls/ @velixio
+/server/internal/push/ @velixio
+/server/internal/pushproto/ @velixio
+/server/internal/pushgw/ @velixio
+/server/internal/httpx/auth.go @velixio

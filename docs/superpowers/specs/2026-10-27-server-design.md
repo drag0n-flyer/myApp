@@ -21,7 +21,7 @@ These were not decided in GOAL.md. Each one changes what gets built.
 5. **Call state lives in memory** on the single server node. A restart ends ringing calls; calls that are already connected keep running, because media is peer-to-peer.
 6. **Display names are stored on the server in plain text** (Phase 1). Encrypted profiles come later.
 7. **TURN credentials last 12 hours.** coturn checks them on every allocation refresh, so the lifetime must cover the longest call. The TURN username is `<expiry>:<random 8 hex>`, which never contains an account or device ID.
-8. **Go module path** `github.com/velixio/myapp/server`. If the GitHub repo is named differently, rename it with one `go mod edit -module` and a search-and-replace.
+8. **Go module path** `github.com/velixio/myApp/server`. Confirmed against the repo `velixio/myApp` (2026-10-27).
 
 ## 3. Components
 
@@ -178,6 +178,7 @@ Usernames: `^[a-z][a-z0-9_]{2,31}$` (same rule as AppCore `UsernameCheck`). Rese
 | `GET /v1/devices` | ✓ | → `{devices:[{id, name, platform, createdAt, lastSeenAt, current}]}` |
 | `DELETE /v1/devices/{id}` | ✓ | → `204`; own devices only (`not_found` otherwise); sends `device.revoked` to the remaining devices |
 | `POST /v1/link` | – | `{deviceName, platform}` → `{linkID, secret, claimToken, expiresAt}`. The new device also makes an X25519 key pair and shows the QR code `https://<host>/link/<linkID>#<secret>.<publicKey b64url>`; the approver seals `sealed` to that key (HPKE, same suite as escrow, `info = "link-v1"`), so the server cannot read the link data |
+| `POST /v1/link/{linkID}/info` | ✓ | `{secret}` → `{deviceName, platform, createdAt}` for the approval screen (client plan 6, OPEN-24); `forbidden` on a wrong secret, `expired` after 5 minutes |
 | `POST /v1/link/{linkID}/approve` | ✓ | `{secret, sealed?}` → `204`. `sealed` is at most 64 KiB of opaque data handed to the new device |
 | `POST /v1/link/{linkID}/claim` | – | `{claimToken}` → `202 {}` while pending; once approved, `200 {accountID, deviceID, sessionToken, sealed}`, exactly once; `expired` after 5 minutes or after a claim |
 
@@ -206,7 +207,7 @@ Fan-out rules:
 - A welcome goes to each added device.
 - A message goes to every member device except the sender.
 - Each delivery is one inbox row plus `Notify(device, Event{Type:"inbox", Data:item, Push:PushMessage, PushPayload:payload})`.
-- When a recipient's account has blocked the sender's account, the server skips that recipient silently and the sender still gets `200`.
+- When a recipient's account has blocked the sender's account, the server skips that recipient silently and the sender still gets `200`. For a **welcome**, the blocked recipient's device is skipped and not added to the conversation. For a **commit** in an existing conversation, the row is still delivered (skipping it would break the recipient's encryption state) but with no push.
 
 Inbox rows older than `retention.inboxDays` are deleted hourly.
 
@@ -218,7 +219,7 @@ Escrow keys: `appserver keygen escrow` prints a new X25519 private key as PKCS#8
 
 Frames: `{"type":string, "id"?:string, "data"?:object}`. When a client frame has an `id`, the server answers with `{"type":"ack","id"}` or `{"type":"error","id","data":{"code"}}`.
 
-Server → client: `inbox`, `device.revoked {deviceID}`, `call.ring`, `call.answered`, `call.signal`, `call.ended`.
+Server → client: `inbox`, `device.revoked {deviceID}`, `call.ring`, `call.answered`, `call.signal`, `call.ended`. Every server-sent `call.signal` carries `{callID, fromDeviceID, payload}`: before the answer several callee devices may signal the caller (client plan 8 has callees make the offer), so the caller must know which device each signal came from.
 
 Client → server, for calls (`payload` is always an opaque MLS application message the server cannot read, carrying the SDP and DTLS fingerprint):
 
