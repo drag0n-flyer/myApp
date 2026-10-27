@@ -40,18 +40,18 @@ type Provider = mls_rs_crypto_rustcrypto::RustCryptoProvider;
 const CIPHER_SUITE: CipherSuite = CipherSuite::CURVE25519_AES128;
 const GROUP_ID_LEN: usize = 32;
 
-type Config = WithMlsRules<
+type Config<P> = WithMlsRules<
     DefaultMlsRules,
     WithCryptoProvider<
-        Provider,
+        P,
         WithIdentityProvider<
             BasicIdentityProvider,
             WithKeyPackageRepo<FileStorage, WithGroupStateStorage<FileStorage, BaseConfig>>,
         >,
     >,
 >;
-type EngineClient = Client<IntoConfigOutput<Config>>;
-type EngineGroup = Group<IntoConfigOutput<Config>>;
+type EngineClient<P> = Client<IntoConfigOutput<Config<P>>>;
+type EngineGroup<P> = Group<IntoConfigOutput<Config<P>>>;
 
 fn provider() -> Provider {
     Provider::default()
@@ -209,16 +209,20 @@ pub fn generate_signature_keypair() -> Result<SignatureKeypair, FfiError> {
     })
 }
 
-#[derive(uniffi::Object)]
-pub struct Engine {
-    client: EngineClient,
+/// The engine, generic over the crypto provider. `Engine` (the UniFFI object)
+/// wraps the platform provider; the generic form exists so tests can build
+/// two clients with different providers (CryptoKit and RustCrypto interop).
+#[doc(hidden)]
+pub struct EngineCore<P: CryptoProvider + Clone> {
+    client: EngineClient<P>,
     storage: FileStorage,
+    crypto: P,
     /// Serializes calls within this process (load, act, write must not
     /// interleave). Cross-process exclusion is the Swift side's `flock`.
     gate: Mutex<()>,
 }
 
-impl Engine {
+impl<P: CryptoProvider + Clone> EngineCore<P> {
     fn lock(&self) -> MutexGuard<'_, ()> {
         // A panic in an earlier call cannot leave in-memory state behind (there
         // is none), so a poisoned gate is safe to reuse.
@@ -227,7 +231,7 @@ impl Engine {
 
     /// Loads the group fresh from storage.
     /// Runs the repair step first (see [`Engine::repair_epochs`]).
-    fn load(&self, group_id: &[u8]) -> Result<EngineGroup, FfiError> {
+    fn load(&self, group_id: &[u8]) -> Result<EngineGroup<P>, FfiError> {
         let group = self.client.load_group(group_id).map_err(map_mls)?;
         self.repair_epochs(group_id, group.current_epoch())?;
         Ok(group)
@@ -255,7 +259,7 @@ impl Engine {
         Ok(())
     }
 
-    fn bundle(group: &EngineGroup, output: CommitOutput) -> Result<CommitBundle, FfiError> {
+    fn bundle(group: &EngineGroup<P>, output: CommitOutput) -> Result<CommitBundle, FfiError> {
         let commit = output.commit_message.to_bytes().map_err(map_mls)?;
         let welcome = output
             .welcome_messages
@@ -279,13 +283,12 @@ fn identity_string(identity: &SigningIdentity) -> Result<String, FfiError> {
     String::from_utf8(basic.identifier.clone()).map_err(|_| FfiError::Malformed)
 }
 
-#[uniffi::export]
-impl Engine {
-    #[uniffi::constructor]
+impl<P: CryptoProvider + Clone> EngineCore<P> {
     pub fn new(
         identity: String,
         keypair: SignatureKeypair,
         storage_dir: String,
+        crypto: P,
     ) -> Result<Arc<Self>, FfiError> {
         let storage = FileStorage::new(storage_dir)?;
         let credential = BasicCredential::new(identity.into_bytes()).into_credential();
@@ -300,13 +303,14 @@ impl Engine {
             .group_state_storage(storage.clone())
             .key_package_repo(storage.clone())
             .identity_provider(BasicIdentityProvider::new())
-            .crypto_provider(provider())
+            .crypto_provider(crypto.clone())
             .mls_rules(DefaultMlsRules::new().with_commit_options(commit_options))
             .signing_identity(signing_identity, secret, CIPHER_SUITE)
             .build();
         Ok(Arc::new(Self {
             storage,
             client,
+            crypto,
             gate: Mutex::new(()),
         }))
     }
@@ -325,7 +329,8 @@ impl Engine {
 
     pub fn create_group(&self) -> Result<Vec<u8>, FfiError> {
         let _g = self.lock();
-        let suite = provider()
+        let suite = self
+            .crypto
             .cipher_suite_provider(CIPHER_SUITE)
             .ok_or_else(|| FfiError::Crypto("cipher suite unavailable".into()))?;
         let group_id = suite
@@ -529,5 +534,96 @@ impl Engine {
             .members_iter()
             .map(|m| identity_string(&m.signing_identity))
             .collect()
+    }
+}
+
+/// Interop-test constructor: an engine on an explicit crypto provider.
+#[doc(hidden)]
+pub fn with_provider<P: CryptoProvider + Clone>(
+    identity: String,
+    keypair: SignatureKeypair,
+    storage_dir: String,
+    crypto: P,
+) -> Result<Arc<EngineCore<P>>, FfiError> {
+    EngineCore::new(identity, keypair, storage_dir, crypto)
+}
+
+#[derive(uniffi::Object)]
+pub struct Engine {
+    core: Arc<EngineCore<Provider>>,
+}
+
+#[uniffi::export]
+impl Engine {
+    #[uniffi::constructor]
+    pub fn new(
+        identity: String,
+        keypair: SignatureKeypair,
+        storage_dir: String,
+    ) -> Result<Arc<Self>, FfiError> {
+        let core = EngineCore::new(identity, keypair, storage_dir, provider())?;
+        Ok(Arc::new(Self { core }))
+    }
+
+    pub fn key_packages(&self, count: u32) -> Result<Vec<Vec<u8>>, FfiError> {
+        self.core.key_packages(count)
+    }
+
+    pub fn create_group(&self) -> Result<Vec<u8>, FfiError> {
+        self.core.create_group()
+    }
+
+    pub fn add(
+        &self,
+        group_id: Vec<u8>,
+        key_packages: Vec<Vec<u8>>,
+    ) -> Result<CommitBundle, FfiError> {
+        self.core.add(group_id, key_packages)
+    }
+
+    pub fn remove(
+        &self,
+        group_id: Vec<u8>,
+        identities: Vec<String>,
+    ) -> Result<CommitBundle, FfiError> {
+        self.core.remove(group_id, identities)
+    }
+
+    pub fn commit_accepted(&self, group_id: Vec<u8>) -> Result<(), FfiError> {
+        self.core.commit_accepted(group_id)
+    }
+
+    pub fn commit_rejected(&self, group_id: Vec<u8>) -> Result<(), FfiError> {
+        self.core.commit_rejected(group_id)
+    }
+
+    pub fn has_pending_commit(&self, group_id: Vec<u8>) -> Result<bool, FfiError> {
+        self.core.has_pending_commit(group_id)
+    }
+
+    pub fn encrypt(&self, group_id: Vec<u8>, plaintext: Vec<u8>) -> Result<Encrypted, FfiError> {
+        self.core.encrypt(group_id, plaintext)
+    }
+
+    pub fn process(&self, message: Vec<u8>) -> Result<Processed, FfiError> {
+        self.core.process(message)
+    }
+
+    pub fn epoch(&self, group_id: Vec<u8>) -> Result<u64, FfiError> {
+        self.core.epoch(group_id)
+    }
+
+    pub fn export_secret(
+        &self,
+        group_id: Vec<u8>,
+        label: String,
+        length: u32,
+    ) -> Result<Vec<u8>, FfiError> {
+        self.core.export_secret(group_id, label, length)
+    }
+
+    /// Current members as "<accountID>/<deviceID>" (README contract: `members(of:)`).
+    pub fn members(&self, group_id: Vec<u8>) -> Result<Vec<String>, FfiError> {
+        self.core.members(group_id)
     }
 }
