@@ -50,24 +50,7 @@ public enum LinkClaim: Equatable, Sendable {
 
 // MARK: - WebAuthn
 
-/// The Go server sends the WebAuthn options bare (`{"challenge":…}`), as its spec says; a browser-style
-/// `{"publicKey":{…}}` wrapper is accepted too.
-private struct PublicKeyEnvelope<T: Decodable>: Decodable {
-    let publicKey: T
-
-    private enum Keys: String, CodingKey { case publicKey }
-
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: Keys.self)
-        if c.contains(.publicKey) {
-            publicKey = try c.decode(T.self, forKey: .publicKey)
-        } else {
-            publicKey = try T(from: decoder)
-        }
-    }
-}
-
-/// Registration options, parsed from the server's bare options (or a `{"publicKey":{…}}` wrapper).
+/// Registration options. The Go server sends WebAuthn options bare (`{"challenge":…}`), as its spec says.
 public struct CreationOptions: Decodable, Equatable, Sendable {
     public let challenge: Data
     public let rpID: String
@@ -94,13 +77,13 @@ public struct CreationOptions: Decodable, Equatable, Sendable {
     }
 
     public init(from decoder: Decoder) throws {
-        let i = try PublicKeyEnvelope<Inner>(from: decoder).publicKey
+        let i = try Inner(from: decoder)
         self.init(challenge: i.challenge.data, rpID: i.rp.id, rpName: i.rp.name, userID: i.user.id.data,
                   userName: i.user.name, userDisplayName: i.user.displayName)
     }
 }
 
-/// Sign-in options, from `{"challenge","rpId"}` (or a `{"publicKey":{…}}` wrapper).
+/// Sign-in options, from `{"challenge","rpId"}`.
 public struct RequestOptions: Decodable, Equatable, Sendable {
     public let challenge: Data
     public let rpID: String
@@ -116,7 +99,7 @@ public struct RequestOptions: Decodable, Equatable, Sendable {
     }
 
     public init(from decoder: Decoder) throws {
-        let i = try PublicKeyEnvelope<Inner>(from: decoder).publicKey
+        let i = try Inner(from: decoder)
         self.init(challenge: i.challenge.data, rpID: i.rpId)
     }
 }

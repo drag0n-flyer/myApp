@@ -1,15 +1,22 @@
 name: Apple apps
 
+permissions:
+  contents: read
+
 on:
   push:
     # feat/server mirrors main; building it again only doubles the Mac queue.
     branches-ignore: [feat/server]
     paths:
       - "apps/apple/**"
+      - "server/**"
+      - "tools/smtp-sink/**"
       - ".github/workflows/apple.yml"
   pull_request:
     paths:
       - "apps/apple/**"
+      - "server/**"
+      - "tools/smtp-sink/**"
       - ".github/workflows/apple.yml"
   workflow_dispatch:
 
@@ -31,6 +38,7 @@ jobs:
       callcore: ${{ steps.pick.outputs.callcore }}
       messaging: ${{ steps.pick.outputs.messaging }}
       app: ${{ steps.pick.outputs.app }}
+      e2e: ${{ steps.pick.outputs.e2e }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -61,7 +69,7 @@ jobs:
           echo "$files" | grep -qx '.github/workflows/apple.yml' && all=1
           has() { [ "$all" = 1 ] || echo "$files" | grep -qE "$1"; }
           P=apps/apple/Packages
-          appcore=false; localstore=false; serverkit=false; callcore=false; messaging=false; app=false
+          appcore=false; localstore=false; serverkit=false; callcore=false; messaging=false; app=false; e2e=false
           if has "^$P/AppCore/"; then appcore=true; serverkit=true; callcore=true; messaging=true; app=true; fi
           if has "^$P/LocalStore/"; then localstore=true; messaging=true; app=true; fi
           if has "^$P/ServerKit/"; then serverkit=true; messaging=true; app=true; fi
@@ -69,7 +77,9 @@ jobs:
           if has "^$P/Messaging/"; then messaging=true; app=true; fi
           if has "^$P/CallCore/"; then callcore=true; app=true; fi
           if has "^apps/apple/(App|AppUITests|NotificationService|scripts)/|^apps/apple/project\.yml$"; then app=true; fi
-          for k in appcore localstore serverkit callcore messaging app; do
+          # The end-to-end job also depends on the server and the mail sink, which no other job uses.
+          if has "^apps/apple/Packages/(AppCore|ServerKit)/|^apps/apple/scripts/e2e-server\.sh$|^server/|^tools/smtp-sink/"; then e2e=true; fi
+          for k in appcore localstore serverkit callcore messaging app e2e; do
             echo "$k=${!k}" >> "$GITHUB_OUTPUT"
             echo "$k=${!k}"
           done
@@ -172,7 +182,7 @@ jobs:
   # ServerKit against the real Go server (Postgres and a mail sink on the runner).
   e2e:
     needs: changes
-    if: needs.changes.outputs.serverkit == 'true'
+    if: needs.changes.outputs.e2e == 'true'
     runs-on: macos-26
     timeout-minutes: 30
     steps:

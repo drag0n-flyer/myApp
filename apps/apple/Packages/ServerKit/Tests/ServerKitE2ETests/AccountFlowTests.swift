@@ -100,12 +100,12 @@ private actor StateLog {
     var deviceID: String { store.current?.deviceID ?? "" }
 
     /// The server sends at most 3 codes an hour to one address, so each test uses its own address.
-    /// Connects, signs up "ana" with a passkey and returns the account's username as the server sees it.
-    func signUpAna(email: String, mail: Mailbox) async throws -> String {
+    /// Connects, signs up `username` with a passkey and returns the account's username as the server sees it.
+    func signUp(username: String, email: String, mail: Mailbox) async throws -> String {
         _ = try await service.connect(host: "localhost")
         #expect(try await service.redeemInvite(code: try env("E2E_INVITE_CODE")))
         let before = mail.newest()
-        try await service.startSignUp(username: "ana", email: email)
+        try await service.startSignUp(username: username, email: email)
         try await service.verifyEmail(code: try await mail.code(after: before))
         try await service.finishSignUp()
         return try await client.me().username
@@ -132,7 +132,7 @@ private actor StateLog {
 
     @Test func signUpLinkRevoke() async throws {
         let iphone = try TestDevice(name: "Ana's iPhone", platform: .iPhone)
-        #expect(try await iphone.signUpAna(email: "ana@example.org", mail: mail) == "ana")
+        #expect(try await iphone.signUp(username: "ana_link", email: "ana@example.org", mail: mail) == "ana_link")
 
         // The Mac shows a link code and waits.
         let mac = try TestDevice(name: "Ana's Mac", platform: .mac)
@@ -172,7 +172,7 @@ private actor StateLog {
     @Test func recoveryAddsPasskey() async throws {
         let first = try TestDevice(name: "Ana's iPhone", platform: .iPhone)
         let email = "ana-recovery@example.org"
-        #expect(try await first.signUpAna(email: email, mail: mail) == "ana")
+        #expect(try await first.signUp(username: "ana_recovery", email: email, mail: mail) == "ana_recovery")
 
         // A new device that has no passkey recovers with an email code, then adds its own passkey.
         let second = try TestDevice(name: "Ana's iPad", platform: .iPhone)
@@ -197,11 +197,11 @@ private actor StateLog {
 
     @Test func deleteAccountFreesUsername() async throws {
         let device = try TestDevice(name: "Ana's iPhone", platform: .iPhone)
-        #expect(try await device.signUpAna(email: "ana-delete@example.org", mail: mail) == "ana")
+        #expect(try await device.signUp(username: "ana_delete", email: "ana-delete@example.org", mail: mail) == "ana_delete")
         let client = try device.client
-        #expect(try await client.usernameAvailable("ana") == false)
+        #expect(try await client.usernameAvailable("ana_delete") == false)
         try await device.service.deleteAccount()
-        #expect(try await client.usernameAvailable("ana") == true)
+        #expect(try await client.usernameAvailable("ana_delete") == true)
     }
 }
 #endif

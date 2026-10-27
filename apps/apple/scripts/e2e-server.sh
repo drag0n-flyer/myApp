@@ -57,12 +57,21 @@ if [ "$ready" != 1 ]; then
   exit 1
 fi
 
-# 4. The tests.
+# 4. The tests. A filter that matches nothing makes swift test pass, so the swift-testing summary
+# ("Test run with N tests ... passed") is parsed and N must reach the expected count.
+EXPECTED_TESTS=3
 set +e
 E2E_BASE_URL=http://127.0.0.1:8080 E2E_MAIL_DIR="$WORK/mail" E2E_ORIGIN=https://localhost \
-  swift test --package-path "$ROOT/apps/apple/Packages/ServerKit" --filter ServerKitE2ETests
-status=$?
+  swift test --package-path "$ROOT/apps/apple/Packages/ServerKit" --filter ServerKitE2ETests 2>&1 | tee "$WORK/swift-test.log"
+status=${PIPESTATUS[0]}
 set -e
+if [ "$status" = 0 ]; then
+  ran=$(sed -nE 's/.*Test run with ([0-9]+) tests?.*/\1/p' "$WORK/swift-test.log" | tail -n 1)
+  if [ -z "$ran" ] || [ "$ran" -lt "$EXPECTED_TESTS" ]; then
+    echo "expected at least $EXPECTED_TESTS end-to-end tests to run, saw: ${ran:-none}" >&2
+    status=1
+  fi
+fi
 if [ "$status" != 0 ]; then
   echo "--- appserver log (tail) ---" >&2
   tail -n 40 "$WORK/appserver.log" >&2 || true

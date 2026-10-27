@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 type sink struct {
@@ -33,6 +34,9 @@ func main() {
 	if err := os.MkdirAll(*out, 0o700); err != nil {
 		log.Fatal(err)
 	}
+	if err := requireLoopback(*listen); err != nil {
+		log.Fatal(err)
+	}
 	ln, err := net.Listen("tcp", *listen)
 	if err != nil {
 		log.Fatal(err)
@@ -48,13 +52,53 @@ func main() {
 	}
 }
 
+const (
+	maxMessage  = 1 << 20          // bytes of DATA kept per message
+	maxLine     = 64 << 10         // bytes in one command or data line
+	idleTimeout = 30 * time.Second // per read
+)
+
+// requireLoopback fails unless the host part of addr is a loopback IP (or "localhost").
+func requireLoopback(addr string) error {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return err
+	}
+	if host == "localhost" {
+		return nil
+	}
+	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+		return fmt.Errorf("smtp-sink: -listen %q is not a loopback address", addr)
+	}
+	return nil
+}
+
+// readLine reads one line, refusing lines over maxLine and waiting at most idleTimeout.
+func readLine(c net.Conn, r *bufio.Reader) (string, error) {
+	c.SetReadDeadline(time.Now().Add(idleTimeout))
+	var b strings.Builder
+	for {
+		chunk, isPrefix, err := r.ReadLine()
+		if err != nil {
+			return "", err
+		}
+		b.Write(chunk)
+		if b.Len() > maxLine {
+			return "", fmt.Errorf("line too long")
+		}
+		if !isPrefix {
+			return b.String() + "\r\n", nil
+		}
+	}
+}
+
 func (s *sink) serve(c net.Conn) {
 	defer c.Close()
 	r := bufio.NewReader(c)
 	say := func(format string, a ...any) { fmt.Fprintf(c, format+"\r\n", a...) }
 	say("220 smtp-sink ready")
 	for {
-		line, err := r.ReadString('\n')
+		line, err := readLine(c, r)
 		if err != nil {
 			return
 		}
@@ -68,7 +112,7 @@ func (s *sink) serve(c net.Conn) {
 			say("250 ok")
 		case cmd == "DATA":
 			say("354 end with <CRLF>.<CRLF>")
-			body, err := readData(r)
+			body, err := readData(c, r)
 			if err != nil {
 				return
 			}
@@ -87,12 +131,15 @@ func (s *sink) serve(c net.Conn) {
 }
 
 // readData reads up to the lone "." line and undoes dot-stuffing.
-func readData(r *bufio.Reader) (string, error) {
+func readData(c net.Conn, r *bufio.Reader) (string, error) {
 	var b strings.Builder
 	for {
-		line, err := r.ReadString('\n')
+		line, err := readLine(c, r)
 		if err != nil {
 			return "", err
+		}
+		if b.Len()+len(line) > maxMessage {
+			return "", fmt.Errorf("message too large")
 		}
 		if strings.TrimRight(line, "\r\n") == "." {
 			return b.String(), nil

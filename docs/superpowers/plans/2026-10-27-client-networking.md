@@ -320,8 +320,8 @@ Models:
 - `LinkInfo{deviceName: String, platform: String, createdAt: Date}`
 - `enum LinkClaim { case pending; case approved(NewSession, sealed: Data?) }`: 202 means `.pending`; 200 means `.approved`
 - `ServerInfo` (all spec §7.5 fields), with `func policy() -> ServerPolicy`
-- `CreationOptions{challenge: Data, rpID: String, rpName: String, userID: Data, userName: String, userDisplayName: String}`, parsed from go-webauthn's `{"publicKey":{…}}` JSON (`challenge`, `rp.id`, `rp.name`, `user.id`, `user.name`, `user.displayName`)
-- `RequestOptions{challenge: Data, rpID: String}`, from `{"publicKey":{"challenge","rpId"}}`
+- `CreationOptions{challenge: Data, rpID: String, rpName: String, userID: Data, userName: String, userDisplayName: String}`, parsed from the server's bare go-webauthn options JSON (no `publicKey` wrapper) (`challenge`, `rp.id`, `rp.name`, `user.id`, `user.name`, `user.displayName`)
+- `RequestOptions{challenge: Data, rpID: String}`, from the bare `{"challenge","rpId"}`
 - `RegistrationCredential{id: Data, clientDataJSON: Data, attestationObject: Data}`, which encodes as `{"id":b64u,"rawId":b64u,"type":"public-key","response":{"clientDataJSON":b64u,"attestationObject":b64u}}`
 - `AssertionCredential{id, clientDataJSON, authenticatorData, signature, userHandle: Data}`, which encodes as `{"id","rawId","type":"public-key","response":{"clientDataJSON","authenticatorData","signature","userHandle"}}`
 
