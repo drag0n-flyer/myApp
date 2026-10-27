@@ -1,0 +1,29 @@
+name: MLS client core
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "apps/apple/Packages/SecureMessaging/**"
+      - ".github/workflows/mls.yml"
+  pull_request:
+    paths:
+      - "apps/apple/Packages/SecureMessaging/**"
+      - ".github/workflows/mls.yml"
+
+concurrency:
+  group: mls-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  swift-linux:
+    runs-on: ubuntu-24.04
+    container: swift:6.0
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: SecureMessagingCore tests
+        working-directory: apps/apple/Packages/SecureMessaging
+        run: swift test
