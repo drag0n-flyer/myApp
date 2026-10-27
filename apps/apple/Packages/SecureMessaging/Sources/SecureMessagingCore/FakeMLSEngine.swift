@@ -154,7 +154,8 @@ public final class FakeMLSEngine: MLSEngine, @unchecked Sendable {
         guard length >= 0 else { throw MLSError.malformed }
         return try lock.withLock {
             let state = try activeState(group)
-            let unit = Array("\(hex(group)):\(state.epoch):\(label)".utf8)
+            // Varying parts first, so short lengths still differ per label and epoch.
+            let unit = Array("\(label):\(state.epoch):\(hex(group))".utf8)
             return Data((0..<length).map { unit[$0 % unit.count] })
         }
     }

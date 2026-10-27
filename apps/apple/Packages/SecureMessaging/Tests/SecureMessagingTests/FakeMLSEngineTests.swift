@@ -194,22 +194,79 @@ private func makeGroup(
         let sb = try await b.exportSecret(group: g, label: "call", length: 32)
         #expect(sa.count == 32)
         #expect(sa == sb)
-        // The spec'd value starts with the 64-hex-digit group ID, so tell labels and epochs
-        // apart with a length that reaches past it.
-        let full = try await a.exportSecret(group: g, label: "call", length: 100)
-        #expect(try await a.exportSecret(group: g, label: "other", length: 100) != full)
+        // Different labels give different secrets, even at a short length.
+        #expect(try await a.exportSecret(group: g, label: "other", length: 32) != sa)
+        #expect(try await a.exportSecret(group: g, label: "other", length: 16)
+                != a.exportSecret(group: g, label: "call", length: 16))
         // Shorter lengths cut, longer lengths repeat.
         let short = try await a.exportSecret(group: g, label: "call", length: 8)
         #expect(short == sa.prefix(8))
-        let long = try await a.exportSecret(group: g, label: "call", length: 100)
-        #expect(long.count == 100)
         let hex = g.raw.map { String(format: "%02x", $0) }.joined()
-        let unit = Data("\(hex):1:call".utf8)
-        #expect(long.prefix(unit.count) == unit)
-        // A new epoch gives a new secret.
+        let unit = Data("call:1:\(hex)".utf8)
+        let long = try await a.exportSecret(group: g, label: "call", length: unit.count + 10)
+        #expect(long == unit + unit.prefix(10))
+        // A new epoch gives a new secret, even at a short length, and members still agree.
         let c = FakeMLSEngine(identity: "acct-c/dev-1")
-        _ = try await a.add(keyPackages: try await c.makeKeyPackages(count: 1), to: g)
+        let bundle = try await a.add(keyPackages: try await c.makeKeyPackages(count: 1), to: g)
         try await a.commitAccepted(g)
-        #expect(try await a.exportSecret(group: g, label: "call", length: 100) != full)
+        _ = try await b.process(bundle.commit)
+        let sa2 = try await a.exportSecret(group: g, label: "call", length: 32)
+        #expect(sa2 != sa)
+        #expect(try await b.exportSecret(group: g, label: "call", length: 32) == sa2)
+    }
+
+    @Test func testOwnCommitEchoAppliesPendingCommit() async throws {
+        let a = FakeMLSEngine(identity: alice)
+        let b = FakeMLSEngine(identity: bob)
+        let c = FakeMLSEngine(identity: "acct-c/dev-1")
+        let g = try await a.createGroup()
+
+        // The 200 was lost: alice never calls commitAccepted, her commit comes back via the inbox.
+        let bundle = try await a.add(keyPackages: try await b.makeKeyPackages(count: 1), to: g)
+        #expect(try await a.epoch(of: g) == 0)
+        let incoming = try await a.process(bundle.commit)
+        #expect(incoming == .commit(group: g, newEpoch: 1, removedMe: false))
+        #expect(try await a.epoch(of: g) == 1)
+        #expect(try await a.members(of: g).sorted() == [alice, bob])
+
+        // The pending commit is cleared: a new commit is allowed, and a late
+        // commitAccepted/commitRejected for the old one changes nothing.
+        try await a.commitAccepted(g)
+        try await a.commitRejected(g)
+        #expect(try await a.epoch(of: g) == 1)
+        let next = try await a.add(keyPackages: try await c.makeKeyPackages(count: 1), to: g)
+        #expect(next.newEpoch == 2)
+
+        // The same echo again is a duplicate.
+        try await a.commitRejected(g)
+        await #expect(throws: MLSError.duplicate) { _ = try await a.process(bundle.commit) }
+        #expect(try await a.epoch(of: g) == 1)
+    }
+
+    @Test func testOwnCommitEchoThatIsNotPendingIsDuplicate() async throws {
+        let a = FakeMLSEngine(identity: alice)
+        let b = FakeMLSEngine(identity: bob)
+        let c = FakeMLSEngine(identity: "acct-c/dev-1")
+        let g = try await a.createGroup()
+
+        // Nothing pending: an own commit already applied via commitAccepted.
+        let first = try await a.add(keyPackages: try await b.makeKeyPackages(count: 1), to: g)
+        try await a.commitAccepted(g)
+        await #expect(throws: MLSError.duplicate) { _ = try await a.process(first.commit) }
+
+        // Rejected commit coming back later does not apply.
+        let second = try await a.add(keyPackages: try await c.makeKeyPackages(count: 1), to: g)
+        try await a.commitRejected(g)
+        await #expect(throws: MLSError.duplicate) { _ = try await a.process(second.commit) }
+        #expect(try await a.epoch(of: g) == 1)
+
+        // A pending commit that differs from the echoed one (other members) does not apply either.
+        let d = FakeMLSEngine(identity: "acct-d/dev-1")
+        let third = try await a.add(keyPackages: try await d.makeKeyPackages(count: 1), to: g)
+        try await a.commitRejected(g)
+        _ = try await a.add(keyPackages: try await c.makeKeyPackages(count: 1), to: g)   // pending: +c
+        await #expect(throws: MLSError.duplicate) { _ = try await a.process(third.commit) }   // echo: +d
+        #expect(try await a.epoch(of: g) == 1)
+        #expect(try await a.members(of: g).sorted() == [alice, bob])
     }
 }
