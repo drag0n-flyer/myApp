@@ -155,6 +155,8 @@ final class Rig: ObservableObject {
             player.play()
 
             try await Task.sleep(for: .seconds(duration + Self.tail))
+            // A stop() that lands just as the sleep ends must still win.
+            try Task.checkCancellation()
             player.stop(); play.stop(); playEngine = nil
             rec.inputNode.removeTap(onBus: 0); rec.stop(); recEngine = nil
 
