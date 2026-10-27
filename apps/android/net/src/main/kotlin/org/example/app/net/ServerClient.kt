@@ -5,6 +5,9 @@ import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -29,16 +32,25 @@ class ServerClient internal constructor(
     internal val baseUrl: HttpUrl,
     private val session: SessionStore,
     http: OkHttpClient,
+    private val io: CoroutineDispatcher = Dispatchers.IO,
 ) {
     constructor(host: String, session: SessionStore, http: OkHttpClient = OkHttpClient()) :
         this(HttpUrl.Builder().scheme("https").host(host).build(), session, http)
 
-    private val http: OkHttpClient = http.newBuilder()
+    // The API never redirects; following one could carry the Bearer token to another scheme or host.
+    private val base: OkHttpClient = http.newBuilder()
+        .followRedirects(false)
+        .followSslRedirects(false)
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
-        .callTimeout(30, TimeUnit.SECONDS)
         .build()
+
+    /** JSON calls are capped as a whole. */
+    internal val jsonHttp: OkHttpClient = base.newBuilder().callTimeout(30, TimeUnit.SECONDS).build()
+
+    /** Attachment transfers have no whole-call cap; connect, read and write timeouts still apply. */
+    internal val rawHttp: OkHttpClient = base.newBuilder().callTimeout(0, TimeUnit.SECONDS).build()
 
     private var onUnauthorized: (suspend () -> Unit)? = null
     private val unauthorizedLock = Mutex()
@@ -57,76 +69,108 @@ class ServerClient internal constructor(
         auth: Auth,
         deserializer: DeserializationStrategy<T>,
     ): T {
-        val res = perform(method, path, jsonBody(body), auth, emptyMap())
-        try {
-            return ServerJson.json.decodeFromString(deserializer, res.body.decodeToString())
-        } catch (e: SerializationException) {
-            throw ServerException(0, "decoding", null, null)
-        } catch (e: IllegalArgumentException) {
-            throw ServerException(0, "decoding", null, null)
+        val res = perform(jsonHttp, method, path, jsonBody(body), auth, emptyMap())
+        return withContext(io) {
+            try {
+                ServerJson.json.decodeFromString(deserializer, res.body.decodeToString())
+            } catch (e: SerializationException) {
+                throw ServerException(0, "decoding", null, null)
+            } catch (e: IllegalArgumentException) {
+                throw ServerException(0, "decoding", null, null)
+            }
         }
     }
 
     /** For endpoints that answer 204 or whose body is ignored. */
     suspend fun requestNoContent(method: String, path: String, body: JsonElement?, auth: Auth) {
-        perform(method, path, jsonBody(body), auth, emptyMap())
+        perform(jsonHttp, method, path, jsonBody(body), auth, emptyMap())
     }
 
-    /** Raw bytes in and out (attachments). */
+    /** Raw bytes in and out (attachments). No whole-call timeout. */
     suspend fun requestRaw(method: String, path: String, body: RequestBody?, headers: Map<String, String>, auth: Auth): RawResponse =
-        perform(method, path, body, auth, headers)
+        perform(rawHttp, method, path, body, auth, headers)
 
     class RawResponse(val status: Int, val body: ByteArray, val headers: Map<String, String>)
 
     private fun jsonBody(body: JsonElement?): RequestBody? =
         body?.let { ServerJson.json.encodeToString(JsonElement.serializer(), it).toRequestBody(JSON) }
 
-    private suspend fun perform(method: String, path: String, body: RequestBody?, auth: Auth, headers: Map<String, String>): RawResponse {
-        val url = baseUrl.resolve(path) ?: throw ServerException(0, "network", null, null)
+    /** Only paths on the base URL's own host and scheme: a single leading `/`, never `//host` or a full URL. */
+    private fun resolveSameHost(path: String): HttpUrl {
+        if (!path.startsWith("/") || path.startsWith("//") || path.contains('\\')) throw ServerException(0, "invalid_path", null, null)
+        val url = baseUrl.resolve(path) ?: throw ServerException(0, "invalid_path", null, null)
+        if (url.host != baseUrl.host || url.scheme != baseUrl.scheme || url.port != baseUrl.port) {
+            throw ServerException(0, "invalid_path", null, null)
+        }
+        return url
+    }
+
+    private suspend fun perform(
+        client: OkHttpClient, method: String, path: String, body: RequestBody?, auth: Auth, headers: Map<String, String>,
+    ): RawResponse {
+        val url = resolveSameHost(path)
         val needsBody = method == "POST" || method == "PUT" || method == "PATCH"
         val rb = Request.Builder().url(url).method(method, body ?: if (needsBody) ByteArray(0).toRequestBody() else null)
         rb.header("Accept", "application/json")
         headers.forEach { (k, v) -> rb.header(k, v) }
+        // Generation first: a save between the two reads then only makes this request look older, never newer.
+        val sentAt = session.generation
         if (auth == Auth.Session) {
             val s = session.current ?: throw ServerException(401, "unauthorized", null, null)
             rb.header("Authorization", "Bearer ${s.token}")
         }
-        val sentAt = session.generation
         val response = try {
-            http.newCall(rb.build()).await()
+            client.newCall(rb.build()).await()
         } catch (e: CancellationException) {
             throw e
         } catch (e: IOException) {
             throw ServerException(0, "network", null, null)
         }
-        response.use { r ->
-            val data = try {
-                r.body.bytes()
-            } catch (e: IOException) {
-                throw ServerException(0, "network", null, null)
+        val outcome = withContext(io) {
+            response.use { r ->
+                val data = try {
+                    r.body.bytes()
+                } catch (e: IOException) {
+                    throw ServerException(0, "network", null, null)
+                }
+                when {
+                    r.code in 200..299 -> RawResponse(r.code, data, r.headers.toMultimap().mapValues { it.value.first() })
+                    r.code in 300..399 -> ServerException(r.code, "redirect", null, null)
+                    else -> mapError(r.code, r.header("Retry-After"), data)
+                }
             }
-            if (r.code in 200..299) {
-                return RawResponse(r.code, data, r.headers.toMultimap().mapValues { it.value.first() })
-            }
-            val err = mapError(r.code, r.header("Retry-After"), data)
-            if (r.code == 401 && auth == Auth.Session) handleUnauthorized(sentAt)
-            throw err
         }
+        if (outcome is RawResponse) return outcome
+        outcome as ServerException
+        if (outcome.status == 401 && auth == Auth.Session) handleUnauthorized(sentAt)
+        throw outcome
     }
 
     private suspend fun handleUnauthorized(sentAt: Int) {
         val first = unauthorizedLock.withLock {
             // A login (save) since the request was sent means the 401 is about an old token.
             if (session.generation != sentAt || signedOutAtGeneration == sentAt) return@withLock false
-            signedOutAtGeneration = sentAt
-            try {
-                session.clear()
-            } catch (_: Exception) {
-                // The app is still told to sign out and may retry.
+            val cleared = withContext(io) {
+                try {
+                    session.clear()
+                    true
+                } catch (e: Exception) {
+                    false
+                }
             }
+            // If the storage delete failed, the next 401 tries again; the app is still told to sign out.
+            if (cleared) signedOutAtGeneration = sentAt
             true
         }
-        if (first) onUnauthorized?.invoke()
+        if (first) {
+            try {
+                onUnauthorized?.invoke()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // The caller still gets the 401.
+            }
+        }
     }
 
     private fun mapError(status: Int, retryAfter: String?, data: ByteArray): ServerException {
