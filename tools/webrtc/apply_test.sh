@@ -36,6 +36,8 @@ g() { git -c user.name=test -c user.email=test@example.com -c commit.gpgsign=fal
 # new_tree <dir>: fixture WebRTC tree.
 #   <dir>/third_party/opus/BUILD.gn   5 lines, in its own git repo
 #   <dir>/hello.txt                   in the git repo <dir>
+#   <dir>/modules/audio_coding/codecs/opus/audio_decoder_opus.cc
+#                                     holds the Opus PLC trial name (VERSION) unless $2 is "notrial"
 new_tree() {
   mkdir -p "$1/third_party/opus"
   printf 'one\ntwo\nthree\nfour\nfive\n' >"$1/third_party/opus/BUILD.gn"
@@ -43,8 +45,14 @@ new_tree() {
   g -C "$1/third_party" add opus/BUILD.gn
   g -C "$1/third_party" commit -q -m base
   printf 'hello\nworld\n' >"$1/hello.txt"
+  mkdir -p "$1/modules/audio_coding/codecs/opus"
+  if [ "${2-}" = notrial ]; then
+    printf 'generate_plc_(field_trials.IsEnabled("Some-Other-Trial"))\n' >"$1/modules/audio_coding/codecs/opus/audio_decoder_opus.cc"
+  else
+    printf 'generate_plc_(field_trials.IsEnabled("%s"))\n' "$FIELD_TRIAL_OPUS_PLC" >"$1/modules/audio_coding/codecs/opus/audio_decoder_opus.cc"
+  fi
   g -C "$1" init -q
-  g -C "$1" add hello.txt
+  g -C "$1" add hello.txt modules
   g -C "$1" commit -q -m base
 }
 
@@ -140,6 +148,16 @@ run_apply "$t" "$work/conf-patches"
 check conflict_fails "non-zero exit" test "$code" -ne 0
 check conflict_fails "no conflict markers left" no_markers "$t"
 check conflict_fails "BUILD.gn back at HEAD" test "$(cat "$t/third_party/opus/BUILD.gn")" = "$(printf 'one\ntwo\nOTHER\nfour\nfive')"
+
+# missing_trial_fails: the Opus PLC field trial is not in audio_decoder_opus.cc
+t="$work/notrial"
+new_tree "$t" notrial
+make_patches "$t" "$work/notrial-patches"
+run_apply "$t" "$work/notrial-patches"
+check missing_trial_fails "exit 3" test "$code" -eq 3
+check missing_trial_fails "names the trial" sh -c 'printf "%s" "$1" | grep -q "Opus PLC field trial"' _ "$out"
+check missing_trial_fails "no marker file" test ! -e "$t/.app-webrtc-applied"
+check missing_trial_fails "patched files restored" test "$(cat "$t/hello.txt")" = "$(printf 'hello\nworld')"
 
 if [ "$failures" -ne 0 ]; then
   echo "$failures check(s) failed"

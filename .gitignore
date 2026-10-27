@@ -28,3 +28,6 @@ deploy/data/
 *.pem
 *.p8
 *.key
+
+# Python bytecode
+__pycache__/

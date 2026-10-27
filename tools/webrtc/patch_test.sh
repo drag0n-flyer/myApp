@@ -73,8 +73,11 @@ g -C "$tree/third_party" init -q
 g -C "$tree/third_party" add opus/BUILD.gn
 g -C "$tree/third_party" commit -q -m base
 echo x >"$tree/x"
+# apply.sh's last step looks for the Opus PLC field trial in this file.
+mkdir -p "$tree/modules/audio_coding/codecs/opus"
+printf '"%s"\n' "$FIELD_TRIAL_OPUS_PLC" >"$tree/modules/audio_coding/codecs/opus/audio_decoder_opus.cc"
 g -C "$tree" init -q
-g -C "$tree" add x
+g -C "$tree" add x modules
 g -C "$tree" commit -q -m base
 
 # git apply --check, as the plan's step 6 asks.

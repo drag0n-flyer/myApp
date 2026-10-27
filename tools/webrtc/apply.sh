@@ -11,6 +11,8 @@
 #   5. copy the Opus probe into sdk/objc/components/app/
 #   6. apply patches/0001-* inside third_party, the other patches inside src
 #   7. fail on any reject or conflict marker
+#   8. fail (exit 3) if the Opus PLC field trial named in VERSION
+#      (FIELD_TRIAL_OPUS_PLC) is not in audio_decoder_opus.cc at this pin
 #
 # Run it once on a clean checkout. On any failure it resets the tracked files
 # in third_party and src to HEAD, so running it again starts clean. When it
@@ -20,7 +22,7 @@
 # Test overrides (environment): OPUS_SHA256, APPLY_PATCH_DIR,
 # APPLY_THIRD_PARTY_PATCH, APPLY_CACHE_DIR.
 #
-# Exit codes: 0 ok, 1 failure, 2 tarball hash mismatch.
+# Exit codes: 0 ok, 1 failure, 2 tarball hash mismatch, 3 Opus PLC field trial missing.
 # Needs: git, tar, python3, curl (only to download), sha256sum or shasum.
 set -eu
 
@@ -157,6 +159,14 @@ for repo in "$tp" "$srcdir"; do
     fi
   done
 done
+
+# 8. Build guard: the Opus PLC field trial must still exist at this pin.
+grep -q "\"$FIELD_TRIAL_OPUS_PLC\"" "$srcdir/modules/audio_coding/codecs/opus/audio_decoder_opus.cc" 2>/dev/null || {
+  echo "Opus PLC field trial '$FIELD_TRIAL_OPUS_PLC' not found at pin" >&2
+  git -C "$tp" reset -q --hard HEAD || true
+  git -C "$srcdir" reset -q --hard HEAD || true
+  exit 3
+}
 
 printf '%s\n' "$version_hash" >"$marker"
 echo "applied opus $pkg_version and patches to $srcdir"

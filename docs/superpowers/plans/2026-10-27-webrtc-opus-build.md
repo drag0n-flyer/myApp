@@ -76,7 +76,7 @@
 
 **CPU features.**
 - On arm64, the build assumes NEON only (`OPUS_ARM_PRESUME_NEON_INTR`, no runtime detection map), so `dnn_arm.h` picks `compute_linear_neon`. It does not use dot-product (`OPUS_ARM_*_DOTPROD`, `-march=armv8.2-a+dotprod`): iOS 17 still runs on the iPhone XS and XR (A12), and the A12 is ARMv8.3 without dot-product instructions (dot-product starts with the A13). NEON is safe on every arm64 target.
-- The x86_64 slices (simulator and Intel Macs) use the generic C neural code: a smaller risk surface, and speed matters little there.
+- The x86_64 slices (simulator and Intel Macs) use Opus's runtime-dispatched SIMD (`dnn/x86/*`), because Chromium's x86 defines require it. Owner ruling.
 
 **WebRTC changes**, all in `tools/webrtc/patches/` and applied in name order:
 - `0001-third-party-opus-1.6.patch`: Opus `BUILD.gn` (described above).
@@ -140,7 +140,7 @@
 3. A **dynamic** XCFramework.
 4. Opus comes from the **official 1.6 release tarball** (hash-pinned, includes the models), not git.
 5. **Floating-point** Opus on every slice (libopus requires it for the neural features).
-6. On arm64, assume **NEON only, no dot-product** (the A12 in iOS 17 devices lacks it). The x86_64 slices use generic C.
+6. On arm64, assume **NEON only, no dot-product** (the A12 in iOS 17 devices lacks it). The x86_64 slices use Opus's runtime-dispatched SIMD (`dnn/x86/*`), because Chromium's x86 defines require it.
 7. **Decoder complexity 7 and BWE on are compiled in**, not configurable at runtime. DRED is off.
 8. **120 ms packet length is compiled in.** If the pin lacks it, the fallback is 60 ms, reported through `RTCOpusInfo.maxPacketMs`.
 9. **Software H.264 off, dav1d off**; VP8/VP9 default.
