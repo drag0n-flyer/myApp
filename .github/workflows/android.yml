@@ -232,3 +232,6 @@ jobs:
       - name: R8 keep rules (release build keeps JNA and UniFFI classes)
         working-directory: apps/android
         run: ./gradlew --no-daemon :app:checkR8KeepRules
+      - name: No android:process in the merged release manifest
+        working-directory: apps/android
+        run: ./gradlew --no-daemon :app:checkNoComponentProcess

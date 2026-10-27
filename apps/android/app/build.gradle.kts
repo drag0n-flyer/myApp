@@ -34,16 +34,32 @@ tasks.register("checkR8KeepRules") {
     group = "verification"
     dependsOn("minifyReleaseWithR8")
     val dir = mappingDir.get().asFile
+    // AGP 9 leaves only a partitioned mapping.prt in outputs/; the plain mapping.txt stays in intermediates.
+    val mappingTxt = layout.buildDirectory.file("intermediates/mapping/release/minifyReleaseWithR8/mapping.txt").get()
     doLast {
         val seeds = dir.resolve("seeds.txt").readLines()
-        val mapping = dir.resolve("mapping.txt").readLines().filter { !it.startsWith(" ") && it.contains(" -> ") }
+        val mapping = mappingTxt.asFile.readLines().filter { !it.startsWith(" ") && it.contains(" -> ") }
         // FfiConverter extends no JNA type, so only the explicit ffi keep rule retains it.
         check(seeds.contains("org.example.app.mls.ffi.FfiConverter")) { "R8 did not keep the UniFFI bindings" }
         for (prefix in listOf("org.example.app.mls.ffi.", "com.sun.jna.")) {
             check(seeds.any { it.startsWith(prefix) }) { "R8 did not keep any $prefix class" }
-            val renamed = mapping.filter { it.startsWith(prefix) && it.substringBefore(" -> ") != it.substringAfter(" -> ").removeSuffix(":") }
+            val renamed = mapping.filter { it.startsWith(prefix) && !it.contains("\$\$ExternalSynthetic") && it.substringBefore(" -> ") != it.substringAfter(" -> ").removeSuffix(":") }
             check(renamed.isEmpty()) { "R8 renamed $prefix classes: ${renamed.take(3)}" }
         }
+    }
+}
+
+// MLS state is single-process: no component of the merged release manifest may declare android:process
+// (a library could add one through manifest merging).
+tasks.register("checkNoComponentProcess") {
+    group = "verification"
+    dependsOn("processReleaseManifest")
+    val manifest = layout.buildDirectory.file("intermediates/merged_manifests/release/processReleaseManifest/AndroidManifest.xml").get()
+    doLast {
+        val text = manifest.asFile.readText()
+        val offenders = Regex("""<(activity|activity-alias|service|receiver|provider)\b[^>]*android:process\s*=\s*"[^"]*"[^>]*>""")
+            .findAll(text).map { it.value.take(120) }.toList()
+        check(offenders.isEmpty()) { "Merged release manifest declares android:process: $offenders" }
     }
 }
 
