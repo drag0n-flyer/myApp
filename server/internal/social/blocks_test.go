@@ -44,6 +44,9 @@ func TestBlockUnblock(t *testing.T) {
 	if res := c.Do(&ana, "PUT", "/v1/blocks/"+ana.AccountID, nil); res.Status != 400 {
 		t.Fatalf("self: %s", res)
 	}
+	if res := c.Do(&ana, "PUT", "/v1/blocks/"+strings.ToUpper(ana.AccountID), nil); res.Status != 400 {
+		t.Fatalf("self, upper case: %s", res)
+	}
 	if res := c.Do(&ana, "PUT", "/v1/blocks/not-a-uuid", nil); res.Status != 400 {
 		t.Fatalf("bad id: %s", res)
 	}

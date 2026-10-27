@@ -226,11 +226,12 @@ func (m *Module) postCommit(w http.ResponseWriter, r *http.Request) error {
 		}
 
 		// 4. Deliver. The commit goes to the whole snapshot, sender included; a
-		// blocker still gets the row (the group must not desync) but no push.
+		// blocker still gets the row (the group must not desync) but no push, and
+		// neither does the sender's own device, which only gets an echo.
 		// It carries the epoch it was made at; a welcome carries the new one.
 		var loud, quiet []string
 		for _, dv := range snapshot {
-			if snapBlocked[dv.account] {
+			if snapBlocked[dv.account] || dv.device == p.DeviceID {
 				quiet = append(quiet, dv.device)
 			} else {
 				loud = append(loud, dv.device)

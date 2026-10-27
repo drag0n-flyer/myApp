@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -163,11 +164,16 @@ func TestGatewayKey(t *testing.T) {
 	e := setup(t)
 	r := e.do("GET", "/v1/gateway-key", "10.0.0.1:1", nil, nil)
 	var out struct {
-		PublicKey []byte `json:"publicKey"`
+		PublicKey string `json:"publicKey"`
 	}
 	_ = json.Unmarshal(r.body, &out)
-	if r.status != 200 || !bytes.Equal(out.PublicKey, e.hpub.Bytes()) {
-		t.Fatal(r.status, string(r.body))
+	// base64url without padding, like every binary field of the client API.
+	got, err := base64.RawURLEncoding.DecodeString(out.PublicKey)
+	if r.status != 200 || err != nil || !bytes.Equal(got, e.hpub.Bytes()) {
+		t.Fatal(r.status, string(r.body), err)
+	}
+	if strings.ContainsAny(out.PublicKey, "+/=") {
+		t.Fatalf("publicKey %q is not base64url without padding", out.PublicKey)
 	}
 }
 

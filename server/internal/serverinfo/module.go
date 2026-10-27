@@ -34,7 +34,7 @@ func (m *Module) Routes(r *httpx.Router) {
 func (m *Module) info(w http.ResponseWriter, _ *http.Request) error {
 	p, c := m.d.Policy, m.d.Config
 	var escrow, gateway *string
-	if p.Encryption.NewConversations == "server_readable" && c.EscrowKeyFile != "" {
+	if c.EscrowKeyFile != "" {
 		k, err := m.escrowPublicKey()
 		if err != nil {
 			return err

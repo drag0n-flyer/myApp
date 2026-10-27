@@ -215,7 +215,11 @@ func TestCommitAdvancesEpoch(t *testing.T) {
 	// Each delivery was announced.
 	for _, p := range []core.Principal{w.bob1, w.bob2, w.ana2, w.ana1} {
 		evs := w.f.Notify.Events(p.DeviceID)
-		if len(evs) != 1 || evs[0].Type != "inbox" || evs[0].Push != core.PushMessage {
+		want := core.PushMessage
+		if p == w.ana1 {
+			want = core.PushNone // the sender's own echo is never pushed
+		}
+		if len(evs) != 1 || evs[0].Type != "inbox" || evs[0].Push != want {
 			t.Fatalf("events for %s = %+v", p.DeviceID, evs)
 		}
 	}
@@ -480,5 +484,22 @@ func TestCommitAddConcurrentWithClaim(t *testing.T) {
 		if commits[i].Status != 200 || claims[i].Status != 200 {
 			t.Fatalf("commit: %s / claim: %s", commits[i], claims[i])
 		}
+	}
+}
+
+// The sender's own device gets the commit as an echo and is never pushed for it.
+func TestCommitEchoToSenderIsNotPushed(t *testing.T) {
+	w := newWorld(t)
+	id := w.joined(t)
+	ownBefore, bobBefore := len(w.f.Notify.Events(w.ana1.DeviceID)), len(w.f.Notify.Events(w.bob1.DeviceID))
+	if r := w.commit(t, w.ana1, id, 1, nil, nil, false); r.Status != 200 {
+		t.Fatalf("commit: %s", r)
+	}
+	own := w.f.Notify.Events(w.ana1.DeviceID)[ownBefore:]
+	if len(own) != 1 || own[0].Push != core.PushNone {
+		t.Fatalf("sender echo %+v", own)
+	}
+	if other := w.f.Notify.Events(w.bob1.DeviceID)[bobBefore:]; len(other) != 1 || other[0].Push != core.PushMessage {
+		t.Fatalf("bob %+v", other)
 	}
 }

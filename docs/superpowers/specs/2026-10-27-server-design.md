@@ -240,7 +240,7 @@ Relay health: every 30 s, send a STUN Binding Request (RFC 5389) over UDP to `H:
 
 ### 7.4 Push (lane D)
 
-Server endpoints: `PUT /v1/push/tokens/{kind}` (kind `alert` or `voip`) `{sealed:b64}` → `204`, and `DELETE /v1/push/tokens/{kind}` → `204`.
+Server endpoints: `PUT /v1/push/tokens/{kind}` (kind `alert` or `voip`) `{sealed:b64url}` → `204` (at most 2 KiB decoded; larger is `bad_request`), and `DELETE /v1/push/tokens/{kind}` → `204`.
 
 **Sealed handle:** the device seals `{"t":"<apns token hex>","k":"alert"|"voip","e":"production"|"sandbox","b":"<bundle id>"}` with HPKE to the gateway's public key (the same suite as escrow, `info = "push-handle-v1"`). The server stores it as received and cannot read it.
 
@@ -260,7 +260,7 @@ Server endpoints: `PUT /v1/push/tokens/{kind}` (kind `alert` or `voip`) `{sealed
 **Gateway (`cmd/pushgw`):**
 
 Endpoints:
-- `GET /v1/gateway-key` → `{publicKey:b64}`
+- `GET /v1/gateway-key` → `{publicKey:b64url}` (base64url, no padding, like every client-facing binary field)
 - `POST /v1/servers` `{publicKey, name, contact}`, signed with that key → `{serverID}`. Limited to 5 per hour per IP.
 - `POST /v1/push`
 
@@ -275,11 +275,14 @@ Checks before sending:
 
 Limits: 1000 per minute per server, 120 per hour per handle for messages, and 20 per hour per handle for calls.
 
+Besides the codes of section 7, the gateway also answers `conflict` (409, a replayed signature), `gone` (410, the handle is no longer valid) and `upstream` (502, APNs failed). It returns no other codes.
+
 **APNs:**
 - HTTP/2 `POST https://api.push.apple.com/3/device/<token>`, or `api.sandbox.push.apple.com` for sandbox handles.
 - The auth JWT is ES256 with header `{alg:ES256, kid}` and claims `{iss:teamID, iat}`, refreshed every 50 minutes.
 - Alert push:
   - headers `apns-push-type: alert`, `apns-priority: 10`, `apns-topic: <bundle>`
+  - `d` is standard base64 with padding. It is an APNs payload field, not a client API field, so decision 3 does not apply
   - body `{"aps":{"alert":{"title":"[App]","body":"New message"},"mutable-content":1,"sound":"default"},"d":"<b64 data>"}`
 - VoIP push:
   - headers `apns-push-type: voip`, `apns-priority: 10`, `apns-expiration: 0`, `apns-topic: <bundle>.voip`

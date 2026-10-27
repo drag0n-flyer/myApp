@@ -26,6 +26,7 @@ const (
 	apnsProduction = "https://api.push.apple.com"
 	apnsSandbox    = "https://api.sandbox.push.apple.com"
 	jwtLifetime    = 50 * time.Minute
+	minTokenAge    = 20 * time.Minute
 	apnsTimeout    = 10 * time.Second
 )
 
@@ -99,9 +100,14 @@ func (c *apnsClient) token() (string, error) {
 	return c.jwt, nil
 }
 
+// forgetToken drops the cached provider token so the next send makes a new
+// one, but at most once per minTokenAge: APNs refuses a new token more often
+// than every 20 minutes, so re-minting sooner only makes things worse.
 func (c *apnsClient) forgetToken() {
 	c.mu.Lock()
-	c.jwt = ""
+	if c.now().Sub(c.jwtIssue) >= minTokenAge {
+		c.jwt = ""
+	}
 	c.mu.Unlock()
 }
 

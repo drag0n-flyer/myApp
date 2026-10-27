@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,6 +15,8 @@ import (
 	"github.com/velixio/myApp/server/internal/httpx"
 	"github.com/velixio/myApp/server/internal/realtime"
 )
+
+var uuidRE = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 const (
 	endedKeep    = 60 * time.Second // an ended call stays visible to call.status
@@ -36,7 +40,13 @@ type Module struct {
 
 	mu    sync.Mutex
 	calls map[string]*entry
+
+	bg sync.WaitGroup // detached ring pushes, drained by WaitBackground
 }
+
+// WaitBackground waits for ring pushes still being sent. App calls it at
+// shutdown, with a timeout.
+func (m *Module) WaitBackground() { m.bg.Wait() }
 
 // New returns the calls module, which registers its frames on frames.
 func New(d core.Deps, frames realtime.FrameRouter) *Module {
@@ -127,9 +137,13 @@ func (m *Module) invite(ctx context.Context, from core.Principal, data json.RawM
 	if err != nil {
 		return nil, err
 	}
-	if f.To == "" || f.To == from.AccountID || len(f.Payload) == 0 {
+	if m.d.Config.TURNSecret == "" {
+		return nil, httpx.Err("calls_disabled", "calls are not available")
+	}
+	if !uuidRE.MatchString(f.To) || strings.EqualFold(f.To, from.AccountID) || len(f.Payload) == 0 {
 		return nil, httpx.Err("bad_request", "bad call invite")
 	}
+	f.To = strings.ToLower(f.To)
 	devs, err := m.d.Directory.DeviceIDs(ctx, f.To)
 	if err != nil {
 		return nil, err
@@ -163,7 +177,9 @@ func (m *Module) invite(ctx context.Context, from core.Principal, data json.RawM
 // pushRing sends the PushCall push off the caller's goroutine: frame handlers
 // run in the WebSocket read loop and a push can take seconds.
 func (m *Module) pushRing(dev string, payload []byte) {
+	m.bg.Add(1)
 	go func() {
+		defer m.bg.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), pushTimeout)
 		defer cancel()
 		if err := m.d.Push.Push(ctx, dev, core.PushCall, payload); err != nil {

@@ -90,20 +90,25 @@ func New(d core.Deps) *App {
 }
 
 // Validate checks the configuration that serving depends on beyond what
-// config.Load can see. When new conversations are server-readable it parses the
-// escrow key, so a missing or invalid key stops startup with a clear error
-// instead of failing on the first message.
+// config.Load can see, so a bad setup stops startup with a clear error instead
+// of failing on the first request:
+//   - an escrow key file, whenever one is configured, must parse (and one is
+//     required when new conversations are server-readable);
+//   - with a push gateway, the server ID and signing key must be usable;
+//   - the passkey relying party must build from the host.
 func Validate(d core.Deps) error {
-	if d.Policy.Encryption.NewConversations != "server_readable" {
-		return nil
-	}
-	if d.Config.EscrowKeyFile == "" {
+	if d.Policy.Encryption.NewConversations == "server_readable" && d.Config.EscrowKeyFile == "" {
 		return errors.New("escrow key: encryption.newConversations is server_readable but no escrow key file is configured")
 	}
-	if _, err := delivery.EscrowPublicKey(d.Config.EscrowKeyFile); err != nil {
+	if d.Config.EscrowKeyFile != "" {
+		if _, err := delivery.EscrowPublicKey(d.Config.EscrowKeyFile); err != nil {
+			return err
+		}
+	}
+	if err := push.Validate(d.Config); err != nil {
 		return err
 	}
-	return nil
+	return identity.Validate(d.Config)
 }
 
 // Handler returns the public HTTP handler.

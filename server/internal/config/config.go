@@ -117,10 +117,31 @@ func Load(getenv func(string) string, readFile func(string) ([]byte, error)) (Co
 			return Config{}, Policy{}, fmt.Errorf("config: APP_POLICY_FILE: %w", err)
 		}
 	}
+	if err := validateConfig(c); err != nil {
+		return Config{}, Policy{}, err
+	}
 	if err := validatePolicy(p, c); err != nil {
 		return Config{}, Policy{}, err
 	}
 	return c, p, nil
+}
+
+func validateConfig(c Config) error {
+	for _, r := range c.Relays {
+		if r.Host == "" {
+			return fmt.Errorf("config: APP_RELAYS has an entry with no host")
+		}
+	}
+	if c.TURNSecret != "" && len(c.Relays) == 0 {
+		return fmt.Errorf("config: APP_TURN_SECRET requires at least one host in APP_RELAYS")
+	}
+	if c.PushGatewayURL != "" && c.PushServerID == "" {
+		return fmt.Errorf("config: APP_PUSH_GATEWAY_URL requires APP_PUSH_SERVER_ID")
+	}
+	if c.PushGatewayURL != "" && c.PushKeyFile == "" {
+		return fmt.Errorf("config: APP_PUSH_GATEWAY_URL requires APP_PUSH_KEY_FILE")
+	}
+	return nil
 }
 
 func validatePolicy(p Policy, c Config) error {
@@ -135,6 +156,12 @@ func validatePolicy(p Policy, c Config) error {
 	}
 	if defRank, ok := ModeRank(p.DefaultMode); ok && defRank > maxRank {
 		return fmt.Errorf("config: policy defaultMode %q is above maxMode %q", p.DefaultMode, p.MaxMode)
+	}
+	if p.Retention.InboxDays <= 0 || p.Retention.AttachmentDays <= 0 || p.Retention.EscrowDays <= 0 {
+		return fmt.Errorf("config: policy retention days must be positive")
+	}
+	if p.Limits.AttachmentBytes <= 0 || p.Limits.AttachmentBytesPerDay <= 0 {
+		return fmt.Errorf("config: policy limits must be positive")
 	}
 	switch p.DefaultIPHiding {
 	case "never", "nonContacts", "always":

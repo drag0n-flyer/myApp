@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -35,7 +36,18 @@ type Module struct {
 
 	mu       sync.RWMutex
 	handlers map[string]FrameHandler
+
+	bg      sync.WaitGroup // detached push sends, drained by WaitBackground
+	pushSem chan struct{}  // bounds concurrent push sends
 }
+
+// revokedCode is the close code for a revoked or deleted device (spec section 7.3).
+const revokedCode = 4003
+
+const (
+	pushTimeout     = 10 * time.Second // one push send, as the gateway client's own limit
+	maxPushesActive = 256
+)
 
 var (
 	_ core.Notifier     = (*Module)(nil)
@@ -45,7 +57,7 @@ var (
 
 // New returns the realtime module.
 func New(d core.Deps) *Module {
-	return &Module{d: d, hub: newHub(), pingEvery: 25 * time.Second, handlers: map[string]FrameHandler{}}
+	return &Module{d: d, hub: newHub(), pingEvery: 25 * time.Second, handlers: map[string]FrameHandler{}, pushSem: make(chan struct{}, maxPushesActive)}
 }
 
 // Run blocks until ctx is done, then closes every live socket (http.Server's
@@ -60,12 +72,34 @@ func (m *Module) Notify(ctx context.Context, deviceID string, ev core.Event) {
 	if m.Send(deviceID, ev.Type, ev.Data) {
 		return
 	}
-	if ev.Push != core.PushNone {
-		if err := m.d.Push.Push(ctx, deviceID, ev.Push, ev.PushPayload); err != nil {
+	if ev.Push == core.PushNone {
+		return
+	}
+	// The push goes out on its own goroutine: a gateway that is slow or down
+	// must not hold up the request that produced the event (a message post
+	// would otherwise wait up to the push timeout for every offline device).
+	// The request's values are kept but its cancellation is not.
+	select {
+	case m.pushSem <- struct{}{}:
+	default:
+		m.d.Log.Warn("push dropped: too many in flight", "kind", int(ev.Push))
+		return
+	}
+	pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), pushTimeout)
+	m.bg.Add(1)
+	go func() {
+		defer m.bg.Done()
+		defer cancel()
+		defer func() { <-m.pushSem }()
+		if err := m.d.Push.Push(pctx, deviceID, ev.Push, ev.PushPayload); err != nil {
 			m.d.Log.Warn("push failed", "kind", int(ev.Push))
 		}
-	}
+	}()
 }
+
+// WaitBackground waits for push sends started by Notify. App calls it at
+// shutdown, with a timeout.
+func (m *Module) WaitBackground() { m.bg.Wait() }
 
 // Disconnect closes the device's live WebSocket.
 func (m *Module) Disconnect(deviceID string, code int, reason string) {
@@ -119,6 +153,12 @@ func (m *Module) serveWS(w http.ResponseWriter, r *http.Request) error {
 	}
 	go c.writeLoop(ctx)
 	go c.pingLoop(ctx, m.pingEvery)
+	// A revoke that ran between the token check and hub.add found no socket to
+	// close. Now that the socket is registered, any later revoke will find it,
+	// so one more check closes the gap.
+	if _, err := m.d.Directory.AccountOf(ctx, p.DeviceID); errors.Is(err, core.ErrNotFound) {
+		c.close(revokedCode, "revoked")
+	}
 	defer func() {
 		c.once.Do(func() { close(c.done); c.hub.remove(c) })
 		ws.CloseNow()
@@ -158,6 +198,10 @@ func (m *Module) dispatch(ctx context.Context, c *conn, p core.Principal, b []by
 		var he *httpx.Error
 		if errors.As(err, &he) {
 			code = he.Code
+		} else {
+			// Never the error text (section 8): the route and the type tell
+			// an operator where to look.
+			m.d.Log.Error("frame handler failed", "frame", typ, "errType", fmt.Sprintf("%T", err))
 		}
 		m.reply(c, "error", id, map[string]string{"code": code})
 		return

@@ -35,12 +35,12 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26'
-          cache-dependency-path: server/go.mod
+          cache-dependency-path: server/go.sum
       - name: Vet
         run: go vet ./...
       - name: Test
         run: go test -race ./...
       - name: Vulnerability check
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
       - name: Fuzz smoke
         run: scripts/fuzz-smoke.sh

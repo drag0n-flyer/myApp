@@ -112,14 +112,17 @@ func (m *Module) claimKeyPackages(w http.ResponseWriter, r *http.Request) error 
 	// Unknown, malformed and blocking targets all give the same not_found
 	// (spec section 8): same status, code, message and no side effects.
 	notFound := httpx.Err("not_found", "no such account")
+	if !uuidRE.MatchString(in.AccountID) {
+		return notFound
+	}
+	target := strings.ToLower(in.AccountID)
 	var exists bool
-	if err := m.d.DB.QueryRow(ctx, `select exists (select 1 from accounts where id::text = lower($1))`, in.AccountID).Scan(&exists); err != nil {
+	if err := m.d.DB.QueryRow(ctx, `select exists (select 1 from accounts where id = $1)`, target).Scan(&exists); err != nil {
 		return err
 	}
 	if !exists {
 		return notFound
 	}
-	target := strings.ToLower(in.AccountID)
 	blocked, err := m.d.Blocks.IsBlocked(ctx, target, p.AccountID)
 	if err != nil {
 		return err

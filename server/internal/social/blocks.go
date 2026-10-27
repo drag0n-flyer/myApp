@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/velixio/myApp/server/internal/httpx"
@@ -50,7 +51,7 @@ func (m *Module) putBlock(w http.ResponseWriter, r *http.Request) error {
 	if !validUUID(target) {
 		return httpx.Err("bad_request", "accountID is not a UUID")
 	}
-	if target == me {
+	if strings.EqualFold(target, me) {
 		return httpx.Err("bad_request", "you cannot block yourself")
 	}
 	_, err := m.d.DB.Exec(r.Context(),

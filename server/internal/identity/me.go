@@ -44,7 +44,11 @@ func (m *Module) deleteAccount(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
-	rows, err := tx.Query(ctx, `select id from devices where account_id = $1`, p.AccountID)
+	// Lock the device rows first, in id order like delivery does, so a delete
+	// cannot deadlock with a message fan-out, and a device added concurrently
+	// is either in this list (and disconnected) or waits until the account is
+	// gone.
+	rows, err := tx.Query(ctx, `select id from devices where account_id = $1 order by id for update`, p.AccountID)
 	if err != nil {
 		return err
 	}

@@ -68,6 +68,12 @@ func TestServerInfoEscrowKey(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "escrow.pem")
 	os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600)
 
+	// The key is published whenever a key file is set, even for e2ee policy.
+	e2ee := serve(t, func(d *core.Deps) { d.Config.EscrowKeyFile = path })
+	if k, _ := decode(t, string(e2ee.Do(nil, "GET", "/v1/server", nil).Body))["encryption"].(map[string]any)["escrowKey"].(string); k == "" {
+		t.Fatal("escrowKey not published for e2ee policy with a key file")
+	}
+
 	c := serve(t, func(d *core.Deps) {
 		d.Policy.Encryption.NewConversations = "server_readable"
 		d.Config.EscrowKeyFile = path

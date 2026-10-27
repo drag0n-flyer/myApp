@@ -193,7 +193,7 @@ func isUUID(s string) bool {
 
 func (g *gateway) gatewayKey(w http.ResponseWriter, _ *http.Request) error {
 	writeJSON(w, http.StatusOK, map[string]string{
-		"publicKey": base64.StdEncoding.EncodeToString(g.cfg.HPKEPublic)})
+		"publicKey": base64.RawURLEncoding.EncodeToString(g.cfg.HPKEPublic)})
 	return nil
 }
 

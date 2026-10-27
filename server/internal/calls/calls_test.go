@@ -406,3 +406,14 @@ func mustJSON(t *testing.T, v any) []byte {
 	}
 	return b
 }
+
+func TestInviteBadTargetAndCallsDisabled(t *testing.T) {
+	w := setup(t)
+	if _, err := w.callRaw(t, w.ana, "call.invite", `{"callID":"x1","to":"not-a-uuid","payload":"-_8"}`); code(err) != "bad_request" {
+		t.Fatalf("non-UUID target: %v", err)
+	}
+	off := setup(t, func(d *core.Deps) { d.Config.TURNSecret = "" })
+	if _, err := off.callRaw(t, off.ana, "call.invite", `{"callID":"x2","to":"`+off.bob1.AccountID+`","payload":"-_8"}`); code(err) != "calls_disabled" {
+		t.Fatalf("calls disabled: %v", err)
+	}
+}

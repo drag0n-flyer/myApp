@@ -22,12 +22,16 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/velixio/myApp/server/internal/config"
 	"github.com/velixio/myApp/server/internal/core"
 	"github.com/velixio/myApp/server/internal/httpx"
 	"github.com/velixio/myApp/server/internal/pushproto"
 )
 
-const httpTimeout = 10 * time.Second
+const (
+	httpTimeout    = 10 * time.Second
+	maxSealedBytes = 2 << 10 // a sealed push handle is far smaller
+)
 
 // Module is the push module. It is the server's core.Pusher. Push is disabled
 // (it does nothing and returns nil) when PushGatewayURL is empty.
@@ -35,9 +39,8 @@ type Module struct {
 	d  core.Deps
 	hc *http.Client
 
-	keyOnce sync.Once
-	key     ed25519.PrivateKey
-	keyErr  error
+	keyMu sync.Mutex
+	key   ed25519.PrivateKey // cached after the first good read; failures are retried
 }
 
 var _ core.Pusher = (*Module)(nil)
@@ -66,8 +69,8 @@ func (m *Module) putToken(w http.ResponseWriter, r *http.Request) error {
 	if err := httpx.Decode(r, &body); err != nil {
 		return err
 	}
-	if len(body.Sealed) == 0 {
-		return httpx.Err("bad_request", "sealed is required")
+	if len(body.Sealed) == 0 || len(body.Sealed) > maxSealedBytes {
+		return httpx.Err("bad_request", "sealed must be between 1 byte and 2 KiB")
 	}
 	p := httpx.PrincipalFrom(r.Context())
 	_, err := m.d.DB.Exec(r.Context(),
@@ -96,8 +99,30 @@ func (m *Module) deleteToken(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (m *Module) loadKey() (ed25519.PrivateKey, error) {
-	m.keyOnce.Do(func() { m.key, m.keyErr = readKey(m.d.Config.PushKeyFile) })
-	return m.key, m.keyErr
+	m.keyMu.Lock()
+	defer m.keyMu.Unlock()
+	if m.key != nil {
+		return m.key, nil
+	}
+	k, err := readKey(m.d.Config.PushKeyFile)
+	if err != nil {
+		return nil, err // not cached: a fixed key file works without a restart
+	}
+	m.key = k
+	return k, nil
+}
+
+// Validate checks the push configuration at startup. With a gateway URL set,
+// the server ID and a parseable Ed25519 signing key are required.
+func Validate(cfg config.Config) error {
+	if cfg.PushGatewayURL == "" {
+		return nil
+	}
+	if cfg.PushServerID == "" {
+		return errors.New("push: APP_PUSH_GATEWAY_URL requires APP_PUSH_SERVER_ID")
+	}
+	_, err := readKey(cfg.PushKeyFile)
+	return err
 }
 
 func readKey(path string) (ed25519.PrivateKey, error) {

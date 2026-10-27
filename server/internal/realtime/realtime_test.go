@@ -102,10 +102,12 @@ func TestNotifyOnlineSendsFrame(t *testing.T) {
 func TestNotifyOfflinePushes(t *testing.T) {
 	e := setup(t)
 	e.m.Notify(context.Background(), e.p.DeviceID, core.Event{Type: "inbox", Push: core.PushMessage, PushPayload: []byte("pay")})
+	e.m.WaitBackground()
 	if len(e.f.Push.Pushed) != 1 || string(e.f.Push.Pushed[0].Payload) != "pay" || e.f.Push.Pushed[0].Kind != core.PushMessage {
 		t.Fatalf("pushed %+v", e.f.Push.Pushed)
 	}
 	e.m.Notify(context.Background(), e.p.DeviceID, core.Event{Type: "inbox", Push: core.PushNone})
+	e.m.WaitBackground()
 	if len(e.f.Push.Pushed) != 1 {
 		t.Fatal("PushNone pushed")
 	}
@@ -245,4 +247,65 @@ func FuzzDecodeFrame(f *testing.F) {
 	f.Add([]byte(`{"type":"a","id":"1","data":{}}`))
 	f.Add([]byte(`[`))
 	f.Fuzz(func(t *testing.T, b []byte) { decodeFrame(b) })
+}
+
+// revokingVerifier accepts the token, then deletes the device before the
+// WebSocket is registered: the race between the token check and hub.add.
+type revokingVerifier struct {
+	d core.Deps
+	p core.Principal
+}
+
+func (v revokingVerifier) Verify(ctx context.Context, _ string) (core.Principal, error) {
+	_, err := v.d.DB.Exec(ctx, `delete from devices where id = $1`, v.p.DeviceID)
+	return v.p, err
+}
+
+func TestRevokedBetweenVerifyAndRegisterIsClosed(t *testing.T) {
+	d, _ := testkit.NewDeps(t)
+	m := New(d)
+	acct := testkit.Account(t, d, "alice")
+	c := testkit.Serve(t, d, m, testkit.WithVerifier(revokingVerifier{d: d, p: acct}))
+	srv := httptest.NewServer(c.Handler)
+	t.Cleanup(srv.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ws, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http")+"/v1/ws", &websocket.DialOptions{
+		HTTPHeader: http.Header{"Authorization": {"Bearer x"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.CloseNow()
+	if code := closeCode(t, ws); code != 4003 {
+		t.Fatalf("close code %d, want 4003", code)
+	}
+}
+
+func TestNotifyPushDoesNotBlockTheCaller(t *testing.T) {
+	d, _ := testkit.NewDeps(t, func(d *core.Deps) { d.Push = slowPusher{} })
+	m := New(d)
+	start := time.Now()
+	m.Notify(context.Background(), "dev", core.Event{Type: "inbox", Push: core.PushMessage})
+	if el := time.Since(start); el > 200*time.Millisecond {
+		t.Fatalf("Notify took %v", el)
+	}
+	done := make(chan struct{})
+	go func() { m.WaitBackground(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("WaitBackground did not drain")
+	}
+}
+
+type slowPusher struct{}
+
+func (slowPusher) Push(ctx context.Context, _ string, _ core.PushKind, _ []byte) error {
+	select {
+	case <-time.After(time.Second):
+	case <-ctx.Done():
+	}
+	return nil
 }

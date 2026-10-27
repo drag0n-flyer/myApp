@@ -83,7 +83,7 @@ sudo chown 65532:65532 secrets/escrow.pem
 sudo chmod 0400 secrets/escrow.pem
 ```
 
-Set `APP_ESCROW_KEY_FILE=/secrets/escrow.pem`. The public half is published in `GET /v1/server`. Back the file up separately from the database: without it the stored copies cannot be read, and anyone who holds it can read them. Do not change the key while escrowed messages exist you still need to read.
+Set `APP_ESCROW_KEY_FILE=/secrets/escrow.pem`. The public half is published in `GET /v1/server`. Back the file up separately from the database: without it the stored copies cannot be read, and anyone who holds it can read them. Do not change the key while escrowed messages exist you still need to read. Keep the key for as long as any server-readable conversation exists, even if you later switch new conversations back to end-to-end: those conversations keep producing escrow copies, and the server refuses to start if the key file is set but missing or invalid.
 
 ## Reports
 

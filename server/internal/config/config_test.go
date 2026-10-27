@@ -79,6 +79,7 @@ func TestLoadOverridesAndOptional(t *testing.T) {
 	env["APP_MAIL_FROM"] = "hi@x.test"
 	env["APP_SMTP_URL"] = "smtp://u:p@h:587"
 	env["APP_TURN_SECRET"] = "s3"
+	env["APP_RELAYS"] = "turn1.x"
 	env["APP_PUSH_GATEWAY_URL"] = "https://push.test"
 	env["APP_PUSH_KEY_FILE"] = "/k.pem"
 	env["APP_PUSH_SERVER_ID"] = "srv1"
@@ -92,7 +93,7 @@ func TestLoadOverridesAndOptional(t *testing.T) {
 	want := Config{
 		Host: "chat.test", Listen: ":9000", AdminListen: "127.0.0.1:9999",
 		DatabaseURL: "postgres:///x", DataDir: "/data",
-		SMTPURL: "smtp://u:p@h:587", MailFrom: "hi@x.test", TURNSecret: "s3",
+		SMTPURL: "smtp://u:p@h:587", MailFrom: "hi@x.test", TURNSecret: "s3", Relays: []Relay{{Host: "turn1.x"}},
 		PushGatewayURL: "https://push.test", PushKeyFile: "/k.pem", PushServerID: "srv1",
 		EscrowKeyFile: "/e.pem", AppleAppIDs: []string{"T1.a.b", "T2.c.d"}, TrustProxy: true,
 	}
@@ -223,6 +224,40 @@ func TestModeRank(t *testing.T) {
 	for _, mode := range []string{"auto", "", "turbo"} {
 		if _, ok := ModeRank(mode); ok {
 			t.Errorf("ModeRank(%q) ok = true, want false", mode)
+		}
+	}
+}
+
+func TestLoadRejectsBadOperationalConfig(t *testing.T) {
+	for name, c := range map[string]struct {
+		env  map[string]string
+		want string
+	}{
+		"relay without host":     {map[string]string{"APP_RELAYS": "@eu"}, "no host"},
+		"turn secret, no relays": {map[string]string{"APP_TURN_SECRET": "s"}, "APP_RELAYS"},
+		"gateway without id":     {map[string]string{"APP_PUSH_GATEWAY_URL": "https://p", "APP_PUSH_KEY_FILE": "/k"}, "APP_PUSH_SERVER_ID"},
+		"gateway without key":    {map[string]string{"APP_PUSH_GATEWAY_URL": "https://p", "APP_PUSH_SERVER_ID": "s"}, "APP_PUSH_KEY_FILE"},
+	} {
+		env := baseEnv()
+		for k, v := range c.env {
+			env[k] = v
+		}
+		if _, _, err := Load(mapEnv(env), noFiles); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err = %v, want %q", name, err, c.want)
+		}
+	}
+}
+
+func TestLoadRejectsNonPositivePolicyNumbers(t *testing.T) {
+	for _, pol := range []string{
+		`{"retention":{"inboxDays":0}}`, `{"retention":{"escrowDays":-1}}`,
+		`{"limits":{"attachmentBytes":0}}`, `{"limits":{"attachmentBytesPerDay":-5}}`,
+	} {
+		env := baseEnv()
+		env["APP_POLICY_FILE"] = "/p.json"
+		read := func(string) ([]byte, error) { return []byte(pol), nil }
+		if _, _, err := Load(mapEnv(env), read); err == nil {
+			t.Errorf("%s accepted", pol)
 		}
 	}
 }

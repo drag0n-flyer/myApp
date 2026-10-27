@@ -330,3 +330,15 @@ func TestPutTokenAcceptsBase64URLWithoutPadding(t *testing.T) {
 		}
 	}
 }
+
+func TestPutTokenCapsSealedAt2KiB(t *testing.T) {
+	d, _ := testkit.NewDeps(t)
+	c := testkit.Serve(t, d, push.New(d))
+	p := testkit.Account(t, d, "ana")
+	if r := putToken(t, c, p, "alert", make([]byte, 2048)); r.Status != 204 {
+		t.Fatalf("2 KiB: %s", r)
+	}
+	if r := putToken(t, c, p, "alert", make([]byte, 2049)); r.Status != 400 || r.Code() != "bad_request" {
+		t.Fatalf("2 KiB + 1: %s", r)
+	}
+}

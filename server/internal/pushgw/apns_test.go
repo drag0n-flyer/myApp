@@ -260,3 +260,30 @@ func mustEd25519DER(t *testing.T) []byte {
 	}
 	return der
 }
+
+// An ExpiredProviderToken answer re-mints the token at most once per 20 minutes.
+func TestExpiredProviderTokenRemintLimited(t *testing.T) {
+	f := newApple(t)
+	now := time.Unix(1767225600, 0)
+	c, _ := newClient(t, f, func() time.Time { return now })
+	h := pushproto.Handle{Token: "aa", Kind: "alert", Env: "sandbox", Bundle: "b"}
+	tok := func() string { return f.last(t).header.Get("Authorization") }
+	send := func() string {
+		_, _ = c.Send(context.Background(), h, "message", nil)
+		return tok()
+	}
+	first := send()
+	f.mu.Lock()
+	f.status, f.reply = 403, `{"reason":"ExpiredProviderToken"}`
+	f.mu.Unlock()
+	now = now.Add(5 * time.Minute)
+	send() // rejected, but the token is younger than 20 minutes: kept
+	if got := send(); got != first {
+		t.Fatal("token re-minted within 20 minutes")
+	}
+	now = now.Add(20 * time.Minute)
+	send() // rejected: token is old enough to be dropped
+	if got := send(); got == first {
+		t.Fatal("token not re-minted after 20 minutes")
+	}
+}

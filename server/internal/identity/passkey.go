@@ -3,6 +3,7 @@ package identity
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/go-webauthn/webauthn/protocol"
@@ -33,6 +34,15 @@ func newWebAuthn(cfg config.Config) (*webauthn.WebAuthn, error) {
 		},
 		Timeouts: webauthn.TimeoutsConfig{Login: timeout, Registration: timeout},
 	})
+}
+
+// Validate checks that the WebAuthn relying party can be built from cfg, so a
+// bad host stops startup instead of failing every sign-up.
+func Validate(cfg config.Config) error {
+	if _, err := newWebAuthn(cfg); err != nil {
+		return fmt.Errorf("identity: passkey configuration: %w", err)
+	}
+	return nil
 }
 
 // relyingParty hides the library's type from the rest of the module.

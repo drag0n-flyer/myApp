@@ -27,6 +27,7 @@ var b64 = base64.RawURLEncoding
 // fakes.
 type e2e struct {
 	t   *testing.T
+	a   *app.App
 	d   core.Deps
 	f   *testkit.Fakes
 	url string
@@ -39,16 +40,17 @@ type user struct {
 	SessionToken string `json:"sessionToken"`
 }
 
-func newE2E(t *testing.T) *e2e {
+func newE2E(t *testing.T, opts ...func(*core.Deps)) *e2e {
 	t.Helper()
-	d, f := testkit.NewDeps(t, func(d *core.Deps) { d.Policy.RequiresInvite = false })
+	opts = append([]func(*core.Deps){func(d *core.Deps) { d.Policy.RequiresInvite = false }}, opts...)
+	d, f := testkit.NewDeps(t, opts...)
 	a := app.New(d)
 	srv := httptest.NewServer(a.Handler())
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { a.Run(ctx); close(done) }()
 	t.Cleanup(func() { cancel(); <-done; srv.Close() })
-	return &e2e{t: t, d: d, f: f, url: srv.URL}
+	return &e2e{t: t, a: a, d: d, f: f, url: srv.URL}
 }
 
 // do sends a JSON request with an optional bearer token and returns the status
@@ -228,6 +230,14 @@ func (e *e2e) message(from user, conv, text, clientMsgID string) {
 	}, nil)
 }
 
+// wait drains the background push sends, so the Push fake can be read safely.
+func (e *e2e) wait() {
+	e.t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	e.a.Wait(ctx)
+}
+
 func (e *e2e) count(query string, args ...any) int {
 	e.t.Helper()
 	var n int
@@ -271,8 +281,10 @@ func TestE2EOfflineMessagePushes(t *testing.T) {
 	e := newE2E(t)
 	ana, bob := e.signUp("ana"), e.signUp("bob")
 	conv := e.connect(ana, bob)
+	e.wait()
 	before := len(e.f.Push.Pushed)
 	e.message(ana, conv, "are you there", "m1")
+	e.wait()
 
 	var got int
 	for _, p := range e.f.Push.Pushed[before:] {
@@ -333,6 +345,7 @@ func TestE2ERevokedDeviceGetsNothing(t *testing.T) {
 		t.Fatalf("claim %+v", mac)
 	}
 
+	e.ok(mac.SessionToken, "PUT", "/v1/push/tokens/alert", map[string]string{"sealed": b64.EncodeToString([]byte("mac handle"))}, nil)
 	conv := e.connect(ana, bob, bob.DeviceID, mac.DeviceID)
 	macWS := e.dial(mac.SessionToken)
 	if n := e.count(`select count(*) from inbox where device_id = $1`, mac.DeviceID); n != 1 {
@@ -351,7 +364,18 @@ func TestE2ERevokedDeviceGetsNothing(t *testing.T) {
 		t.Fatalf("revoked token status %d", st)
 	}
 
+	if n := e.count(`select count(*) from push_tokens where device_id = $1`, mac.DeviceID); n != 0 {
+		t.Fatalf("revoked mac still has %d push tokens", n)
+	}
+	e.wait()
+	before := len(e.f.Push.Pushed)
 	e.message(ana, conv, "after revoke", "m1")
+	e.wait()
+	for _, p := range e.f.Push.Pushed[before:] {
+		if p.DeviceID == mac.DeviceID {
+			t.Fatalf("push sent to the revoked mac: %+v", p)
+		}
+	}
 	if n := e.count(`select count(*) from inbox where device_id = $1`, mac.DeviceID); n != 0 {
 		t.Fatalf("revoked mac has %d inbox rows", n)
 	}
@@ -395,4 +419,27 @@ func TestE2EDeleteAccountRemovesEverything(t *testing.T) {
 	if st, _ := e.do(bob.SessionToken, "GET", "/v1/me", nil); st != 401 {
 		t.Errorf("deleted account's token status %d", st)
 	}
+}
+
+// blockedPusher stands in for a push gateway that hangs.
+type blockedPusher struct{}
+
+func (blockedPusher) Push(ctx context.Context, _ string, _ core.PushKind, _ []byte) error {
+	select {
+	case <-time.After(2 * time.Second):
+	case <-ctx.Done():
+	}
+	return nil
+}
+
+func TestE2ESlowPushDoesNotSlowMessages(t *testing.T) {
+	e := newE2E(t, func(d *core.Deps) { d.Push = blockedPusher{} })
+	ana, bob := e.signUp("ana"), e.signUp("bob")
+	start := time.Now()
+	conv := e.connect(ana, bob) // bob is offline: the welcome would push
+	e.message(ana, conv, "hello", "m1")
+	if el := time.Since(start); el > 500*time.Millisecond {
+		t.Fatalf("connect + message took %v with a 2 s push gateway", el)
+	}
+	e.wait()
 }
