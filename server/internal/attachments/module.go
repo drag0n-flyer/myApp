@@ -177,15 +177,18 @@ func (m *Module) PruneOnce(ctx context.Context) error {
 	if err := rows.Err(); err != nil {
 		return err
 	}
+	// One bad blob must not stop the rest: keep going and report all failures.
+	var errs []error
 	for _, id := range ids {
 		if err := m.store.Delete(ctx, id); err != nil {
-			return err
+			errs = append(errs, err)
+			continue
 		}
 		if _, err := m.d.DB.Exec(ctx, `delete from attachments where id = $1`, id); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // Run deletes expired attachments every hour until ctx is cancelled.
