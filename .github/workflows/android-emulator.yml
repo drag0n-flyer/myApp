@@ -66,12 +66,19 @@ jobs:
       - name: Cross-build mlsffi
         run: scripts/build-mlsffi-android.sh
       - name: Cache the emulator system images and AVDs
+        id: images
         uses: actions/cache@v4
         with:
           path: |
-            ~/.android/avd
+            /usr/local/lib/android/sdk/system-images
+            /usr/local/lib/android/sdk/emulator
             ~/.android/gradle
-          key: avd-${{ runner.os }}-api29-api36-${{ hashFiles('apps/android/mls/build.gradle.kts', 'apps/android/store/build.gradle.kts') }}
+          key: avd-${{ runner.os }}-api29-api36-x86_64-v1
+      - name: Install the emulator and system images
+        run: |
+          set -euo pipefail
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "emulator" \
+            "system-images;android-29;default;x86_64" "system-images;android-36;default;x86_64" >/dev/null
       - name: Instrumented tests on API 29 and API 36
         working-directory: apps/android
         run: |
