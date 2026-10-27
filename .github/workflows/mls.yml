@@ -36,6 +36,13 @@ jobs:
           persist-credentials: false
       - name: Swift target info (diagnostic)
         run: |
+          ls -d /Applications/Xcode* 
+          for x in /Applications/Xcode*.app; do
+            echo "== $x"
+            for t in arm64-apple-ios17.0 arm64-apple-ios17.0-simulator; do
+              echo "$t: $(DEVELOPER_DIR=$x/Contents/Developer xcrun swift -print-target-info --target=$t 2>&1 | grep -E 'librariesRequireRPath|compilerVersion' | tr -d '\n')"
+            done
+          done
           swift --version
           xcodebuild -version
           for t in arm64-apple-ios17.0 arm64-apple-ios17.0-simulator arm64-apple-macosx26.0 x86_64-apple-macosx26.0; do
