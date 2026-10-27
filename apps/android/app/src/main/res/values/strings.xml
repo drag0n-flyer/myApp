@@ -122,4 +122,43 @@
     <string name="block_title">Block this person?</string>
     <string name="cancel">Cancel</string>
     <string name="close">Close</string>
+
+    <!-- Call screens -->
+    <string name="call_connecting">Connecting…</string>
+    <string name="call_ringing">Ringing…</string>
+    <string name="call_incoming">Incoming call</string>
+    <string name="call_ended">Call ended</string>
+    <string name="call_declined">Call declined</string>
+    <string name="call_no_answer">No answer</string>
+    <string name="call_answered_elsewhere">Answered on another device</string>
+    <string name="call_failed">Call failed</string>
+    <string name="call_network_a11y">Network %1$s</string>
+    <string name="call_mode_pill_auto">%1$s · %2$s</string>
+    <string name="call_ctrl_speaker">Speaker</string>
+    <string name="call_ctrl_flip">Flip camera</string>
+    <string name="call_ctrl_mute">Mute</string>
+    <string name="call_ctrl_unmute">Unmute</string>
+    <string name="call_ctrl_video">Video</string>
+    <string name="call_ctrl_data">Data</string>
+    <string name="call_ctrl_end">End</string>
+    <string name="call_answer">Answer</string>
+    <string name="call_decline">Decline</string>
+    <string name="call_remote_video">Video from the other person</string>
+    <string name="call_self_video">Your video</string>
+    <string name="call_data_sheet_title">Data for this call</string>
+    <string name="call_data_sheet_footer">This call only · audio, both directions, estimated</string>
+    <string name="call_simulate">Simulate network</string>
+    <string name="call_simulate_good">Good</string>
+    <string name="call_simulate_weak">Weak</string>
+    <string name="call_simulate_very_weak">Very weak</string>
+    <string name="call_simulate_lost">Lost</string>
+    <string name="call_simulate_advance">Advance 10 s</string>
+
+    <!-- Calls tab -->
+    <string name="calls_filter_all">All</string>
+    <string name="calls_filter_missed">Missed</string>
+    <string name="calls_empty">No calls</string>
+    <string name="calls_incoming">Incoming</string>
+    <string name="calls_outgoing">Outgoing</string>
+    <string name="calls_call_back">Call %1$s</string>
 </resources>
