@@ -108,7 +108,7 @@ The new device cannot read messages sent before its leaf was added. Device chang
 
 ## Safety numbers
 
-A client can show two people a number that changes when either side's devices change (plan 7 Design 20, [OPEN-6](../security/threat-model.md#open-6-no-contact-or-device-verification)). It is computed from the preferred conversation's members and their MLS signature public keys, which the engine returns from `memberKeys(of:)` (a `MemberKey` is an identity and a signature key; plan 4 adds it at plan 7's request).
+A client can show two people a number that changes when either side's devices change (plan 7 Design 20, [OPEN-6](../security/threat-model.md#open-6-no-contact-or-device-verification)). It is computed from the preferred conversation's members and their MLS signature public keys, which the engine returns from `memberKeys(of:)` (a `MemberKey` is an identity and a signature key; plan 7 has asked plan 4 to add it, and that request is still pending).
 
 - For each account, `side = SHA-256("safety-v1" ‖ 0x00 ‖ accountID ‖ 0x00 ‖ devices)`. `devices` lists that account's member devices sorted by identity bytes, each as `u16be(len id) ‖ id ‖ u16be(len key) ‖ key`.
 - The two sides are ordered by account ID. Each side gives 6 groups of 5 digits: group `i` is bytes `5i` to `5i+4` as a big-endian integer, mod 100 000. The number is the lower side's groups, then the higher side's: 12 groups, the same on both phones.

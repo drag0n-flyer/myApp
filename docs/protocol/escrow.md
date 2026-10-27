@@ -46,8 +46,22 @@ The server's checks are a backstop. The client decides by the rules below.
 - The mode is set once, when the conversation is created, from the server's policy. No Phase 1 call changes it, so a conversation cannot be downgraded.
 - **The conversation's creator binds the mode inside the conversation.** The first application message of every conversation is a `MessageBody` of kind `mode`, `{"k":"mode","m":"e2ee"}` or `{"k":"mode","m":"server_readable"}`, taken from the server's create response (plan 7 Design 18, owner-approved). Whoever commits a later Add sends it again right after, so devices that join later learn it.
 - **Each device pins the first `mode` it sees** as the conversation's inner mode. The pin never changes. A later `mode` message with another value is ignored and flagged as a mismatch.
-- **A client adds an escrow copy only when the inner mode and the server's mode both say `server_readable`.** When the inner mode is `e2ee`, it never adds one, whatever the server says, and an `escrow_required` answer never overrides that. Until a `mode` message arrives, a conversation that the server calls `server_readable` holds its outgoing messages, and one that the server calls `e2ee` sends without escrow.
-- **Any disagreement pauses sending.** If the server demands escrow for a conversation pinned `e2ee`, the message fails, the chat shows one line saying messages are paused, and chat info shows the details. The client does not retry after refreshing the mode from `GET /v1/conversations/{id}`.
+
+The sender decides by the pinned inner mode and the server's mode, as plan 7 Design 18 lays out:
+
+| Inner mode | Server mode | What the sender does |
+|---|---|---|
+| `server_readable` | `server_readable` | Sends with an escrow copy |
+| `e2ee` | `e2ee` | Sends without one |
+| `e2ee` | `server_readable` | Flags a mismatch, fails the message and does not send. This is the only case that pauses sending. |
+| `server_readable` | `e2ee` | Flags a mismatch and sends without an escrow copy |
+| none yet | `e2ee` | Sends without one |
+| none yet | `server_readable` | Keeps the message queued until a `mode` message arrives |
+
+The inner mode is never changed by the server's answers. A mismatch is logged by conversation ID only.
+
+- **When sending pauses,** the chat shows one line saying messages are paused, and chat info shows the details. The line names no encryption type.
+- **If the server answers `escrow_required` or `escrow_forbidden`,** the client refreshes the server's mode with `GET /v1/conversations/{id}`, decides again by the table, and retries once. Plan 7 step 7 says this. It cannot make an `e2ee`-pinned conversation send escrow.
 - The server checks only that a copy is present or absent. It cannot open the MLS message or the escrow copy's contents, so it cannot compare the two.
 
 ## Retention and export

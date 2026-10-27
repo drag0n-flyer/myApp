@@ -67,6 +67,8 @@ These rules and values are in this folder but are not fixed by the server design
 | Strict unpadding; the gateway forwards padded bytes; `X-Signature` and `d` are base64url without padding | [Push](push.md) |
 | Notification extension: 2 second lock wait, 25 second deadline, at most 20 inbox items | [Push](push.md#what-the-notification-extension-does-with-d) |
 | Escrow `sentAt` is RFC 3339 | [Escrow](escrow.md#the-plaintext) |
+| After `escrow_required` or `escrow_forbidden` the client refreshes the server mode and retries once (plan 7 step 7); it still follows the pinned-mode table | [Escrow](escrow.md#when-an-escrow-copy-is-sent) |
+| Calls: buffer pre-answer `call.signal` frames per `fromDeviceID` and keep only the answering device's | [Calls](calls.md#call-setup) |
 | An unknown higher `protocol` stops all traffic and keeps local data, also for a signed-in account | [Versioning](versioning.md#what-a-client-does-with-an-unknown-version) |
 
 Test vectors: none of its own. The shared vectors live in `test-vectors/`. They are generated only by the Go generator (plan 9 Task 4), never edited by hand, and verified by both Go and Swift. They are linked from [push](push.md), [escrow](escrow.md) and [calls](calls.md).

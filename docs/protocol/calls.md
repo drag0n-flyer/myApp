@@ -49,7 +49,7 @@ The callee makes the offer. A video SDP is usually 3 to 6 KB, and a push can car
 1. The caller sends `call.invite` with a `ring` payload. The server rings every device of the callee account and sends a call push to the ones that are offline ([push](push.md)).
 2. Each ringing device prepares its offer and starts gathering ICE candidates while it rings. It sends nothing yet.
 3. The device that answers sends `call.answer` with an `offer` payload. The other devices get `call.ended` with `answered_elsewhere`.
-4. The caller gets `call.answered`, runs the checks below, sets the remote description and sends `call.signal` with an `answer` payload.
+4. The caller gets `call.answered`, runs the checks below, sets the remote description and sends `call.signal` with an `answer` payload. Before the answer, several callee devices can send `call.signal` to the caller, and each carries its `fromDeviceID`. The caller buffers those signals per `fromDeviceID`. When `call.answered` arrives, it keeps only the buffer of the device named there and discards the rest. A signal from a device that is not the answering one is never applied.
 5. Both sides trickle candidates with `call.signal`. Ending a call uses `call.hangup` and `call.decline`, which carry no payload.
 
 ## What the receiver must check
