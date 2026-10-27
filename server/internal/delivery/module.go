@@ -25,6 +25,7 @@ func New(d core.Deps) *Module {
 // Routes registers the delivery endpoints.
 func (m *Module) Routes(r *httpx.Router) {
 	m.keyPackageRoutes(r)
+	m.conversationRoutes(r)
 }
 
 // Commands returns the admin CLI subcommands.
