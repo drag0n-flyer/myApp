@@ -33,24 +33,15 @@ jobs:
   apple:
     runs-on: macos-26
     timeout-minutes: 60
+    env:
+      # mls-rs-crypto-cryptokit's build.rs panics when `swift -print-target-info` reports
+      # librariesRequireRPath=true for iOS 17.0, which every Xcode from 26.1 on does.
+      # Xcode 26.0.x reports false. Revisit when the crate's build.rs is fixed upstream.
+      DEVELOPER_DIR: /Applications/Xcode_26.0.1.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Swift target info (diagnostic)
-        run: |
-          ls -d /Applications/Xcode* 
-          for x in /Applications/Xcode*.app; do
-            echo "== $x"
-            for t in arm64-apple-ios17.0 arm64-apple-ios17.0-simulator; do
-              echo "$t: $(DEVELOPER_DIR=$x/Contents/Developer xcrun swift -print-target-info --target=$t 2>&1 | grep -E 'librariesRequireRPath|compilerVersion' | tr -d '\n')"
-            done
-          done
-          swift --version
-          xcodebuild -version
-          for t in arm64-apple-ios17.0 arm64-apple-ios17.0-simulator arm64-apple-macosx26.0 x86_64-apple-macosx26.0; do
-            echo "$t: $(swift -print-target-info --target=$t | grep -E 'librariesRequireRPath')"
-          done
       - name: Build XCFramework and bindings
         working-directory: apps/apple/Packages/SecureMessaging
         run: scripts/build-mlsffi.sh

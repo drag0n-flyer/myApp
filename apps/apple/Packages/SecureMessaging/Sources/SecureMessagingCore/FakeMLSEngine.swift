@@ -12,9 +12,9 @@ import Foundation
 ///   only on `commitAccepted` (or when our own commit comes back through `process`).
 /// - Processing someone else's commit clears our pending commit (it lost the race); a later
 ///   `commitRejected` or `commitAccepted` with nothing pending is a no-op.
-/// - An application message from an epoch above ours, from more than two epochs below ours, or
-///   for an unknown group throws; seeing the same message twice (or our own message) throws
-///   `.duplicate`.
+/// - An application message from an epoch above ours throws `.epochGap`, and so does a commit
+///   that skips an epoch. A message from more than two epochs below ours, or seen twice, or our
+///   own, throws `.duplicate`. A message for an unknown group throws `.unknownGroup`.
 /// - After a commit removes this device, the group stays known but every use throws `.notMember`.
 ///
 /// Wire format: JSON with `"fake"` set to `"kp"`, `"commit"`, `"welcome"` or `"app"`, plus
@@ -201,7 +201,7 @@ public final class FakeMLSEngine: MLSEngine, @unchecked Sendable {
             }
             guard newEpoch > state.epoch else { throw MLSError.duplicate }
             guard newEpoch == state.epoch + 1 else {
-                throw MLSError.crypto("commit for epoch \(newEpoch) but group is at \(state.epoch)")
+                throw MLSError.epochGap   // a commit was missed
             }
             state.epoch = newEpoch
             state.members = members
@@ -221,10 +221,10 @@ public final class FakeMLSEngine: MLSEngine, @unchecked Sendable {
             var state = try activeState(group)
             if sender == identity { throw MLSError.duplicate }   // cannot process our own message
             guard epoch <= state.epoch else {
-                throw MLSError.crypto("message from epoch \(epoch) but group is at \(state.epoch)")
+                throw MLSError.epochGap   // a commit was missed
             }
             guard state.epoch - epoch <= 2 else {
-                throw MLSError.crypto("message from epoch \(epoch) is too old for epoch \(state.epoch)")
+                throw MLSError.duplicate   // too old to read; the real engine reports it as already passed
             }
             guard state.seen.insert(raw).inserted else { throw MLSError.duplicate }
             groups[group] = state
