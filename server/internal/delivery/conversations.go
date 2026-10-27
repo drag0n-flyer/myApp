@@ -172,6 +172,7 @@ func (m *Module) postCommit(w http.ResponseWriter, r *http.Request) error {
 		// conversation's accounts. A device whose account blocked the sender
 		// is skipped silently: no welcome and no membership.
 		var added []string
+		var allowed []string
 		if len(add) > 0 {
 			ok, err := queryPairs(ctx, tx,
 				`select d.id::text, d.account_id::text from devices d
@@ -187,19 +188,34 @@ func (m *Module) postCommit(w http.ResponseWriter, r *http.Request) error {
 			if err != nil {
 				return err
 			}
-			var allowed []string
 			for _, dv := range ok {
 				if !blocked[dv.account] {
 					allowed = append(allowed, dv.device)
 				}
 			}
-			if len(allowed) > 0 {
-				added, err = queryStrings(ctx, tx,
-					`insert into conversation_devices (conversation_id, device_id)
-					 select $1, unnest($2::uuid[]) on conflict do nothing returning device_id::text`, id, allowed)
-				if err != nil {
-					return err
-				}
+		}
+		snapBlocked, err := m.blockers(ctx, snapshot, p.AccountID)
+		if err != nil {
+			return err
+		}
+		// Lock every device this commit touches or delivers to, once, in
+		// sorted order, before the conversation_devices writes below (their
+		// foreign keys take a share lock on the device rows, and taking that
+		// before the exclusive lock could deadlock with other lockers).
+		lockIDs := make([]string, 0, len(snapshot)+len(allowed))
+		for _, dv := range snapshot {
+			lockIDs = append(lockIDs, dv.device)
+		}
+		lockIDs = append(lockIDs, allowed...)
+		if err := lockDevices(ctx, tx, lockIDs); err != nil {
+			return err
+		}
+		if len(allowed) > 0 {
+			added, err = queryStrings(ctx, tx,
+				`insert into conversation_devices (conversation_id, device_id)
+				 select $1, unnest($2::uuid[]) on conflict do nothing returning device_id::text`, id, allowed)
+			if err != nil {
+				return err
 			}
 		}
 		if len(remove) > 0 {
@@ -209,26 +225,16 @@ func (m *Module) postCommit(w http.ResponseWriter, r *http.Request) error {
 			}
 		}
 
-		// 4. Deliver. Lock every recipient once, in sorted order, before any
-		// insert. The commit goes to the whole snapshot, sender included; a
+		// 4. Deliver. The commit goes to the whole snapshot, sender included; a
 		// blocker still gets the row (the group must not desync) but no push.
 		// It carries the epoch it was made at; a welcome carries the new one.
-		snapBlocked, err := m.blockers(ctx, snapshot, p.AccountID)
-		if err != nil {
-			return err
-		}
-		var loud, quiet, lockIDs []string
+		var loud, quiet []string
 		for _, dv := range snapshot {
-			lockIDs = append(lockIDs, dv.device)
 			if snapBlocked[dv.account] {
 				quiet = append(quiet, dv.device)
 			} else {
 				loud = append(loud, dv.device)
 			}
-		}
-		lockIDs = append(lockIDs, added...)
-		if err := lockDevices(ctx, tx, lockIDs); err != nil {
-			return err
 		}
 		now := m.d.Now()
 		commitItem := InboxItem{

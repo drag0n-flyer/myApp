@@ -435,3 +435,36 @@ func TestBlockerGetsCommitWithoutPush(t *testing.T) {
 		t.Fatalf("ana2 last event = %+v", last)
 	}
 }
+
+// Adding devices to conversations while others claim KeyPackages of the same
+// devices must not deadlock (both lock device rows).
+func TestCommitAddConcurrentWithClaim(t *testing.T) {
+	w := newWorld(t)
+	w.upload(t, w.bob1, pkgs(30, 1))
+	w.upload(t, w.bob2, pkgs(30, 2))
+	const n = 20
+	ids := make([]string, n)
+	for i := range ids {
+		ids[i] = w.newConvo(t)
+	}
+	var wg sync.WaitGroup
+	commits := make([]*testkit.Response, n)
+	claims := make([]*testkit.Response, n)
+	for i := 0; i < n; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			commits[i] = w.commit(t, w.ana1, ids[i], 0, []string{w.bob1.DeviceID, w.bob2.DeviceID, w.ana2.DeviceID}, nil, true)
+		}()
+		go func() {
+			defer wg.Done()
+			claims[i] = w.c.Do(&w.carol, "POST", "/v1/keypackages/claim", map[string]string{"accountID": w.bob1.AccountID})
+		}()
+	}
+	wg.Wait()
+	for i := 0; i < n; i++ {
+		if commits[i].Status != 200 || claims[i].Status != 200 {
+			t.Fatalf("commit: %s / claim: %s", commits[i], claims[i])
+		}
+	}
+}
