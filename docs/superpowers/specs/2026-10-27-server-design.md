@@ -273,8 +273,8 @@ Checks before sending:
 - The timestamp is within ±300 s of the gateway's clock.
 - The same signature has not been seen in the last 10 minutes (a replay).
 - The handle opens with the gateway's key.
-- The handle's bundle ID is in `PUSHGW_BUNDLE_IDS`.
-- The handle's kind fits: `call` may use `voip` or `alert`; `message` must use `alert`.
+- The handle's bundle ID is in `PUSHGW_BUNDLE_IDS` (for an `fcm` handle: its application ID is in `PUSHGW_ANDROID_APP_IDS`, and the gateway has FCM configured).
+- The handle's kind fits: `call` may use `voip`, `alert` or `fcm`; `message` must use `alert` or `fcm`.
 
 Limits: 1000 per minute per server, 120 per hour per handle for messages, and 20 per hour per handle for calls.
 
@@ -292,7 +292,14 @@ Besides the codes of section 7, the gateway also answers `conflict` (409, a repl
   - body `{"d":"<b64 data>"}`
 - APNs `410`, or `400 BadDeviceToken`, becomes a `410` to the server.
 
-`appserver keygen push` prints a new Ed25519 private key as PKCS#8 PEM; `appserver push register --gateway URL --name N --contact C` registers it and prints the server ID. Gateway configuration: `PUSHGW_LISTEN`, `PUSHGW_DATABASE_URL`, `PUSHGW_HPKE_KEY_FILE`, `PUSHGW_APNS_KEY_FILE` (.p8, held by the owner only), `PUSHGW_APNS_KEY_ID`, `PUSHGW_APNS_TEAM_ID`, `PUSHGW_BUNDLE_IDS`, `PUSHGW_APNS_URL` (overrides both APNs hosts; for tests).
+**FCM (`fcm` handles):**
+- HTTP/2 or HTTP/1.1 `POST https://fcm.googleapis.com/v1/projects/<PUSHGW_FCM_PROJECT_ID>/messages:send` with `Authorization: Bearer <access token>`. The access token comes from the service-account key: an RS256 JWT (`iss` = the account's email, `scope` = `https://www.googleapis.com/auth/firebase.messaging`, `aud` = the key's `token_uri`, one hour lifetime) exchanged at that URI. It is cached until 5 minutes before it expires, and a new one is never minted more than once a minute. No redirects are followed.
+- Body `{"message":{"token":"<t>","data":{"k":"message"|"call","d":"<b64 data>"},"android":{"priority":"HIGH","ttl":"86400s"|"45s"}}}`. `d` is standard base64 with padding of the padded payload, unchanged, as for APNs. The TTL is `45s` for a call and `86400s` for a message.
+- **Size rule:** FCM data is limited to 4096 bytes. A padded payload over 2048 bytes (the 3072 bucket, 4096 characters in base64) is replaced by the 256-byte empty one (length 0, "fetch the inbox"). The gateway decides this from the padded length alone.
+- FCM `UNREGISTERED` becomes a `410` to the server. Any other `404`, including `NOT_FOUND` (which a wrong URL, proxy or project also returns), is a gateway-side error: `502`, and the handle is kept.
+- An `fcm` handle must have `e = "production"`; anything else is `bad_request`.
+
+`appserver keygen push` prints a new Ed25519 private key as PKCS#8 PEM; `appserver push register --gateway URL --name N --contact C` registers it and prints the server ID. Gateway configuration: `PUSHGW_LISTEN`, `PUSHGW_DATABASE_URL`, `PUSHGW_HPKE_KEY_FILE`, `PUSHGW_APNS_KEY_FILE` (.p8, held by the owner only), `PUSHGW_APNS_KEY_ID`, `PUSHGW_APNS_TEAM_ID`, `PUSHGW_BUNDLE_IDS`, `PUSHGW_APNS_URL` (overrides both APNs hosts; for tests). Android handles need `PUSHGW_FCM_PROJECT_ID`, `PUSHGW_FCM_KEY_FILE` (the service-account JSON, held by the owner only) and `PUSHGW_ANDROID_APP_IDS` (all three or none), plus `PUSHGW_FCM_URL` (overrides the FCM host; for tests).
 
 ### 7.5 Social, attachments, server info (lane E)
 
