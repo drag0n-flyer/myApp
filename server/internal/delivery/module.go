@@ -47,8 +47,25 @@ func (m *Module) Run(ctx context.Context) {
 		case <-t.C:
 			if err := m.PruneOnce(ctx); err != nil && ctx.Err() == nil {
 				// The error text is not logged (section 8); the type is enough.
-				m.d.Log.Error("delivery prune failed", "errType", fmt.Sprintf("%T", err))
+				m.d.Log.Error("delivery prune failed", "errType", errType(err))
 			}
 		}
 	}
+}
+
+// errType names the Go type of err for logs. For an errors.Join result it names
+// the first joined error, since the join type itself says nothing.
+func errType(err error) string {
+	for {
+		j, ok := err.(interface{ Unwrap() []error })
+		if !ok {
+			break
+		}
+		errs := j.Unwrap()
+		if len(errs) == 0 {
+			break
+		}
+		err = errs[0]
+	}
+	return fmt.Sprintf("%T", err)
 }

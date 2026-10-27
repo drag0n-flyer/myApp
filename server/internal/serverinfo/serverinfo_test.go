@@ -66,7 +66,9 @@ func TestServerInfoEscrowKey(t *testing.T) {
 	}
 	der, _ := x509.MarshalPKCS8PrivateKey(priv)
 	path := filepath.Join(t.TempDir(), "escrow.pem")
-	os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600)
+	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	// The key is published whenever a key file is set, even for e2ee policy.
 	e2ee := serve(t, func(d *core.Deps) { d.Config.EscrowKeyFile = path })

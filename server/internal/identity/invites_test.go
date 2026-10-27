@@ -72,7 +72,9 @@ func TestInviteCheck(t *testing.T) {
 		t.Fatal("malformed code valid")
 	}
 	empty, _ := m.CreateInvite(ctx, 1, time.Hour)
-	d.DB.Exec(ctx, `update invites set uses_left=0 where code=$1`, empty)
+	if _, err := d.DB.Exec(ctx, `update invites set uses_left=0 where code=$1`, empty); err != nil {
+		t.Fatal(err)
+	}
 	if _, v := checkInvite(t, c, empty); v {
 		t.Fatal("used-up code valid")
 	}
@@ -109,7 +111,9 @@ func TestInviteCreateCommand(t *testing.T) {
 		t.Fatalf("output %q", out.String())
 	}
 	var n int
-	d.DB.QueryRow(context.Background(), `select uses_left from invites`).Scan(&n)
+	if err := d.DB.QueryRow(context.Background(), `select uses_left from invites`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
 	if n != 3 {
 		t.Fatalf("uses_left %d", n)
 	}

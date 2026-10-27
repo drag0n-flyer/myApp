@@ -160,7 +160,7 @@ func (m *Module) download(w http.ResponseWriter, r *http.Request) error {
 
 // PruneOnce deletes every expired attachment, file first, then row.
 func (m *Module) PruneOnce(ctx context.Context) error {
-	rows, err := m.d.DB.Query(ctx, `select id from attachments where expires_at <= $1`, m.d.Now())
+	rows, err := m.d.DB.Query(ctx, `select id from attachments where expires_at <= $1 order by id`, m.d.Now())
 	if err != nil {
 		return err
 	}
