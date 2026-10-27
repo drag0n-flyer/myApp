@@ -1,12 +1,12 @@
 # Progress
 
-Last updated: 2026-10-28 (late night).
+Last updated: 2026-10-29 (early morning).
 
 | Track | Done | % |
 |---|---|---|
 | iPhone/Mac Phase 1 | 119 / 128 | 93% |
 | Android | 30 / 43 | 70% |
-| Admin dashboard | 15 / 15 on `main`; admin accounts being added | 100% + extension |
+| Admin dashboard | 15 / 15 on `main`; admin accounts and 2FA being added | 100% + extension |
 
 About 15 agents work in parallel. Mac CI runs only the jobs a change needs. Android CI uses Linux runners only.
 
@@ -25,7 +25,7 @@ make kill    # stops a server started by make run; make clean removes the binary
 
 This machine's `.env` uses the local PostgreSQL 18 (user and database `appserver`) and `APP_HOST=192.168.0.174.nip.io`. Passkeys refuse bare IP addresses; nip.io points that name at 192.168.0.174. Phones need HTTPS before they can sign in (see "Waiting on the owner").
 
-Admin dashboard: `http://localhost:9044/admin/` on this machine (it refuses the IP address over plain HTTP). From another computer: `ssh -N -L 9044:127.0.0.1:9044 user@192.168.0.174`, then `http://localhost:9044/admin/`. Until admin accounts land, sign in with a code from `bin/appserver admin token create --label laptop`.
+Admin dashboard: `http://localhost:9044/admin/`. `.env` also sets `APP_ADMIN_HOSTS=192.168.0.174` and `APP_ADMIN_ALLOW_HTTP=true`, so `http://192.168.0.174:9044/admin/` works on the LAN once admin accounts are merged (sign-in then crosses the LAN unencrypted; owner's choice). Until then the running build still asks for a token from `bin/appserver admin token create --label laptop`.
 
 ## iPhone/Mac Phase 1, by plan
 
@@ -61,7 +61,7 @@ The Apple apps workflow on `main` is red. The fix on `fix/swift62-ci` (Linux pac
 | D, storage and messaging | 7 | 5 | D1–D4 and D6 on `main`; D5, D7 next |
 | E, WebRTC and calls | 6 | 2 | E3, E4 on `main`; E2 (WebRTC build) on CI; E1 merges after E2's first green build; E5, E6 after |
 | F, push | 4 | 4 | done |
-| G, CI | 4 | 2 | G1, G2 on `main`; G3 (emulator tests) in progress; G4 last |
+| G, CI | 4 | 2 | G1, G2 on `main`; G3 (emulator tests) green on CI, adding the key store and voice recorder device tests; G4 last |
 | I, integration and iPhone↔Android test | 2 | 0 | waits for all lanes |
 
 ETA: about 1.5 days of agent work.
@@ -70,14 +70,22 @@ ETA: about 1.5 days of agent work.
 
 On `main`: overview, invites, accounts and devices, reports, read-only settings, audit log, served only on the admin port.
 
-Being added: **admin accounts** (owner decisions 2026-10-28) — username and password; "Create the first admin" on first visit with no setup code; an Admins page to add, disable, enable, reset and remove admins; `bin/appserver admin user list|add|reset-password|disable|enable` for recovery. Then a security review and merge.
+Being added on `feat/admin-users` (owner decisions 2026-10-28):
+- **Username and password only.** Token sign-in and `admin token create` are removed.
+- **First visit:** "Create the first admin" whenever no admin exists, nothing else required.
+- **Admins page:** add, disable, enable, reset password, remove; the last working admin can't be removed.
+- **Optional two-step sign-in (TOTP)** per admin: scan a QR code (skip2/go-qrcode, approved), confirm with a code; sign-in then asks for password and code. Lost phone: `bin/appserver admin user reset-2fa <name>` (no recovery codes).
+- **Plain HTTP on the LAN** for hosts in `APP_ADMIN_HOSTS` when `APP_ADMIN_ALLOW_HTTP=true` (default off; logs a warning).
+- **CLI recovery:** `bin/appserver admin user list|add|reset-password|reset-2fa|disable|enable`; passwords are typed without echo.
+
+Status: accounts reviewed and approved (no serious findings); fix round, plain-HTTP opt-in, token removal and 2FA in progress; then a security review and merge.
 
 ## Waiting on the owner
 
 1. **The final app ID.** Android reads it from `app-id.properties`; the iPhone/Mac file is coming. It can't change after the first store release. The placeholder is `org.example.app`.
 2. **A domain and HTTPS for testing on phones.** The server speaks plain HTTP; the apps, passkeys and the admin dashboard from other machines need HTTPS with a real certificate. A domain pointed at this machine plus Caddy (in the Docker setup) is enough.
 3. **SMTP details in `.env`** (`APP_SMTP_URL`, `APP_MAIL_FROM`), so sign-up codes are sent.
-4. **Keep the admin port on `127.0.0.1`.** `.env` has `APP_ADMIN_LISTEN=0.0.0.0:9044`. With first-visit admin creation and no setup code, anyone who reaches that port before you can create the first admin.
+4. **Admin port on the LAN (your choice, noted):** `.env` has `APP_ADMIN_LISTEN=0.0.0.0:9044` and plain HTTP allowed. Create your admin right after the merge: until the first admin exists, anyone on the network who opens the page can create it. Turn on two-step sign-in.
 5. **Protocol rulings made for you, to confirm:**
    - the first commit of a new chat may be resent once if its reply was lost (only at epoch 0, when the creator is the only member); written into `docs/protocol/mls-profile.md`, marked "owner to confirm"
    - call glare: when both people call at once, a caller whose own offer is 5 s old gives way (carried over from the iPhone)
