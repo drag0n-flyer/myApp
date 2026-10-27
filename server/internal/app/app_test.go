@@ -154,9 +154,9 @@ func TestThreeWordCommand(t *testing.T) {
 	d, _ := testkit.NewDeps(t)
 	a := app.New(d)
 	var out bytes.Buffer
-	err := a.Command(context.Background(), []string{"admin", "token", "create"}, &out)
-	if err != nil || !strings.HasPrefix(out.String(), "adm_") {
-		t.Errorf("admin token create = %q, %v", out.String(), err)
+	err := a.Command(context.Background(), []string{"admin", "user", "list"}, &out)
+	if err != nil || !strings.HasPrefix(out.String(), "no admins yet") {
+		t.Errorf("admin user list = %q, %v", out.String(), err)
 	}
 	if err := a.Command(context.Background(), []string{"invite", "create"}, &out); err != nil {
 		t.Errorf("invite create: %v", err)

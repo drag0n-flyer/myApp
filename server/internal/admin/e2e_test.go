@@ -30,6 +30,8 @@ type browser struct {
 	h      http.Handler
 	cookie *http.Cookie
 	csrf   string
+	// pending is the pending-login cookie of a two-step sign-in.
+	pending *http.Cookie
 }
 
 func (b *browser) do(method, path string, body any, background bool) *httptest.ResponseRecorder {
@@ -63,6 +65,9 @@ func (b *browser) do(method, path string, body any, background bool) *httptest.R
 	}
 	if b.cookie != nil {
 		r.AddCookie(b.cookie)
+	}
+	if b.pending != nil {
+		r.AddCookie(b.pending)
 	}
 	return serveReq(b.h, r)
 }

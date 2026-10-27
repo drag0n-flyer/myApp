@@ -1,7 +1,8 @@
 package admin
 
 import (
-	"context"
+	"errors"
+	"net/http"
 	"time"
 
 	"fmt"
@@ -85,37 +86,14 @@ func TestRemoveRefusedWhenNoEnabledAdminWouldRemain(t *testing.T) {
 	if _, err := runCmd(t, m, "admin user disable", "bob"); err != nil {
 		t.Fatal(err)
 	}
-	tok := signIn(t, m)
+	// No session survives a disable, so the guard is checked on the store.
 	for _, id := range []string{aliceID, bobID} {
-		if rec := tok.do("DELETE", "/admin/api/admins/"+id, nil, false); rec.Code != 409 || errCode(rec) != "conflict" {
-			t.Errorf("remove disabled %s = %d %s", id, rec.Code, rec.Body)
+		if err := m.deleteAdmin(t.Context(), id, Entry{Actor: "dashboard"}); !errors.Is(err, errLastAdmin) {
+			t.Errorf("remove disabled %s = %v, want errLastAdmin", id, err)
 		}
 	}
 	if n := count(t, m, `select count(*) from admin_users`); n != 2 {
 		t.Errorf("admins = %d", n)
-	}
-}
-
-// M4: password logins cannot use up the token bucket.
-func TestTokenLoginHasItsOwnGlobalBucket(t *testing.T) {
-	m, _ := newTestModule(t)
-	h := m.Handler()
-	for i := 1; i <= 31; i++ {
-		r := req("POST", "/admin/api/login", fmt.Sprintf(`{"username":"user%d","password":"wrong password here"}`, i), nil)
-		r.RemoteAddr = fmt.Sprintf("10.0.1.%d:5000", i)
-		w := serveReq(h, r)
-		want := 401
-		if i == 31 {
-			want = 429
-		}
-		if w.Code != want {
-			t.Fatalf("password try %d = %d", i, w.Code)
-		}
-	}
-	r := req("POST", "/admin/api/login", `{"token":"x"}`, nil)
-	r.RemoteAddr = "10.0.2.1:5000"
-	if w := serveReq(h, r); w.Code != 401 {
-		t.Errorf("token login after password flood = %d, want 401", w.Code)
 	}
 }
 
@@ -184,8 +162,8 @@ func TestAdminAllowHTTP(t *testing.T) {
 			d.Config.AdminHosts = []string{"192.168.0.174"}
 			d.Config.AdminAllowHTTP = allow
 		})
-		_, token, _ := m.createToken(context.Background(), "", 15*time.Minute)
-		r := req("POST", "/admin/api/login", `{"token":"`+token+`"}`, nil)
+		ensureTestAdmin(t, m)
+		r := req("POST", "/admin/api/login", pwBody(testUser, goodPassword), nil)
 		r.Host = host
 		r.Header.Set("Origin", "http://"+host)
 		return serveReq(m.Handler(), r)
@@ -207,4 +185,30 @@ func TestAdminAllowHTTP(t *testing.T) {
 			t.Errorf("= %d", w.Code)
 		}
 	})
+}
+
+// A session left by the removed token sign-in cannot be used, and its CLI
+// command is gone; `admin sessions end` still ends everything.
+func TestLegacyTokenSessionsUnusable(t *testing.T) {
+	m, f := newTestModule(t)
+	ctx := t.Context()
+	if _, ok := m.Commands()["admin token create"]; ok {
+		t.Error("admin token create still exists")
+	}
+	id := "44444444-4444-4444-4444-444444444444"
+	if _, err := m.d.DB.Exec(ctx, `insert into admin_tokens (id, token_hash, label, created_at, expires_at, used_at) values ($1, '\x02', '', $2, $2, $2)`, id, f.Clock.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.d.DB.Exec(ctx,
+		`insert into admin_sessions (id_hash, token_id, csrf_hash, created_at, last_seen_at, expires_at) values ($1, $2, $1, $3, $3, $4)`,
+		hashString("legacy"), id, f.Clock.Now(), f.Clock.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	c := &http.Cookie{Name: cookieName, Value: "legacy"}
+	if w := serveReq(m.Handler(), req("GET", "/admin/api/session", "", c)); w.Code != 401 {
+		t.Errorf("legacy session = %d, want 401", w.Code)
+	}
+	if out, err := runCmd(t, m, "admin sessions end"); err != nil || out != "ended 1 sessions\n" {
+		t.Errorf("sessions end = %q %v", out, err)
+	}
 }

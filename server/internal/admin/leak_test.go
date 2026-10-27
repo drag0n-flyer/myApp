@@ -120,10 +120,6 @@ func TestNoSecretsInResponses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	adminToken := "ADMINTOKEN-" + hex.EncodeToString(randBytes(t, 16))
-	adminHash := sha256.Sum256([]byte(adminToken))
-	mustExec(t, d, `insert into admin_tokens (id, token_hash, label, created_at, expires_at) values ($1, $2, 'lbl', $3, $4)`,
-		testSession.TokenID, adminHash[:], f.Clock.Now(), f.Clock.Now().Add(time.Hour))
 
 	// An admin account with a known password, and the hash stored for it.
 	const leakPassword = "LEAKPASSWORD-correct-horse"
@@ -144,15 +140,14 @@ func TestNoSecretsInResponses(t *testing.T) {
 		"escrow bytes":   variants(escrow),
 		"report text":    {"SECRET-TEXT"},
 		"invite code":    {inviteCode, inviteCode[6:]},
-		"admin token":    append([]string{adminToken}, variants(adminHash[:])...),
 		"client IP":      {"203.0.113", "198.51.100"},
 		"config secret":  {"SMTPPASS", "DBPASS", "TURNSECRET", "GWPASS", "GWQUERY", "GWFRAG", "/secrets/", escrowPath, vapidPath},
 	}
 
 	// Reads go through the real handler chain with a real session, so
-	// /session works too; the admin token seeded above is the sign-in token.
+	// /session works too.
 	h := m.Handler()
-	lw := serveReq(h, req("POST", "/admin/api/login", `{"token":"`+adminToken+`"}`, nil))
+	lw := serveReq(h, req("POST", "/admin/api/login", pwBody("leakadmin", leakPassword), nil))
 	if lw.Code != http.StatusNoContent {
 		t.Fatalf("login = %d %s", lw.Code, lw.Body)
 	}

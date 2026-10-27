@@ -22,6 +22,7 @@ Checked by `scripts/check-go-licenses.sh` (go-licenses v2.0.1) against the allow
 | github.com/coder/websocket | v1.8.15 | ISC | owner (plan 2 §2) |
 | github.com/go-webauthn/webauthn | v0.18.2 | BSD-3-Clause | owner (plan 2 §2) |
 | github.com/jackc/pgx/v5 | v5.11.0 | MIT | owner (plan 2 §2) |
+| github.com/skip2/go-qrcode | v0.0.0-20200617195104-da1b6568686e | MIT | owner 2026-10-28 (admin two-step sign-in QR code) |
 
 ## swift-packages
 

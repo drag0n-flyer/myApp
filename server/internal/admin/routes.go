@@ -50,9 +50,14 @@ func (m *Module) mux(wrap func(h apiFunc, public bool) http.Handler) *http.Serve
 	api := func(pattern string, h apiFunc) { mux.Handle(pattern, wrap(h, false)) }
 
 	mux.Handle("POST /admin/api/login", wrap(m.login, true))
+	mux.Handle("POST /admin/api/login/code", wrap(m.loginCode, true))
 	mux.Handle("GET /admin/api/setup", wrap(m.setupNeeded, true))
 	mux.Handle("POST /admin/api/setup", wrap(m.setup, true))
 	api("POST /admin/api/logout", m.logout)
+	api("POST /admin/api/me/totp/start", m.totpStart)
+	api("GET /admin/api/me/totp/qr", m.totpQR)
+	api("POST /admin/api/me/totp/enable", m.totpEnable)
+	api("POST /admin/api/me/totp/disable", m.totpDisable)
 	api("GET /admin/api/session", m.session)
 	api("GET /admin/api/overview", m.overview)
 	api("GET /admin/api/invites", m.listInvites)

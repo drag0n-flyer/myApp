@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -93,7 +94,7 @@ func TestSetupWorksOnce(t *testing.T) {
 
 	a := setupFirst(t, m, "Alice", goodPassword)
 	s := a.loadSession()
-	if s.Username == nil || *s.Username != "alice" || s.TokenID != "" {
+	if s.Username == nil || *s.Username != "alice" {
 		t.Errorf("session = %+v", s)
 	}
 	need.Needed = true
@@ -195,7 +196,7 @@ func TestPasswordLogin(t *testing.T) {
 	if n := count(t, m, `select count(*) from admin_users where last_login_at = $1`, f.Clock.Now()); n != 1 {
 		t.Errorf("last_login_at not updated")
 	}
-	if n := count(t, m, `select count(*) from admin_audit where action = 'login' and actor = 'dashboard' and detail->>'username' = 'alice' and admin_user_id is not null and token_id is null`); n != 1 {
+	if n := count(t, m, `select count(*) from admin_audit where action = 'login' and actor = 'dashboard' and detail->>'username' = 'alice' and admin_user_id is not null`); n != 1 {
 		t.Errorf("login audit rows = %d", n)
 	}
 	// Signing in again ends the browser's previous session.
@@ -279,16 +280,6 @@ func TestPasswordLoginRateLimitedPerUsername(t *testing.T) {
 	r.RemoteAddr = "10.0.0.50:1"
 	if w := serveReq(h, r); w.Code != 429 {
 		t.Errorf("right password while limited = %d", w.Code)
-	}
-}
-
-func TestTokenLoginStillWorksAndHasNoUsername(t *testing.T) {
-	m, _ := newTestModule(t)
-	setupFirst(t, m, "alice", goodPassword)
-	b := signIn(t, m)
-	s := b.loadSession()
-	if s.Username != nil || s.TokenID == "" || s.Label != "laptop" {
-		t.Errorf("token session = %+v", s)
 	}
 }
 
@@ -400,20 +391,22 @@ func TestCannotDisableOrRemoveLastEnabledAdmin(t *testing.T) {
 	a.want(a.do("POST", "/admin/api/admins", map[string]string{"username": "bob", "password": goodPassword}, false), 200, "add bob")
 	aliceID, bobID := findAdmin(t, a, "alice").ID, findAdmin(t, a, "bob").ID
 
-	// A token session is no admin, so only the last-enabled rule applies.
-	tok := signIn(t, m)
-	tok.want(tok.do("POST", "/admin/api/admins/"+bobID+"/disable", nil, false), 204, "disable bob")
+	// Nobody may disable or remove themselves.
 	for _, c := range []struct{ method, path string }{
 		{"POST", "/admin/api/admins/" + aliceID + "/disable"},
 		{"DELETE", "/admin/api/admins/" + aliceID},
 	} {
-		if rec := tok.do(c.method, c.path, nil, false); rec.Code != 409 || errCode(rec) != "conflict" {
+		if rec := a.do(c.method, c.path, nil, false); rec.Code != 409 || errCode(rec) != "conflict" {
 			t.Errorf("%s %s = %d %s", c.method, c.path, rec.Code, rec.Body)
 		}
 	}
-	// A disabled admin can still be removed; that leaves the enabled one.
-	tok.want(tok.do("DELETE", "/admin/api/admins/"+bobID, nil, false), 204, "remove disabled bob")
-	// A token session can disable nobody when the only admin is enabled and last.
+	a.want(a.do("POST", "/admin/api/admins/"+bobID+"/disable", nil, false), 204, "disable bob")
+	// A disabled admin can be removed while another enabled admin remains.
+	a.want(a.do("DELETE", "/admin/api/admins/"+bobID, nil, false), 204, "remove disabled bob")
+	// The last enabled admin cannot be disabled by anyone else.
+	if _, _, err := m.setDisabled(t.Context(), aliceID, true, Entry{Actor: "dashboard"}, true); !errors.Is(err, errLastAdmin) {
+		t.Errorf("disable last = %v, want errLastAdmin", err)
+	}
 	if n := count(t, m, `select count(*) from admin_users where disabled_at is null`); n != 1 {
 		t.Errorf("enabled admins = %d", n)
 	}
@@ -492,11 +485,11 @@ func TestAuditShowsWhichAdminActed(t *testing.T) {
 	var p struct {
 		Entries []struct {
 			Actor, Username, Action string
-			AdminID, TokenID        *string
+			AdminID                 *string
 		}
 	}
 	decodeBody(t, rec, &p)
-	if len(p.Entries) != 1 || p.Entries[0].Username != "alice" || p.Entries[0].AdminID == nil || p.Entries[0].TokenID != nil {
+	if len(p.Entries) != 1 || p.Entries[0].Username != "alice" || p.Entries[0].AdminID == nil {
 		t.Errorf("entries = %+v", p.Entries)
 	}
 	for _, act := range []string{"admin.setup", "admin.add", "admin.disable", "admin.enable", "admin.password", "admin.remove"} {
@@ -508,10 +501,10 @@ func TestAuditShowsWhichAdminActed(t *testing.T) {
 func TestAccountPagesUseTheAPI(t *testing.T) {
 	files := embeddedFiles(t)
 	for name, wants := range map[string][]string{
-		"static/login.js":  {`"/admin/api/setup"`, `{ username, password }`, `{ token }`, "Create the first admin"},
-		"static/admins.js": {`"/admin/api/admins"`, `"/disable"`, `"/enable"`, `"/password"`, `"DELETE"`, "(you)"},
+		"static/login.js":  {`"/admin/api/setup"`, `{ username, password }`, "Create the first admin", `"/admin/api/login/code"`},
+		"static/admins.js": {`"/admin/api/admins"`, `"/disable"`, `"/enable"`, `"/password"`, `"/admin/api/me/totp/start"`, `/admin/api/me/totp/qr?t=`, `"/admin/api/me/totp/enable"`, `"/admin/api/me/totp/disable"`, "Turn on two-step sign-in", `"DELETE"`, "(you)"},
 		"static/common.js": {`"admins.html"`},
-		"login.html":       {`id="setup-form"`, `id="token-form"`, "Sign in with a one-time token"},
+		"login.html":       {`id="setup-form"`, `id="login-form"`, `id="code-form"`},
 	} {
 		for _, w := range wants {
 			if !strings.Contains(files[name], w) {

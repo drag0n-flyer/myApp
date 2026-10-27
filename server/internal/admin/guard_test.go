@@ -1,12 +1,10 @@
 package admin
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/drag0n-flyer/myApp/server/internal/core"
 )
@@ -170,12 +168,11 @@ func TestLogoutNeedsCSRF(t *testing.T) {
 	}
 }
 
-func TestLoginChecksHeadersNotToken(t *testing.T) {
+func TestLoginChecksHeadersNotCSRFToken(t *testing.T) {
 	m, _ := newTestModule(t)
 	h := m.Handler()
-	ctx := context.Background()
-	_, token, _ := m.createToken(ctx, "", 15*time.Minute)
-	body := `{"token":"` + token + `"}`
+	ensureTestAdmin(t, m)
+	body := pwBody(testUser, goodPassword)
 	for name, set := range map[string]map[string]string{
 		"evil origin": {"Origin": "http://evil.example"},
 		"text/plain":  {"Content-Type": "text/plain"},
@@ -189,7 +186,7 @@ func TestLoginChecksHeadersNotToken(t *testing.T) {
 			t.Errorf("%s = %d, want 403", name, w.Code)
 		}
 	}
-	// Rejected requests did not use the token up.
+	// Rejected requests did not use up the sign-in.
 	if w := serveReq(h, req("POST", "/admin/api/login", body, nil)); w.Code != 204 {
 		t.Errorf("login with good headers and no CSRF token = %d", w.Code)
 	}

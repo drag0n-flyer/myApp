@@ -29,7 +29,7 @@ func adminAPIErr(err error) error {
 		return httpx.Err("bad_request", in.Error())
 	case errors.Is(err, core.ErrNotFound):
 		return httpx.Err("not_found", "no such admin")
-	case errors.Is(err, errUserExists), errors.Is(err, errLastAdmin), errors.Is(err, errSelf), errors.Is(err, errSetupDone):
+	case errors.Is(err, errUserExists), errors.Is(err, errTotpOn), errors.Is(err, errTotpOff), errors.Is(err, errLastAdmin), errors.Is(err, errSelf), errors.Is(err, errSetupDone):
 		return httpx.Err("conflict", err.Error())
 	}
 	return err
@@ -98,7 +98,7 @@ func (m *Module) setup(w http.ResponseWriter, r *http.Request, _ Session) error 
 		if err != nil {
 			return err
 		}
-		if sid, err = m.newSession(ctx, tx, r, "", id); err != nil {
+		if sid, err = m.newSession(ctx, tx, r, id); err != nil {
 			return err
 		}
 		return m.audit(ctx, tx, Entry{Actor: "dashboard", AdminUserID: id, Action: "admin.setup", Target: id,

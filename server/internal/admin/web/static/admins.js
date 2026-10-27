@@ -88,6 +88,77 @@ async function remove(a) {
   }
 }
 
+function newInput(type, autocomplete, extra) {
+  const id = "f" + Math.random().toString(36).slice(2, 8);
+  return { id, input: el("input", Object.assign({ type, id, autocomplete }, extra || {})) };
+}
+
+// turnOnTwoStep walks through the setup: secret and QR code, then a code.
+async function turnOnTwoStep() {
+  let start;
+  try {
+    start = await api("POST", "/admin/api/me/totp/start");
+  } catch (err) {
+    fail(err);
+    return;
+  }
+  const code = newInput("text", "one-time-code", { inputMode: "numeric", pattern: "[0-9 ]*" });
+  const qr = el("img", {
+    src: "/admin/api/me/totp/qr?t=" + Date.now(),
+    alt: "QR code for your authenticator app",
+    width: "256",
+    height: "256",
+  });
+  const extra = el(
+    "div",
+    {},
+    el("p", {}, qr),
+    el("p", {}, "Or type this key into the app by hand:"),
+    el("p", {}, el("code", {}, start.secret)),
+    el("p", {}, el("label", { for: code.id }, "Code from the app")),
+    el("p", {}, code.input),
+  );
+  const ok = await confirmDialog(
+    "Scan the picture with an authenticator app, then enter the 6-digit code it shows. If you lose the app, another person with command-line access can turn this off for you.",
+    null,
+    { title: "Turn on two-step sign-in", confirmLabel: "Turn on", extra },
+  );
+  if (!ok) return;
+  try {
+    await api("POST", "/admin/api/me/totp/enable", { code: code.input.value.replace(/\s+/g, "") });
+    notice("Two-step sign-in is on.");
+    await reload();
+  } catch (err) {
+    fail(err);
+  }
+}
+
+async function turnOffTwoStep() {
+  const pw = newInput("password", "current-password");
+  const code = newInput("text", "one-time-code", { inputMode: "numeric", pattern: "[0-9 ]*" });
+  const extra = el(
+    "div",
+    {},
+    el("p", {}, el("label", { for: pw.id }, "Your password")),
+    el("p", {}, pw.input),
+    el("p", {}, el("label", { for: code.id }, "Current code from the app")),
+    el("p", {}, code.input),
+  );
+  const ok = await confirmDialog("Enter your password and a current code to turn two-step sign-in off.", null, {
+    title: "Turn off two-step sign-in",
+    confirmLabel: "Turn off",
+    extra,
+  });
+  if (!ok) return;
+  try {
+    await api("POST", "/admin/api/me/totp/disable", { password: pw.input.value, code: code.input.value.replace(/\s+/g, "") });
+    notice("Two-step sign-in is off.");
+    await reload();
+  } catch (err) {
+    fail(err);
+  }
+}
+
 function button(label, aria, onClick) {
   const b = el("button", { type: "button", className: "secondary", "aria-label": aria }, label);
   b.addEventListener("click", onClick);
@@ -96,7 +167,15 @@ function button(label, aria, onClick) {
 
 function actions(a) {
   if (me && a.username === me) {
-    return el("span", {}, button("Change password", "Change your password", () => resetPassword(a, true)));
+    return el(
+      "span",
+      {},
+      button("Change password", "Change your password", () => resetPassword(a, true)),
+      " ",
+      a.twoStep
+        ? button("Turn off two-step sign-in", "Turn off two-step sign-in", turnOffTwoStep)
+        : button("Turn on two-step sign-in", "Turn on two-step sign-in", turnOnTwoStep),
+    );
   }
   return el(
     "span",
@@ -119,11 +198,12 @@ function render() {
   const body = rows.map((a) => [
     me && a.username === me ? a.username + " (you)" : a.username,
     a.disabled ? "Disabled" : "Active",
+    a.twoStep ? "On" : "Off",
     formatTime(a.createdAt),
     formatTime(a.lastLoginAt),
     actions(a),
   ]);
-  list.appendChild(table("Admins", ["Username", "State", "Added", "Last signed in", "Actions"], body));
+  list.appendChild(table("Admins", ["Username", "State", "Two-step sign-in", "Added", "Last signed in", "Actions"], body));
 }
 
 async function reload() {

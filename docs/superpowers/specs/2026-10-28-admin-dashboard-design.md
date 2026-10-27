@@ -19,7 +19,7 @@ Choices this document makes without an owner instruction are marked "(planner's 
   | Revoke an invite | `identity` | `RevokeInvite(ctx, id string) error` |
   | Revoke a device | `identity` | `AdminRevokeDevice(ctx, deviceID string) error` |
   | Delete an account | `identity` | `AdminDeleteAccount(ctx, accountID string) error` |
-  | Mark a report handled | `social` | `MarkReportHandled(ctx, id, tokenID string) error` |
+  | Mark a report handled | `social` | `MarkReportHandled(ctx, id, adminUserID string) error` |
 
 - **Live numbers through small read-only methods** that `app` wires in: `realtime.(*Module).ConnectionCount() int`, `push.(*Module).Stats() push.Stats` (sent and failed since start), and `turn.(*Module).Relays() []turn.RelayStatus` (host, region, healthy, last round-trip time).
 
@@ -37,27 +37,34 @@ Choices this document makes without an owner instruction are marked "(planner's 
 
 ## 3. Login
 
-1. On the server: `appserver admin token create [--label TEXT] [--minutes N]`. It prints one token, once, and stores only its SHA-256.
-2. In the browser the operator pastes it into the login page. `POST /admin/api/login` exchanges it for a session cookie. The token is used up by that exchange, even if the browser never stores the cookie.
-3. A new login needs a new token. The operator is already on the host over SSH, so this costs one command.
+Sign-in is by username and password only (owner decision; the one-time token sign-in and `appserver admin token create` were removed). The first admin is created on first visit or with `appserver admin user add`; recovery is `appserver admin user reset-password`, `enable` or `add` on the host. `POST /admin/api/login` takes `{username, password}`. The `admin_tokens` table and the `token_id` columns stay in the database for now (no destructive migration); a session row that has a token and no admin is never accepted, and expires and is cleaned up like any other.
 
 Values (all planner's choice):
 
 | Item | Value |
 |---|---|
-| Token format | `adm_` + 32 random bytes, base64url without padding |
-| Token lifetime if unused | `--minutes`, default 15, at most 60 |
-| `--label` | at most 64 characters, no control characters; shown in the audit log |
 | Session ID | 32 random bytes, base64url; the database stores only its SHA-256 |
 | Idle timeout | 15 minutes without a request. A request with the header `X-Admin-Background: 1` (the overview's 30-second refresh and its reload when the tab becomes visible again) does not reset the idle timer, so an open, unattended tab still signs out. The 8-hour limit applies to it too |
 | Absolute lifetime | 8 hours from login |
 | Cookie | `admin_session`, `Path=/admin`, `HttpOnly`, `SameSite=Strict`, no `Max-Age` (ends with the browser), `Secure` unless the request's `Host` is a loopback name (§2) |
-| Login rate limit | 5 per minute per client address, and 30 per hour for the whole server (`ratelimit.Limiter`, keyed by `httpx.ClientIP`; the address is never stored or logged) |
-| Wrong, used or expired token, or one ended by `admin sessions end` | the same `401 unauthorized` body for each, compared by hash lookup (a constant-time compare of the hash is not needed: the lookup key is a hash of 32 random bytes) |
+| Login rate limit | 5 per minute per client address, 10 per hour per username, and 30 per hour for the whole server (`ratelimit.Limiter`, keyed by `httpx.ClientIP`; the address is never stored or logged) |
+| Unknown user, wrong password, disabled admin, or a session ended by `admin sessions end` | the same `401 unauthorized` body for each; one argon2 verify always runs |
 
 `appserver admin sessions end` ends every dashboard session at once (for a lost laptop). (planner's choice)
 
-Expired tokens and sessions are deleted by the admin module's hourly `Run`.
+Expired sessions are deleted by the admin module's hourly `Run`.
+
+### 3.1 Two-step sign-in (optional TOTP)
+
+Owner decision: each admin may turn on a second step. It is TOTP (RFC 6238: HMAC-SHA1, 30-second steps, 6 digits), written on the standard library; a code is accepted for the step before, at and after the current one, and never for a step that is not newer than the last one used (`totp_last_step`), so a code works once.
+
+- **Storage.** Migration `6003_admin_totp.sql` adds to `admin_users`: `totp_secret bytea` (20 random bytes), `totp_enabled_at`, `totp_last_step bigint` and `totp_pending_at` (when an unconfirmed secret was made). The server has no key meant for protecting this secret, so it is **stored raw**; the column comment says so. Reading the table already gives the password hashes.
+- **Turn on** (Admins page, own row, "Turn on two-step sign-in"): `POST /me/totp/start` makes a pending secret (replacing an older pending one) and returns `{secret}` (base32, for typing in by hand); `GET /me/totp/qr` returns a PNG (`Cache-Control: no-store`) of `otpauth://totp/<APP_HOST>:<username>?secret=<base32>&issuer=<APP_HOST>&algorithm=SHA1&digits=6&period=30`, drawn with `github.com/skip2/go-qrcode` (MIT); `POST /me/totp/enable {code}` checks a code and only then sets `totp_enabled_at`. A pending secret is good for 10 minutes. The page shows the PNG as an `<img>` from its own origin, so CSP `img-src 'self'` holds.
+- **Turn off:** `POST /me/totp/disable {password, code}` needs the current password and a current code. Attempts on `enable` and `disable` are limited to 10 per 10 minutes per admin.
+- **Sign-in.** With two-step on, `POST /login` with the right password answers `200 {needsCode:true}` and sets `admin_pending` (`Path=/admin`, `HttpOnly`, `SameSite=Strict`, 5 minutes), and no session. `POST /login/code {code}` finishes the sign-in. A pending sign-in allows 5 code tries, then it is gone and the admin starts over. It also ends if the password changed, the admin was disabled or two-step was turned off meanwhile. Pending sign-ins live in memory. A wrong password gets the usual identical `401`; nothing shows whether two-step is on before the password is right.
+- **Recovery.** Only `appserver admin user reset-2fa <username>` (turns it off and ends that admin's sessions). There are no recovery codes.
+- **Visibility.** `GET /admins` shows `twoStep: true|false` for each admin and never a secret. The `/me/totp` endpoints act only on the signed-in admin.
+- **Audit.** `admin.totp.enable`, `admin.totp.disable` (dashboard), `admin.totp.reset` (cli), and `login.code_failed` (dashboard, with the username).
 
 ## 4. Browser protections
 
@@ -138,7 +145,7 @@ Editing is not built. `core.Deps.Policy` is copied by value into every module at
 
 ### 6.6 Audit log
 
-Newest first: time, actor (`dashboard` with the token's ID and label, or `cli`), action, target. Filter by action.
+Newest first: time, actor (`dashboard` with the admin's username, or `cli`; old rows from the removed token sign-in show the token), action, target. Filter by action.
 
 ## 7. Admin API
 
@@ -146,10 +153,12 @@ All paths are under `/admin/api`. JSON in and out, with the server's error envel
 
 | Method and path | Request → response |
 |---|---|
-| `POST /login` | `{token}` or `{username, password}` → `204` and `Set-Cookie`; `unauthorized`, `rate_limited` |
+| `POST /login` | `{username, password}` → `204` and `Set-Cookie`, or `200 {needsCode:true}` and `Set-Cookie: admin_pending` when two-step is on; `unauthorized`, `rate_limited` |
+| `POST /login/code` | `{code}` (with the `admin_pending` cookie) → `204` and `Set-Cookie`; `unauthorized`, `rate_limited` |
 | `GET /setup`, `POST /setup` | → `{needed}`; `{username, password}` → `204` and `Set-Cookie`, only while no admin exists (`conflict`, see 10a) |
 | `POST /logout` | → `204`, clears the cookie |
-| `GET /session` | → `{tokenID, label, username, csrf, idleTimeoutSeconds:900, expiresAt}` (`username` is `null` for a token session; `tokenID` and `label` are `null` for a password session) |
+| `GET /session` | → `{username, csrf, idleTimeoutSeconds:900, expiresAt}` |
+| `POST /me/totp/start`, `GET /me/totp/qr`, `POST /me/totp/enable`, `POST /me/totp/disable` | two-step sign-in of the signed-in admin (§3.1); `conflict` (already on, or not on), `bad_request` (wrong code, password or expired setup), `not_found` (no setup waiting), `rate_limited` |
 | `GET /overview` | → `{version, goVersion, startedAt, uptimeSeconds, database:"ok"\|"down", counts:{accounts, devices, conversations, messagesToday}, connections, push:{enabled, sent, failed}, calls:{enabled, relays:[{host, region, healthy, rttMs}]}}` |
 | `GET /invites?state=&after=` | → `{invites:[{id, codePrefix, usesLeft, createdAt, expiresAt, revokedAt, state}], next}` |
 | `POST /invites` | `{uses, days}` → `{id, code, link, expiresAt}`; `bad_request` |
@@ -163,7 +172,7 @@ All paths are under `/admin/api`. JSON in and out, with the server's error envel
 | `POST /reports/{id}/handle` | → `204`; marking a handled report again is `204` and changes nothing |
 | `GET /server` | → `{policy, info, settings}` |
 | `GET /audit?action=&after=` | → `{entries:[{id, at, actor, tokenID, tokenLabel, adminID, username, action, target, detail}], next}` |
-| `GET /admins` | → `{admins:[{id, username, disabled, createdAt, lastLoginAt}]}` |
+| `GET /admins` | → `{admins:[{id, username, disabled, createdAt, lastLoginAt, twoStep}]}` |
 | `POST /admins` | `{username, password}` → the new admin; `bad_request`, `conflict` |
 | `POST /admins/{id}/disable`, `/enable` | → `204`; `not_found`, `conflict` |
 | `POST /admins/{id}/password` | `{password}` → `204`; `bad_request`, `not_found` |
@@ -212,11 +221,12 @@ Actions and targets:
 
 | Action | Actor | Target | Detail |
 |---|---|---|---|
-| `token.create` | cli | token ID | `{label}` |
+| `token.create` | cli | token ID | `{label}` (history only; the command is gone) |
 | `sessions.end` | cli | — | `{count}` |
-| `login` | dashboard | token ID | — |
-| `login.failed` | dashboard | — | — (the presented token is never stored) |
-| `logout` | dashboard | token ID | — |
+| `login` | dashboard | admin ID | `{username}` (and `twoStep: true` after a code) |
+| `login.failed` | dashboard | — | `{username}` when it fits the username rules, else `(invalid)`; never the password |
+| `login.code_failed` | dashboard | admin ID | `{username}` |
+| `logout` | dashboard | admin ID | — |
 | `invite.create` | dashboard | invite ID | `{uses, days}` |
 | `invite.revoke` | dashboard | invite ID | — |
 | `account.view` | dashboard | account ID | — |
@@ -226,6 +236,8 @@ Actions and targets:
 | `report.handle` | dashboard | report ID | — |
 | `admin.setup` | dashboard | admin ID | `{username}` |
 | `admin.add`, `admin.disable`, `admin.enable`, `admin.password`, `admin.remove` | dashboard or cli | admin ID | `{username}` |
+| `admin.totp.enable`, `admin.totp.disable` | dashboard | admin ID | `{username}` |
+| `admin.totp.reset` | cli | admin ID | `{username}` |
 
 Admin accounts add one exception to "IDs only": `login`, `login.failed` (with the username tried, never the password) and the `admin.*` actions carry the admin username in `detail`, and `admin_audit.admin_user_id` names the admin who acted (no foreign key, like `token_id`).
 
@@ -235,11 +247,11 @@ Logs follow server design §8: the admin package logs action names and IDs at de
 
 ## 9. Other changes
 
-- **Migrations:** `1004_invite_admin.sql` (`invites` gains `id uuid not null default gen_random_uuid() unique`, `created_at timestamptz not null default now()`, `revoked_at timestamptz`); `5002_report_handled.sql` (`reports` gains `handled_at timestamptz`, `handled_by uuid`); `6001_admin.sql` (§8).
-- **`app`:** the CLI dispatcher also matches three-word commands (`admin token create`), longest first; `AdminHandler` mounts the admin package; `app.New` records the start time.
+- **Migrations:** `1004_invite_admin.sql` (`invites` gains `id uuid not null default gen_random_uuid() unique`, `created_at timestamptz not null default now()`, `revoked_at timestamptz`); `5002_report_handled.sql` (`reports` gains `handled_at timestamptz`, `handled_by uuid`, always an admin user id since token sign-in was removed); `6001_admin.sql` (§8); `6003_admin_totp.sql` (§3.1).
+- **`app`:** the CLI dispatcher also matches three-word commands (`admin user reset-password`), longest first; `AdminHandler` mounts the admin package; `app.New` records the start time.
 - **`config`:** `APP_ADMIN_HOSTS` (comma list, default empty).
 - **`httpx`:** exports `WriteError(w http.ResponseWriter, err error)` so the admin package answers with the same envelope.
-- **Docs:** the admin guide gains "Admin dashboard" (tunnel, token, what it shows and hides, `APP_ADMIN_HOSTS`); server design §1 and §5 point here.
+- **Docs:** the admin guide gains "Admin dashboard" (tunnel, sign-in and two-step, what it shows and hides, `APP_ADMIN_HOSTS`); server design §1 and §5 point here.
 
 ## 10. Accessibility and look
 

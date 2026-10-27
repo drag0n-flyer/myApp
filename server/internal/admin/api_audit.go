@@ -19,6 +19,7 @@ var auditActions = map[string]bool{
 	"account.delete": true, "report.view": true, "report.handle": true,
 	"admin.setup": true, "admin.add": true, "admin.disable": true, "admin.enable": true,
 	"admin.password": true, "admin.remove": true,
+	"admin.totp.enable": true, "admin.totp.disable": true, "admin.totp.reset": true, "login.code_failed": true,
 }
 
 type auditEntry struct {

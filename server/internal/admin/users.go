@@ -234,11 +234,12 @@ type adminRow struct {
 	Disabled    bool       `json:"disabled"`
 	CreatedAt   time.Time  `json:"createdAt"`
 	LastLoginAt *time.Time `json:"lastLoginAt"`
+	TwoStep     bool       `json:"twoStep"`
 }
 
 func (m *Module) loadAdmins(ctx context.Context) ([]adminRow, error) {
 	rows, err := m.d.DB.Query(ctx,
-		`select id::text, username, disabled_at is not null, created_at, last_login_at
+		`select id::text, username, disabled_at is not null, created_at, last_login_at, totp_enabled_at is not null
 		 from admin_users order by created_at, username`)
 	if err != nil {
 		return nil, err
@@ -247,7 +248,7 @@ func (m *Module) loadAdmins(ctx context.Context) ([]adminRow, error) {
 	out := []adminRow{}
 	for rows.Next() {
 		var a adminRow
-		if err := rows.Scan(&a.ID, &a.Username, &a.Disabled, &a.CreatedAt, &a.LastLoginAt); err != nil {
+		if err := rows.Scan(&a.ID, &a.Username, &a.Disabled, &a.CreatedAt, &a.LastLoginAt, &a.TwoStep); err != nil {
 			return nil, err
 		}
 		out = append(out, a)

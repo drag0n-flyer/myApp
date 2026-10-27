@@ -23,6 +23,10 @@ const ACTIONS = [
   ["admin.enable", "Admin enabled"],
   ["admin.password", "Admin password changed"],
   ["admin.remove", "Admin removed"],
+  ["admin.totp.enable", "Two-step sign-in turned on"],
+  ["admin.totp.disable", "Two-step sign-in turned off"],
+  ["admin.totp.reset", "Two-step sign-in reset (command line)"],
+  ["login.code_failed", "Two-step code wrong"],
 ];
 const LABELS = new Map(ACTIONS);
 

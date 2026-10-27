@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"github.com/jackc/pgx/v5"
 	"io"
 	"math/big"
 	"os"
@@ -200,4 +201,49 @@ func (m *Module) cmdUserSetDisabled(disable bool) core.Command {
 		}
 		return nil
 	}
+}
+
+// cmdUserReset2FA turns two-step sign-in off for an admin who lost their
+// authenticator, and ends that admin's sessions. There are no recovery codes;
+// this is the way back in.
+func (m *Module) cmdUserReset2FA(ctx context.Context, args []string, out io.Writer) error {
+	username, _, err := userArgs("admin user reset-2fa", args, false)
+	if err != nil {
+		return err
+	}
+	id, err := m.cliAdminID(ctx, username)
+	if err != nil {
+		return err
+	}
+	u := normalizeLoose(username)
+	reset := false
+	err = pgx.BeginFunc(ctx, m.d.DB, func(tx pgx.Tx) error {
+		var on bool
+		if err := tx.QueryRow(ctx, `select totp_enabled_at is not null from admin_users where id = $1 for update`, id).Scan(&on); err != nil {
+			return err
+		}
+		if !on {
+			return nil
+		}
+		reset = true
+		if _, err := tx.Exec(ctx,
+			`update admin_users set totp_secret = null, totp_enabled_at = null, totp_last_step = null, totp_pending_at = null where id = $1`, id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `delete from admin_sessions where admin_user_id = $1`, id); err != nil {
+			return err
+		}
+		e := cliBy
+		e.Action, e.Target, e.Detail = "admin.totp.reset", id, map[string]any{"username": u}
+		return m.audit(ctx, tx, e)
+	})
+	if err != nil {
+		return err
+	}
+	if !reset {
+		_, err = fmt.Fprintf(out, "two-step sign-in is already off for %s\n", u)
+		return err
+	}
+	_, err = fmt.Fprintf(out, "two-step sign-in is off for %s; their sessions ended\n", u)
+	return err
 }

@@ -49,7 +49,7 @@ async function loadSession() {
 // which must not keep the session alive. It throws ApiError for any other failure.
 export async function api(method, path, body, opts) {
   const headers = { Accept: "application/json" };
-  if (method !== "GET" && csrf === null && path !== "/admin/api/login") {
+  if (method !== "GET" && csrf === null && !path.startsWith("/admin/api/login")) {
     await loadSession();
   }
   if (csrf !== null) headers["X-CSRF-Token"] = csrf;
@@ -243,7 +243,7 @@ function startPage() {
   if (page === "login") return Promise.resolve(null);
   return loadSession().then((s) => {
     const who = document.getElementById("who");
-    if (who) who.textContent = "Signed in as " + (s.username || s.label || "admin");
+    if (who) who.textContent = "Signed in as " + (s.username || "admin");
     return s;
   });
 }

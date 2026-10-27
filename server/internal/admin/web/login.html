@@ -44,14 +44,13 @@
 </div>
 <button type="submit" id="sign-in">Sign in</button>
 </form>
-<p id="token-link"><button type="button" class="link" id="show-token">Sign in with a one-time token</button></p>
-<form id="token-form" class="login" method="post" hidden>
+<form id="code-form" class="login" method="post" hidden>
+<p>Enter the 6-digit code from your authenticator app.</p>
 <div class="field">
-<label for="token">Admin token</label>
-<input type="password" id="token" autocomplete="off" required>
+<label for="code">Code</label>
+<input type="text" id="code" inputmode="numeric" pattern="[0-9 ]*" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" required>
 </div>
-<button type="submit" id="sign-in-token">Sign in with token</button>
-<p>Create a token on the server with <code>appserver admin token create</code>. Each token works once.</p>
+<button type="submit" id="sign-in-code">Sign in</button>
 </form>
 </main>
 <noscript>This page needs JavaScript.</noscript>

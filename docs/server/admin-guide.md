@@ -186,29 +186,37 @@ The commands read the same `.env`. Use `docker compose exec appserver /appserver
 | Command | What it does |
 |---|---|
 | `admin user list` | Lists admins, whether each is enabled, and the last sign-in. |
-| `admin user add <username>` | Adds an admin. The password is read from standard input, one line; pipe it in, for example `printf '%s\n' "$PW" \| appserver admin user add alice`. Run in a terminal, the typing is shown, because the binary has no way to hide it without a new dependency. |
+| `admin user add <username>` | Adds an admin. The password is read from standard input, one line; pipe it in, for example `printf '%s\n' "$PW" \| appserver admin user add alice`. Run in a terminal, the typing is not shown. |
 | `admin user add <username> --generate` | Adds an admin with a random 20-character password, printed once. |
 | `admin user reset-password <username>` | Sets a new password (from standard input, or `--generate`) and signs that admin out everywhere. It does not enable a disabled admin. |
+| `admin user reset-2fa <username>` | Turns two-step sign-in off for an admin who lost their authenticator, and signs that admin out everywhere. |
 | `admin user disable <username>` / `enable <username>` | Disables (signs the admin out everywhere) or enables an admin. From the command line the last admin can be disabled; it prints a warning. |
 
 Every command is written to the audit log as the command line.
 
+### Two-step sign-in (optional)
+
+Each admin can add a second step: a 6-digit code from an authenticator app (any app that does TOTP). On the Admins page, in your own row, choose "Turn on two-step sign-in". Scan the picture with the app (or type the key it shows), enter the code the app gives, and confirm. It turns on only after a correct code, and the setup is good for 10 minutes. To turn it off, choose "Turn off two-step sign-in" and enter your password and a current code.
+
+When it is on, sign-in asks for the password first, then the code. You get five tries at the code, and five minutes between the password and the code, then you start again. A code works once. Other admins can see whether you have it on, never the key.
+
+The key is stored in the database as it is, not encrypted, because the server has no key meant for that. Whoever can read the database can already read the password hashes, so protect database backups.
+
+**There are no recovery codes.** If you lose the authenticator, another person with command-line access runs `appserver admin user reset-2fa <username>`, which turns it off and signs you out everywhere. Then sign in with your password and turn it on again.
+
 ### Locked out?
 
-Run `appserver admin user reset-password <username>` for a forgotten password. If every admin is disabled, run `appserver admin user enable <username>`, or `appserver admin user add <username>` for a new one. The one-time token sign-in below has its own limit (thirty tries an hour in total), so wrong passwords cannot block it; it can still be used up by repeated wrong tokens.
+- Forgot a password: `appserver admin user reset-password <username>`.
+- Lost the authenticator: `appserver admin user reset-2fa <username>`.
+- Every admin is disabled: `appserver admin user enable <username>`, or `appserver admin user add <username>` for a new one.
 
-### One-time token sign-in (recovery)
-
-On the sign-in page, "Sign in with a one-time token" shows the token field. How to use it:
-1. On the server run `docker compose exec appserver /appserver admin token create --label laptop` (Docker), or `bin/appserver admin token create --label laptop` from the repository after `make run` (the binary reads the same `.env`).
-2. Paste the token into the sign-in page once. It works one time only, and an unused token expires after 15 minutes (`--minutes N` changes this, at most 60).
-3. A session ends after 15 minutes without use, and after 8 hours at most. The overview's automatic refresh does not count as use. For a lost laptop, run `docker compose exec appserver /appserver admin sessions end` (or `bin/appserver admin sessions end`) to end every session.
+All of these run on the server (see "Command line"). The dashboard has no other way in; the old one-time token sign-in is gone. Run `appserver admin sessions end` (for example `docker compose exec appserver /appserver admin sessions end`) to end every session, for instance after a lost laptop. A session ends after 15 minutes without use, and after 8 hours at most. The overview's automatic refresh does not count as use.
 
 Never publish port 9090. It must stay on `127.0.0.1`. Set `APP_ADMIN_HOSTS` only when you put your own HTTPS proxy in front of it, and give that proxy its own access control.
 
 To use the dashboard over plain HTTP on a trusted local network (for example `http://192.168.0.174:9044/admin/`), list that address in `APP_ADMIN_HOSTS`, publish the admin port on that address, and set `APP_ADMIN_ALLOW_HTTP=true` (default `false`). The session cookie then is not marked Secure for the listed hosts, and the server logs a warning at start-up. Sign-in codes, passwords and session cookies cross the network unencrypted, so anyone on that network can read them. Hosts not listed are still refused.
 
-Every action is written to the audit log and kept 365 days. The log holds IDs, token labels and admin usernames, not passwords or email addresses. Escrow export stays a command-line action.
+Every action is written to the audit log and kept 365 days. The log holds IDs and admin usernames, not passwords or email addresses. Escrow export stays a command-line action.
 
 ## What the operator can see
 

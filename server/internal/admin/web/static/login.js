@@ -1,11 +1,10 @@
-import { api, ApiError, el, clear } from "./common.js";
+import { api, ApiError, clear } from "./common.js";
 
 const box = document.getElementById("notice");
 const title = document.getElementById("title");
 const setupForm = document.getElementById("setup-form");
 const loginForm = document.getElementById("login-form");
-const tokenForm = document.getElementById("token-form");
-const tokenLink = document.getElementById("token-link");
+const codeForm = document.getElementById("code-form");
 
 function show(...parts) {
   clear(box);
@@ -33,7 +32,18 @@ loginForm.addEventListener("submit", async (event) => {
   const button = document.getElementById("sign-in");
   button.disabled = true;
   try {
-    await api("POST", "/admin/api/login", { username, password }, { stay: true });
+    const res = await api("POST", "/admin/api/login", { username, password }, { stay: true });
+    if (res && res.needsCode) {
+      // Two-step sign-in: the password was right; ask for the code.
+      document.getElementById("password").value = "";
+      loginForm.hidden = true;
+      codeForm.hidden = false;
+      clear(box);
+      box.className = "";
+      box.removeAttribute("role");
+      document.getElementById("code").focus();
+      return;
+    }
     window.location.href = "index.html";
   } catch (err) {
     document.getElementById("password").value = "";
@@ -42,28 +52,25 @@ loginForm.addEventListener("submit", async (event) => {
   }
 });
 
-document.getElementById("show-token").addEventListener("click", () => {
-  loginForm.hidden = true;
-  tokenLink.hidden = true;
-  tokenForm.hidden = false;
-  document.getElementById("token").focus();
-});
-
-tokenForm.addEventListener("submit", async (event) => {
+codeForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const token = document.getElementById("token").value.trim();
-  if (token === "") {
-    show("Paste your admin token first.");
+  const code = document.getElementById("code").value.replace(/\s+/g, "");
+  if (!/^[0-9]{6}$/.test(code)) {
+    show("Enter the 6-digit code.");
     return;
   }
-  const button = document.getElementById("sign-in-token");
+  const button = document.getElementById("sign-in-code");
   button.disabled = true;
   try {
-    await api("POST", "/admin/api/login", { token }, { stay: true });
+    await api("POST", "/admin/api/login/code", { code }, { stay: true });
     window.location.href = "index.html";
   } catch (err) {
-    document.getElementById("token").value = "";
-    failure(err, ["That token is not valid. Create a new one with ", el("code", {}, "appserver admin token create"), "."]);
+    document.getElementById("code").value = "";
+    if (err instanceof ApiError && err.status === 401) {
+      show("That code did not work, or the sign-in timed out. Check the code, or start again.");
+    } else {
+      failure(err);
+    }
     button.disabled = false;
   }
 });
@@ -98,7 +105,6 @@ setupForm.addEventListener("submit", async (event) => {
       // Someone else finished the setup first: show the sign-in form.
       setupForm.hidden = true;
       loginForm.hidden = false;
-      tokenLink.hidden = false;
       title.textContent = "Sign in";
     }
     button.disabled = false;
@@ -118,7 +124,6 @@ async function start() {
     title.textContent = "Create the first admin";
     setupForm.hidden = false;
     loginForm.hidden = true;
-    tokenLink.hidden = true;
     document.getElementById("setup-username").focus();
   } else {
     const params = new URLSearchParams(window.location.search);
