@@ -178,6 +178,7 @@ Usernames: `^[a-z][a-z0-9_]{2,31}$` (same rule as AppCore `UsernameCheck`). Rese
 | `GET /v1/devices` | ✓ | → `{devices:[{id, name, platform, createdAt, lastSeenAt, current}]}` |
 | `DELETE /v1/devices/{id}` | ✓ | → `204`; own devices only (`not_found` otherwise); sends `device.revoked` to the remaining devices |
 | `POST /v1/link` | – | `{deviceName, platform}` → `{linkID, secret, claimToken, expiresAt}`. The new device also makes an X25519 key pair and shows the QR code `https://<host>/link/<linkID>#<secret>.<publicKey b64url>`; the approver seals `sealed` to that key (HPKE, same suite as escrow, `info = "link-v1"`), so the server cannot read the link data |
+| `POST /v1/link/{linkID}/info` | ✓ | `{secret}` → `{deviceName, platform, createdAt}` for the approval screen (client plan 6, OPEN-24); `forbidden` on a wrong secret, `expired` after 5 minutes |
 | `POST /v1/link/{linkID}/approve` | ✓ | `{secret, sealed?}` → `204`. `sealed` is at most 64 KiB of opaque data handed to the new device |
 | `POST /v1/link/{linkID}/claim` | – | `{claimToken}` → `202 {}` while pending; once approved, `200 {accountID, deviceID, sessionToken, sealed}`, exactly once; `expired` after 5 minutes or after a claim |
 
