@@ -169,3 +169,11 @@ The sample services stay. The launch argument `-sampleData` selects them, so the
 - Plan 8 needs plan 3's WebRTC build to add a capture post-processing hook for RNNoise and H.264 hardware factories.
 - Plan 8's first app build checks that plan 4's CryptoKit bridge symbols and WebRTC's symbols don't collide.
 - Plan 9's test vectors (push padding, signatures, sealed handles, TURN credentials, escrow, link sealing) are checked by both the Go and Swift tests.
+
+## Owner decisions log
+
+| Date | Decision |
+|---|---|
+| 2026-10-27 | Passkeys only for hosts in the app's associated domains; other servers sign in by email code. **Approved.** |
+| 2026-10-27 | Plan 3 carries our own WebRTC patch for the capture post-processing hook (RNNoise). **Approved.** |
+| 2026-10-27 | Keep server-readable mode in Phase 1 (escrow copy, off by default, admin export is audit-logged). **Approved.** |
