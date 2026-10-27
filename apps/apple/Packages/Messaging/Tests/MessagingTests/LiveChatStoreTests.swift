@@ -109,6 +109,7 @@ private func text(_ message: Message?) -> String? {
         await rig.ana.store.syncInbox()
         #expect(rig.ana.store.chat(id: "acc-bob")?.messages.last?.status == .delivered)
 
+        rig.bob.store.accept(requestID: "acc-ana")
         rig.bob.store.markRead(chatID: "acc-ana")
         #expect(rig.bob.store.chat(id: "acc-ana")?.unreadCount == 0)
         await rig.bob.store.settle()
@@ -367,5 +368,76 @@ private func text(_ message: Message?) -> String? {
         #expect(await rig.ana.store.addContact(username: "nobody") == nil)
         #expect(rig.ana.store.ensureChat(with: "acc-bob") == "acc-bob")
         #expect(rig.ana.store.chat(id: "acc-bob")?.isRequest == false)
+    }
+
+    @Test func noReadReceiptForRequestUntilAccepted() async throws {
+        let rig = try await Rig.make()
+        try await rig.anaChatsWithBob()
+        rig.ana.store.send(.text("hello"), in: "acc-bob")
+        await rig.ana.store.settle()
+        await rig.bob.store.syncInbox()
+        await rig.bob.store.settle()
+        await rig.ana.store.syncInbox()
+        let bob = rig.bob.store
+        #expect(bob.chat(id: "acc-ana")?.isRequest == true)
+
+        bob.markRead(chatID: "acc-ana")
+        await bob.settle()
+        #expect(bob.chat(id: "acc-ana")?.unreadCount == 0)
+        #expect(bob.chat(id: "acc-ana")?.messages.last?.status == .read)   // locally
+        await rig.ana.store.syncInbox()
+        #expect(rig.ana.store.chat(id: "acc-bob")?.messages.last?.status == .delivered)
+
+        bob.accept(requestID: "acc-ana")
+        await bob.settle()
+        await rig.ana.store.syncInbox()
+        #expect(rig.ana.store.chat(id: "acc-bob")?.messages.last?.status == .read)
+    }
+
+    @Test func controlsQueueBehindTheirMessageAndRetry() async throws {
+        let rig = try await Rig.make()
+        try await rig.anaChatsWithBob()
+        let store = rig.ana.store
+        await rig.server.failNextMessages(statuses: [503])
+        rig.clock.advance()
+        store.send(.text("first"), in: "acc-bob")
+        let id = try #require(store.chat(id: "acc-bob")?.messages.last?.id)
+        store.edit(messageID: id, in: "acc-bob", text: "edited")   // queued before the message has left
+        await store.settle()
+        // The message failed once (503) and backs off; the edit must not have overtaken it.
+        let conversation = try #require(await rig.server.conversationIDs().first)
+        #expect(await rig.server.storedMessages(in: conversation).isEmpty)
+        rig.clock.advance(5)
+        await store.flushOutbox()
+        await rig.bob.store.syncInbox()
+        await rig.bob.store.settle()
+        let seen = rig.bob.store.messages(in: "acc-ana", before: nil, limit: 5).first
+        #expect(text(seen) == "edited")
+        #expect(seen?.editedAt != nil)
+    }
+
+    @Test func blockAndReportRetryUntilServerGetsThemOnce() async throws {
+        let rig = try await Rig.make()
+        try await rig.anaChatsWithBob()
+        let store = rig.ana.store
+        rig.clock.advance()
+        try rig.insertText(rig.ana, chat: "acc-bob", id: "m1", from: "acc-bob", text: "rude")
+        store.refresh()
+        await rig.server.failNextRequests("PUT /v1/blocks", count: 1)
+        await rig.server.failNextRequests("POST /v1/reports", count: 1)
+        store.report(chatID: "acc-bob")
+        store.block(contactID: "acc-bob")
+        #expect(store.chats(in: .all).isEmpty)   // local state applies at once
+        await store.settle()
+        #expect(await rig.server.requests().filter { $0.hasPrefix("PUT /v1/blocks") }.isEmpty)
+        #expect(await rig.server.submittedReports().isEmpty)
+
+        await store.flushOutbox()
+        await store.flushOutbox()
+        #expect(await rig.server.requests().filter { $0 == "PUT /v1/blocks/acc-bob" }.count == 1)
+        #expect(await rig.server.submittedReports().count == 1)
+        await store.syncInbox()
+        #expect(await rig.server.requests().filter { $0 == "PUT /v1/blocks/acc-bob" }.count == 1)
+        #expect(await rig.server.submittedReports().count == 1)
     }
 }

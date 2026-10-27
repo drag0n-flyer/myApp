@@ -63,12 +63,14 @@ public final class LiveChatStore: ChatStore {
     /// The push-driven `InboxProcessor.run(events:)` has no change callback: call `refresh()` after it reports.
     public func syncInbox() async {
         _ = try? await inbox.syncOnce()
+        await PendingActions.run(repo: repo, server: deps.server)
         refresh()
     }
 
     /// Sends what is queued, then refreshes.
     public func flushOutbox() async {
         try? await outbox.flush()
+        await PendingActions.run(repo: repo, server: deps.server)
         refresh()
     }
 
@@ -286,10 +288,11 @@ public final class LiveChatStore: ChatStore {
         sendControl(.delete(target: messageID), chatID: chatID)
     }
 
-    /// Best effort: a control message that cannot be sent is not retried, the local change stays.
+    /// Queued in the chat's outbox, behind the message it refers to; retried like a message.
     private func sendControl(_ body: ContentEnvelope.Body, chatID: String) {
+        guard (try? outbox.enqueueControl(body, chatID: chatID)) != nil else { return }
         let outbox = outbox
-        background { try? await outbox.sendControl(body, chatID: chatID) }
+        background { try? await outbox.flush() }
     }
 
     // MARK: - Calls
@@ -362,6 +365,8 @@ public final class LiveChatStore: ChatStore {
             }
         } catch { return }
         refresh()
+        let read = peerMessageIDs(requestID) { $0.status == "read" }
+        if !read.isEmpty { sendControl(.receipt(.read, ids: read), chatID: requestID) }
     }
 
     public func block(contactID: String) {
@@ -373,11 +378,11 @@ public final class LiveChatStore: ChatStore {
                     row.isContact = false
                     try repo.upsertContact(row)
                 }
+                try repo.set(PendingActions.blockPrefix + contactID, Data([1]))
             }
         } catch { return }
         refresh()
-        let server = deps.server
-        background { try? await server.block(accountID: contactID) }
+        kickPending()
     }
 
     public func report(chatID: String) {
@@ -386,34 +391,40 @@ public final class LiveChatStore: ChatStore {
             if case .system = message.content { return false }
             return true
         }.suffix(Self.reportedMessageCount).map { ReportedMessage(sentAt: $0.sentAt, text: $0.previewText) }
-        let conversationID = ((try? repo.preferredConversation(chatID: chatID)) ?? nil)?.serverID
-        let server = deps.server
-        background {
-            try? await server.report(
-                accountID: chatID, conversationID: conversationID, reason: "abuse", messages: Array(lines), note: nil)
-        }
+        let pending = PendingActions.Report(
+            accountID: chatID, conversationID: ((try? repo.preferredConversation(chatID: chatID)) ?? nil)?.serverID,
+            messages: Array(lines))
+        guard let data = try? JSONEncoder().encode(pending),
+              (try? repo.set(PendingActions.reportPrefix + freshID(), data)) != nil else { return }
+        kickPending()
+    }
+
+    /// Sends block and report requests that are still pending, in the background.
+    private func kickPending() {
+        let repo = repo, server = deps.server
+        background { await PendingActions.run(repo: repo, server: server) }
     }
 
     public func markRead(chatID: String) {
         guard let chat = (try? repo.chat(id: chatID)) ?? nil else { return }
-        let rows = (try? repo.messages(chatID: chatID, before: nil, limit: 200)) ?? []
-        let ids = rows.filter {
-            $0.senderAccount != deps.me.accountID && $0.senderAccount != ChatMapping.systemSender
-                && !$0.id.hasPrefix(ChatMapping.callPrefix) && !$0.undecryptable && $0.status != "read"
-        }.map(\.id)
+        let ids = unreadPeerMessageIDs(chatID)
         guard chat.unread > 0 || !ids.isEmpty else { return }
         try? repo.setUnread(chatID: chatID, 0)
+        try? repo.updateStatus(ids: ids, to: "read")
         refresh()
-        guard !ids.isEmpty else { return }
-        let outbox = outbox
-        let repo = repo
-        background {
-            // Marked read here only once the receipt is out, so a failed receipt is sent the next time the chat opens.
-            do {
-                try await outbox.sendControl(.receipt(.read, ids: ids), chatID: chatID)
-                try repo.updateStatus(ids: ids, to: "read")
-            } catch {}
-        }
+        // A message request gets no receipt until it is accepted (`accept` sends it).
+        if !chat.isRequest, !ids.isEmpty { sendControl(.receipt(.read, ids: ids), chatID: chatID) }
+    }
+
+    private func unreadPeerMessageIDs(_ chatID: String) -> [String] {
+        peerMessageIDs(chatID) { $0.status != "read" }
+    }
+
+    private func peerMessageIDs(_ chatID: String, where include: (MessageRecord) -> Bool) -> [String] {
+        ((try? repo.messages(chatID: chatID, before: nil, limit: 500)) ?? []).filter {
+            $0.senderAccount != deps.me.accountID && $0.senderAccount != ChatMapping.systemSender
+                && !$0.id.hasPrefix(ChatMapping.callPrefix) && !$0.undecryptable && include($0)
+        }.map(\.id)
     }
 
     public func addContact(username: String) async -> Contact? {

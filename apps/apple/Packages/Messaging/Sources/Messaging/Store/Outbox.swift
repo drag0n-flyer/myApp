@@ -74,6 +74,17 @@ public actor Outbox: ControlSender {
             outbox: OutboxRecord(messageID: envelope.id, chatID: chatID, envelope: data, attempts: 0, nextAttemptAt: now))
     }
 
+    /// Queues a control message (edit, delete, reaction, receipt) in the chat's queue, so it stays behind the
+    /// messages queued before it, is retried like a message, and survives a restart. It has no message row:
+    /// the outbox row's ID is the envelope ID.
+    nonisolated public func enqueueControl(_ body: ContentEnvelope.Body, chatID: String) throws {
+        let now = deps.now()
+        let envelope = ContentEnvelope(
+            id: UUID().uuidString.lowercased(), at: Int64((now.timeIntervalSince1970 * 1000).rounded()), body: body)
+        try deps.repo.enqueue(OutboxRecord(
+            messageID: envelope.id, chatID: chatID, envelope: envelope.encoded(), attempts: 0, nextAttemptAt: now))
+    }
+
     /// A queued message that failed this many attempts, or sat in the queue this long, is marked `failed`
     /// (the UI shows it as not sent, with retry) so the chat's next message can go.
     public static let maxAttempts = 10

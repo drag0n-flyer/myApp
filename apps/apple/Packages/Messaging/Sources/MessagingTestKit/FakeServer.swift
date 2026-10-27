@@ -41,6 +41,7 @@ public actor FakeServer {
     private var blocks: [String: Set<String>] = [:]             // account -> blocked accounts
     private var reports: [[String: String]] = []
     private var requestLog: [String] = []
+    private var requestFailures: [(prefix: String, count: Int)] = []
     private var attachments: [String: Data] = [:]
     private var messageSeqs: [String: Int64] = [:]              // "device|conv|clientMsgID" -> seq
     private var subscribers: [String: [UUID: AsyncStream<ServerEvent>.Continuation]] = [:]
@@ -90,7 +91,10 @@ public actor FakeServer {
     /// Each report's `accountID`, `reason`, `conversationID` and `messages` (the number of messages sent).
     public func submittedReports() -> [[String: String]] { reports }
 
-    /// Every authenticated request so far, as `"METHOD /path"` (for example `"PUT /v1/blocks/acc-bob"`).
+    /// Fails the next `count` requests whose `"METHOD /path"` starts with `prefix` with a 503. They are not logged.
+    public func failNextRequests(_ prefix: String, count: Int = 1) { requestFailures.append((prefix, count)) }
+
+    /// Every handled authenticated request so far, as `"METHOD /path"` (for example `"PUT /v1/blocks/acc-bob"`).
     public func requests() -> [String] { requestLog }
 
     private func removeSubscriber(_ deviceID: String, _ id: UUID) {
@@ -113,7 +117,13 @@ public actor FakeServer {
               deviceAccount[deviceID] == accountID else {
             return failure(401, "unauthorized")
         }
-        requestLog.append("\(method) \(path)")
+        let line = "\(method) \(path)"
+        if let i = requestFailures.firstIndex(where: { line.hasPrefix($0.prefix) }) {
+            requestFailures[i].count -= 1
+            if requestFailures[i].count <= 0 { requestFailures.remove(at: i) }
+            return failure(503, "unavailable")
+        }
+        requestLog.append(line)
         let body = request.httpBody ?? Data()
         let parts = path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
         guard parts.first == "v1" else { return failure(404, "not_found") }
