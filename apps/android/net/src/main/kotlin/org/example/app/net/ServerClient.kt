@@ -90,6 +90,43 @@ class ServerClient internal constructor(
     suspend fun requestRaw(method: String, path: String, body: RequestBody?, headers: Map<String, String>, auth: Auth): RawResponse =
         perform(rawHttp, method, path, body, auth, headers)
 
+    /**
+     * Attachment download: the open response body, not buffered. The caller must close [StreamResponse.body].
+     * Same host, no redirects and 401 handling as every other call; no whole-call timeout.
+     */
+    suspend fun openStream(path: String, headers: Map<String, String>, auth: Auth): StreamResponse {
+        val (request, sentAt) = buildRequest("GET", path, null, auth, headers)
+        val response = try {
+            rawHttp.newCall(request).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: IOException) {
+            throw ServerException(0, "network", null, null)
+        }
+        val outcome = withContext(io) {
+            if (response.code in 200..299) {
+                StreamResponse(response.code, response.headers.toMultimap().mapKeys { it.key.lowercase() }.mapValues { it.value.first() }, response.body.byteStream())
+            } else {
+                response.use { r ->
+                    val data = try {
+                        r.body.bytes()
+                    } catch (e: IOException) {
+                        throw ServerException(0, "network", null, null)
+                    }
+                    if (r.code in 300..399) ServerException(r.code, "redirect", null, null)
+                    else mapError(r.code, r.header("Retry-After"), data)
+                }
+            }
+        }
+        if (outcome is StreamResponse) return outcome
+        outcome as ServerException
+        if (outcome.status == 401 && auth == Auth.Session) handleUnauthorized(sentAt)
+        throw outcome
+    }
+
+    /** Header names are lower case. */
+    class StreamResponse(val status: Int, val headers: Map<String, String>, val body: java.io.InputStream)
+
     class RawResponse(val status: Int, val body: ByteArray, val headers: Map<String, String>)
 
     private fun jsonBody(body: JsonElement?): RequestBody? =
@@ -105,9 +142,7 @@ class ServerClient internal constructor(
         return url
     }
 
-    private suspend fun perform(
-        client: OkHttpClient, method: String, path: String, body: RequestBody?, auth: Auth, headers: Map<String, String>,
-    ): RawResponse {
+    private fun buildRequest(method: String, path: String, body: RequestBody?, auth: Auth, headers: Map<String, String>): Pair<Request, Int> {
         val url = resolveSameHost(path)
         val needsBody = method == "POST" || method == "PUT" || method == "PATCH"
         val rb = Request.Builder().url(url).method(method, body ?: if (needsBody) ByteArray(0).toRequestBody() else null)
@@ -119,8 +154,15 @@ class ServerClient internal constructor(
             val s = session.current ?: throw ServerException(401, "unauthorized", null, null)
             rb.header("Authorization", "Bearer ${s.token}")
         }
+        return rb.build() to sentAt
+    }
+
+    private suspend fun perform(
+        client: OkHttpClient, method: String, path: String, body: RequestBody?, auth: Auth, headers: Map<String, String>,
+    ): RawResponse {
+        val (request, sentAt) = buildRequest(method, path, body, auth, headers)
         val response = try {
-            client.newCall(rb.build()).await()
+            client.newCall(request).await()
         } catch (e: CancellationException) {
             throw e
         } catch (e: IOException) {

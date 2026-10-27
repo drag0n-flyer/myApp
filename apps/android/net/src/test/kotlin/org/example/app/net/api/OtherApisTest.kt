@@ -110,6 +110,27 @@ class AttachmentsApiTest : ApiTestBase() {
     }
 
     @Test
+    fun resumeRejects200() = runBlocking {
+        reply(code = 200, body = "whole file")
+        val e = assertFailsWith<ServerException> { api.download("att1", 10) }
+        assertEquals("bad_range", e.code)
+    }
+
+    @Test
+    fun resumeRejectsWrongContentRange() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(206).setHeader("Content-Range", "bytes 0-2/3").setBody("abc"))
+        assertEquals("bad_range", assertFailsWith<ServerException> { api.download("att1", 10) }.code)
+        server.enqueue(MockResponse().setResponseCode(206).setBody("abc"))
+        assertEquals("bad_range", assertFailsWith<ServerException> { api.download("att1", 10) }.code)
+    }
+
+    @Test
+    fun resumeAcceptsCorrect206() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(206).setHeader("Content-Range", "bytes 10-12/13").setBody("abc"))
+        assertEquals("abc", api.download("att1", 10).use { it.readBytes() }.decodeToString())
+    }
+
+    @Test
     fun downloadFromStartSendsNoRange() = runBlocking {
         reply(body = "all")
         assertEquals("all", api.download("att1", 0).readBytes().decodeToString())
@@ -152,8 +173,12 @@ class TurnAndPushApiTest : ApiTestBase() {
         assertEquals("PUT /v1/push/tokens/fcm", "${a.method} ${a.path}")
         assertEquals("""{"sealed":"AQI"}""", a.body.readUtf8())
         assertEquals("Bearer tok", a.getHeader("Authorization"))
-        api.putPushToken("unifiedpush", buildJsonObject { put("sealed", "AQI") })
-        assertEquals("/v1/push/tokens/unifiedpush", next().path)
+        // UnifiedPush sends its Web Push subscription, not a sealed handle (server/internal/push).
+        val sub = buildJsonObject { put("endpoint", "https://up.example.org/x"); put("p256dh", "AQI"); put("auth", "_w") }
+        api.putPushToken("unifiedpush", sub)
+        val up = next()
+        assertEquals("/v1/push/tokens/unifiedpush", up.path)
+        assertEquals("""{"endpoint":"https://up.example.org/x","p256dh":"AQI","auth":"_w"}""", up.body.readUtf8())
         api.putPushToken("alert", buildJsonObject { put("sealed", "AQI") })
         assertEquals("/v1/push/tokens/alert", next().path)
         api.deletePushToken("fcm")

@@ -145,7 +145,7 @@ class DeliveryApiTest : ApiTestBase() {
     @Test
     fun attachmentsDelegate() = runBlocking {
         reply(body = """{"id":"att1","expiresAt":"2026-11-28T10:00:00Z"}""")
-        reply(code = 206, body = "xyz")
+        server.enqueue(okhttp3.mockwebserver.MockResponse().setResponseCode(206).setHeader("Content-Range", "bytes 5-7/8").setBody("xyz"))
         val ref = api.uploadAttachment(byteArrayOf(1, 2, 3).inputStream(), 3)
         assertEquals("att1", ref.id)
         assertEquals("xyz", api.downloadAttachment("att1", 5).readBytes().decodeToString())
