@@ -23,7 +23,9 @@ If you use a server run by someone else, that operator is responsible for that s
 The server keeps only what it needs to deliver your messages and calls. Each item below matches the server design, section 9, and the server's database tables.
 
 - **Account data:** your username, your email address, and your display name. The display name is stored as plain text.
-- **Device data:** a name and type (iPhone or Mac) for each of your devices, and when each device was last seen.
+- **Phone number, optional:** only if you add one to your account. Other people can find you by it only if you turn on "Find me by phone", which is off by default.
+- **Device data:** a device ID the server assigns to each of your devices, its name and type (for example iPhone or Mac), and when it was last seen. The device ID is linked to your account. It is not an advertising identifier.
+- **Crash reports:** when the app crashes, a report of what the app was doing (no message content, contacts or other personal content) is sent to the operator so the problem can be fixed. Crash reports are not linked to your account. How they are sent and how long they are kept: TO BE FILLED IN.
 - **Conversation membership:** which accounts are in a conversation together, and which of their devices are in it.
 - **Message timing and size:** when a message was sent and how large it is. Not what it says in end-to-end encrypted chats.
 - **Call timing:** when a call was set up between two accounts. Not what was said or shown.
