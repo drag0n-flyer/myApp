@@ -98,11 +98,12 @@ func (m *Module) adminByUsername(ctx context.Context, username string) (string, 
 // setDisabled disables or enables an admin, ending the sessions of a disabled
 // one. by.AdminUserID is the admin acting, who may not disable themselves.
 // With guardLast, disabling the last enabled admin is errLastAdmin; either
-// way wasLast says that it was the last one. Asking for the state the admin
+// way wasLast says that it was the last one. changed is false when the admin
+// was already in the state asked for. Asking for the state the admin
 // is already in changes and audits nothing.
-func (m *Module) setDisabled(ctx context.Context, id string, disable bool, by Entry, guardLast bool) (wasLast bool, err error) {
+func (m *Module) setDisabled(ctx context.Context, id string, disable bool, by Entry, guardLast bool) (wasLast, changed bool, err error) {
 	if !adminIDRE.MatchString(id) {
-		return false, core.ErrNotFound
+		return false, false, core.ErrNotFound
 	}
 	err = pgx.BeginFunc(ctx, m.d.DB, func(tx pgx.Tx) error {
 		if err := lockAdmins(ctx, tx); err != nil {
@@ -115,6 +116,7 @@ func (m *Module) setDisabled(ctx context.Context, id string, disable bool, by En
 		if disabled == disable {
 			return nil
 		}
+		changed = true
 		now := m.d.Now()
 		action := "admin.enable"
 		if disable {
@@ -142,7 +144,7 @@ func (m *Module) setDisabled(ctx context.Context, id string, disable bool, by En
 		by.Action, by.Target, by.Detail = action, id, map[string]any{"username": username}
 		return m.audit(ctx, tx, by)
 	})
-	return wasLast, err
+	return wasLast, changed && err == nil, err
 }
 
 // lockUser locks the row and returns its username and whether it is disabled.
@@ -164,21 +166,20 @@ func (m *Module) deleteAdmin(ctx context.Context, id string, by Entry) error {
 		if err := lockAdmins(ctx, tx); err != nil {
 			return err
 		}
-		username, disabled, err := m.lockUser(ctx, tx, id)
+		username, _, err := m.lockUser(ctx, tx, id)
 		if err != nil {
 			return err
 		}
 		if by.AdminUserID == id {
 			return errSelf
 		}
-		if !disabled {
-			var others int
-			if err := tx.QueryRow(ctx, `select count(*) from admin_users where disabled_at is null and id <> $1`, id).Scan(&others); err != nil {
-				return err
-			}
-			if others == 0 {
-				return errLastAdmin
-			}
+		// Whether the target is enabled or not, an enabled admin must remain.
+		var others int
+		if err := tx.QueryRow(ctx, `select count(*) from admin_users where disabled_at is null and id <> $1`, id).Scan(&others); err != nil {
+			return err
+		}
+		if others == 0 {
+			return errLastAdmin
 		}
 		if _, err := tx.Exec(ctx, `delete from admin_users where id = $1`, id); err != nil {
 			return err

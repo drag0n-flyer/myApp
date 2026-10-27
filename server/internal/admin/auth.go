@@ -61,7 +61,7 @@ func csrfToken(cookieValue string) string {
 
 // loginLimits are the login rate limiters of one module. Module has no field
 // for them (module.go belongs to the skeleton), so they live here by module.
-type loginLimits struct{ perAddr, global, perUser *ratelimit.Limiter }
+type loginLimits struct{ perAddr, global, tokenGlobal, perUser, setup *ratelimit.Limiter }
 
 var limitsByModule sync.Map // *Module -> *loginLimits
 
@@ -72,7 +72,10 @@ func (m *Module) limits() *loginLimits {
 	l, _ := limitsByModule.LoadOrStore(m, &loginLimits{
 		perAddr: ratelimit.New(5, time.Minute, m.d.Now),
 		global:  ratelimit.New(30, time.Hour, m.d.Now),
-		perUser: ratelimit.New(10, time.Hour, m.d.Now),
+		// Token sign-in is the recovery path, so password attempts cannot use it up.
+		tokenGlobal: ratelimit.New(30, time.Hour, m.d.Now),
+		perUser:     ratelimit.New(10, time.Hour, m.d.Now),
+		setup:       ratelimit.New(10, time.Minute, m.d.Now),
 	})
 	return l.(*loginLimits)
 }
@@ -87,7 +90,8 @@ func nilIfEmpty(s string) any {
 
 func unauthorized() error { return httpx.Err("unauthorized", "sign in required") }
 
-// cookieSecure is false only for a loopback Host.
+// cookieSecure is false for a loopback Host, and, with APP_ADMIN_ALLOW_HTTP,
+// for a Host listed in APP_ADMIN_HOSTS.
 func (m *Module) cookieSecure(r *http.Request) bool {
 	host := r.Host
 	if h, _, err := net.SplitHostPort(host); err == nil {
@@ -96,6 +100,9 @@ func (m *Module) cookieSecure(r *http.Request) bool {
 	host = strings.TrimSuffix(strings.TrimPrefix(strings.ToLower(host), "["), "]")
 	switch host {
 	case "localhost", "127.0.0.1", "::1":
+		return false
+	}
+	if m.d.Config.AdminAllowHTTP && m.hostAllowed(host) {
 		return false
 	}
 	return true
@@ -123,10 +130,6 @@ func (m *Module) login(w http.ResponseWriter, r *http.Request, _ Session) error 
 		retryAfter(w, wait)
 		return httpx.Err("rate_limited", "too many attempts")
 	}
-	if ok, wait := l.global.Allow("all"); !ok {
-		retryAfter(w, wait)
-		return httpx.Err("rate_limited", "too many attempts")
-	}
 	var in struct {
 		Token    string `json:"token"`
 		Username string `json:"username"`
@@ -136,7 +139,16 @@ func (m *Module) login(w http.ResponseWriter, r *http.Request, _ Session) error 
 		return err
 	}
 	ctx := r.Context()
-	if in.Token == "" && (in.Username != "" || in.Password != "") {
+	passwordMode := in.Token == "" && (in.Username != "" || in.Password != "")
+	global := l.tokenGlobal
+	if passwordMode {
+		global = l.global
+	}
+	if ok, wait := global.Allow("all"); !ok {
+		retryAfter(w, wait)
+		return httpx.Err("rate_limited", "too many attempts")
+	}
+	if passwordMode {
 		key := normalizeLoose(in.Username)
 		if len(key) > 64 {
 			key = key[:64]
@@ -190,18 +202,23 @@ func (m *Module) passwordLogin(w http.ResponseWriter, r *http.Request, username,
 		return err
 	}
 	matched := false
-	if found {
+	if _, perr := parsePHC(hash); found && perr == nil {
 		matched = verifyPassword(hash, password)
 	} else {
 		dummyVerifies.Add(1)
 		verifyDummy(password)
 	}
+	if afterPasswordVerify != nil {
+		afterPasswordVerify()
+	}
 	var sid string
 	if found && matched && !disabled {
 		err = pgx.BeginFunc(ctx, m.d.DB, func(tx pgx.Tx) error {
-			// The account may have been disabled since the check above.
+			// The account may have been disabled, or its password changed,
+			// since the check above.
 			tag, err := tx.Exec(ctx,
-				`update admin_users set last_login_at = $2 where id = $1 and disabled_at is null`, id, m.d.Now())
+				`update admin_users set last_login_at = $2 where id = $1 and disabled_at is null and password_hash = $3`,
+				id, m.d.Now(), hash)
 			if err != nil {
 				return err
 			}
@@ -223,9 +240,11 @@ func (m *Module) passwordLogin(w http.ResponseWriter, r *http.Request, username,
 			return err
 		}
 	}
-	shown := name
-	if r := []rune(shown); len(r) > 64 {
-		shown = string(r[:64])
+	// Only a well-formed username is recorded, so a password typed into the
+	// username field does not end up in the log.
+	shown := "(invalid)"
+	if usernameRE.MatchString(name) {
+		shown = name
 	}
 	if aerr := m.audit(ctx, m.d.DB, Entry{Actor: "dashboard", Action: "login.failed", Detail: map[string]any{"username": shown}}); aerr != nil {
 		m.d.Log.Error("admin audit write failed", "action", "login.failed")
@@ -384,3 +403,7 @@ func (m *Module) cleanup(ctx context.Context) error {
 	_, err := m.d.DB.Exec(ctx, `delete from admin_audit where at < $1`, now.Add(-auditKeep))
 	return err
 }
+
+// afterPasswordVerify is a test seam called between the password check and
+// the session insert of a password login.
+var afterPasswordVerify func()

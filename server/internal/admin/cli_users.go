@@ -49,15 +49,6 @@ func readPasswordLine(in io.Reader) (string, error) {
 	return strings.TrimRight(line, "\r\n"), nil
 }
 
-func stdinIsTerminal() bool {
-	f, ok := cliStdin.(*os.File)
-	if !ok {
-		return false
-	}
-	fi, err := f.Stat()
-	return err == nil && fi.Mode()&os.ModeCharDevice != 0
-}
-
 // userArgs splits "<username> [--generate]" in either order.
 func userArgs(cmd string, args []string, allowGenerate bool) (username string, generate bool, err error) {
 	for _, a := range args {
@@ -78,15 +69,18 @@ func userArgs(cmd string, args []string, allowGenerate bool) (username string, g
 	return username, generate, nil
 }
 
-// cliPassword gets the new password: generated, or one line from stdin. Echo
-// cannot be turned off without a new dependency, so a terminal gets a warning.
+// cliPassword gets the new password: generated, or one line from stdin. On a
+// terminal the typing is not shown.
 func cliPassword(generate bool) (pw string, generated bool, err error) {
 	if generate {
 		pw, err = generatePassword()
 		return pw, true, err
 	}
-	if stdinIsTerminal() {
-		fmt.Fprintln(os.Stderr, "Type the new password and press Enter. It will be shown as you type; to avoid that, pipe it in or use --generate.")
+	if f, ok := cliStdin.(*os.File); ok && isTerminal(f) {
+		fmt.Fprint(os.Stderr, "New password (not shown): ")
+		err = withoutEcho(f, func() (err error) { pw, err = readPasswordLine(f); return })
+		fmt.Fprintln(os.Stderr)
+		return pw, false, err
 	}
 	pw, err = readPasswordLine(cliStdin)
 	return pw, false, err
@@ -186,11 +180,16 @@ func (m *Module) cmdUserSetDisabled(disable bool) core.Command {
 		if err != nil {
 			return err
 		}
-		wasLast, err := m.setDisabled(ctx, id, disable, cliBy, false)
+		wasLast, changed, err := m.setDisabled(ctx, id, disable, cliBy, false)
 		if err != nil {
 			return err
 		}
 		u := normalizeLoose(username)
+		if !changed {
+			state := map[bool]string{true: "disabled", false: "enabled"}[disable]
+			fmt.Fprintf(out, "%s is already %s\n", u, state)
+			return nil
+		}
 		if disable {
 			fmt.Fprintf(out, "disabled %s; their sessions ended\n", u)
 			if wasLast {

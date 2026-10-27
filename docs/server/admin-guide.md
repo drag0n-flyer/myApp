@@ -175,13 +175,13 @@ When no admin account exists yet, the sign-in page shows "Create the first admin
 
 ### Sign in and manage admins
 
-Sign in with your username and password. After five wrong tries in a minute from one address, ten wrong tries in an hour for one username, or thirty in an hour in total, sign-in stops for a while. A wrong username, a wrong password and a disabled account all give the same answer.
+Sign in with your username and password. After five wrong tries in a minute from one address, ten wrong tries in an hour for one username, or thirty password tries in an hour in total, sign-in stops for a while. A wrong username, a wrong password and a disabled account all give the same answer.
 
 The Admins page lists the admins. You can add an admin, disable or enable one, reset a password and remove an admin. Disabling, removing or changing the password of an admin signs that admin out everywhere. You cannot disable or remove yourself (ask another admin, or use the command line), and the last enabled admin cannot be disabled or removed. You can change your own password, which signs you out everywhere.
 
 ### Command line
 
-The commands read the same `.env`. Use `docker compose exec appserver /appserver ...` (Docker) or `bin/appserver ...` after `make run`.
+The commands read the same `.env`. Use `docker compose exec appserver /appserver ...` (Docker) or `bin/appserver ...` after `make run`. When you pipe a password in, use `docker compose exec -T appserver /appserver ...`; without `-T` Docker opens a terminal and the pipe fails. On a terminal the password you type is not shown.
 
 | Command | What it does |
 |---|---|
@@ -195,7 +195,7 @@ Every command is written to the audit log as the command line.
 
 ### Locked out?
 
-Run `appserver admin user reset-password <username>` for a forgotten password. If every admin is disabled, run `appserver admin user enable <username>`, or `appserver admin user add <username>` for a new one. The one-time token sign-in below always works too.
+Run `appserver admin user reset-password <username>` for a forgotten password. If every admin is disabled, run `appserver admin user enable <username>`, or `appserver admin user add <username>` for a new one. The one-time token sign-in below has its own limit (thirty tries an hour in total), so wrong passwords cannot block it; it can still be used up by repeated wrong tokens.
 
 ### One-time token sign-in (recovery)
 
@@ -205,6 +205,8 @@ On the sign-in page, "Sign in with a one-time token" shows the token field. How 
 3. A session ends after 15 minutes without use, and after 8 hours at most. The overview's automatic refresh does not count as use. For a lost laptop, run `docker compose exec appserver /appserver admin sessions end` (or `bin/appserver admin sessions end`) to end every session.
 
 Never publish port 9090. It must stay on `127.0.0.1`. Set `APP_ADMIN_HOSTS` only when you put your own HTTPS proxy in front of it, and give that proxy its own access control.
+
+To use the dashboard over plain HTTP on a trusted local network (for example `http://192.168.0.174:9044/admin/`), list that address in `APP_ADMIN_HOSTS`, publish the admin port on that address, and set `APP_ADMIN_ALLOW_HTTP=true` (default `false`). The session cookie then is not marked Secure for the listed hosts, and the server logs a warning at start-up. Sign-in codes, passwords and session cookies cross the network unencrypted, so anyone on that network can read them. Hosts not listed are still refused.
 
 Every action is written to the audit log and kept 365 days. The log holds IDs, token labels and admin usernames, not passwords or email addresses. Escrow export stays a command-line action.
 

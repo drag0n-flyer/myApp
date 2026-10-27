@@ -57,6 +57,11 @@ func (m *Module) setup(w http.ResponseWriter, r *http.Request, _ Session) error 
 	if err := m.verifyCSRF(r, false); err != nil {
 		return err
 	}
+	// Each attempt on an empty install costs one argon2 hash.
+	if ok, wait := m.limits().setup.Allow("all"); !ok {
+		retryAfter(w, wait)
+		return httpx.Err("rate_limited", "too many attempts")
+	}
 	var in credentials
 	if err := httpx.Decode(r, &in); err != nil {
 		return err
@@ -139,7 +144,7 @@ func (m *Module) addAdmin(w http.ResponseWriter, r *http.Request, s Session) err
 }
 
 func (m *Module) disableAdmin(w http.ResponseWriter, r *http.Request, s Session) error {
-	if _, err := m.setDisabled(r.Context(), r.PathValue("id"), true, s.entry("", "", nil), true); err != nil {
+	if _, _, err := m.setDisabled(r.Context(), r.PathValue("id"), true, s.entry("", "", nil), true); err != nil {
 		return adminAPIErr(err)
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -147,7 +152,7 @@ func (m *Module) disableAdmin(w http.ResponseWriter, r *http.Request, s Session)
 }
 
 func (m *Module) enableAdmin(w http.ResponseWriter, r *http.Request, s Session) error {
-	if _, err := m.setDisabled(r.Context(), r.PathValue("id"), false, s.entry("", "", nil), true); err != nil {
+	if _, _, err := m.setDisabled(r.Context(), r.PathValue("id"), false, s.entry("", "", nil), true); err != nil {
 		return adminAPIErr(err)
 	}
 	w.WriteHeader(http.StatusNoContent)

@@ -45,6 +45,15 @@ func encodePHC(p phc) string {
 		p.memory, p.time, p.threads, b64.EncodeToString(p.salt), b64.EncodeToString(p.key))
 }
 
+// Upper bounds for a stored hash's parameters, so a planted hash cannot make
+// a login allocate or spin without end.
+const (
+	maxPHCMemoryKiB = 1 << 20 // 1 GiB
+	maxPHCTime      = 10
+	maxPHCThreads   = 16
+	maxPHCKeyLen    = 64
+)
+
 // parsePHC reads $argon2id$v=19$m=..,t=..,p=..$salt$hash.
 func parsePHC(s string) (phc, error) {
 	bad := errors.New("not an argon2id hash")
@@ -67,11 +76,17 @@ func parsePHC(s string) (phc, error) {
 		}
 		switch i {
 		case 0:
+			if n > maxPHCMemoryKiB {
+				return phc{}, bad
+			}
 			p.memory = uint32(n)
 		case 1:
+			if n > maxPHCTime {
+				return phc{}, bad
+			}
 			p.time = uint32(n)
 		case 2:
-			if n > 255 {
+			if n > maxPHCThreads {
 				return phc{}, bad
 			}
 			p.threads = uint8(n)
@@ -81,7 +96,7 @@ func parsePHC(s string) (phc, error) {
 	if p.salt, err = base64.RawStdEncoding.DecodeString(parts[4]); err != nil || len(p.salt) == 0 {
 		return phc{}, bad
 	}
-	if p.key, err = base64.RawStdEncoding.DecodeString(parts[5]); err != nil || len(p.key) == 0 {
+	if p.key, err = base64.RawStdEncoding.DecodeString(parts[5]); err != nil || len(p.key) == 0 || len(p.key) > maxPHCKeyLen {
 		return phc{}, bad
 	}
 	return p, nil

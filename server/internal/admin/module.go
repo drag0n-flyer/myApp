@@ -66,7 +66,12 @@ type Module struct {
 }
 
 // New returns the admin module.
-func New(d core.Deps, src Sources) *Module { return &Module{d: d, src: src} }
+func New(d core.Deps, src Sources) *Module {
+	if d.Config.AdminAllowHTTP && d.Log != nil {
+		d.Log.Warn("admin dashboard allows plain HTTP for APP_ADMIN_HOSTS; sign-in codes, passwords and session cookies cross the network unencrypted")
+	}
+	return &Module{d: d, src: src}
+}
 
 // Run deletes expired tokens, sessions and old audit entries every hour until
 // ctx is done.
