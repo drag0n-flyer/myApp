@@ -7,7 +7,7 @@ import UserNotifications
 /// What the Mac ring needs from the call engine. `AppModel` conforms for now; `LiveCallEngine` takes over later.
 /// All calls arrive on the main actor.
 @MainActor
-protocol MacRingHandling: AnyObject {
+protocol MacRingHandling: AnyObject, Sendable {
     /// Shows or clears the in-app incoming-call banner.
     func macRingSetCaller(_ caller: Contact?)
     /// `caller` is nil when the app was launched by the notification (the engine knows the call by `callID`).
@@ -126,7 +126,7 @@ final class MacRinger: NSObject, UNUserNotificationCenterDelegate {
     /// `call.status` within 5 s; nil on timeout (the call is treated as still ringing).
     private static func status(of callID: String, via handler: MacRingHandling) async -> CallStatus? {
         await withTaskGroup(of: CallStatus?.self) { group in
-            group.addTask { await handler.macRingStatus(callID: callID) }
+            group.addTask { @MainActor in await handler.macRingStatus(callID: callID) }
             group.addTask { try? await Task.sleep(for: .seconds(5)); return nil }
             let first = await group.next() ?? nil
             group.cancelAll()
