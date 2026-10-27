@@ -21,6 +21,8 @@ android {
         unitTests.all {
             // Robolectric downloads its Android jars here; the default (~/.m2) may not be writable.
             it.systemProperty("maven.repo.local", gradle.gradleUserHomeDir.resolve("robolectric-repo").path)
+            // Robolectric Compose tests together outgrow the default 512 MB test heap.
+            it.maxHeapSize = "2g"
         }
     }
 }
