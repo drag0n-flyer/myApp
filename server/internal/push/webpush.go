@@ -22,9 +22,11 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/drag0n-flyer/myApp/server/internal/core"
@@ -38,9 +40,20 @@ const (
 	vapidLifetime    = 12 * time.Hour
 )
 
+// originOf returns the RFC 6454 origin of u: lower-case scheme and host, and
+// no port when it is the default 443.
+func originOf(u *url.URL) string {
+	o := "https://" + strings.ToLower(u.Hostname())
+	if p := u.Port(); p != "" && p != "443" {
+		o += ":" + p
+	}
+	return o
+}
+
 // upRegistration is what the server stores for a UnifiedPush device: the
 // distributor endpoint and the receiver's Web Push keys. It is stored as JSON
-// in push_tokens.sealed (it is not sealed: the server must read it).
+// in push_tokens.sealed (it is not sealed: the server must read it). The
+// endpoint is a capability URL: never log it or return it from any API.
 type upRegistration struct {
 	Endpoint string      `json:"endpoint"`
 	P256dh   httpx.Bytes `json:"p256dh"`
@@ -68,6 +81,9 @@ func validateUploadEndpoint(s string) (*url.URL, error) {
 	}
 	if p := u.Port(); p != "" && p != "443" {
 		return nil, errors.New("endpoint must use port 443")
+	}
+	if _, err := netip.ParseAddr(u.Hostname()); err == nil {
+		return nil, errors.New("endpoint must use a host name, not an IP address")
 	}
 	return u, nil
 }
@@ -229,10 +245,14 @@ func (m *Module) vapidHeader(endpoint *url.URL) (string, error) {
 	}
 	enc := base64.RawURLEncoding
 	hdr := enc.EncodeToString([]byte(`{"typ":"JWT","alg":"ES256"}`))
+	sub := "https://" + m.d.Config.Host
+	if m.d.Config.Host == "" {
+		sub = "mailto:admin@invalid"
+	}
 	claims, err := json.Marshal(map[string]any{
-		"aud": endpoint.Scheme + "://" + endpoint.Host,
+		"aud": originOf(endpoint),
 		"exp": m.d.Now().Add(vapidLifetime).Unix(),
-		"sub": "https://" + m.d.Config.Host,
+		"sub": sub,
 	})
 	if err != nil {
 		return "", err
@@ -251,6 +271,50 @@ func (m *Module) vapidHeader(endpoint *url.URL) (string, error) {
 	rs.R.FillBytes(sig[:32])
 	rs.S.FillBytes(sig[32:])
 	return "vapid t=" + signing + "." + enc.EncodeToString(sig) + ", k=" + enc.EncodeToString(pub), nil
+}
+
+const (
+	upMaxInFlight = 64 // all UnifiedPush sends together, separate from gateway pushes
+	upPerAccount  = 2  // in flight for one account
+	upTimeout     = 10 * time.Second
+)
+
+// enqueueUnifiedPush hands a send to the UnifiedPush pool and returns at once,
+// so a stalled client-supplied endpoint never holds a caller's push slot. A
+// send over the global or per-account cap is dropped: the device fetches its
+// inbox when it next connects.
+func (m *Module) enqueueUnifiedPush(ctx context.Context, deviceID string, kind core.PushKind, stored, payload []byte) error {
+	var account string
+	if err := m.d.DB.QueryRow(ctx, `select account_id from devices where id = $1`, deviceID).Scan(&account); err != nil {
+		return err
+	}
+	m.upMu.Lock()
+	if m.upActive >= upMaxInFlight || m.upByAccount[account] >= upPerAccount {
+		m.upMu.Unlock()
+		return errors.New("push: unifiedpush send dropped, too many in flight")
+	}
+	m.upActive++
+	m.upByAccount[account]++
+	m.upMu.Unlock()
+	payload = append([]byte(nil), payload...)
+	m.upWG.Add(1)
+	go func() {
+		defer m.upWG.Done()
+		defer func() {
+			m.upMu.Lock()
+			m.upActive--
+			if m.upByAccount[account]--; m.upByAccount[account] <= 0 {
+				delete(m.upByAccount, account)
+			}
+			m.upMu.Unlock()
+		}()
+		sctx, cancel := context.WithTimeout(context.Background(), upTimeout)
+		defer cancel()
+		if err := m.sendUnifiedPush(sctx, deviceID, kind, stored, payload); err != nil {
+			m.d.Log.Warn("unifiedpush failed") // never the error text or endpoint
+		}
+	}()
+	return nil
 }
 
 // sendUnifiedPush delivers one push to a UnifiedPush distributor endpoint.

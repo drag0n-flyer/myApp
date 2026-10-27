@@ -45,6 +45,11 @@ type Module struct {
 	key   ed25519.PrivateKey // cached after the first good read; failures are retried
 	vapid *ecdsa.PrivateKey  // the UnifiedPush VAPID key, cached the same way
 	up    *http.Client       // UnifiedPush endpoints: SSRF-guarded, no redirects
+
+	upMu        sync.Mutex
+	upActive    int
+	upByAccount map[string]int
+	upWG        sync.WaitGroup
 }
 
 var _ core.Pusher = (*Module)(nil)
@@ -57,7 +62,7 @@ func New(d core.Deps) *Module {
 		Timeout:       httpTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	return &Module{d: d, hc: hc, up: newUPClient(false, nil)}
+	return &Module{d: d, hc: hc, up: newUPClient(false, nil), upByAccount: map[string]int{}}
 }
 
 func validKind(k string) bool {
@@ -120,6 +125,10 @@ func (m *Module) putToken(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
+	// Serialise concurrent uploads for one device, so both transports can't survive.
+	if _, err := tx.Exec(r.Context(), `select 1 from devices where id = $1 for update`, p.DeviceID); err != nil {
+		return err
+	}
 	if other != "" {
 		if _, err := tx.Exec(r.Context(),
 			`delete from push_tokens where device_id = $1 and kind = $2`, p.DeviceID, other); err != nil {
@@ -247,7 +256,7 @@ func (m *Module) Push(ctx context.Context, deviceID string, kind core.PushKind, 
 		return err
 	}
 	if handleKind == "unifiedpush" { // direct, no gateway
-		return m.sendUnifiedPush(ctx, deviceID, kind, sealed, payload)
+		return m.enqueueUnifiedPush(ctx, deviceID, kind, sealed, payload)
 	}
 	if m.d.Config.PushGatewayURL == "" {
 		return nil

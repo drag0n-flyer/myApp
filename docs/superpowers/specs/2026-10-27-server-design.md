@@ -250,7 +250,7 @@ Server endpoints: `PUT /v1/push/tokens/{kind}` (kind `alert`, `voip` or `fcm`) `
 **Sending (`push.Sender`, implements `core.Pusher`):**
 - `PushCall` uses the device's `voip` handle if it has one (iPhone), then `alert` (Mac), then `fcm`, then `unifiedpush`.
 - `PushMessage` uses `alert`, then `fcm`, then `unifiedpush`.
-- A `unifiedpush` push goes straight to the distributor endpoint (RFC 8030/8291/8292, see [push](../../protocol/push.md#android-pushes-through-unifiedpush)), with no gateway, so it works when `APP_PUSH_GATEWAY_URL` is empty. The endpoint is untrusted: https and port 443 only, no redirects, no proxy, and the resolved address must be public (checked at connect time). `APP_VAPID_KEY_FILE` holds the P-256 VAPID key (`appserver keygen vapid`); `/v1/server` publishes it as `push.vapidKey`. `404` and `410` delete the registration.
+- A `unifiedpush` push goes straight to the distributor endpoint (RFC 8030/8291/8292, see [push](../../protocol/push.md#android-pushes-through-unifiedpush)), with no gateway, so it works when `APP_PUSH_GATEWAY_URL` is empty. The endpoint is untrusted: https and port 443 only, no redirects, no proxy, and the resolved address must be public (checked at connect time). `APP_VAPID_KEY_FILE` holds the P-256 VAPID key (`appserver keygen vapid`); `/v1/server` publishes it as `push.vapidKey`. `404` and `410` delete the registration. UnifiedPush sends run in their own pool (64 in flight, 2 per account, 10-second limit) and never hold a gateway push slot; a send over a cap is dropped and the device fetches its inbox.
 - No handle means no push and no error.
 
 **Padding:** the body is a 2-byte big-endian length, then the payload, then zeros up to the smallest bucket of 256, 512, 1024, 2048 or 3072 bytes. A payload over 3070 bytes is replaced by an empty one, and the device then fetches its inbox.
@@ -324,7 +324,7 @@ Server info document:
 { "protocol": 1, "host": "chat.example.org", "requiresInvite": true,
   "policy": { "defaultMode": "auto", "maxMode": "high", "defaultIPHiding": "nonContacts" },
   "encryption": { "newConversations": "e2ee", "escrowKey": null },
-  "push": { "gateway": "https://push.example.org" },
+  "push": { "gateway": "https://push.example.org", "vapidKey": "<base64url P-256 public key, or null>" },
   "features": ["calls", "video", "linking"], "federation": false,
   "limits": { "attachmentBytes": 104857600 } }
 ```

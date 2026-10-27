@@ -15,7 +15,6 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
-	"errors"
 	"io"
 	"math/big"
 	"net/http"
@@ -68,7 +67,7 @@ func decryptWebpush(t *testing.T, ua *ecdh.PrivateKey, auth, body []byte) []byte
 		t.Fatalf("short body %d", len(body))
 	}
 	salt, rs, idlen := body[:16], binary.BigEndian.Uint32(body[16:20]), int(body[20])
-	if idlen != 65 || int(rs) < len(body)-86 && false {
+	if idlen != 65 || rs != 4096 {
 		t.Fatalf("header %d", idlen)
 	}
 	asPub := body[21 : 21+idlen]
@@ -217,6 +216,160 @@ func TestRejectsBadEndpoints(t *testing.T) {
 	}
 }
 
+func TestRefusesSpecialPurposeBlocks(t *testing.T) {
+	for _, a := range []string{
+		// IPv4: one per block
+		"0.1.2.3", "10.1.2.3", "100.64.1.1", "127.1.2.3", "169.254.1.1", "172.16.5.5",
+		"192.0.0.9", "192.0.2.7", "192.88.99.1", "192.168.5.5", "198.18.0.1", "198.19.255.1",
+		"198.51.100.7", "203.0.113.7", "224.1.1.1", "239.255.255.255", "240.0.0.1", "255.255.255.255",
+		// IPv6: one per block
+		"::", "::1", "::7f00:1", "::a00:1", "::ffff:8.8.8.8", "64:ff9b::a9fe:a9fe", "64:ff9b::808:808",
+		"64:ff9b:1::a00:1", "100::1", "2001::1", "2001:0:4136:e378:8000:63bf:3fff:fdd2", "2001:db8::1",
+		"2002:a9fe:a9fe::1", "2002:808:808::1", "fc00::1", "fd00::1", "fe80::1", "fec0::1", "ff02::1",
+	} {
+		ip := a
+		if strings.Contains(a, ":") {
+			ip = "[" + a + "]"
+		}
+		if err := push.CheckAddr(ip + ":443"); err == nil {
+			t.Errorf("%s allowed", a)
+		}
+	}
+	for _, a := range []string{"8.8.8.8", "1.1.1.1", "172.15.0.1", "172.32.0.1", "2606:4700:4700::1111", "2a00:1450:4001::1"} {
+		ip := a
+		if strings.Contains(a, ":") {
+			ip = "[" + a + "]"
+		}
+		if err := push.CheckAddr(ip + ":443"); err != nil {
+			t.Errorf("%s refused", a)
+		}
+	}
+}
+
+func TestVapidAudIsOrigin(t *testing.T) {
+	for in, want := range map[string]string{
+		"https://Push.Example.ORG:443/a/b": "https://push.example.org",
+		"https://push.example.org/x":       "https://push.example.org",
+		"https://push.example.org:8443/x":  "https://push.example.org:8443",
+	} {
+		got, err := push.VapidAudForTest(in)
+		if err != nil || got != want {
+			t.Errorf("%s -> %q %v", in, got, err)
+		}
+	}
+}
+
+func TestIPLiteralEndpointRejectedAtUpload(t *testing.T) {
+	r := newReceiver(t, 201)
+	_, _, c, p, _ := upSetup(t, r)
+	for _, ep := range []string{"https://10.0.0.1/x", "https://[::1]/x", "https://8.8.8.8/x"} {
+		if res := c.Do(&p, "PUT", "/v1/push/tokens/unifiedpush", upBody(ep, r.ua, r.auth)); res.Status != 400 {
+			t.Errorf("%s: %d", ep, res.Status)
+		}
+	}
+}
+
+// stalling receiver: counts concurrent requests and holds them until released.
+type staller struct {
+	srv         *httptest.Server
+	mu          sync.Mutex
+	cur, maxCur int
+	total       int
+	release     chan struct{}
+}
+
+func newStaller(t *testing.T) *staller {
+	s := &staller{release: make(chan struct{})}
+	s.srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		s.mu.Lock()
+		s.cur++
+		s.total++
+		if s.cur > s.maxCur {
+			s.maxCur = s.cur
+		}
+		s.mu.Unlock()
+		<-s.release
+		s.mu.Lock()
+		s.cur--
+		s.mu.Unlock()
+		w.WriteHeader(201)
+	}))
+	t.Cleanup(s.srv.Close)
+	return s
+}
+
+func TestStalledEndpointDoesNotBlockGatewayPush(t *testing.T) {
+	st := newStaller(t)
+	vf, _ := newVapidFile(t)
+	d, _, g := setupWith(t, 200, func(d *core.Deps) { d.Config.VapidKeyFile = vf })
+	m := push.New(d)
+	pool := x509.NewCertPool()
+	pool.AddCert(st.srv.Certificate())
+	m.UseTestTransport(pool)
+	c := testkit.Serve(t, d, m)
+	up := testkit.Account(t, d, "alice")
+	gw := testkit.Account(t, d, "bob")
+	ua, _ := ecdh.P256().GenerateKey(rand.Reader)
+	reg, _ := json.Marshal(map[string]string{"endpoint": st.srv.URL + "/e",
+		"p256dh": base64.RawURLEncoding.EncodeToString(ua.PublicKey().Bytes()),
+		"auth":   base64.RawURLEncoding.EncodeToString(make([]byte, 16))})
+	_, _ = d.DB.Exec(context.Background(), `insert into push_tokens (device_id, kind, sealed) values ($1,'unifiedpush',$2)`, up.DeviceID, reg)
+	putToken(t, c, gw, "alert", []byte("h"))
+	done := make(chan error, 1)
+	go func() { done <- m.Push(context.Background(), up.DeviceID, core.PushMessage, []byte("x")) }()
+	select {
+	case <-done: // Push hands the send to the UnifiedPush pool and returns
+	case <-time.After(2 * time.Second):
+		t.Fatal("Push blocked on a stalled endpoint")
+	}
+	if err := m.Push(context.Background(), gw.DeviceID, core.PushMessage, []byte("y")); err != nil {
+		t.Fatal(err)
+	}
+	if len(g.requests()) != 1 {
+		t.Fatal("gateway push did not go out")
+	}
+	close(st.release)
+	m.WaitUP()
+}
+
+func TestUnifiedPushCapsPerAccount(t *testing.T) {
+	st := newStaller(t)
+	vf, _ := newVapidFile(t)
+	d, _ := testkit.NewDeps(t, func(d *core.Deps) { d.Config.VapidKeyFile = vf })
+	m := push.New(d)
+	pool := x509.NewCertPool()
+	pool.AddCert(st.srv.Certificate())
+	m.UseTestTransport(pool)
+	alice := testkit.Account(t, d, "alice")
+	var devs []string
+	devs = append(devs, alice.DeviceID)
+	for i := 0; i < 4; i++ {
+		devs = append(devs, testkit.Device(t, d, alice.AccountID, "mac").DeviceID)
+	}
+	ua, _ := ecdh.P256().GenerateKey(rand.Reader)
+	reg, _ := json.Marshal(map[string]string{"endpoint": st.srv.URL + "/e",
+		"p256dh": base64.RawURLEncoding.EncodeToString(ua.PublicKey().Bytes()),
+		"auth":   base64.RawURLEncoding.EncodeToString(make([]byte, 16))})
+	for _, dev := range devs {
+		_, _ = d.DB.Exec(context.Background(), `insert into push_tokens (device_id, kind, sealed) values ($1,'unifiedpush',$2)`, dev, reg)
+		_ = m.Push(context.Background(), dev, core.PushMessage, []byte("x"))
+	}
+	time.Sleep(500 * time.Millisecond)
+	st.mu.Lock()
+	cur := st.cur
+	st.mu.Unlock()
+	if cur != 2 {
+		t.Fatalf("in flight %d, want exactly the cap of 2", cur)
+	}
+	close(st.release)
+	m.WaitUP()
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.maxCur > 2 {
+		t.Fatalf("max concurrent %d", st.maxCur)
+	}
+}
+
 func TestRefusesPrivateEndpoints(t *testing.T) {
 	for _, a := range []string{
 		"10.0.0.1:443", "10.255.255.255:443", "172.16.0.1:443", "172.31.255.255:443", "192.168.1.1:443",
@@ -250,13 +403,10 @@ func TestPrivateEndpointNeverContacted(t *testing.T) {
 		`insert into push_tokens (device_id, kind, sealed) values ($1,'unifiedpush',$2)`, p.DeviceID, reg); err != nil {
 		t.Fatal(err)
 	}
-	err := m.Push(context.Background(), p.DeviceID, core.PushMessage, []byte("hi"))
-	if err == nil {
-		t.Fatal("no error")
+	if err := m.Push(context.Background(), p.DeviceID, core.PushMessage, []byte("hi")); err != nil {
+		t.Fatal(err)
 	}
-	if strings.Contains(err.Error(), r.srv.URL) || strings.Contains(err.Error(), "127.0.0.1") {
-		t.Fatalf("error leaks endpoint: %v", err)
-	}
+	m.WaitUP()
 	if r.hits != 0 {
 		t.Fatalf("receiver hit %d times", r.hits)
 	}
@@ -279,6 +429,7 @@ func TestWebpushRoundTrip(t *testing.T) {
 	if err := m.Push(context.Background(), p.DeviceID, core.PushMessage, []byte("hello")); err != nil {
 		t.Fatal(err)
 	}
+	m.WaitUP()
 	if len(r.got) != 1 {
 		t.Fatalf("hits %d", len(r.got))
 	}
@@ -358,6 +509,7 @@ func TestCallUsesTtl45(t *testing.T) {
 	if err := m.Push(context.Background(), p.DeviceID, core.PushCall, []byte("ring")); err != nil {
 		t.Fatal(err)
 	}
+	m.WaitUP()
 	if r.got[0].Header.Get("TTL") != "45" {
 		t.Fatalf("ttl %q", r.got[0].Header.Get("TTL"))
 	}
@@ -374,6 +526,7 @@ func TestEndpointGoneDeletes(t *testing.T) {
 		if err := m.Push(context.Background(), p.DeviceID, core.PushMessage, []byte("x")); err != nil {
 			t.Fatalf("%d: %v", st, err)
 		}
+		m.WaitUP()
 		if n := count(t, d, p.DeviceID); n != 0 {
 			t.Errorf("%d: registration kept", st)
 		}
@@ -381,8 +534,10 @@ func TestEndpointGoneDeletes(t *testing.T) {
 	r := newReceiver(t, 503)
 	d, m, _, p, _ := upSetup(t, r)
 	registerUP(t, d, p.DeviceID, r)
-	if err := m.Push(context.Background(), p.DeviceID, core.PushMessage, []byte("x")); err == nil {
-		t.Error("503 should be an error")
+	_ = m.Push(context.Background(), p.DeviceID, core.PushMessage, []byte("x"))
+	m.WaitUP()
+	if r.hits != 1 {
+		t.Error("503 endpoint not contacted")
 	}
 	if n := count(t, d, p.DeviceID); n != 1 {
 		t.Error("503 must not delete")
@@ -405,15 +560,18 @@ func TestUnifiedPushNoRedirects(t *testing.T) {
 		"auth":   base64.RawURLEncoding.EncodeToString(target.auth)})
 	_, _ = d.DB.Exec(context.Background(), `insert into push_tokens (device_id, kind, sealed) values ($1,'unifiedpush',$2)`, p.DeviceID, reg)
 	_ = m.Push(context.Background(), p.DeviceID, core.PushMessage, []byte("x"))
+	m.WaitUP()
 	if target.hits != 0 {
 		t.Fatal("redirect followed")
+	}
+	if n := count(t, d, p.DeviceID); n != 1 {
+		t.Fatal("a 3xx must keep the registration")
 	}
 }
 
 func TestOneTransportPerDevice(t *testing.T) {
 	r := newReceiver(t, 201)
-	d, m, c, p, _ := upSetup(t, r)
-	_ = m
+	d, _, c, p, _ := upSetup(t, r)
 	kinds := func() []string {
 		rows, err := d.DB.Query(context.Background(), `select kind from push_tokens where device_id=$1 order by kind`, p.DeviceID)
 		if err != nil {
@@ -476,7 +634,9 @@ func TestUnifiedPushWorksWithoutGateway(t *testing.T) {
 	m.UseTestTransport(r.roots())
 	p := testkit.Account(t, d, "alice")
 	registerUP(t, d, p.DeviceID, r)
-	if err := m.Push(context.Background(), p.DeviceID, core.PushMessage, []byte("x")); err != nil || r.hits != 1 {
+	err := m.Push(context.Background(), p.DeviceID, core.PushMessage, []byte("x"))
+	m.WaitUP()
+	if err != nil || r.hits != 1 {
 		t.Fatalf("%v %d", err, r.hits)
 	}
 }
@@ -506,5 +666,4 @@ func TestKeygenVapidCommand(t *testing.T) {
 	if _, err := push.VAPIDPublicKey(filepath.Join(t.TempDir(), "nope")); err == nil {
 		t.Fatal("missing file accepted")
 	}
-	_ = errors.New
 }
