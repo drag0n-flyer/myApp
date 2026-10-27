@@ -85,6 +85,7 @@ func TestLoadOverridesAndOptional(t *testing.T) {
 	env["APP_PUSH_SERVER_ID"] = "srv1"
 	env["APP_ESCROW_KEY_FILE"] = "/e.pem"
 	env["APP_APPLE_APP_IDS"] = "T1.a.b, T2.c.d,"
+	env["APP_DOCS_DIR"] = "/docs"
 	env["APP_TRUST_PROXY"] = "true"
 	cfg, _, err := Load(mapEnv(env), noFiles)
 	if err != nil {
@@ -95,7 +96,7 @@ func TestLoadOverridesAndOptional(t *testing.T) {
 		DatabaseURL: "postgres:///x", DataDir: "/data",
 		SMTPURL: "smtp://u:p@h:587", MailFrom: "hi@x.test", TURNSecret: "s3", Relays: []Relay{{Host: "turn1.x"}},
 		PushGatewayURL: "https://push.test", PushKeyFile: "/k.pem", PushServerID: "srv1",
-		EscrowKeyFile: "/e.pem", AppleAppIDs: []string{"T1.a.b", "T2.c.d"}, TrustProxy: true,
+		EscrowKeyFile: "/e.pem", AppleAppIDs: []string{"T1.a.b", "T2.c.d"}, DocsDir: "/docs", TrustProxy: true,
 	}
 	if !reflect.DeepEqual(cfg, want) {
 		t.Errorf("cfg = %+v\nwant %+v", cfg, want)

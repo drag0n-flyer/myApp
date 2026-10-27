@@ -1,4 +1,5 @@
-// Package serverinfo is lane E: GET /v1/server, the /invite/{code} page and
+// Package serverinfo is lane E: GET /v1/server, the /invite/{code} page,
+// the operator documents (security.txt, legal pages) and
 // apple-app-site-association.
 package serverinfo
 
@@ -6,6 +7,8 @@ import (
 	"encoding/base64"
 	"html/template"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/velixio/myApp/server/internal/core"
@@ -29,6 +32,32 @@ func (m *Module) Routes(r *httpx.Router) {
 	r.Public("GET /v1/server", m.info)
 	r.Public("GET /invite/{code}", m.invite)
 	r.Public("GET /.well-known/apple-app-site-association", m.aasa)
+	r.Public("GET /.well-known/security.txt", m.doc("security.txt", "text/plain; charset=utf-8"))
+	r.Public("GET /legal/privacy", m.doc("privacy.html", "text/html; charset=utf-8"))
+	r.Public("GET /legal/terms", m.doc("terms.html", "text/html; charset=utf-8"))
+	r.Public("GET /legal/disclosure", m.doc("disclosure.html", "text/html; charset=utf-8"))
+}
+
+// doc serves one operator document from APP_DOCS_DIR. The file name is fixed
+// at registration and never comes from the request. The file is read on each
+// request and sent with no-cache, so operators can edit it live. A missing
+// directory or file, or a non-regular file, is 404 not_found.
+func (m *Module) doc(name, contentType string) httpx.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) error {
+		dir := m.d.Config.DocsDir
+		if dir == "" {
+			return httpx.Err("not_found", "not found")
+		}
+		path := filepath.Join(dir, name)
+		if fi, err := os.Stat(path); err != nil || !fi.Mode().IsRegular() {
+			return httpx.Err("not_found", "not found")
+		}
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		http.ServeFile(w, r, path)
+		return nil
+	}
 }
 
 func (m *Module) info(w http.ResponseWriter, _ *http.Request) error {
