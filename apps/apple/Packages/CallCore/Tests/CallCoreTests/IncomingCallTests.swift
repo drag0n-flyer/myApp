@@ -224,7 +224,7 @@ private func active(video: Bool = false) -> (CallSessionMachine, ManualClock) {
         #expect(fx.contains { if case .makeOffer(_, let r) = $0 { r } else { false } })
         // A renegotiate that carries an SDP is not accepted by the caller.
         let withSDP = CallSignalPayload(kind: .renegotiate, callID: "c1", sdp: sdp(myFP), dtlsFingerprint: myFP)
-        #expect(!m.handle(.remote(withSDP, fromDeviceID: "d1")).contains { isAcceptOffer($0) })
+        #expect(m.handle(.remote(withSDP, fromDeviceID: "d1")).isEmpty)
     }
 
     // MARK: Buffers
@@ -271,5 +271,114 @@ private func active(video: Bool = false) -> (CallSessionMachine, ManualClock) {
         _ = m.handle(.localOffer(sdp(myFP)))
         let fx = m.handle(.answer(video: false))
         #expect(fx.filter { if case .sendSignal = $0 { true } else { false } }.count == CallSessionMachine.maxPendingLocalCandidates)
+    }
+
+    // MARK: Fix round 1
+
+    @Test func calleeVideoStartOffUsesEffectiveCeiling() {
+        let (_, _, fx) = ringing(video: true, ceiling: .dataSaver)
+        #expect(fx.contains(.configureMedia(policy: .all, video: false)))
+    }
+
+    @Test func callerIgnoresRestartRequestWhileOfferOutstanding() {
+        var m = CallSessionMachine(context: ctx(), clock: ManualClock())
+        _ = m.handle(.start(contact: bob, video: false, callID: "c1"))
+        _ = m.handle(.server(.answered(callID: "c1", deviceID: "d1", payload: Data())))
+        _ = m.handle(.remote(CallSignalPayload(kind: .offer, callID: "c1", sdp: sdp(myFP), dtlsFingerprint: myFP), fromDeviceID: "d1"))
+        _ = m.handle(.localAnswer(sdp(callerFP)))
+        let req = CallSignalPayload(kind: .renegotiate, callID: "c1")
+        #expect(!m.handle(.remote(req, fromDeviceID: "d1")).isEmpty)   // first request honoured
+        #expect(m.handle(.remote(req, fromDeviceID: "d1")).isEmpty)    // offer outstanding
+    }
+
+    @Test func callerRateLimitsRequestsAndGatesOwnRestart() {
+        let clock = ManualClock()
+        var m = CallSessionMachine(context: ctx(), clock: clock)
+        _ = m.handle(.start(contact: bob, video: false, callID: "c1"))
+        _ = m.handle(.server(.answered(callID: "c1", deviceID: "d1", payload: Data())))
+        _ = m.handle(.remote(CallSignalPayload(kind: .offer, callID: "c1", sdp: sdp(myFP), dtlsFingerprint: myFP), fromDeviceID: "d1"))
+        _ = m.handle(.localAnswer(sdp(callerFP)))
+        _ = m.handle(.media(.iceState(.connected)))
+        let req = CallSignalPayload(kind: .renegotiate, callID: "c1")
+        _ = m.handle(.remote(req, fromDeviceID: "d1"))
+        _ = m.handle(.localOffer(sdp(callerFP)))
+        let answer = CallSignalPayload(kind: .renegotiateAnswer, callID: "c1", sdp: sdp(myFP), dtlsFingerprint: myFP)
+        _ = m.handle(.remote(answer, fromDeviceID: "d1"))          // restart complete
+        clock.advance(1)
+        #expect(m.handle(.remote(req, fromDeviceID: "d1")).isEmpty)    // within the 5 s window
+        clock.advance(4)
+        #expect(!m.handle(.remote(req, fromDeviceID: "d1")).isEmpty)   // window passed
+        // Own restart is gated while an offer is outstanding.
+        _ = m.handle(.media(.iceState(.disconnected)))
+        clock.advance(2.5)
+        #expect(!m.handle(.tick).contains { if case .makeOffer = $0 { true } else { false } })
+        clock.advance(5)
+        #expect(m.handle(.tick).contains { if case .makeOffer = $0 { true } else { false } })   // stale offer: retry
+    }
+
+    @Test func callerFailsIfRestartOfferHasNoFingerprint() {
+        var m = CallSessionMachine(context: ctx(), clock: ManualClock())
+        _ = m.handle(.start(contact: bob, video: false, callID: "c1"))
+        _ = m.handle(.server(.answered(callID: "c1", deviceID: "d1", payload: Data())))
+        _ = m.handle(.remote(CallSignalPayload(kind: .offer, callID: "c1", sdp: sdp(myFP), dtlsFingerprint: myFP), fromDeviceID: "d1"))
+        _ = m.handle(.localAnswer(sdp(callerFP)))
+        _ = m.handle(.remote(CallSignalPayload(kind: .renegotiate, callID: "c1"), fromDeviceID: "d1"))
+        let fx = m.handle(.localOffer("v=0\r\n"))
+        #expect(m.state?.phase == .ended(.failed) && fx.contains(.sendHangup))
+    }
+
+    @Test func calleeDoesNotAcceptSecondOfferBeforeAnswering() {
+        var (m, _) = active()
+        let re = CallSignalPayload(kind: .renegotiate, callID: "c1", sdp: sdp(callerFP), dtlsFingerprint: callerFP)
+        #expect(m.handle(.remote(re, fromDeviceID: "dA")).contains { isAcceptOffer($0) })
+        #expect(m.handle(.remote(re, fromDeviceID: "dA")).isEmpty)
+        _ = m.handle(.localAnswer(sdp(myFP)))
+        #expect(m.handle(.remote(re, fromDeviceID: "dA")).contains { isAcceptOffer($0) })   // next round is fine
+    }
+
+    @Test func calleeDoesNotRequestWhileAnsweringAnOffer() {
+        var (m, clock) = active()
+        let re = CallSignalPayload(kind: .renegotiate, callID: "c1", sdp: sdp(callerFP), dtlsFingerprint: callerFP)
+        _ = m.handle(.remote(re, fromDeviceID: "dA"))
+        _ = m.handle(.media(.iceState(.disconnected)))
+        clock.advance(2.5)
+        #expect(!m.handle(.tick).contains { if case .sendSignal = $0 { true } else { false } })
+    }
+
+    @Test func simultaneousRestartsConverge() {
+        let callerClock = ManualClock(), calleeClock = ManualClock()
+        var caller = CallSessionMachine(context: ctx(), clock: callerClock)
+        var callee = CallSessionMachine(context: ctx(), clock: calleeClock)
+        _ = caller.handle(.start(contact: bob, video: false, callID: "c1"))
+        _ = callee.handle(.incoming(callID: "c1", contact: bob, fromDeviceID: "caller-dev", ring: ring(video: false)))
+        _ = callee.handle(.localOffer(sdp(myFP)))
+        let offerFX = callee.handle(.answer(video: false))
+        guard case .sendAnswer(let offerPayload)? = offerFX.first(where: { if case .sendAnswer = $0 { true } else { false } }) else {
+            Issue.record("no offer"); return
+        }
+        _ = caller.handle(.server(.answered(callID: "c1", deviceID: "callee-dev", payload: Data())))
+        _ = caller.handle(.remote(offerPayload, fromDeviceID: "callee-dev"))
+        let answerFX = caller.handle(.localAnswer(sdp(callerFP)))
+        guard case .sendSignal(let answerPayload)? = answerFX.first(where: { if case .sendSignal = $0 { true } else { false } }) else {
+            Issue.record("no answer"); return
+        }
+        _ = callee.handle(.remote(answerPayload, fromDeviceID: "caller-dev"))
+        _ = caller.handle(.media(.iceState(.connected))); _ = callee.handle(.media(.iceState(.connected)))
+        _ = caller.handle(.media(.iceState(.disconnected))); _ = callee.handle(.media(.iceState(.disconnected)))
+        callerClock.advance(2.5); calleeClock.advance(2.5)
+        let callerFX = caller.handle(.tick), calleeFX = callee.handle(.tick)
+        #expect(callerFX.contains { if case .makeOffer(_, let r) = $0 { r } else { false } })
+        guard case .sendSignal(let request)? = calleeFX.first(where: { if case .sendSignal = $0 { true } else { false } }) else {
+            Issue.record("no request"); return
+        }
+        // The caller's offer goes out; the callee's request crosses it and is ignored.
+        let restartOffer = caller.handle(.localOffer(sdp(callerFP)))
+        #expect(caller.handle(.remote(request, fromDeviceID: "callee-dev")).isEmpty)
+        guard case .sendSignal(let offer)? = restartOffer.first else { Issue.record("no restart offer"); return }
+        #expect(callee.handle(.remote(offer, fromDeviceID: "caller-dev")).contains { isAcceptOffer($0) })
+        let reply = callee.handle(.localAnswer(sdp(myFP)))
+        guard case .sendSignal(let answer)? = reply.first else { Issue.record("no reply"); return }
+        #expect(answer.kind == .renegotiateAnswer)
+        #expect(caller.handle(.remote(answer, fromDeviceID: "callee-dev")).contains { isAcceptAnswer($0) })
     }
 }

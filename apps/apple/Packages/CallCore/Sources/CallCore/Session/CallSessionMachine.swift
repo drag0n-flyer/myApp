@@ -26,7 +26,12 @@ public struct CallSessionMachine: Sendable {
     private var answerSent = false
     private var answerRequested = false          // callee: the user answered
     private var localOfferSDP: String?            // callee: our prewarmed offer
-    private var pendingRenegotiateAnswer = false  // callee: accepted a renegotiate offer, owe the answer
+    private var pendingRenegotiateSince: Date?   // callee: accepted a renegotiate offer, owe the answer
+    private var outstandingSince: Date?           // caller: our restart offer is out, answer not yet accepted
+    private var lastHonouredRequest: Date?        // caller: last restart request we acted on
+    /// Restarts are coalesced: one in flight at a time, and a peer's requests are honoured at most once per window.
+    private static let restartWindow = ReconnectPolicy.retryEvery
+    private static let staleAnswerAfter: TimeInterval = 10
     private var videoStartsOff = false
     private var pendingLocalCandidates: [IceCandidate] = []
     /// Remote candidates received before we can use them, by sending device.
@@ -100,7 +105,8 @@ public struct CallSessionMachine: Sendable {
         outgoing = isOutgoing
         peerCeiling = nil
         answeringDevice = nil; remoteDescriptionSet = false; answerSent = false
-        answerRequested = false; localOfferSDP = nil; pendingRenegotiateAnswer = false
+        answerRequested = false; localOfferSDP = nil; pendingRenegotiateSince = nil
+        outstandingSince = nil; lastHonouredRequest = nil
         pinnedFingerprint = nil; renegotiateOutstanding = false
         pendingLocalCandidates = []; earlyRemoteCandidates = [:]
         activeSince = nil; everActive = false; lastSentMode = nil; lastSentTier = nil
@@ -115,7 +121,7 @@ public struct CallSessionMachine: Sendable {
         peerCeiling = ring.ceiling
         let video = ring.video ?? false
         let ceiling = ownCeiling
-        videoStartsOff = VideoLadder.startsOff(ceiling: ceiling, network: context.network, settings: context.settings.call)
+        videoStartsOff = VideoLadder.startsOff(ceiling: effectiveCeiling, network: context.network, settings: context.settings.call)
         adaptor = QualityAdaptor(ceiling: effectiveCeiling, videoWanted: false)
         lastSentMode = adaptor.currentMode
         lastSentTier = nil
@@ -227,13 +233,21 @@ public struct CallSessionMachine: Sendable {
             if outgoing {
                 // The callee asks for an ICE restart (no SDP); an SDP here is not accepted by the caller.
                 guard p.sdp == nil else { return [] }
+                let now = clock.now
+                if renegotiateOutstanding, let since = outstandingSince, now.timeIntervalSince(since) < Self.restartWindow { return [] }
+                if let last = lastHonouredRequest, now.timeIntervalSince(last) < Self.restartWindow { return [] }
+                lastHonouredRequest = now
+                renegotiateOutstanding = true
+                outstandingSince = now
                 return [.makeOffer(receive: .for(ownCeiling), iceRestart: true)]
             }
+            // One offer at a time: a second one before we answered the first is not accepted.
+            if let since = pendingRenegotiateSince, clock.now.timeIntervalSince(since) < Self.staleAnswerAfter { return [] }
             guard let sdp = p.sdp, let claimed = p.dtlsFingerprint, SDPMunger.fingerprint(in: sdp) == claimed,
                   claimed == pinnedFingerprint else {
                 return end(.failed, notifyServer: true)
             }
-            pendingRenegotiateAnswer = true
+            pendingRenegotiateSince = clock.now
             return [.acceptOffer(sdp: sdp, send: .for(state?.effectiveMode ?? ownCeiling), receive: .for(ownCeiling))]
         case .renegotiateAnswer:
             guard outgoing, device == answeringDevice, remoteDescriptionSet, renegotiateOutstanding, let sdp = p.sdp else { return [] }
@@ -243,6 +257,7 @@ public struct CallSessionMachine: Sendable {
                 return end(.failed, notifyServer: true)
             }
             renegotiateOutstanding = false
+            outstandingSince = nil
             return [.acceptAnswer(sdp: sdp, send: .for(state?.effectiveMode ?? ownCeiling))]
         case .modeChange:
             guard device == answeringDevice else { return [] }
@@ -254,9 +269,9 @@ public struct CallSessionMachine: Sendable {
     }
 
     private mutating func localAnswer(_ sdp: String) -> [CallEffect] {
-        if pendingRenegotiateAnswer {
+        if pendingRenegotiateSince != nil {
             guard isLive else { return [] }
-            pendingRenegotiateAnswer = false
+            pendingRenegotiateSince = nil
             guard let fingerprint = SDPMunger.fingerprint(in: sdp) else { return end(.failed, notifyServer: true) }
             return [.sendSignal(CallSignalPayload(kind: .renegotiateAnswer, callID: callID, sdp: sdp,
                                                   dtlsFingerprint: fingerprint, ceiling: ownCeiling))]
@@ -278,10 +293,10 @@ public struct CallSessionMachine: Sendable {
             return answerRequested ? sendAnswer(sdp) + [.publish(state)] : []
         }
         // Caller: an ICE-restart offer from this side.
-        guard isLive, answerSent else { return [] }
-        renegotiateOutstanding = true
+        guard isLive, answerSent, renegotiateOutstanding else { return [] }   // only the offer we asked for
+        guard let fingerprint = SDPMunger.fingerprint(in: sdp) else { return end(.failed, notifyServer: true) }
         return [.sendSignal(CallSignalPayload(kind: .renegotiate, callID: callID, sdp: sdp,
-                                              dtlsFingerprint: SDPMunger.fingerprint(in: sdp), ceiling: ownCeiling))]
+                                              dtlsFingerprint: fingerprint, ceiling: ownCeiling))]
     }
 
     private mutating func media(_ e: MediaEvent) -> [CallEffect] {
@@ -314,8 +329,13 @@ public struct CallSessionMachine: Sendable {
                 update { $0.phase = .reconnecting; $0.banner = .reconnecting }
                 fx.append(.publish(state))
             case .restartIce:
+                let now = clock.now
+                if renegotiateOutstanding, let since = outstandingSince, now.timeIntervalSince(since) < Self.restartWindow { break }
+                renegotiateOutstanding = true
+                outstandingSince = now
                 fx.append(.makeOffer(receive: .for(ownCeiling), iceRestart: true))
             case .requestRestart:
+                if let since = pendingRenegotiateSince, clock.now.timeIntervalSince(since) < Self.staleAnswerAfter { break }
                 fx.append(.sendSignal(CallSignalPayload(kind: .renegotiate, callID: callID)))   // callee asks; no SDP
             case .recovered:
                 markActive()
@@ -445,7 +465,9 @@ public struct CallSessionMachine: Sendable {
         pendingLocalCandidates = []
         earlyRemoteCandidates = [:]
         localOfferSDP = nil
-        pendingRenegotiateAnswer = false
+        pendingRenegotiateSince = nil
+        outstandingSince = nil
+        lastHonouredRequest = nil
         answeringDevice = nil
         pinnedFingerprint = nil
         renegotiateOutstanding = false
