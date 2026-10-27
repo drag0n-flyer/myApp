@@ -1,0 +1,61 @@
+name: NSEPrototype
+options:
+  bundleIdPrefix: org.example.app
+  deploymentTarget:
+    iOS: '17.0'
+packages:
+  SecureMessaging:
+    path: ../../Packages/SecureMessaging
+settings:
+  base:
+    SWIFT_VERSION: '6.0'
+    SWIFT_STRICT_CONCURRENCY: complete
+    CODE_SIGN_STYLE: Automatic
+    CODE_SIGN_IDENTITY: '-'
+    GENERATE_INFOPLIST_FILE: 'YES'
+targets:
+  NSEProtoHost:
+    type: application
+    platform: iOS
+    sources:
+      - path: Host
+        excludes: ['*.entitlements']
+    info:
+      path: Generated/NSEProtoHost-Info.plist
+      properties:
+        MLSKeychainAccessGroup: $(AppIdentifierPrefix)org.example.app.nseproto.shared
+    dependencies:
+      - package: SecureMessaging
+        product: SecureMessaging
+      - target: NSEProtoService
+        embed: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.example.app.nseproto
+        CODE_SIGN_ENTITLEMENTS: Host/Host.entitlements
+  NSEProtoService:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Service
+        excludes: ['*.entitlements']
+    info:
+      path: Generated/NSEProtoService-Info.plist
+      properties:
+        CFBundleDisplayName: NSEProtoService
+        MLSKeychainAccessGroup: $(AppIdentifierPrefix)org.example.app.nseproto.shared
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
+    dependencies:
+      - package: SecureMessaging
+        product: SecureMessaging
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.example.app.nseproto.nse
+        CODE_SIGN_ENTITLEMENTS: Service/Service.entitlements
+schemes:
+  NSEProtoHost:
+    build:
+      targets:
+        NSEProtoHost: all

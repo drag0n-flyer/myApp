@@ -81,6 +81,11 @@ jobs:
             -destination "platform=iOS Simulator,id=$udid" \
             -skipPackagePluginValidation | tail -n 80
           exit "${PIPESTATUS[0]}"
+      - name: nse-prototype (simulator push through the notification extension)
+        working-directory: apps/apple/Prototypes/NSEPrototype
+        run: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          ./run-sim-push.sh
       - uses: actions/upload-artifact@v4
         with:
           name: MLSFFI-xcframework
