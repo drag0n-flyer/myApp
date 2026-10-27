@@ -42,3 +42,5 @@ apps/apple/Generated/
 apps/apple/Packages/SecureMessaging/mlsffi/target/
 apps/apple/Packages/SecureMessaging/Artifacts/
 apps/apple/Packages/SecureMessaging/mlsffi/build/
+
+# Python bytecode
