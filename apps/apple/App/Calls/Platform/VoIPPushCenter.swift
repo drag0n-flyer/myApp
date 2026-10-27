@@ -5,35 +5,31 @@ import CallKit
 import AppCore
 import CallCore
 
-/// What the push center learned synchronously about a push. Opening the sealed payload and reading the call
-/// status must not block the push callback: the owner supplies what it already has (for example a
-/// payload opened by the message extension, or the cached `call.status`), and `.undecryptable` otherwise.
-struct VoIPPushResolution {
-    var payload: PushPayloadState
-    var isStranger: Bool
-    var status: CallStatus?
-}
-
 @MainActor
 protocol VoIPPushHandling: AnyObject {
-    /// Synchronous. `sealed` is the unpadded payload; empty or nil means the server sent an empty push.
-    func resolve(sealed: Data?) -> VoIPPushResolution
-    /// After the call was reported as ringing: the engine takes over (connect, `call.status`, answer).
-    func voipPushDidReportRing(callID: UUID, contact: Contact, ring: CallSignalPayload)
+    /// The opened payload for a push, shown on CallKit under `kitCallID`. The server call ID is
+    /// `ring.callID`; the push carries no call ID, so the CallKit UUID is made at push time and the engine
+    /// maps `kitCallID` to the server call ID. Called only for rings that stay ringing.
+    func voipPushDidResolveRing(kitCallID: UUID, contact: Contact, ring: CallSignalPayload)
+    /// The push ended up ending (stranger, call already over, or failed): record a missed call for a stranger.
+    func voipPushDidEnd(kitCallID: UUID, reason: EndReason, resolution: VoIPPushResolution)
 }
 
-/// The one `PKPushRegistry` for the app's lifetime. Every VoIP push is reported to CallKit before the
-/// PushKit completion handler runs, with no async work in between.
+/// The one `PKPushRegistry` for the app's lifetime. The push carries only a sealed payload, so:
+/// 1. synchronously, in the push callback, report a generic "Incoming call" to CallKit (before anything async);
+/// 2. then open the payload, recover the sender, apply `VoIPPushDecision`, and update or end the call.
 @MainActor
 final class VoIPPushCenter: NSObject, PKPushRegistryDelegate {
     private let callKit: CallKitController
+    private let resolver: VoIPPushResolver
     private let onToken: @Sendable (Data) -> Void
     weak var handler: VoIPPushHandling?
     private var registry: PKPushRegistry?
 
     /// `onToken` hands the VoIP token to the push registrar (kind `voip`).
-    init(callKit: CallKitController, onToken: @escaping @Sendable (Data) -> Void) {
+    init(callKit: CallKitController, resolver: VoIPPushResolver, onToken: @escaping @Sendable (Data) -> Void) {
         self.callKit = callKit
+        self.resolver = resolver
         self.onToken = onToken
         super.init()
     }
@@ -61,9 +57,7 @@ final class VoIPPushCenter: NSObject, PKPushRegistryDelegate {
         // PKPushPayload is not Sendable; read the one field here, on the main queue.
         let d = payload.dictionaryPayload["d"] as? String
         nonisolated(unsafe) let done = completion
-        MainActor.assumeIsolated {
-            handle(d: d, mustReport: nil, completion: done)
-        }
+        MainActor.assumeIsolated { handle(d: d, mustReport: nil, completion: done) }
     }
 
     // iOS 26.4+: the metadata variant (`PKVoIPPushMetadata.mustReport`) is NOT implemented yet. Its selector
@@ -71,39 +65,46 @@ final class VoIPPushCenter: NSObject, PKPushRegistryDelegate {
     // with `mustReport == nil`, which reports every push (always safe). When added, it only needs to call
     // `handle(d:mustReport:completion:)` with the metadata value.
 
-    // MARK: Decision and report (synchronous)
+    // MARK: Stage 1 (synchronous) and stage 2 (asynchronous)
 
     func handle(d: String?, mustReport: Bool?, completion: @escaping () -> Void) {
+        let kitCallID = UUID()
         let sealed = VoIPPushBody.payload(d: d)
-        let resolution = handler?.resolve(sealed: sealed)
-            ?? VoIPPushResolution(payload: (sealed?.isEmpty ?? true) ? .empty : .undecryptable,
-                                  isStranger: false, status: nil)
-        let action = VoIPPushDecision.decide(mustReport: mustReport, payload: resolution.payload,
-                                             isStranger: resolution.isStranger, status: resolution.status)
-        switch action {
-        case .ignore:
-            completion()
-        case let .reportRing(name, video):
-            let (callID, handle, contact, ring) = Self.identity(of: resolution.payload)
-            callKit.reportIncoming(callID: callID, name: name, handle: handle, video: video) { _ in
-                completion()
-            }
-            if let contact, let ring { self.handler?.voipPushDidReportRing(callID: callID, contact: contact, ring: ring) }
-        case let .reportThenEnd(name, reason):
-            let (callID, handle, _, _) = Self.identity(of: resolution.payload)
-            let kit = callKit
-            callKit.reportIncoming(callID: callID, name: name, handle: handle, video: false) { _ in
-                kit.reportEnded(callID: callID, reason: CXCallEndedReason(reason))
-                completion()
-            }
+        let stage1 = VoIPPushDecision.immediate(mustReport: mustReport)
+        if stage1 == .reportGeneric {
+            // Nothing async before this line. The handle is a placeholder: the push has no sender or call ID.
+            callKit.reportIncoming(callID: kitCallID, name: String(localized: "Incoming call"),
+                                   handle: kitCallID.uuidString, video: false) { _ in }
+        }
+        // PushKit's completion may run once the report is made; the rest continues on its own.
+        completion()
+        let reportedGeneric = stage1 == .reportGeneric
+        Task { @MainActor [weak self] in
+            await self?.resolveAndFinish(kitCallID: kitCallID, sealed: sealed, mustReport: mustReport,
+                                         reportedGeneric: reportedGeneric)
         }
     }
 
-    private static func identity(of payload: PushPayloadState) -> (UUID, String, Contact?, CallSignalPayload?) {
-        if case let .ring(ring, contact) = payload {
-            return (UUID(uuidString: ring.callID) ?? UUID(), contact.id, contact, ring)
+    private func resolveAndFinish(kitCallID: UUID, sealed: Data?, mustReport: Bool?, reportedGeneric: Bool) async {
+        let r = await resolver.resolve(sealed: sealed)
+        let action = VoIPPushDecision.decide(mustReport: mustReport, payload: r.payload,
+                                             isStranger: r.isStranger, status: r.status)
+        let name: (String) -> String = { $0 == VoIPPushDecision.unknownCallerName ? String(localized: "Unknown") : $0 }
+        switch VoIPPushDecision.followUp(reportedGeneric: reportedGeneric, action: action) {
+        case let .updateCaller(callerName, video):
+            guard case let .ring(ring, contact) = r.payload else { return }
+            callKit.updateCaller(callID: kitCallID, name: name(callerName), handle: contact.id, video: video)
+            handler?.voipPushDidResolveRing(kitCallID: kitCallID, contact: contact, ring: ring)
+        case let .reportRing(callerName, video):
+            guard case let .ring(ring, contact) = r.payload else { return }
+            callKit.reportIncoming(callID: kitCallID, name: name(callerName), handle: contact.id, video: video) { _ in }
+            handler?.voipPushDidResolveRing(kitCallID: kitCallID, contact: contact, ring: ring)
+        case let .end(reason):
+            callKit.reportEnded(callID: kitCallID, reason: CXCallEndedReason(reason))
+            handler?.voipPushDidEnd(kitCallID: kitCallID, reason: reason, resolution: r)
+        case .none:
+            break
         }
-        return (UUID(), "unknown", nil, nil)
     }
 }
 #endif

@@ -68,6 +68,15 @@ final class CallKitController: NSObject, CXProviderDelegate {
         }
     }
 
+    /// The push was reported with a generic display; now that the payload is open, show the caller's name.
+    func updateCaller(callID: UUID, name: String, handle: String, video: Bool) {
+        let update = CXCallUpdate()
+        update.remoteHandle = CXHandle(type: .generic, value: handle)
+        update.localizedCallerName = name
+        update.hasVideo = video
+        provider.reportCall(with: callID, updated: update)
+    }
+
     func reportEnded(callID: UUID, reason: CXCallEndedReason) {
         provider.reportCall(with: callID, endedAt: nil, reason: reason)
     }

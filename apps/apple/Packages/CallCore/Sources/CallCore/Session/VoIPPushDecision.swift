@@ -64,3 +64,75 @@ public enum VoIPPushBody {
         return Data(bytes[2..<(2 + n)])
     }
 }
+
+/// What the device learned about a VoIP push after opening it.
+public struct VoIPPushResolution: Sendable {
+    public var payload: PushPayloadState
+    public var isStranger: Bool
+    public var status: CallStatus?
+    public init(payload: PushPayloadState, isStranger: Bool, status: CallStatus?) {
+        self.payload = payload; self.isStranger = isStranger; self.status = status
+    }
+}
+
+public enum VoIPPushImmediate: Equatable, Sendable {
+    /// Report a generic "Incoming call" to CallKit now, synchronously in the push callback.
+    case reportGeneric
+    /// iOS 26.4+ said no report is required: resolve first, and report only if it would really ring.
+    case deferToResolution
+}
+
+public enum VoIPPushFollowUp: Equatable, Sendable {
+    case updateCaller(name: String, video: Bool)
+    case end(reason: EndReason)
+    case reportRing(name: String, video: Bool)
+    case none
+}
+
+extension VoIPPushDecision {
+    /// Stage 1, before any async work.
+    public static func immediate(mustReport: Bool?) -> VoIPPushImmediate {
+        (mustReport ?? true) ? .reportGeneric : .deferToResolution
+    }
+
+    /// Stage 2, after the payload is opened. `reportedGeneric` says whether stage 1 already reported a call.
+    public static func followUp(reportedGeneric: Bool, action: VoIPPushAction) -> VoIPPushFollowUp {
+        switch (reportedGeneric, action) {
+        case let (true, .reportRing(name, video)): .updateCaller(name: name, video: video)
+        case let (true, .reportThenEnd(_, reason)): .end(reason: reason)
+        case (true, .ignore): .end(reason: .failed)   // cannot happen when stage 1 reported; end safely
+        case let (false, .reportRing(name, video)): .reportRing(name: name, video: video)
+        case (false, _): .none
+        }
+    }
+}
+
+/// Opens a push's sealed ring payload and gathers what the decision needs. Never throws: any failure is `.undecryptable`.
+public struct VoIPPushResolver: Sendable {
+    private let sealer: any SenderRecoveringSealer
+    private let contact: @Sendable (String) async -> Contact?
+    private let status: @Sendable (String) async -> CallStatus?
+
+    /// - contact: the saved contact for an account ID, or nil for a stranger.
+    /// - status: `call.status` for a call ID; nil when it cannot be fetched in time.
+    public init(sealer: any SenderRecoveringSealer,
+                contact: @escaping @Sendable (String) async -> Contact?,
+                status: @escaping @Sendable (String) async -> CallStatus?) {
+        self.sealer = sealer; self.contact = contact; self.status = status
+    }
+
+    public func resolve(sealed: Data?) async -> VoIPPushResolution {
+        guard let sealed, !sealed.isEmpty else {
+            return VoIPPushResolution(payload: .empty, isStranger: false, status: nil)
+        }
+        guard let opened = try? await sealer.openRecoveringSender(sealed), opened.payload.kind == .ring else {
+            return VoIPPushResolution(payload: .undecryptable, isStranger: false, status: nil)
+        }
+        if let known = await contact(opened.senderAccountID) {
+            let st = await status(opened.payload.callID)
+            return VoIPPushResolution(payload: .ring(opened.payload, contact: known), isStranger: false, status: st)
+        }
+        let stranger = Contact(id: opened.senderAccountID, displayName: VoIPPushDecision.unknownCallerName, username: "")
+        return VoIPPushResolution(payload: .ring(opened.payload, contact: stranger), isStranger: true, status: nil)
+    }
+}
