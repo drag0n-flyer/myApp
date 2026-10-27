@@ -15,4 +15,41 @@ final class ChatFlowTests: XCTestCase {
         XCTAssertEqual(rows.count, 1)
         XCTAssertTrue(app.element("chatlist.row.chat-riya").exists)
     }
+
+    func testSendMessage() {
+        let app = XCUIApplication.launched()
+        app.element("chatlist.row.chat-riya").tap()
+        let field = app.textFields["chat.composer.field"].exists ? app.textFields["chat.composer.field"] : app.textViews["chat.composer.field"]
+        XCTAssertTrue(field.waitToExist())
+        field.tap()
+        field.typeText("Hello")
+        app.element("chat.composer.send").tap()
+        XCTAssertTrue(app.staticTexts["Hello"].waitToExist())
+        XCTAssertFalse(app.element("chat.composer.send").exists, "Send turns back into the mic when the field is empty")
+    }
+
+    func testPhotoNotAutoDownloadedOnMobile() {
+        let mobile = XCUIApplication.launched(network: "mobile")
+        mobile.element("chatlist.row.chat-meera").tap()
+        XCTAssertTrue(mobile.buttons["Photo · 240 KB"].waitToExist())
+        mobile.terminate()
+
+        let wifi = XCUIApplication.launched(network: "wifi")
+        wifi.element("chatlist.row.chat-meera").tap()
+        XCTAssertTrue(wifi.element("chat.header").waitToExist())
+        XCTAssertFalse(wifi.buttons["Photo · 240 KB"].exists)
+    }
+
+    func testEncryptionOnlyInInfo() {
+        let app = XCUIApplication.launched()
+        app.element("chatlist.chip.all").tap()
+        app.element("chatlist.row.chat-sam").tap()
+        XCTAssertTrue(app.element("chat.header").waitToExist())
+        let encryptedText = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] 'encrypted'"))
+        XCTAssertEqual(encryptedText.count, 0)
+        app.element("chat.header").tap()
+        let info = app.element("chatinfo.encryption")
+        XCTAssertTrue(info.waitToExist())
+        XCTAssertEqual(info.label, "Not end-to-end encrypted: the server admin can read this chat")
+    }
 }
