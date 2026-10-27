@@ -75,6 +75,6 @@ final class ChatFlowTests: XCTestCase {
         field.tap()
         field.typeText("neha")
         app.element("addcontact.submit").tap()
-        XCTAssertTrue(app.element("contacts.row.neha").waitToExist())
+        XCTAssertTrue(app.element("contacts.row.neha").scrollToExist(in: app))
     }
 }
