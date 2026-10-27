@@ -43,6 +43,7 @@ private final class Delivery: @unchecked Sendable {
     private var handler: ((UNNotificationContent) -> Void)?
     private var content: UNMutableNotificationContent?
     private var task: Task<Void, Never>?
+    private var expired = false
     private let strings = NotificationStrings.localized()
 
     func start(handler: @escaping (UNNotificationContent) -> Void, content: UNMutableNotificationContent) {
@@ -53,13 +54,17 @@ private final class Delivery: @unchecked Sendable {
     }
 
     func keep(_ task: Task<Void, Never>) {
-        lock.withLock { self.task = task }
+        let alreadyExpired = lock.withLock { () -> Bool in
+            self.task = task
+            return expired
+        }
+        if alreadyExpired { task.cancel() }
     }
 
     /// Time is up: stop working and show the generic notice. A decrypted outcome that already won
     /// the gate is left alone.
     func expire() {
-        lock.withLock { task }?.cancel()
+        lock.withLock { expired = true; return task }?.cancel()
         deliver(.fallback(strings))
     }
 
@@ -81,14 +86,14 @@ private final class Delivery: @unchecked Sendable {
             case .empty:
                 handler(UNNotificationContent())
             case .content(let title, let body, let threadID, let sound):
-                guard let content else { return handler(UNNotificationContent()) }
+                let content = content ?? UNMutableNotificationContent()
                 content.title = title
                 content.body = body
                 if let threadID { content.threadIdentifier = threadID }
                 content.sound = sound ? UNNotificationSound.default : nil
                 handler(content)
             case .call(let payload, let contact):
-                guard let content else { return handler(UNNotificationContent()) }
+                let content = content ?? UNMutableNotificationContent()
                 NotificationService.applyCall(payload, from: contact, to: content)
                 handler(content)
             }
