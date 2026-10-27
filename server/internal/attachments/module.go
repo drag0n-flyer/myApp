@@ -52,47 +52,77 @@ func (m *Module) upload(w http.ResponseWriter, r *http.Request) error {
 	me := httpx.PrincipalFrom(r.Context()).AccountID
 	now := m.d.Now()
 
-	var used int64
-	if err := m.d.DB.QueryRow(r.Context(),
-		`select coalesce(sum(size), 0) from attachments where account_id = $1 and created_at > $2`,
-		me, now.Add(-24*time.Hour)).Scan(&used); err != nil {
-		return err
-	}
-	if used+size > limits.AttachmentBytesPerDay {
-		w.Header().Set("Retry-After", "3600")
-		return httpx.Err("rate_limited", "daily attachment quota used up")
-	}
-
 	id, err := newID()
 	if err != nil {
 		return err
 	}
-	// MaxBytesReader stops a body longer than it declared; the body is streamed
-	// to disk, never held in memory.
-	n, err := m.store.Put(r.Context(), id, http.MaxBytesReader(w, r.Body, size))
-	if err != nil {
-		var tooBig *http.MaxBytesError
-		if errors.As(err, &tooBig) {
-			return httpx.Err("too_large", "body is longer than Content-Length")
-		}
-		return httpx.Err("bad_request", "upload was interrupted")
-	}
-	if n != size {
-		_ = m.store.Delete(r.Context(), id)
-		return httpx.Err("bad_request", "body is shorter than Content-Length")
-	}
 	expires := now.Add(time.Duration(m.d.Policy.Retention.AttachmentDays) * 24 * time.Hour)
-	if _, err := m.d.DB.Exec(r.Context(),
-		`insert into attachments (id, account_id, size, created_at, expires_at) values ($1, $2, $3, $4, $5)`,
-		id, me, n, now, expires); err != nil {
-		_ = m.store.Delete(r.Context(), id)
+	if err := m.reserve(r.Context(), id, me, size, now, expires); err != nil {
 		return err
+	}
+	// MaxBytesReader stops a body longer than it declared; the body is streamed
+	// to disk, never held in memory. The row above already counts against the
+	// quota, so parallel uploads cannot overshoot it; any failure releases it.
+	n, err := m.store.Put(r.Context(), id, http.MaxBytesReader(w, r.Body, size))
+	if err == nil && n != size {
+		err = errShort
+	}
+	if err != nil {
+		m.release(id)
+		var tooBig *http.MaxBytesError
+		switch {
+		case errors.As(err, &tooBig):
+			return httpx.Err("too_large", "body is longer than Content-Length")
+		case errors.Is(err, errShort):
+			return httpx.Err("bad_request", "body is shorter than Content-Length")
+		}
+		return err // disk or I/O failure: 500
 	}
 	httpx.JSON(w, http.StatusOK, struct {
 		ID        string    `json:"id"`
 		ExpiresAt time.Time `json:"expiresAt"`
 	}{id, expires.UTC()})
 	return nil
+}
+
+var errShort = errors.New("attachments: short body")
+
+// reserve takes the account's quota for size bytes by inserting the row before
+// any byte is streamed. An advisory lock per account serializes the check and
+// the insert; it is held only for this short transaction.
+func (m *Module) reserve(ctx context.Context, id, account string, size int64, now, expires time.Time) error {
+	tx, err := m.d.DB.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `select pg_advisory_xact_lock(hashtext($1))`, account); err != nil {
+		return err
+	}
+	var used int64
+	if err := tx.QueryRow(ctx,
+		`select coalesce(sum(size), 0) from attachments where account_id = $1 and created_at > $2`,
+		account, now.Add(-24*time.Hour)).Scan(&used); err != nil {
+		return err
+	}
+	if used+size > m.d.Policy.Limits.AttachmentBytesPerDay {
+		return httpx.Err("rate_limited", "daily attachment quota used up")
+	}
+	if _, err := tx.Exec(ctx,
+		`insert into attachments (id, account_id, size, created_at, expires_at) values ($1, $2, $3, $4, $5)`,
+		id, account, size, now, expires); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// release drops a reservation and any partial file. It uses a fresh context
+// because the request's may be cancelled, which is often why we are here.
+func (m *Module) release(id string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = m.store.Delete(ctx, id)
+	_, _ = m.d.DB.Exec(ctx, `delete from attachments where id = $1`, id)
 }
 
 func (m *Module) download(w http.ResponseWriter, r *http.Request) error {

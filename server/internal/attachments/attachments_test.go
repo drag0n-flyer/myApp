@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -114,6 +115,58 @@ func TestUploadLimits(t *testing.T) {
 	x.f.Clock.Advance(25 * time.Hour)
 	if res := x.c.Do(&x.me, "POST", "/v1/attachments", make([]byte, 100)); res.Status != 200 {
 		t.Fatalf("next day: %s", res)
+	}
+}
+
+func TestParallelUploadsRespectDailyBudget(t *testing.T) {
+	x := setup(t, func(d *core.Deps) {
+		d.Policy.Limits.AttachmentBytes = 100
+		d.Policy.Limits.AttachmentBytesPerDay = 250
+	})
+	const n = 8
+	codes := make(chan int, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			codes <- x.c.Do(&x.me, "POST", "/v1/attachments", make([]byte, 100)).Status
+		}()
+	}
+	wg.Wait()
+	close(codes)
+	ok, limited := 0, 0
+	for c := range codes {
+		switch c {
+		case 200:
+			ok++
+		case 429:
+			limited++
+		default:
+			t.Fatalf("status %d", c)
+		}
+	}
+	if ok != 2 || limited != n-2 {
+		t.Fatalf("ok=%d limited=%d", ok, limited)
+	}
+	if got := len(files(t, x.root)); got != 2 {
+		t.Fatalf("%d files, want 2", got)
+	}
+}
+
+func TestFailedUploadReleasesQuota(t *testing.T) {
+	x := setup(t, func(d *core.Deps) { d.Policy.Limits.AttachmentBytesPerDay = 100 })
+	// Body shorter than its declared length: httptest cannot send that, so
+	// call the store-failing path by making the data dir unwritable.
+	if err := os.Chmod(x.root, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	if res := x.c.Do(&x.me, "POST", "/v1/attachments", make([]byte, 100)); os.Geteuid() != 0 && res.Status != 500 {
+		t.Fatalf("disk failure: %s", res)
+	}
+	os.Chmod(x.root, 0o700)
+	if res := x.c.Do(&x.me, "POST", "/v1/attachments", make([]byte, 100)); res.Status != 200 {
+		t.Fatalf("quota not released: %s", res)
 	}
 }
 
