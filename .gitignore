@@ -1,6 +1,7 @@
 knowledge/
 .superpowers/
 .vscode
+.playwright-mcp/
 
 # Apple apps
 apps/apple/*.xcodeproj

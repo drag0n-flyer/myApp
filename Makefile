@@ -15,7 +15,7 @@
 #   make db-stop   stop it (data is kept)
 #   make db-shell  open psql
 #   Then in .env: APP_DATABASE_URL=postgres://appserver:PASSWORD@127.0.0.1:5432/appserver?sslmode=disable
-#   Another port: make db DB_PORT=5433. The server creates its tables itself on start.
+#   The port comes from APP_DATABASE_URL (or make db DB_PORT=5433). The server creates its tables itself on start.
 #
 # Listen address: APP_LISTEN in .env, or for one run:
 #   make run BIND=0.0.0.0 PORT=8080   every network: other machines can connect
@@ -28,7 +28,8 @@ RUN_DIR  := server/run
 PID      := $(RUN_DIR)/appserver.pid
 LOG      := $(RUN_DIR)/appserver.log
 
-DB_PORT      ?= 5432
+# Port for make db: DB_PORT=..., else the port in APP_DATABASE_URL (127.0.0.1 only), else 5432.
+DB_PORT      ?= $(or $(shell sed -n 's|^APP_DATABASE_URL=.*@127\.0\.0\.1:\([0-9][0-9]*\)/.*|\1|p' "$(ENV_FILE)" 2>/dev/null | tail -1),5432)
 DB_CONTAINER ?= myapp-postgres
 DB_VOLUME    ?= myapp-pgdata
 
