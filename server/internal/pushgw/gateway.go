@@ -321,7 +321,7 @@ func (g *gateway) push(w http.ResponseWriter, r *http.Request) error {
 	if !slices.Contains(allowed, h.Bundle) {
 		return apiErr("bad_request", "bundle not allowed")
 	}
-	if (h.Env != "production" && h.Env != "sandbox") || h.Token == "" {
+	if (h.Env != "production" && h.Env != "sandbox") || h.Token == "" || (h.Kind == "fcm" && h.Env != "production") {
 		return apiErr("bad_request", "handle is not valid")
 	}
 	if req.Kind == "message" && h.Kind != "alert" && h.Kind != "fcm" {

@@ -3,9 +3,12 @@ package pushgw_test
 import (
 	"context"
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -30,14 +33,15 @@ type fcmReq struct {
 }
 
 type fakeGoogle struct {
-	srv       *httptest.Server
-	mu        sync.Mutex
-	sends     []fcmReq
-	tokenReqs []url.Values
-	status    int
-	reply     string
-	expiresIn int
-	counter   int
+	srv         *httptest.Server
+	mu          sync.Mutex
+	sends       []fcmReq
+	tokenReqs   []url.Values
+	status      int
+	reply       string
+	expiresIn   int
+	tokenStatus int
+	counter     int
 }
 
 func (f *fakeGoogle) lastSend(t *testing.T) fcmReq {
@@ -65,6 +69,10 @@ func newGoogle(t *testing.T) *fakeGoogle {
 		if r.URL.Path == "/token" {
 			q, _ := url.ParseQuery(string(b))
 			f.tokenReqs = append(f.tokenReqs, q)
+			if f.tokenStatus != 0 && f.tokenStatus != 200 {
+				w.WriteHeader(f.tokenStatus)
+				return
+			}
 			f.counter++
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"access_token": "at-" + string(rune('0'+f.counter)), "expires_in": f.expiresIn, "token_type": "Bearer"})
@@ -182,7 +190,11 @@ func TestUnregisteredBecomes410(t *testing.T) {
 		reply  string
 		gone   bool
 	}{
-		{"404", 404, `{"error":{"code":404,"status":"NOT_FOUND"}}`, true},
+		{"404 NOT_FOUND", 404, `{"error":{"code":404,"status":"NOT_FOUND"}}`, true},
+		{"bare 404", 404, ``, false},
+		{"html 404", 404, `<html>not found</html>`, false},
+		{"unknown 404 status", 404, `{"error":{"code":404,"status":"SOMETHING_ELSE"}}`, false},
+		{"429 is an error", 429, `{"error":{"status":"RESOURCE_EXHAUSTED"}}`, false},
 		{"UNREGISTERED detail", 400, `{"error":{"code":404,"status":"NOT_FOUND","details":[{"@type":"x","errorCode":"UNREGISTERED"}]}}`, true},
 		{"unavailable is an error", 503, `{"error":{"status":"UNAVAILABLE"}}`, false},
 		{"invalid argument is an error", 400, `{"error":{"status":"INVALID_ARGUMENT"}}`, false},
@@ -292,29 +304,100 @@ func TestFcm401DropsTokenButRemintIsLimited(t *testing.T) {
 func TestFcmDoesNotFollowRedirects(t *testing.T) {
 	var mu sync.Mutex
 	hits := 0
-	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+	target := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		mu.Lock()
 		hits++
 		mu.Unlock()
 	}))
 	t.Cleanup(target.Close)
+	redirects := 0
 	redirector := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, target.URL+r.URL.Path, http.StatusTemporaryRedirect)
+		mu.Lock()
+		redirects++
+		mu.Unlock()
+		http.Redirect(w, r, target.URL+r.URL.Path, http.StatusFound)
 	}))
 	t.Cleanup(redirector.Close)
+	// A client that trusts the test certificates but sets no redirect policy:
+	// the constructor must add it.
+	pool := x509.NewCertPool()
+	pool.AddCert(redirector.Certificate())
+	pool.AddCert(target.Certificate())
+	hc := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}}
+	// Redirect the token endpoint first.
 	_, j := saKey(t, redirector.URL+"/token")
-	c, err := pushgw.NewFCMClient("proj-1", j, redirector.URL, nil, nil)
+	c, err := pushgw.NewFCMClient("proj-1", j, redirector.URL, hc, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The default client has no custom roots, so a TLS failure is also an error; both are fine.
 	if gone, err := c.Send(context.Background(), androidHandle, "message", pushproto.Pad(nil)); err == nil || gone {
+		t.Fatal(gone, err)
+	}
+	mu.Lock()
+	if redirects == 0 {
+		t.Fatal("the redirect was never reached")
+	}
+	if hits != 0 {
+		t.Fatalf("the token request followed a redirect %d times", hits)
+	}
+	mu.Unlock()
+	// Now redirect the send itself: the token endpoint works, FCM redirects.
+	g := newGoogle(t)
+	_, j2 := saKey(t, g.srv.URL+"/token")
+	pool.AddCert(g.srv.Certificate())
+	c2, err := pushgw.NewFCMClient("proj-1", j2, redirector.URL, hc, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gone, err := c2.Send(context.Background(), androidHandle, "message", pushproto.Pad(nil)); err == nil || gone {
 		t.Fatal(gone, err)
 	}
 	mu.Lock()
 	defer mu.Unlock()
 	if hits != 0 {
-		t.Fatalf("followed a redirect %d times", hits)
+		t.Fatalf("the Bearer token followed a redirect %d times", hits)
+	}
+}
+
+func TestFailedMintIsRateLimited(t *testing.T) {
+	f := newGoogle(t)
+	now := time.Unix(1_800_000_000, 0)
+	c, _ := newFCM(t, f, func() time.Time { return now })
+	f.mu.Lock()
+	f.tokenStatus = 500
+	f.mu.Unlock()
+	send := func() error {
+		_, err := c.Send(context.Background(), androidHandle, "message", pushproto.Pad(nil))
+		return err
+	}
+	if send() == nil || f.nTokens() != 1 {
+		t.Fatal("first mint should fail and reach the endpoint")
+	}
+	now = now.Add(30 * time.Second)
+	if send() == nil || f.nTokens() != 1 {
+		t.Fatalf("a second mint within a minute reached the endpoint (%d)", f.nTokens())
+	}
+	f.mu.Lock()
+	f.tokenStatus = 200
+	f.mu.Unlock()
+	now = now.Add(31 * time.Second)
+	if err := send(); err != nil || f.nTokens() != 2 {
+		t.Fatalf("no retry after the window: %v, %d", err, f.nTokens())
+	}
+}
+
+func TestFcmExpiresInIsClamped(t *testing.T) {
+	f := newGoogle(t)
+	f.expiresIn = 60 // under the 5 minute margin
+	now := time.Unix(1_800_000_000, 0)
+	c, _ := newFCM(t, f, func() time.Time { return now })
+	for i := 0; i < 2; i++ {
+		if _, err := c.Send(context.Background(), androidHandle, "message", pushproto.Pad(nil)); err != nil {
+			t.Fatalf("send %d: %v", i, err)
+		}
+	}
+	if f.nTokens() != 1 {
+		t.Fatalf("a short-lived token was minted %d times", f.nTokens())
 	}
 }
 
@@ -331,7 +414,11 @@ func TestNewFCMClientRejectsBadKeys(t *testing.T) {
 		b, _ := json.Marshal(c)
 		return b
 	}
+	ec, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	ecDER, _ := x509.MarshalPKCS8PrivateKey(ec)
+	ecPEM := string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: ecDER}))
 	for name, j := range map[string][]byte{
+		"ecdsa key":     with("private_key", ecPEM),
 		"not json":      []byte("nope"),
 		"http token":    with("token_uri", "http://oauth2.example/token"),
 		"no email":      with("client_email", ""),
@@ -406,8 +493,22 @@ func TestFcmKindRulesEnforced(t *testing.T) {
 }
 
 func TestFcmHandleRefusedWithoutFCMConfigured(t *testing.T) {
-	e := setupWith(t, false)
+	e := setupAndroidIDsOnly(t)
 	if r := e.push(e.body(e.handle(androidHandle), "message", "x")); r.status != 400 {
 		t.Fatal(r.status)
+	}
+}
+
+func TestFcmHandleNeedsProductionEnv(t *testing.T) {
+	e := setup(t)
+	for _, env := range []string{"sandbox", "", "staging"} {
+		h := androidHandle
+		h.Env = env
+		if r := e.push(e.body(e.handle(h), "message", "x")); r.status != 400 {
+			t.Fatalf("env %q: %d", env, r.status)
+		}
+	}
+	if e.fcm.count() != 0 {
+		t.Fatal("sent")
 	}
 }

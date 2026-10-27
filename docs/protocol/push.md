@@ -29,7 +29,7 @@ The device seals this JSON object to the gateway's public key:
 - **Upload:** `PUT /v1/push/tokens/{kind}` with `{"sealed": "<base64url>"}`. The server stores the bytes as received and cannot read them. The `k` inside the handle is the one the gateway enforces.
 - **Where the key comes from:** the gateway's public key and URL are compiled into the app. If a server's info document names a different gateway, the app registers no push tokens with that server. A dishonest server therefore cannot collect raw tokens through a fake gateway (plan 6, decision 3).
 - **Bundle IDs:** the iPhone app and the Mac app each have their own, and the gateway allows only the ones it is configured with (`PUSHGW_BUNDLE_IDS`). A VoIP push goes to the topic `<bundle>.voip`.
-- **Android:** an `fcm` handle is `{"t":"<FCM token>","k":"fcm","e":"production","b":"<applicationId>"}`. The gateway allows only the application IDs in `PUSHGW_ANDROID_APP_IDS`, and refuses `fcm` handles when it has no FCM key. A `message` push needs an `alert` or `fcm` handle; a `call` push may use `voip`, `alert` or `fcm`.
+- **Android:** an `fcm` handle is `{"t":"<FCM token>","k":"fcm","e":"production","b":"<applicationId>"}`. The gateway allows only the application IDs in `PUSHGW_ANDROID_APP_IDS`, refuses `fcm` handles when it has no FCM key, and requires `e` to be `production` for them. A `message` push needs an `alert` or `fcm` handle; a `call` push may use `voip`, `alert` or `fcm`.
 
 ## Padding
 
@@ -104,7 +104,7 @@ The extension's memory budget is about 24 MB. The visible alert text is not auth
 
 ## Android pushes through FCM
 
-The gateway sends an `fcm` handle as an FCM HTTP v1 data message: `{"message":{"token":"<t>","data":{"k":"message"|"call","d":"<std base64 of the padded payload>"},"android":{"priority":"HIGH","ttl":"86400s"|"45s"}}}`. A call expires after 45 seconds (the ring timeout), a message after one day. FCM `404` or `UNREGISTERED` becomes `410` to the server, which deletes the handle. The gateway authenticates with an OAuth access token minted from the owner's service-account key (RS256 JWT, cached until 5 minutes before expiry); it follows no redirects and logs neither tokens nor payloads. Details: [server design §7.4](../superpowers/specs/2026-10-27-server-design.md#74-push-lane-d).
+The gateway sends an `fcm` handle as an FCM HTTP v1 data message: `{"message":{"token":"<t>","data":{"k":"message"|"call","d":"<std base64 of the padded payload>"},"android":{"priority":"HIGH","ttl":"86400s"|"45s"}}}`. A call expires after 45 seconds (the ring timeout), a message after one day. FCM `UNREGISTERED`, or a `404` whose error body says `NOT_FOUND`, becomes `410` to the server, which deletes the handle; a bare or unknown `404` is a gateway error (`502`) and keeps the handle. The gateway authenticates with an OAuth access token minted from the owner's service-account key (RS256 JWT, cached until 5 minutes before expiry); it follows no redirects and logs neither tokens nor payloads. Details: [server design §7.4](../superpowers/specs/2026-10-27-server-design.md#74-push-lane-d).
 
 ## iOS VoIP pushes
 

@@ -57,7 +57,7 @@ type fcmClient struct {
 // nil httpClient uses one with a 10 s timeout that follows no redirects, and a
 // nil now uses the system clock. The key and the access token are never
 // logged and never appear in errors.
-func NewFCMClient(projectID string, keyJSON []byte, baseURL string, httpClient *http.Client, now func() time.Time) (APNs, error) {
+func NewFCMClient(projectID string, keyJSON []byte, baseURL string, httpClient *http.Client, now func() time.Time) (FCM, error) {
 	if projectID == "" || strings.ContainsAny(projectID, "/?#% ") {
 		return nil, errors.New("pushgw: FCM project ID is not valid")
 	}
@@ -88,13 +88,15 @@ func NewFCMClient(projectID string, keyJSON []byte, baseURL string, httpClient *
 	if !ok {
 		return nil, errors.New("pushgw: FCM private key must be RSA")
 	}
+	// A redirect must not carry the access token or the JWT to another host, so
+	// the policy is set even on a client the caller passes in (a copy of it).
 	if httpClient == nil {
-		// A redirect must not carry the access token or the JWT to another host.
-		httpClient = &http.Client{
-			Timeout:       fcmTimeout,
-			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-		}
+		httpClient = &http.Client{Timeout: fcmTimeout}
+	} else {
+		cp := *httpClient
+		httpClient = &cp
 	}
+	httpClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	if now == nil {
 		now = time.Now
 	}
@@ -114,7 +116,7 @@ func (c *fcmClient) accessToken(ctx context.Context) (string, error) {
 	if c.access != "" && now.Before(c.expires) {
 		return c.access, nil
 	}
-	if !c.minted.IsZero() && now.Before(c.minted.Add(fcmMinMintAge)) && now.After(c.minted) {
+	if !c.minted.IsZero() && now.Before(c.minted.Add(fcmMinMintAge)) && !now.Before(c.minted) {
 		return "", errors.New("pushgw: FCM access token was refused recently")
 	}
 	hdr, _ := json.Marshal(struct {
@@ -161,7 +163,13 @@ func (c *fcmClient) accessToken(ctx context.Context) (string, error) {
 		return "", errors.New("pushgw: FCM token answer is not valid")
 	}
 	c.access = out.Access
-	c.expires = now.Add(time.Duration(out.Expires)*time.Second - fcmTokenEarly)
+	life := time.Duration(min(out.Expires, 3600)) * time.Second
+	if life > fcmTokenEarly {
+		life -= fcmTokenEarly
+	} else {
+		life /= 2 // a short-lived token is still cached for part of its life
+	}
+	c.expires = now.Add(life)
 	return c.access, nil
 }
 
@@ -252,7 +260,10 @@ func (c *fcmClient) Send(ctx context.Context, h pushproto.Handle, kind string, d
 	switch {
 	case resp.StatusCode == http.StatusOK:
 		return false, nil
-	case resp.StatusCode == http.StatusNotFound, code == "UNREGISTERED":
+	case code == "UNREGISTERED",
+		resp.StatusCode == http.StatusNotFound && code == "NOT_FOUND":
+		// A bare or unknown 404 (a wrong URL, a proxy) is a gateway-side
+		// error and must not delete the device's handle.
 		return true, nil
 	case resp.StatusCode == http.StatusUnauthorized:
 		c.forgetToken()

@@ -85,6 +85,21 @@ func newHPKE(t *testing.T) hpke.PrivateKey {
 func setup(t *testing.T) *env { return setupWith(t, true) }
 
 func setupWith(t *testing.T, withFCM bool) *env {
+	return setupCfg(t, func(cfg *pushgw.GatewayConfig, fcm *fakeAPNs) {
+		if withFCM {
+			cfg.FCM, cfg.AndroidAppIDs = fcm, []string{"com.example.android"}
+		}
+	})
+}
+
+// setupAndroidIDsOnly lists an Android application ID but configures no FCM sender.
+func setupAndroidIDsOnly(t *testing.T) *env {
+	return setupCfg(t, func(cfg *pushgw.GatewayConfig, _ *fakeAPNs) {
+		cfg.AndroidAppIDs = []string{"com.example.android"}
+	})
+}
+
+func setupCfg(t *testing.T, tweak func(*pushgw.GatewayConfig, *fakeAPNs)) *env {
 	t.Helper()
 	pool := testkit.DB(t)
 	if err := pushgw.Migrate(context.Background(), pool); err != nil {
@@ -97,9 +112,7 @@ func setupWith(t *testing.T, withFCM bool) *env {
 		HPKEKey: hk, HPKEPublic: hk.PublicKey().Bytes(),
 		BundleIDs: []string{"com.example.app"}, Now: clock.Now,
 	}
-	if withFCM {
-		cfg.FCM, cfg.AndroidAppIDs = fcm, []string{"com.example.android"}
-	}
+	tweak(&cfg, fcm)
 	h := pushgw.NewGateway(pool, cfg, apns, slog.New(slog.DiscardHandler))
 	e := &env{t: t, h: h, apns: apns, fcm: fcm, clock: clock, hpub: hk.PublicKey()}
 	e.dbExec = func(sql string, args ...any) {
