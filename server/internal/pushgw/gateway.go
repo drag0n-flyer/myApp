@@ -201,7 +201,11 @@ func (g *gateway) gatewayKey(w http.ResponseWriter, _ *http.Request) error {
 func readBody(r *http.Request) ([]byte, error) {
 	b, err := io.ReadAll(http.MaxBytesReader(nil, r.Body, maxBodyBytes))
 	if err != nil {
-		return nil, apiErr("too_large", "request body is too large")
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			return nil, apiErr("too_large", "request body is too large")
+		}
+		return nil, apiErr("bad_request", "request body could not be read")
 	}
 	return b, nil
 }

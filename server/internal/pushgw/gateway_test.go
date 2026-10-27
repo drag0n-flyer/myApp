@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -419,6 +420,45 @@ func TestReplayExpires(t *testing.T) {
 	e.clock.Advance(11 * time.Minute)
 	if r := e.push(b); r.status != 202 {
 		t.Fatal(r.status)
+	}
+}
+
+// A request signed 300 s in the future is accepted on arrival and again up to
+// 300 s past its timestamp, so 600 s after first use. It must still be a replay.
+func TestReplayWindowCoversFullSkewRange(t *testing.T) {
+	e := setup(t)
+	b := e.body(e.handle(goodHandle), "message", "x")
+	signedAhead := e.clock.Now().Add(300 * time.Second)
+	send := func() resp {
+		return e.do("POST", "/v1/push", "10.0.0.9:1", b, func(r *http.Request) {
+			pushproto.Sign(e.priv, r, b, e.serverID, signedAhead)
+		})
+	}
+	if r := send(); r.status != 202 {
+		t.Fatalf("first: %d %s", r.status, r.body)
+	}
+	e.clock.Advance(600 * time.Second)
+	if r := send(); r.status != 409 {
+		t.Fatalf("replay at +600 s: %d %s", r.status, r.body)
+	}
+}
+
+type failingBody struct{}
+
+func (failingBody) Read([]byte) (int, error) { return 0, errors.New("connection reset") }
+
+func TestBodyReadErrors(t *testing.T) {
+	e := setup(t)
+	big := bytes.Repeat([]byte("a"), 33<<10)
+	if r := e.do("POST", "/v1/servers", "10.0.0.2:1", big, nil); r.status != 413 {
+		t.Errorf("oversize: %d %s", r.status, r.body)
+	}
+	req := httptest.NewRequest("POST", "/v1/servers", failingBody{})
+	req.RemoteAddr = "10.0.0.3:1"
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, req)
+	if rec.Code != 400 {
+		t.Errorf("read error: %d %s", rec.Code, rec.Body)
 	}
 }
 
