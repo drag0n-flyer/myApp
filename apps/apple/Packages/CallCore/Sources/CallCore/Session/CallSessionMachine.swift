@@ -1,8 +1,13 @@
 import Foundation
 import AppCore
 
-/// The call state machine: inputs in, effects out, no I/O. Outgoing (caller) paths.
+/// The call state machine: inputs in, effects out, no I/O. Caller and callee paths.
 public struct CallSessionMachine: Sendable {
+    /// Caps for what a peer can make us buffer before a call is answered.
+    static let maxEarlyDevices = 8
+    static let maxEarlyCandidatesPerDevice = 64
+    static let maxPendingLocalCandidates = 64
+
     public private(set) var state: CallState?
 
     private var context: CallContext
@@ -19,6 +24,10 @@ public struct CallSessionMachine: Sendable {
     private var pinnedFingerprint: String?
     private var renegotiateOutstanding = false
     private var answerSent = false
+    private var answerRequested = false          // callee: the user answered
+    private var localOfferSDP: String?            // callee: our prewarmed offer
+    private var pendingRenegotiateAnswer = false  // callee: accepted a renegotiate offer, owe the answer
+    private var videoStartsOff = false
     private var pendingLocalCandidates: [IceCandidate] = []
     /// Remote candidates received before we can use them, by sending device.
     private var earlyRemoteCandidates: [String: [IceCandidate]] = [:]
@@ -35,7 +44,9 @@ public struct CallSessionMachine: Sendable {
     public mutating func handle(_ input: CallInput) -> [CallEffect] {
         switch input {
         case .start(let contact, let video, let id): return start(contact, video, id)
-        case .incoming, .answer, .decline: return []   // incoming calls: task S2
+        case .incoming(let id, let contact, let device, let ring): return incoming(id, contact, device, ring)
+        case .answer(let video): return answer(video)
+        case .decline: return decline()
         case .hangup: return hangup()
         case .setPreference(let p): return setPreference(p)
         case .setVideo(let on): return setVideo(on)
@@ -66,14 +77,7 @@ public struct CallSessionMachine: Sendable {
 
     private mutating func start(_ contact: Contact, _ video: Bool, _ id: String) -> [CallEffect] {
         if let s = state, !s.isEnded { return [] }
-        callID = id
-        outgoing = true
-        peerCeiling = nil
-        answeringDevice = nil; remoteDescriptionSet = false; answerSent = false
-        pinnedFingerprint = nil; renegotiateOutstanding = false
-        pendingLocalCandidates = []; earlyRemoteCandidates = [:]
-        activeSince = nil; everActive = false; lastSentMode = nil; lastSentTier = nil
-        reconnect = ReconnectPolicy(isCaller: true)
+        resetCall(id, outgoing: true)
 
         let ceiling = ownCeiling
         let videoOn = video && !VideoLadder.startsOff(ceiling: ceiling, network: context.network, settings: context.settings.call)
@@ -91,10 +95,81 @@ public struct CallSessionMachine: Sendable {
         ]
     }
 
+    private mutating func resetCall(_ id: String, outgoing isOutgoing: Bool) {
+        callID = id
+        outgoing = isOutgoing
+        peerCeiling = nil
+        answeringDevice = nil; remoteDescriptionSet = false; answerSent = false
+        answerRequested = false; localOfferSDP = nil; pendingRenegotiateAnswer = false
+        pinnedFingerprint = nil; renegotiateOutstanding = false
+        pendingLocalCandidates = []; earlyRemoteCandidates = [:]
+        activeSince = nil; everActive = false; lastSentMode = nil; lastSentTier = nil
+        reconnect = ReconnectPolicy(isCaller: isOutgoing)
+    }
+
+    private mutating func incoming(_ id: String, _ contact: Contact, _ device: String, _ ring: CallSignalPayload) -> [CallEffect] {
+        if let s = state, !s.isEnded { return [] }
+        guard ring.kind == .ring, ring.callID == id else { return [] }
+        resetCall(id, outgoing: false)
+        answeringDevice = device              // the exchange is bound to the caller's device from the ring
+        peerCeiling = ring.ceiling
+        let video = ring.video ?? false
+        let ceiling = ownCeiling
+        videoStartsOff = VideoLadder.startsOff(ceiling: ceiling, network: context.network, settings: context.settings.call)
+        adaptor = QualityAdaptor(ceiling: effectiveCeiling, videoWanted: false)
+        lastSentMode = adaptor.currentMode
+        lastSentTier = nil
+        state = CallState(contact: contact, phase: .incoming, isVideoCall: video, isVideoOn: false,
+                          effectiveMode: adaptor.currentMode, network: context.network)
+        let policy = RelayDecision.policy(context.settings.ipHiding, isContact: context.isContact)
+        return [
+            .configureMedia(policy: policy, video: video && !videoStartsOff),
+            .setNoiseSuppression(context.settings.noiseSuppression),
+            .makeOffer(receive: .for(ceiling), iceRestart: false),
+            .publish(state),
+        ]
+    }
+
+    private mutating func answer(_ video: Bool) -> [CallEffect] {
+        guard isLive, !outgoing, state?.phase == .incoming, !answerRequested else { return [] }
+        answerRequested = true
+        let on = video && (state?.isVideoCall ?? false) && !videoStartsOff
+        adaptor = QualityAdaptor(ceiling: effectiveCeiling, videoWanted: on)   // fresh start with the answer's video choice
+        let tier = adaptor.currentTier
+        lastSentTier = tier
+        update { $0.phase = .connecting; $0.isVideoOn = tier != nil; $0.isSpeakerOn = on }
+        var fx: [CallEffect] = []
+        if let sdp = localOfferSDP { fx += sendAnswer(sdp) }
+        if isLive { fx.append(.publish(state)) }
+        return fx
+    }
+
+    private mutating func decline() -> [CallEffect] {
+        guard isLive, !outgoing, state?.phase == .incoming else { return [] }
+        return [.sendDecline] + end(.declined, notifyServer: false)
+    }
+
+    /// Callee: sends our prewarmed offer, then the candidates gathered while ringing.
+    private mutating func sendAnswer(_ sdp: String) -> [CallEffect] {
+        guard let fingerprint = SDPMunger.fingerprint(in: sdp) else { return end(.failed, notifyServer: true) }
+        answerSent = true
+        var fx: [CallEffect] = [.sendAnswer(CallSignalPayload(kind: .offer, callID: callID, sdp: sdp,
+                                                             dtlsFingerprint: fingerprint, ceiling: ownCeiling))]
+        for c in pendingLocalCandidates { fx.append(.sendSignal(CallSignalPayload(kind: .candidate, callID: callID, candidate: c))) }
+        pendingLocalCandidates = []
+        return fx
+    }
+
+    private mutating func bufferEarly(_ c: IceCandidate, from device: String) {
+        if earlyRemoteCandidates[device] == nil, earlyRemoteCandidates.count >= Self.maxEarlyDevices { return }
+        if (earlyRemoteCandidates[device]?.count ?? 0) >= Self.maxEarlyCandidatesPerDevice { return }
+        earlyRemoteCandidates[device, default: []].append(c)
+    }
+
     private mutating func server(_ e: CallServerEvent) -> [CallEffect] {
         switch e {
         case .answered(let id, let device, _):
-            guard id == callID, isLive, answeringDevice == nil else { return [] }
+            guard outgoing, id == callID, isLive, answeringDevice == nil else { return [] }
             answeringDevice = device
             // Keep only the answering device's buffered candidates.
             earlyRemoteCandidates = earlyRemoteCandidates.filter { $0.key == device }
@@ -113,15 +188,15 @@ public struct CallSessionMachine: Sendable {
         case .candidate:
             guard let c = p.candidate else { return [] }
             guard let answering = answeringDevice else {
-                earlyRemoteCandidates[device, default: []].append(c)   // before call.answered: per device
+                bufferEarly(c, from: device)   // before call.answered: per device, capped
                 return []
             }
             guard device == answering else { return [] }
             if remoteDescriptionSet { return [.addCandidate(c)] }
-            earlyRemoteCandidates[answering, default: []].append(c)
+            bufferEarly(c, from: answering)
             return []
         case .offer:
-            guard let answering = answeringDevice, !remoteDescriptionSet, device == answering else { return [] }
+            guard outgoing, let answering = answeringDevice, !remoteDescriptionSet, device == answering else { return [] }
             guard let sdp = p.sdp, let claimed = p.dtlsFingerprint,
                   SDPMunger.fingerprint(in: sdp) == claimed else {
                 return end(.failed, notifyServer: true)
@@ -135,8 +210,33 @@ public struct CallSessionMachine: Sendable {
             update { $0.phase = .connecting }
             fx.append(.publish(state))
             return fx
+        case .answer:
+            guard !outgoing, answerSent, !remoteDescriptionSet, device == answeringDevice, let answering = answeringDevice else { return [] }
+            guard let sdp = p.sdp, let claimed = p.dtlsFingerprint, SDPMunger.fingerprint(in: sdp) == claimed else {
+                return end(.failed, notifyServer: true)
+            }
+            if let c = p.ceiling { setPeerCeiling(c) }
+            remoteDescriptionSet = true
+            pinnedFingerprint = claimed
+            var fx: [CallEffect] = [.acceptAnswer(sdp: sdp, send: .for(state?.effectiveMode ?? ownCeiling))]
+            for c in earlyRemoteCandidates.removeValue(forKey: answering) ?? [] { fx.append(.addCandidate(c)) }
+            fx.append(.publish(state))
+            return fx
+        case .renegotiate:
+            guard device == answeringDevice, remoteDescriptionSet else { return [] }
+            if outgoing {
+                // The callee asks for an ICE restart (no SDP); an SDP here is not accepted by the caller.
+                guard p.sdp == nil else { return [] }
+                return [.makeOffer(receive: .for(ownCeiling), iceRestart: true)]
+            }
+            guard let sdp = p.sdp, let claimed = p.dtlsFingerprint, SDPMunger.fingerprint(in: sdp) == claimed,
+                  claimed == pinnedFingerprint else {
+                return end(.failed, notifyServer: true)
+            }
+            pendingRenegotiateAnswer = true
+            return [.acceptOffer(sdp: sdp, send: .for(state?.effectiveMode ?? ownCeiling), receive: .for(ownCeiling))]
         case .renegotiateAnswer:
-            guard device == answeringDevice, remoteDescriptionSet, renegotiateOutstanding, let sdp = p.sdp else { return [] }
+            guard outgoing, device == answeringDevice, remoteDescriptionSet, renegotiateOutstanding, let sdp = p.sdp else { return [] }
             // The fingerprint must match the SDP and the one pinned from the original offer.
             guard let claimed = p.dtlsFingerprint, SDPMunger.fingerprint(in: sdp) == claimed,
                   claimed == pinnedFingerprint else {
@@ -148,13 +248,20 @@ public struct CallSessionMachine: Sendable {
             guard device == answeringDevice else { return [] }
             if let c = p.ceiling { setPeerCeiling(c) }
             return [.publish(state)]
-        case .ring, .answer, .renegotiate:
+        case .ring:
             return []
         }
     }
 
     private mutating func localAnswer(_ sdp: String) -> [CallEffect] {
-        guard isLive, remoteDescriptionSet, !answerSent else { return [] }
+        if pendingRenegotiateAnswer {
+            guard isLive else { return [] }
+            pendingRenegotiateAnswer = false
+            guard let fingerprint = SDPMunger.fingerprint(in: sdp) else { return end(.failed, notifyServer: true) }
+            return [.sendSignal(CallSignalPayload(kind: .renegotiateAnswer, callID: callID, sdp: sdp,
+                                                  dtlsFingerprint: fingerprint, ceiling: ownCeiling))]
+        }
+        guard outgoing, isLive, remoteDescriptionSet, !answerSent else { return [] }
         answerSent = true
         var fx: [CallEffect] = [.sendSignal(CallSignalPayload(
             kind: .answer, callID: callID, sdp: sdp, dtlsFingerprint: SDPMunger.fingerprint(in: sdp), ceiling: ownCeiling))]
@@ -164,10 +271,17 @@ public struct CallSessionMachine: Sendable {
     }
 
     private mutating func localOffer(_ sdp: String) -> [CallEffect] {
-        // An ICE-restart offer from this side.
+        if !outgoing {
+            // Callee: our prewarmed offer. It goes out only once the user answers.
+            guard isLive, !answerSent, localOfferSDP == nil else { return [] }
+            localOfferSDP = sdp
+            return answerRequested ? sendAnswer(sdp) + [.publish(state)] : []
+        }
+        // Caller: an ICE-restart offer from this side.
         guard isLive, answerSent else { return [] }
         renegotiateOutstanding = true
-        return [.sendSignal(CallSignalPayload(kind: .renegotiate, callID: callID, sdp: sdp, ceiling: ownCeiling))]
+        return [.sendSignal(CallSignalPayload(kind: .renegotiate, callID: callID, sdp: sdp,
+                                              dtlsFingerprint: SDPMunger.fingerprint(in: sdp), ceiling: ownCeiling))]
     }
 
     private mutating func media(_ e: MediaEvent) -> [CallEffect] {
@@ -175,7 +289,7 @@ public struct CallSessionMachine: Sendable {
         switch e {
         case .localCandidate(let c):
             if answerSent { return [.sendSignal(CallSignalPayload(kind: .candidate, callID: callID, candidate: c))] }
-            pendingLocalCandidates.append(c)
+            if pendingLocalCandidates.count < Self.maxPendingLocalCandidates { pendingLocalCandidates.append(c) }
             return []
         case .remoteVideo:
             return []
@@ -202,7 +316,7 @@ public struct CallSessionMachine: Sendable {
             case .restartIce:
                 fx.append(.makeOffer(receive: .for(ownCeiling), iceRestart: true))
             case .requestRestart:
-                break   // callee path: task S2
+                fx.append(.sendSignal(CallSignalPayload(kind: .renegotiate, callID: callID)))   // callee asks; no SDP
             case .recovered:
                 markActive()
                 update { $0.phase = .active; $0.banner = nil }
@@ -278,6 +392,7 @@ public struct CallSessionMachine: Sendable {
 
     private mutating func hangup() -> [CallEffect] {
         guard isLive else { return [] }
+        if !outgoing, state?.phase == .incoming { return decline() }
         return end(.hungUp, notifyServer: true)
     }
 
@@ -329,12 +444,16 @@ public struct CallSessionMachine: Sendable {
         }
         pendingLocalCandidates = []
         earlyRemoteCandidates = [:]
+        localOfferSDP = nil
+        pendingRenegotiateAnswer = false
         answeringDevice = nil
         pinnedFingerprint = nil
         renegotiateOutstanding = false
         var fx: [CallEffect] = []
         if notifyServer { fx.append(.sendHangup) }
-        fx += [.closeMedia, .recordHistory(summary, outgoing: outgoing), .publish(state)]
+        fx.append(.closeMedia)
+        if reason != .answeredElsewhere { fx.append(.recordHistory(summary, outgoing: outgoing)) }
+        fx.append(.publish(state))
         return fx
     }
 
