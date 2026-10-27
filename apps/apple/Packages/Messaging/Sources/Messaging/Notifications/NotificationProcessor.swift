@@ -101,9 +101,20 @@ public struct NotificationProcessor: Sendable {
 
     private struct LeaveForApp: Error {}
 
-    /// True for an MLS Welcome: MLSMessage framing (version 1, wire format 3) or the fake
-    /// engine's `{"fake":"welcome"}`.
-    static func isWelcome(_ payload: Data) -> Bool {
+    /// The push body is only the padded inbox payload: it has no `kind` and no conversation ID
+    /// (server `fanout.go` passes `item.Payload` as `PushPayload`). The server's `kind` is known
+    /// only for inbox items already fetched into `inbox_raw` (same payload bytes), so look it up
+    /// there and trust it. Only when the item has not been fetched yet (the usual first push)
+    /// fall back to sniffing the bytes: MLSMessage framing (version 1, wire format 3), or the
+    /// fake engine's `{"fake":"welcome"}`.
+    private func isWelcome(_ payload: Data) throws -> Bool {
+        if let known = try deps.repo.rawItems(limit: 500).first(where: { $0.payload == payload }) {
+            return known.kind == "welcome"
+        }
+        return Self.sniffsAsWelcome(payload)
+    }
+
+    static func sniffsAsWelcome(_ payload: Data) -> Bool {
         let b = [UInt8](payload.prefix(4))
         if b == [0, 1, 0, 3] { return true }
         guard let object = try? JSONSerialization.jsonObject(with: payload) as? [String: Any] else { return false }
@@ -118,7 +129,7 @@ public struct NotificationProcessor: Sendable {
 
         // A Welcome needs the inbox item's server conversation ID to register the conversation,
         // and the push does not carry it. Leave it for the full sync (never mark it processed here).
-        if Self.isWelcome(payload) { return try await syncAndShowNewest() }
+        if try isWelcome(payload) { return try await syncAndShowNewest() }
 
         let hash = PortableSHA256.hash(payload)
         if try deps.repo.isProcessed(hash: hash) { return .drop }

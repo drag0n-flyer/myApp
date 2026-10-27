@@ -318,4 +318,43 @@ private struct Pair {
         let outcome = await pair.processor().process(pushData: padded(Data()), deadline: Pair.deadline)
         #expect(outcome == .show(title: "Ana", body: "new", threadID: "acc-ana"))
     }
+
+    @Test func testWelcomeKindFromFetchedInboxItemBeatsSniffing() async throws {
+        let server = FakeServer()
+        let ana = await makeDevice(server, account: "acc-ana", username: "ana")
+        let bob = await makeDevice(server, account: "acc-bob", username: "bob")
+        _ = try await bob.deps.server.uploadKeyPackages(try await bob.deps.mls.makeKeyPackages(count: 1))
+        _ = try await ana.deps.server.claimKeyPackages(accountID: bob.accountID)
+        let conversation = try await ana.deps.server.createConversation(with: bob.accountID)
+        let opaque = Data("opaque-bytes-that-do-not-look-like-a-welcome".utf8)
+        #expect(!NotificationProcessor.sniffsAsWelcome(opaque))
+        _ = try await ana.deps.server.postCommit(
+            conversationID: conversation.conversationID, epoch: 0, commit: Data("c".utf8),
+            welcome: opaque, addDevices: [bob.deviceID], removeDevices: [])
+        // The app fetched the inbox earlier: the server's kind is now in inbox_raw.
+        let page = try await bob.deps.server.inbox(after: nil)
+        let item = try #require(page.items.first { $0.kind == "welcome" })
+        #expect(item.payload == opaque)
+        try bob.deps.repo.insertRaw([RawInboxRecord(
+            cursor: item.cursor, kind: item.kind, conversationID: item.conversationID, seq: item.seq, epoch: item.epoch,
+            senderAccount: item.senderAccountID, senderDevice: item.senderDeviceID, payload: item.payload, sentAt: testEpochDate)])
+
+        let inbox = FakeInbox()
+        let processor = NotificationProcessor(deps: bob.deps, handler: TestHandler(), inbox: inbox, conversations: NoConversations())
+        let outcome = await processor.process(pushData: padded(opaque), deadline: Pair.deadline)
+        #expect(outcome == .fallback)
+        #expect(inbox.recorded == [20])   // routed to the sync, not to mls.process
+        #expect(try bob.deps.repo.isProcessed(hash: PortableSHA256.hash(opaque)) == false)
+    }
+
+    @Test func testMessageKindFromInboxItemBeatsSniffing() async throws {
+        // The server says "message" even though the bytes look like a Welcome: trust the server.
+        let pair = try await Pair()
+        let welcomeLooking = Data(#"{"fake":"welcome"}"#.utf8)
+        try pair.bob.deps.repo.insertRaw([RawInboxRecord(
+            cursor: 1, kind: "message", conversationID: "conv-1", seq: 1, epoch: 1, senderAccount: "acc-ana",
+            senderDevice: "d", payload: welcomeLooking, sentAt: testEpochDate)])
+        _ = await pair.processor().process(pushData: padded(welcomeLooking), deadline: Pair.deadline)
+        #expect(pair.inbox.recorded.isEmpty)
+    }
 }
