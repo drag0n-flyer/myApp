@@ -21,7 +21,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 BANNER = "> **Draft — needs lawyer review before use.**"
-EVIDENCE = re.compile(r"\]\([^)\s]+\)|https?://\S+|👤\s*\d{4}-\d{2}-\d{2}\s+\S+")
+LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)\)")
+BARE_URL = re.compile(r"https?://[^\s)\]]+")
+RUN_URL = re.compile(r"https://github\.com/drag0n-flyer/myApp/actions/runs/\d+/?")
+OWNER_EVIDENCE = re.compile(r"👤\s*\d{4}-\d{2}-\d{2}\s+\S+")
 WAIVED = re.compile(r"^waived \((.+), owner \d{4}-\d{2}-\d{2}\)$")
 OWNER_LINE = re.compile(r"👤\s*\d{4}-\d{2}-\d{2}\s+\S+")
 LAWYER_LINE = re.compile(r"lawyer reviewed \d{4}-\d{2}-\d{2}", re.I)
@@ -47,6 +50,24 @@ def parse_rows(text):
     return rows
 
 
+def evidence_problems(evidence, base):
+    """Return the parts of `evidence` that are not an allowed kind, and whether any allowed one exists."""
+    targets = LINK.findall(evidence)
+    targets += BARE_URL.findall(LINK.sub("", evidence))
+    bad, good = [], bool(OWNER_EVIDENCE.search(evidence))
+    for t in targets:
+        if t.startswith(("http://", "https://")):
+            ok = bool(RUN_URL.fullmatch(t))
+        else:
+            ok = "://" not in t and not t.startswith(("/", "mailto:")) and \
+                (base / t.split("#")[0]).resolve().is_file() and bool(t.split("#")[0])
+        if ok:
+            good = True
+        else:
+            bad.append(t)
+    return bad, good
+
+
 def check_rows(path, errors, open_items, counts):
     if not path.is_file():
         errors.append(f"{path}: missing")
@@ -63,10 +84,14 @@ def check_rows(path, errors, open_items, counts):
         if status == "done":
             if not evidence:
                 errors.append(f"{item}: done without evidence (line {n})")
-            elif not EVIDENCE.search(evidence):
-                errors.append(f"{item}: evidence is not a link or owner line (line {n})")
             else:
-                counts["done"] += 1
+                bad, good = evidence_problems(evidence, path.parent)
+                if bad or not good:
+                    errors.append(f"{item}: not an allowed evidence: {', '.join(bad) or evidence} "
+                                  f"(need a run URL of drag0n-flyer/myApp, an existing repo path, "
+                                  f"or an owner line) (line {n})")
+                else:
+                    counts["done"] += 1
         elif status == "open":
             counts["open"] += 1
             open_items.append(f"open: {item}")
