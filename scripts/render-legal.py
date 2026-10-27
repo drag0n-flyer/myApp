@@ -17,7 +17,6 @@ ROOT = Path(__file__).resolve().parent.parent
 BANNER = "> **Draft — needs lawyer review before use.**"
 PAGES = {"privacy-policy.md": "privacy.html", "terms.md": "terms.html"}
 
-PAGES_BY_SRC = None  # set below
 LINK = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
 BOLD = re.compile(r"\*\*(.+?)\*\*")
 CODE = re.compile(r"`([^`]+)`")
@@ -56,7 +55,7 @@ def render_body(md):
         line = lines[i]
         if not line.strip():
             i += 1
-        elif line.startswith("#"):
+        elif re.match(r"^#{1,6}\s+", line):
             m = re.match(r"^(#{1,6})\s+(.*)$", line)
             n = len(m.group(1))
             out.append("<h%d>%s</h%d>" % (n, inline(m.group(2)), n))
@@ -89,7 +88,7 @@ def render_body(md):
         else:
             buf = []
             while (i < len(lines) and lines[i].strip()
-                   and not re.match(r"^(#|>|\||[-*]\s)", lines[i])):
+                   and not re.match(r"^(#{1,6}\s|>|\||[-*]\s)", lines[i])):
                 buf.append(lines[i].strip())
                 i += 1
             out.append("<p>%s</p>" % inline(" ".join(buf)))

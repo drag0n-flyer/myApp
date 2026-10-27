@@ -27,7 +27,7 @@ The server keeps only what it needs to deliver your messages and calls. Each ite
 - **Conversation membership:** which accounts are in a conversation together, and which of their devices are in it.
 - **Message timing and size:** when a message was sent and how large it is. Not what it says in end-to-end encrypted chats.
 - **Call timing:** when a call was set up between two accounts. Not what was said or shown.
-- **Block lists and reports:** the accounts you have blocked, and reports you send about other accounts or messages.
+- **Block lists and reports:** the accounts you have blocked, and reports you send about other accounts or messages. A report holds up to 50 message texts you chose to share, plus any note you add. It is sent by email to the operator's abuse contact through the email provider (see section 5), so the operator and the provider can read it.
 - **Attachments:** photos and files are encrypted on your device before upload. They are deleted after the number of days set by `retention.attachmentDays` (30 days by default). The server also sees attachment sizes and timing.
 - **Escrow copies:** only in chats marked as server-readable, the server keeps a copy it can read. See section 3.
 - **IP addresses:** the server writes IP addresses to no logs. The server, the call relay servers and the push gateway still see your IP address for a moment while you connect.
@@ -79,9 +79,9 @@ The legal basis follows Article 6 of the GDPR. The lawyer must confirm each row.
 - **The project push gateway:** it passes notifications from the server to Apple. It sees which server sends to which handle and when, and, because it must open the handle to contact Apple, the raw push token at that moment. It does not see message content or account names.
 - **Call relay operators:** when a call cannot go directly between devices, a relay server carries it. The relay sees both IP addresses, when the call starts and ends, and how much data flows. It does not see the call content.
 - **Cloudflare, optional:** if the server administrator turns on Cloudflare as a fallback call relay, Cloudflare also sees your IP address and call volume. This server's administrator will state here whether it is on: TO BE FILLED IN.
-- **Email delivery provider:** the provider the operator uses to send sign-in codes sees your email address and when a code was sent. Provider name: TO BE FILLED IN.
+- **Email delivery provider:** the provider the operator uses to send sign-in codes, and to forward reports to the abuse contact, sees your email address and when a code was sent. It also sees the content of each report (up to 50 message texts you chose to share, plus any note). Provider name: TO BE FILLED IN.
 
-We do not sell your data and do not use it for advertising.
+We do not sell your data and do not use it for advertising. [owner to confirm]
 
 ## 6. How long we keep data
 
@@ -95,7 +95,7 @@ These are the default values of the server's policy file.
 - Accounts and their data: until you delete them.
 - Reports: kept until the operator has handled them. TO BE CONFIRMED by the lawyer.
 
-When you remove a device, its record is deleted. When you delete your account, your account record is deleted, and with it your devices, sessions, conversation membership, push tokens and blocks.
+When you remove a device, its record is deleted. When you delete your account, your account record is deleted, and with it your devices, sessions, KeyPackages (the keys others use to start encrypted chats with you), undelivered inbox items, conversation membership, push tokens and blocks.
 
 ## 7. Your rights
 

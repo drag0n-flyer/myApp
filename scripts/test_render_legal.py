@@ -28,6 +28,9 @@ class RenderLegal(unittest.TestCase):
         with self.assertRaises(rl.MissingBanner):
             rl.render("# No banner\n")
 
+    def test_hash_without_space_is_text(self):
+        self.assertIn("<p>#foo</p>", rl.render(B + "#foo\n"))
+
     def test_table(self):
         out = rl.render(B + "| A | B |\n|---|---|\n| 1 | 2 |\n")
         self.assertIn("<th>A</th>", out)
