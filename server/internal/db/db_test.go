@@ -121,3 +121,22 @@ func TestDeleteAccountCascadesDevices(t *testing.T) {
 		t.Fatalf("DeviceIDs after delete = %v, want empty", got)
 	}
 }
+
+func TestDirectoryMalformedIDs(t *testing.T) {
+	ctx := context.Background()
+	pool := testkit.DB(t)
+	dir := db.NewDirectory(pool)
+
+	for _, bad := range []string{"not-a-uuid", "", "123", "' or 1=1 --"} {
+		if _, err := dir.AccountOf(ctx, bad); !errors.Is(err, core.ErrNotFound) {
+			t.Errorf("AccountOf(%q) err = %v, want ErrNotFound", bad, err)
+		}
+		got, err := dir.DeviceIDs(ctx, bad)
+		if err != nil {
+			t.Errorf("DeviceIDs(%q) err = %v, want nil", bad, err)
+		}
+		if got == nil || len(got) != 0 {
+			t.Errorf("DeviceIDs(%q) = %#v, want empty non-nil slice", bad, got)
+		}
+	}
+}

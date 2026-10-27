@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/velixio/myapp/server/internal/db"
 )
@@ -32,6 +33,22 @@ func withDatabase(rawURL, name string) (string, error) {
 		return "", err
 	}
 	u.Path = "/" + name
+	return u.String(), nil
+}
+
+// testPoolMaxConns caps each per-test pool so parallel tests and packages
+// stay well below Postgres max_connections.
+const testPoolMaxConns = 4
+
+// withPoolCap returns rawURL with the pgxpool max-connections setting applied.
+func withPoolCap(rawURL string) (string, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "", err
+	}
+	q := u.Query()
+	q.Set("pool_max_conns", fmt.Sprint(testPoolMaxConns))
+	u.RawQuery = q.Encode()
 	return u.String(), nil
 }
 
@@ -67,18 +84,14 @@ func ensureTemplate(ctx context.Context, adminURL string) (string, error) {
 	}
 	name := "apptmpl_" + sum
 
-	admin, err := pgxpool.New(ctx, adminURL)
+	// One short-lived admin connection, closed when the template is ready.
+	conn, err := pgx.Connect(ctx, adminURL)
 	if err != nil {
 		return "", err
 	}
-	defer admin.Close()
+	defer conn.Close(context.Background())
 
 	// Serialise template creation across test binaries running in parallel.
-	conn, err := admin.Acquire(ctx)
-	if err != nil {
-		return "", err
-	}
-	defer conn.Release()
 	if _, err := conn.Exec(ctx, `select pg_advisory_lock(7461726270)`); err != nil {
 		return "", err
 	}
@@ -140,32 +153,40 @@ func DB(t testing.TB) *pgxpool.Pool {
 	}
 	name := "t_" + hex.EncodeToString(rnd[:])
 
-	admin, err := pgxpool.New(ctx, adminURL)
+	if err := adminExec(ctx, adminURL, `create database `+quote(name)+` template `+quote(tmplName)); err != nil {
+		t.Fatalf("create test database: %v", err)
+	}
+	// From here on the database exists, so drop it even if setup fails.
+	t.Cleanup(func() {
+		dctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := adminExec(dctx, adminURL, `drop database if exists `+quote(name)+` with (force)`); err != nil {
+			t.Errorf("drop test database: %v", err)
+		}
+	})
+	testURL, err := withDatabase(adminURL, name)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := admin.Exec(ctx, `create database `+quote(name)+` template `+quote(tmplName)); err != nil {
-		admin.Close()
-		t.Fatalf("create test database: %v", err)
-	}
-	testURL, err := withDatabase(adminURL, name)
-	if err != nil {
-		admin.Close()
+	if testURL, err = withPoolCap(testURL); err != nil {
 		t.Fatal(err)
 	}
 	pool, err := db.Open(ctx, testURL)
 	if err != nil {
-		admin.Close()
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		pool.Close()
-		dctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if _, err := admin.Exec(dctx, `drop database if exists `+quote(name)+` with (force)`); err != nil {
-			t.Errorf("drop test database: %v", err)
-		}
-		admin.Close()
-	})
+	// Registered after the drop, so it runs first: close the pool, then drop.
+	t.Cleanup(pool.Close)
 	return pool
+}
+
+// adminExec runs one statement on a short-lived admin connection.
+func adminExec(ctx context.Context, adminURL, sql string) error {
+	conn, err := pgx.Connect(ctx, adminURL)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
+	_, err = conn.Exec(ctx, sql)
+	return err
 }
