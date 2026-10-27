@@ -27,7 +27,7 @@ func newSignupEnv(t *testing.T, opts ...func(*core.Deps)) *signupEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &signupEnv{d, f, m, testkit.Serve(t, d, m), code}
+	return &signupEnv{d, f, m, testkit.Serve(t, d, m, testkit.WithVerifier(m)), code}
 }
 
 func (e *signupEnv) start(t *testing.T, invite, username, email string) *testkit.Response {

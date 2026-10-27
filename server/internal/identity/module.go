@@ -1,10 +1,9 @@
 // Package identity is lane A: accounts, invites, email codes, passkeys,
-// sessions, devices, linking and deletion. A1 covers usernames and invites;
-// the rest is still a stub.
+// sessions, devices, linking and deletion. A1 to A3 cover usernames,
+// invites, sign-up, passkeys and sessions.
 package identity
 
 import (
-	"context"
 	"net/http"
 	"time"
 
@@ -18,6 +17,9 @@ var _ core.SessionVerifier = (*Module)(nil)
 // Module is the identity module.
 type Module struct {
 	d            core.Deps
+	wa           *relyingParty // nil when the config is unusable; waErr says why
+	waErr        error
+	optionsRate  *ratelimit.Limiter // passkey options: 30/min per IP
 	usernameRate *ratelimit.Limiter // 30/min per IP
 	inviteRate   *ratelimit.Limiter // 10/hour per IP
 	signupRate   *ratelimit.Limiter // sign-up start: 5/hour per IP
@@ -27,8 +29,12 @@ type Module struct {
 
 // New returns the identity module.
 func New(d core.Deps) *Module {
+	wa, waErr := newRelyingParty(d.Config)
 	return &Module{
 		d:            d,
+		wa:           wa,
+		waErr:        waErr,
+		optionsRate:  ratelimit.New(30, time.Minute, d.Now),
 		usernameRate: ratelimit.New(30, time.Minute, d.Now),
 		inviteRate:   ratelimit.New(10, time.Hour, d.Now),
 		signupRate:   ratelimit.New(5, time.Hour, d.Now),
@@ -37,23 +43,21 @@ func New(d core.Deps) *Module {
 	}
 }
 
-// Verify is the session verifier. The stub rejects every token.
-func (m *Module) Verify(ctx context.Context, token string) (core.Principal, error) {
-	return core.Principal{}, core.ErrNotFound
-}
-
 func (m *Module) ip(r *http.Request) string { return httpx.ClientIP(r, m.d.Config.TrustProxy) }
 
-// Routes registers the identity endpoints. The authed GET /v1/me is still a
-// stub so that the wiring (and the verifier) can be exercised.
+// Routes registers the identity endpoints.
 func (m *Module) Routes(r *httpx.Router) {
 	r.Public("GET /v1/usernames/{name}", httpx.Limited(m.usernameRate, m.ip, m.usernameAvailable))
 	r.Public("POST /v1/invites/check", httpx.Limited(m.inviteRate, m.ip, m.checkInvite))
 	r.Public("POST /v1/signup/start", httpx.Limited(m.signupRate, m.ip, m.signupStart))
 	r.Public("POST /v1/signup/verify", m.signupVerify)
-	r.Authed("GET /v1/me", func(http.ResponseWriter, *http.Request) error {
-		return httpx.Err("not_found", "not implemented")
-	})
+	r.Public("POST /v1/signup/passkey/options", httpx.Limited(m.optionsRate, m.ip, m.signupPasskeyOptions))
+	r.Public("POST /v1/signup/finish", m.signupFinish)
+	r.Public("POST /v1/signin/passkey/options", httpx.Limited(m.optionsRate, m.ip, m.signinOptions))
+	r.Public("POST /v1/signin/passkey/finish", m.signinFinish)
+	r.Authed("POST /v1/me/passkeys/options", httpx.Limited(m.optionsRate, m.ip, m.mePasskeyOptions))
+	r.Authed("POST /v1/me/passkeys", m.mePasskeyAdd)
+	r.Authed("GET /v1/me", m.me)
 }
 
 // Commands returns the admin CLI subcommands, keyed like "invite create".
