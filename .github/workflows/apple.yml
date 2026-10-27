@@ -64,7 +64,7 @@ jobs:
           appcore=false; localstore=false; serverkit=false; callcore=false; messaging=false; app=false
           if has "^$P/AppCore/"; then appcore=true; serverkit=true; callcore=true; messaging=true; app=true; fi
           if has "^$P/LocalStore/"; then localstore=true; messaging=true; app=true; fi
-          if has "^$P/ServerKit/"; then serverkit=true; messaging=true; app=true; fi
+          if has "^$P/ServerKit/|^apps/apple/(serverkit-tests\.yml|ServerKitTestHost/)"; then serverkit=true; messaging=true; app=true; fi
           if has "^$P/SecureMessaging/"; then messaging=true; app=true; fi
           if has "^$P/Messaging/"; then messaging=true; app=true; fi
           if has "^$P/CallCore/"; then callcore=true; app=true; fi
