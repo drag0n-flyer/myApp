@@ -10,7 +10,8 @@ import kotlinx.serialization.json.Json
  * Whether a server can use passkeys with this app: its `https://<host>/.well-known/assetlinks.json`
  * must list this app's package and signing-certificate SHA-256 for `delegate_permission/common.get_login_creds`.
  * The caller fetches the file with one GET (no redirects to another host) and passes the body, or null
- * when the file is missing or the request failed. Pure: no network, no logging.
+ * when the file is missing or the request failed. [host] is only checked for being non-blank: the caller binds
+ * the body to `https://<host>/.well-known/assetlinks.json`. Pure: no network, no logging.
  */
 object PasskeySupport {
     const val RELATION = "delegate_permission/common.get_login_creds"

@@ -86,6 +86,7 @@ fun accountErrorText(error: AccountError): String = when (error) {
     AccountError.InvalidServerAddress -> stringResource(R.string.err_invalid_address)
     AccountError.WrongServer -> stringResource(R.string.err_wrong_server)
     AccountError.PasskeyUnavailable -> stringResource(R.string.err_passkey_unavailable)
+    AccountError.PasskeyTemporary -> stringResource(R.string.err_passkey_temporary)
     AccountError.BiometricsUnavailable -> stringResource(R.string.err_biometrics)
     AccountError.Network -> stringResource(R.string.err_network)
     AccountError.Server, AccountError.Cancelled -> stringResource(R.string.err_server)

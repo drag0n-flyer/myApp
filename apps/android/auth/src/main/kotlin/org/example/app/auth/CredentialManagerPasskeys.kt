@@ -1,6 +1,6 @@
 package org.example.app.auth
 
-import android.content.Context
+import android.app.Activity
 import androidx.credentials.CreateCredentialResponse
 import androidx.credentials.CreatePublicKeyCredentialRequest
 import androidx.credentials.CreatePublicKeyCredentialResponse
@@ -9,19 +9,24 @@ import androidx.credentials.GetCredentialRequest
 import androidx.credentials.GetPublicKeyCredentialOption
 import androidx.credentials.PublicKeyCredential
 import androidx.credentials.exceptions.CreateCredentialCancellationException
-import androidx.credentials.exceptions.CreateCredentialException
+import androidx.credentials.exceptions.CreateCredentialNoCreateOptionException
+import androidx.credentials.exceptions.CreateCredentialProviderConfigurationException
+import androidx.credentials.exceptions.CreateCredentialUnsupportedException
+import androidx.credentials.exceptions.GetCredentialProviderConfigurationException
+import androidx.credentials.exceptions.GetCredentialUnsupportedException
+import androidx.credentials.exceptions.NoCredentialException
 import androidx.credentials.exceptions.CreateCredentialInterruptedException
 import androidx.credentials.exceptions.GetCredentialCancellationException
-import androidx.credentials.exceptions.GetCredentialException
 import androidx.credentials.exceptions.GetCredentialInterruptedException
 import kotlinx.coroutines.CancellationException
 import org.example.app.core.account.AccountError
 
 /**
  * Passkeys. Both calls take the server's bare WebAuthn options JSON unchanged and return the credential
- * JSON the server's `finish` call expects. They throw only [AccountError.PasskeyUnavailable] (no provider,
- * no screen lock, unsupported, no matching passkey, or any other provider failure: the app falls back to an
- * email code) or [AccountError.Cancelled] (the person closed the sheet: not an error), plus coroutine
+ * JSON the server's `finish` call expects. They throw only [AccountError.PasskeyUnavailable] (this phone cannot
+ * do passkeys: no provider, unsupported, no matching passkey; the app may offer an email code),
+ * [AccountError.PasskeyTemporary] (a passing failure: say so and let the person retry, never switch to the email
+ * code automatically) or [AccountError.Cancelled] (the person closed the sheet: not an error), plus coroutine
  * cancellation. Options, credentials and challenges are never logged and never put in exception messages.
  */
 interface Passkeys {
@@ -35,24 +40,21 @@ interface CredentialApi {
     suspend fun get(optionsJson: String): androidx.credentials.GetCredentialResponse
 }
 
-/** Real calls. [context] must be the current Activity (it hosts the system sheet), read at call time. */
-class CredentialManagerApi(private val context: () -> Context?) : CredentialApi {
-    private fun manager(): CredentialManager =
-        CredentialManager.create(context() ?: throw AccountError.PasskeyUnavailable)
-
+/** Real calls. [activity] is the current Activity (it hosts the system sheet), read once per call; null means none is showing. */
+class CredentialManagerApi(private val activity: () -> Activity?) : CredentialApi {
     override suspend fun create(optionsJson: String): CreateCredentialResponse {
-        val ctx = context() ?: throw AccountError.PasskeyUnavailable
-        return manager().createCredential(ctx, CreatePublicKeyCredentialRequest(optionsJson))
+        val ctx = activity() ?: throw AccountError.PasskeyTemporary
+        return CredentialManager.create(ctx).createCredential(ctx, CreatePublicKeyCredentialRequest(optionsJson))
     }
 
     override suspend fun get(optionsJson: String): androidx.credentials.GetCredentialResponse {
-        val ctx = context() ?: throw AccountError.PasskeyUnavailable
-        return manager().getCredential(ctx, GetCredentialRequest(listOf(GetPublicKeyCredentialOption(optionsJson))))
+        val ctx = activity() ?: throw AccountError.PasskeyTemporary
+        return CredentialManager.create(ctx).getCredential(ctx, GetCredentialRequest(listOf(GetPublicKeyCredentialOption(optionsJson))))
     }
 }
 
 class CredentialManagerPasskeys(private val api: CredentialApi) : Passkeys {
-    constructor(activity: () -> Context?) : this(CredentialManagerApi(activity))
+    constructor(activity: () -> Activity?) : this(CredentialManagerApi(activity))
 
     override suspend fun create(optionsJson: String): String = try {
         (api.create(optionsJson) as? CreatePublicKeyCredentialResponse)?.registrationResponseJson
@@ -73,12 +75,18 @@ class CredentialManagerPasskeys(private val api: CredentialApi) : Passkeys {
     }
 }
 
-/** Maps a Credential Manager failure; a cancel or interruption is [AccountError.Cancelled], everything else unavailable. */
+/**
+ * Maps a Credential Manager failure, never keeping its message or cause. A cancel or interruption is
+ * [AccountError.Cancelled]. "This phone cannot do passkeys" (no provider, unsupported, no matching passkey) is
+ * [AccountError.PasskeyUnavailable]; everything else is [AccountError.PasskeyTemporary].
+ */
 internal fun mapPasskeyFailure(e: Throwable): AccountError = when (e) {
     is AccountError -> e
     is CreateCredentialCancellationException, is GetCredentialCancellationException,
     is CreateCredentialInterruptedException, is GetCredentialInterruptedException -> AccountError.Cancelled
-    // NoCreateOption, Unsupported, ProviderConfiguration, NoCredential, DOM and custom errors, anything unknown.
-    is CreateCredentialException, is GetCredentialException -> AccountError.PasskeyUnavailable
-    else -> AccountError.PasskeyUnavailable
+    is CreateCredentialNoCreateOptionException, is CreateCredentialUnsupportedException,
+    is CreateCredentialProviderConfigurationException, is GetCredentialUnsupportedException,
+    is GetCredentialProviderConfigurationException, is NoCredentialException -> AccountError.PasskeyUnavailable
+    // Unknown, DOM and custom provider errors, and anything else.
+    else -> AccountError.PasskeyTemporary
 }

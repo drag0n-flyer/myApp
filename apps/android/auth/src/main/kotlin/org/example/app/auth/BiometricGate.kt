@@ -1,5 +1,6 @@
 package org.example.app.auth
 
+import android.app.KeyguardManager
 import android.os.Build
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG
@@ -31,8 +32,12 @@ object BiometricGate {
         data class Blocked(val result: Result) : Plan
     }
 
-    /** [can] is `BiometricManager.canAuthenticate` for the given authenticators. */
-    fun plan(sdk: Int, can: (Int) -> Int): Plan {
+    /**
+     * [can] is `BiometricManager.canAuthenticate` for the given authenticators. [deviceSecure] is
+     * `KeyguardManager.isDeviceSecure` (a PIN, pattern or password is set). On API 29 androidx.biometric 1.1.0
+     * answers "unsupported" for `DEVICE_CREDENTIAL`, so the screen lock is read from [deviceSecure] and never from [can].
+     */
+    fun plan(sdk: Int, deviceSecure: Boolean, can: (Int) -> Int): Plan {
         if (sdk >= 30) {
             val both = BIOMETRIC_STRONG or DEVICE_CREDENTIAL
             val code = can(both)
@@ -40,11 +45,10 @@ object BiometricGate {
         }
         // API 29 cannot combine the two, so strong comes first with the screen lock as the fallback.
         val strong = can(BIOMETRIC_STRONG)
-        val credential = can(DEVICE_CREDENTIAL)
         return when {
-            strong == BiometricManager.BIOMETRIC_SUCCESS ->
-                Plan.StrongThenCredential(credentialFallback = credential == BiometricManager.BIOMETRIC_SUCCESS)
-            credential == BiometricManager.BIOMETRIC_SUCCESS -> Plan.CredentialOnly
+            strong == BiometricManager.BIOMETRIC_SUCCESS -> Plan.StrongThenCredential(credentialFallback = deviceSecure)
+            deviceSecure && (strong == BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED || strong == BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE) ->
+                Plan.CredentialOnly
             else -> blocked(strong)
         }
     }
@@ -73,20 +77,22 @@ object BiometricGate {
         subtitle: String? = null,
         sdk: Int = Build.VERSION.SDK_INT,
         canAuthenticate: ((Int) -> Int)? = null,
+        deviceSecure: Boolean? = null,
     ): Result = try {
         val can = canAuthenticate ?: BiometricManager.from(activity)::canAuthenticate
-        when (val plan = plan(sdk, can)) {
+        val secure = deviceSecure ?: (activity.getSystemService(KeyguardManager::class.java)?.isDeviceSecure == true)
+        when (val plan = plan(sdk, secure, can)) {
             is Plan.Blocked -> plan.result
-            is Plan.Combined -> prompt(activity, plan.authenticators, title, subtitle, negative = null)
-            Plan.CredentialOnly -> prompt(activity, DEVICE_CREDENTIAL, title, subtitle, negative = null)
+            is Plan.Combined -> prompt(activity, sdk, plan.authenticators, title, subtitle, negative = null)
+            Plan.CredentialOnly -> prompt(activity, sdk, DEVICE_CREDENTIAL, title, subtitle, negative = null)
             is Plan.StrongThenCredential -> {
                 // null means the person tapped "Use screen lock".
                 val first = promptOnce(
-                    activity, BIOMETRIC_STRONG, title, subtitle,
+                    activity, sdk, BIOMETRIC_STRONG, title, subtitle,
                     negative = activity.getString(if (plan.credentialFallback) R.string.biometric_use_screen_lock else R.string.biometric_cancel),
                     negativeIsFallback = plan.credentialFallback,
                 )
-                first ?: prompt(activity, DEVICE_CREDENTIAL, title, subtitle, negative = null)
+                first ?: prompt(activity, sdk, DEVICE_CREDENTIAL, title, subtitle, negative = null)
             }
         }
     } catch (e: CancellationException) {
@@ -95,11 +101,28 @@ object BiometricGate {
         Result.Failed
     }
 
-    private suspend fun prompt(activity: FragmentActivity, authenticators: Int, title: String, subtitle: String?, negative: String?): Result =
-        promptOnce(activity, authenticators, title, subtitle, negative, negativeIsFallback = false) ?: Result.Cancelled
+    private suspend fun prompt(activity: FragmentActivity, sdk: Int, authenticators: Int, title: String, subtitle: String?, negative: String?): Result =
+        promptOnce(activity, sdk, authenticators, title, subtitle, negative, negativeIsFallback = false) ?: Result.Cancelled
+
+    /**
+     * The prompt's settings. Below API 30 `setAllowedAuthenticators(DEVICE_CREDENTIAL)` makes `build()` throw, so
+     * the screen-lock-only prompt uses the older `setDeviceCredentialAllowed(true)` (deprecated, still supported).
+     */
+    @Suppress("DEPRECATION")
+    internal fun promptInfo(sdk: Int, title: String, subtitle: String?, authenticators: Int, negative: String?): BiometricPrompt.PromptInfo =
+        BiometricPrompt.PromptInfo.Builder()
+            .setTitle(title)
+            .apply { if (subtitle != null) setSubtitle(subtitle) }
+            .apply {
+                if (sdk < 30 && authenticators == DEVICE_CREDENTIAL) setDeviceCredentialAllowed(true)
+                else setAllowedAuthenticators(authenticators)
+            }
+            .apply { if (negative != null) setNegativeButtonText(negative) }
+            .build()
 
     private suspend fun promptOnce(
         activity: FragmentActivity,
+        sdk: Int,
         authenticators: Int,
         title: String,
         subtitle: String?,
@@ -121,12 +144,7 @@ object BiometricGate {
         }
         try {
             val biometricPrompt = BiometricPrompt(activity, executor, callback)
-            val info = BiometricPrompt.PromptInfo.Builder()
-                .setTitle(title)
-                .apply { if (subtitle != null) setSubtitle(subtitle) }
-                .setAllowedAuthenticators(authenticators)
-                .apply { if (negative != null) setNegativeButtonText(negative) }
-                .build()
+            val info = promptInfo(sdk, title, subtitle, authenticators, negative)
             cont.invokeOnCancellation { biometricPrompt.cancelAuthentication() }
             biometricPrompt.authenticate(info)
         } catch (e: Exception) {
