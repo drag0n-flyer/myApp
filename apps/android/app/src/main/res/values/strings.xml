@@ -1,4 +1,64 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name" translatable="false">[App]</string>
+
+    <!-- Bottom tabs -->
+    <string name="tab_contacts">Contacts</string>
+    <string name="tab_calls">Calls</string>
+    <string name="tab_chats">Chats</string>
+    <string name="tab_settings">Settings</string>
+
+    <!-- Call data modes (:core DataModeInfo, DataModePolicy) -->
+    <string name="mode_auto">Auto</string>
+    <string name="mode_auto_subtitle">Best your network allows</string>
+    <string name="mode_ultra_low">Ultra-low</string>
+    <string name="mode_ultra_low_subtitle">Voice only, smallest data</string>
+    <string name="mode_data_saver">Data saver</string>
+    <string name="mode_data_saver_subtitle">Clear voice, low data</string>
+    <string name="mode_balanced">Balanced</string>
+    <string name="mode_high">High quality</string>
+    <string name="note_limited_by_server">Limited by your server</string>
+    <string name="note_above_mobile_limit">Above your mobile data limit</string>
+
+    <!-- Hide my IP address in calls (:core IPHiding) -->
+    <string name="ip_hiding_never">Never</string>
+    <string name="ip_hiding_never_subtitle">Fastest; the other person may see your IP</string>
+    <string name="ip_hiding_non_contacts">With people not in my contacts</string>
+    <string name="ip_hiding_non_contacts_subtitle">Recommended</string>
+    <string name="ip_hiding_always">Always</string>
+    <string name="ip_hiding_always_subtitle">Calls may be slightly slower</string>
+
+    <!-- Auto-download (:core AutoDownloadPolicy) -->
+    <string name="download_all">All</string>
+    <string name="download_photos_only">Photos only</string>
+    <string name="download_none">None</string>
+
+    <!-- Call quality and banners (:core CallEngine) -->
+    <string name="call_quality_good">Good</string>
+    <string name="call_quality_weak">Weak</string>
+    <string name="call_banner_video_lowered">Weak network: video lowered to save your voice quality</string>
+    <string name="call_banner_audio_only">Switched to audio only</string>
+    <string name="call_banner_reconnecting">Reconnecting…</string>
+    <string name="call_banner_connection_lost">Call ended: connection lost</string>
+
+    <!-- Chat info only (:core ChatEncryption) -->
+    <string name="chat_info_encryption_end_to_end">End-to-end encrypted</string>
+    <string name="chat_info_encryption_server_readable">Not end-to-end encrypted: the server admin can read this chat</string>
+
+    <!-- Chat list previews and system lines (:core Message.preview) -->
+    <string name="preview_voice">Voice message %1$s</string>
+    <string name="preview_photo">Photo</string>
+    <string name="preview_missed_audio_call">Missed audio call</string>
+    <string name="preview_missed_video_call">Missed video call</string>
+    <string name="preview_audio_call">Audio call · %1$s min</string>
+    <string name="preview_video_call">Video call · %1$s min</string>
+    <string name="preview_deleted">This message was deleted</string>
+    <!-- Argument: the app name (app_name). :core emits this key without arguments, so the UI adds it. -->
+    <string name="preview_unsupported">Update %1$s to see this message</string>
+    <string name="system_device_added_you">You added a new device</string>
+    <string name="system_device_added">%1$s added a new device</string>
+    <string name="system_device_removed_you">You removed a device</string>
+    <string name="system_device_removed">%1$s removed a device</string>
+    <string name="system_safety_number_changed">Safety number changed</string>
+    <string name="system_messages_paused">Messages in this chat are paused. Open chat info for details.</string>
 </resources>
