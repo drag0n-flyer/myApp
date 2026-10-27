@@ -25,7 +25,7 @@ class AttachmentCipherTest {
     private fun sha(b: ByteArray) = MessageDigest.getInstance("SHA-256").digest(b)
     private fun enc(data: ByteArray, key: ByteArray = ByteArray(32) { it.toByte() }): Pair<ByteArray, EncryptedBlob> {
         val out = ByteArrayOutputStream()
-        val blob = AttachmentCipher.encrypt(ByteArrayInputStream(data), out, key)
+        val blob = AttachmentCipher.encryptWithKey(ByteArrayInputStream(data), out, key)
         return out.toByteArray() to blob
     }
 
@@ -150,5 +150,45 @@ class AttachmentCipherTest {
     @Test fun freshKeysDiffer() {
         assertFalse(AttachmentCipher.newKey().contentEquals(AttachmentCipher.newKey()))
         assertEquals(32, AttachmentCipher.newKey().size)
+    }
+
+    @Test fun encryptGeneratesItsOwnKeyEachTime() {
+        val a = ByteArrayOutputStream()
+        val b = ByteArrayOutputStream()
+        val ba = AttachmentCipher.encrypt(ByteArrayInputStream(plain(10)), a)
+        val bb = AttachmentCipher.encrypt(ByteArrayInputStream(plain(10)), b)
+        assertEquals(32, ba.key.size)
+        assertFalse(ba.key.contentEquals(bb.key))
+        assertFalse(a.toByteArray().contentEquals(b.toByteArray()))
+    }
+
+    @Test fun negativeFirstIndexIsRejected() {
+        val (cipher, _) = enc(plain(10))
+        assertFailsWith<IllegalArgumentException> {
+            AttachmentCipher.decryptChunks(ByteArrayInputStream(cipher), ByteArrayOutputStream(), ByteArray(32) { it.toByte() }, firstIndex = -1)
+        }
+    }
+
+    @Test fun decryptTempNamesAreUnique() {
+        val dir = File.createTempFile("att", "").also { it.delete(); it.mkdirs() }
+        try {
+            val key = ByteArray(32) { 5 }
+            val (cipher, _) = enc(plain(3 * 65536), key)
+            val src = File(dir, "in.enc").also { it.writeBytes(cipher) }
+            val to = File(dir, "out.bin")
+            // A stale file with the old fixed temp name must neither be used nor disturbed.
+            val stale = File(dir, "out.bin.part").also { it.writeBytes(byteArrayOf(1, 2, 3)) }
+            AttachmentCipher.decrypt(src, to, key, sha(cipher))
+            assertEquals(3 * 65536, to.length().toInt())
+            assertContentEquals(byteArrayOf(1, 2, 3), stale.readBytes())
+        } finally { dir.deleteRecursively() }
+    }
+
+    @Test fun sealedSizeMatchesFraming() {
+        assertEquals(16L, AttachmentCipher.sealedSize(0))
+        assertEquals(65_536L + 16, AttachmentCipher.sealedSize(65_536))
+        assertEquals(65_537L + 32, AttachmentCipher.sealedSize(65_537))
+        val (cipher, blob) = enc(plain(150_000))
+        assertEquals(cipher.size.toLong(), AttachmentCipher.sealedSize(blob.size))
     }
 }

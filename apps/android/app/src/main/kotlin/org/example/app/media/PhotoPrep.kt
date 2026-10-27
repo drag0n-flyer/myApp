@@ -27,15 +27,24 @@ class PhotoPrepException(message: String) : Exception(message)
 class PhotoPrep(private val context: Context, private val outputDir: File) {
     fun prepare(uri: Uri): Prepared {
         val main = decode(uri, MediaPlan.PHOTO_MAX_SIDE)
-        outputDir.mkdirs()
-        val out = File.createTempFile("photo", ".jpg", outputDir)
         try {
-            FileOutputStream(out).use { if (!flattened(main).compress(Bitmap.CompressFormat.JPEG, MediaPlan.PHOTO_QUALITY, it)) throw PhotoPrepException("encoding failed") }
-            val thumb = thumbnail(main)
-            return Prepared(out, main.width, main.height, thumb)
-        } catch (t: Throwable) {
-            out.delete()
-            throw t
+            outputDir.mkdirs()
+            val out = File.createTempFile("photo", ".jpg", outputDir)
+            try {
+                val flat = flattened(main)
+                try {
+                    FileOutputStream(out).use { if (!flat.compress(Bitmap.CompressFormat.JPEG, MediaPlan.PHOTO_QUALITY, it)) throw PhotoPrepException("encoding failed") }
+                } finally {
+                    if (flat !== main) flat.recycle()
+                }
+                val thumb = thumbnail(main)
+                return Prepared(out, main.width, main.height, thumb)
+            } catch (t: Throwable) {
+                out.delete()
+                throw t
+            }
+        } finally {
+            main.recycle()
         }
     }
 
@@ -54,15 +63,20 @@ class PhotoPrep(private val context: Context, private val outputDir: File) {
         val decoded = resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
             ?: throw PhotoPrepException("unreadable image")
         val oriented = orient(decoded, orientation(uri))
+        if (oriented !== decoded) decoded.recycle()
         val (w, h) = MediaPlan.targetSize(oriented.width, oriented.height, maxSide)
-        return if (w == oriented.width && h == oriented.height) oriented else Bitmap.createScaledBitmap(oriented, w, h, true)
+        if (w == oriented.width && h == oriented.height) return oriented
+        val scaled = Bitmap.createScaledBitmap(oriented, w, h, true)
+        if (scaled !== oriented) oriented.recycle()
+        return scaled
     }
 
     private fun orientation(uri: Uri): Int = try {
         context.contentResolver.openInputStream(uri)?.use {
             ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
         } ?: ExifInterface.ORIENTATION_NORMAL
-    } catch (e: java.io.IOException) {
+    } catch (e: Exception) {
+        // A malformed EXIF block must not stop a photo from being sent.
         ExifInterface.ORIENTATION_NORMAL
     }
 
@@ -91,11 +105,17 @@ class PhotoPrep(private val context: Context, private val outputDir: File) {
 
     private fun thumbnail(main: Bitmap): ByteArray {
         val (w, h) = MediaPlan.targetSize(main.width, main.height, MediaPlan.THUMBNAIL_SIDE)
-        val small = flattened(Bitmap.createScaledBitmap(main, max(w, 1), max(h, 1), true))
-        for (q in MediaPlan.thumbnailQualities()) {
-            val bytes = ByteArrayOutputStream().also { small.compress(Bitmap.CompressFormat.JPEG, q, it) }.toByteArray()
-            if (bytes.size <= MediaPlan.THUMBNAIL_MAX_BYTES) return bytes
+        val scaled = Bitmap.createScaledBitmap(main, max(w, 1), max(h, 1), true)
+        val small = flattened(scaled)
+        try {
+            for (q in MediaPlan.thumbnailQualities()) {
+                val bytes = ByteArrayOutputStream().also { small.compress(Bitmap.CompressFormat.JPEG, q, it) }.toByteArray()
+                if (bytes.size <= MediaPlan.THUMBNAIL_MAX_BYTES) return bytes
+            }
+            throw PhotoPrepException("thumbnail too large")
+        } finally {
+            if (small !== scaled) small.recycle()
+            if (scaled !== main) scaled.recycle()
         }
-        throw PhotoPrepException("thumbnail too large")
     }
 }

@@ -66,11 +66,24 @@ object AttachmentCipher {
         return c
     }
 
+    /** Ciphertext length for a plaintext of [size] bytes: one tag per chunk, and an empty file is one chunk. */
+    fun sealedSize(size: Long): Long {
+        require(size >= 0) { "negative size" }
+        val chunks = maxOf(1L, (size + CHUNK_SIZE - 1) / CHUNK_SIZE)
+        return size + chunks * TAG_SIZE
+    }
+
     /**
-     * Encrypts [input] to [output] with [key] (a fresh random key by default) and returns the key, the digest of
-     * what was written and the sizes. Neither stream is closed.
+     * Encrypts [input] to [output] under a fresh random key and returns that key, the digest of what was written
+     * and the sizes. Neither stream is closed. The key is always generated here: the nonces are the chunk
+     * indexes, so a key must never be used for two files.
      */
-    fun encrypt(input: InputStream, output: OutputStream, key: ByteArray = newKey()): EncryptedBlob {
+    fun encrypt(input: InputStream, output: OutputStream): EncryptedBlob = encryptWithKey(input, output, newKey())
+
+    fun encrypt(file: File, to: File): EncryptedBlob = encryptWithKey(file, to, newKey())
+
+    /** Test vectors only: a caller-chosen key on a deterministic-nonce cipher would reuse (key, nonce) pairs. */
+    internal fun encryptWithKey(input: InputStream, output: OutputStream, key: ByteArray): EncryptedBlob {
         if (key.size != KEY_SIZE) throw AttachmentException.BadKey()
         val sha = MessageDigest.getInstance("SHA-256")
         var size = 0L
@@ -93,21 +106,23 @@ object AttachmentCipher {
         return EncryptedBlob(key, sha.digest(), size, cipherSize)
     }
 
-    fun encrypt(file: File, to: File, key: ByteArray = newKey()): EncryptedBlob =
+    internal fun encryptWithKey(file: File, to: File, key: ByteArray): EncryptedBlob =
         try {
-            FileInputStream(file).use { i -> FileOutputStream(to).use { o -> encrypt(i, o, key) } }
+            FileInputStream(file).use { i -> FileOutputStream(to).use { o -> encryptWithKey(i, o, key) } }
         } catch (t: Throwable) {
             to.delete()
             throw t
         }
 
-    /**
-     * Checks the digest of the whole ciphertext in [input], then decrypts it into [output]. Nothing is written
-     * when the digest differs. A chunk that fails authentication throws [AttachmentException.Authentication];
-     * [output] then holds only chunks that did pass, so the caller must discard it (see the `File` overload).
-     */
-    fun decrypt(input: File, output: OutputStream, key: ByteArray, digest: ByteArray) {
-        if (key.size != KEY_SIZE) throw AttachmentException.BadKey()
+    /** Throws [AttachmentException.Digest] unless the SHA-256 of the whole file [input] equals [digest]. */
+    fun checkDigest(input: File, digest: ByteArray) {
+        sha256(input).let { (hash, _) ->
+            // MessageDigest.isEqual compares in constant time.
+            if (!MessageDigest.isEqual(hash, digest)) throw AttachmentException.Digest()
+        }
+    }
+
+    private fun sha256(input: File): Pair<ByteArray, Long> {
         val sha = MessageDigest.getInstance("SHA-256")
         var length = 0L
         FileInputStream(input).use { i ->
@@ -119,8 +134,19 @@ object AttachmentCipher {
                 length += n
             }
         }
-        // MessageDigest.isEqual compares in constant time.
-        if (!MessageDigest.isEqual(sha.digest(), digest)) throw AttachmentException.Digest()
+        return sha.digest() to length
+    }
+
+    /**
+     * Checks the digest of the whole ciphertext in [input], then decrypts it into [output]. Nothing is written
+     * when the digest differs. A chunk that fails authentication throws [AttachmentException.Authentication];
+     * [output] then holds chunks that did pass, so production code uses the `File` overload, which never exposes
+     * them.
+     */
+    internal fun decrypt(input: File, output: OutputStream, key: ByteArray, digest: ByteArray) {
+        if (key.size != KEY_SIZE) throw AttachmentException.BadKey()
+        val (hash, length) = sha256(input)
+        if (!MessageDigest.isEqual(hash, digest)) throw AttachmentException.Digest()
         if (length < TAG_SIZE) throw AttachmentException.Format()
         FileInputStream(input).use { decryptChunks(it, output, key, 0) }
     }
@@ -130,8 +156,8 @@ object AttachmentCipher {
      * On any failure no plaintext is left behind.
      */
     fun decrypt(input: File, to: File, key: ByteArray, digest: ByteArray) {
-        val temp = File(to.path + ".part")
-        temp.delete()
+        // A unique name, so two decrypts into the same target can never write the same temporary file.
+        val temp = File.createTempFile(to.name + ".", ".part", to.absoluteFile.parentFile)
         try {
             FileOutputStream(temp).use { decrypt(input, it, key, digest) }
             to.delete()
@@ -146,9 +172,11 @@ object AttachmentCipher {
      * Decrypts sealed chunks from [input], whose first byte is the start of chunk [firstIndex] (so a ranged
      * download that starts at byte `firstIndex * 65 552` resumes in the middle of a file). The end of [input]
      * must be the end of the ciphertext: the last chunk is the one with nothing after it. The digest is not
-     * checked here; callers that hold the whole ciphertext use [decrypt].
+     * checked here; callers that hold the whole ciphertext use [decrypt]. Internal: it releases plaintext before the end is
+     * authenticated.
      */
-    fun decryptChunks(input: InputStream, output: OutputStream, key: ByteArray, firstIndex: Long = 0) {
+    internal fun decryptChunks(input: InputStream, output: OutputStream, key: ByteArray, firstIndex: Long = 0) {
+        require(firstIndex >= 0) { "negative chunk index" }
         if (key.size != KEY_SIZE) throw AttachmentException.BadKey()
         var index = firstIndex
         var current = readFully(input, SEALED_CHUNK_SIZE)

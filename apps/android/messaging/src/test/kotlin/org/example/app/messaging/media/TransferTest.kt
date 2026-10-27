@@ -10,12 +10,16 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import org.example.app.contracts.AttachmentRef
 import org.example.app.contracts.ConversationInfo
 import org.example.app.contracts.DeliveryApi
 import org.example.app.contracts.DeviceRecord
 import org.example.app.contracts.InboxPage
+import org.example.app.messaging.crypto.AttachmentCipher
 import org.example.app.messaging.crypto.AttachmentException
 
 private class FakeServer : DeliveryApi {
@@ -23,6 +27,11 @@ private class FakeServer : DeliveryApi {
     /** When set, a download delivers at most this many bytes, then ends. */
     var cutAfter: Int? = null
     val fromBytes = mutableListOf<Long>()
+    /** When true, a ranged request fails like a server that ignores Range (the API layer's `bad_range`). */
+    var ignoresRange = false
+    /** Delay in ms before a download returns, to overlap concurrent callers. */
+    var delayMs = 0L
+    val downloads = java.util.concurrent.atomic.AtomicInteger()
     override suspend fun uploadAttachment(bytes: InputStream, length: Long): AttachmentRef {
         val data = bytes.readBytes()
         assertEquals(length, data.size.toLong())
@@ -30,7 +39,10 @@ private class FakeServer : DeliveryApi {
         return AttachmentRef("up1", Instant.EPOCH)
     }
     override suspend fun downloadAttachment(id: String, fromByte: Long): InputStream {
-        fromBytes += fromByte
+        downloads.incrementAndGet()
+        synchronized(fromBytes) { fromBytes += fromByte }
+        if (delayMs > 0) kotlinx.coroutines.delay(delayMs)
+        if (ignoresRange && fromByte > 0) throw org.example.app.contracts.ServerException(200, "bad_range", null, null)
         var tail = blobs.getValue(id).copyOfRange(fromByte.toInt(), blobs.getValue(id).size)
         cutAfter?.let { tail = tail.copyOf(minOf(it, tail.size)) }
         return ByteArrayInputStream(tail)
@@ -49,20 +61,57 @@ private class FakeServer : DeliveryApi {
 
 class TransferTest {
     private fun tmp() = File.createTempFile("xfer", "").also { it.delete(); it.mkdirs() }
+    private fun downloader(server: DeliveryApi, dir: File, max: Long = Downloader.DEFAULT_MAX_BYTES) =
+        Downloader(server, File(dir, "dl"), File(dir, "open"), max)
+    private suspend fun upload(server: FakeServer, dir: File, data: ByteArray): Pair<File, org.example.app.messaging.content.Att> {
+        val src = File(dir, "src.bin").also { it.writeBytes(data) }
+        return src to Uploader(server, File(dir, "tmp")).upload(src)
+    }
 
-    @Test fun uploadThenDownloadRoundTripLeavesNoTempFiles() = runBlocking {
+    @Test fun uploadThenOpenRoundTripKeepsOnlyEncryptedBlobOnDisk() = runBlocking {
         val dir = tmp()
         try {
             val server = FakeServer()
-            val src = File(dir, "photo.jpg").also { it.writeBytes(ByteArray(150_000) { i -> (i * 7).toByte() }) }
-            val att = Uploader(server, File(dir, "tmp")).upload(src)
+            val (src, att) = upload(server, dir, ByteArray(150_000) { i -> (i * 7).toByte() })
             assertEquals(150_000L, att.sz)
             assertEquals(server.blobs["up1"]!!.size.toLong(), att.csz)
             assertEquals(emptyList(), File(dir, "tmp").list()!!.toList(), "upload temp removed")
-            val to = File(dir, "out.jpg")
-            Downloader(server, File(dir, "dl")).download(att, to)
-            assertContentEquals(src.readBytes(), to.readBytes())
-            assertEquals(emptyList(), File(dir, "dl").list()!!.toList(), "no ciphertext or plaintext temp left")
+            val dl = downloader(server, dir)
+            val blob = dl.download(att)
+            assertEquals("up1.enc", blob.name)
+            assertContentEquals(server.blobs["up1"]!!, blob.readBytes(), "the stored file is the ciphertext")
+            assertEquals(listOf("up1.enc"), File(dir, "dl").list()!!.toList(), "no part file, no plaintext")
+            assertFalse(File(dir, "open").exists() && File(dir, "open").list()!!.isNotEmpty())
+            val opened = dl.open(att)
+            assertTrue(opened.file.absolutePath.startsWith(File(dir, "open").absolutePath))
+            assertContentEquals(src.readBytes(), opened.file.readBytes())
+            opened.close()
+            assertFalse(opened.file.exists(), "plaintext deleted on close")
+            assertEquals(emptyList(), File(dir, "open").list()!!.toList())
+            assertEquals(listOf("up1.enc"), File(dir, "dl").list()!!.toList())
+        } finally { dir.deleteRecursively() }
+    }
+
+    @Test fun openedPlaintextSurvivesUntilLastCloseAndSweepRemovesLeftovers() = runBlocking {
+        val dir = tmp()
+        try {
+            val server = FakeServer()
+            val (_, att) = upload(server, dir, ByteArray(1000) { 3 })
+            val dl = downloader(server, dir)
+            val a = dl.open(att)
+            val b = dl.open(att)
+            a.close()
+            assertTrue(b.file.exists(), "still shown by the second viewer")
+            b.close()
+            assertFalse(b.file.exists())
+            val c = dl.open(att)
+            File(dir, "open").mkdirs()
+            File(dir, "open/orphan.part").writeBytes(byteArrayOf(1))
+            // A new process starts: nothing from the old one may stay.
+            downloader(server, dir).sweepOpen()
+            assertEquals(emptyList(), File(dir, "open").list()!!.toList())
+            assertTrue(File(dir, "dl/up1.enc").exists(), "the encrypted blob is not swept")
+            c.close()
         } finally { dir.deleteRecursively() }
     }
 
@@ -70,17 +119,47 @@ class TransferTest {
         val dir = tmp()
         try {
             val server = FakeServer()
-            val src = File(dir, "f.bin").also { it.writeBytes(ByteArray(200_000) { i -> i.toByte() }) }
-            val att = Uploader(server, File(dir, "tmp")).upload(src)
-            val dl = Downloader(server, File(dir, "dl"))
-            val to = File(dir, "out.bin")
+            val (src, att) = upload(server, dir, ByteArray(200_000) { i -> i.toByte() })
+            val dl = downloader(server, dir)
             server.cutAfter = 70_000
-            assertFailsWith<IncompleteDownloadException> { dl.download(att, to) }
-            assertFalse(to.exists())
+            assertFailsWith<IncompleteDownloadException> { dl.download(att) }
+            assertFalse(File(dir, "dl/up1.enc").exists())
             server.cutAfter = null
-            dl.download(att, to)
+            dl.download(att)
             assertEquals(listOf(0L, 70_000L), server.fromBytes)
-            assertContentEquals(src.readBytes(), to.readBytes())
+            dl.open(att).use { assertContentEquals(src.readBytes(), it.file.readBytes()) }
+        } finally { dir.deleteRecursively() }
+    }
+
+    @Test fun serverThatIgnoresRangeRestartsFromZeroOnce() = runBlocking {
+        val dir = tmp()
+        try {
+            val server = FakeServer()
+            val (src, att) = upload(server, dir, ByteArray(200_000) { i -> i.toByte() })
+            val dl = downloader(server, dir)
+            server.cutAfter = 70_000
+            assertFailsWith<IncompleteDownloadException> { dl.download(att) }
+            server.cutAfter = null
+            server.ignoresRange = true
+            dl.download(att)
+            assertEquals(listOf(0L, 70_000L, 0L), server.fromBytes)
+            dl.open(att).use { assertContentEquals(src.readBytes(), it.file.readBytes()) }
+        } finally { dir.deleteRecursively() }
+    }
+
+    @Test fun badRangeOnAFreshStartIsNotRetriedForever() = runBlocking {
+        val dir = tmp()
+        try {
+            val server = FakeServer()
+            val (_, att) = upload(server, dir, ByteArray(200_000) { i -> i.toByte() })
+            val dl = downloader(server, dir)
+            server.cutAfter = 70_000
+            assertFailsWith<IncompleteDownloadException> { dl.download(att) }
+            server.cutAfter = 50_000
+            server.ignoresRange = true
+            // Restart from zero delivers 50 000 bytes only, so it is incomplete again; no further restart in this call.
+            assertFailsWith<IncompleteDownloadException> { dl.download(att) }
+            assertEquals(listOf(0L, 70_000L, 0L), server.fromBytes)
         } finally { dir.deleteRecursively() }
     }
 
@@ -88,13 +167,22 @@ class TransferTest {
         val dir = tmp()
         try {
             val server = FakeServer()
-            val src = File(dir, "f.bin").also { it.writeBytes(ByteArray(1000) { 1 }) }
-            val att = Uploader(server, File(dir, "tmp")).upload(src)
+            val (_, att) = upload(server, dir, ByteArray(1000) { 1 })
             server.blobs["up1"]!![5] = (server.blobs["up1"]!![5].toInt() xor 1).toByte()
-            val to = File(dir, "out.bin")
-            assertFailsWith<AttachmentException.Digest> { Downloader(server, File(dir, "dl")).download(att, to) }
-            assertFalse(to.exists())
+            assertFailsWith<AttachmentException.Digest> { downloader(server, dir).download(att) }
             assertEquals(emptyList(), File(dir, "dl").list()!!.toList())
+        } finally { dir.deleteRecursively() }
+    }
+
+    @Test fun wrongKeyIsRejectedAtOpenAndLeavesNoPlaintext() = runBlocking {
+        val dir = tmp()
+        try {
+            val server = FakeServer()
+            val (_, att) = upload(server, dir, ByteArray(1000) { 1 })
+            val bad = org.example.app.messaging.content.Att(att.id, ByteArray(32) { 9 }, att.dg, att.sz, att.csz)
+            val dl = downloader(server, dir)
+            assertFailsWith<AttachmentException.Authentication> { dl.open(bad) }
+            assertEquals(emptyList(), File(dir, "open").list()?.toList() ?: emptyList())
         } finally { dir.deleteRecursively() }
     }
 
@@ -102,8 +190,55 @@ class TransferTest {
         val dir = tmp()
         try {
             val att = org.example.app.messaging.content.Att("../evil", ByteArray(32), ByteArray(32), 0, 16)
-            assertFailsWith<IllegalArgumentException> { Downloader(FakeServer(), dir).download(att, File(dir, "x")) }
+            assertFailsWith<IllegalArgumentException> { downloader(FakeServer(), dir).download(att) }
             assertTrue(dir.list()!!.isEmpty())
+        } finally { dir.deleteRecursively() }
+    }
+
+    @Test fun cszOverThePolicyLimitIsRejectedBeforeFetching() = runBlocking {
+        val dir = tmp()
+        try {
+            val server = FakeServer()
+            val sz = 200_000L
+            val att = org.example.app.messaging.content.Att("big", ByteArray(32), ByteArray(32), sz, AttachmentCipher.sealedSize(sz))
+            val dl = downloader(server, dir, max = att.csz - 1)
+            assertFailsWith<AttachmentSizeException> { dl.download(att) }
+            assertEquals(0, server.downloads.get())
+            // The default limit is the server's 100 MiB.
+            assertEquals(104_857_600L, Downloader.DEFAULT_MAX_BYTES)
+            val huge = org.example.app.messaging.content.Att("huge", ByteArray(32), ByteArray(32), 104_857_600L, AttachmentCipher.sealedSize(104_857_600L))
+            assertFailsWith<AttachmentSizeException> { downloader(server, dir).download(huge) }
+            assertEquals(0, server.downloads.get())
+        } finally { dir.deleteRecursively() }
+    }
+
+    @Test fun cszInconsistentWithSzIsRejectedBeforeFetching() = runBlocking {
+        val dir = tmp()
+        try {
+            val server = FakeServer()
+            val good = AttachmentCipher.sealedSize(1000)
+            for ((sz, csz) in listOf(1000L to good + 1, 1000L to good - 1, 1000L to 2 * good, -1L to 16L, 0L to 0L, 1000L to -5L)) {
+                val att = org.example.app.messaging.content.Att("x", ByteArray(32), ByteArray(32), sz, csz)
+                assertFailsWith<AttachmentSizeException>("sz=$sz csz=$csz") { downloader(server, dir).download(att) }
+            }
+            assertEquals(0, server.downloads.get())
+        } finally { dir.deleteRecursively() }
+    }
+
+    @Test fun concurrentDownloadsOfOneAttachmentFetchOnceAndBothSucceed() = runBlocking {
+        val dir = tmp()
+        try {
+            val server = FakeServer()
+            val (src, att) = upload(server, dir, ByteArray(300_000) { i -> (i * 3).toByte() })
+            server.delayMs = 100
+            val dl = downloader(server, dir)
+            val results = (1..8).map { async(Dispatchers.Default) { dl.open(att) } }.awaitAll()
+            assertEquals(1, server.downloads.get(), "one transfer for eight callers")
+            for (r in results) assertContentEquals(src.readBytes(), r.file.readBytes())
+            assertEquals(1, results.map { it.file }.toSet().size, "one shared plaintext file")
+            assertEquals(listOf("up1.enc"), File(dir, "dl").list()!!.toList())
+            results.forEach { it.close() }
+            assertEquals(emptyList(), File(dir, "open").list()!!.toList())
         } finally { dir.deleteRecursively() }
     }
 }

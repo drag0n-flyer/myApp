@@ -13,7 +13,10 @@ val appId: String = Properties().apply {
 android {
     namespace = "org.example.app"
 
-    defaultConfig { applicationId = appId }
+    defaultConfig {
+        applicationId = appId
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
 
     buildFeatures { compose = true }
 
@@ -86,6 +89,7 @@ dependencies {
     testImplementation(platform(libs.androidx.compose.bom))
     testImplementation(libs.androidx.compose.ui.test.junit4)
 
+    androidTestImplementation(libs.kotlin.test.junit)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.rules)
     androidTestImplementation(libs.androidx.test.ext.junit)
