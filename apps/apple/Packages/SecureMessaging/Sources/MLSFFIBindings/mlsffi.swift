@@ -547,7 +547,19 @@ public protocol EngineProtocol: AnyObject, Sendable {
     
     func commitRejected(groupId: Data) throws 
     
+    /**
+     * Persists a staged message; `Stale` if the group's state changed since staging.
+     */
+    func confirm(staged: StagedProcess) throws 
+    
     func createGroup() throws  -> Data
+    
+    /**
+     * Decrypts an application message; anything else is `NotApplication`.
+     */
+    func decryptApplication(groupId: Data, message: Data) throws  -> ApplicationMessage
+    
+    func discard(staged: StagedProcess) 
     
     func encrypt(groupId: Data, plaintext: Data) throws  -> Encrypted
     
@@ -560,6 +572,11 @@ public protocol EngineProtocol: AnyObject, Sendable {
     func keyPackages(count: UInt32) throws  -> [Data]
     
     /**
+     * Every member's identity and leaf signature public key, sorted by identity.
+     */
+    func memberKeys(groupId: Data) throws  -> [MemberKey]
+    
+    /**
      * Current members as "<accountID>/<deviceID>" (README contract: `members(of:)`).
      */
     func members(groupId: Data) throws  -> [String]
@@ -567,6 +584,11 @@ public protocol EngineProtocol: AnyObject, Sendable {
     func process(message: Data) throws  -> Processed
     
     func remove(groupId: Data, identities: [String]) throws  -> CommitBundle
+    
+    /**
+     * Decrypts and validates without persisting anything; see `confirm`.
+     */
+    func stageProcess(groupId: Data, message: Data) throws  -> StagedProcess
     
 }
 open class Engine: EngineProtocol, @unchecked Sendable {
@@ -658,12 +680,44 @@ open func commitRejected(groupId: Data)throws   {try rustCallWithError(FfiConver
 }
 }
     
+    /**
+     * Persists a staged message; `Stale` if the group's state changed since staging.
+     */
+open func confirm(staged: StagedProcess)throws   {try rustCallWithError(FfiConverterTypeFfiError_lift) {
+    uniffi_mlsffi_fn_method_engine_confirm(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeStagedProcess_lower(staged),$0
+    )
+}
+}
+    
 open func createGroup()throws  -> Data  {
     return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
     uniffi_mlsffi_fn_method_engine_create_group(
             self.uniffiCloneHandle(),$0
     )
 })
+}
+    
+    /**
+     * Decrypts an application message; anything else is `NotApplication`.
+     */
+open func decryptApplication(groupId: Data, message: Data)throws  -> ApplicationMessage  {
+    return try  FfiConverterTypeApplicationMessage_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+    uniffi_mlsffi_fn_method_engine_decrypt_application(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(groupId),
+        FfiConverterData.lower(message),$0
+    )
+})
+}
+    
+open func discard(staged: StagedProcess)  {try! rustCall() {
+    uniffi_mlsffi_fn_method_engine_discard(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeStagedProcess_lower(staged),$0
+    )
+}
 }
     
 open func encrypt(groupId: Data, plaintext: Data)throws  -> Encrypted  {
@@ -715,6 +769,18 @@ open func keyPackages(count: UInt32)throws  -> [Data]  {
 }
     
     /**
+     * Every member's identity and leaf signature public key, sorted by identity.
+     */
+open func memberKeys(groupId: Data)throws  -> [MemberKey]  {
+    return try  FfiConverterSequenceTypeMemberKey.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+    uniffi_mlsffi_fn_method_engine_member_keys(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(groupId),$0
+    )
+})
+}
+    
+    /**
      * Current members as "<accountID>/<deviceID>" (README contract: `members(of:)`).
      */
 open func members(groupId: Data)throws  -> [String]  {
@@ -741,6 +807,19 @@ open func remove(groupId: Data, identities: [String])throws  -> CommitBundle  {
             self.uniffiCloneHandle(),
         FfiConverterData.lower(groupId),
         FfiConverterSequenceString.lower(identities),$0
+    )
+})
+}
+    
+    /**
+     * Decrypts and validates without persisting anything; see `confirm`.
+     */
+open func stageProcess(groupId: Data, message: Data)throws  -> StagedProcess  {
+    return try  FfiConverterTypeStagedProcess_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+    uniffi_mlsffi_fn_method_engine_stage_process(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(groupId),
+        FfiConverterData.lower(message),$0
     )
 })
 }
@@ -791,6 +870,222 @@ public func FfiConverterTypeEngine_lower(_ value: Engine) -> UInt64 {
 }
 
 
+
+
+
+
+/**
+ * The result of [`EngineCore::stage_process`]: what `process` would return,
+ * plus what is needed to apply it later. Holds no key material and nothing is
+ * persisted for it. `confirm` re-runs the processing against the stored state
+ * and applies it only if the state is the one this was staged against.
+ */
+public protocol StagedProcessProtocol: AnyObject, Sendable {
+    
+    /**
+     * Drops this staged message (same as `Engine::discard`). Nothing was persisted.
+     */
+    func discard() 
+    
+    /**
+     * What `process` would return for this message.
+     */
+    func incoming()  -> Processed
+    
+}
+/**
+ * The result of [`EngineCore::stage_process`]: what `process` would return,
+ * plus what is needed to apply it later. Holds no key material and nothing is
+ * persisted for it. `confirm` re-runs the processing against the stored state
+ * and applies it only if the state is the one this was staged against.
+ */
+open class StagedProcess: StagedProcessProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_mlsffi_fn_clone_stagedprocess(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_mlsffi_fn_free_stagedprocess(handle, $0) }
+    }
+
+    
+
+    
+    /**
+     * Drops this staged message (same as `Engine::discard`). Nothing was persisted.
+     */
+open func discard()  {try! rustCall() {
+    uniffi_mlsffi_fn_method_stagedprocess_discard(
+            self.uniffiCloneHandle(),$0
+    )
+}
+}
+    
+    /**
+     * What `process` would return for this message.
+     */
+open func incoming() -> Processed  {
+    return try!  FfiConverterTypeProcessed_lift(try! rustCall() {
+    uniffi_mlsffi_fn_method_stagedprocess_incoming(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeStagedProcess: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = StagedProcess
+
+    public static func lift(_ handle: UInt64) throws -> StagedProcess {
+        return StagedProcess(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: StagedProcess) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> StagedProcess {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: StagedProcess, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeStagedProcess_lift(_ handle: UInt64) throws -> StagedProcess {
+    return try FfiConverterTypeStagedProcess.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeStagedProcess_lower(_ value: StagedProcess) -> UInt64 {
+    return FfiConverterTypeStagedProcess.lower(value)
+}
+
+
+
+
+/**
+ * An application message decrypted by `decrypt_application`.
+ */
+public struct ApplicationMessage: Equatable, Hashable {
+    public var sender: String
+    public var plaintext: Data
+    /**
+     * The epoch it was sent in.
+     */
+    public var epoch: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(sender: String, plaintext: Data, 
+        /**
+         * The epoch it was sent in.
+         */epoch: UInt64) {
+        self.sender = sender
+        self.plaintext = plaintext
+        self.epoch = epoch
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ApplicationMessage: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeApplicationMessage: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ApplicationMessage {
+        return
+            try ApplicationMessage(
+                sender: FfiConverterString.read(from: &buf), 
+                plaintext: FfiConverterData.read(from: &buf), 
+                epoch: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ApplicationMessage, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.sender, into: &buf)
+        FfiConverterData.write(value.plaintext, into: &buf)
+        FfiConverterUInt64.write(value.epoch, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeApplicationMessage_lift(_ buf: RustBuffer) throws -> ApplicationMessage {
+    return try FfiConverterTypeApplicationMessage.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeApplicationMessage_lower(_ value: ApplicationMessage) -> RustBuffer {
+    return FfiConverterTypeApplicationMessage.lower(value)
+}
 
 
 public struct CommitBundle: Equatable, Hashable {
@@ -905,15 +1200,18 @@ public func FfiConverterTypeEncrypted_lower(_ value: Encrypted) -> RustBuffer {
 }
 
 
-public struct HpkeKeyPair: Equatable, Hashable {
-    public var privateKey: Data
-    public var publicKey: Data
+/**
+ * A group member's identity and MLS signature public key (the leaf's).
+ */
+public struct MemberKey: Equatable, Hashable {
+    public var identity: String
+    public var signatureKey: Data
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(privateKey: Data, publicKey: Data) {
-        self.privateKey = privateKey
-        self.publicKey = publicKey
+    public init(identity: String, signatureKey: Data) {
+        self.identity = identity
+        self.signatureKey = signatureKey
     }
 
     
@@ -922,24 +1220,24 @@ public struct HpkeKeyPair: Equatable, Hashable {
 }
 
 #if compiler(>=6)
-extension HpkeKeyPair: Sendable {}
+extension MemberKey: Sendable {}
 #endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeHpkeKeyPair: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> HpkeKeyPair {
+public struct FfiConverterTypeMemberKey: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MemberKey {
         return
-            try HpkeKeyPair(
-                privateKey: FfiConverterData.read(from: &buf), 
-                publicKey: FfiConverterData.read(from: &buf)
+            try MemberKey(
+                identity: FfiConverterString.read(from: &buf), 
+                signatureKey: FfiConverterData.read(from: &buf)
         )
     }
 
-    public static func write(_ value: HpkeKeyPair, into buf: inout [UInt8]) {
-        FfiConverterData.write(value.privateKey, into: &buf)
-        FfiConverterData.write(value.publicKey, into: &buf)
+    public static func write(_ value: MemberKey, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.identity, into: &buf)
+        FfiConverterData.write(value.signatureKey, into: &buf)
     }
 }
 
@@ -947,15 +1245,15 @@ public struct FfiConverterTypeHpkeKeyPair: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeHpkeKeyPair_lift(_ buf: RustBuffer) throws -> HpkeKeyPair {
-    return try FfiConverterTypeHpkeKeyPair.lift(buf)
+public func FfiConverterTypeMemberKey_lift(_ buf: RustBuffer) throws -> MemberKey {
+    return try FfiConverterTypeMemberKey.lift(buf)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeHpkeKeyPair_lower(_ value: HpkeKeyPair) -> RustBuffer {
-    return FfiConverterTypeHpkeKeyPair.lower(value)
+public func FfiConverterTypeMemberKey_lower(_ value: MemberKey) -> RustBuffer {
+    return FfiConverterTypeMemberKey.lower(value)
 }
 
 
@@ -1030,6 +1328,15 @@ public enum FfiError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErro
      */
     case EpochGap
     case PendingCommit
+    /**
+     * A staged `process` can no longer be confirmed: the group's stored state
+     * changed since it was staged (or it was already confirmed or discarded).
+     */
+    case Stale
+    /**
+     * `decrypt_application` was given something that is not an application message.
+     */
+    case NotApplication
     case Storage(String
     )
     case Crypto(String
@@ -1071,13 +1378,15 @@ public struct FfiConverterTypeFfiError: FfiConverterRustBuffer {
         case 4: return .Duplicate
         case 5: return .EpochGap
         case 6: return .PendingCommit
-        case 7: return .Storage(
+        case 7: return .Stale
+        case 8: return .NotApplication
+        case 9: return .Storage(
             try FfiConverterString.read(from: &buf)
             )
-        case 8: return .Crypto(
+        case 10: return .Crypto(
             try FfiConverterString.read(from: &buf)
             )
-        case 9: return .Internal(
+        case 11: return .Internal(
             try FfiConverterString.read(from: &buf)
             )
 
@@ -1116,18 +1425,26 @@ public struct FfiConverterTypeFfiError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(6))
         
         
-        case let .Storage(v1):
+        case .Stale:
             writeInt(&buf, Int32(7))
+        
+        
+        case .NotApplication:
+            writeInt(&buf, Int32(8))
+        
+        
+        case let .Storage(v1):
+            writeInt(&buf, Int32(9))
             FfiConverterString.write(v1, into: &buf)
             
         
         case let .Crypto(v1):
-            writeInt(&buf, Int32(8))
+            writeInt(&buf, Int32(10))
             FfiConverterString.write(v1, into: &buf)
             
         
         case let .Internal(v1):
-            writeInt(&buf, Int32(9))
+            writeInt(&buf, Int32(11))
             FfiConverterString.write(v1, into: &buf)
             
         }
@@ -1311,40 +1628,34 @@ fileprivate struct FfiConverterSequenceData: FfiConverterRustBuffer {
         return seq
     }
 }
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeMemberKey: FfiConverterRustBuffer {
+    typealias SwiftType = [MemberKey]
+
+    public static func write(_ value: [MemberKey], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeMemberKey.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [MemberKey] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [MemberKey]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeMemberKey.read(from: &buf))
+        }
+        return seq
+    }
+}
 public func generateSignatureKeypair()throws  -> SignatureKeypair  {
     return try  FfiConverterTypeSignatureKeypair_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
     uniffi_mlsffi_fn_func_generate_signature_keypair($0
-    )
-})
-}
-public func hpkeGenerateKeypair()throws  -> HpkeKeyPair  {
-    return try  FfiConverterTypeHpkeKeyPair_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
-    uniffi_mlsffi_fn_func_hpke_generate_keypair($0
-    )
-})
-}
-/**
- * `sealed` is `enc ‖ ct`. Input shorter than the encapsulated key is `Malformed`.
- */
-public func hpkeOpen(privateKey: Data, publicKey: Data, info: Data, sealed: Data)throws  -> Data  {
-    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
-    uniffi_mlsffi_fn_func_hpke_open(
-        FfiConverterData.lower(privateKey),
-        FfiConverterData.lower(publicKey),
-        FfiConverterData.lower(info),
-        FfiConverterData.lower(sealed),$0
-    )
-})
-}
-/**
- * Returns `enc ‖ ct`.
- */
-public func hpkeSeal(recipientPublicKey: Data, info: Data, plaintext: Data)throws  -> Data  {
-    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
-    uniffi_mlsffi_fn_func_hpke_seal(
-        FfiConverterData.lower(recipientPublicKey),
-        FfiConverterData.lower(info),
-        FfiConverterData.lower(plaintext),$0
     )
 })
 }
@@ -1367,15 +1678,6 @@ private let initializationResult: InitializationResult = {
     if (uniffi_mlsffi_checksum_func_generate_signature_keypair() != 1271) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_mlsffi_checksum_func_hpke_generate_keypair() != 5294) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_mlsffi_checksum_func_hpke_open() != 35405) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_mlsffi_checksum_func_hpke_seal() != 15243) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_mlsffi_checksum_method_engine_add() != 64762) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -1385,7 +1687,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_mlsffi_checksum_method_engine_commit_rejected() != 28185) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_mlsffi_checksum_method_engine_confirm() != 36301) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_mlsffi_checksum_method_engine_create_group() != 33515) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_mlsffi_checksum_method_engine_decrypt_application() != 60401) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_mlsffi_checksum_method_engine_discard() != 59375) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_mlsffi_checksum_method_engine_encrypt() != 39710) {
@@ -1403,6 +1714,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_mlsffi_checksum_method_engine_key_packages() != 55313) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_mlsffi_checksum_method_engine_member_keys() != 24692) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_mlsffi_checksum_method_engine_members() != 51469) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -1410,6 +1724,15 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_mlsffi_checksum_method_engine_remove() != 57957) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_mlsffi_checksum_method_engine_stage_process() != 55380) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_mlsffi_checksum_method_stagedprocess_discard() != 46153) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_mlsffi_checksum_method_stagedprocess_incoming() != 48755) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_mlsffi_checksum_constructor_engine_new() != 23522) {
