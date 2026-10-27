@@ -194,9 +194,13 @@ class PushTest {
         )
         val permissions = info.requestedPermissions.orEmpty().toList()
         assertFalse("android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" in permissions, "$permissions")
-        // Library services (WorkManager, the UnifiedPush connector's RaiseToForegroundService) are allowed for now;
-        // an app-declared one is not.
-        val own = info.services.orEmpty().map { it.name }.filter { it.startsWith(BuildConfig.APP_ID) }
+        // Library services (WorkManager, the UnifiedPush connector's RaiseToForegroundService) and the FCM
+        // service are allowed; an app-declared foreground service is not (F4 declares only AppFirebaseService).
+        val own = info.services.orEmpty()
+            .filter { it.name.startsWith(BuildConfig.APP_ID) && it.name != AppFirebaseService::class.java.name }
+            .map { it.name }
+        val typed = info.services.orEmpty().filter { it.name.startsWith(BuildConfig.APP_ID) && it.foregroundServiceType != 0 }
+        assertTrue(typed.isEmpty(), "app foreground services: $typed")
         assertTrue(own.isEmpty(), "app-declared services: $own")
     }
 }
