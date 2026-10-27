@@ -3,9 +3,21 @@ package org.example.app.messaging.sync
 import org.example.app.contracts.GroupId
 import org.example.app.contracts.MemberKey
 import org.example.app.contracts.MlsEngine
+import org.example.app.messaging.ports.Clock
 import org.example.app.messaging.ports.ConversationRecord
 import org.example.app.messaging.ports.MemberRecord
+import org.example.app.messaging.ports.MessageRecord
 import org.example.app.messaging.ports.Repository
+
+/**
+ * What a membership update changed, as full identities (`"<accountId>/<deviceId>"`) except [ownDevicesAdded], which
+ * holds the device IDs of my own account (never this device).
+ */
+data class MembershipChange(
+    val added: List<String> = emptyList(),
+    val removed: List<String> = emptyList(),
+    val ownDevicesAdded: List<String> = emptyList(),
+)
 
 /**
  * The group's members and the chat's safety number (Design 19, 20), after every processed commit, every
@@ -15,14 +27,16 @@ import org.example.app.messaging.ports.Repository
  * under the MLS lock and write in the transaction that also marks the item processed: [keys] first, then [apply].
  * [update] does both. Callers hold the MLS lock around either.
  *
- * D5 seam: `diff()` (device-added/removed lines, the safety-number-changed line and the own-device notice) goes
- * into [apply], which already compares against the stored rows.
+ * [diff] compares the stored rows with the group's members. [apply] writes the device-added and device-removed
+ * lines, the safety-number-changed line and the new members in the caller's transaction, and returns the change; the
+ * caller turns [MembershipChange.ownDevicesAdded] into the own-device notice (`IncomingHandler`).
  */
 class Membership(
     private val me: LocalDevice,
     private val mls: MlsEngine,
     /** `LiveMlsEngine.providesRealMemberKeys`. False until MLS M7; the safety-number UI stays hidden while false. */
     val realMemberKeys: Boolean,
+    private val clock: Clock = Clock.System,
 ) {
     /**
      * The members with their signature keys, sorted by identity (UTF-8 bytes).
@@ -37,26 +51,73 @@ class Membership(
         return keys.sortedWith { a, b -> compareUtf8(a.identity, b.identity) }
     }
 
-    suspend fun update(conversation: ConversationRecord, repo: Repository) {
+    suspend fun update(conversation: ConversationRecord, repo: Repository): MembershipChange {
         val keys = keys(GroupId(conversation.groupId))
-        repo.transaction { apply(keys, conversation, repo) }
+        return repo.transaction { apply(keys, conversation, repo) }
     }
 
     /** Database-only half; run it inside the caller's transaction. */
-    fun apply(keys: List<MemberKey>, conversation: ConversationRecord, repo: Repository) = write(me, keys, conversation, repo)
+    fun apply(keys: List<MemberKey>, conversation: ConversationRecord, repo: Repository): MembershipChange =
+        write(me, keys, conversation, repo, clock.now())
 
     companion object {
-        /** [apply] for code that has no engine (`IncomingHandler`). */
-        fun write(me: LocalDevice, keys: List<MemberKey>, conversation: ConversationRecord, repo: Repository) {
+        /** [apply] for code that has no engine (`IncomingHandler`). [now] stamps the device lines. */
+        fun write(me: LocalDevice, keys: List<MemberKey>, conversation: ConversationRecord, repo: Repository, now: Long): MembershipChange {
+            // The epoch in the line IDs is the stored one: callers store the new epoch first.
             val current = repo.conversation(conversation.serverId) ?: conversation
+            val stored = repo.members(current.serverId)
+            val lines = mutableListOf<Pair<String, ByteArray>>()
+
+            // No stored rows yet: the commit or Welcome that creates the conversation. Store, no lines.
+            val change = if (stored.isEmpty()) MembershipChange() else diff(me, stored, keys)
+            fun name(identity: String) = identity.substringBefore('/').takeIf { it != me.accountId }
+            change.added.forEach { lines += "add-$it" to lineEnvelope("deviceAdded", name(it)) }
+            change.removed.forEach { lines += "remove-$it" to lineEnvelope("deviceRemoved", name(it)) }
+
             val fresh = keys.map { MemberRecord(it.identity, it.signatureKey) }
-            if (repo.members(current.serverId) != fresh) repo.replaceMembers(current.serverId, fresh)
+            if (stored != fresh) repo.replaceMembers(current.serverId, fresh)
 
             // The chat's number follows its preferred conversation. An oversized identity or key gives no number.
             if (repo.preferredConversation(current.chatId)?.serverId == current.serverId) {
                 val number = runCatching { SafetyNumber.compute(keys, me.accountId, current.chatId).joinToString("") }.getOrNull()
-                if (number != null && repo.safety(current.chatId)?.current != number) repo.setSafetyCurrent(current.chatId, number)
+                val previous = repo.safety(current.chatId)?.current
+                if (number != null && previous != number) {
+                    repo.setSafetyCurrent(current.chatId, number)
+                    if (previous != null) lines += "safety" to lineEnvelope("safetyNumberChanged", null)
+                }
             }
+
+            // One millisecond apart, so the lines keep their order.
+            lines.forEachIndexed { index, (id, envelope) ->
+                val at = now + index
+                repo.insertMessage(
+                    MessageRecord(
+                        id = "sys-${current.serverId}-${current.epoch}-$id", chatId = current.chatId, conversationId = current.serverId,
+                        senderAccount = "system", senderDevice = null, sentAt = at, receivedAt = at, envelope = envelope, status = "sent",
+                    ),
+                )
+            }
+            return change
+        }
+
+        /** Devices that joined or left, comparing the stored rows with [keys]. This device is never reported. */
+        fun diff(me: LocalDevice, stored: List<MemberRecord>, keys: List<MemberKey>): MembershipChange {
+            val old = stored.map { it.identity }.toSet()
+            val new = keys.map { it.identity }.toSet()
+            val added = (new - old).filter { it != me.identity }.sortedWith { a, b -> compareUtf8(a, b) }
+            val removed = (old - new).filter { it != me.identity }.sortedWith { a, b -> compareUtf8(a, b) }
+            val prefix = me.accountId + "/"
+            return MembershipChange(added, removed, added.filter { it.startsWith(prefix) }.map { it.removePrefix(prefix) })
+        }
+
+        /**
+         * The device line as the iPhone's `SystemEvent` Codable writes it: `{"deviceAdded":{"name":"<account>"}}`
+         * (no name for my own account), `{"safetyNumberChanged":{}}`. Names are account IDs; the chat resolves them
+         * when the line is shown, they are never stored as display names.
+         */
+        fun lineEnvelope(kind: String, name: String?): ByteArray {
+            val escaped = name?.let { "\"name\":" + kotlinx.serialization.json.JsonPrimitive(it) }.orEmpty()
+            return "{\"$kind\":{$escaped}}".encodeToByteArray()
         }
 
         private fun compareUtf8(a: String, b: String): Int {

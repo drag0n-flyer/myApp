@@ -41,6 +41,8 @@ class InboxProcessor(
     private val conversations: ConversationManager,
     private val handler: IncomingHandler,
     private val membership: Membership,
+    /** Posts "New device added" after a drain (D5). Null in the notification processor, which shows its own notice. */
+    private val notices: OwnDeviceNotices? = null,
 ) {
     private val fetchSection = Mutex()
     private val drainSection = Mutex()
@@ -50,6 +52,9 @@ class InboxProcessor(
 
     /** Receives every applied result after its transaction (D5 receipts, D7 call signals and notices). */
     var onApplied: (suspend (AppliedResult) -> Unit)? = null
+
+    /** Receives each drain's results as one batch, before [onApplied] (the delivered receipts: one per chat per batch). */
+    var onBatch: (suspend (List<AppliedResult>) -> Unit)? = null
 
     private sealed interface Step {
         data class Done(val applied: AppliedResult?) : Step
@@ -111,6 +116,15 @@ class InboxProcessor(
                 }
             }
         }
+        // Network calls (receipts, the device names) go after the lock and the mutexes are released.
+        try {
+            notices?.post()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // The markers stay; the next drain posts them.
+        }
+        if (results.isNotEmpty()) onBatch?.invoke(results)
         onApplied?.let { callback -> results.forEach { callback(it) } }
         return results
     }

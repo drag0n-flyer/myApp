@@ -55,6 +55,17 @@ class FakeDeliveryServer(var defaultMode: String = "e2ee") {
     /** Runs right after a commit is applied, before the reply leaves (a test throws here to model a kill). */
     var afterCommitApplied: (() -> Unit)? = null
     var failNextMessages = 0
+
+    /** Runs right after a message is accepted, before the reply leaves (a test throws here to model a kill). */
+    var afterMessageApplied: (() -> Unit)? = null
+
+    /** The server's escrow check (`400 escrow_required` / `400 escrow_forbidden`), as in the Go server. */
+    var enforceEscrow = true
+
+    private val revoked = mutableSetOf<String>()
+
+    /** Removes a device from `GET /v1/devices` (a revoked device). Its group membership is the clients' business. */
+    fun revokeDevice(accountId: String, deviceId: String) = synchronized(lock) { revoked += "$accountId/$deviceId"; Unit }
     var failNextInboxReads = 0
     var failConversationLookup: ServerException? = null
 
@@ -194,18 +205,27 @@ class FakeDeliveryServer(var defaultMode: String = "e2ee") {
 
         override suspend fun postMessage(id: String, epoch: Long, ciphertext: ByteArray, escrow: ByteArray?, clientMsgId: String): Long {
             call("postMessage")
-            return synchronized(lock) {
+            val seq = synchronized(lock) {
                 if (failNextMessages > 0) {
                     failNextMessages -= 1
                     throw ServerException(503, "unavailable", null, null)
                 }
                 val c = conversations[id] ?: throw ServerException(404, "not_found", null, null)
+                if (enforceEscrow) {
+                    if (c.mode == "server_readable" && escrow == null) throw ServerException(400, "escrow_required", null, null)
+                    if (c.mode == "e2ee" && escrow != null) throw ServerException(400, "escrow_forbidden", null, null)
+                }
+                // The client message ID makes a retry idempotent: the same message is stored and delivered once.
+                val index = messages.filter { it.conversationId == id }.indexOfFirst { it.clientMsgId == clientMsgId }
+                if (index >= 0) return@synchronized (index + 1).toLong()
                 if (epoch != c.epoch) throw ServerException(409, "stale_epoch", null, null)
                 messages += Posted(id, epoch, ciphertext, escrow, clientMsgId, identity)
                 val seq = messages.count { it.conversationId == id }.toLong()
                 c.members.filter { it != identity }.forEach { deliver(it, "message", id, epoch, identity, ciphertext, seq) }
                 seq
             }
+            afterMessageApplied?.invoke()
+            return seq
         }
 
         override suspend fun inbox(after: Long?, limit: Int): InboxPage {
@@ -228,7 +248,7 @@ class FakeDeliveryServer(var defaultMode: String = "e2ee") {
         override suspend fun devices(): List<DeviceRecord> {
             call("devices")
             return synchronized(lock) {
-                keyPackages[account].orEmpty().keys.map { DeviceRecord(it, it, "android", Instant.EPOCH, null, it == device) }
+                keyPackages[account].orEmpty().keys.filter { "$account/$it" !in revoked }.map { DeviceRecord(it, it, "android", Instant.EPOCH, null, it == device) }
             }
         }
 
