@@ -79,6 +79,12 @@ private func makeGroup(creator: any MLSEngine, joiners: [any MLSEngine]) async t
         #expect(try await b.process(ct) == .application(group: g, sender: alice, plaintext: utf8("alice at two"), epoch: 2))
     }
 
+    @Test func testStorageExcludedFromBackup() throws {
+        let dir = tempDir()
+        _ = try live(alice, dir: dir)
+        #expect(try dir.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup == true)
+    }
+
     @Test func testSameIdentityKeepsKey() async throws {
         let keys = InMemorySigningKeyStore()
         let first = try live(alice, keys: keys), second = try live(alice, keys: keys)

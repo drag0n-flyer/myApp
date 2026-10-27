@@ -30,6 +30,21 @@ enum SigningKeyEncoding {
     }
 }
 
+/// The Info.plist key that names the shared Keychain access group. It is required: without it
+/// each process would use its own default group, and the notification extension could not read
+/// the app's signing key (it would make a different one).
+enum KeychainAccessGroupConfig {
+    static let infoKey = "MLSKeychainAccessGroup"
+
+    static func resolve(_ value: Any?) throws -> String {
+        guard let group = value as? String,
+              !group.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw MLSError.storage("Info.plist key \(infoKey) is missing or empty; refusing to use the default Keychain access group")
+        }
+        return group
+    }
+}
+
 /// Keeps keys in memory. For tests only: nothing is persisted or protected.
 public final class InMemorySigningKeyStore: SigningKeyStore, @unchecked Sendable {
     private let lock = NSLock()

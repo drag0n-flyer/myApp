@@ -26,3 +26,21 @@ import Testing
         }
     }
 }
+
+@Suite struct AccessGroupConfigTests {
+    @Test func resolvesAConfiguredGroup() throws {
+        #expect(try KeychainAccessGroupConfig.resolve("ABCDE12345.org.example.app.shared") == "ABCDE12345.org.example.app.shared")
+    }
+
+    @Test func missingOrEmptyGroupFailsClosedNamingTheKey() {
+        for bad: Any? in [nil, "", "   ", 42] {
+            do {
+                _ = try KeychainAccessGroupConfig.resolve(bad)
+                Issue.record("expected an error for \(String(describing: bad))")
+            } catch let error as MLSError {
+                guard case .storage(let message) = error else { Issue.record("wrong error \(error)"); continue }
+                #expect(message.contains("MLSKeychainAccessGroup"))
+            } catch { Issue.record("wrong error \(error)") }
+        }
+    }
+}

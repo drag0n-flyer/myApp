@@ -138,6 +138,12 @@ public actor LiveMLSEngine: MLSEngine {
             #else
             try FileManager.default.createDirectory(at: storage, withIntermediateDirectories: true)
             #endif
+            // MLS state must not be restored onto another device: it would clone this device's
+            // group membership (the signing key is ThisDeviceOnly and would not follow).
+            var directory = storage
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
+            try directory.setResourceValues(values)
         } catch {
             throw MLSError.storage("cannot create storage directory")
         }
@@ -147,7 +153,9 @@ public actor LiveMLSEngine: MLSEngine {
 /// The engine the app and the notification extension use: signing key in the shared Keychain
 /// access group named by the Info.plist key `MLSKeychainAccessGroup`.
 public func makeMLSEngine(identity: String, storage: URL) throws -> MLSEngine {
-    let group = Bundle.main.object(forInfoDictionaryKey: "MLSKeychainAccessGroup") as? String
+    // Fails closed when the key is missing: no silent fallback to the default access group.
+    let group = try KeychainAccessGroupConfig.resolve(
+        Bundle.main.object(forInfoDictionaryKey: KeychainAccessGroupConfig.infoKey))
     return try LiveMLSEngine(
         identity: identity, storage: storage, keys: KeychainSigningKeyStore(accessGroup: group))
 }
