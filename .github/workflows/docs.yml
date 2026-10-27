@@ -26,6 +26,9 @@ env:
   LYCHEE_VERSION: v0.18.1
   LYCHEE_SHA256: 0d48569e2dc11c1917fa98321dfd7aa675fba03b79f41e8e74afa3223e30d379
 
+permissions:
+  contents: read
+
 jobs:
   check:
     runs-on: ubuntu-latest
