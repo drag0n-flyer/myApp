@@ -20,6 +20,9 @@ type Module struct {
 	d            core.Deps
 	usernameRate *ratelimit.Limiter // 30/min per IP
 	inviteRate   *ratelimit.Limiter // 10/hour per IP
+	signupRate   *ratelimit.Limiter // sign-up start: 5/hour per IP
+	emailRate    *ratelimit.Limiter // email code send: 3/hour per email
+	emailIPRate  *ratelimit.Limiter // email code send: 10/hour per IP
 }
 
 // New returns the identity module.
@@ -28,6 +31,9 @@ func New(d core.Deps) *Module {
 		d:            d,
 		usernameRate: ratelimit.New(30, time.Minute, d.Now),
 		inviteRate:   ratelimit.New(10, time.Hour, d.Now),
+		signupRate:   ratelimit.New(5, time.Hour, d.Now),
+		emailRate:    ratelimit.New(3, time.Hour, d.Now),
+		emailIPRate:  ratelimit.New(10, time.Hour, d.Now),
 	}
 }
 
@@ -43,6 +49,8 @@ func (m *Module) ip(r *http.Request) string { return httpx.ClientIP(r, m.d.Confi
 func (m *Module) Routes(r *httpx.Router) {
 	r.Public("GET /v1/usernames/{name}", httpx.Limited(m.usernameRate, m.ip, m.usernameAvailable))
 	r.Public("POST /v1/invites/check", httpx.Limited(m.inviteRate, m.ip, m.checkInvite))
+	r.Public("POST /v1/signup/start", httpx.Limited(m.signupRate, m.ip, m.signupStart))
+	r.Public("POST /v1/signup/verify", m.signupVerify)
 	r.Authed("GET /v1/me", func(http.ResponseWriter, *http.Request) error {
 		return httpx.Err("not_found", "not implemented")
 	})
