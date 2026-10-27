@@ -171,7 +171,7 @@ Then open `http://localhost:9090/admin/`.
 
 When no admin account exists yet, the sign-in page shows "Create the first admin" instead. Choose a username (3 to 32 characters: letters, digits, dot, underscore, hyphen) and a password (12 to 128 characters), type the password twice, and you are signed in. There is no setup code and no other check.
 
-**Warning: until the first admin exists, anyone who can reach the admin port can create it.** The admin listener defaults to `127.0.0.1` and you reach it through an SSH tunnel, so in the normal setup that is only you. If you changed `APP_ADMIN_LISTEN`, or put a proxy in front of the admin port, create the first admin before you open the port to anyone else, or create it from the command line with `appserver admin user add <username>`.
+**Warning: until the first admin exists, anyone who can reach the admin port can create it.** The admin listener defaults to `127.0.0.1` and you reach it through an SSH tunnel, so in the normal setup that is only you. Keep `APP_ADMIN_LISTEN` on `127.0.0.1`. If you change it, or put a proxy in front of the admin port, create the first admin before you open the port to anyone else, or create it from the command line with `appserver admin user add <username>`.
 
 ### Sign in and manage admins
 
