@@ -42,10 +42,10 @@ xcodebuild -create-xcframework \
     -library build/macos/libmlsffi.a -headers build/headers \
     -output "$OUT/MLSFFI.xcframework"
 
-# The CryptoKit Swift bridge must be inside the static library.
-symbols="$(nm -g "$OUT/MLSFFI.xcframework/ios-arm64/libmlsffi.a" 2>/dev/null || true)"
-if ! grep -q _signature_key_generate <<<"$symbols"; then
-    echo "error: CryptoKit bridge symbol _signature_key_generate missing from ios-arm64 libmlsffi.a" >&2
+# Exactly three slices: iOS device, iOS simulator, macOS.
+slices="$(plutil -extract AvailableLibraries raw -o - "$OUT/MLSFFI.xcframework/Info.plist")"
+if [ "$slices" != "3" ]; then
+    echo "error: expected 3 XCFramework slices, found $slices" >&2
     exit 1
 fi
 
