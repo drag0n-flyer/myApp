@@ -33,6 +33,8 @@ public struct CallSessionMachine: Sendable {
     private static let restartWindow = ReconnectPolicy.retryEvery
     private static let staleAnswerAfter: TimeInterval = 10
     private var videoStartsOff = false
+    /// The send profile the current remote description was munged with; a change of ptime, FEC or DTX needs a renegotiation.
+    private var negotiatedSend: AudioProfile?
     private var pendingLocalCandidates: [IceCandidate] = []
     /// Remote candidates received before we can use them, by sending device.
     private var earlyRemoteCandidates: [String: [IceCandidate]] = [:]
@@ -106,7 +108,7 @@ public struct CallSessionMachine: Sendable {
         peerCeiling = nil
         answeringDevice = nil; remoteDescriptionSet = false; answerSent = false
         answerRequested = false; localOfferSDP = nil; pendingRenegotiateSince = nil
-        outstandingSince = nil; lastHonouredRequest = nil
+        outstandingSince = nil; lastHonouredRequest = nil; negotiatedSend = nil
         pinnedFingerprint = nil; renegotiateOutstanding = false
         pendingLocalCandidates = []; earlyRemoteCandidates = [:]
         activeSince = nil; everActive = false; lastSentMode = nil; lastSentTier = nil
@@ -204,12 +206,13 @@ public struct CallSessionMachine: Sendable {
         case .offer:
             guard outgoing, let answering = answeringDevice, !remoteDescriptionSet, device == answering else { return [] }
             guard let sdp = p.sdp, let claimed = p.dtlsFingerprint,
-                  SDPMunger.fingerprint(in: sdp) == claimed else {
+                  FingerprintCheck.isValid(sdp: sdp, claimed: claimed) else {
                 return end(.failed, notifyServer: true)
             }
             if let c = p.ceiling { setPeerCeiling(c) }
             remoteDescriptionSet = true
             pinnedFingerprint = claimed
+            negotiatedSend = .for(state?.effectiveMode ?? ownCeiling)
             var fx: [CallEffect] = [.acceptOffer(sdp: sdp, send: .for(state?.effectiveMode ?? ownCeiling),
                                                 receive: .for(ownCeiling))]
             for c in earlyRemoteCandidates.removeValue(forKey: answering) ?? [] { fx.append(.addCandidate(c)) }
@@ -218,21 +221,23 @@ public struct CallSessionMachine: Sendable {
             return fx
         case .answer:
             guard !outgoing, answerSent, !remoteDescriptionSet, device == answeringDevice, let answering = answeringDevice else { return [] }
-            guard let sdp = p.sdp, let claimed = p.dtlsFingerprint, SDPMunger.fingerprint(in: sdp) == claimed else {
+            guard let sdp = p.sdp, let claimed = p.dtlsFingerprint, FingerprintCheck.isValid(sdp: sdp, claimed: claimed) else {
                 return end(.failed, notifyServer: true)
             }
             if let c = p.ceiling { setPeerCeiling(c) }
             remoteDescriptionSet = true
             pinnedFingerprint = claimed
+            negotiatedSend = .for(state?.effectiveMode ?? ownCeiling)
             var fx: [CallEffect] = [.acceptAnswer(sdp: sdp, send: .for(state?.effectiveMode ?? ownCeiling))]
             for c in earlyRemoteCandidates.removeValue(forKey: answering) ?? [] { fx.append(.addCandidate(c)) }
             fx.append(.publish(state))
             return fx
         case .renegotiate:
             guard device == answeringDevice, remoteDescriptionSet else { return [] }
-            if outgoing {
-                // The callee asks for an ICE restart (no SDP); an SDP here is not accepted by the caller.
-                guard p.sdp == nil else { return [] }
+            // `renegotiate` without an SDP is a restart REQUEST from the callee: only the caller acts on it, and it
+            // answers with its own ICE-restart offer. `renegotiate` with an SDP is an OFFER (mode change or restart).
+            guard let sdp = p.sdp else {
+                guard outgoing else { return [] }
                 let now = clock.now
                 if renegotiateOutstanding, let since = outstandingSince, now.timeIntervalSince(since) < Self.restartWindow { return [] }
                 if let last = lastHonouredRequest, now.timeIntervalSince(last) < Self.restartWindow { return [] }
@@ -241,28 +246,43 @@ public struct CallSessionMachine: Sendable {
                 outstandingSince = now
                 return [.makeOffer(receive: .for(ownCeiling), iceRestart: true)]
             }
-            // One offer at a time: a second one before we answered the first is not accepted.
-            if let since = pendingRenegotiateSince, clock.now.timeIntervalSince(since) < Self.staleAnswerAfter { return [] }
-            guard let sdp = p.sdp, let claimed = p.dtlsFingerprint, SDPMunger.fingerprint(in: sdp) == claimed,
-                  claimed == pinnedFingerprint else {
+            let now = clock.now
+            // One offer to answer at a time: a second one before we answered the first is not accepted.
+            if let since = pendingRenegotiateSince, now.timeIntervalSince(since) < Self.staleAnswerAfter { return [] }
+            guard FingerprintCheck.isValid(sdp: sdp, claimed: p.dtlsFingerprint, pinned: pinnedFingerprint, requirePin: true) else {
                 return end(.failed, notifyServer: true)
             }
-            pendingRenegotiateSince = clock.now
-            return [.acceptOffer(sdp: sdp, send: .for(state?.effectiveMode ?? ownCeiling), receive: .for(ownCeiling))]
+            var fx: [CallEffect] = []
+            if renegotiateOutstanding {
+                // Glare: the caller's offer wins. The caller ignores the callee's offer while its own is fresh;
+                // the callee (or a caller whose offer went stale) rolls its own offer back first.
+                let fresh = outstandingSince.map { now.timeIntervalSince($0) < Self.restartWindow } ?? false
+                if outgoing && fresh { return [] }
+                fx.append(.rollback)
+                renegotiateOutstanding = false
+                outstandingSince = nil
+            }
+            if let c = p.ceiling { setPeerCeiling(c) }
+            pendingRenegotiateSince = now
+            let send = AudioProfile.for(state?.effectiveMode ?? ownCeiling)
+            negotiatedSend = send
+            fx.append(.acceptOffer(sdp: sdp, send: send, receive: .for(ownCeiling)))
+            return fx + syncMedia()
         case .renegotiateAnswer:
-            guard outgoing, device == answeringDevice, remoteDescriptionSet, renegotiateOutstanding, let sdp = p.sdp else { return [] }
-            // The fingerprint must match the SDP and the one pinned from the original offer.
-            guard let claimed = p.dtlsFingerprint, SDPMunger.fingerprint(in: sdp) == claimed,
-                  claimed == pinnedFingerprint else {
+            guard device == answeringDevice, remoteDescriptionSet, renegotiateOutstanding, let sdp = p.sdp else { return [] }
+            // The fingerprint must match the SDP and the one pinned from the original offer or answer.
+            guard FingerprintCheck.isValid(sdp: sdp, claimed: p.dtlsFingerprint, pinned: pinnedFingerprint, requirePin: true) else {
                 return end(.failed, notifyServer: true)
             }
             renegotiateOutstanding = false
             outstandingSince = nil
-            return [.acceptAnswer(sdp: sdp, send: .for(state?.effectiveMode ?? ownCeiling))]
+            let send = AudioProfile.for(state?.effectiveMode ?? ownCeiling)
+            negotiatedSend = send
+            return [.acceptAnswer(sdp: sdp, send: send)]
         case .modeChange:
             guard device == answeringDevice else { return [] }
             if let c = p.ceiling { setPeerCeiling(c) }
-            return [.publish(state)]
+            return syncMedia() + [.publish(state)] + renegotiationIfNeeded()
         case .ring:
             return []
         }
@@ -286,14 +306,14 @@ public struct CallSessionMachine: Sendable {
     }
 
     private mutating func localOffer(_ sdp: String) -> [CallEffect] {
-        if !outgoing {
+        if !outgoing, !answerSent {
             // Callee: our prewarmed offer. It goes out only once the user answers.
-            guard isLive, !answerSent, localOfferSDP == nil else { return [] }
+            guard isLive, localOfferSDP == nil else { return [] }
             localOfferSDP = sdp
             return answerRequested ? sendAnswer(sdp) + [.publish(state)] : []
         }
-        // Caller: an ICE-restart offer from this side.
-        guard isLive, answerSent, renegotiateOutstanding else { return [] }   // only the offer we asked for
+        // After the answer, either side: an offer we asked for (ICE restart or mode change).
+        guard isLive, answerSent, renegotiateOutstanding else { return [] }
         guard let fingerprint = SDPMunger.fingerprint(in: sdp) else { return end(.failed, notifyServer: true) }
         return [.sendSignal(CallSignalPayload(kind: .renegotiate, callID: callID, sdp: sdp,
                                               dtlsFingerprint: fingerprint, ceiling: ownCeiling))]
@@ -370,26 +390,55 @@ public struct CallSessionMachine: Sendable {
             if $0.phase != .reconnecting { $0.banner = out.banner }
             $0.bytesUsed = s.bytesSent + s.bytesReceived + 28 * (s.packetsSent + s.packetsReceived)
         }
-        var fx: [CallEffect] = []
-        if out.mode != lastSentMode {
-            lastSentMode = out.mode
-            fx.append(.setAudioMaxBitrate(AudioProfile.for(out.mode).maxAverageBitrate))
-        }
-        if out.video != lastSentTier {
-            lastSentTier = out.video
-            fx.append(.setVideo(out.video))
-        }
+        var fx = syncMedia()
         fx.append(.publish(state))
+        return fx + renegotiationIfNeeded()
+    }
+
+    /// Instant media changes: bitrate and video tier follow the adaptor without renegotiation.
+    private mutating func syncMedia() -> [CallEffect] {
+        var fx: [CallEffect] = []
+        let mode = adaptor.currentMode, tier = adaptor.currentTier
+        if mode != lastSentMode {
+            lastSentMode = mode
+            fx.append(.setAudioMaxBitrate(AudioProfile.for(mode).maxAverageBitrate))
+        }
+        if tier != lastSentTier {
+            lastSentTier = tier
+            fx.append(.setVideo(tier))
+        }
         return fx
+    }
+
+    /// A change of my send ptime, FEC or DTX needs a new offer; bitrate-only changes do not.
+    private mutating func renegotiationIfNeeded() -> [CallEffect] {
+        guard isLive, state?.phase == .active, remoteDescriptionSet, answerSent, let negotiated = negotiatedSend else { return [] }
+        let want = AudioProfile.for(state?.effectiveMode ?? ownCeiling)
+        guard want.ptime != negotiated.ptime || want.inbandFEC != negotiated.inbandFEC || want.dtx != negotiated.dtx else { return [] }
+        let now = clock.now
+        if renegotiateOutstanding, let since = outstandingSince, now.timeIntervalSince(since) < Self.restartWindow { return [] }
+        if let since = pendingRenegotiateSince, now.timeIntervalSince(since) < Self.staleAnswerAfter { return [] }
+        renegotiateOutstanding = true
+        outstandingSince = now
+        return [.makeOffer(receive: .for(ownCeiling), iceRestart: false)]
+    }
+
+    private func modeChangeSignal() -> [CallEffect] {
+        guard answerSent else { return [] }   // before that, the ring/offer/answer ceiling already carries it
+        return [.sendSignal(CallSignalPayload(kind: .modeChange, callID: callID, ceiling: ownCeiling))]
     }
 
     private mutating func setPreference(_ p: ModePreference) -> [CallEffect] {
         guard isLive else { return [] }
+        let before = ownCeiling
         update { $0.inCallPreference = p }
         adaptor.setCeiling(effectiveCeiling)
         let mode = adaptor.currentMode
         update { $0.effectiveMode = mode }
-        return [.publish(state)]
+        var fx = syncMedia()
+        if ownCeiling != before { fx += modeChangeSignal() }
+        fx.append(.publish(state))
+        return fx + renegotiationIfNeeded()
     }
 
     private mutating func setVideo(_ on: Bool) -> [CallEffect] {
@@ -402,12 +451,16 @@ public struct CallSessionMachine: Sendable {
     }
 
     private mutating func contextChanged(_ c: CallContext) -> [CallEffect] {
+        let before = ownCeiling
         context = c
         guard isLive else { return [] }
         adaptor.setCeiling(effectiveCeiling)
         let mode = adaptor.currentMode
         update { $0.network = c.network; $0.effectiveMode = mode }
-        return [.publish(state)]
+        var fx = syncMedia()
+        if ownCeiling != before { fx += modeChangeSignal() }
+        fx.append(.publish(state))
+        return fx + renegotiationIfNeeded()
     }
 
     private mutating func hangup() -> [CallEffect] {
