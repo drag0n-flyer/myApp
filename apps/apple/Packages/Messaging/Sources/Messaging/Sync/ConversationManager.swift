@@ -47,7 +47,7 @@ public actor ConversationManager: ConversationManaging {
 
     /// Runs `body` under the process lock (Design 12). Used for every step that changes MLS state or group
     /// rows. Never held across a network call, and never nested (the lock is not re-entrant).
-    func locked<T>(_ body: () async throws -> T) async throws -> T {
+    func locked<T: Sendable>(_ body: () async throws -> T) async throws -> T {
         try await deps.lock.withAsyncLock(timeout: lockTimeout, body)
     }
 

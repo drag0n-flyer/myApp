@@ -39,7 +39,7 @@ public final class ProcessLock: Sendable {
     /// Like `withLock`, for a body that awaits (the MLS engine is async). The lock is a `flock` on its own
     /// open file description, so it does not matter which thread the body resumes on. Waiting does not
     /// block a thread. Not re-entrant: a nested call from inside `body` waits until it times out.
-    public func withAsyncLock<T>(
+    public func withAsyncLock<T: Sendable>(
         isolation: isolated (any Actor)? = #isolation, timeout: Duration, _ body: () async throws -> T
     ) async throws -> T {
         let fd = open(url.path, O_CREAT | O_RDWR, 0o600)
