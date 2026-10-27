@@ -35,6 +35,11 @@
   - The setting `PASSKEY_DOMAINS` (default `home.example.org`) feeds both the `webcredentials:` entitlement and `PasskeyPolicy.supported(host:)`.
   - On other hosts, sign-up finishes without a passkey, and sign-in uses an email code.
 - **Linking QR code:** `https://<host>/link/<linkID>#<secret>`. The scanning iPhone refuses a code whose host differs from its own server and shows `wrongServer`. The new device keeps `claimToken` in memory only and polls `claim` every 2 s until approved, expired (5 min) or cancelled.
+- **Approving a link is a deliberate step** (decision 8; OPEN-24, LNK-S-03). Scanning or pasting a code never approves it. The approving device:
+  1. checks the host (as above), then fetches the request's details with `POST /v1/link/{linkID}/info {secret}` → `{deviceName, platform, createdAt}`
+  2. shows the approval screen: the device's name, its type (iPhone or Mac), when the request was made, and the warning "This device will be able to read all your future messages. Only approve it if it's yours and you started linking it just now."
+  3. on Approve, requires Face ID or Touch ID (`LAContext`, policy `.deviceOwnerAuthenticationWithBiometrics`); only after success does it call `approve`. No biometrics enrolled or available → `AccountError.biometricsUnavailable`, and nothing is sent.
+  - The QR format stays as in the roadmap (`#<secret>.<X25519 public key>`); the parser takes the secret before the first `.`.
 - **Push** (decision 3):
   - Sealing:
     - The device seals `{"t","k","e","b"}` (server spec §7.4) with `HPKE.Sender(recipientKey:ciphersuite: .Curve25519_SHA256_ChachaPoly, info: "push-handle-v1")`.
@@ -59,6 +64,9 @@
 5. **`LiveAccountService` lives in `ServerKit`**, not the app target, so its logic is unit-tested on Linux against stubs.
 6. **Typed throws.** `AccountService` becomes `async throws(AccountError)`, and every user-visible error text lives in the app's String Catalog (decision for AGENTS.md's "all strings in the String Catalog").
 7. **`UsernameCheck` gains `.unknown`**, used when the server can't be reached; the field shows no verdict.
+8. **Link approval shows details, needs Face ID or Touch ID, and warns plainly** (Design, "Approving a link"; threat model OPEN-24 and LNK-S-03). **Approved by owner 2026-10-27.**
+   - **This needs a plan 2 change (lane A, A5):** an authed `POST /v1/link/{linkID}/info {secret}` → `200 {deviceName, platform, createdAt}`, `403 forbidden` on a wrong secret, `410 expired` after expiry or claim. It reads the existing `link_requests` row (`createdAt` = `expires_at − 5 min`) and changes nothing. Recorded in the roadmap.
+   - The notification to the account's own devices when a device is added lives in **plan 7 A4**, not here: it is driven by the MLS commit that actually adds the device, not by the server's device list.
 
 ---
 
@@ -73,7 +81,7 @@
 - Names, paths, endpoint fields and error codes come from the server spec §7 and README.md, word for word. Don't rename the contract types: `ServerClient`, `HTTPTransport`, `ServerError`, `InboxItem`, `ServerEvent`, `LiveConnection` and `SessionStore`.
 - Never log tokens, codes, link secrets, emails or push tokens. `ServerClient` has no request logging.
 - UI: Apple components, SF Symbols, system text styles, VoiceOver labels, leading/trailing layout, and all new strings in `Localizable.xcstrings`. Never show "relay", "MLS", "E2EE", "codec" or "kbps".
-- **Owner review before merge:** `Sources/ServerKit/Session/`, `Sources/ServerKit/Passkeys/`, `Sources/ServerKit/Push/` and `Sources/ServerKit/Account/` (added to `.github/CODEOWNERS` in N1).
+- **Owner review before merge:** `Sources/ServerKit/Session/`, `Sources/ServerKit/Passkeys/`, `Sources/ServerKit/Presence/`, `Sources/ServerKit/Push/` and `Sources/ServerKit/Account/` (added to `.github/CODEOWNERS` in N1; `Presence/` in L3e).
 - Commits: plain messages, no `Co-Authored-By`.
 - Branch: start from `main` after `feat/app-ui-sample-data` is merged. The lanes branch from `feat/client-networking`.
 
@@ -88,6 +96,7 @@
    - HPKE framing `enc ‖ ct`
 
    Pinned by N1 `base64URLRoundTrip`, N1 `decodesGoTimestamps`, and L3 `opensGoSealedVector`.
+6. **A link can't be approved by accident.** Scanning or pasting never sends `approve`; approval needs a successful Face ID or Touch ID check on this device, and a failed, cancelled or unavailable check sends nothing. The screen names the device and says it can read future messages. Pinned by S1 `linkApprovalRequiresBiometrics` and `linkRequestShowsDeviceDetails`, and S2 `linkApprovalShowsWarning`.
 5. **Passkey availability per host.** A server outside `PASSKEY_DOMAINS` must never start an `ASAuthorization` request. Sign-up finishes without a credential, and Lost device offers only the email code. Pinned by S1 `signUpWithoutPasskeyOnOtherHosts`.
 
 ---
@@ -107,7 +116,7 @@ Stage 2  Integration (1 agent)    S1 LiveAccountService → S2 app wiring → S3
   |---|---|
   | L1 | `API/`, `Models/` |
   | L2 | `Live/` |
-  | L3 | `Session/Keychain*`, `Passkeys/`, `Push/`, and `App/DesignSystem/QRScannerView.swift` |
+  | L3 | `Session/Keychain*`, `Passkeys/`, `Presence/`, `Push/`, and `App/DesignSystem/QRScannerView.swift` |
 
 - Merge order: L1, L2, L3. `Package.swift` is written once in N1, and lanes never edit it.
 - S3 needs plan 2 (the Go server) merged on the branch. S1 and S2 do not.
@@ -188,9 +197,13 @@ public enum UsernameCheck { case available, taken, invalid, unknown }   // + .un
 public enum AccountError: Error, Equatable, Sendable {
     case inviteRequired, inviteInvalid, usernameTaken, invalidUsername, invalidEmail
     case codeInvalid, codeExpired, tooManyAttempts(retryAfterSeconds: Int?)
-    case linkExpired, wrongServer, passkeyUnavailable, cancelled, network, server
+    case linkExpired, wrongServer, passkeyUnavailable, biometricsUnavailable, cancelled, network, server
 }
 public struct LinkCode: Equatable, Sendable { public let qrText: String; public let expiresAt: Date }
+public struct LinkRequest: Equatable, Sendable {                 // what the approval screen shows (decision 8)
+    public let linkID: String; public let secret: String          // secret is never logged or shown
+    public let deviceName: String; public let platform: DevicePlatform; public let requestedAt: Date
+}
 public struct DeviceInfo: Identifiable, Equatable, Sendable {
     public let id: String; public let name: String; public let platform: DevicePlatform
     public let lastActive: Date; public let isThisDevice: Bool
@@ -212,7 +225,8 @@ public struct DeviceInfo: Identifiable, Equatable, Sendable {
     func addPasskey() async throws(AccountError)
     func makeLinkCode() async throws(AccountError) -> LinkCode
     func waitForLinkApproval() async throws(AccountError)   // returns when signed in
-    func approveLink(qrText: String) async throws(AccountError)
+    func linkRequest(qrText: String) async throws(AccountError) -> LinkRequest   // host check + POST …/info; never approves
+    func approveLink(_ request: LinkRequest) async throws(AccountError)          // Face ID / Touch ID first, then approve
     func devices() async throws(AccountError) -> [DeviceInfo]
     func removeDevice(id: String) async throws(AccountError)
     func deleteAccount() async throws(AccountError)
@@ -223,6 +237,7 @@ public struct DeviceInfo: Identifiable, Equatable, Sendable {
 `SampleAccountService` keeps its sample constants: code `123456`, invite `BETA-2026`, taken names `riya` and `admin`.
 - Its `linkingCode` becomes `makeLinkCode()` returning `qrText "https://home.example.org/link/sample#7Q2K9"`.
 - `waitForLinkApproval()` returns at once.
+- `linkRequest(qrText:)` returns `LinkRequest(linkID: "sample", secret: "7Q2K9", deviceName: "Ana's iPad", platform: .iPhone, requestedAt: <now − 1 min>)`; `approveLink(_:)` adds that device to the sample list (no biometric prompt in sample mode).
 - `devices()` returns `LinkedDevice.samples` mapped to `DeviceInfo`.
 
 `AppModel` changes:
@@ -245,6 +260,7 @@ public struct DeviceInfo: Identifiable, Equatable, Sendable {
 | `linkExpired` | "This code has expired. Start again on the new device." |
 | `wrongServer` | "This code is for a different server." |
 | `passkeyUnavailable` | "Passkeys aren't available on this server. Use an email code instead." |
+| `biometricsUnavailable` | "Turn on Face ID or Touch ID on this device to approve a new device." |
 | `network` | "Can't reach the server. Check your connection and try again." |
 | `server` | "Something went wrong on the server. Try again later." |
 
@@ -255,6 +271,7 @@ Views show the text under the field with `.foregroundStyle(.red)`, plus `accessi
   - `rightCodePasses`.
   - `inviteRedeem`: `BETA-2026` → true; `NOPE` → throws `.inviteInvalid`.
   - `linkCodeShape`: `qrText.hasPrefix("https://home.example.org/link/")`.
+  - `sampleLinkRequestThenApprove`: `linkRequest(qrText:)` gives `deviceName == "Ana's iPad"`; after `approveLink(_:)`, `devices()` has one more entry.
   - `devicesIncludeThisDevice`: exactly one has `isThisDevice`.
   - `recoveredFinishesOnboarding`: `OnboardingFlow` goes from `.lostDevice` through `recovered()` to `.done`.
 - [ ] **Step 2:** `cd apps/apple/Packages/AppCore && swift test --no-parallel` → FAIL.
@@ -291,6 +308,7 @@ Test command: `cd apps/apple/Packages/ServerKit && swift test --no-parallel --fi
 - `me() -> Me`, `deleteMe()`
 - `devices() -> [Device]`, `revokeDevice(id: String)`
 - `linkStart(deviceName: String, platform: String) -> LinkTicket`
+- `linkInfo(linkID: String, secret: String) -> LinkInfo` (decision 8; plan 2 adds the endpoint)
 - `linkApprove(linkID: String, secret: String, sealed: Data?)`
 - `linkClaim(linkID: String, claimToken: String) -> LinkClaim`
 
@@ -299,6 +317,7 @@ Models:
 - `Me{accountID, username, email, displayName, findByEmail}`
 - `Device{id, name, platform, createdAt, lastSeenAt, current}`
 - `LinkTicket{linkID, secret, claimToken, expiresAt}`
+- `LinkInfo{deviceName: String, platform: String, createdAt: Date}`
 - `enum LinkClaim { case pending; case approved(NewSession, sealed: Data?) }`: 202 means `.pending`; 200 means `.approved`
 - `ServerInfo` (all spec §7.5 fields), with `func policy() -> ServerPolicy`
 - `CreationOptions{challenge: Data, rpID: String, rpName: String, userID: Data, userName: String, userDisplayName: String}`, parsed from go-webauthn's `{"publicKey":{…}}` JSON (`challenge`, `rp.id`, `rp.name`, `user.id`, `user.name`, `user.displayName`)
@@ -313,6 +332,7 @@ Models:
   - `creationOptionsParse`: a captured go-webauthn options fixture gives `challenge`, `rpID == "chat.test"` and a 16-byte `userID`. Keep the fixture in `Tests/ServerKitTests/Fixtures/creation-options.json`, written by hand to match go-webauthn's field names.
   - `registrationCredentialJSON`: the encoded JSON matches the fixture byte for byte, with the keys sorted via `.sortedKeys`.
   - `linkClaimPendingThenApproved`: 202 `{}` gives `.pending`; 200 gives `.approved` with a matching `sealed`.
+  - `linkInfoRequest`: `linkInfo(linkID: "L1", secret: "S1")` sends `POST /v1/link/L1/info` with the bearer token and body exactly `{"secret":"S1"}`; the reply `{"deviceName":"Ana's MacBook","platform":"mac","createdAt":"2026-11-01T12:00:00.5Z"}` decodes; a 410 gives `ServerError(code: "expired")`.
   - `emailStartAccepts202`.
   - `revokeDeviceUsesDelete`: `DELETE /v1/devices/d2` with the bearer token.
 - [ ] **Step 2:** Run → FAIL.
@@ -514,6 +534,28 @@ Test command: on the macOS runner, `cd apps/apple/Packages/ServerKit && swift te
 - [ ] **Step 1:** Build in CI (`apps/apple/scripts/test-ios.sh`). This view has no unit test. S2's UI test covers the paste path.
 - [ ] **Step 2: Commit** `feat(app): QR scanner with paste fallback`.
 
+### Task L3e: User presence check (Face ID / Touch ID)
+
+**Files:**
+- Create: `Presence/UserPresence.swift` (cross-platform protocol), `Presence/LocalAuthenticationPresence.swift` (`#if canImport(LocalAuthentication)`)
+- Create: `Sources/ServerKitTesting/FakePresence.swift`
+- Test: `Tests/ServerKitAppleTests/PresenceTests.swift`
+- Modify: `.github/CODEOWNERS`: add `Sources/ServerKit/Presence/` to the owner-review folders (authentication)
+
+**Interfaces — Produces:**
+- `public protocol UserPresenceChecking: Sendable { func confirm(reason: String) async throws(AccountError) }`
+- `public struct LocalAuthenticationPresence: UserPresenceChecking`
+  - `public static let policy: LAPolicy = .deviceOwnerAuthenticationWithBiometrics`: biometrics only, no passcode fallback (decision 8)
+  - a fresh `LAContext` per call with `localizedFallbackTitle = ""`, so no "Enter Password" button appears
+  - `canEvaluatePolicy` false with `.biometryNotAvailable`, `.biometryNotEnrolled` or `.biometryLockout` → `.biometricsUnavailable`; `.userCancel`, `.appCancel`, `.systemCancel` → `.cancelled`; any other failure → `.cancelled`
+- `ServerKitTesting.FakePresence: UserPresenceChecking`, with `init(result: Result<Void, AccountError>)` and `reasons: [String]`
+
+- [ ] **Step 1: Failing tests.**
+  - `presencePolicyIsBiometricOnly`: `LocalAuthenticationPresence.policy == .deviceOwnerAuthenticationWithBiometrics`.
+  - `presenceMapsErrors`: a table of `LAError.Code` → `AccountError` matches the mapping above (through an internal `static func map(_ code: LAError.Code) -> AccountError`).
+- [ ] **Step 2:** Run on macOS → FAIL. **Step 3:** Implement. **Step 4:** Run → PASS.
+- [ ] **Step 5: Commit** `feat(serverkit): Face ID / Touch ID presence check for link approval`.
+
 ---
 
 ## Stage 2 — Integration
@@ -528,7 +570,7 @@ Test command: on the macOS runner, `cd apps/apple/Packages/ServerKit && swift te
 @MainActor public final class LiveAccountService: AccountService {
     public init(defaultHost: String, passkeyDomains: [String], platform: DevicePlatform, deviceName: String,
                 sessions: SessionStore, makeClient: @escaping @Sendable (String) -> ServerClient,
-                passkeys: any PasskeyAuthenticating, sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) })
+                passkeys: any PasskeyAuthenticating, presence: any UserPresenceChecking, sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) })
     public private(set) var client: ServerClient?     // for plans 7–8 once signed in
 }
 ```
@@ -566,13 +608,18 @@ Test command: on the macOS runner, `cd apps/apple/Packages/ServerKit && swift te
     - `makeLinkCode()` → `qrText == "https://chat.test/link/L1#S1"`
     - `waitForLinkApproval()` sees `.pending`, `.pending`, then `.approved`, with 2 sleeps of 2 s each, then signs in
     - when `sleep` has passed 5 minutes in total → `.linkExpired`
-  - `approveLinkRejectsOtherHost`: signed in on `chat.test`, scanning `https://evil.test/link/L1#S1` → `.wrongServer`, and `StubTransport.requests` is empty.
-  - `approveLinkSendsSecret`: the body has `{"secret":"S1"}`, sent to `/v1/link/L1/approve`.
+  - `approveLinkRejectsOtherHost`: signed in on `chat.test`, `linkRequest(qrText: "https://evil.test/link/L1#S1.PK")` → `.wrongServer`, and `StubTransport.requests` is empty.
+  - `linkRequestShowsDeviceDetails`: `linkRequest(qrText: "https://chat.test/link/L1#S1.PK")` sends only `POST /v1/link/L1/info {"secret":"S1"}` (no `/approve`) and returns `LinkRequest(linkID: "L1", secret: "S1", deviceName: "Ana's MacBook", platform: .mac, requestedAt: 2026-11-01T12:00:00Z)`; `FakePresence.reasons` is empty.
+  - `linkApprovalRequiresBiometrics`:
+    - `FakePresence(result: .failure(.cancelled))` → `approveLink(req)` throws `.cancelled`, and no request to `/v1/link/L1/approve` was made
+    - `FakePresence(result: .failure(.biometricsUnavailable))` → throws `.biometricsUnavailable`, no `/approve` request
+    - `FakePresence(result: .success(()))` → exactly one `POST /v1/link/L1/approve` with body `{"secret":"S1"}`, sent after `confirm` was called once with reason `"Approve a new device for your account"`
+  - `linkRequestExpired`: `/info` answers 410 → `.linkExpired`.
   - `devicesMapAndRemove`: `current` → `isThisDevice`; `"iphone"` → `.iPhone`, `"mac"` → `.mac`; `removeDevice` calls `DELETE`.
   - `deleteAccountClearsSession`: `deleteMe` → `SessionStore.current == nil`, and `isSignedIn == false`.
   - `unauthorizedSignsOut`: any 401 → `isSignedIn == false`.
 - [ ] **Step 2:** Run → FAIL.
-- [ ] **Step 3: Implement.** The device name and platform come from `init`; the app passes `UIDevice.current.name`/`.iPhone` or `Host.current().localizedName ?? "Mac"`/`.mac`.
+- [ ] **Step 3: Implement.** `approveLink` calls `presence.confirm` before any request, and re-checks the host. The app passes `LocalAuthenticationPresence()`; tests pass `FakePresence`. The device name and platform come from `init`; the app passes `UIDevice.current.name`/`.iPhone` or `Host.current().localizedName ?? "Mac"`/`.mac`.
 - [ ] **Step 4:** Run → PASS.
 - [ ] **Step 5: Commit** `feat(serverkit): live account service`.
 
@@ -614,10 +661,16 @@ Test command: on the macOS runner, `cd apps/apple/Packages/ServerKit && swift te
   - on `.linkExpired`, shows the error and a "Show new code" button
   - the sample-only "I scanned it" button stays only for the sample service
 - Lost device: "Sign in with passkey" is hidden when `!supportsPasskeys`. After `recover`, when `supportsPasskeys`, call `addPasskey()`; on `.cancelled`, carry on. Then `recovered()`.
-- Linked devices: "Link a device" → `QRScannerView` → `approveLink(qrText:)` → `refreshDevices()`; swipe to remove → `removeDevice`.
+- Linked devices: "Link a device" → `QRScannerView` → `linkRequest(qrText:)` → `LinkApprovalView` (below) → `approveLink(_:)` → `refreshDevices()`; swipe to remove → `removeDevice`.
+- `LinkApprovalView` (new, `App/Features/Settings/LinkApprovalView.swift`; decision 8), a sheet with system components only:
+  - title "Add this device?"; a `Form` with `LabeledContent("Name", …)`, `LabeledContent("Type", "iPhone" | "Mac")` and `LabeledContent("Requested", …)` using `Text(requestedAt, style: .relative)` plus the time; identifiers `linkapproval.name`, `linkapproval.type`, `linkapproval.time`
+  - the warning, with `Image(systemName: "exclamationmark.triangle")` and `.foregroundStyle(.orange)`: "This device will be able to read all your future messages. Only approve it if it's yours and you started linking it just now." (`linkapproval.warning`)
+  - buttons "Approve" (`linkapproval.approve`, VoiceOver hint "Asks for Face ID or Touch ID") and "Don't Approve" (`.cancel` role); errors show `AccountError` text
+  - the reason string passed to `presence.confirm` is "Approve a new device for your account"
+  - `project.yml` gains `INFOPLIST_KEY_NSFaceIDUsageDescription`: "Face ID confirms it's you before a new device joins your account." Every string goes in the String Catalog (the usage description in `InfoPlist.xcstrings`).
 - Delete account: confirm with "Delete your account? Your messages on this device are erased and can't be recovered.", then `deleteAccount()` and reset.
 
-- [ ] **Step 1: Failing UI test** (`AppUITests/iOS/LinkingTests.swift`, sample mode): Settings → Linked devices → Link a device → paste `https://home.example.org/link/sample#7Q2K9` into `scanner.paste` → Done → the list shows 3 devices. Also run the existing suite with `-sampleData`.
+- [ ] **Step 1: Failing UI test** (`AppUITests/iOS/LinkingTests.swift`, sample mode): Settings → Linked devices → Link a device → paste `https://home.example.org/link/sample#7Q2K9` into `scanner.paste` → Done → `linkApprovalShowsWarning`: `linkapproval.name` reads "Ana's iPad", `linkapproval.type` reads "iPhone", and `linkapproval.warning` exists; the list still shows 2 devices → tap `linkapproval.approve` → the list shows 3 devices. Also run the existing suite with `-sampleData`.
 - [ ] **Step 2:** Push → the CI iOS job FAILS on the new test.
 - [ ] **Step 3: Implement** the wiring above, adding every new string to `Localizable.xcstrings`.
 - [ ] **Step 4:** Push → the `core`, `ios` and `macos` jobs are green, and `check-test-only-libs.sh` passes.
@@ -647,7 +700,7 @@ Needs plan 2 merged on the branch.
 - `signUpLinkRevoke`:
   1. The iPhone client signs up with `SoftwarePasskey(origin: E2E_ORIGIN)` and `passkeyDomains: ["localhost"]` → `me().username == "ana"`.
   2. The Mac client calls `makeLinkCode()` and starts `waitForLinkApproval()` in a task.
-  3. The iPhone runs `approveLink(qrText:)`; its host `localhost` matches.
+  3. The iPhone runs `linkRequest(qrText:)` → `deviceName` and `platform` equal what the Mac sent; then `approveLink(_:)` with `FakePresence(result: .success(()))`. Its host `localhost` matches.
   4. The Mac task finishes, and the Mac `me()` gives the same account.
   5. The Mac's `LiveConnection` reaches `.connected`.
   6. The iPhone runs `removeDevice(mac)` → the Mac `states` reach `.revoked` within 5 s, and the Mac `me()` throws `ServerError(status: 401)`.

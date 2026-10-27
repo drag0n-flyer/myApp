@@ -68,6 +68,7 @@ docs/measurements/               plan 5
 - Encryption mode strings are the server's: `e2ee` and `server_readable`.
 - Contact IDs in AppCore are server account IDs.
 - Device-linking QR: `https://<host>/link/<linkID>#<secret>.<X25519 public key, b64url>`; the approver seals the link snapshot to that key (server design §7.1).
+  - Before approving, the approver fetches `POST /v1/link/{linkID}/info {secret}` → `{deviceName, platform, createdAt}` (plan 2 lane A adds it; plan 6 shows it, then requires Face ID / Touch ID).
 - Passkeys work only for hosts in the app's associated domains (the project's servers). On other servers, sign-up skips the passkey and sign-in uses an email code.
 
 ### `SecureMessaging` (plan 4 owns it; plans 7 and 8 consume it)
@@ -92,7 +93,9 @@ public protocol MLSEngine: Sendable {
     func epoch(of group: GroupID) async throws -> UInt64
     func exportSecret(group: GroupID, label: String, length: Int) async throws -> Data
     func members(of group: GroupID) async throws -> [String]   // added by plan 7's request
+    func memberKeys(of group: GroupID) async throws -> [MemberKey]   // requested by plan 7 (safety numbers, device lines; OPEN-6/7): sorted by identity, includes this device
 }
+public struct MemberKey: Sendable, Equatable { public let identity: String; public let signatureKey: Data }   // the leaf's MLS signature public key; FakeMLSEngine: Data("fake-sig:\(identity)".utf8)
 public enum MLSError: Error   // plan 4 defines the cases
 // The engine re-reads group state from storage on every call: the NSE changes it from another process.
 // Product `SecureMessagingCore` (no binary target, builds on Linux) holds the protocol, the types,
@@ -168,7 +171,10 @@ The sample services stay. The launch argument `-sampleData` selects them, so the
 - Plan 5 adds `appserver lab session` and `APP_LAB_MODE` to the server's identity package after plan 2 merges (owner review: auth).
 - Plan 8 needs plan 3's WebRTC build to add a capture post-processing hook for RNNoise and H.264 hardware factories.
 - Plan 8's first app build checks that plan 4's CryptoKit bridge symbols and WebRTC's symbols don't collide.
-- Plan 9's test vectors (push padding, signatures, sealed handles, TURN credentials, escrow, link sealing) are checked by both the Go and Swift tests.
+- Plan 9's test vectors (push padding, signatures, sealed handles, TURN credentials, escrow, link sealing, safety numbers) are checked by both the Go and Swift tests.
+- **Plan 2 lane A (A5) adds `POST /v1/link/{linkID}/info`** (authed; `{secret}` → `{deviceName, platform, createdAt}`; `403 forbidden`, `410 expired`) for plan 6's link approval screen (OPEN-24). Owner review: auth.
+- **Plan 4 adds `MLSEngine.memberKeys(of:)` and `MemberKey`** (contract above) for plan 7 A4. Owner review: cryptography.
+- **Plan 7's content envelope gains kind `mode`** (`{"k":"mode","m":"e2ee"|"server_readable"}`), sent first by a conversation's creator and after every add; clients pin it and never add escrow to a chat pinned `e2ee` (OPEN-18). Plan 9's protocol spec documents it and the safety-number derivation (plan 7 Design 20).
 
 ## Owner decisions log
 
