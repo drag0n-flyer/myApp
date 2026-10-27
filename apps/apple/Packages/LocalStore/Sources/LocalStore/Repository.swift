@@ -17,6 +17,11 @@ public final class Repository: @unchecked Sendable {
         self.now = now
     }
 
+    /// Runs `body` in one transaction (joins an outer one). Rolls back when `body` throws.
+    public func transaction<T>(_ body: () throws -> T) throws -> T {
+        try db.transaction { _ in try body() }
+    }
+
     // MARK: contacts
 
     public func upsertContact(_ c: ContactRecord) throws {

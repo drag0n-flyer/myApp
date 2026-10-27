@@ -34,6 +34,11 @@ public protocol ConversationManaging: Sendable {
     func handleStaleEpoch(_ conversation: ConversationRecord) async throws
 }
 
+/// Sends a control envelope (receipt, reaction...) that is not stored. Lane B's `Outbox` implements it.
+public protocol ControlSender: Sendable {
+    func sendControl(_ body: ContentEnvelope.Body, chatID: String) async
+}
+
 /// Shows "New device added" (Design 19). The app posts a local notification; the notification
 /// extension does nothing here because it shows the notice itself.
 public protocol DeviceNotifier: Sendable {

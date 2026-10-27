@@ -121,6 +121,12 @@ public actor ConversationManager: ConversationManaging {
     /// Called by the inbox processor after `mls.process` returned `.joined`.
     public func joined(group: GroupID, serverConversationID: String) async throws {
         let info = try await deps.server.conversation(id: serverConversationID)
+        try await joined(group: group, serverConversationID: serverConversationID, serverMode: info.mode)
+    }
+
+    /// The local part of `joined`, with the server's mode already fetched. The inbox processor fetches it
+    /// before it takes the process lock, so no network call happens under the lock.
+    func joined(group: GroupID, serverConversationID: String, serverMode: String) async throws {
         let identities = try await deps.mls.members(of: group)
         let accounts = Set(identities.map { String($0.split(separator: "/", maxSplits: 1)[0]) })
         guard let peer = accounts.subtracting([deps.me.accountID]).sorted().first else { throw SyncError.noPeer }
@@ -132,7 +138,7 @@ public actor ConversationManager: ConversationManaging {
         }
         // `inner_mode` stays NULL until the creator's `mode` envelope arrives.
         try deps.repo.upsertConversation(ConversationRecord(
-            serverID: serverConversationID, chatID: peer, groupID: group.raw, mode: info.mode, innerMode: nil,
+            serverID: serverConversationID, chatID: peer, groupID: group.raw, mode: serverMode, innerMode: nil,
             modeMismatch: false, epoch: Int64(epoch), active: true, createdAt: deps.now()))
     }
 
