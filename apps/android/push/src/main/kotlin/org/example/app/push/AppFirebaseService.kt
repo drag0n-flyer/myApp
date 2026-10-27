@@ -12,10 +12,15 @@ import kotlinx.coroutines.runBlocking
 class AppFirebaseService : FirebaseMessagingService() {
     override fun onMessageReceived(message: RemoteMessage) {
         val dispatcher = PushRuntime.dispatcher ?: return
-        val high = message.priority == RemoteMessage.PRIORITY_HIGH
+        // The priority the server sent, not the delivered one: FCM may lower the delivered priority of an app
+        // whose high-priority pushes show nothing, and that must not hide the count.
+        val high = message.originalPriority == RemoteMessage.PRIORITY_HIGH
         runBlocking(Dispatchers.Default) { dispatcher.onFcm(message.data, high) }
     }
 
+    // The Firebase base class marks this member deprecated in its Kotlin signature, but it is still the only
+    // callback for a new token.
+    @Suppress("OVERRIDE_DEPRECATION")
     override fun onNewToken(token: String) {
         val sink = PushRuntime.registrationSink ?: return
         runBlocking(Dispatchers.Default) {

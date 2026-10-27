@@ -67,10 +67,15 @@ private class FakeRing : IncomingCallSink {
 private class FakeEffects : PushEffects {
     val shown = mutableListOf<NotificationOutcome>()
     var fetches = 0
+    val fetchPriorities = mutableListOf<Boolean>()
+    val missedShown = mutableListOf<Pair<String, String>>()
+    var strangerShown = 0
     val missed = mutableListOf<Pair<String, String>>()
     val pushes = mutableListOf<Pair<Boolean, Boolean>>()
     override fun show(outcome: NotificationOutcome) { shown += outcome }
-    override fun enqueueInboxFetch() { fetches++ }
+    override fun enqueueInboxFetch(highPriority: Boolean) { fetches++; fetchPriorities += highPriority }
+    override fun showMissedCall(chatId: String, callerName: String) { missedShown += chatId to callerName }
+    override fun showStrangerMissedCall() { strangerShown++ }
     override suspend fun recordMissedCall(callId: String, fromAccountId: String) { missed += callId to fromAccountId }
     override fun pushHandled(highPriority: Boolean, showedSomething: Boolean) { pushes += highPriority to showedSomething }
 }
@@ -98,8 +103,12 @@ class PushWakeTest {
         for (c in cases) {
             val o = c.jsonObject
             val name = o["name"]!!.jsonPrimitive.content
-            // An over-limit payload is replaced by an empty one before padding: the padded form carries length 0.
-            val expected = if ("replaced by empty" in name) ByteArray(0) else hex(o["payloadHex"]!!.jsonPrimitive.content)
+            // The expected payload is what the padded bytes' own 2-byte length prefix says (an over-limit payload
+            // is padded as length 0, whatever payloadHex holds), so it does not depend on the case name.
+            val padded = hex(o["paddedHex"]!!.jsonPrimitive.content)
+            val length = ((padded[0].toInt() and 0xff) shl 8) or (padded[1].toInt() and 0xff)
+            val expected = if (length == 0) ByteArray(0) else hex(o["payloadHex"]!!.jsonPrimitive.content)
+            assertEquals(length, expected.size, "$name: payloadHex length must match the prefix")
             assertContentEquals(expected, PushPadding.unpad(hex(o["paddedHex"]!!.jsonPrimitive.content)), o["name"].toString())
         }
         for (n in root["negative"]!!.jsonArray) {
@@ -131,8 +140,10 @@ class PushWakeTest {
     fun emptyEnqueuesExpeditedFetch() = runTest {
         dispatcher().onFcm(mapOf("k" to "message", "d" to b64(pad(ByteArray(0)))), highPriority = true)
         assertEquals(1, effects.fetches)
+        assertEquals(listOf(true), effects.fetchPriorities)
         assertTrue(handler.messagePayloads.isEmpty())
         assertTrue(effects.shown.isEmpty())
+        assertTrue(effects.pushes.isEmpty(), "counted when the fetch ends, not at hand-off")
     }
 
     @Test
@@ -149,10 +160,11 @@ class PushWakeTest {
     }
 
     @Test
-    fun unknownKindIsIgnored() = runTest {
+    fun unknownKindShowsNothingAndCountsQuiet() = runTest {
         dispatcher().onFcm(mapOf("k" to "other", "d" to b64(pad(ByteArray(1)))), highPriority = true)
         dispatcher().onFcm(mapOf("d" to b64(pad(ByteArray(1)))), highPriority = true)
         assertTrue(effects.shown.isEmpty() && handler.messagePayloads.isEmpty() && handler.callPayloads.isEmpty())
+        assertEquals(listOf(true to false, true to false), effects.pushes)
     }
 
     @Test
@@ -165,6 +177,8 @@ class PushWakeTest {
         assertTrue(effects.shown.single() === NotificationOutcome.Generic)
         PushDispatcher(failing, ring, effects).onFcm(mapOf("k" to "call", "d" to b64(pad(ByteArray(1)))), highPriority = true)
         assertTrue(ring.rung.isEmpty())
+        assertEquals(2, effects.shown.size, "an undecryptable ring falls back to the generic notice")
+        assertTrue(effects.shown.all { it === NotificationOutcome.Generic })
     }
 
     @Test
@@ -173,7 +187,8 @@ class PushWakeTest {
         handler.delayMs = 60_000
         dispatcher(budgetMs = 8_000).onFcm(mapOf("k" to "message", "d" to b64(pad(ByteArray(1)))), highPriority = true)
         assertEquals(1, effects.fetches)
-        assertTrue(effects.shown.isEmpty())
+        assertTrue(effects.shown.single() === NotificationOutcome.Generic, "the budget ran out: post the generic notice")
+        assertEquals(listOf(true to true), effects.pushes)
         assertEquals(8_000, testScheduler.currentTime)
     }
 
@@ -182,7 +197,9 @@ class PushWakeTest {
         handler.message = NotificationOutcome.FetchInbox
         dispatcher().onFcm(mapOf("k" to "message", "d" to b64(pad(ByteArray(1)))), highPriority = false)
         assertEquals(1, effects.fetches)
+        assertEquals(listOf(false), effects.fetchPriorities)
         assertTrue(effects.shown.isEmpty())
+        assertTrue(effects.pushes.isEmpty())
     }
 
     @Test
@@ -200,15 +217,28 @@ class PushWakeTest {
         dispatcher().onFcm(mapOf("k" to "call", "d" to b64(pad(ByteArray(1)))), highPriority = true)
         assertTrue(ring.rung.isEmpty())
         assertEquals(listOf("call2" to "stranger"), effects.missed)
+        assertEquals(1, effects.strangerShown)
+        assertEquals(listOf(true to true), effects.pushes)
     }
 
     @Test
-    fun droppedAndEmptyCallDoNothing() = runTest {
+    fun callEndedBeforeAnswerPostsMissedCallForThatChat() = runTest {
+        handler.call = RingOutcome.MissedBeforeAnswer("call3", "chat7", "Ana")
+        dispatcher().onFcm(mapOf("k" to "call", "d" to b64(pad(ByteArray(1)))), highPriority = true)
+        assertTrue(ring.rung.isEmpty())
+        assertEquals(listOf("chat7" to "Ana"), effects.missedShown)
+        assertEquals(listOf(true to true), effects.pushes)
+    }
+
+    @Test
+    fun droppedAndEmptyCallFallBackToGeneric() = runTest {
         handler.call = RingOutcome.Drop
         dispatcher().onFcm(mapOf("k" to "call", "d" to b64(pad(ByteArray(1)))), highPriority = true)
         dispatcher().onFcm(mapOf("k" to "call", "d" to b64(pad(ByteArray(0)))), highPriority = true)
         assertTrue(ring.rung.isEmpty() && effects.missed.isEmpty())
         assertTrue(handler.callPayloads.size == 1)
+        assertEquals(2, effects.shown.size)
+        assertTrue(effects.shown.all { it === NotificationOutcome.Generic })
     }
 
     @Test
@@ -224,10 +254,12 @@ class PushWakeTest {
         assertContentEquals(padded, handler.callPayloads.single())
         assertEquals(1, ring.rung.size)
 
+        val before = effects.pushes.size
         dispatcher().onUnifiedPush(byteArrayOf(0x07) + padded)
         dispatcher().onUnifiedPush(ByteArray(0))
         assertEquals(1, handler.messagePayloads.size)
         assertEquals(1, handler.callPayloads.size)
+        assertEquals(listOf(true to false, true to false), effects.pushes.drop(before))
     }
 
     @Test
@@ -342,6 +374,28 @@ class PushWakeTest {
     }
 
     @Test
+    fun strangerMissedCallIsQuietOnRequestsChannelAndNamesNobody() {
+        MessageNotifier(context).showStrangerMissedCall()
+        val n = active().single()
+        assertEquals("requests", n.channelId)
+        assertEquals("Missed call", n.extras.getString("android.text"))
+        assertEquals(context.applicationInfo.loadLabel(context.packageManager).toString(), n.extras.getString("android.title"))
+        @Suppress("DEPRECATION") val low = n.priority <= androidx.core.app.NotificationCompat.PRIORITY_LOW
+        assertTrue(low)
+    }
+
+    @Test
+    fun missedCallReplacesTheChatsNotification() {
+        val notifier = MessageNotifier(context)
+        notifier.show(NotificationOutcome.Message("c1", "Ana", "hello"))
+        notifier.showMissedCall("c1", "Ana")
+        val n = active().single()
+        assertEquals("messages", n.channelId)
+        assertEquals("Ana", n.extras.getString("android.title"))
+        assertEquals("Missed call", n.extras.getString("android.text"))
+    }
+
+    @Test
     fun newDeviceUsesDevicesChannel() {
         MessageNotifier(context).show(NotificationOutcome.NewOwnDevice("Pixel"))
         val n = active().single()
@@ -363,7 +417,7 @@ class PushWakeTest {
             R.string.push_channel_messages, R.string.push_channel_requests, R.string.push_channel_calls,
             R.string.push_channel_devices, R.string.push_channel_service, R.string.push_generic_body,
             R.string.push_request_body, R.string.push_new_device_body, R.string.push_new_device_body_unnamed,
-            R.string.push_fetch_title,
+            R.string.push_fetch_title, R.string.push_missed_call_body,
         )) {
             val text = context.getString(id, "x").lowercase()
             for (w in words) assertFalse(text.contains(w), "$text has $w")
@@ -400,6 +454,70 @@ class PushWakeTest {
         assertEquals("Bo", active().single().extras.getString("android.title"))
     }
 
+    private fun fetcherReturning(vararg o: NotificationOutcome) = object : InboxFetcher {
+        override suspend fun fetch() = o.toList()
+    }
+
+    @Test
+    fun runnerCountsQueuedPushesAfterTheOutcomeIsKnown() = runTest {
+        val monitor = MissedPushMonitor(context)
+        monitor.fetchQueued(highPriority = true)
+        monitor.fetchQueued(highPriority = true)
+        monitor.fetchQueued(highPriority = false)
+        assertEquals(0, monitor.highPriorityCount(), "not counted at hand-off")
+        PushRuntime.inboxFetcher = fetcherReturning(NotificationOutcome.Message("c", "Bo", "yo"))
+        try {
+            InboxFetchRunner.run(context)
+        } finally {
+            PushRuntime.inboxFetcher = null
+        }
+        assertEquals(2, monitor.highPriorityCount())
+        assertEquals(0, monitor.quietHighPriorityCount())
+    }
+
+    @Test
+    fun runnerPostsGenericWhenFetchShowsNothingAndCountsItAsShown() = runTest {
+        val monitor = MissedPushMonitor(context)
+        monitor.fetchQueued(highPriority = true)
+        PushRuntime.inboxFetcher = fetcherReturning(NotificationOutcome.Nothing)
+        try {
+            assertTrue(InboxFetchRunner.run(context))
+        } finally {
+            PushRuntime.inboxFetcher = null
+        }
+        val n = active().single()
+        assertEquals("messages", n.channelId)
+        assertEquals("New message", n.extras.getString("android.text"))
+        assertEquals(1, monitor.highPriorityCount())
+        assertEquals(0, monitor.quietHighPriorityCount())
+    }
+
+    @Test
+    fun runnerPostsGenericWhenFetchFails() = runTest {
+        val monitor = MissedPushMonitor(context)
+        monitor.fetchQueued(highPriority = true)
+        PushRuntime.inboxFetcher = object : InboxFetcher { override suspend fun fetch(): List<NotificationOutcome> = error("offline") }
+        try {
+            assertFalse(InboxFetchRunner.run(context))
+        } finally {
+            PushRuntime.inboxFetcher = null
+        }
+        assertEquals("New message", active().single().extras.getString("android.text"))
+        assertEquals(1, monitor.highPriorityCount())
+    }
+
+    @Test
+    fun realNotificationReplacesEarlierGeneric() = runTest {
+        MessageNotifier(context).show(NotificationOutcome.Generic)
+        PushRuntime.inboxFetcher = fetcherReturning(NotificationOutcome.Message("c", "Bo", "yo"))
+        try {
+            InboxFetchRunner.run(context)
+        } finally {
+            PushRuntime.inboxFetcher = null
+        }
+        assertEquals("Bo", active().single().extras.getString("android.title"))
+    }
+
     @Test
     fun runnerWithoutFetcherIsQuiet() = runTest {
         PushRuntime.inboxFetcher = null
@@ -408,14 +526,14 @@ class PushWakeTest {
     }
 
     @Test
-    fun runnerFailureRetriesNothingAndShowsNothing() = runTest {
+    fun runnerFailureRetriesAndAnnounces() = runTest {
         PushRuntime.inboxFetcher = object : InboxFetcher { override suspend fun fetch(): List<NotificationOutcome> = error("offline") }
         try {
             assertFalse(InboxFetchRunner.run(context))
         } finally {
             PushRuntime.inboxFetcher = null
         }
-        assertTrue(active().isEmpty())
+        assertEquals("New message", active().single().extras.getString("android.text"), "a failed fetch with a push behind it still announces")
     }
 
     @Test

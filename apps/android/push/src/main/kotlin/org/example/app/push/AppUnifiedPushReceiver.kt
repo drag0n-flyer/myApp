@@ -38,6 +38,8 @@ class AppUnifiedPushReceiver : MessagingReceiver() {
     override fun onUnregistered(context: Context, instance: String) = Unit
 
     private fun async(block: suspend () -> Unit) {
+        // Connector 3.3.5 (checked in its bytecode) never calls goAsync() and runs onMessage synchronously inside
+        // onReceive, so this is the only goAsync() and keeps the process alive until finish().
         val pending: BroadcastReceiver.PendingResult? = goAsync()
         scope.launch {
             try {

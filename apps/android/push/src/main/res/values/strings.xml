@@ -10,5 +10,6 @@
     <string name="push_new_device_title">New device</string>
     <string name="push_new_device_body">%1$s was added to your account</string>
     <string name="push_new_device_body_unnamed">A new device was added to your account</string>
+    <string name="push_missed_call_body">Missed call</string>
     <string name="push_fetch_title">Checking for new messages</string>
 </resources>

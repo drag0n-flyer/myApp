@@ -16,21 +16,34 @@ import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import kotlinx.coroutines.CancellationException
+import org.example.app.contracts.NotificationOutcome
 
 /** The long part of a wake: fetch the inbox and show what it holds. Runs as expedited work. */
 object InboxFetchRunner {
     /** Returns false when the fetch failed (the next push or app start fetches again). */
     suspend fun run(context: Context): Boolean {
         val fetcher = PushRuntime.inboxFetcher ?: return true
+        val notifier = MessageNotifier(context)
+        val monitor = MissedPushMonitor(context)
         val outcomes = try {
             fetcher.fetch()
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
+            // A push is behind this fetch: say so, as the iPhone does. A later retry replaces the notice.
+            notifier.show(NotificationOutcome.Generic)
+            monitor.fetchFinished(showedSomething = true)
             return false
         }
-        val notifier = MessageNotifier(context)
-        outcomes.forEach { notifier.show(it) }
+        val real = outcomes.filter { it != NotificationOutcome.Nothing && it != NotificationOutcome.FetchInbox }
+        if (real.isEmpty()) {
+            // The push is counted as shown only because the generic notice is shown for it.
+            if (monitor.fetchFinished(showedSomething = true) > 0) notifier.show(NotificationOutcome.Generic)
+        } else {
+            notifier.cancelGeneric()
+            real.forEach { notifier.show(it) }
+            monitor.fetchFinished(showedSomething = true)
+        }
         return true
     }
 }

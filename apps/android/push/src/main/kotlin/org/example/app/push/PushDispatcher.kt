@@ -13,8 +13,17 @@ import org.example.app.mls.MlsGate
 interface PushEffects {
     fun show(outcome: NotificationOutcome)
 
-    /** Starts the expedited inbox fetch ([InboxFetchWorker]). */
-    fun enqueueInboxFetch()
+    /**
+     * Starts the expedited inbox fetch ([InboxFetchWorker]). The push is counted for the quota measurement when
+     * the fetch ends, not now.
+     */
+    fun enqueueInboxFetch(highPriority: Boolean)
+
+    /** "Missed call" for a chat whose call ended before it was answered. */
+    fun showMissedCall(chatId: String, callerName: String)
+
+    /** A low-importance "Missed call" on the requests channel. Names nobody. */
+    fun showStrangerMissedCall()
 
     suspend fun recordMissedCall(callId: String, fromAccountId: String)
 
@@ -46,7 +55,10 @@ class PushDispatcher(
         val kind = when (data["k"]) {
             "message" -> Kind.Message
             "call" -> Kind.Call
-            else -> return
+            else -> {
+                effects.pushHandled(highPriority, showedSomething = false)
+                return
+            }
         }
         val padded = try {
             Base64.decode(data["d"] ?: "", Base64.DEFAULT)
@@ -58,11 +70,13 @@ class PushDispatcher(
 
     /** UnifiedPush: one kind byte (`0x01` message, `0x02` call), then the padded payload. Always high urgency. */
     suspend fun onUnifiedPush(content: ByteArray) {
-        if (content.isEmpty()) return
-        val kind = when (content[0]) {
+        val kind = when (content.firstOrNull()) {
             KIND_MESSAGE -> Kind.Message
             KIND_CALL -> Kind.Call
-            else -> return
+            else -> {
+                effects.pushHandled(highPriority = true, showedSomething = false)
+                return
+            }
         }
         dispatch(kind, content.copyOfRange(1, content.size), highPriority = true)
     }
@@ -81,8 +95,7 @@ class PushDispatcher(
             return
         }
         if (payload.isEmpty()) {
-            effects.enqueueInboxFetch()
-            effects.pushHandled(highPriority, showedSomething = true) // the fetch decides; not a quiet push
+            fetchLater(highPriority)
             return
         }
         val outcome = try {
@@ -93,14 +106,19 @@ class PushDispatcher(
             NotificationOutcome.Generic
         }
         when (outcome) {
-            null, NotificationOutcome.FetchInbox -> {
-                effects.enqueueInboxFetch()
-                effects.pushHandled(highPriority, showedSomething = true)
+            // Out of time: announce now, as the iPhone does. The fetch replaces it with the real notification.
+            null -> {
+                effects.enqueueInboxFetch(highPriority)
+                show(NotificationOutcome.Generic, highPriority)
             }
+            NotificationOutcome.FetchInbox -> fetchLater(highPriority)
             NotificationOutcome.Nothing -> effects.pushHandled(highPriority, showedSomething = false)
             else -> show(outcome, highPriority)
         }
     }
+
+    /** The fetch decides what the user sees and counts the push when it ends ([InboxFetchRunner]). */
+    private fun fetchLater(highPriority: Boolean) = effects.enqueueInboxFetch(highPriority)
 
     private fun show(outcome: NotificationOutcome, highPriority: Boolean) {
         effects.show(outcome)
@@ -110,10 +128,9 @@ class PushDispatcher(
     private suspend fun onCall(padded: ByteArray?, highPriority: Boolean) {
         val payload = padded?.let { PushPadding.unpad(it) }
         if (padded == null || payload == null || payload.isEmpty()) {
-            effects.pushHandled(highPriority, showedSomething = false)
+            show(NotificationOutcome.Generic, highPriority)
             return
         }
-        // A ring that cannot be opened is dropped silently: Android has no rule forcing a call UI.
         val outcome = try {
             withTimeoutOrNull(budgetMs) { MlsGate.withLock { handler.onCallPush(padded) } }
         } catch (e: CancellationException) {
@@ -128,9 +145,15 @@ class PushDispatcher(
             }
             is RingOutcome.SilentMissed -> {
                 effects.recordMissedCall(outcome.callId, outcome.fromAccountId)
-                effects.pushHandled(highPriority, showedSomething = false)
+                effects.showStrangerMissedCall()
+                effects.pushHandled(highPriority, showedSomething = true)
             }
-            else -> effects.pushHandled(highPriority, showedSomething = false)
+            is RingOutcome.MissedBeforeAnswer -> {
+                effects.showMissedCall(outcome.chatId, outcome.callerName)
+                effects.pushHandled(highPriority, showedSomething = true)
+            }
+            // A ring that cannot be opened (or ran out of time): say that something arrived, like the iPhone.
+            RingOutcome.Drop, null -> show(NotificationOutcome.Generic, highPriority)
         }
     }
 }

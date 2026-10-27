@@ -14,7 +14,14 @@ class AndroidPushEffects(
 
     override fun show(outcome: NotificationOutcome) = notifier.show(outcome)
 
-    override fun enqueueInboxFetch() = InboxFetchWorker.enqueue(context)
+    override fun enqueueInboxFetch(highPriority: Boolean) {
+        monitor.fetchQueued(highPriority)
+        InboxFetchWorker.enqueue(context)
+    }
+
+    override fun showMissedCall(chatId: String, callerName: String) = notifier.showMissedCall(chatId, callerName)
+
+    override fun showStrangerMissedCall() = notifier.showStrangerMissedCall()
 
     override suspend fun recordMissedCall(callId: String, fromAccountId: String) =
         missedCalls.recordMissedCall(callId, fromAccountId)

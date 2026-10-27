@@ -15,6 +15,8 @@ class MissedPushMonitor(context: Context, private val clock: () -> Long = System
         private const val PREFS = "push_monitor"
         private const val HIGH = "high"
         private const val QUIET = "quiet"
+        private const val PENDING_HIGH = "pendingHigh"
+        private const val PENDING = "pending"
         private const val TIMES = "times"
         private const val MISSED = "missed"
         private const val HINT_SHOWN = "hintShown"
@@ -38,6 +40,34 @@ class MissedPushMonitor(context: Context, private val clock: () -> Long = System
         }
         edit.putString(TIMES, (times() + clock()).takeLast(KEEP).joinToString(","))
         edit.apply()
+    }
+
+    /** A push handed its result to the inbox fetch. It is counted by [fetchFinished], once the outcome is known. */
+    @Synchronized
+    fun fetchQueued(highPriority: Boolean) {
+        val edit = prefs.edit()
+        edit.putInt(PENDING, prefs.getInt(PENDING, 0) + 1)
+        if (highPriority) edit.putInt(PENDING_HIGH, prefs.getInt(PENDING_HIGH, 0) + 1)
+        edit.putString(TIMES, (times() + clock()).takeLast(KEEP).joinToString(","))
+        edit.apply()
+    }
+
+    /**
+     * The fetch ended: count every push that was waiting for it as high priority and showed-something or not.
+     * Returns how many pushes were waiting.
+     */
+    @Synchronized
+    fun fetchFinished(showedSomething: Boolean): Int {
+        val pending = prefs.getInt(PENDING, 0)
+        val high = prefs.getInt(PENDING_HIGH, 0)
+        if (pending == 0) return 0
+        val edit = prefs.edit().putInt(PENDING, 0).putInt(PENDING_HIGH, 0)
+        if (high > 0) {
+            edit.putInt(HIGH, prefs.getInt(HIGH, 0) + high)
+            if (!showedSomething) edit.putInt(QUIET, prefs.getInt(QUIET, 0) + high)
+        }
+        edit.apply()
+        return pending
     }
 
     fun highPriorityCount(): Int = prefs.getInt(HIGH, 0)
