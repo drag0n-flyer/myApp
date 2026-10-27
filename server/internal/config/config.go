@@ -23,7 +23,8 @@ type Config struct {
 	AndroidApps                                                                    []AndroidApp // APP_ANDROID_APPS; empty accepts no Android passkey origins
 	DocsDir                                                                        string       // APP_DOCS_DIR: operator security.txt and legal pages; empty serves none
 	TrustProxy                                                                     bool
-	LabMode                                                                        bool // APP_LAB_MODE=1: lab-only session command; never on a real server
+	AdminHosts                                                                     []string // APP_ADMIN_HOSTS: extra Host names the admin listener accepts (lowercase)
+	LabMode                                                                        bool     // APP_LAB_MODE=1: lab-only session command; never on a real server
 }
 
 // AndroidApp is an Android app the operator trusts for passkeys: its package
@@ -141,6 +142,10 @@ func Load(getenv func(string) string, readFile func(string) ([]byte, error)) (Co
 			return Config{}, Policy{}, fmt.Errorf("config: APP_TRUST_PROXY must be true or false")
 		}
 		c.TrustProxy = b
+	}
+
+	for _, h := range splitList(getenv("APP_ADMIN_HOSTS")) {
+		c.AdminHosts = append(c.AdminHosts, strings.ToLower(h))
 	}
 
 	c.LabMode = getenv("APP_LAB_MODE") == "1"

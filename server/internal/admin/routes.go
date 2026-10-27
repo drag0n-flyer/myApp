@@ -1,0 +1,62 @@
+package admin
+
+import (
+	"net/http"
+
+	"github.com/drag0n-flyer/myApp/server/internal/httpx"
+)
+
+// Handler is the full chain: hostGuard, secureHeaders, then static files or
+// the API (requireSession, checkCSRF, handler). POST /admin/api/login skips
+// the session and CSRF checks but not the header checks.
+func (m *Module) Handler() http.Handler {
+	mux := m.mux(func(h apiFunc, public bool) http.Handler {
+		if public {
+			return serve(h, Session{})
+		}
+		return m.requireSession(m.checkCSRF(h))
+	})
+	return m.hostGuard(m.secureHeaders(mux))
+}
+
+// testHandler serves the same routes, running every request as s with no
+// host, session or CSRF checks.
+func (m *Module) testHandler(s Session) http.Handler {
+	return m.mux(func(h apiFunc, _ bool) http.Handler { return serve(h, s) })
+}
+
+// serve runs h as s and answers an error with the server's envelope.
+func serve(h apiFunc, s Session) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := h(w, r, s); err != nil {
+			httpx.WriteError(w, err)
+		}
+	})
+}
+
+// mux registers every path of the design's section 7 and the static files.
+// wrap builds the handler for one API route; public routes need no session.
+func (m *Module) mux(wrap func(h apiFunc, public bool) http.Handler) *http.ServeMux {
+	mux := http.NewServeMux()
+	api := func(pattern string, h apiFunc) { mux.Handle(pattern, wrap(h, false)) }
+
+	mux.Handle("POST /admin/api/login", wrap(m.login, true))
+	api("POST /admin/api/logout", m.logout)
+	api("GET /admin/api/session", m.session)
+	api("GET /admin/api/overview", m.overview)
+	api("GET /admin/api/invites", m.listInvites)
+	api("POST /admin/api/invites", m.createInvite)
+	api("POST /admin/api/invites/{id}/revoke", m.revokeInvite)
+	api("GET /admin/api/accounts", m.listAccounts)
+	api("GET /admin/api/accounts/{id}", m.getAccount)
+	api("POST /admin/api/accounts/{id}/devices/{deviceID}/revoke", m.revokeDevice)
+	api("POST /admin/api/accounts/{id}/delete", m.deleteAccount)
+	api("GET /admin/api/reports", m.listReports)
+	api("GET /admin/api/reports/{id}", m.getReport)
+	api("POST /admin/api/reports/{id}/handle", m.handleReport)
+	api("GET /admin/api/server", m.serverInfo)
+	api("GET /admin/api/audit", m.listAudit)
+
+	m.static(mux)
+	return mux
+}
