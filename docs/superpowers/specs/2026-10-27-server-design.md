@@ -218,7 +218,7 @@ Escrow keys: `appserver keygen escrow` prints a new X25519 private key as PKCS#8
 
 Frames: `{"type":string, "id"?:string, "data"?:object}`. When a client frame has an `id`, the server answers with `{"type":"ack","id"}` or `{"type":"error","id","data":{"code"}}`.
 
-Server → client: `inbox`, `device.revoked {deviceID}`, `call.ring`, `call.answered`, `call.signal`, `call.ended`.
+Server → client: `inbox`, `device.revoked {deviceID}`, `call.ring`, `call.answered`, `call.signal`, `call.ended`. Every server-sent `call.signal` carries `{callID, fromDeviceID, payload}`: before the answer several callee devices may signal the caller (client plan 8 has callees make the offer), so the caller must know which device each signal came from.
 
 Client → server, for calls (`payload` is always an opaque MLS application message the server cannot read, carrying the SDP and DTLS fingerprint):
 
