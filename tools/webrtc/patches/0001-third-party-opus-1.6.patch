@@ -1,12 +1,12 @@
 diff --git opus/BUILD.gn opus/BUILD.gn
-index 9b1fb42..e27d444 100644
+index 9b1fb42..864b110 100644
 --- opus/BUILD.gn
 +++ opus/BUILD.gn
 @@ -5,6 +5,10 @@
  import("//build/config/arm.gni")
  import("//testing/test.gni")
  
-+# deep_plc_sources, osce_sources, dnn_neon_sources, dnn_dotprod_sources.
++# deep_plc_sources, osce_sources, dnn_neon_sources (dnn_dotprod_sources is unused).
 +# Written by tools/webrtc/apply.sh from opus 1.6 (lpcnet_sources.mk).
 +import("dnn_sources.gni")
 +
@@ -53,25 +53,20 @@ index 9b1fb42..e27d444 100644
    if (use_opus_x86_optimization) {
      defines += [
        # Run Time CPU Detections (RTCD) is always enabled for x86.
-@@ -105,7 +122,16 @@ config("opus_private_config") {
-     ]
+@@ -106,6 +123,12 @@ config("opus_private_config") {
  
      if (current_cpu == "arm64") {
--      defines += [ "OPUS_ARM_PRESUME_AARCH64_NEON_INTR" ]
-+      defines += [
-+        "OPUS_ARM_PRESUME_AARCH64_NEON_INTR",
+       defines += [ "OPUS_ARM_PRESUME_AARCH64_NEON_INTR" ]
 +
-+        # The neural code uses dot-product instructions with no runtime
-+        # detection (dnn/arm/dnn_arm.h). See ":opus_dotprod" below.
-+        # OPUS_ARM_MAY_HAVE_NEON_INTR and OPUS_ARM_PRESUME_NEON_INTR are
-+        # already defined above.
-+        "OPUS_ARM_MAY_HAVE_DOTPROD",
-+        "OPUS_ARM_PRESUME_DOTPROD",
-+      ]
++      # The neural code uses NEON only, chosen at compile time by
++      # OPUS_ARM_PRESUME_NEON_INTR (dnn/arm/dnn_arm.h picks
++      # compute_linear_neon). No dot-product: iOS 17 still runs on the A12,
++      # which lacks it, so OPUS_ARM_*_DOTPROD stays undefined and
++      # dnn/arm/nnet_dotprod.c is not built.
      }
    }
  }
-@@ -148,6 +174,7 @@ if (use_opus_x86_optimization) {
+@@ -148,6 +171,7 @@ if (use_opus_x86_optimization) {
        "src/silk/x86/NSQ_sse4_1.c",
        "src/silk/x86/VAD_sse4_1.c",
        "src/silk/x86/VQ_WMat_EC_sse4_1.c",
@@ -79,7 +74,7 @@ index 9b1fb42..e27d444 100644
      ]
  
      configs -= [ "//build/config/compiler:chromium_code" ]
-@@ -167,6 +194,7 @@ if (use_opus_x86_optimization) {
+@@ -167,6 +191,7 @@ if (use_opus_x86_optimization) {
        "src/celt/x86/pitch_avx.c",
        "src/silk/float/x86/inner_product_FLP_avx2.c",
        "src/silk/x86/NSQ_del_dec_avx2.c",
@@ -87,32 +82,7 @@ index 9b1fb42..e27d444 100644
      ]
  
      configs -= [ "//build/config/compiler:chromium_code" ]
-@@ -189,6 +217,24 @@ if (use_opus_x86_optimization) {
-   }
- }
- 
-+if (current_cpu == "arm64") {
-+  # Dot-product kernels for the neural code. Every arm64 target we build
-+  # (iOS A12 and newer, Apple silicon Macs) is assumed to have them, so the
-+  # flag applies to these files only and there is no runtime check.
-+  source_set("opus_dotprod") {
-+    sources = dnn_dotprod_sources
-+
-+    configs -= [ "//build/config/compiler:chromium_code" ]
-+    configs += [ "//build/config/compiler:no_chromium_code" ]
-+    configs += [
-+      ":opus_private_config",
-+      ":opus_config",
-+    ]
-+
-+    cflags = [ "-march=armv8.2-a+dotprod" ]
-+  }
-+}
-+
- # Note: Do not add any defines or include_dirs to this target, those should all
- # go in the opus_private_config so they can be shared with intrinsic targets.
- static_library("opus") {
-@@ -361,7 +407,6 @@ static_library("opus") {
+@@ -361,7 +386,6 @@ static_library("opus") {
      "src/src/opus_projection_decoder.c",
      "src/src/opus_projection_encoder.c",
      "src/src/repacketizer.c",
@@ -120,7 +90,7 @@ index 9b1fb42..e27d444 100644
    ]
  
    # Silk floating-point
-@@ -414,6 +459,9 @@ static_library("opus") {
+@@ -414,6 +438,9 @@ static_library("opus") {
      configs += [ "//build/config/compiler:optimize_speed" ]
    }
  
@@ -130,7 +100,7 @@ index 9b1fb42..e27d444 100644
    deps = []
  
    if (use_opus_x86_optimization) {
-@@ -431,6 +479,8 @@ static_library("opus") {
+@@ -431,6 +458,8 @@ static_library("opus") {
        "src/silk/x86/SigProc_FIX_sse.h",
        "src/silk/x86/main_sse.h",
        "src/silk/x86/x86_silk_map.c",
@@ -139,14 +109,13 @@ index 9b1fb42..e27d444 100644
      ]
      deps += [
        ":opus_avx2",
-@@ -462,6 +512,11 @@ static_library("opus") {
+@@ -462,6 +491,10 @@ static_library("opus") {
        "src/silk/arm/macros_armv4.h",
        "src/silk/arm/macros_armv5e.h",
      ]
 +
 +    if (current_cpu == "arm64") {
 +      sources += dnn_neon_sources
-+      deps += [ ":opus_dotprod" ]
 +    }
    }
  }

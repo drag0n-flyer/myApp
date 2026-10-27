@@ -99,9 +99,11 @@ check 'does not define ENABLE_DRED' sh -c '! grep -q ENABLE_DRED "$1"' _ "$b"
 check 'adds src/dnn to include_dirs' has '^ *"src/dnn",$'
 check 'adds deep PLC and OSCE sources' has 'sources += deep_plc_sources + osce_sources'
 check 'adds arm64 neon sources' has 'sources += dnn_neon_sources'
-check 'builds dotprod sources with -march=armv8.2-a+dotprod' has '"-march=armv8.2-a+dotprod"'
-check 'defines OPUS_ARM_MAY_HAVE_DOTPROD' has '^ *"OPUS_ARM_MAY_HAVE_DOTPROD",$'
-check 'defines OPUS_ARM_PRESUME_DOTPROD' has '^ *"OPUS_ARM_PRESUME_DOTPROD",$'
+# No dot-product: iOS 17 runs on the A12, which lacks it.
+check 'no -march=armv8.2-a+dotprod' sh -c '! grep -v "^ *#" "$1" | grep -q "dotprod"' _ "$b"
+check 'no OPUS_ARM_MAY_HAVE_DOTPROD' sh -c '! grep -v "^ *#" "$1" | grep -q "OPUS_ARM_MAY_HAVE_DOTPROD"' _ "$b"
+check 'no OPUS_ARM_PRESUME_DOTPROD' sh -c '! grep -v "^ *#" "$1" | grep -q "OPUS_ARM_PRESUME_DOTPROD"' _ "$b"
+check 'no opus_dotprod source set or dnn_dotprod_sources use' sh -c '! grep -v "^ *#" "$1" | grep -q "opus_dotprod\|dnn_dotprod_sources"' _ "$b"
 check 'floating point only (no FIXED_POINT define, no silk/fixed sources)' \
   sh -c '! grep -v "^ *#" "$1" | grep -q "FIXED_POINT\|src/silk/fixed/.*\.c"' _ "$b"
 
