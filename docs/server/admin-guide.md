@@ -4,13 +4,16 @@ For the person who runs a server. Commands run from the `deploy/` directory unle
 
 ## Install
 
-You need a Linux host with Docker and the compose plugin, a DNS name pointing at it, and ports 80 and 443 (reverse proxy) and 3478 and 443 UDP/TCP (calls) open.
+You need a Linux host with Docker and the compose plugin, a DNS name pointing at it, and ports 80 and 443 (reverse proxy) open. Calls need more ports; see "Calls and TURN" below.
 
 1. `cp .env.example .env` and edit it. Set `POSTGRES_PASSWORD`, `APP_HOST` (your public host name) and `APP_TURN_SECRET` (a long random string). Every variable is described in the server design, section 5.
-2. Put secrets (escrow key, push key) in `deploy/secrets/` and TLS files for coturn in `deploy/certs/`. Neither directory is committed.
+2. Put secrets (escrow key, push key) in `deploy/secrets/` and TLS files for coturn in `deploy/certs/`. Neither directory is committed. The server runs as user 65532 (not root), so every key file it reads must be owned by that user and private: `sudo chown 65532:65532 secrets/*.pem && sudo chmod 0400 secrets/*.pem`. (`chmod 600` alone would leave the file owned by you and unreadable to the server.) Do the same for the push gateway's HPKE and APNs (`.p8`) keys if you run a gateway.
+   The attachments volume is created owned by that user; no step is needed.
 3. Render the coturn config, which needs the secret: `TURN_SECRET=<APP_TURN_SECRET> envsubst '${TURN_SECRET}' < turnserver.conf > turnserver.rendered.conf`. Set `realm` in `turnserver.conf` to your host name first.
 4. `docker compose up -d`. The server applies its database migrations on start.
 5. Check it: `curl -s http://127.0.0.1:9090/readyz`.
+
+`APP_ADMIN_LISTEN` in `.env` has no effect under compose: `compose.yaml` sets it to `0.0.0.0:9090` inside the container, and publishes it on `127.0.0.1:9090` only.
 
 `APP_APPLE_APP_IDS` must list both apps, for example `TEAMID.org.example.app,TEAMID.org.example.app.mac`. Invite and link URLs open in the app only if it is correct.
 
@@ -46,7 +49,7 @@ It prints a code like `ABCDE-FGHJK`. Share the link `https://<host>/invite/ABCDE
 
 Push goes through a gateway, which holds the Apple key. Use the gateway of the app's owner, or run your own (below).
 
-1. Make a signing key for this server: `docker compose exec appserver /appserver keygen push > secrets/push.pem`, then set `APP_PUSH_KEY_FILE=/secrets/push.pem`.
+1. Make a signing key for this server: `docker compose exec appserver /appserver keygen push > secrets/push.pem`, run `sudo chown 65532:65532 secrets/push.pem && sudo chmod 0400 secrets/push.pem`, then set `APP_PUSH_KEY_FILE=/secrets/push.pem`.
 2. Register it with the gateway: `docker compose exec appserver /appserver push register --gateway https://push.example.org --name "my server" --contact you@example.org`. It prints a server ID; set `APP_PUSH_SERVER_ID` to it, and `APP_PUSH_GATEWAY_URL` to the gateway URL.
 3. `docker compose up -d` to restart with the new settings.
 
@@ -54,9 +57,21 @@ Without a gateway URL, push is off and the apps only update while open.
 
 ### Running your own gateway (optional)
 
-The compose file has a `pushgw` service, off by default: `docker compose --profile gateway up -d`. It needs an Apple push key (`.p8`), which only its owner should hold. Set the `PUSHGW_*` variables in `.env`: `PUSHGW_HPKE_KEY_FILE`, `PUSHGW_APNS_KEY_FILE`, `PUSHGW_APNS_KEY_ID`, `PUSHGW_APNS_TEAM_ID`, `PUSHGW_BUNDLE_IDS` (the iPhone and Mac bundle IDs). Behind a reverse proxy, set `PUSHGW_TRUST_PROXY=true` so it sees client addresses; otherwise leave it `false`. Put the gateway behind TLS like the server.
+The compose file has a `pushgw` service, off by default: `docker compose --profile gateway up -d`. It needs an Apple push key (`.p8`), which only its owner should hold. Give the key files (`.p8` and the HPKE key) owner 65532 and mode 0400, as for the escrow key.
+
+The gateway uses its own database role and database (`pushgw`), apart from the server's, because it is a separate trust boundary. Set `PUSHGW_DB_PASSWORD` in `.env` before the first start and the postgres container creates them. On an existing database volume the init script does not run; create them by hand: `docker compose exec postgres psql -U appserver -c "create role pushgw login password '<password>'" -c "create database pushgw owner pushgw"`. Set the `PUSHGW_*` variables in `.env`: `PUSHGW_HPKE_KEY_FILE`, `PUSHGW_APNS_KEY_FILE`, `PUSHGW_APNS_KEY_ID`, `PUSHGW_APNS_TEAM_ID`, `PUSHGW_BUNDLE_IDS` (the iPhone and Mac bundle IDs). Behind a reverse proxy, set `PUSHGW_TRUST_PROXY=true` so it sees client addresses; otherwise leave it `false`. Put the gateway behind TLS like the server.
 
 The gateway sees raw APNs tokens: it opens each sealed handle to send the push to Apple. Treat its database, its logs and its HPKE key as sensitive. This is a known part of the threat model (OPEN-13).
+
+## Calls and TURN
+
+Calls relay through coturn. The server hands out short-lived credentials made from `APP_TURN_SECRET`, and `APP_RELAYS` lists the relay hosts the apps may use.
+
+**Production topology:** run coturn on dedicated relay hosts, separate from the server, each with its own DNS name and TLS certificate, serving TLS on port 443. This lets calls get through networks that only allow HTTPS. The beta plan has two relay nodes (for example `turn1.example.org@eu` and `turn2.example.org@us`). On a relay host, use the same `turnserver.conf` but set `tls-listening-port=443`; Linux only lets non-root processes bind ports below 1024 if the container is given that right (for example `sysctl net.ipv4.ip_unprivileged_port_start=0` on the host, or `cap_add: [NET_BIND_SERVICE]`), so set one of those. Put every relay in `APP_RELAYS`.
+
+**Single-host compose:** the bundled coturn shares the server's host, where the reverse proxy owns 443, so it listens on 3478 and `tls-listening-port=5349`. It has **no TLS-on-443 fallback**: callers on networks that block everything except 443 will not be relayed. Use it for trying things out or a small private server.
+
+**Firewall and addresses.** Open 3478 (UDP and TCP), 5349 (TCP) and the relay port range `min-port` to `max-port` (49152-49999 in the shipped file, UDP). If the host is behind NAT or has several addresses, set `external-ip=<public ip>[/<private ip>]` in `turnserver.conf`. coturn refuses to relay to private and local address ranges (`denied-peer-ip`), so a call cannot be used to probe your internal network; do not remove those lines.
 
 ## Escrow key
 
@@ -64,7 +79,8 @@ Only needed if the policy lets conversations be server-readable (`"newConversati
 
 ```
 docker compose exec appserver /appserver keygen escrow > secrets/escrow.pem
-chmod 600 secrets/escrow.pem
+sudo chown 65532:65532 secrets/escrow.pem
+sudo chmod 0400 secrets/escrow.pem
 ```
 
 Set `APP_ESCROW_KEY_FILE=/secrets/escrow.pem`. The public half is published in `GET /v1/server`. Back the file up separately from the database: without it the stored copies cannot be read, and anyone who holds it can read them. Do not change the key while escrowed messages exist you still need to read.
@@ -86,7 +102,7 @@ docker run --rm -v deploy_appdata:/data -v "$PWD":/out alpine tar czf /out/appda
 
 **Restore** on a fresh install: start only postgres (`docker compose up -d postgres`), then `docker compose exec -T postgres pg_restore -U appserver -d appserver --clean --if-exists < backup.dump`, unpack the attachments archive into the data volume, and `docker compose up -d`.
 
-**Upgrade:** take a backup, then `git pull`, `docker compose build`, `docker compose run --rm appserver /appserver migrate`, `docker compose up -d`. Migrations only add; they are applied in order and never edited.
+**Upgrade:** take a backup, then `git pull`, `docker compose build`, `docker compose run --rm appserver migrate`, `docker compose up -d`. The server also migrates when it starts. Running `migrate` first, as its own step, means a failed migration shows up on your screen while the old version is still serving, instead of as a restart loop. Migrations only add; they are applied in order and never edited.
 
 **Rollback:** `git checkout` the previous version and `docker compose up -d --build`. If the new version ran a migration, the old binary still works with the added tables and columns; if anything is wrong, restore the backup taken before the upgrade.
 

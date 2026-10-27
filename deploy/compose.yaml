@@ -8,8 +8,10 @@ services:
       POSTGRES_USER: appserver
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: appserver
+      PUSHGW_DB_PASSWORD: ${PUSHGW_DB_PASSWORD:-} # creates the gateway's own role and database
     volumes:
       - pgdata:/var/lib/postgresql
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U appserver -d appserver"]
       interval: 5s
@@ -28,6 +30,8 @@ services:
     environment:
       APP_DATABASE_URL: postgres://appserver:${POSTGRES_PASSWORD}@postgres:5432/appserver?sslmode=disable
       APP_LISTEN: ":8080"
+      # Overrides .env: inside the container the admin port must listen on all
+      # interfaces so the published port works; the host side stays 127.0.0.1.
       APP_ADMIN_LISTEN: "0.0.0.0:9090"
       APP_DATA_DIR: /var/lib/appserver
     ports:
@@ -41,8 +45,8 @@ services:
     image: coturn/coturn:4.18
     restart: unless-stopped
     network_mode: host
-    environment:
-      TURN_SECRET: ${APP_TURN_SECRET:?set APP_TURN_SECRET in .env}
+    # Single-host setup: TURN on 3478 and TLS on 5349, no TLS-on-443 fallback
+    # (the reverse proxy owns 443). See "Calls and TURN" in the admin guide.
     volumes:
       # coturn does not expand ${TURN_SECRET} itself: render it first, see the admin guide
       - ./turnserver.rendered.conf:/etc/coturn/turnserver.conf:ro
@@ -63,7 +67,7 @@ services:
         condition: service_healthy
     environment:
       PUSHGW_LISTEN: ":8081"
-      PUSHGW_DATABASE_URL: postgres://appserver:${POSTGRES_PASSWORD}@postgres:5432/appserver?sslmode=disable
+      PUSHGW_DATABASE_URL: postgres://pushgw:${PUSHGW_DB_PASSWORD:-}@postgres:5432/pushgw?sslmode=disable
       PUSHGW_HPKE_KEY_FILE: ${PUSHGW_HPKE_KEY_FILE:-/secrets/pushgw-hpke.pem}
       PUSHGW_APNS_KEY_FILE: ${PUSHGW_APNS_KEY_FILE:-/secrets/apns.p8}
       PUSHGW_APNS_KEY_ID: ${PUSHGW_APNS_KEY_ID:-}
