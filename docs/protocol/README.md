@@ -65,7 +65,7 @@ These rules and values are in this folder but are not fixed by the server design
 | The credential's device must equal the offering device or `fromDeviceID` | [Calls](calls.md#what-the-receiver-must-check) |
 | `renegotiate` without `sdp` asks the caller to restart ICE; restart after 2.5 s, retry every 5 s, give up at 30 s | [Calls](calls.md#ice-restarts-and-reconnection) |
 | Reuse cached TURN credentials only with at least 4 hours left | [Calls](calls.md#turn-credentials) |
-| Strict unpadding; the gateway forwards padded bytes; `X-Signature`, `handle`, `data` and `d` are standard base64 with padding | [Push](push.md) |
+| Strict unpadding; the gateway forwards padded bytes; `X-Signature`, `handle`, `data` and `d` (the padded payload) are standard base64 with padding | [Push](push.md) |
 | Notification extension: 2 second lock wait, 25 second deadline, at most 20 inbox items | [Push](push.md#what-the-notification-extension-does-with-d) |
 | Escrow `sentAt` is RFC 3339 | [Escrow](escrow.md#the-plaintext) |
 | After `escrow_required` or `escrow_forbidden` the client refreshes the server mode and retries once (plan 7 step 7); it still follows the pinned-mode table | [Escrow](escrow.md#when-an-escrow-copy-is-sent) |
