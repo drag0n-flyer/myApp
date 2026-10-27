@@ -1,6 +1,5 @@
 package org.example.app.contracts
 
-import java.io.IOException
 
 /**
  * The Keystore (or the storage under it) failed in a way that does not prove the key is gone: a busy or
@@ -13,7 +12,7 @@ import java.io.IOException
  * 4. Never catch this and fall back to "create a new key/secret" (`DbKey.loadOrCreate`, `SigningKeys.loadOrCreate`).
  * 5. Catch it by type (`SessionStore`, `ErrorMapping`); do not map it to "signed out" or a generic internal error.
  */
-class SecretStoreUnavailable(message: String, cause: Throwable? = null) : IOException(message, cause)
+class SecretStoreUnavailable(message: String, cause: Throwable? = null) : Exception(message, cause)
 
 /**
  * The wrapping key is definitely gone while wrapped secrets still exist: the Keystore reported the alias
