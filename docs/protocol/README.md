@@ -46,4 +46,27 @@ TODO(plan 7): replace the link above with the schema document once plan 7 publis
 
 The suite is HPKE (RFC 9180) in base mode (`0x00`), with DHKEM(X25519, HKDF-SHA256) (`0x0020`), HKDF-SHA256 (`0x0001`) and ChaCha20-Poly1305 (`0x0003`). The AAD is empty. The output is `enc ‖ ct`: the 32-byte encapsulated key first, then the ciphertext with its 16-byte tag, so its length is `32 + len(plaintext) + 16`. Go uses `crypto/hpke`. Swift uses CryptoKit's `HPKE.Ciphersuite.Curve25519_SHA256_ChachaPoly`.
 
+## Owner to confirm
+
+These rules and values are in this folder but are not fixed by the server design, the roadmap or a plan, or only a plan fixes them. The owner confirms each one before the spec is final.
+
+| Rule or value | Where |
+|---|---|
+| A device that missed `device.revoked` catches up by comparing group leaves with `GET /v1/devices`; Remove commits within 24 hours of coming online | [MLS profile](mls-profile.md#removing-a-device) |
+| KeyPackage refill: check at most every 6 hours, upload 50 when fewer than 10 remain; 90-day lifetime; keep the last-resort secrets after a Welcome | [MLS profile](mls-profile.md#keypackages) |
+| Three retained epochs (a message more than two epochs late is lost) | [MLS profile](mls-profile.md#application-messages) |
+| Group IDs are 16 bytes and receivers accept any length | [MLS profile](mls-profile.md#groups-and-conversations) |
+| At least one retry after `stale_epoch`; an unknown-outcome commit is never resent, the inbox is fetched first | [MLS profile](mls-profile.md#commits) |
+| Receivers act on the MLS credential, not on server-stated sender fields | [MLS profile](mls-profile.md#identity) |
+| The exporter context is empty; `call-fingerprint-v1` is reserved and unused | [MLS profile](mls-profile.md#exporter-labels) |
+| A fresh link key pair per attempt; a `sealed` that fails to open is discarded whole | [Device linking](device-linking.md) |
+| `p.callID` must equal the frame's `callID`; every `a=fingerprint` line must match; renegotiation keeps the call's fingerprint | [Calls](calls.md#what-the-receiver-must-check) |
+| The credential's device must equal the offering device or `fromDeviceID` | [Calls](calls.md#what-the-receiver-must-check) |
+| `renegotiate` without `sdp` asks the caller to restart ICE; restart after 2.5 s, retry every 5 s, give up at 30 s | [Calls](calls.md#ice-restarts-and-reconnection) |
+| Reuse cached TURN credentials only with at least 4 hours left | [Calls](calls.md#turn-credentials) |
+| Strict unpadding; the gateway forwards padded bytes; `X-Signature` and `d` are base64url without padding | [Push](push.md) |
+| Notification extension: 2 second lock wait, 25 second deadline, at most 20 inbox items | [Push](push.md#what-the-notification-extension-does-with-d) |
+| Escrow `sentAt` is RFC 3339 | [Escrow](escrow.md#the-plaintext) |
+| An unknown higher `protocol` stops all traffic and keeps local data, also for a signed-in account | [Versioning](versioning.md#what-a-client-does-with-an-unknown-version) |
+
 Test vectors: none of its own. The shared vectors live in `test-vectors/`. They are generated only by the Go generator (plan 9 Task 4), never edited by hand, and verified by both Go and Swift. They are linked from [push](push.md), [escrow](escrow.md) and [calls](calls.md).

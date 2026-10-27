@@ -41,9 +41,13 @@ The plaintext is UTF-8 JSON with these four keys:
 | `server_readable` | an `escrow` copy | `400 escrow_required` |
 | `e2ee` | no `escrow` copy | `400 escrow_forbidden` |
 
+The server's checks are a backstop. The client decides by the rules below.
+
 - The mode is set once, when the conversation is created, from the server's policy. No Phase 1 call changes it, so a conversation cannot be downgraded.
-- **A client adds an escrow copy only when its stored mode for that conversation is `server_readable`.** The mode comes from the server's create response or from `GET /v1/conversations/{id}`. It never comes from message content, even when a peer's content claims something else.
-- On `escrow_required` or `escrow_forbidden`, the client refreshes the mode with `GET /v1/conversations/{id}` and retries once.
+- **The conversation's creator binds the mode inside the conversation.** The first application message of every conversation is a `MessageBody` of kind `mode`, `{"k":"mode","m":"e2ee"}` or `{"k":"mode","m":"server_readable"}`, taken from the server's create response (plan 7 Design 18, owner-approved). Whoever commits a later Add sends it again right after, so devices that join later learn it.
+- **Each device pins the first `mode` it sees** as the conversation's inner mode. The pin never changes. A later `mode` message with another value is ignored and flagged as a mismatch.
+- **A client adds an escrow copy only when the inner mode and the server's mode both say `server_readable`.** When the inner mode is `e2ee`, it never adds one, whatever the server says, and an `escrow_required` answer never overrides that. Until a `mode` message arrives, a conversation that the server calls `server_readable` holds its outgoing messages, and one that the server calls `e2ee` sends without escrow.
+- **Any disagreement pauses sending.** If the server demands escrow for a conversation pinned `e2ee`, the message fails, the chat shows one line saying messages are paused, and chat info shows the details. The client does not retry after refreshing the mode from `GET /v1/conversations/{id}`.
 - The server checks only that a copy is present or absent. It cannot open the MLS message or the escrow copy's contents, so it cannot compare the two.
 
 ## Retention and export
@@ -57,7 +61,7 @@ An escrow row is kept for `retention.escrowDays`, 365 days by default.
 The escrow rows are in [section 5.4](../security/threat-model.md#54-escrow-server-readable-mode) of the threat model, and [section 6](../security/threat-model.md#6-mode-b-server-readable-specifics) explains why a strict conversation cannot be downgraded.
 
 - **The escrow copy is not bound to the MLS message.** HPKE base mode authenticates nobody. Anyone with the public key can make a valid copy, and a member can send a copy that differs from the real message. The operator's export is the operator's record and not proof of what was said ([OPEN-20](../security/threat-model.md#open-20-escrow-copies-are-not-bound-to-the-mls-message)).
-- **Clients trust the server for the mode.** A malicious operator can make a client treat an end-to-end conversation as server-readable and collect escrow copies of later messages. The client does not pin the mode it first saw ([OPEN-18](../security/threat-model.md#open-18-clients-trust-the-server-for-the-conversation-mode)).
+- **Residual risk of the pinned mode.** The pin comes from the creator's `mode` message, so a malicious or compromised creator device can still choose `server_readable` for a new conversation, and a device that joins before it has seen any `mode` message depends on the server's answer for the interim. The server can no longer switch an existing end-to-end conversation to server-readable ([OPEN-18](../security/threat-model.md#open-18-clients-trust-the-server-for-the-conversation-mode)).
 
 ## Open points
 

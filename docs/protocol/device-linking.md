@@ -31,7 +31,10 @@ sequenceDiagram
         N->>S: POST /v1/link/linkID/claim {claimToken}
         S-->>N: 202 {} while pending
     end
-    A->>A: scan QR, check host, ask the user to approve
+    A->>A: scan QR, check host
+    A->>S: POST /v1/link/linkID/info {secret}
+    S-->>A: {deviceName, platform, createdAt}
+    A->>A: show approval screen, require Face ID or Touch ID
     A->>A: seal snapshot to publicKey (HPKE, info link-v1)
     A->>S: POST /v1/link/linkID/approve {secret, sealed}
     S-->>A: 204
@@ -42,7 +45,7 @@ sequenceDiagram
     Note over A,N: an existing device adds N to every conversation (MLS profile)
 ```
 
-The request and response shapes are in the server design. The claim answers `200` exactly once. After that, or after 5 minutes, it answers `expired`.
+The request and response shapes are in the server design. `info` is read-only: it changes nothing on the server. The claim answers `200` exactly once. After that, or after 5 minutes, it answers `expired`.
 
 ## The QR code
 
@@ -83,8 +86,8 @@ The new device opens `sealed` with its private key. If `sealed` is missing or do
 
 ## What each side checks
 
-- **The approver** checks that the host in the QR code is its own server's host. It then shows an approval prompt. Today the prompt is a scan or a paste with no further step.
-- **The new device** checks that `sealed` opens. It cannot check which account approved the link, because the claim response gives it no way to compare ([OPEN-8](../security/threat-model.md#open-8-device-link-gaps)).
+- **The approver** checks that the host in the QR code is its own server's host, then fetches the request's details with `POST /v1/link/{linkID}/info`. It shows the new device's name, its type (iPhone or Mac) and when the request was made, with a plain warning that the device will be able to read all future messages. Approval requires Face ID or Touch ID on the approving device. If neither is available, it sends nothing (plan 6, decision 8). A wrong secret gets `forbidden` and an old request gets `expired`.
+- **The new device** checks that `sealed` opens. It makes its own key pair and builds the QR code, and it opens `sealed` with that key. It cannot check which account approved the link, because the claim response gives it no way to compare ([OPEN-8](../security/threat-model.md#open-8-device-link-gaps)).
 - **The server** checks that `secret` matches, that the link has not expired and that it has not been claimed yet. Limits: link start 10 per hour per IP, claim 60 per minute per link.
 
 ## Threats
@@ -101,13 +104,12 @@ The linking rows of the threat model cover this flow ([section 5.11](../security
 | LNK-R-01, LNK-E-01, LNK-E-02 | Unnoticed devices and full rights for every device |
 | LNK-D-01 | Spamming link start |
 
-Approving a link gives the new device read access to all future messages. The approval prompt is too easy to abuse today ([OPEN-24](../security/threat-model.md#open-24-approving-a-device-link-is-too-easy-to-abuse)), and nobody is told when a device is added ([OPEN-7](../security/threat-model.md#open-7-new-devices-are-added-silently)).
+Approving a link gives the new device read access to all future messages. The approval screen with biometrics and a warning ([OPEN-24](../security/threat-model.md#open-24-approving-a-device-link-is-too-easy-to-abuse)) makes a careless approval harder, but a user can still approve an attacker's device after a convincing story. Every other own device is notified when a device is added, and the contact's chat shows a line ([OPEN-7](../security/threat-model.md#open-7-new-devices-are-added-silently), [MLS profile](mls-profile.md#a-linked-device-joins)); that is a warning after the fact, not a prevention.
 
 ## Open points
 
-- **Plan 6 does not produce this QR code.** Its linking task builds `https://<host>/link/<linkID>#<secret>` and sends no `sealed` data. This document needs plan 6's linking task to make the new device generate the X25519 key, put it in the QR code, and open `sealed`, and the approving device to seal the snapshot. Until then, the snapshot is either not sent or readable by the server ([OPEN-8](../security/threat-model.md#open-8-device-link-gaps)).
-- **Who builds the snapshot:** plan 7 says plan 6 seals it, and plan 6 lists it as out of scope. One of them has to own it.
+- **Plan 6 owns the key, the QR code and `sealed`.** The new device makes the X25519 key, builds the QR code and opens `sealed`, and the approver seals it (`link-v1`). Plan 7's `exportSnapshot` supplies the plaintext bytes. The remaining weakness is that the new device cannot see which account approved ([OPEN-8](../security/threat-model.md#open-8-device-link-gaps)).
 - **A snapshot over 64 KiB:** the server limit is on `sealed`, and no plan says what the approver does with a very large contact list.
-- **Approval prompt:** the prompt that names the new device, asks for Face ID or Touch ID, and says plainly what the device can read is a proposal, not part of version 1 (OPEN-24).
+- **Approval is still the user's choice.** A user who is talked into approving gives an attacker's device full read access to new messages (OPEN-24, OPEN-7).
 
-Test vectors: none yet. The roadmap expects a link-sealing vector, but plan 9 Task 4 defines no file for it.
+Test vectors: none yet. The roadmap expects link-sealing and safety-number vectors, but plan 9 Task 4 defines no file for them.

@@ -33,14 +33,14 @@ An identity is `<accountID>/<deviceID>`, both lowercase UUIDs, as the server iss
 - **Upload:** `POST /v1/keypackages`. The server accepts at most 16 KiB per KeyPackage and keeps at most 100 per device.
 - **Refill:** a device reads `GET /v1/keypackages/count` after sign-in and then at most every 6 hours. When the count is below 10 it uploads 50 more. That keeps at most 59 stored.
 - **One last-resort KeyPackage per device.** The server never removes a device's final KeyPackage when it is claimed (server design §7.2), so a device that has run out can still be added to a conversation. That package can be used in more than one Add. The device therefore keeps the private keys of its last-resort KeyPackage after a Welcome has used it, and drops them only when that package has expired or a newer one has replaced it. Reuse weakens forward secrecy a little in exchange for reliability (RFC 9420 §16.8, [OPEN-17](../security/threat-model.md#open-17-forward-secrecy-trade-offs)).
-- **Claim:** `POST /v1/keypackages/claim` returns one KeyPackage per device of the account. The MLS library checks the signature, the cipher suite and the lifetime when it processes the Add. No version 1 task compares the credential identity with the `<accountID>/<deviceID>` that the server named, so a malicious server can offer a device it controls ([OPEN-6](../security/threat-model.md#open-6-no-contact-or-device-verification), DLV-S-02).
+- **Claim:** `POST /v1/keypackages/claim` returns one KeyPackage per device of the account. The MLS library checks the signature, the cipher suite and the lifetime when it processes the Add. No version 1 task compares the credential identity with the `<accountID>/<deviceID>` that the server named, so a malicious server can offer a device it controls. Safety numbers (below) let two people detect that afterwards ([OPEN-6](../security/threat-model.md#open-6-no-contact-or-device-verification), DLV-S-02).
 
 ## Groups and conversations
 
 - **One MLS group per conversation.** A conversation has exactly two accounts. Its group holds one leaf for every device of both accounts.
 - **The group ID is 16 random bytes** from a cryptographically secure generator, chosen by the creating device. A receiver treats a group ID as an opaque string and MUST accept any length.
 - **The server's conversation ID and the group ID are independent.** The server never sees a group ID. Each client stores the pair. A device that joins by Welcome learns the conversation ID from the inbox item that carried the Welcome, and the group ID from the Welcome itself.
-- **The encryption mode** (`e2ee` or `server_readable`) belongs to the conversation and is set once, at creation, by the server. A creator reads it from the create response. A device that joined by Welcome reads it from `GET /v1/conversations/{id}`. The mode only ever comes from the server ([escrow](escrow.md#when-an-escrow-copy-is-sent), [OPEN-18](../security/threat-model.md#open-18-clients-trust-the-server-for-the-conversation-mode)).
+- **The encryption mode** (`e2ee` or `server_readable`) belongs to the conversation and is set once, at creation, by the server. A creator reads it from the create response. A device that joined by Welcome reads it from `GET /v1/conversations/{id}`. The mode is also bound inside the conversation: the creator's first application message is a `mode` message, which each device pins and which decides escrow ([escrow](escrow.md#when-an-escrow-copy-is-sent), plan 7 Design 18, [OPEN-18](../security/threat-model.md#open-18-clients-trust-the-server-for-the-conversation-mode)). Whoever commits a later Add sends it again right after, so devices that join later learn it.
 - **Two conversations for one pair** can exist when both people start a chat at the same moment. Both stay receivable. A sender uses the active conversation with the smallest conversation ID, so both sides pick the same one without talking (plan 7 Design 1).
 
 Creating a conversation, in order:
@@ -49,7 +49,7 @@ Creating a conversation, in order:
 2. `POST /v1/conversations` returns the conversation ID, the mode and `epoch: 0`.
 3. The creator makes the group (epoch 0, itself the only leaf) and builds one commit that adds every claimed KeyPackage.
 4. `POST /v1/conversations/{id}/commits` with `epoch: 0`, the commit, the Welcome and `addDevices` naming each added device.
-5. On `200` the creator merges the commit. The group is at epoch 1. The server delivers the Welcome to each added device as a `welcome` inbox item.
+5. On `200` the creator merges the commit. The group is at epoch 1. The server delivers the Welcome to each added device as a `welcome` inbox item. The creator then sends the `mode` message as the conversation's first application message, before anything else.
 
 ## Commits
 
@@ -68,7 +68,11 @@ Rules the engine enforces (plan 4):
 - The engine reads group state from disk on every call, under one cross-process lock, because the Notification Service Extension changes the same state from another process.
 - The same ciphertext twice is a typed error, never a corrupted group.
 
-A commit goes to every member device present before the commit, the sender included. A Welcome goes to each added device. The server cannot read a commit, so it cannot check that `addDevices` and `removeDevices` match what the commit contains. It checks only that added devices belong to the conversation's two accounts.
+A commit goes to every member device present before the commit, the sender included. A Welcome goes to each added device.
+
+Blocking changes this. When a recipient's account has blocked the sender's account, the server skips that recipient and the sender still gets `200`. For a Welcome, the blocked device is skipped and never added to the conversation. For a commit in an existing conversation, the row is still delivered, because skipping it would break the recipient's encryption state, but it carries no push.
+
+The server cannot read a commit, so it cannot check that `addDevices` and `removeDevices` match what the commit contains. It checks only that added devices belong to the conversation's two accounts.
 
 ## Application messages
 
@@ -100,7 +104,17 @@ A device added through [device linking](device-linking.md) starts with no group.
 3. It claims the account's KeyPackages and commits an Add with a Welcome and `addDevices` for the new device, in every active conversation.
 4. The new device processes the Welcomes from its inbox and reads each conversation's mode.
 
-The new device cannot read messages sent before its leaf was added. Nothing tells the other devices that a device was added, and no frame announces it: they find out when they next compare the device list ([OPEN-7](../security/threat-model.md#open-7-new-devices-are-added-silently)).
+The new device cannot read messages sent before its leaf was added. Device changes are visible (plan 7 Design 19, [OPEN-7](../security/threat-model.md#open-7-new-devices-are-added-silently)). After every processed commit, every accepted commit and every Welcome, a client compares the group's members with the ones it stored. A device added or removed on another account shows a line in that chat ("Ana added a new device", "Ana removed a device"). A new device on the client's own account also raises a local notification on every other own device. The commit or Welcome that creates a conversation produces no line. No frame announces a device add: clients find out from the commit itself.
+
+## Safety numbers
+
+A client can show two people a number that changes when either side's devices change (plan 7 Design 20, [OPEN-6](../security/threat-model.md#open-6-no-contact-or-device-verification)). It is computed from the preferred conversation's members and their MLS signature public keys, which the engine returns from `memberKeys(of:)` (a `MemberKey` is an identity and a signature key; plan 4 adds it at plan 7's request).
+
+- For each account, `side = SHA-256("safety-v1" ‖ 0x00 ‖ accountID ‖ 0x00 ‖ devices)`. `devices` lists that account's member devices sorted by identity bytes, each as `u16be(len id) ‖ id ‖ u16be(len key) ‖ key`.
+- The two sides are ordered by account ID. Each side gives 6 groups of 5 digits: group `i` is bytes `5i` to `5i+4` as a big-endian integer, mod 100 000. The number is the lower side's groups, then the higher side's: 12 groups, the same on both phones.
+- It changes when either account adds, removes or re-keys a device, and the chat then shows "Safety number changed". "Verified" is stored only on the device and nothing is sent to the server.
+
+What this closes and what it does not: two people who compare the number out of band detect a substituted KeyPackage after the fact. Nothing yet stops a client from accepting a claimed KeyPackage whose credential does not match the claim, and most users will not compare numbers.
 
 ## Exporter labels
 
@@ -122,8 +136,9 @@ These are gaps between this profile and the plans. They need an owner decision o
 
 - **Plan 4 does not cover the KeyPackage rules.** `key_packages(count)` has no lifetime parameter, no last-resort marker, and the engine deletes a KeyPackage's secrets after its Welcome (test `welcome_after_restart`). The server design also does not say which stored KeyPackage counts as "the last".
 - **Group ID length:** plan 4 creates 32-byte group IDs, and this profile says 16. Receivers accept either.
-- **Credential check:** no task checks a claimed KeyPackage's credential against the claim (OPEN-6).
-- **Silent device adds:** OPEN-7.
+- **Credential check:** no task checks a claimed KeyPackage's credential against the claim. Safety numbers detect a substitution only when users compare them (OPEN-6 stays open for the automatic check).
+- **Plan 4 request:** `memberKeys(of:)` and `MemberKey` must be added to the engine for safety numbers and device lines.
+- **Device add visibility:** lines and notifications appear only after the commit is processed. A malicious server that never delivers a commit shows nothing (OPEN-7, OPEN-19).
 - **Revocation catch-up:** plan 7's `handleRevoked` reacts to the live event only. The comparison with `GET /v1/devices` above is not in any task.
 - **`removeDevices` for a revoked device:** the server design does not say whether a commit may name a device whose row revocation already deleted.
 - **Withheld messages:** clients do not check for gaps in `seq` or the inbox cursor ([OPEN-19](../security/threat-model.md#open-19-the-server-can-withhold-messages-undetectably)).
