@@ -23,14 +23,24 @@ class StringsRulesTest {
         (0 until nodes.length).map { nodes.item(it) }.map { it.attributes.getNamedItem("name").nodeValue to it.textContent }
     }
 
+    private val forbiddenWords = Regex("\\b(codecs?|kbps|relay(s|ed|ing)?|MLS|E2EE)\\b", RegexOption.IGNORE_CASE)
+
     private fun kotlinFiles(dir: File): List<File> = dir.walkTopDown().filter { it.extension == "kt" }.toList()
 
     @Test
     fun forbiddenWordsAbsent() {
         assertTrue(entries().isNotEmpty())
-        val forbidden = Regex("\\b(codec|kbps|relay|MLS|E2EE)\\b", RegexOption.IGNORE_CASE)
+        val forbidden = forbiddenWords
         val hits = entries().filter { (name, text) -> forbidden.containsMatchIn(text) || forbidden.containsMatchIn(name) }
         assertEquals(emptyList(), hits)
+    }
+
+    @Test
+    fun forbiddenWordsCatchPluralsAndVariants() {
+        val forbidden = forbiddenWords
+        for (text in listOf("codecs", "Codec", "relays", "relayed", "MLS", "E2EE", "64 kbps")) {
+            assertTrue(forbidden.containsMatchIn(text), text)
+        }
     }
 
     @Test
@@ -39,14 +49,44 @@ class StringsRulesTest {
         assertEquals(listOf("app_name"), withBrand)
     }
 
+    /**
+     * Files (other than ChatInfoScreen.kt) that name an encryption string resource, an encryption key from :core
+     * (`ChatEncryption.infoKey`, `chat_info_encryption_*`), or a literal that names an encryption type.
+     */
+    private fun encryptionViolations(dir: File): List<String> {
+        val patterns = listOf(
+            Regex("R\\.string\\.\\w*encryption\\w*"),
+            Regex("\\w*encryption_\\w+"),
+            Regex("\\b(ChatEncryption|infoKey)\\b"),
+            Regex("\"[^\"\\n]*(encrypt|end-to-end)[^\"\\n]*\"", RegexOption.IGNORE_CASE),
+        )
+        return kotlinFiles(dir).filter { it.name != "ChatInfoScreen.kt" }
+            .filter { f -> f.readText().let { text -> patterns.any { it.containsMatchIn(text) } } }
+            .map { it.name }
+    }
+
     @Test
     fun encryptionStringsOnlyInChatInfo() {
-        val roots = listOf(File(appDir, "src/main/kotlin"), File(appDir, "src/test/kotlin"))
-        val offenders = roots.flatMap { kotlinFiles(it) }
-            .filter { it.name != "ChatInfoScreen.kt" && it.name != "StringsRulesTest.kt" }
-            .filter { it.readText().contains("R.string.encryption_") }
-            .map { it.name }
-        assertEquals(emptyList(), offenders)
+        assertEquals(emptyList(), encryptionViolations(File(appDir, "src/main/kotlin")))
+    }
+
+    @Test
+    fun encryptionGuardCatchesPlantedReferences() {
+        val scratch = kotlin.io.path.createTempDirectory("encryption-guard").toFile()
+        try {
+            val plants = mapOf(
+                "ChatRow.kt" to "val t = stringResource(R.string.chat_info_encryption_end_to_end)",
+                "ChatScreen.kt" to "Text(chat.encryption.infoKey)",
+                "CallScreen.kt" to "Text(\"End-to-end encrypted\")",
+                "Other.kt" to "val k = \"chat_info_encryption_server_readable\"",
+            )
+            for ((name, body) in plants) File(scratch, name).writeText("package x\n$body\n")
+            File(scratch, "ChatInfoScreen.kt").writeText("package x\nval ok = R.string.chat_info_encryption_end_to_end\n")
+            File(scratch, "Clean.kt").writeText("package x\nval ok = R.string.tab_chats\n")
+            assertEquals(plants.keys, encryptionViolations(scratch).toSet())
+        } finally {
+            scratch.deleteRecursively()
+        }
     }
 
     @Test
