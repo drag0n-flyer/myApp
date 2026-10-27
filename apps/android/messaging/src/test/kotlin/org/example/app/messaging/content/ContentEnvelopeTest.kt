@@ -59,10 +59,29 @@ class ContentEnvelopeTest {
     }
 
     @Test
-    fun textOver4096Rejected() {
-        ContentCodec.encode(ContentEnvelope.Text("i", 1, "a".repeat(4096)))
-        assertFailsWith<IllegalArgumentException> { ContentCodec.encode(ContentEnvelope.Text("i", 1, "a".repeat(4097))) }
-        assertFailsWith<IllegalArgumentException> { ContentCodec.encode(ContentEnvelope.Edit("i", 1, "t", "a".repeat(4097))) }
+    fun codecDoesNotCapTextButHasBackstop() {
+        ContentCodec.encode(ContentEnvelope.Text("i", 1, "a".repeat(5000)))
+        assertFailsWith<IllegalArgumentException> { ContentCodec.encode(ContentEnvelope.Text("i", 1, "a".repeat(70_000))) }
+        val big = """{"at":1,"id":"x","k":"text","t":"${"a".repeat(70_000)}","v":1}""".encodeToByteArray()
+        assertEquals("invalid", assertIs<ContentEnvelope.Unknown>(ContentCodec.decode(big)).kind)
+    }
+
+    @Test
+    fun unknownReEncodesLosslessly() {
+        val raw = """{"at":1,"future":{"x":[1,2]},"id":"x","k":"sticker","v":1}"""
+        assertEquals(raw, ContentCodec.encode(ContentCodec.decode(raw.encodeToByteArray())).decodeToString())
+    }
+
+    @Test
+    fun wholeNumberDurationMatchesSwift() {
+        // Swift JSONEncoder writes Double 3.0 as `3` (checked with swiftc on Linux).
+        val att = Att("a", ByteArray(1), ByteArray(1), 1, 1)
+        val out = ContentCodec.encode(ContentEnvelope.Voice("i", 1, att, 3.0)).decodeToString()
+        assertTrue(out.contains(""""dur":3,"""), out)
+        val back = assertIs<ContentEnvelope.Voice>(ContentCodec.decode(out.encodeToByteArray()))
+        assertEquals(3.0, back.dur)
+        assertEquals(out, ContentCodec.encode(back).decodeToString())
+        assertTrue(ContentCodec.encode(ContentEnvelope.Voice("i", 1, att, 14.5)).decodeToString().contains(""""dur":14.5"""))
     }
 
     @Test

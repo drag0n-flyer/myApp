@@ -48,24 +48,32 @@ sealed interface ContentEnvelope {
 enum class ReceiptKind(val wire: String) { Delivered("delivered"), Read("read") }
 
 object ContentCodec {
-    const val MAX_TEXT_LENGTH = 4096
+    /** Loose backstop on a whole envelope (UTF-8 bytes), both ways. The real text limit is [TextLimit], applied at compose time. */
+    const val MAX_ENVELOPE_BYTES = 64 * 1024
     private val json = Json { ignoreUnknownKeys = true }
     private val knownKinds = setOf("text", "photo", "voice", "file", "edit", "delete", "react", "receipt", "callsig", "mode")
     private val invalidKinds = setOf("mode", "receipt")
 
-    /** Sorted keys, no whitespace, like the Swift encoder. Throws [IllegalArgumentException] for text over 4096 characters. */
+    /** Sorted keys, no whitespace, like the Swift encoder. Throws [IllegalArgumentException] only over the 64 KiB backstop. [ContentEnvelope.Unknown] is re-emitted verbatim. */
     fun encode(env: ContentEnvelope): ByteArray {
+        val bytes = encodeUnchecked(env)
+        require(bytes.size <= MAX_ENVELOPE_BYTES) { "envelope larger than $MAX_ENVELOPE_BYTES bytes" }
+        return bytes
+    }
+
+    private fun encodeUnchecked(env: ContentEnvelope): ByteArray {
+        if (env is ContentEnvelope.Unknown) return env.raw.encodeToByteArray()
         val obj = when (env) {
-            is ContentEnvelope.Text -> { checkLength(env.t); head(env, "text") { put("t", env.t); env.r?.let { put("r", it) } } }
+            is ContentEnvelope.Text -> { head(env, "text") { put("t", env.t); env.r?.let { put("r", it) } } }
             is ContentEnvelope.Photo -> head(env, "photo") {
                 put("a", attJson(env.a)); put("w", env.w); put("h", env.h)
                 env.th?.let { put("th", b64(it)) }; env.r?.let { put("r", it) }
             }
-            is ContentEnvelope.Voice -> head(env, "voice") { put("a", attJson(env.a)); put("dur", env.dur); env.r?.let { put("r", it) } }
+            is ContentEnvelope.Voice -> head(env, "voice") { put("a", attJson(env.a)); put("dur", number(env.dur)); env.r?.let { put("r", it) } }
             is ContentEnvelope.File -> head(env, "file") {
                 put("a", attJson(env.a)); put("name", env.name); put("mime", env.mime); env.r?.let { put("r", it) }
             }
-            is ContentEnvelope.Edit -> { checkLength(env.t); head(env, "edit") { put("target", env.target); put("t", env.t) } }
+            is ContentEnvelope.Edit -> { head(env, "edit") { put("target", env.target); put("t", env.t) } }
             is ContentEnvelope.Delete -> head(env, "delete") { put("target", env.target) }
             is ContentEnvelope.React -> head(env, "react") { put("target", env.target); put("e", env.e) }
             is ContentEnvelope.Receipt -> head(env, "receipt") {
@@ -75,13 +83,14 @@ object ContentCodec {
                 put("p", json.encodeToJsonElement(CallSignalPayload.serializer(), env.p))
             }
             is ContentEnvelope.Mode -> head(env, "mode") { put("m", env.m) }
-            is ContentEnvelope.Unknown -> head(env, env.kind) {}
+            is ContentEnvelope.Unknown -> error("handled above")
         }
         return sorted(obj).toString().encodeToByteArray()
     }
 
     /** Never throws: bad JSON, a newer version, an unknown kind or a malformed known kind all give [ContentEnvelope.Unknown]. */
     fun decode(data: ByteArray): ContentEnvelope {
+        if (data.size > MAX_ENVELOPE_BYTES) return ContentEnvelope.Unknown("", 0, "invalid", "")
         val text = data.decodeToString()
         val obj = try { json.parseToJsonElement(text) as? JsonObject } catch (_: Exception) { null }
         val v = obj?.get("v").int(); val id = obj?.get("id").str(); val at = obj?.get("at").long(); val k = obj?.get("k").str()
@@ -127,8 +136,9 @@ object ContentCodec {
     private fun attJson(a: Att): JsonElement = json.encodeToJsonElement(Att.serializer(), a)
     private fun b64(b: ByteArray) = Base64.getEncoder().encodeToString(b)
 
-    private fun checkLength(t: String) =
-        require(t.codePointCount(0, t.length) <= MAX_TEXT_LENGTH) { "text longer than $MAX_TEXT_LENGTH characters" }
+    /** Swift writes a whole-number Double as `3`, not `3.0`. */
+    private fun number(d: Double): JsonPrimitive =
+        if (d.isFinite() && d == Math.floor(d) && Math.abs(d) < 1e15) JsonPrimitive(d.toLong()) else JsonPrimitive(d)
 
     private inline fun head(env: ContentEnvelope, k: String, fields: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit) =
         buildJsonObject { put("v", env.v); put("id", env.id); put("at", env.at); put("k", k); fields() }
