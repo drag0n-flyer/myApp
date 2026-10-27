@@ -1,5 +1,30 @@
 knowledge/
 .superpowers/
+
+# Apple apps
 apps/apple/*.xcodeproj
 .build/
 DerivedData/
+tools/call-lab/*.xcodeproj
+tools/call-lab/corpus/
+tools/call-lab/runs/
+
+# Rust (MLS bindings) and built frameworks
+target/
+*.xcframework/
+*.xcframework.zip
+
+# Go server
+server/bin/
+*.test
+*.out
+coverage.*
+
+# Local deployment state and secrets (never commit keys or credentials)
+.env
+.env.*
+!.env.example
+deploy/data/
+*.pem
+*.p8
+*.key

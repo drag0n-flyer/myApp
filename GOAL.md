@@ -40,7 +40,7 @@ The product should offer the everyday communication capabilities people expect f
 - **Web browser client:** not planned. A web app downloads its code from the server on every load, so a compromised or dishonest server could serve code that steals keys, which conflicts with strict E2EE.
 
 ### Shared code
-No shared cross-platform core for now. Each client is written natively (Swift for iPhone and macOS; Kotlin for Android later). Reviewed libraries, including those implemented in Rust or C/C++, are consumed through their official Swift/Kotlin bindings rather than through a custom shared core; confirm each library's license before adopting it. Keep client behavior consistent through a written protocol specification and shared test vectors. Revisit this decision when Android development starts.
+No shared cross-platform core for now. Each client is written natively (Swift for iPhone and macOS; Kotlin for Android later). Reviewed libraries, including those implemented in Rust or C/C++, are consumed through their official Swift/Kotlin bindings, or through a thin project-written binding layer when the official one is inadequate (as for `mls-rs`), rather than through a custom shared core. Such a layer only passes data to the library and contains no cryptography of its own; confirm each library's license before adopting it. Keep client behavior consistent through a written protocol specification and shared test vectors. Revisit this decision when Android development starts.
 
 ## 4. Core Product Scope
 
@@ -149,7 +149,7 @@ The product must support clearly differentiated encryption policies. Encryption 
 - Define behavior for group membership changes, unsupported clients, linked devices, message search, backups, attachments, notifications, and call media under each mode.
 
 ### Encryption protocol
-- **Messaging:** MLS (RFC 9420) for every conversation, using the `mls-rs` library (Apache-2.0 OR MIT) through its official Swift and Kotlin bindings. A 1:1 chat is a two-member group, and each device is its own MLS member, which supports device linking.
+- **Messaging:** MLS (RFC 9420) for every conversation, using the `mls-rs` library (Apache-2.0 OR MIT) through a thin project-written Rust binding layer (`mlsffi`), because the official `mls-rs-uniffi` bindings require OpenSSL, keep KeyPackage keys only in memory, and lack epoch and pending-commit operations. The owner reviews this layer. No complete Swift-native MLS library exists as of October 2026. A 1:1 chat is a two-member group, and each device is its own MLS member, which supports device linking.
 - **Server role:** the Go server is an MLS Delivery Service. It stores KeyPackages and accepts commits in strict order (first commit wins per epoch). It needs no cryptography library.
 - **Not libsignal:** it is AGPL-3.0 and its maintainers state that use outside Signal is unsupported.
 - **1:1 call media:** WebRTC DTLS-SRTP is end-to-end for direct and TURN-relayed calls, provided each side's DTLS fingerprint is exchanged inside an MLS-encrypted message so no server can substitute it.
