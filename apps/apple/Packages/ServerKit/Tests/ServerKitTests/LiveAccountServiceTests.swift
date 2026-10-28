@@ -293,18 +293,28 @@ private func err(_ code: String) -> String { #"{"error":{"code":"\#(code)","mess
         let box = ServiceBox()
         let r = Rig(onSleep: { n, t in
             if n == 1 {
-                await t.respond("GET", "/v1/server", status: 200, json: serverJSON)
+                await t.respond("GET", "/v1/server", status: 200,
+                                json: serverJSON.replacingOccurrences(of: "chat.test", with: "other.test"))
                 await box.changeServer(to: "other.test")
                 await t.respond("POST", "/v1/link/L1/claim", status: 200, json: sessionJSON)
             }
         })
         box.service = r.service
+        await r.t.respond("GET", "/v1/server", status: 200, json: serverJSON)
+        _ = try await r.service.connect(host: "chat.test")
         await r.t.respond("POST", "/v1/link", status: 200, json: #"{"linkID":"L1","secret":"S1","claimToken":"C1","expiresAt":"2026-11-01T12:05:00Z"}"#)
         await r.t.respond("POST", "/v1/link/L1/claim", status: 202, json: "{}")
         _ = try await r.service.makeLinkCode()
         _ = try await r.service.waitForLinkApproval()
         #expect(box.changed)
         #expect(r.store.current?.host == "chat.test")
+        // Later authenticated calls go to the claim host; the other server never sees the token.
+        #expect(r.service.currentServer?.host == "chat.test")
+        await r.t.respond("GET", "/v1/devices", status: 200, json: #"{"devices":[]}"#)
+        _ = try await r.service.devices()
+        let sent = await r.t.requests
+        #expect(sent.last?.url?.host == "chat.test" && sent.last?.url?.path == "/v1/devices")
+        #expect(!sent.contains { $0.url?.host == "other.test" && $0.value(forHTTPHeaderField: "Authorization") != nil })
     }
 
     @Test func linkExpiresAfterFiveMinutes() async throws {
