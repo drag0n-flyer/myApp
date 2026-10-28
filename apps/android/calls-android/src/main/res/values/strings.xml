@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="calls_incoming_audio">Incoming audio call</string>
+    <string name="calls_incoming_video">Incoming video call</string>
+    <string name="calls_ongoing">Ongoing call</string>
+    <string name="calls_unknown_caller">Unknown caller</string>
+</resources>
