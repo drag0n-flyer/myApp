@@ -96,7 +96,14 @@ class NotificationProcessor(
             // A failed read flags the conversation instead of skipping silently: the state has advanced.
             var unreadable: GroupId? = null
             val keys = if (incoming is Incoming.Commit && !incoming.removedMe) {
-                try { membership.keys(incoming.group) } catch (_: Exception) { unreadable = incoming.group; null }
+                try {
+                    membership.keys(incoming.group)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    unreadable = incoming.group
+                    null
+                }
             } else null
             val raw = known ?: rawRecord(incoming, payload)
             val applied = repo.transaction {
