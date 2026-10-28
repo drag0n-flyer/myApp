@@ -6,6 +6,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.example.app.contracts.DeliveryApi
+import org.example.app.contracts.GroupId
 import org.example.app.contracts.InboxItem
 import org.example.app.contracts.Incoming
 import org.example.app.contracts.MemberKey
@@ -251,13 +252,16 @@ class InboxProcessor(
                 handler.apply(incoming, raw, repo, plan.keys)
             }
         } else {
-            // The members after a commit. A failure only skips them now; the next update catches up.
+            // The members after a commit. The MLS state has advanced, so the item must not be processed again: a
+            // failure flags the conversation instead (no safety number until a read works).
+            var unreadable: GroupId? = null
             val keys: List<MemberKey>? = if (incoming is Incoming.Commit && !incoming.removedMe) {
-                try { membership.keys(incoming.group) } catch (_: Exception) { null }
+                try { membership.keys(incoming.group) } catch (e: CancellationException) { throw e } catch (_: Exception) { unreadable = incoming.group; null }
             } else null
             result = repo.transaction {
                 if (!repo.markProcessed(hash, clock.now())) return@transaction null.also { repo.deleteRaw(raw.cursor) }
                 repo.deleteRaw(raw.cursor)
+                unreadable?.let { g -> repo.conversationByGroup(g.raw) }?.let { Membership.markUnreadable(it.serverId, repo) }
                 handler.apply(incoming, raw, repo, keys)
             }
         }

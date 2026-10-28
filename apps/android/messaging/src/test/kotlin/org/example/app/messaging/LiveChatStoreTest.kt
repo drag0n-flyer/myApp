@@ -280,4 +280,27 @@ class LiveChatStoreTest {
         rig.bob1.repo.block("acc-ana", NOW)
         assertEquals(org.example.app.core.chats.IncomingCallDecision.SilentMissed, s.incomingCall("acc-ana", false))
     }
+
+    /** A chat whose members cannot be read shows no number and no verified state, cannot be verified, and says so. */
+    @Test
+    fun unreadableMembersHideTheNumberAndTheVerifiedState() = runTest {
+        val (rig, _, conv) = joined()
+        val d = rig.bob1
+        val s = LiveChatStore(
+            d.me, d.mls, d.api, d.repo, d.lock, d.clock, d.manager, d.processor,
+            org.example.app.messaging.sync.Membership(d.me, d.mls, realMemberKeys = true, clock = d.clock),
+            d.sealer(), null, { true }, 10, MediaDirs(tmp("blob"), tmp("open"), tmp("temp")), social, scope, mediaSweep = {},
+        )
+        assertNotNull(s.safetyNumber("acc-ana"))
+        s.setVerified(true, "acc-ana")
+        assertEquals(true, s.safetyNumber("acc-ana")?.isVerified)
+        assertFalse(s.membersUnreadable("acc-ana"))
+
+        org.example.app.messaging.sync.Membership.markUnreadable(conv.serverId, d.repo)
+        assertTrue(s.membersUnreadable("acc-ana"))
+        assertNull(s.safetyNumber("acc-ana"))
+        val verified = d.repo.safety("acc-ana")?.verified
+        s.setVerified(false, "acc-ana")
+        assertEquals(verified, d.repo.safety("acc-ana")?.verified, "unchanged, cannot be re-verified")
+    }
 }

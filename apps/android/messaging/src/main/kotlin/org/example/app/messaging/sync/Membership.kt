@@ -51,8 +51,14 @@ class Membership(
         return keys.sortedWith { a, b -> compareUtf8(a.identity, b.identity) }
     }
 
+    /** A failed read flags the conversation ([markUnreadable]) and still throws. */
     suspend fun update(conversation: ConversationRecord, repo: Repository): MembershipChange {
-        val keys = keys(GroupId(conversation.groupId))
+        val keys = try {
+            keys(GroupId(conversation.groupId))
+        } catch (e: Exception) {
+            if (e !is kotlinx.coroutines.CancellationException) markUnreadable(conversation.serverId, repo)
+            throw e
+        }
         return repo.transaction { apply(keys, conversation, repo) }
     }
 
@@ -61,11 +67,33 @@ class Membership(
         write(me, keys, conversation, repo, clock.now())
 
     companion object {
+        /**
+         * A `kv` flag per conversation: the engine could not read its members (a member's credential it cannot read,
+         * or any other failure), so its device lines and safety number may be out of date. Set instead of skipping
+         * silently; cleared by the next [write]. While set, the chat shows no safety number and says why.
+         */
+        const val UNREADABLE_PREFIX = "members.unreadable."
+
+        /** Flags a known conversation; an unknown one is ignored. */
+        fun markUnreadable(conversationId: String, repo: Repository) {
+            if (repo.conversation(conversationId) == null) return
+            repo.set(UNREADABLE_PREFIX + conversationId, byteArrayOf(1))
+        }
+
+        fun isUnreadable(conversationId: String, repo: Repository): Boolean =
+            repo.get(UNREADABLE_PREFIX + conversationId)?.contentEquals(byteArrayOf(1)) == true
+
+        /** True when the members of any active conversation of the chat could not be read. */
+        fun membersUnreadable(chatId: String, repo: Repository): Boolean =
+            repo.conversations(chatId).any { it.active && isUnreadable(it.serverId, repo) }
+
         /** [apply] for code that has no engine (`IncomingHandler`). [now] stamps the device lines. */
         fun write(me: LocalDevice, keys: List<MemberKey>, conversation: ConversationRecord, repo: Repository, now: Long): MembershipChange {
             // The epoch in the line IDs is the stored one: callers store the new epoch first.
             val current = repo.conversation(conversation.serverId) ?: conversation
             val stored = repo.members(current.serverId)
+            // The members were read: any earlier unreadable flag no longer applies.
+            if (isUnreadable(current.serverId, repo)) repo.set(UNREADABLE_PREFIX + current.serverId, ByteArray(0))
             val lines = mutableListOf<Pair<String, ByteArray>>()
 
             // No stored rows yet: the commit or Welcome that creates the conversation. Store, no lines.

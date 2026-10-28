@@ -93,13 +93,18 @@ class NotificationProcessor(
             } catch (_: Exception) {
                 return@withContext NotificationOutcome.Generic
             }
+            // A failed read flags the conversation instead of skipping silently: the state has advanced.
+            var unreadable: GroupId? = null
             val keys = if (incoming is Incoming.Commit && !incoming.removedMe) {
-                try { membership.keys(incoming.group) } catch (_: Exception) { null }
+                try { membership.keys(incoming.group) } catch (_: Exception) { unreadable = incoming.group; null }
             } else null
             val raw = known ?: rawRecord(incoming, payload)
             val applied = repo.transaction {
                 if (!repo.markProcessed(hash, clock.now())) AppliedResult.Ignored
-                else handler.apply(incoming, raw, repo, keys)
+                else {
+                    unreadable?.let { g -> repo.conversationByGroup(g.raw) }?.let { Membership.markUnreadable(it.serverId, repo) }
+                    handler.apply(incoming, raw, repo, keys)
+                }
             }
             decide(applied)
         }

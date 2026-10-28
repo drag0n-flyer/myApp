@@ -3,6 +3,7 @@ package org.example.app.messaging
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
@@ -15,6 +16,7 @@ import org.example.app.messaging.content.ReceiptKind
 import org.example.app.messaging.ports.ContactRecord
 import org.example.app.messaging.ports.ConversationRecord
 import org.example.app.messaging.ports.RawInboxRecord
+import org.example.app.messaging.sync.Membership
 import org.example.app.messaging.sync.NOW
 import org.example.app.messaging.sync.Rig
 import org.example.app.messaging.sync.TestDevice
@@ -206,5 +208,28 @@ class NotificationProcessorTest {
         val s = setup(contact = true)
         assertIs<RingOutcome.Drop>(s.rig.bob1.lock.withLock { s.np.onCallPush(pad("junk".encodeToByteArray())) })
         assertIs<RingOutcome.Drop>(s.rig.bob1.lock.withLock { s.np.onCallPush(pad(ByteArray(0))) })
+    }
+
+    /** A commit taken from a push whose members cannot be read flags the chat; a later commit that reads clears it. */
+    @Test
+    fun commitWithUnreadableMembersFlagsTheChat() = runTest {
+        val s = setup(contact = true)
+        val group = org.example.app.contracts.GroupId(s.conv.groupId)
+        suspend fun commitFromAna(device: String): ByteArray {
+            s.rig.ana1.manager.postCommitWithRetry(s.conv.serverId, group, emptyList(), listOf(device.substringAfter('/'))) {
+                s.rig.ana1.mls.remove(listOf(device), group)
+            }
+            return s.rig.server.pending("acc-bob/bob1").last().payload
+        }
+        val first = commitFromAna("acc-ana/ana2")
+        s.rig.bob1.mls.failMembers = { org.example.app.contracts.MlsException.Crypto("unreadable credential") }
+        s.rig.bob1.lock.withLock { s.np.onMessagePush(pad(first)) }
+        assertEquals(2L, s.rig.bob1.repo.conversation(s.conv.serverId)?.epoch)
+        assertTrue(Membership.membersUnreadable("acc-ana", s.rig.bob1.repo))
+
+        s.rig.bob1.mls.failMembers = null
+        val second = commitFromAna("acc-bob/bob2")
+        s.rig.bob1.lock.withLock { s.np.onMessagePush(pad(second)) }
+        assertFalse(Membership.membersUnreadable("acc-ana", s.rig.bob1.repo))
     }
 }

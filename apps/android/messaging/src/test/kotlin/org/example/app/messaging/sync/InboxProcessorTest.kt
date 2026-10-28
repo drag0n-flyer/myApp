@@ -486,4 +486,29 @@ class InboxProcessorTest {
         assertEquals("acc-ana/ana1", signal.sender)
         assertTrue(rig.bob1.repo.allMessages().isEmpty())
     }
+
+    /** A commit is processed (the MLS state has moved on) but its members cannot be read: the chat is flagged, not skipped. */
+    @Test
+    fun commitWithUnreadableMembersFlagsTheChatAndTheNextReadClearsIt() = runTest {
+        val (rig, record) = joinedRig()
+        assertFalse(Membership.membersUnreadable("acc-ana", rig.bob1.repo))
+        val group = GroupId(record.groupId)
+        rig.ana1.manager.postCommitWithRetry(record.serverId, group, emptyList(), listOf("ana2")) {
+            rig.ana1.mls.remove(listOf("acc-ana/ana2"), group)
+        }
+        rig.bob1.mls.failMembers = { MlsException.Crypto("unreadable credential") }
+        rig.bob1.processor.sync()
+        assertEquals(2L, rig.bob1.repo.conversation(record.serverId)?.epoch)
+        assertTrue(Membership.isUnreadable(record.serverId, rig.bob1.repo))
+        assertTrue(Membership.membersUnreadable("acc-ana", rig.bob1.repo))
+
+        rig.bob1.mls.failMembers = null
+        rig.ana1.manager.postCommitWithRetry(record.serverId, group, emptyList(), listOf("bob2")) {
+            rig.ana1.mls.remove(listOf("acc-bob/bob2"), group)
+        }
+        rig.bob1.processor.sync()
+        assertEquals(3L, rig.bob1.repo.conversation(record.serverId)?.epoch)
+        assertFalse(Membership.membersUnreadable("acc-ana", rig.bob1.repo))
+        rig.assertLockDiscipline()
+    }
 }
