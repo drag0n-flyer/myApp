@@ -29,6 +29,24 @@ final class OnboardingTests: XCTestCase {
         XCTAssertTrue(app.tab("Chats").waitToExist())
     }
 
+    func testSignUpWithEmailCodeInstead() {
+        let app = XCUIApplication.launched(skipOnboarding: false)
+        app.element("welcome.start").tap()
+        app.element("join.default").tap()
+        type(app, "invite.field", "BETA-2026")
+        app.element("invite.submit").tap()
+        type(app, "account.name", "Your Name")
+        type(app, "account.username", "yourname")
+        XCTAssertTrue(app.staticTexts["✓ Available"].waitToExist())
+        type(app, "account.email", "you@example.com")
+        app.element("account.continue").tap()
+        type(app, "verify.field", "123456")
+        XCTAssertTrue(app.element("passkey.emailInstead").waitToExist())
+        app.element("passkey.emailInstead").tap()
+        app.element("permissions.continue").tap()
+        XCTAssertTrue(app.tab("Chats").waitToExist())
+    }
+
     func testUsernameTaken() {
         let app = XCUIApplication.launched(skipOnboarding: false)
         app.element("welcome.start").tap()

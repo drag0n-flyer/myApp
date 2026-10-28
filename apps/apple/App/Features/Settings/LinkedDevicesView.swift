@@ -51,6 +51,8 @@ private struct ScanLinkCodeView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var request: LinkRequest?
     @State private var error: AccountError?
+    /// Approved, but the contact list was too large to send.
+    @State private var snapshotNotSent = false
 
     var body: some View {
         NavigationStack {
@@ -78,6 +80,11 @@ private struct ScanLinkCodeView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             }
+            .alert("Device linked", isPresented: $snapshotNotSent) {
+                Button("OK", role: .cancel) { dismiss() }
+            } message: {
+                Text("The new device starts without its contacts.")
+            }
         }
     }
 
@@ -88,15 +95,21 @@ private struct ScanLinkCodeView: View {
         } catch { self.error = error }
     }
 
-    /// Returns the error to show, or `nil` after dismissing on success.
+    /// Returns the error to show, or `nil` on success. On success it dismisses, or first says the new
+    /// device starts without its contacts when they were too large to send.
     private func approve(_ request: LinkRequest) async -> AccountError? {
+        let approval: LinkApproval
         do throws(AccountError) {
-            try await model.account.approveLink(request)
+            approval = try await model.account.approveLink(request)
         } catch {
             return error == .cancelled ? nil : error
         }
         await model.refreshDevices()
-        dismiss()
+        if approval.snapshotSent {
+            dismiss()
+        } else {
+            snapshotNotSent = true
+        }
         return nil
     }
 }

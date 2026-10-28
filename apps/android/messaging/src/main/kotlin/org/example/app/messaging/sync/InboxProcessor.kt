@@ -302,7 +302,7 @@ class InboxProcessor(
         const val CURSOR_KEY = "inbox.cursor"
 
         /**
-         * The `planJoin` failures retrying cannot fix: no peer, a server ID bound to another group, and anything the
+         * The `planJoin` failures retrying cannot fix: no peer, a server ID or group bound to another conversation, and anything the
          * engine rejects (unreadable credentials included) except a storage error. Everything else is temporary.
          */
         internal fun isPermanentJoinFailure(e: Exception): Boolean = when (e) {

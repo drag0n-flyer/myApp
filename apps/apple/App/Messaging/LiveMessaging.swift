@@ -25,8 +25,13 @@ struct LiveMessaging {
     let inbox: InboxProcessor
     /// Wipes this account's local data at sign-out (`wipeLocalData`).
     let sync: DeviceSync
+    /// Runs own-device reconcile on each live connect and once more 11 minutes later, and handles
+    /// `device.revoked` events, one at a time.
+    let reconciler: ReconcileScheduler
     let network: SharedValue<NetworkType>
     let autoDownload: SharedValue<AutoDownloadSettings>
+    /// The Read receipts switch, read by the outbox and the chat store.
+    let readReceipts: SharedValue<Bool>
 
     /// The app-group container, or nil when the group is not available.
     static var container: URL? {
@@ -53,6 +58,7 @@ struct LiveMessaging {
     /// Sign-out: stop this graph (no task can write afterwards), then wipe its data. Throws when the wipe fails;
     /// the pending marker (written by the caller before it started) stays, so the next launch retries.
     func wipeAfterSignOut() async throws {
+        await reconciler.disconnected()
         await store.shutdown()
         try await sync.wipeLocalData()
         if let container = Self.container { try LocalAccountData.clearWipePending(in: container) }
@@ -61,7 +67,8 @@ struct LiveMessaging {
     /// `nil` when the real MLS engine is not available in this build (see `makeEngine`) or when the shared
     /// container cannot be opened. The caller then keeps the sample store: it never falls back to a fake engine.
     static func make(
-        session: Session, client: ServerClient, network: NetworkType, settings: AutoDownloadSettings
+        session: Session, client: ServerClient, network: NetworkType, settings: AutoDownloadSettings,
+        readReceipts: Bool
     ) async -> LiveMessaging? {
         guard let container,
               makeEngineAvailable(),
@@ -92,7 +99,9 @@ struct LiveMessaging {
         let keys = EscrowKeyProvider(server: client)
         let syncHook = SyncHook()
         let conversations = ConversationManager(deps: deps, escrowKey: keys.closure, syncOnce: { try await syncHook.run() })
-        let outbox = Outbox(deps: deps, conversations: conversations, keys: keys)
+        let readReceiptsBox = SharedValue(readReceipts)
+        let outbox = Outbox(
+            deps: deps, conversations: conversations, keys: keys, readReceiptsEnabled: { readReceiptsBox.value })
         let inbox = InboxProcessor(
             deps: deps, conversations: conversations, handler: IncomingHandler(me: deps.me, now: now), controls: outbox)
         syncHook.set { _ = try await inbox.syncOnce() }
@@ -108,7 +117,11 @@ struct LiveMessaging {
             deps: deps, outbox: outbox, network: { networkBox.value }, settings: { settingsBox.value })
         let store = LiveChatStore(
             deps: deps, outbox: outbox, inbox: inbox, conversations: conversations, attachments: attachments)
-        return LiveMessaging(store: store, inbox: inbox, sync: sync, network: networkBox, autoDownload: settingsBox)
+        let reconciler = ReconcileScheduler(
+            deviceID: session.deviceID, reconcile: { try await sync.reconcileOwnDevices() })
+        return LiveMessaging(
+            store: store, inbox: inbox, sync: sync, reconciler: reconciler,
+            network: networkBox, autoDownload: settingsBox, readReceipts: readReceiptsBox)
     }
 
     /// MERGE(M5): the real engine, `makeMLSEngine(identity:storage:)` (plan 4), keeping its group state in the

@@ -11,7 +11,7 @@ import MessagingTestKit
         let server = FakeServer()
         let device = await makeDevice(server, account: "acc-ana", username: "ana", realMemberKeys: realKeys)
         let manager = ConversationManager(deps: device.deps)
-        let outbox = Outbox(deps: device.deps, conversations: manager)
+        let outbox = Outbox(deps: device.deps, conversations: manager, readReceiptsEnabled: { true })
         let inbox = InboxProcessor(
             deps: device.deps, conversations: manager, handler: IncomingHandler(me: device.deps.me, now: device.deps.now, log: { _ in }))
         let store = LiveChatStore(deps: device.deps, outbox: outbox, inbox: inbox, conversations: manager, attachments: nil)

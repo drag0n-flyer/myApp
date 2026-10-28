@@ -65,11 +65,12 @@ private struct Rig {
     let carol1: Node
     let conversationIDs: [String]
 
-    static func make(withCarol: Bool = false) async throws -> Rig {
+    /// - Parameter bob1Now: bob1's clock.
+    static func make(withCarol: Bool = false, bob1Now: @escaping @Sendable () -> Date = { testEpochDate }) async throws -> Rig {
         let server = FakeServer()
         let a1 = await makeDevice(server, account: "acc-ana", username: "ana")
         let a2 = await makeDevice(server, account: "acc-ana", username: "ana")
-        let b1 = await makeDevice(server, account: "acc-bob", username: "bob")
+        let b1 = await makeDevice(server, account: "acc-bob", username: "bob", now: bob1Now)
         let b2 = await makeDevice(server, account: "acc-bob", username: "bob")
         let c1 = await makeDevice(server, account: "acc-carol", username: "carol")
         for d in [a1, a2, b1, b2, c1] { try await keyPackages(d) }
@@ -105,7 +106,12 @@ private struct Rig {
     }
 
     @Test func deviceRemovedLine() async throws {
-        let rig = try await Rig.make()
+        let clock = StepClock()
+        let rig = try await Rig.make(bob1Now: { clock.now })
+        // The revoked event only runs reconcile: two lists ten minutes apart without bob2 remove it.
+        await rig.server.revokeDevice(account: "acc-bob", deviceID: rig.bob2.device.deviceID)
+        try await rig.bob1.sync.handleRevoked(deviceID: rig.bob2.device.deviceID)
+        clock.advance(10 * 60)
         try await rig.bob1.sync.handleRevoked(deviceID: rig.bob2.device.deviceID)
         try await rig.ana1.syncInbox()
         try await rig.ana2.syncInbox()
@@ -256,4 +262,11 @@ private struct GateTransport: HTTPTransport {
         if gate.failing, request.url?.path == "/v1/devices" { throw URLError(.notConnectedToInternet) }
         return try await inner.send(request)
     }
+}
+
+private final class StepClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var date = testEpochDate
+    var now: Date { lock.withLock { date } }
+    func advance(_ seconds: TimeInterval) { lock.withLock { date = date.addingTimeInterval(seconds) } }
 }

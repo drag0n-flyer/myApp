@@ -20,6 +20,12 @@ public protocol ConversationManaging: Sendable {
     /// Creates a conversation if the chat has none.
     func preferredConversation(with peer: String) async throws -> ConversationRecord
     func handleStaleEpoch(_ conversation: ConversationRecord) async throws
+    /// Finishes every create whose add commit is not settled yet (a lost reply, a timeout or a kill).
+    func resumePendingCreates() async
+}
+
+extension ConversationManaging {
+    public func resumePendingCreates() async {}
 }
 
 /// Sends a control envelope (receipt, reaction...) that is not stored. Lane B's `Outbox` implements it.

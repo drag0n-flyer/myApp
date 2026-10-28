@@ -5,7 +5,7 @@ Last updated: 2026-10-28, 08:20 UTC.
 | Track | Done | % |
 |---|---|---|
 | iPhone/Mac Phase 1 | 120 / 128 | 94% |
-| Android | 37 / 44 | 84% |
+| Android | 38 / 44 | 86% |
 | Admin dashboard | done, with admin accounts and 2FA, on `main` | 100% |
 
 Up to 15 agents work in parallel (on Opus until 2 Nov, when Sonnet's weekly limit resets). CI is the bottleneck: about 5 Mac jobs at once, and GitHub throttles status checks when many agents watch runs. Mac CI runs only the jobs a change needs. Android CI uses Linux runners only.
@@ -46,15 +46,15 @@ Extra work beyond the plans, in progress (each is reviewed before it merges; ETA
 | Work | Branch | Now | ETA |
 |---|---|---|---|
 | Android review follow-ups (server binding, invite clearing, 1:1 call signals) | `android/followups` | merged | done |
-| Port: a lost reply to a new chat's first commit no longer orphans it; one bad invite no longer stalls the inbox | `fix/ios-port-inbox` | 2nd fix round (when to give up on a new chat) on CI; review found and fixed a remote inbox stall | 1–2 h |
-| Port: calls check the answering device; ring (50 s) and setup (30 s) deadlines | `fix/ios-port-calls` | review approved; fix round (sender device wired through, 2 tests) on CI | 1 h |
-| Port: own devices kept in line with the account; old control messages expire after 24 h | `feat/ios-port-reconcile` | review approved; fix round (wiring, a faked "device revoked" can never wipe or remove) on CI | 1–2 h |
-| Android: the same own-device wiring, with the same protection | `android/reconcile-wiring` | review found the faked-revoke wipe; fixed, on CI | 1–2 h |
-| Port: sign-up sends the display name, email-code sign-up, read-receipts switch | `feat/ios-port-signup` | written, on CI, review next | 2–3 h |
-| Port: linking skips an unreadable or too-large contact list; link-code check compares the port | `feat/ios-port-linking` | written, on CI, review next | 2–3 h |
+| Port: a lost reply to a new chat's first commit no longer orphans it; one bad invite no longer stalls the inbox | `fix/ios-port-inbox` | merged | done |
+| Port: calls check the answering device; ring (50 s) and setup (30 s) deadlines | `fix/ios-port-calls` | merged | done |
+| Port: own devices kept in line with the account; old control messages expire after 24 h | `feat/ios-port-reconcile` | merged | done |
+| Android: the same own-device wiring, with the same protection | `android/reconcile-wiring` | merged (only a rejected session wipes a phone; switched on by Android I1) | done |
+| Port: sign-up sends the display name, email-code sign-up, read-receipts switch | `feat/ios-port-signup` | merged | done |
+| Port: linking skips an unreadable or too-large contact list; link-code check compares the port | `feat/ios-port-linking` | merged | done |
 | App ID in one file (`apps/apple/AppID.xcconfig`) and a stronger photo-privacy test | `chore/appid-xcconfig` | written, waiting for Mac CI | 1–2 h |
 
-Still to port to Android after the iPhone inbox review: a crafted invite reusing another chat's group must be set aside, not stall the inbox; a new chat is abandoned only on a definite refusal.
+Android has the same inbox fixes (merged): a crafted invite can't stall the inbox, a new chat is abandoned only when really gone, and a failure after a chat starts never creates a second one.
 
 ## Main CI
 
@@ -71,10 +71,10 @@ Green: Apple apps (every job, after the Swift 6.2 / Xcode 26 fix), MLS client co
 | B, networking and accounts | 7 | 7 | done, with B7's review follow-ups merged (the http/https choice is saved with a session, a link code is claimed only on the server that issued it, changing server clears the invite code) |
 | C, MLS bindings | 4 | 4 | done |
 | D, storage and messaging | 7 | 7 | done. D7 took M7's `decryptApplication` from the iPhone side; checking `call.status` for late ring pushes moved to E6/I1. A ring is accepted only from the 1:1 chat with its sender (merged) |
-| E, WebRTC and calls | 6 (+E5b) | 2 | E3, E4 on `main`; E2 (WebRTC build): x86_64 and packaging green, the two ARM builds re-running after Google download errors; E1 after E2; then E5, E5b (bundled Opus for phones without an encoder), E6 |
+| E, WebRTC and calls | 6 (+E5b) | 2 | E3, E4 and E5 part 1 (call data counting, audio setup, noise reduction at ~3.6 MB) on `main`; E6 (Android phone-call integration) in review fixes; E2 (WebRTC build): x86_64 and packaging green, the two ARM builds re-running after Google download errors; E1 after E2; then E5, E5b (bundled Opus for phones without an encoder), E6 |
 | F, push | 4 | 4 | done |
 | G, CI | 4 | 4 | done; G4: release bundle, license notices, Play documents. A `v*` tag release fails until the SQLCipher, WebRTC and Opus notice texts are filled in |
-| I, integration and iPhone↔Android test | 2 | 0 | waits for all lanes |
+| I, integration and iPhone↔Android test | 2 | 1 | I1 merged: the app runs on the live server (accounts, messaging, push, device cleanup; crash-safe wipe). Calls switch on with E6. I2 (iPhone↔Android test) waits for calls |
 
 ETA: about 1.5 days of agent work.
 
