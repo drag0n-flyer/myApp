@@ -1,5 +1,6 @@
 package org.example.app.ui.settings
 
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.clickable
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.Text
@@ -34,7 +35,7 @@ fun NotificationsScreen(
         if (!canUseFullScreenIntent) {
             item {
                 ListItem(
-                    modifier = Modifier.clickable(onClick = onOpenFullScreenSettings),
+                    modifier = Modifier.clickable(role = Role.Button, onClick = onOpenFullScreenSettings),
                     headlineContent = { Text(stringResource(R.string.notif_full_screen)) },
                     supportingContent = { Text(stringResource(R.string.notif_full_screen_subtitle)) },
                 )

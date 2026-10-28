@@ -1,5 +1,6 @@
 package org.example.app.ui.call
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,7 +15,6 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,7 +33,7 @@ private val AnswerGreen = Color(0xFF2FB457)
 @Composable
 fun IncomingCallScreen(viewModel: CallViewModel, modifier: Modifier = Modifier) {
     CallTheme {
-        val call by viewModel.call.collectAsState()
+        val call by viewModel.call.collectAsStateWithLifecycle()
         val current = call ?: return@CallTheme
         CallBackHandler(onMinimise = null)
         val name = viewModel.contactName(current)

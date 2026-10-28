@@ -1,5 +1,6 @@
 package org.example.app.ui.chatlist
 
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.clickable
 import androidx.compose.material3.Badge
 import androidx.compose.material3.ListItem
@@ -24,7 +25,7 @@ import androidx.compose.ui.unit.dp
 fun ChatRow(row: ChatRowModel, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val preview = row.preview?.let { previewText(it) }.orEmpty()
     ListItem(
-        modifier = modifier.clickable(onClick = onClick),
+        modifier = modifier.clickable(role = Role.Button, onClick = onClick),
         leadingContent = { Avatar(row.name) },
         headlineContent = { Text(row.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         supportingContent = { Text(preview, maxLines = 1, overflow = TextOverflow.Ellipsis) },

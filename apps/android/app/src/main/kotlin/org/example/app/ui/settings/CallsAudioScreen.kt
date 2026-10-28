@@ -1,8 +1,8 @@
 package org.example.app.ui.settings
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -12,7 +12,7 @@ import org.example.app.core.settings.NoiseSuppression
 /** Background noise choices. Android has no system voice-isolation switch to point to, so there is no such row. */
 @Composable
 fun CallsAudioScreen(settings: SettingsStore, onBack: () -> Unit, modifier: Modifier = Modifier) {
-    val current by settings.settings.collectAsState()
+    val current by settings.settings.collectAsStateWithLifecycle()
     SettingsPage(stringResource(R.string.settings_calls_audio), onBack, modifier) {
         item { SectionHeader(stringResource(R.string.audio_noise)) }
         items(NoiseSuppression.entries.toList(), key = { it.name }) { mode ->
