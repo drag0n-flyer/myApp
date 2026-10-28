@@ -21,7 +21,7 @@
 #   2. fetch --nohooks --no-history webrtc_android
 #   3. check out WEBRTC_COMMIT (tools/webrtc/VERSION), gclient sync, gclient runhooks
 #   4. apply.sh with APPLY_PLATFORM=android (Opus 1.6 and patches 0001, 0002,
-#      0005, 0006; the Objective-C patches 0003 and 0004 are not applied)
+#      0006, 0007; the Objective-C and Mac patches 0003, 0004 and 0005 are not applied)
 #   5. gn gen src/out/android/<abi>, then build //sdk/android:libjingle_peerconnection_so
 #      and //sdk/android:libwebrtc (the Java classes jar)
 #   6. copy the results to <workdir>/out/android/<abi>/ (the plan's out/android/<abi>):

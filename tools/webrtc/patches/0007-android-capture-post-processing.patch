@@ -22,7 +22,7 @@ index 2522e5a..56f8b3c 100644
  
    # Modules, in alphabetical order.
  
-+  # App patch (tools/webrtc/patches/0006): AudioCapturePostProcessing.
++  # App patch (tools/webrtc/patches/0007): AudioCapturePostProcessing.
 +  rtc_android_library("capture_post_processing_java") {
 +    visibility = [ "*" ]
 +    sources = [ "api/org/webrtc/AudioCapturePostProcessing.java" ]
@@ -41,7 +41,7 @@ index 2522e5a..56f8b3c 100644
      ]
    }
  
-+  # App patch (tools/webrtc/patches/0006): AudioCapturePostProcessing.
++  # App patch (tools/webrtc/patches/0007): AudioCapturePostProcessing.
 +  rtc_library("capture_post_processing_jni") {
 +    visibility = [ "*" ]
 +    allow_poison = [ "environment_construction" ]
@@ -72,7 +72,7 @@ index 2522e5a..56f8b3c 100644
      namespace = "webrtc::jni"
    }
  
-+  # App patch (tools/webrtc/patches/0006): AudioCapturePostProcessing.
++  # App patch (tools/webrtc/patches/0007): AudioCapturePostProcessing.
 +  generate_jni("generated_capture_post_processing_jni") {
 +    sources = [ "api/org/webrtc/AudioCapturePostProcessing.java" ]
 +    namespace = "webrtc::jni"
@@ -88,7 +88,7 @@ index 0000000..fa6d603
 +++ b/sdk/android/api/org/webrtc/AudioCapturePostProcessing.java
 @@ -0,0 +1,83 @@
 +/*
-+ *  Application patch (tools/webrtc/patches/0006): a writable hook on captured
++ *  Application patch (tools/webrtc/patches/0007): a writable hook on captured
 + *  audio. The upstream Java SDK has no way to edit it. The Android form of
 + *  RTCAudioCapturePostProcessing (patch 0004).
 + *
@@ -177,7 +177,7 @@ index 0000000..0aa2c61
 +++ b/sdk/android/src/jni/app/audio_capture_post_processing.cc
 @@ -0,0 +1,175 @@
 +/*
-+ *  Application patch (tools/webrtc/patches/0006). See
++ *  Application patch (tools/webrtc/patches/0007). See
 + *  api/org/webrtc/AudioCapturePostProcessing.java and audio_capture_processor.h.
 + */
 +
@@ -358,7 +358,7 @@ index 0000000..80a091f
 +++ b/sdk/android/src/jni/app/audio_capture_processor.h
 @@ -0,0 +1,59 @@
 +/*
-+ *  Application patch (tools/webrtc/patches/0006): the C interface a native
++ *  Application patch (tools/webrtc/patches/0007): the C interface a native
 + *  library implements to edit captured audio. It is plain C so that a separate
 + *  shared library (libjingle_peerconnection_so exports nothing but its JNI
 + *  functions) can fill in the struct without linking against WebRTC.
@@ -426,7 +426,7 @@ index 905c61e..edb1456 100644
    RTC_CHECK(env != nullptr);
 -  scoped_refptr<AudioProcessing> audio_processor(
 -      reinterpret_cast<AudioProcessing*>(native_audio_processor));
-+  // App patch (tools/webrtc/patches/0006): createNative returns an owning
++  // App patch (tools/webrtc/patches/0007): createNative returns an owning
 +  // reference, so take it over. Constructing a scoped_refptr from the raw
 +  // pointer would add a second reference and leak the module.
 +  scoped_refptr<AudioProcessing> audio_processor =
