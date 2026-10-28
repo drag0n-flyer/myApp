@@ -9,6 +9,9 @@
 #   - a name from reserved-symbols.txt is exported, or
 #   - an unprefixed plain C symbol is exported that matches none of the
 #     allowed prefixes: _RTC* _OBJC_* _kRTC* __Z* _WebRTC*
+# plus names the pinned build exports on its own (seen in CI): the Rust bridge
+# (_cxxbridge1$*, _webrtc$*, __R* v0-mangled Rust names) and the compiler-rt
+# emulation helpers (___emu*). All are namespaced or mangled, none are plain C names.
 #
 # Environment (tests only): RESERVED_SYMBOLS_FILE.
 # Exit codes: 0 ok, 1 usage or tool error, 5 forbidden symbol exported.
@@ -50,6 +53,7 @@ grep -Fx -f "$work/reserved.txt" "$work/exported.txt" >>"$work/bad.txt" || true
 while IFS= read -r name; do
   case "$name" in
     _RTC* | _OBJC_* | _kRTC* | __Z* | _WebRTC* | __mh_*) ;;
+    _cxxbridge1\$* | _webrtc\$* | __R* | ___emu*) ;;
     # Linker-provided names a Linux shared object always exports (tests only).
     __init | __fini | ___bss_start | __edata | __end) [ "$prefix" = "_" ] || echo "$name" >>"$work/bad.txt" ;;
     *) echo "$name" >>"$work/bad.txt" ;;

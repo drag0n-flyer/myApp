@@ -121,6 +121,7 @@ public actor Outbox: ControlSender {
 
     /// Returns true when the head left the queue (sent or failed).
     private func process(_ item: OutboxRecord) async throws -> Bool {
+        // `decode` never throws: undecodable bytes give an envelope with `at == 0`, which the age check drops.
         let envelope = ContentEnvelope.decode(item.envelope)
         // A read receipt found with the switch off is dropped, not held: holding it would send it later
         // (the switch is not retroactive) and block the chat's queue.
@@ -128,7 +129,9 @@ public actor Outbox: ControlSender {
             try deps.repo.removeOutbox(id: item.messageID)
             return true
         }
-        let queuedAt = try deps.repo.message(id: item.messageID)?.receivedAt ?? deps.now()
+        // A control message has no message row; its envelope time is when it was queued.
+        let queuedAt = try deps.repo.message(id: item.messageID)?.receivedAt
+            ?? Date(timeIntervalSince1970: Double(envelope.at) / 1000)
         if deps.now().timeIntervalSince(queuedAt) > Self.maxAge {
             try deps.repo.completeSend(id: item.messageID, status: "failed")
             return true

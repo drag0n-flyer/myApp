@@ -67,6 +67,8 @@ public final class LiveChatStore: ChatStore {
     public func syncInbox() async {
         guard !closed else { return }
         _ = try? await inbox.syncOnce()
+        // A chat whose first commit's reply was lost is finished here, never started again (MLS profile, step 5).
+        await conversations.resumePendingCreates()
         await PendingActions.run(repo: repo, server: deps.server, gate: pendingGate)
         refresh()
     }
