@@ -105,6 +105,9 @@ public protocol AccountService: AnyObject {
     func sendRecoveryCode(to email: String) async throws(AccountError)
     func recover(email: String, code: String) async throws(AccountError)
     func addPasskey() async throws(AccountError)
+    /// A link claim succeeded but saving the session failed (or was left mid-retry). Retry with
+    /// `waitForLinkApproval()`, never `makeLinkCode()`: a new code drops the claimed session for good.
+    var linkSavePending: Bool { get }
     func makeLinkCode() async throws(AccountError) -> LinkCode
     /// Returns when this device is signed in. A contact list that can't be opened is skipped, not an error.
     func waitForLinkApproval() async throws(AccountError) -> LinkedResult
@@ -117,4 +120,13 @@ public protocol AccountService: AnyObject {
     func removeDevice(id: String) async throws(AccountError)
     func deleteAccount() async throws(AccountError)
     func signOutLocally()
+}
+
+extension AccountService {
+    /// One linking attempt on the new device, as Android's `ensureLinking`. While a claimed session is still
+    /// waiting to be saved only the save is retried; otherwise a new code is made, shown, and waited on.
+    public func linkThisDevice(showCode: (String) -> Void) async throws(AccountError) -> LinkedResult {
+        if !linkSavePending { showCode(try await makeLinkCode().qrText) }
+        return try await waitForLinkApproval()
+    }
 }

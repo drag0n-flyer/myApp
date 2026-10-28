@@ -90,3 +90,22 @@ public struct AppStores {
         sampleData ? SampleChatStore() : EmptyChatStore()
     }
 }
+
+/// How the app runs, decided once at launch.
+public enum AppLaunchMode: Equatable, Sendable {
+    /// `-sampleData`: sample accounts and chats, no server.
+    case sample
+    /// A live account on the server.
+    case live
+    /// This build lacks a required shared group (`missing` Info.plist keys): the app shows a blocking error. It never
+    /// signs in and never shows sample chats.
+    case brokenSetup(missing: [String])
+
+    public static func resolve(sampleData: Bool, setupProblems: [String]) -> AppLaunchMode {
+        if sampleData { return .sample }
+        return setupProblems.isEmpty ? .live : .brokenSetup(missing: setupProblems)
+    }
+
+    public var showsSampleData: Bool { self == .sample }
+    public var isLive: Bool { self == .live }
+}

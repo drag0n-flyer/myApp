@@ -160,6 +160,24 @@ def run(root, *flags):
     )
 
 
+def use_app_id_xcconfig(root, app_id):
+    """Rewrites the fixture the way apps/apple does it: every ID built from APP_ID in AppID.xcconfig."""
+    with open(os.path.join(root, "AppID.xcconfig"), "w") as f:
+        f.write("// The app ID.\nAPP_ID = %s\n" % app_id)
+    proj = project(bundle_prefix="$(APP_ID)")
+    proj["configFiles"] = {"Debug": "AppID.xcconfig", "Release": "AppID.xcconfig"}
+    with open(os.path.join(root, "project.yml"), "w") as f:
+        f.write(json.dumps(proj, indent=2) + "\n")
+    for rel in ("App/AppiOS.entitlements", "App/AppMac.entitlements", "NotificationService/NSE-iOS.entitlements",
+                "NotificationService/NSE-iOS-filtering.entitlements", "NotificationService/NSE-Mac.entitlements"):
+        path = os.path.join(root, rel)
+        with open(path, "rb") as f:
+            ent = plistlib.load(f)
+        ent["com.apple.security.application-groups"] = ["group.$(APP_ID)"]
+        ent["keychain-access-groups"] = ["$(AppIdentifierPrefix)$(APP_ID).shared"]
+        write_plist(path, ent)
+
+
 class CheckReleaseConfigTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -310,6 +328,24 @@ class CheckReleaseConfigTests(unittest.TestCase):
         write_plist(os.path.join(self.root, "App/PrivacyInfo.xcprivacy"), d)
         r = run(self.root)
         self.assertRegex(r.stdout, r"MISSING\s+iOS app: privacy manifest")
+
+
+    def test_app_id_from_xcconfig(self):
+        make_fixture(self.root)
+        use_app_id_xcconfig(self.root, "com.realbrand.chat")
+        r = run(self.root)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("app group group.com.realbrand.chat", r.stdout)
+        self.assertIn("real bundle ID (found com.realbrand.chat.mac.nse)", r.stdout)
+
+    def test_placeholder_app_id_in_xcconfig_flagged(self):
+        make_fixture(self.root)
+        use_app_id_xcconfig(self.root, "org.example.app")
+        r = run(self.root)
+        self.assertEqual(r.returncode, 1, r.stdout)
+        self.assertRegex(r.stdout, r"MISSING\s+AppiOS: real bundle ID \(found org.example.app\)")
+        ok = run(self.root, "--placeholder-brand-ok")
+        self.assertEqual(ok.returncode, 0, ok.stdout)
 
 
 if __name__ == "__main__":

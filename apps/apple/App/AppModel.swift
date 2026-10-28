@@ -45,6 +45,10 @@ final class AppModel {
     let isSampleData: Bool
     /// Shown after the server ends this device's session.
     var deviceRemovedAlert = false
+    /// This build lacks the shared app group or keychain group (`AppLaunchMode.brokenSetup`): live sign-in is refused
+    /// (the session would be stranded where the notification extension cannot read it) and a blocking error is shown.
+    /// Never sample data.
+    let hasBrokenSetup: Bool
     private var connection: LiveConnection?
     private let sessions: SessionStore?
     private var messaging: LiveMessaging?
@@ -128,7 +132,12 @@ final class AppModel {
         let account: any AccountService
         var live: LiveAccountService?
         var sessionStore: SessionStore?
-        if launch.sampleData {
+        // Fails closed like `makeMLSEngine`: no live account without both shared groups.
+        let setupProblems = launch.sampleData ? [] : MessagingLocations.liveSetupProblems(in: Bundle.main.infoDictionary ?? [:])
+        let mode = AppLaunchMode.resolve(sampleData: launch.sampleData, setupProblems: setupProblems)
+        let sampleData = mode.showsSampleData
+        if !mode.isLive {
+            // Sample mode; or a broken setup, whose blocking error screen never lets anyone reach this service.
             account = SampleAccountService(platform: platform)
         } else {
             let sessions = SessionStore(storage: KeychainSessionStorage(accessGroup: config.keychainAccessGroup))
@@ -147,12 +156,13 @@ final class AppModel {
         self.account = account
         self.live = live
         self.sessions = sessionStore
-        self.isSampleData = launch.sampleData
+        self.isSampleData = sampleData
+        self.hasBrokenSetup = !setupProblems.isEmpty
         self.server = server
         self.settings = settings
         self.network = launch.network
         self.isUITesting = launch.isUITesting
-        let stores = AppStores(sampleData: launch.sampleData, server: server, settings: settings.call, network: launch.network)
+        let stores = AppStores(sampleData: sampleData, server: server, settings: settings.call, network: launch.network)
         let chatStore = stores.chatStore
         self.chatStore = chatStore
         self.sampleCalls = stores.sampleCalls
@@ -173,7 +183,7 @@ final class AppModel {
         self.onboarding = flow
         live?.onSignedOut = { [weak self] in self?.deviceWasRemoved() }
         // A sign-out wipe that was cut short (kill, failure) is finished first; the sign-in below waits for it.
-        if !launch.sampleData {
+        if mode.isLive {
             wipeTask = Task { [weak self] in
                 do { try await LiveMessaging.finishPendingWipe() } catch { self?.wipeFailed = true }
             }
@@ -186,7 +196,7 @@ final class AppModel {
         #if os(macOS)
         macRinger = MacRinger(handler: self, systemUI: !launch.isUITesting)
         #endif
-        if !launch.sampleData {
+        if mode.isLive {
             #if os(iOS)
             setUpVoIP()
             #endif

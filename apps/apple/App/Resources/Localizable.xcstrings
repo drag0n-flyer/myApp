@@ -551,6 +551,17 @@
         }
       }
     },
+    "Try again" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Try again"
+          }
+        }
+      }
+    },
     "Type" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1079,17 +1090,6 @@
         }
       }
     },
-    "Try again" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Try again"
-          }
-        }
-      }
-    },
     "%@, %@" : {
       "comment" : "VoiceOver label of a call info row: the row's name, then its value",
       "extractionState" : "manual",
@@ -1120,6 +1120,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Check your connection, then try again."
+          }
+        }
+      }
+    },
+    "This copy of the app is set up incorrectly" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This copy of the app is set up incorrectly"
+          }
+        }
+      }
+    },
+    "It can't sign in or show chats. Install the app again to fix it." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "It can't sign in or show chats. Install the app again to fix it."
           }
         }
       }

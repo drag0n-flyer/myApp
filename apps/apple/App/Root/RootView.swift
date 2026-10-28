@@ -10,7 +10,15 @@ struct RootView: View {
 
     var body: some View {
         Group {
-            if model.onboarding.step == .done {
+            if model.hasBrokenSetup {
+                // Blocking: a build without its shared groups can neither sign in nor show sample chats.
+                ContentUnavailableView {
+                    Label("This copy of the app is set up incorrectly", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text("It can't sign in or show chats. Install the app again to fix it.")
+                }
+                .accessibilityIdentifier("setup.broken")
+            } else if model.onboarding.step == .done {
                 #if os(macOS)
                 MacRootView(model: model)
                 #else

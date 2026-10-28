@@ -45,6 +45,8 @@ if command -v cc >/dev/null 2>&1; then
   expect_output "check-symbols: names _some_helper" '^_some_helper$'
   printf 'int RTCFoo(void){return 2;}\n__attribute__((visibility("hidden"))) int sign(void){return 3;}\n' | cc -shared -fPIC -x c - -o "$work/hid.so"
   expect_exit "check-symbols: hidden sign is fine" 0 sh "$here/check-symbols.sh" "$work/hid.so"
+  printf 'int RTCFoo(void){return 2;}\nint rb(void) __asm__("webrtc$cxxbridge1$1");\nint rb(void){return 3;}\nint cb(void) __asm__("cxxbridge1$string$new");\nint cb(void){return 4;}\nint _Rx(void){return 5;}\nint emu(void) __asm__("__emutls_get_address");\nint emu(void){return 6;}\n' | cc -shared -fPIC -x c - -o "$work/rust.so"
+  expect_exit "check-symbols: Rust bridge and compiler-rt names are allowed" 0 sh "$here/check-symbols.sh" "$work/rust.so"
   printf '_RTCFoo\n' >"$work/res.txt"
   expect_exit "check-symbols: custom reserved list" 5 env RESERVED_SYMBOLS_FILE="$work/res.txt" sh "$here/check-symbols.sh" "$work/ok.so"
 else

@@ -86,8 +86,44 @@ private final class Counter: @unchecked Sendable {
 @Suite struct MessagingLocationsTests {
     @Test func namesMatchTheDesign() {
         let root = URL(fileURLWithPath: "/g")
-        #expect(MessagingLocations.appGroupID == "group.org.example.app")
         #expect(MessagingLocations.lockURL(in: root).path == "/g/messaging.lock")
         #expect(MessagingLocations.databaseURL(in: root).path == "/g/messaging.sqlite")
+    }
+
+    /// The app group comes from Info.plist (project.yml writes `group.$(APP_ID)` from AppID.xcconfig).
+    @Test func appGroupFromInfoPlist() {
+        var missing: [String] = []
+        let note: (String) -> Void = { missing.append($0) }
+        #expect(MessagingLocations.appGroupInfoKey == "AppGroupID")
+        #expect(MessagingLocations.appGroup(in: ["AppGroupID": "group.com.example.chat"], onMissing: note) == "group.com.example.chat")
+        #expect(missing.isEmpty)
+        #expect(MessagingLocations.appGroup(in: ["AppGroupID": " "], onMissing: note) == nil)
+        #expect(MessagingLocations.appGroup(in: [:], onMissing: note) == nil)
+        #expect(missing == ["AppGroupID", "AppGroupID"])
+    }
+
+    /// A required Info.plist string: present is returned trimmed; missing or empty is reported, never silently ignored.
+    @Test func requiredInfoValueReportsMissing() {
+        var missing: [String] = []
+        let note: (String) -> Void = { missing.append($0) }
+        #expect(MessagingLocations.requiredInfoValue("KeychainAccessGroup", in: ["KeychainAccessGroup": " T.g "], onMissing: note) == "T.g")
+        #expect(MessagingLocations.requiredInfoValue("KeychainAccessGroup", in: ["KeychainAccessGroup": ""], onMissing: note) == nil)
+        #expect(MessagingLocations.requiredInfoValue("KeychainAccessGroup", in: ["KeychainAccessGroup": 3], onMissing: note) == nil)
+        #expect(missing == ["KeychainAccessGroup", "KeychainAccessGroup"])
+    }
+
+    /// Live sign-in needs both shared stores; a build without either must not sign in (Keychain
+    /// sessions would land in the app's private group, data would stay in sample mode).
+    @Test func liveSetupNeedsBothSharedGroups() {
+        var missing: [String] = []
+        let note: (String) -> Void = { missing.append($0) }
+        let both: [String: Any] = ["AppGroupID": "group.a", "KeychainAccessGroup": "T.a.shared"]
+        #expect(MessagingLocations.liveSetupProblems(in: both, onMissing: note).isEmpty)
+        #expect(missing.isEmpty)
+        #expect(MessagingLocations.liveSetupProblems(in: ["AppGroupID": "group.a"], onMissing: note) == ["KeychainAccessGroup"])
+        #expect(MessagingLocations.liveSetupProblems(in: ["KeychainAccessGroup": "T.a.shared"], onMissing: note) == ["AppGroupID"])
+        #expect(MessagingLocations.liveSetupProblems(in: [:], onMissing: note) == ["AppGroupID", "KeychainAccessGroup"])
+        #expect(missing == ["KeychainAccessGroup", "AppGroupID", "AppGroupID", "KeychainAccessGroup"])
+        #expect(MessagingLocations.keychainAccessGroupInfoKey == "KeychainAccessGroup")
     }
 }

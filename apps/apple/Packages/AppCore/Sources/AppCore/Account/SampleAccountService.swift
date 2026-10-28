@@ -89,6 +89,8 @@ public final class SampleAccountService: AccountService {
 
     public func addPasskey() async throws(AccountError) {}
 
+    public var linkSavePending: Bool { false }
+
     public func makeLinkCode() async throws(AccountError) -> LinkCode {
         LinkCode(qrText: Self.sampleLinkText, expiresAt: Date().addingTimeInterval(300))
     }

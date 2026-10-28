@@ -57,3 +57,23 @@ import Testing
         #expect(AppStores.signedOutStore(sampleData: true) is SampleChatStore)
     }
 }
+
+/// A build without the shared app group or keychain group is a broken setup: a blocking error, never sample chats.
+@MainActor @Suite struct AppLaunchModeTests {
+    @Test func sampleDataWins() {
+        #expect(AppLaunchMode.resolve(sampleData: true, setupProblems: []) == .sample)
+    }
+
+    @Test func liveWhenTheSetupIsComplete() {
+        #expect(AppLaunchMode.resolve(sampleData: false, setupProblems: []) == .live)
+    }
+
+    @Test func missingGroupsBlockInsteadOfFallingBackToSamples() {
+        let mode = AppLaunchMode.resolve(sampleData: false, setupProblems: ["AppGroupID"])
+        #expect(mode == .brokenSetup(missing: ["AppGroupID"]))
+        #expect(!mode.showsSampleData && !mode.isLive)
+        let stores = AppStores(sampleData: mode.showsSampleData, server: server, settings: CallSettings(), network: .wifi)
+        #expect(!(stores.chatStore is SampleChatStore))
+        #expect(stores.sampleCalls == nil)
+    }
+}
