@@ -21,13 +21,15 @@ use mls_rs::crypto::{SignaturePublicKey, SignatureSecretKey};
 use mls_rs::error::MlsError;
 use mls_rs::group::{CommitEffect, CommitOutput, ReceivedMessage};
 use mls_rs::identity::basic::{BasicCredential, BasicIdentityProvider};
-use mls_rs::identity::SigningIdentity;
+use mls_rs::identity::{CredentialType, SigningIdentity};
 use mls_rs::mls_rules::{CommitOptions, DefaultMlsRules};
 use mls_rs::{
     CipherSuite, CipherSuiteProvider, Client, CryptoProvider, ExtensionList, Group, MlsMessage,
     WireFormat,
 };
+use mls_rs::time::MlsTime;
 use mls_rs_core::group::GroupStateStorage;
+use mls_rs_core::identity::{IdentityProvider, MemberValidationContext};
 use zeroize::Zeroizing;
 
 use crate::error::FfiError;
@@ -43,7 +45,7 @@ type Config<P> = WithMlsRules<
     WithCryptoProvider<
         P,
         WithIdentityProvider<
-            BasicIdentityProvider,
+            ProfileIdentityProvider,
             WithKeyPackageRepo<FileStorage, WithGroupStateStorage<FileStorage, BaseConfig>>,
         >,
     >,
@@ -399,6 +401,73 @@ fn identity_string(identity: &SigningIdentity) -> Result<String, FfiError> {
     String::from_utf8(basic.identifier.clone()).map_err(|_| FfiError::Malformed)
 }
 
+/// Longest identity a member may have, in bytes (proposed ruling, mls-profile.md).
+/// A real one, `<accountID>/<deviceID>`, is 73.
+const MAX_IDENTITY_LEN: usize = 255;
+
+/// The profile's credential rule: basic, and the identity is 1 to
+/// `MAX_IDENTITY_LEN` bytes of UTF-8. mls-rs calls this for every leaf it
+/// accepts (a KeyPackage in `add` or in a received Add, an update path, and
+/// every leaf in a Welcome's ratchet tree), so no member that `members` or
+/// `member_keys` cannot read gets into a group.
+#[derive(Clone, Copy, Debug)]
+struct ProfileIdentityProvider;
+
+fn check_profile_identity(identity: &SigningIdentity) -> Result<(), FfiError> {
+    let id = identity_string(identity)?;
+    if id.is_empty() || id.len() > MAX_IDENTITY_LEN {
+        return Err(FfiError::Malformed);
+    }
+    Ok(())
+}
+
+impl IdentityProvider for ProfileIdentityProvider {
+    type Error = FfiError;
+
+    fn validate_member(
+        &self,
+        signing_identity: &SigningIdentity,
+        _timestamp: Option<MlsTime>,
+        _context: MemberValidationContext<'_>,
+    ) -> Result<(), FfiError> {
+        check_profile_identity(signing_identity)
+    }
+
+    fn validate_external_sender(
+        &self,
+        signing_identity: &SigningIdentity,
+        _timestamp: Option<MlsTime>,
+        _extensions: Option<&ExtensionList>,
+    ) -> Result<(), FfiError> {
+        check_profile_identity(signing_identity)
+    }
+
+    fn identity(
+        &self,
+        signing_identity: &SigningIdentity,
+        extensions: &ExtensionList,
+    ) -> Result<Vec<u8>, FfiError> {
+        BasicIdentityProvider::new()
+            .identity(signing_identity, extensions)
+            .map_err(|_| FfiError::Malformed)
+    }
+
+    fn valid_successor(
+        &self,
+        predecessor: &SigningIdentity,
+        successor: &SigningIdentity,
+        extensions: &ExtensionList,
+    ) -> Result<bool, FfiError> {
+        BasicIdentityProvider::new()
+            .valid_successor(predecessor, successor, extensions)
+            .map_err(|_| FfiError::Malformed)
+    }
+
+    fn supported_types(&self) -> Vec<CredentialType> {
+        BasicIdentityProvider::new().supported_types()
+    }
+}
+
 impl<P: CryptoProvider + Clone> EngineCore<P> {
     pub fn new(
         identity: String,
@@ -418,7 +487,7 @@ impl<P: CryptoProvider + Clone> EngineCore<P> {
         let client = ClientBuilder::new()
             .group_state_storage(storage.clone())
             .key_package_repo(storage.clone())
-            .identity_provider(BasicIdentityProvider::new())
+            .identity_provider(ProfileIdentityProvider)
             .crypto_provider(crypto.clone())
             .mls_rules(DefaultMlsRules::new().with_commit_options(commit_options))
             .signing_identity(signing_identity, secret, CIPHER_SUITE)
