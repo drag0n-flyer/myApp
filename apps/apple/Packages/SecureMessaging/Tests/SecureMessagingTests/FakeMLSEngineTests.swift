@@ -31,6 +31,12 @@ private func makeGroup(
 }
 
 @Suite struct FakeMLSEngineTests {
+    /// The fake's keys are placeholders: it never claims real member keys unless a test asks it to.
+    @Test func noRealMemberKeysByDefault() {
+        #expect(!FakeMLSEngine(identity: alice).providesRealMemberKeys)
+        #expect(FakeMLSEngine(identity: alice, realMemberKeys: true).providesRealMemberKeys)
+    }
+
     @Test func testTwoDevicesExchange() async throws {
         let a = FakeMLSEngine(identity: alice)
         let b = FakeMLSEngine(identity: bob)

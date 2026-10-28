@@ -56,8 +56,9 @@ private struct Rig {
     static func make() async throws -> Rig {
         let server = FakeServer()
         let clock = StoreClock()
-        let anaDevice = await makeDevice(server, account: "acc-ana", username: "ana", now: clock.now)
-        let bobDevice = await makeDevice(server, account: "acc-bob", username: "bob", now: clock.now)
+        // The fake's keys are placeholders; these tests turn the safety-number UI on to exercise it.
+        let anaDevice = await makeDevice(server, account: "acc-ana", username: "ana", now: clock.now, realMemberKeys: true)
+        let bobDevice = await makeDevice(server, account: "acc-bob", username: "bob", now: clock.now, realMemberKeys: true)
         for device in [anaDevice, bobDevice] {
             _ = try await device.deps.server.uploadKeyPackages(try await device.deps.mls.makeKeyPackages(count: 3))
         }
