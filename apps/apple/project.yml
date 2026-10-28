@@ -159,8 +159,6 @@ targets:
         product: Messaging
       - package: SecureMessaging
         product: SecureMessaging
-      - package: Messaging
-        product: Messaging
       - package: CallCore
   AppNSEMac:
     type: app-extension
@@ -196,8 +194,6 @@ targets:
         product: Messaging
       - package: SecureMessaging
         product: SecureMessaging
-      - package: Messaging
-        product: Messaging
       - package: CallCore
   AppiOSUITests:
     type: bundle.ui-testing
