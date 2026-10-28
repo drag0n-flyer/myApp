@@ -31,6 +31,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      # Two runs were killed by a runner shutdown as the :app emulators started (E5b); free the unused toolchains
+      # as webrtc-android.yml does. The Android SDK (/usr/local/lib/android) stays.
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/boost /usr/share/swift
+          sudo docker image prune --all --force || true
+          sudo apt-get clean
+          df -h /
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -99,6 +109,8 @@ jobs:
         working-directory: apps/android
         timeout-minutes: 45
         run: |
+          df -h /
+          free -m
           ./gradlew --no-daemon --continue -PliveServer=true \
             -Pandroid.testoptions.manageddevices.emulator.gpu=swiftshader_indirect \
             -Pandroid.experimental.androidTest.numManagedDeviceShards=1 \
@@ -108,6 +120,11 @@ jobs:
             :calls-android:pixel6Api29DebugAndroidTest :calls-android:pixel6Api36DebugAndroidTest \
             :app:pixel6Api29DebugAndroidTest :app:pixel6Api36DebugAndroidTest
       # Every module must have run at least its known test count on both API levels, none skipped (no silent no-op).
+      - name: Disk and memory after the tests
+        if: always()
+        run: |
+          df -h /
+          free -m
       - name: Check that every instrumented test ran
         if: always()
         run: scripts/check-emulator-results.py apps/android mls:1 store:1 auth:8 calls-android:1 app:4 | tee -a "$GITHUB_STEP_SUMMARY"
