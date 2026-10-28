@@ -96,7 +96,7 @@ Opened by tapping the header pill. Photo, name, username; buttons for audio call
 2. **Data sheet:** tapping "Data" opens a glass sheet "Data for this call" with Auto, Ultra-low, Data saver, Balanced, High quality. Each shows estimated data per 10 minutes (audio, both directions). The change applies to this call only. Modes above the server maximum are shown disabled with "Limited by your server". Modes above the user's **Limit on mobile data** stay selectable on mobile data, marked "Above your mobile data limit"; choosing one lifts the limit for this call only.
 - **Order of limits:** server maximum (hard), then the in-call choice if any, otherwise the user's default mode capped by the mobile-data limit when on mobile data, then what the network can sustain.
 3. **Video call on a weak network:** full-screen remote video, small self-view top-right, glass banner explaining what the app did. Banner sequence as conditions worsen: "Weak network: video lowered to save your voice quality" → "Switched to audio only" → "Reconnecting…" (for up to ~30 s) → "Call ended: connection lost".
-- The estimates in the sheet (~2, ~3, ~5, ~8 MB per 10 min) are placeholders from research; they are replaced with Phase 0 measurements.
+- The estimates in the sheet (~2, ~3, ~5, ~6 MB per 10 min) are measured (CI, simulated, 2026-10-28; see docs/measurements/2026-10-28-data-use-ci.md). Call lab L10's real-phone measurements may replace them before release.
 - Incoming calls on iPhone use the system CallKit screen; this design covers the in-app screen after answering.
 
 ### 6.6 Settings (mockup 04, approved)

@@ -66,14 +66,16 @@ No shared cross-platform core for now. Each client is written natively (Swift fo
 ### Low-data calling
 Provide automatic and user-selectable data modes. Modes are defined by measured bytes on the wire, not codec bitrate alone: at 6–12 kbps, IP/UDP/RTP/SRTP headers are 60–80% of the bytes sent with default 20 ms packets, so packet length (ptime) matters more than codec bitrate in the low modes.
 
-| Mode | Opus target | Audio packet length (ptime) | In-band FEC | Estimated wire bandwidth, one direction | Behavior |
+| Mode | Opus target | Audio packet length (ptime) | In-band FEC | Measured wire bandwidth (one direction, clean network)[^m] | Behavior |
 |---|---:|---|---|---:|---|
-| Ultra-low data | 8–10 kbps, wideband | 60 ms (120 ms optional; needs custom build) | Off (cannot activate below ~14 kbps) | ~17–21 kbps | Prioritize intelligible speech and minimum bandwidth |
-| Data saver | 14–16 kbps | 40–60 ms | On, only under loss | ~25–30 kbps | Reduce usage while preserving acceptable quality |
-| Balanced | 24 kbps | 20–40 ms | On | ~38–51 kbps | General-purpose default |
-| High quality | 32–48 kbps | 20 ms | On | ~59–75 kbps | Prefer audio quality when bandwidth permits |
+| Ultra-low data | 8–10 kbps, wideband | 60 ms (120 ms optional; needs custom build) | Off (cannot activate below ~14 kbps) | 11.9 kbps | Prioritize intelligible speech and minimum bandwidth |
+| Data saver | 14–16 kbps | 40–60 ms | On, only under loss | 18.3 kbps | Reduce usage while preserving acceptable quality |
+| Balanced | 24 kbps | 20–40 ms | On | 27.3 kbps | General-purpose default |
+| High quality | 32–48 kbps | 20 ms | On | 33.6 kbps | Prefer audio quality when bandwidth permits |
 
-Wire estimates assume IPv4, continuous speech, and no silence suppression. A 1:1 call both sends and receives, so per-device usage is roughly double; DTX with typical talk time reduces it substantially. These are engineering hypotheses to validate: measure actual bytes from packet captures, including packet headers, encryption, retransmission, relay overhead, and congestion-control feedback, and publish the results.
+[^m]: CI, simulated: median of 3 calls per mode on a macOS CI runner over loopback, direct path, audio only; `kbps_per_direction` (half of the bytes sent and received). The test speech is about 50% talk with silence suppression (DTX) on, as in a normal back-and-forth conversation; continuous one-way speech uses more. See [docs/measurements/2026-10-28-data-use-ci.md](docs/measurements/2026-10-28-data-use-ci.md). Relayed path (one call each): Ultra-low 15.4 kbps, Balanced 28.4 kbps. The real-phone measurements of call lab L10 may replace these before release.
+
+The measured figures are wire bytes over IPv4 from packet captures, including packet headers, encryption and congestion-control feedback, for a normal conversation with silence suppression (DTX) on. The earlier research estimates assumed continuous speech with no silence suppression and were higher (about 17–21, 25–30, 38–51 and 59–75 kbps). A 1:1 call both sends and receives, so per-device usage is roughly double the one-direction figure. Lossy networks can add more (bandwidth probing); see the call lab results.
 
 #### Quality selection
 A selected mode is a ceiling, not a guarantee. The effective quality of a call is the lowest of:
