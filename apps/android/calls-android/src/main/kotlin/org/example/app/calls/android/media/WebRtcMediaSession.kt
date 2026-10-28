@@ -119,6 +119,10 @@ class WebRtcMediaSession(context: Context, private val settings: UserSettings) :
     private var closed = false
     private val aggregator = MediaStatsAggregator()
 
+    /** Test hooks: the last audio source made, and a step that runs just before the audio transceiver is added. */
+    internal var audioSourceForTesting: AudioSource? = null
+    internal var beforeAudioTransceiverForTesting: (() -> Unit)? = null
+
     /** Test hook: `maxBitrateBps` of the audio sender's first encoding. */
     internal val audioMaxBitrateForTesting: Int?
         get() = synchronized(lock) { audioSender }?.parameters?.encodings?.firstOrNull()?.maxBitrateBps
@@ -159,33 +163,41 @@ class WebRtcMediaSession(context: Context, private val settings: UserSettings) :
     private fun attach(f: PeerConnectionFactory, peer: PeerConnection, video: Boolean) {
         val noise = settings.noiseSuppression
         CaptureHook.enabled = AudioSetup.processing(noise).rnnoise
-        val aSource = f.createAudioSource(audioConstraints(noise))
-        val aTrack = f.createAudioTrack("audio0", aSource)
-        val aSender = peer.addTransceiver(aTrack, transceiverInit()).sender
-
+        CaptureHook.resetForCall()
+        val aSource = f.createAudioSource(audioConstraints(noise)).also { audioSourceForTesting = it }
+        var aTrack: AudioTrack? = null
+        var aSender: RtpSender? = null
         var vSource: VideoSource? = null
         var vTrack: VideoTrack? = null
         var vSender: RtpSender? = null
-        if (video) {
-            vSource = f.createVideoSource(false)
-            vTrack = f.createVideoTrack("video0", vSource).apply { setEnabled(false) } // off until setVideo(tier)
-            val transceiver = peer.addTransceiver(vTrack, transceiverInit())
-            preferH264(f, transceiver)
-            vSender = transceiver.sender
-        }
-        synchronized(lock) {
-            if (closed) {
-                vSource?.dispose()
-                aSource.dispose()
-                throw MediaSessionException("closed while configuring")
+        try {
+            aTrack = f.createAudioTrack("audio0", aSource)
+            beforeAudioTransceiverForTesting?.invoke()
+            aSender = peer.addTransceiver(aTrack, transceiverInit()).sender
+            if (video) {
+                vSource = f.createVideoSource(false)
+                vTrack = f.createVideoTrack("video0", vSource).apply { setEnabled(false) } // off until setVideo(tier)
+                val transceiver = peer.addTransceiver(vTrack, transceiverInit())
+                vSender = transceiver.sender
+                preferH264(f, transceiver)
             }
-            pc = peer
-            audioSource = aSource
-            audioTrack = aTrack
-            audioSender = aSender
-            videoSource = vSource
-            videoTrack = vTrack
-            videoSender = vSender
+            synchronized(lock) {
+                if (closed) throw MediaSessionException("closed while configuring")
+                pc = peer
+                audioSource = aSource
+                audioTrack = aTrack
+                audioSender = aSender
+                videoSource = vSource
+                videoTrack = vTrack
+                videoSender = vSender
+            }
+        } catch (e: Exception) {
+            // A track a transceiver took is disposed with the peer connection (the caller disposes it); the rest here.
+            if (aSender == null) aTrack?.dispose()
+            if (vSender == null) vTrack?.dispose()
+            vSource?.dispose()
+            aSource.dispose()
+            throw e
         }
     }
 

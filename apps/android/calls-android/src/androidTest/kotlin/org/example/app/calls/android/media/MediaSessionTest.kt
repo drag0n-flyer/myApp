@@ -10,6 +10,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -55,6 +56,7 @@ class MediaSessionTest {
     fun tearDown() {
         scope.cancel()
         CaptureHook.enabled = false
+        CaptureHook.tone = false
     }
 
     private fun session(noise: NoiseSuppression = NoiseSuppression.Standard) =
@@ -182,26 +184,51 @@ class MediaSessionTest {
     }
 
     /**
-     * The encoder rate is the `outbound-rtp` payload (`bytesSent` there has no RTP headers), checked against the
-     * UltraLow profile's 10 kbps with headroom; the transport counter also holds headers, RTCP and feedback.
-     * B asks to receive High, so the cap on A can only come from the munge of the remote answer (`send`).
+     * With the tone playing, an encoder that ignored the profile would send 30 kbps or more (Opus default). B asks
+     * to receive High, so its answer does not carry the 10 kbps cap: the cap on A can only come from the munge A
+     * applies to the remote answer (`send` UltraLow). The encoder rate is the `outbound-rtp` payload (`bytesSent`
+     * there has no RTP headers); the transport counter also holds headers, RTCP and feedback, so it is checked
+     * against the profile's wire budget instead. The tone (not the emulator's silent microphone) keeps DTX from
+     * passing the test with nothing sent.
      */
     @Test
     fun sendBitrateStaysWithinTheProfile() = runBlocking {
+        CaptureHook.tone = true
         val (a, b) = connected(send = DataMode.UltraLow, peerReceive = DataMode.High)
         assertTrue(waitFor(5_000) { has("A", IceState.Connected) || has("A", IceState.Completed) }, "the call must connect")
         a.setAudioMaxBitrate(50_000)
         val capped = a.audioMaxBitrateForTesting
+        val s0 = a.stats()
         val r0 = a.rawStatsForTesting()
+        val f0 = CaptureHook.toneFrames
         delay(5_000)
+        val s1 = a.stats()
         val r1 = a.rawStatsForTesting()
+        val toneFrames = CaptureHook.toneFrames - f0
         a.close()
         b.close()
         val codecBps = (audioOut(r1, "bytesSent") - audioOut(r0, "bytesSent")) * 8 / 5
+        val wireBps = (s1.bytesSent - s0.bytesSent) * 8.0 / 5
         val target = r1.firstOrNull { it.type == "outbound-rtp" && it.strings["kind"] == "audio" }?.numbers?.get("targetBitrate")
-        assertEquals(AudioProfile.forMode(DataMode.UltraLow).maxAverageBitrate, capped)
+        val profile = AudioProfile.forMode(DataMode.UltraLow)
+        assertTrue(toneFrames >= 400, "the tone must play (one frame per 10 ms); it played $toneFrames frames")
+        assertEquals(profile.maxAverageBitrate, capped)
+        assertTrue(codecBps > 2_000, "the tone must be sent; codec payload $codecBps bit/s")
         assertTrue(codecBps <= 14_000, "codec payload $codecBps bit/s")
         if (target != null) assertTrue(target <= 10_000, "target $target bit/s")
+        assertTrue(wireBps <= profile.wireBudget, "transport $wireBps bit/s over the wire budget ${profile.wireBudget}")
+    }
+
+    /** A configure that fails after the audio source is made disposes it (and the peer connection). */
+    @Test
+    fun failedConfigureDisposesTheAudioSource() = runBlocking {
+        val a = session()
+        a.beforeAudioTransceiverForTesting = { throw IllegalStateException("injected") }
+        assertFailsWith<IllegalStateException> { a.configure(emptyList(), IceTransportPolicy.All, video = false) }
+        val source = assertNotNull(a.audioSourceForTesting)
+        // MediaSource.state() throws once the source is disposed.
+        assertFailsWith<IllegalStateException> { source.state() }
+        a.close()
     }
 
     @Test
