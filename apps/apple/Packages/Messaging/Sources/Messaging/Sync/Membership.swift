@@ -68,6 +68,19 @@ struct Membership: Sendable {
         try db.set(unreadablePrefix + conversationID, Data([1]))
     }
 
+    /// The group's member identities (`MLSEngine.members(of:)`) for readers outside `update`; a failed read sets
+    /// the flag, as `update` does, and is rethrown.
+    static func members(
+        of group: GroupID, conversationID: String, mls: MLSEngine, db: Repository
+    ) async throws -> [String] {
+        do {
+            return try await mls.members(of: group)
+        } catch {
+            try markUnreadable(conversationID: conversationID, db: db)
+            throw error
+        }
+    }
+
     static func isUnreadable(conversationID: String, db: Repository) throws -> Bool {
         try db.get(unreadablePrefix + conversationID) == Data([1])
     }
