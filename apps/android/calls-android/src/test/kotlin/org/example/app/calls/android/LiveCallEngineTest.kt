@@ -6,6 +6,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.test.TestScope
@@ -82,8 +83,10 @@ class LiveCallEngineTest {
         override suspend fun signal(callID: String, payload: ByteArray) { frames += CallFrame.SIGNAL }
         override suspend fun decline(callID: String) { frames += CallFrame.DECLINE }
         var hangupBlocks = false
+        @Volatile var hangupGate: CompletableDeferred<Unit>? = null
         override suspend fun hangup(callID: String) {
             if (hangupBlocks) kotlinx.coroutines.awaitCancellation()
+            hangupGate?.await()
             frames += CallFrame.HANGUP
         }
         override suspend fun status(callID: String): CallStatus = status()
@@ -93,7 +96,10 @@ class LiveCallEngineTest {
     private class FakeMedia : MediaSession {
         override val events = MutableSharedFlow<MediaEvent>()
         var closed = 0
-        override suspend fun configure(iceServers: List<IceServer>, policy: IceTransportPolicy, video: Boolean) = Unit
+        val closeCalls = java.util.concurrent.atomic.AtomicInteger()
+        @Volatile var closeDelayMs = 0L
+        @Volatile var configured = false
+        override suspend fun configure(iceServers: List<IceServer>, policy: IceTransportPolicy, video: Boolean) { configured = true }
         override suspend fun makeOffer(receive: AudioProfile, iceRestart: Boolean) = SDP
         override suspend fun acceptOffer(sdp: String, send: AudioProfile, receive: AudioProfile) = SDP
         override suspend fun acceptAnswer(sdp: String, send: AudioProfile) = Unit
@@ -104,11 +110,15 @@ class LiveCallEngineTest {
         override suspend fun setMuted(on: Boolean) = Unit
         override suspend fun setNoiseSuppression(mode: NoiseSuppression) = Unit
         override suspend fun stats() = MediaStats()
-        override suspend fun close() { closed++ }
+        override suspend fun close() {
+            closeCalls.incrementAndGet()
+            if (closeDelayMs > 0) Thread.sleep(closeDelayMs)
+            closed++
+        }
     }
 
     private class FakeController : CallController {
-        val log = mutableListOf<String>()
+        val log: MutableList<String> = java.util.concurrent.CopyOnWriteArrayList()
         /** Stands in for `ForegroundServiceStartNotAllowedException` from the call service. */
         var serviceRefused = false
         override fun reportIncoming(call: CallInfo) { log += "incoming:${call.callId}" }
@@ -250,6 +260,37 @@ class LiveCallEngineTest {
         runCurrent()
         assertTrue(job.isCompleted)
         assertEquals("ended:c1:HungUp", h.controller.log.last())
+    }
+
+    @Test
+    fun timeoutAndQueueCloseTheMediaOnceWhenTheyRace() = kotlinx.coroutines.runBlocking {
+        // Real threads: the hang-up goes out just before the timeout, so the queue's closeMedia (slow close) and the
+        // timeout branch's closeMedia run at the same time. The media closes once and the jobs are cancelled once.
+        val scope = CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
+        try {
+            val h = Harness(scope, CallPeer(bob, isContact = true, isBlocked = false), null, PlainSealer())
+            h.engine.attach()
+            suspend fun waitFor(cond: () -> Boolean) {
+                val end = System.currentTimeMillis() + 5_000
+                while (!cond() && System.currentTimeMillis() < end) kotlinx.coroutines.delay(10)
+                assertTrue(cond())
+            }
+            h.engine.ring(ring())
+            waitFor { h.controller.log.any { it.startsWith("incoming:") } }
+            h.engine.answer(video = false)
+            waitFor { h.session.configured }
+            val release = CompletableDeferred<Unit>()
+            h.signaling.hangupGate = release
+            h.session.closeDelayMs = 200
+            val shutdown = launch(kotlinx.coroutines.Dispatchers.Default) { h.engine.shutdown() }
+            kotlinx.coroutines.delay(LiveCallEngine.SHUTDOWN_MS - 50)
+            release.complete(Unit)
+            shutdown.join()
+            kotlinx.coroutines.delay(500)
+            assertEquals(1, h.session.closeCalls.get())
+        } finally {
+            scope.cancel()
+        }
     }
 
     @Test
