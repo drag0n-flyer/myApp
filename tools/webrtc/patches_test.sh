@@ -29,7 +29,7 @@ check() { # check <description> <command...>
 g() { git -c user.name=test -c user.email=test@example.com -c commit.gpgsign=false "$@"; }
 has() { grep -q -- "$1" "$2"; }
 
-patches=$(ls "$here"/patches/000[234]-*.patch)
+patches=$(ls "$here"/patches/000[2345]-*.patch)
 # Files the patches modify (not the ones they create).
 files=$(for p in $patches; do
   awk '/^diff --git /{f=substr($4,3)} /^--- a\//{print f}' "$p"
@@ -105,6 +105,10 @@ for h in "$o"/RTC*.h; do
   case "$(basename "$h")" in "$cls+"*) continue ;; esac # upstream +Private/+Native headers
   check "$(basename "$h") imports $cls.h for its category" has "#import \".*/$cls.h\"" "$h"
 done
+
+# 0005
+check "0005: macOS framework copies the bracket headers" has 'copy("copy_bracket_headers_\$this_target_name")' "$repo/webrtc.gni"
+check "0005: macOS framework depends on the copy" has '":copy_bracket_headers_\$this_target_name",' "$repo/webrtc.gni"
 
 if [ "$failures" -ne 0 ]; then
   echo "$failures check(s) failed"
