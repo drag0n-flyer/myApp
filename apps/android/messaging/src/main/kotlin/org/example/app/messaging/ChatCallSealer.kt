@@ -56,7 +56,10 @@ class ChatCallSealer(
         return lock.withLock { withContext(NonCancellable) { mls.encrypt(plaintext, GroupId(conversation.groupId)).ciphertext } }
     }
 
-    /** Throws [CallSealException.WrongSender] unless the MLS sender's account is [from]. */
+    /**
+     * Throws [CallSealException.WrongSender] unless the MLS sender's account is [from] and the message came in the
+     * 1:1 conversation with [from].
+     */
     override suspend fun open(data: ByteArray, from: String): OpenedCallSignal {
         val opened = openRecoveringSender(data)
         if (opened.senderAccountId != from) throw CallSealException.WrongSender
@@ -89,7 +92,11 @@ class ChatCallSealer(
         // The identity is `<accountId>/<deviceId>`: without both parts it is malformed.
         val slash = sender.indexOf('/')
         if (slash <= 0 || slash == sender.length - 1) throw CallSealException.WrongSender
-        return RecoveredCallSignal(envelope.p, sender.substring(0, slash), sender.substring(slash + 1))
+        val account = sender.substring(0, slash)
+        // A call signal counts only in the 1:1 conversation with its sender (calls.md), whose chat ID is the
+        // sender's account: not in another group the sender shares, and not in a group with no conversation here.
+        if (repo.conversationByGroup(incoming.group.raw)?.chatId != account) throw CallSealException.WrongSender
+        return RecoveredCallSignal(envelope.p, account, sender.substring(slash + 1))
     }
 
     /** The engine already decrypted a message that is not a call signal: store it as the inbox would. */
