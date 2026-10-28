@@ -4,7 +4,7 @@ Last updated: 2026-10-28, 15:30 UTC.
 
 | Track | Done | % |
 |---|---|---|
-| iPhone/Mac Phase 1 | 123 / 128 | 96% |
+| iPhone/Mac Phase 1 | 124 / 128 | 97% |
 | Android | 39 / 44 | 89% |
 | Admin dashboard | done, with admin accounts and 2FA, on `main` | 100% |
 
@@ -35,11 +35,11 @@ Admin dashboard: `http://localhost:9044/admin/`. `.env` also sets `APP_ADMIN_HOS
 | [App UI on sample data](docs/superpowers/plans/2026-10-27-app-ui-sample-data.md) | 16 / 16 | 100% | on `main` | done; Mac UI test confirmed on the next green run |
 | [Client networking](docs/superpowers/plans/2026-10-27-client-networking.md) | 14 / 14 | 100% | on `main`, with end-to-end tests against the real Go server in CI | done |
 | [MLS client core](docs/superpowers/plans/2026-10-27-mls-client-core.md) | 7 / 7 | 100% | on `main`; the real-iPhone checklist for the notification extension is yours (see "Waiting on the owner") | done |
-| [WebRTC + Opus build](docs/superpowers/plans/2026-10-27-webrtc-opus-build.md) | 5 / 6 | 90% | Release `webrtc-m156.1` published (all builds and the smoke test green); the package points at it and the pin check is green. Merges once the send-bitrate test passes | 2–4 h |
-| [Client calling](docs/superpowers/plans/2026-10-27-client-calling.md) | 16 / 16 | 100% | I1 merged (shared with messaging). Open: with the real WebRTC build, the send-bitrate test measures about 15.4 kbps against its 14 kbps limit; being fixed on `feat/webrtc-release` | fix in progress |
+| [WebRTC + Opus build](docs/superpowers/plans/2026-10-27-webrtc-opus-build.md) | 6 / 6 | 100% | Release `webrtc-m156.1` published; the package is pinned to it and all Apple CI jobs, including the real call-media tests, are green. Open, minor: add WebRTC's PATENTS file to the generated license notice and fix the `&quot;` escaping (in `package.sh`); the bitrate test skips the 10 kbps target check when the runner reports no target | done |
+| [Client calling](docs/superpowers/plans/2026-10-27-client-calling.md) | 16 / 16 | 100% | I1 merged. With the real WebRTC build the encoder holds 10 kbps (about 19 kbps on the wire, inside GOAL.md's 17–21); the send-bitrate test now checks the audio payload, the encoder target and the wire total | done |
 | [Client messaging](docs/superpowers/plans/2026-10-27-client-messaging.md) | 16 / 16 | 100% | I1 merged: live store, calls tied to the caller's device, CallKit hang-up, sign-out ends calls first, a setup-error screen instead of sample chats; Apple CI green | done |
 | [Security docs and release](docs/superpowers/plans/2026-10-27-security-docs-release.md) | 13 / 14 | 93% | only Task 13 left, deferred by the owner | done for now |
-| [Call lab](docs/superpowers/plans/2026-10-27-call-lab.md) | 9 / 12 | 75% | L10a waits for WebRTC; L10 deferred; L11 last | 1 day after WebRTC |
+| [Call lab](docs/superpowers/plans/2026-10-27-call-lab.md) | 9 / 12 | 75% | WebRTC is in: L10a can start; L10 deferred; L11 last | about 1 day |
 
 Extra work beyond the plans, in progress (each is reviewed before it merges; ETAs are agent time):
 
