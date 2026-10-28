@@ -196,9 +196,9 @@ Every command is written to the audit log as the command line.
 
 ### Two-step sign-in (optional)
 
-Each admin can add a second step: a 6-digit code from an authenticator app (any app that does TOTP). On the Admins page, in your own row, choose "Turn on two-step sign-in". Scan the picture with the app (or type the key it shows), enter the code the app gives, and confirm. It turns on only after a correct code, and the setup is good for 10 minutes. To turn it off, choose "Turn off two-step sign-in" and enter your password and a current code.
+Each admin can add a second step: a 6-digit code from an authenticator app (any app that does TOTP). On the Admins page, in your own row, choose "Turn on two-step sign-in" and enter your password. Scan the picture with the app (or type the key it shows), enter the code the app gives, and confirm. It turns on only after a correct code, and the setup is good for 10 minutes. Turning it on signs out your other sessions and keeps the one you are using. To turn it off, choose "Turn off two-step sign-in" and enter your password and a current code.
 
-When it is on, sign-in asks for the password first, then the code. You get five tries at the code, and five minutes between the password and the code, then you start again. A code works once. Other admins can see whether you have it on, never the key.
+When it is on, sign-in asks for the password first, then the code. You get five tries at the code, and five minutes between the password and the code, then you start again. A code works once. Someone who already has your password can still guess codes, about 50 guesses an hour (each wrong one is in the audit log as `login.code_failed`); there is no lockout beyond the limits above, so keep passwords strong. Other admins can see whether you have it on, never the key.
 
 The key is stored in the database as it is, not encrypted, because the server has no key meant for that. Whoever can read the database can already read the password hashes, so protect database backups.
 

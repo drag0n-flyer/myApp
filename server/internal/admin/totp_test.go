@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -52,10 +53,12 @@ func TestTOTPMatchWindowAndReplay(t *testing.T) {
 	}
 }
 
+var startBody = map[string]string{"password": goodPassword}
+
 // totpOn walks the setup flow for the signed-in admin and returns the secret.
 func totpOn(t *testing.T, m *Module, b *browser, clock func() time.Time) []byte {
 	t.Helper()
-	rec := b.do("POST", "/admin/api/me/totp/start", nil, false)
+	rec := b.do("POST", "/admin/api/me/totp/start", startBody, false)
 	b.want(rec, 200, "totp start")
 	var st struct{ Secret string }
 	decodeBody(t, rec, &st)
@@ -76,7 +79,7 @@ func TestTOTPSetupFlow(t *testing.T) {
 	// Nothing is pending yet.
 	a.want(a.do("GET", "/admin/api/me/totp/qr", nil, false), 404, "qr before start")
 
-	rec := a.do("POST", "/admin/api/me/totp/start", nil, false)
+	rec := a.do("POST", "/admin/api/me/totp/start", startBody, false)
 	a.want(rec, 200, "start")
 	var st struct{ Secret string }
 	decodeBody(t, rec, &st)
@@ -96,6 +99,11 @@ func TestTOTPSetupFlow(t *testing.T) {
 		"otpauth://totp/chat.example.org:alice?secret="+st.Secret+"&issuer=chat.example.org&algorithm=SHA1&digits=6&period=30" {
 		t.Errorf("otpauth = %s", got)
 	}
+	// m2: a port in the host must not add a second colon to the label.
+	if got := otpauthURL("chat.example.org:8443", "alice", st.Secret); got !=
+		"otpauth://totp/chat.example.org%3A8443:alice?secret="+st.Secret+"&issuer=chat.example.org%3A8443&algorithm=SHA1&digits=6&period=30" {
+		t.Errorf("otpauth with a port = %s", got)
+	}
 	// The QR needs a session.
 	if w := serveReq(m.Handler(), req("GET", "/admin/api/me/totp/qr", "", nil)); w.Code != 401 {
 		t.Errorf("qr without session = %d", w.Code)
@@ -112,7 +120,7 @@ func TestTOTPSetupFlow(t *testing.T) {
 		t.Errorf("enable audit rows = %d", n)
 	}
 	// Once on: no new secret, no QR, no second enable.
-	a.want(a.do("POST", "/admin/api/me/totp/start", nil, false), 409, "start when on")
+	a.want(a.do("POST", "/admin/api/me/totp/start", startBody, false), 409, "start when on")
 	a.want(a.do("GET", "/admin/api/me/totp/qr", nil, false), 404, "qr when on")
 
 	// The list says who has it on, and carries no secret.
@@ -141,7 +149,7 @@ func TestTOTPSetupFlow(t *testing.T) {
 func TestTOTPPendingSecretExpires(t *testing.T) {
 	m, f := newTestModule(t)
 	a := setupFirst(t, m, "alice", goodPassword)
-	rec := a.do("POST", "/admin/api/me/totp/start", nil, false)
+	rec := a.do("POST", "/admin/api/me/totp/start", startBody, false)
 	var st struct{ Secret string }
 	decodeBody(t, rec, &st)
 	secret, _ := base32.StdEncoding.WithPadding(base32.NoPadding).DecodeString(st.Secret)
@@ -150,7 +158,7 @@ func TestTOTPPendingSecretExpires(t *testing.T) {
 	a.want(a.do("GET", "/admin/api/me/totp/qr", nil, false), 404, "qr after 10 minutes")
 	a.want(a.do("POST", "/admin/api/me/totp/enable", map[string]string{"code": totpCode(secret, f.Clock.Now().Unix()/30)}, false), 400, "enable after 10 minutes")
 	// Starting again gives a new secret.
-	a.want(a.do("POST", "/admin/api/me/totp/start", nil, false), 200, "restart")
+	a.want(a.do("POST", "/admin/api/me/totp/start", startBody, false), 200, "restart")
 }
 
 func twoStepLogin(b *browser, user, pw string) *httptest.ResponseRecorder {
@@ -336,4 +344,148 @@ func TestTOTPWritesNeedCSRF(t *testing.T) {
 			t.Errorf("%s without CSRF = %d", p, rec.Code)
 		}
 	}
+}
+
+// m6: starting setup needs the current password.
+func TestTOTPStartNeedsPassword(t *testing.T) {
+	m, _ := newTestModule(t)
+	a := setupFirst(t, m, "alice", goodPassword)
+	for name, body := range map[string]any{
+		"none":  nil,
+		"empty": map[string]string{"password": ""},
+		"wrong": map[string]string{"password": "wrong password here"},
+	} {
+		a.want(a.do("POST", "/admin/api/me/totp/start", body, false), 400, "start with "+name+" password")
+	}
+	if n := count(t, m, `select count(*) from admin_users where totp_secret is not null`); n != 0 {
+		t.Fatal("a secret was made without the password")
+	}
+	a.want(a.do("POST", "/admin/api/me/totp/start", startBody, false), 200, "start with the password")
+}
+
+// m6: turning 2FA on ends the admin's other sessions, not the current one,
+// and not another admin's.
+func TestTOTPEnableEndsOtherSessions(t *testing.T) {
+	m, f := newTestModule(t)
+	a := setupFirst(t, m, "alice", goodPassword)
+	a.want(a.do("POST", "/admin/api/admins", map[string]string{"username": "bob", "password": goodPassword}, false), 200, "add bob")
+	other := passwordSignIn(t, m, "alice", goodPassword)
+	bob := passwordSignIn(t, m, "bob", goodPassword)
+	other.want(other.do("GET", "/admin/api/session", nil, false), 200, "other session before")
+	totpOn(t, m, a, f.Clock.Now)
+	a.want(a.do("GET", "/admin/api/session", nil, false), 200, "current session after enable")
+	other.want(other.do("GET", "/admin/api/session", nil, false), 401, "other session after enable")
+	bob.want(bob.do("GET", "/admin/api/session", nil, false), 200, "bob's session after enable")
+}
+
+// m1: one pending login, two different valid codes at once: one session.
+func TestTOTPPendingLoginSingleUseConcurrent(t *testing.T) {
+	m, f := newTestModule(t)
+	a := setupFirst(t, m, "alice", goodPassword)
+	secret := totpOn(t, m, a, f.Clock.Now)
+	f.Clock.Advance(time.Minute)
+	cur := f.Clock.Now().Unix() / 30
+	for round := 0; round < 5; round++ {
+		b := &browser{t: t, h: m.Handler()}
+		rec := passwordLogin(b, "alice", goodPassword)
+		b.want(rec, 200, "password step")
+		b.pending = rec.Result().Cookies()[0]
+		before := count(t, m, `select count(*) from admin_sessions`)
+		codes := []string{totpCode(secret, cur-1), totpCode(secret, cur)}
+		got := make([]int, len(codes))
+		var wg sync.WaitGroup
+		for i := range codes {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				got[i] = b.do("POST", "/admin/api/login/code", map[string]string{"code": codes[i]}, false).Code
+			}()
+		}
+		wg.Wait()
+		ok := 0
+		for _, c := range got {
+			if c == 204 {
+				ok++
+			}
+		}
+		if after := count(t, m, `select count(*) from admin_sessions`); ok != 1 || after != before+1 {
+			t.Fatalf("round %d: codes %v, sessions %d -> %d", round, got, before, after)
+		}
+		f.Clock.Advance(2 * time.Minute)
+		cur = f.Clock.Now().Unix() / 30
+	}
+}
+
+// m4: the same code sent by several pending logins at once works once.
+func TestTOTPConcurrentReplayOneSuccess(t *testing.T) {
+	m, f := newTestModule(t)
+	a := setupFirst(t, m, "alice", goodPassword)
+	secret := totpOn(t, m, a, f.Clock.Now)
+	f.Clock.Advance(time.Minute)
+	code := totpCode(secret, f.Clock.Now().Unix()/30)
+	const n = 6
+	bs := make([]*browser, n)
+	for i := range bs {
+		bs[i] = &browser{t: t, h: m.Handler()}
+		rec := passwordLogin(bs[i], "alice", goodPassword)
+		bs[i].want(rec, 200, "password step")
+		bs[i].pending = rec.Result().Cookies()[0]
+	}
+	got := make([]int, n)
+	var wg sync.WaitGroup
+	for i := range bs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			got[i] = bs[i].do("POST", "/admin/api/login/code", map[string]string{"code": code}, false).Code
+		}()
+	}
+	wg.Wait()
+	ok := 0
+	for _, c := range got {
+		if c == 204 {
+			ok++
+		}
+	}
+	if ok != 1 {
+		t.Fatalf("codes %v: %d successes, want 1", got, ok)
+	}
+}
+
+// m4: a disabled account gets no session from the code step.
+func TestTOTPCodeRefusesDisabledAccount(t *testing.T) {
+	m, f := newTestModule(t)
+	a := setupFirst(t, m, "alice", goodPassword)
+	a.want(a.do("POST", "/admin/api/admins", map[string]string{"username": "bob", "password": goodPassword}, false), 200, "add bob")
+	secret := totpOn(t, m, a, f.Clock.Now)
+	f.Clock.Advance(time.Minute)
+	b := &browser{t: t, h: m.Handler()}
+	rec := passwordLogin(b, "alice", goodPassword)
+	b.want(rec, 200, "password step")
+	b.pending = rec.Result().Cookies()[0]
+	if _, err := runCmd(t, m, "admin user disable", "alice"); err != nil {
+		t.Fatal(err)
+	}
+	before := count(t, m, `select count(*) from admin_sessions`)
+	b.want(b.do("POST", "/admin/api/login/code", map[string]string{"code": totpCode(secret, f.Clock.Now().Unix()/30)}, false), 401, "code for a disabled account")
+	if after := count(t, m, `select count(*) from admin_sessions`); after != before {
+		t.Errorf("sessions %d -> %d", before, after)
+	}
+}
+
+// m4: the pending cookie is not a session, whatever name it is sent under.
+func TestTOTPPendingCookieIsNotASession(t *testing.T) {
+	m, f := newTestModule(t)
+	a := setupFirst(t, m, "alice", goodPassword)
+	totpOn(t, m, a, f.Clock.Now)
+	f.Clock.Advance(time.Minute)
+	b := &browser{t: t, h: m.Handler()}
+	rec := passwordLogin(b, "alice", goodPassword)
+	b.want(rec, 200, "password step")
+	pending := rec.Result().Cookies()[0]
+	b.pending = pending
+	b.want(b.do("GET", "/admin/api/session", nil, false), 401, "pending cookie alone")
+	b.pending = nil
+	b.cookie = &http.Cookie{Name: "admin_session", Value: pending.Value}
+	b.want(b.do("GET", "/admin/api/session", nil, false), 401, "pending value as the session cookie")
 }

@@ -1,5 +1,6 @@
 package org.example.app.ui.contacts
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -13,7 +14,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -29,7 +29,7 @@ import org.example.app.ui.chatlist.ChatRowModel
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MessageRequestsScreen(store: ChatStore, onOpenChat: (chatId: String) -> Unit, onBack: () -> Unit, modifier: Modifier = Modifier) {
-    val requests by store.requests.collectAsState()
+    val requests by store.requests.collectAsStateWithLifecycle()
     Scaffold(
         modifier = modifier,
         topBar = {

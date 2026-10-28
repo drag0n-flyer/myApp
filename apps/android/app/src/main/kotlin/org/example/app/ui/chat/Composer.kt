@@ -1,5 +1,6 @@
 package org.example.app.ui.chat
 
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -44,7 +45,7 @@ fun Composer(
     modifier: Modifier = Modifier,
 ) {
     var text by rememberSaveable { mutableStateOf("") }
-    var sheet by remember { mutableStateOf(false) }
+    var sheet by rememberSaveable { mutableStateOf(false) }
     Row(
         modifier.fillMaxWidth().imePadding().navigationBarsPadding().padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -87,7 +88,7 @@ fun Composer(
 @Composable
 private fun AttachRow(label: Int, icon: Int, onClick: () -> Unit) {
     ListItem(
-        modifier = Modifier.clickable(onClick = onClick),
+        modifier = Modifier.clickable(role = Role.Button, onClick = onClick),
         leadingContent = { Icon(painterResource(icon), contentDescription = null) },
         headlineContent = { Text(stringResource(label)) },
     )

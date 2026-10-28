@@ -5,7 +5,7 @@ Last updated: 2026-10-29 (morning).
 | Track | Done | % |
 |---|---|---|
 | iPhone/Mac Phase 1 | 119 / 128 | 93% |
-| Android | 31 / 43 | 72% |
+| Android | 34 / 44 | 77% |
 | Admin dashboard | done, with admin accounts and 2FA, on `main` | 100% |
 
 About 10–12 agents work in parallel. Mac CI runs only the jobs a change needs. Android CI uses Linux runners only.
@@ -58,13 +58,13 @@ The Apple apps workflow on `main` is red. The fix on `fix/swift62-ci` has Linux 
 
 | Lane | Tasks | Done | Now |
 |---|---|---|---|
-| A, scaffold and UI | 9 | 8 | A1–A8 on `main`; A9 (accessibility and languages) built, in review |
+| A, scaffold and UI | 9 | 9 | done |
 | B, networking and accounts | 7 | 6 | B1–B6 on `main` (B5 key store, B6 passkeys and fingerprint unlock); B7 (live accounts, linking) in its last re-review |
 | C, MLS bindings | 4 | 4 | done |
-| D, storage and messaging | 7 | 5 | D1–D4 and D6 on `main`; D5 (outbox, receipts, device sync) approved, last small fix; D7 next |
+| D, storage and messaging | 7 | 6 | D1–D6 on `main`; D7 (live chat store, notification processor, call signal sealer) next |
 | E, WebRTC and calls | 6 (+E5b) | 2 | E3, E4 on `main`; E2 (WebRTC build) on CI, last 32-bit link fix; E1 after E2; then E5, E5b (bundled Opus for phones without an encoder), E6 |
 | F, push | 4 | 4 | done |
-| G, CI | 4 | 2 | G1, G2 on `main`; G3 (emulator tests on Android 10 and 16, all four modules) finishing; G4 last |
+| G, CI | 4 | 3 | G1–G3 on `main` (G3: emulator tests on Android 10 and 16, every module); G4 (release bundle, licenses, Play documents) in progress |
 | I, integration and iPhone↔Android test | 2 | 0 | waits for all lanes |
 
 ETA: about 1.5 days of agent work.

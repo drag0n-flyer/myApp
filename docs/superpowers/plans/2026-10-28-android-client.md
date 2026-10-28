@@ -629,6 +629,16 @@ If plan 4's `member_keys` export is still missing, add `Engine::member_keys(grou
 - [ ] **Step 2:** FAIL. **Step 3: Implement.** **Step 4:** PASS. The owner records CPU use of Standard and Enhanced in a 5-minute call on the OnePlus 5 (`docs/measurements/android-noise-cpu.md`).
 - [ ] **Step 5: Commit** `feat(android-calls): WebRTC media session, stats, RNNoise`.
 
+### Task E5b: bundled Opus fallback encoder (after E2)
+
+**Files:** a JNI bridge in `:webrtc` or `:app` over the libopus already inside our Android WebRTC build (BSD, approved); `apps/android/app/src/main/kotlin/org/example/app/media/VoiceRecorder.kt` picks the platform encoder first, then the bundled one; instrumented `VoiceRecorderInstrumentedTest` loses its no-encoder branch.
+
+**Interfaces — Produces:** the same Ogg Opus voice notes (16 kHz mono, 16 kbps, pre-skip 312) on every Android 10+ phone, whichever encoder made them. **Size budget:** expected AAR size increase: to be measured.
+
+- [ ] **Step 1: Failing test:** remove the no-encoder branch in `VoiceRecorderInstrumentedTest` so the full test runs on every device; it fails on API 29 AOSP (no Opus encoder).
+- [ ] **Step 2:** FAIL. **Step 3: Implement** the JNI bridge and the encoder choice. **Step 4:** PASS on API 29 AOSP and API 36 in `android-emulator-ci`; record the measured AAR size increase here.
+- [ ] **Step 5: Commit** `feat(android-media): bundled Opus fallback encoder`.
+
 ### Task E6: Telecom, call notifications, `LiveCallEngine` (owner review)
 
 **Files:** `.../calls/android/telecom/{AppConnectionService,AppConnection,PhoneAccounts,TelecomCallController,PlainCallController}.kt`, `.../calls/android/{CallService,CallNotifications,IncomingCallActivity,LiveCallEngine}.kt`, manifest entries in `calls-android/src/main/AndroidManifest.xml` (`MANAGE_OWN_CALLS`, `FOREGROUND_SERVICE_PHONE_CALL`, `_MICROPHONE`, `_CAMERA`, `USE_FULL_SCREEN_INTENT`, the service with `android.telecom.ConnectionService` and `BIND_TELECOM_CONNECTION_SERVICE`); Robolectric `CallNotificationsTest`, instrumented `TelecomSmokeTest`.

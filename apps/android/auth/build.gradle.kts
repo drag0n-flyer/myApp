@@ -9,7 +9,7 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    // The Keystore test needs a real Keystore: it runs on the emulator (CI task G3).
+    // The Keystore test needs a real Keystore: it runs on the API 29 and API 36 emulators (.github/workflows/android-emulator.yml).
     testOptions {
         unitTests.all {
             // Robolectric downloads its Android jars here; the default (~/.m2) may not be writable.
@@ -21,6 +21,13 @@ android {
                     device = "Pixel 6"
                     apiLevel = 29
                     systemImageSource = "aosp"
+                    require64Bit = true
+                }
+                create("pixel6Api36") {
+                    device = "Pixel 6"
+                    apiLevel = 36
+                    systemImageSource = "aosp"
+                    require64Bit = true
                 }
             }
         }

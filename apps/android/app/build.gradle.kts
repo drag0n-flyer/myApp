@@ -27,6 +27,23 @@ android {
             // Robolectric Compose tests together outgrow the default 512 MB test heap.
             it.maxHeapSize = "2g"
         }
+        // VoiceRecorderInstrumentedTest needs real AudioRecord and MediaCodec: it runs on the emulators of .github/workflows/android-emulator.yml.
+        managedDevices {
+            localDevices {
+                create("pixel6Api29") {
+                    device = "Pixel 6"
+                    apiLevel = 29
+                    systemImageSource = "aosp"
+                    require64Bit = true
+                }
+                create("pixel6Api36") {
+                    device = "Pixel 6"
+                    apiLevel = 36
+                    systemImageSource = "aosp"
+                    require64Bit = true
+                }
+            }
+        }
     }
 }
 
