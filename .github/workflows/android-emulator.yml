@@ -24,7 +24,7 @@ concurrency:
 jobs:
   emulator:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 120
     env:
       NDK_VERSION: 28.2.13676358
     steps:
@@ -107,11 +107,11 @@ jobs:
         run: scripts/android-live-server.sh
       - name: Instrumented tests on API 29 and API 36
         working-directory: apps/android
-        timeout-minutes: 45
+        timeout-minutes: 75
         run: |
-          df -h /
-          free -m
-          ./gradlew --no-daemon --continue -PliveServer=true \
+          # One emulator at a time: several at once ran the 16 GB runner out of memory and it was shut down (runs 40760801165, 40767166428).
+          ./gradlew --no-daemon --continue --max-workers=2 -PliveServer=true \
+            -Pandroid.experimental.testOptions.managedDevices.maxConcurrentDevices=1 \
             -Pandroid.testoptions.manageddevices.emulator.gpu=swiftshader_indirect \
             -Pandroid.experimental.androidTest.numManagedDeviceShards=1 \
             :mls:pixel6Api29DebugAndroidTest :mls:pixel6Api36DebugAndroidTest \
