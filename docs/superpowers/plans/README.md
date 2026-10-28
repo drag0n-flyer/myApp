@@ -210,3 +210,4 @@ The sample services stay. The launch argument `-sampleData` selects them, so the
 | 2026-10-28 | Android: `androidx.biometric` approved for fingerprint/face unlock (`BiometricGate`, lane B). **Owner decision.** |
 | 2026-10-28 | Ruling: sign-up display name sent via PATCH /v1/me/settings after signupFinish on both platforms until signup/start takes it — iPhone must match — cost if wrong: one extra request |
 | 2026-10-28 | Own-device reconcile (mls-profile.md:94) removes a device only when missing from two lists ≥10 min apart and the list contains this device; Android now, iPhone to port. Ruling — cost if wrong: a stale device lingers up to one more reconcile. |
+| 2026-10-29 | Read receipts switch works on both platforms: off stops sending read receipts (delivered still sent) and hides others' read ticks; not retroactive. iPhone to match. **Owner decision.** |

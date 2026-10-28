@@ -82,4 +82,49 @@ class ReceiptsTest {
         rig.ana1.processor.sync()
         assertEquals("read", rig.ana1.repo.message("m-1")?.status)
     }
+
+    // The Read receipts switch (owner decision 2026-10-29)
+
+    @Test
+    fun switchOffSendsNoReadReceiptButDeliveredStillGoOut() = runTest {
+        val rig = joined()
+        var enabled = false
+        val receipts = Receipts(rig.bob1.outbox) { enabled }
+        receipts.attach(rig.bob1.processor)
+        rig.ana1.outbox.enqueue(ContentEnvelope.Text("m-1", NOW, "one"), "acc-bob")
+        rig.ana1.outbox.flush()
+        rig.bob1.processor.sync()
+        assertEquals(1, rig.bobPosts().size, "delivered still sent")
+
+        receipts.read("acc-ana", listOf("m-1"))
+        assertEquals(0, rig.bob1.repo.dueOutbox(Long.MAX_VALUE).size)
+        rig.bob1.outbox.flush()
+        assertEquals(1, rig.bobPosts().size)
+
+        // Switching back on is not retroactive: m-1 stays unreported; new reads are sent.
+        enabled = true
+        rig.bob1.outbox.flush()
+        assertEquals(1, rig.bobPosts().size)
+        receipts.read("acc-ana", listOf("m-2"))
+        rig.bob1.outbox.flush()
+        assertEquals(2, rig.bobPosts().size)
+    }
+
+    @Test
+    fun displayedStatusHidesReadWhileTheSwitchIsOff() = runTest {
+        val rig = joined()
+        rig.ana1.outbox.enqueue(ContentEnvelope.Text("m-1", NOW, "one"), "acc-bob")
+        rig.ana1.outbox.flush()
+        rig.bob1.processor.sync()
+        rig.bob1.receipts.read("acc-ana", listOf("m-1"))
+        rig.bob1.outbox.flush()
+        rig.ana1.processor.sync()
+        // Stored as read either way, so turning the switch on shows it.
+        val stored = rig.ana1.repo.message("m-1")!!.status
+        assertEquals("read", stored)
+        assertEquals("delivered", Receipts.displayStatus(stored, showRead = false))
+        assertEquals("read", Receipts.displayStatus(stored, showRead = true))
+        assertEquals("sent", Receipts.displayStatus("sent", showRead = false))
+        assertEquals("sending", Receipts.displayStatus("sending", showRead = false))
+    }
 }
