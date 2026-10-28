@@ -5,7 +5,7 @@ Last updated: 2026-10-29 (morning).
 | Track | Done | % |
 |---|---|---|
 | iPhone/Mac Phase 1 | 119 / 128 | 93% |
-| Android | 35 / 44 | 80% |
+| Android | 36 / 44 | 82% |
 | Admin dashboard | done, with admin accounts and 2FA, on `main` | 100% |
 
 About 10–12 agents work in parallel. Mac CI runs only the jobs a change needs. Android CI uses Linux runners only.
@@ -59,7 +59,7 @@ The Apple apps workflow on `main` is red. The fix on `fix/swift62-ci` has Linux 
 | Lane | Tasks | Done | Now |
 |---|---|---|---|
 | A, scaffold and UI | 9 | 9 | done |
-| B, networking and accounts | 7 | 6 | B1–B6 on `main` (B5 key store, B6 passkeys and fingerprint unlock); B7 (live accounts, linking) in its last re-review |
+| B, networking and accounts | 7 | 7 | done. Small follow-ups from B7's last review: save the http/https choice with a local dev session, check the linking server before claiming, clear the invite code when the server is changed during sign-up |
 | C, MLS bindings | 4 | 4 | done |
 | D, storage and messaging | 7 | 6 | D1–D6 on `main`; D7 (live chat store, notification processor, call signal sealer) next |
 | E, WebRTC and calls | 6 (+E5b) | 2 | E3, E4 on `main`; E2 (WebRTC build) on CI, last 32-bit link fix; E1 after E2; then E5, E5b (bundled Opus for phones without an encoder), E6 |
