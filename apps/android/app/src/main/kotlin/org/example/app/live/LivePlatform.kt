@@ -4,7 +4,10 @@ import android.content.Context
 import java.io.File
 import okhttp3.OkHttpClient
 import org.example.app.auth.KeystoreSecretStore
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import org.example.app.contracts.Hpke
+import org.example.app.core.calls.NetworkType
 import org.example.app.contracts.LiveSocket
 import org.example.app.contracts.MlsEngine
 import org.example.app.contracts.SecretStore
@@ -43,6 +46,10 @@ class LivePlatform(
     val socket: (ServerClient) -> SocketHandle,
     val deviceName: String,
     val defaultHost: String = DEFAULT_SERVER_HOST,
+    /** Removes every notification this app posted (part of a wipe). */
+    val cancelNotifications: () -> Unit = {},
+    /** The network the device is on now. */
+    val network: () -> NetworkType = { NetworkType.Wifi },
 ) {
     val secretsDir: File get() = File(filesDir, "secrets")
     val mlsDir: File get() = File(filesDir, "mls")
@@ -70,7 +77,20 @@ class LivePlatform(
                     SocketHandle(connection, connection::start, connection::stop)
                 },
                 deviceName = android.os.Build.MODEL ?: "Android",
+                cancelNotifications = { androidx.core.app.NotificationManagerCompat.from(app).cancelAll() },
+                network = { currentNetwork(app) },
             )
         }
+    }
+}
+
+/** Wi-Fi (or Ethernet), mobile, or offline, from the active network. */
+private fun currentNetwork(context: Context): NetworkType {
+    val cm = context.getSystemService(ConnectivityManager::class.java) ?: return NetworkType.Offline
+    val caps = cm.getNetworkCapabilities(cm.activeNetwork) ?: return NetworkType.Offline
+    return when {
+        caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> NetworkType.Mobile
+        caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) -> NetworkType.Wifi
+        else -> NetworkType.Offline
     }
 }

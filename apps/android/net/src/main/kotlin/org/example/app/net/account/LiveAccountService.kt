@@ -105,8 +105,11 @@ class LiveAccountService(
     /** A claimed link session whose save failed; memory only. A retry saves it and never claims again. */
     private var unsaved: LinkApproved? = null
 
-    /** Called when the server ended this session (401, or this device was removed); not on a local sign-out. */
-    var onSignedOut: (() -> Unit)? = null
+    /**
+     * Called when the server ended this session; not on a local sign-out. [org.example.app.net.SignOutReason.Revoked]
+     * (a 4003 close or a confirmed 401) is the only reason the app wipes.
+     */
+    var onSignedOut: ((org.example.app.net.SignOutReason) -> Unit)? = null
 
     /** True once the connected server's protocol is newer than this app knows: nothing more is sent to it. */
     @Volatile var updateRequired: Boolean = false
@@ -365,9 +368,9 @@ class LiveAccountService(
     // ---- helpers
 
     private fun install(c: ServerClient) {
-        c.setOnUnauthorized {
+        c.setOnUnauthorized { reason ->
             forcedOut = true
-            onSignedOut?.invoke()
+            onSignedOut?.invoke(reason)
         }
     }
 

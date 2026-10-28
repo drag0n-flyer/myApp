@@ -13,7 +13,7 @@ class MainActivity : FragmentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         // The live services by default; UI tests pass `sampleData` for the sample ones.
-        graph = if (intent.getBooleanExtra(EXTRA_SAMPLE_DATA, false)) AppGraph(this, sampleData = true) else (application as App).graph
+        graph = if (usesSampleData(intent)) AppGraph(this, sampleData = true) else (application as App).graph
         graph.activity = this
         setContent { AppRoot(graph) }
     }
@@ -35,5 +35,8 @@ class MainActivity : FragmentActivity() {
 
     companion object {
         const val EXTRA_SAMPLE_DATA = "sampleData"
+
+        /** The live services unless the launch asks for sample data (UI tests). */
+        fun usesSampleData(intent: android.content.Intent): Boolean = intent.getBooleanExtra(EXTRA_SAMPLE_DATA, false)
     }
 }

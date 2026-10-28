@@ -67,7 +67,8 @@ class LiveSession(
     private val platform: LivePlatform,
     context: Context,
     hpke: Hpke,
-    scope: CoroutineScope,
+    /** This session's own scope: cancelled when the session ends, so none of its work outlives the account. */
+    val scope: CoroutineScope,
     readReceiptsEnabled: () -> Boolean,
 ) {
     private val clock = Clock.System

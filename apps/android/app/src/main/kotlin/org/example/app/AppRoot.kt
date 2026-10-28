@@ -9,6 +9,10 @@ import android.os.Build
 import android.provider.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.fillMaxSize
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -17,7 +21,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import org.example.app.core.account.AccountState
-import org.example.app.core.account.SampleAccountService
 import org.example.app.ui.contacts.AddContactScreen
 import org.example.app.ui.contacts.ContactsScreen
 import org.example.app.ui.contacts.MessageRequestsScreen
@@ -94,9 +97,9 @@ fun AppRoot(
 ) {
     AppTheme {
         // An account that cannot be read right now is not a signed-out one: ask again, never onboard over it.
-        var accountState by remember { mutableStateOf(if (graph.sampleData) AccountState.SignedIn else graph.accountService.accountState) }
+        var accountState by remember { mutableStateOf(graph.accountState) }
         if (startWithOnboarding == null && accountState == AccountState.Unavailable) {
-            AccountUnavailableScreen(onTryAgain = { accountState = graph.accountService.accountState })
+            AccountUnavailableScreen(onTryAgain = { accountState = graph.accountState })
             return@AppTheme
         }
         // Onboarding is shown on its own, before anything reads the chat store (the live one needs a signed-in account).
@@ -113,18 +116,29 @@ fun AppRoot(
                 key = "onboarding-$sessionEnds",
                 factory = viewModelFactory { initializer { OnboardingViewModel(graph.accountService, saved = createSavedStateHandle()) } },
             )
-            OnboardingHost(vm, onFinished = { onboarding = false })
+            val opening = rememberCoroutineScope()
+            // The signed-in services open off the main thread before the chats show.
+            OnboardingHost(vm, onFinished = { opening.launch { graph.openSession(); onboarding = false } })
+            return@AppTheme
+        }
+        var opened by remember(sessionEnds) { mutableStateOf(graph.sampleData || graph.liveSession != null) }
+        if (!opened) {
+            // Signed in at launch: open the session off the main thread; nothing reads the chats until then.
+            LaunchedEffect(sessionEnds) { if (graph.openSession() == null) onboarding = true else opened = true }
+            Box(Modifier.fillMaxSize())
             return@AppTheme
         }
         val nav = rememberNavController()
         val idArg = listOf(navArgument("id") { type = NavType.StringType })
         val context = LocalContext.current
         val debuggable = (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+        // One per session: a call view model never outlives the account it was made for.
         val callVm = viewModel<CallViewModel>(
+            key = "call-$sessionEnds",
             factory = factory {
                 CallViewModel(
                     graph.callEngine, graph.chatStore, graph.serverPolicy, { graph.settingsStore.settings.value.call },
-                    simulator = graph.callEngine as? SimulatedCallEngine, showSimulator = debuggable,
+                    simulator = graph.callEngine as? SimulatedCallEngine, showSimulator = debuggable && graph.callsAvailable,
                 )
             },
         )
@@ -136,7 +150,7 @@ fun AppRoot(
                 LinkApprovalFlow(vm, onDone = { nav.popBackStack() })
             }
             composable(MAIN) {
-                MainTabs { tab ->
+                MainTabs(tabs = if (graph.callsAvailable) MainTab.entries else MainTab.entries - MainTab.Calls) { tab ->
                     if (tab == MainTab.Chats) {
                         val vm = viewModel<ChatListViewModel>(
                             factory = factory { ChatListViewModel(graph.chatStore, graph.serverPolicy, graph.settingsStore.settings, graph.network) },
@@ -147,9 +161,8 @@ fun AppRoot(
                         CallHistoryScreen(vm, onCall = callVm::start)
                     } else if (tab == MainTab.Contacts) {
                         val context = LocalContext.current
-                        val invite = "https://${graph.serverPolicy.host}/invite/${SampleAccountService.SAMPLE_INVITE_CODE}"
                         ContactsScreen(
-                            graph.chatStore, invite,
+                            graph.chatStore, graph.inviteUrl,
                             onOpenChat = { nav.navigate("chat/$it") },
                             onAddContact = { nav.navigate(ADD_CONTACT) },
                             onInvite = { shareInvite(context, it) },
@@ -197,7 +210,7 @@ fun AppRoot(
                     vm, myId = graph.chatStore.me.id,
                     onBack = { nav.popBackStack() },
                     onOpenInfo = { nav.navigate("chatinfo/$id") },
-                    onCall = { video -> callVm.start(id, video) },
+                    onCall = if (graph.callsAvailable) { video -> callVm.start(id, video) } else null,
                 )
             }
             composable(INFO, idArg) { entry ->
@@ -205,7 +218,7 @@ fun AppRoot(
                 ChatInfoScreen(
                     graph.chatStore, id,
                     onBack = { nav.popBackStack() },
-                    onCall = { video -> callVm.start(id, video) },
+                    onCall = if (graph.callsAvailable) { video -> callVm.start(id, video) } else null,
                     onSearch = {},
                     onBlocked = { nav.popBackStack(MAIN, inclusive = false) },
                 )

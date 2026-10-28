@@ -29,6 +29,13 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.example.app.contracts.ServerException
 
+/**
+ * Why the server ended the session. Ruling (decision log, 2026-10-28): only [Revoked] wipes local data. It is a 4003
+ * close, or a 401 whose body is the server's own `unauthorized` error and that a second authenticated call
+ * (`GET /v1/me`) confirms. Any other 401 is [SessionEnded]: signed out, data kept.
+ */
+enum class SignOutReason { Revoked, SessionEnded }
+
 class ServerClient internal constructor(
     internal val baseUrl: HttpUrl,
     private val session: SessionStore,
@@ -60,13 +67,13 @@ class ServerClient internal constructor(
     /** Attachment transfers have no whole-call cap; connect, read and write timeouts still apply. */
     internal val rawHttp: OkHttpClient = base.newBuilder().callTimeout(0, TimeUnit.SECONDS).build()
 
-    private var onUnauthorized: (suspend () -> Unit)? = null
+    private var onUnauthorized: (suspend (SignOutReason) -> Unit)? = null
     private val unauthorizedLock = Mutex()
 
     /** Generation at which a 401 was already handled; stays until the next `SessionStore.save`. */
     private var signedOutAtGeneration: Int? = null
 
-    fun setOnUnauthorized(f: suspend () -> Unit) {
+    fun setOnUnauthorized(f: suspend (SignOutReason) -> Unit) {
         onUnauthorized = f
     }
 
@@ -128,7 +135,7 @@ class ServerClient internal constructor(
         }
         if (outcome is StreamResponse) return outcome
         outcome as ServerException
-        if (outcome.status == 401 && auth == Auth.Session) handleUnauthorized(sentAt)
+        if (outcome.status == 401 && auth == Auth.Session) handleUnauthorized(sentAt, outcome.code == "unauthorized")
         throw outcome
     }
 
@@ -192,7 +199,7 @@ class ServerClient internal constructor(
         }
         if (outcome is RawResponse) return outcome
         outcome as ServerException
-        if (outcome.status == 401 && auth == Auth.Session) handleUnauthorized(sentAt)
+        if (outcome.status == 401 && auth == Auth.Session) handleUnauthorized(sentAt, outcome.code == "unauthorized")
         throw outcome
     }
 
@@ -205,15 +212,28 @@ class ServerClient internal constructor(
         return LiveEndpoint(request, sentAt)
     }
 
-    /** Close code 4003 or a 401 on the upgrade: same effect as a 401 on an authenticated call. */
-    internal suspend fun handleRevoked(generation: Int) = handleUnauthorized(generation)
+    /** Close code 4003: the server revoked this device. */
+    internal suspend fun handleRevoked(generation: Int): SignOutReason = handleUnauthorized(generation, serverError = true, revoked = true)
+
+    /** A 401 on the WebSocket upgrade (its body is not read): revoked only if a second call confirms it. */
+    internal suspend fun handleUpgradeUnauthorized(generation: Int): SignOutReason = handleUnauthorized(generation, serverError = true)
 
     internal class LiveEndpoint(val request: Request, val generation: Int)
 
-    private suspend fun handleUnauthorized(sentAt: Int) {
+    /**
+     * Signs out once per session generation and tells the app why ([SignOutReason]). The confirming call runs before the
+     * session is cleared, with the same token, and never comes back here.
+     */
+    private suspend fun handleUnauthorized(sentAt: Int, serverError: Boolean, revoked: Boolean = false): SignOutReason {
+        var reason = SignOutReason.SessionEnded
         val first = unauthorizedLock.withLock {
             // A login (save) since the request was sent means the 401 is about an old token.
             if (session.generation != sentAt || signedOutAtGeneration == sentAt) return@withLock false
+            reason = when {
+                revoked -> SignOutReason.Revoked
+                serverError && confirmUnauthorized() -> SignOutReason.Revoked
+                else -> SignOutReason.SessionEnded
+            }
             val cleared = withContext(io) {
                 try {
                     session.clear()
@@ -228,12 +248,32 @@ class ServerClient internal constructor(
         }
         if (first) {
             try {
-                onUnauthorized?.invoke()
+                onUnauthorized?.invoke(reason)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
                 // The caller still gets the 401.
             }
+        }
+        return reason
+    }
+
+    /** True only when `GET /v1/me` with the current token is also the server's own 401 `unauthorized`. */
+    private suspend fun confirmUnauthorized(): Boolean {
+        val request = try {
+            buildRequest("GET", "/v1/me", null, Auth.Session, emptyMap()).first
+        } catch (_: ServerException) {
+            return false
+        }
+        return try {
+            jsonHttp.newCall(request).await().use { r ->
+                val data = withContext(io) { r.body.bytes() }
+                r.code == 401 && mapError(r.code, null, data).code == "unauthorized"
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            false
         }
     }
 

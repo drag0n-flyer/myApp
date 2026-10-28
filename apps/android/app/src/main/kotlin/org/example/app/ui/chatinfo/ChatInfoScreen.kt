@@ -55,7 +55,8 @@ fun ChatInfoScreen(
     store: ChatStore,
     chatId: String,
     onBack: () -> Unit,
-    onCall: (video: Boolean) -> Unit,
+    /** Null hides the call buttons (no live calls before E6). */
+    onCall: ((video: Boolean) -> Unit)?,
     onSearch: (name: String) -> Unit,
     onBlocked: () -> Unit,
     modifier: Modifier = Modifier,
@@ -90,8 +91,8 @@ fun ChatInfoScreen(
                 Text(contact.displayName, style = MaterialTheme.typography.titleLarge)
                 Text(usernameText(contact.username), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = { onCall(false) }) { Text(stringResource(R.string.info_audio)) }
-                    TextButton(onClick = { onCall(true) }) { Text(stringResource(R.string.info_video)) }
+                    if (onCall != null) TextButton(onClick = { onCall(false) }) { Text(stringResource(R.string.info_audio)) }
+                    if (onCall != null) TextButton(onClick = { onCall(true) }) { Text(stringResource(R.string.info_video)) }
                     TextButton(onClick = { muted = !muted }) { Text(stringResource(if (muted) R.string.info_unmute else R.string.info_mute)) }
                     TextButton(onClick = { onSearch(contact.displayName) }) { Text(stringResource(R.string.info_search)) }
                 }

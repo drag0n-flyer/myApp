@@ -84,7 +84,7 @@ object PushWiring {
         }
     }
 
-    private fun registrar(graph: AppGraph): PushRegistrar? {
+    private suspend fun registrar(graph: AppGraph): PushRegistrar? {
         val client = graph.openSession()?.client ?: return null
         val key = BuildConfig.PUSH_GATEWAY_KEY.takeIf { it.isNotEmpty() }?.let { Base64.getUrlDecoder().decode(it) } ?: ByteArray(0)
         return PushRegistrar(ServerPushApi(client), graph.hpke, key, BuildConfig.PUSH_GATEWAY_URL, BuildConfig.APP_ID)
