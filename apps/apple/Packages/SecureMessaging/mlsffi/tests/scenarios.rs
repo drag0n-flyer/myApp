@@ -291,6 +291,21 @@ fn pending_commit_blocks_new_commit() {
 }
 
 #[test]
+fn pending_commit_wins_over_every_other_remove_error() {
+    let (alice, bob) = (dev("acct-a/dev-1"), dev("acct-b/dev-1"));
+    let g = alice.create_group().unwrap();
+    alice
+        .add(g.clone(), vec![bob.key_packages(1).unwrap().remove(0)])
+        .unwrap();
+    // Bob is not a member yet (his commit is pending), but the pending commit is reported first.
+    let removal = alice.remove(g, vec!["acct-b/dev-1".into()]);
+    assert!(
+        matches!(removal, Err(FfiError::PendingCommit)),
+        "got {removal:?}"
+    );
+}
+
+#[test]
 fn pending_commit_survives_restart() {
     let (mut alice, bob) = (dev("acct-a/dev-1"), dev("acct-b/dev-1"));
     let g = alice.create_group().unwrap();

@@ -35,7 +35,11 @@ if FileManager.default.fileExists(atPath: packageDirectory + "/" + xcframework) 
     if let index = targets.firstIndex(where: { $0.name == "SecureMessagingTests" }) {
         targets[index].dependencies.append("MLSFFIBindings")
     }
-    // M6 adds the executable target `mls-nse-sim` here.
+    // A stand-in for the notification extension, run as a second process by NSEProcessTests.
+    // `swift test` builds every target, so the helper sits next to the test bundle.
+    targets.append(
+        .executableTarget(name: "mls-nse-sim", dependencies: ["SecureMessaging", "SecureMessagingCore"])
+    )
 }
 #endif
 

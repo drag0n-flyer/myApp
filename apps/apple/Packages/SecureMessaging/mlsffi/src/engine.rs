@@ -472,6 +472,9 @@ impl<P: CryptoProvider + Clone> EngineCore<P> {
     ) -> Result<CommitBundle, FfiError> {
         let _g = self.lock();
         let mut group = self.load(&group_id)?;
+        if group.has_pending_commit() {
+            return Err(FfiError::PendingCommit);
+        }
         let mut builder = group.commit_builder();
         for kp in &key_packages {
             let msg = MlsMessage::from_bytes(kp).map_err(|_| FfiError::Malformed)?;
