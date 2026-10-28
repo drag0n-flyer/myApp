@@ -255,10 +255,12 @@ class AppGraph(
     }
 
     suspend fun openSession(): LiveSession? = withContext(Dispatchers.IO) {
-        if (sampleData || wipeRunning) return@withContext null
-        liveSession?.let { return@withContext it }
+        if (sampleData) return@withContext null
+        if (!wipeRunning) liveSession?.let { return@withContext it }
         // One open at a time (UI and push may race): ownership is checked, and another device's data wiped, only here,
-        // so a second caller never wipes the session the first one just opened.
+        // so a second caller never wipes the session the first one just opened. `wipeRunning` is read under the lock
+        // only: the open's own wipe of another device's data sets it, and a caller arriving then waits for that open
+        // and gets its session instead of null.
         opening.withLock { openLocked() }
     }
 

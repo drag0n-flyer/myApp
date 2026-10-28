@@ -391,6 +391,28 @@ class AppGraphTest {
         assertEquals(AccountState.SignedIn, graph.accountState)
     }
 
+    /**
+     * A second open (a push ring) that arrives while the first one wipes another device's data waits for that open
+     * and gets its session: the open's own wipe is not a revocation, so it never answers "not signed in".
+     */
+    @Test
+    fun openDuringTheSwitchWipeWaitsForTheSession() = runBlocking {
+        val (_, old) = opened()
+        old.database.close()
+        saveSession(device = "dev-2")
+        val graph = AppGraph(context, sampleData = false, scope = scope, platform = platform())
+        var second: kotlinx.coroutines.Deferred<org.example.app.live.LiveSession?>? = null
+        onCancelNotifications = {
+            onCancelNotifications = {}
+            val during = scope.async(Dispatchers.IO) { graph.openSession() }
+            second = during
+            // Bounded: before the fix the second open returned null at once; after it, it waits for this open.
+            runBlocking { kotlinx.coroutines.withTimeoutOrNull(1_000) { during.join() } }
+        }
+        val first = assertNotNull(graph.openSession())
+        assertSame(first, assertNotNull(second, "the wipe ran inside the open").await())
+    }
+
     @Test
     fun socketOpenOnlyWhileVisibleOrInCall() {
         val (graph, _) = opened()
