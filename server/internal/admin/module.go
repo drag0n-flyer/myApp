@@ -14,8 +14,16 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Session is the signed-in admin token behind a request.
-type Session struct{ TokenID, Label string }
+// Session is the signed-in admin behind a request.
+type Session struct{ AdminUserID, Username string }
+
+// ActorID is the ID that stands for the signed-in admin in records.
+func (s Session) ActorID() string { return s.AdminUserID }
+
+// entry is an audit entry by this session's admin.
+func (s Session) entry(action, target string, detail map[string]any) Entry {
+	return Entry{Actor: "dashboard", AdminUserID: s.AdminUserID, Action: action, Target: target, Detail: detail}
+}
 
 type apiFunc func(w http.ResponseWriter, r *http.Request, s Session) error
 
@@ -37,7 +45,7 @@ type Sources struct {
 	Relays   interface{ Relays() []turn.RelayStatus }
 	Identity Identity
 	Reports  interface {
-		MarkReportHandled(ctx context.Context, id, tokenID string) error
+		MarkReportHandled(ctx context.Context, id, adminUserID string) error
 	}
 	Info interface {
 		Document(ctx context.Context) ([]byte, error)
@@ -51,9 +59,14 @@ type Module struct {
 }
 
 // New returns the admin module.
-func New(d core.Deps, src Sources) *Module { return &Module{d: d, src: src} }
+func New(d core.Deps, src Sources) *Module {
+	if d.Config.AdminAllowHTTP && d.Log != nil {
+		d.Log.Warn("admin dashboard allows plain HTTP for APP_ADMIN_HOSTS; sign-in codes, passwords and session cookies cross the network unencrypted")
+	}
+	return &Module{d: d, src: src}
+}
 
-// Run deletes expired tokens, sessions and old audit entries every hour until
+// Run deletes expired sessions and old audit entries every hour until
 // ctx is done.
 func (m *Module) Run(ctx context.Context) {
 	t := time.NewTicker(time.Hour)
