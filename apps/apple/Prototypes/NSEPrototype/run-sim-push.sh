@@ -35,7 +35,7 @@ if [ ! -f "$container/nse-result.txt" ]; then
   nselog="$(xcrun simctl spawn "$udid" log show --start "$stamp" --style compact \
     --predicate 'process == "NSEProtoService" OR process == "usernotificationsd" OR process == "NSEProtoHost" OR process == "ReportCrash" OR process == "jetsam" OR eventMessage CONTAINS "NSEProtoService"' 2>&1 || true)"
   echo "$nselog" | tail -n 60
-  if echo "$nselog" | grep -q "NSEProtoService"; then
+  if echo "$nselog" | grep -qE "(^| )NSEProtoService\[[0-9]+"; then
     echo "FAIL: NSEProtoService appears in the log (started, crashed or was killed) but left no result"
     exit 1
   fi
