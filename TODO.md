@@ -5,7 +5,7 @@ Last updated: 2026-10-29 (morning).
 | Track | Done | % |
 |---|---|---|
 | iPhone/Mac Phase 1 | 119 / 128 | 93% |
-| Android | 36 / 44 | 82% |
+| Android | 37 / 44 | 84% |
 | Admin dashboard | done, with admin accounts and 2FA, on `main` | 100% |
 
 About 10–12 agents work in parallel. Mac CI runs only the jobs a change needs. Android CI uses Linux runners only.
@@ -64,7 +64,7 @@ The Apple apps workflow fix (Swift 6.2 / Xcode 26) is merged; every Apple job wa
 | A, scaffold and UI | 9 | 9 | done |
 | B, networking and accounts | 7 | 7 | done. Small follow-ups from B7's last review: save the http/https choice with a local dev session, check the linking server before claiming, clear the invite code when the server is changed during sign-up |
 | C, MLS bindings | 4 | 4 | done |
-| D, storage and messaging | 7 | 6 | D1–D6 on `main`; D7 (live chat store, notification processor, call signal sealer) next |
+| D, storage and messaging | 7 | 7 | done. D7 took M7's `decryptApplication` from the iPhone side; checking `call.status` for late ring pushes moved to E6/I1 |
 | E, WebRTC and calls | 6 (+E5b) | 2 | E3, E4 on `main`; E2 (WebRTC build) on CI, last 32-bit link fix; E1 after E2; then E5, E5b (bundled Opus for phones without an encoder), E6 |
 | F, push | 4 | 4 | done |
 | G, CI | 4 | 4 | done; G4: release bundle, license notices, Play documents. A `v*` tag release fails until the SQLCipher, WebRTC and Opus notice texts are filled in |
