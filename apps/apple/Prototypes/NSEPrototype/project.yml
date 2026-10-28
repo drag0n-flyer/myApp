@@ -6,12 +6,15 @@ options:
 packages:
   SecureMessaging:
     path: ../../Packages/SecureMessaging
+configFiles:
+  Debug: Prototype.xcconfig
+  Release: Prototype.xcconfig
 settings:
   base:
     # A throwaway prototype: Swift 5 mode avoids Sendable noise around the notification content handler.
     SWIFT_VERSION: '5.0'
+    # Team and signing identity come from Prototype.xcconfig (do not set them here).
     CODE_SIGN_STYLE: Automatic
-    CODE_SIGN_IDENTITY: '-'
     GENERATE_INFOPLIST_FILE: 'YES'
     MARKETING_VERSION: '0.1.0'
     CURRENT_PROJECT_VERSION: '1'

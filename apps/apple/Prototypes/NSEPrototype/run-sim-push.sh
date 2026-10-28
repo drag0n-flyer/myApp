@@ -21,15 +21,27 @@ xcrun simctl launch "$udid" "$BUNDLE" -prepare
 sleep 3
 container="$(xcrun simctl get_app_container "$udid" "$BUNDLE" "$GROUP")"
 cat "$container/prepare-result.txt"; echo
+appex="$(xcrun simctl get_app_container "$udid" "$BUNDLE" app)/PlugIns/NSEProtoService.appex"
+if [ ! -d "$appex" ]; then
+  echo "FAIL: $appex is missing; the extension is not embedded in the installed app"
+  exit 1
+fi
+rm -f "$container/nse-result.txt"
+stamp="$(date '+%Y-%m-%d %H:%M:%S')"
 xcrun simctl push "$udid" "$BUNDLE" "$container/push.apns"
 sleep 5
 if [ ! -f "$container/nse-result.txt" ]; then
-  # The extension left no result: either `simctl push` does not run the extension on this
-  # runner, or it crashed. Show what the system logged and do not pretend it passed.
-  echo "::warning::nse-result.txt missing: the extension did not run or crashed"
   ls -la "$container"
-  xcrun simctl spawn "$udid" log show --last 3m --style compact \
-    --predicate 'process == "NSEProtoService" OR process == "usernotificationsd" OR process == "NSEProtoHost"' | tail -n 60 || true
+  nselog="$(xcrun simctl spawn "$udid" log show --start "$stamp" --style compact \
+    --predicate 'process == "NSEProtoService" OR process == "usernotificationsd" OR process == "NSEProtoHost" OR process == "ReportCrash" OR process == "jetsam" OR eventMessage CONTAINS "NSEProtoService"' 2>&1 || true)"
+  echo "$nselog" | tail -n 60
+  if echo "$nselog" | grep -q "NSEProtoService"; then
+    echo "FAIL: NSEProtoService appears in the log (started, crashed or was killed) but left no result"
+    exit 1
+  fi
+  # The extension never launched: `simctl push` presents the push to the foreground host on this
+  # runner without running the extension. Non-blocking; the device checklist covers it.
+  echo "::warning::nse-result.txt missing and the extension never launched"
   echo "Ruling: NSE simulator run not supported on macos-26 -- prototype verified by NSEProcessTests + device checklist"
   exit 0
 fi

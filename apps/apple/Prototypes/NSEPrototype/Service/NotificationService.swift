@@ -28,12 +28,12 @@ final class NotificationService: UNNotificationServiceExtension, @unchecked Send
                     if case .application(_, _, let plaintext, _) = try await engine.process(message) {
                         let text = String(decoding: plaintext, as: UTF8.self)
                         content.body = text
-                        report = "OK \(text) mem=\(os_proc_available_memory())"
+                        report = "OK \(text) mem=\(Self.footprintMB())MB"
                     } else {
-                        report = "OK (not a message) mem=\(os_proc_available_memory())"
+                        report = "OK (not a message) mem=\(Self.footprintMB())MB"
                     }
                 } else {
-                    report = "OK (fetch inbox) mem=\(os_proc_available_memory())"
+                    report = "OK (fetch inbox) mem=\(Self.footprintMB())MB"
                 }
             } catch {
                 content.body = Self.fallback
@@ -44,5 +44,17 @@ final class NotificationService: UNNotificationServiceExtension, @unchecked Send
             }
             contentHandler(content)
         }
+    }
+
+    /// Memory used by this process (phys_footprint, the number jetsam counts), in whole megabytes.
+    private static func footprintMB() -> Int {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+        let status = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        return status == KERN_SUCCESS ? Int(info.phys_footprint / 1_048_576) : -1
     }
 }

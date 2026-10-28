@@ -1,4 +1,6 @@
 import SwiftUI
+import UIKit
+import UserNotifications
 import SecureMessaging
 
 /// Launched with `-prepare`, the host plays "the app": it sets up a group between a sender and
@@ -7,6 +9,8 @@ import SecureMessaging
 /// the container for `xcrun simctl push`.
 @main
 struct HostApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     init() {
         if CommandLine.arguments.contains("-prepare") {
             Task { await Self.prepare() }
@@ -14,7 +18,7 @@ struct HostApp: App {
     }
 
     var body: some Scene {
-        WindowGroup { Text("NSE prototype host") }
+        WindowGroup { TokenView() }
     }
 
     static func prepare() async {
@@ -55,5 +59,59 @@ struct HostApp: App {
         out[1] = UInt8(payload.count & 0xff)
         out.replaceSubrange(2..<(2 + payload.count), with: payload)
         return out
+    }
+}
+
+/// Shared place for the APNs device token, so the screen can show it.
+final class TokenStore: ObservableObject {
+    static let shared = TokenStore()
+    @Published var text = "Waiting for the device token..."
+}
+
+final class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            DispatchQueue.main.async {
+                if granted {
+                    application.registerForRemoteNotifications()
+                } else {
+                    TokenStore.shared.text = "Notifications are not allowed. Turn them on in Settings."
+                }
+            }
+        }
+        return true
+    }
+
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        TokenStore.shared.text = deviceToken.map { String(format: "%02x", $0) }.joined()
+    }
+
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        TokenStore.shared.text = "Registration failed: \(error.localizedDescription)"
+    }
+}
+
+struct TokenView: View {
+    @ObservedObject private var store = TokenStore.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("NSE prototype host").font(.headline)
+            Text("Device token").font(.subheadline)
+            Text(store.text)
+                .font(.footnote.monospaced())
+                .textSelection(.enabled)
+                .accessibilityLabel("Device token")
+            Button {
+                UIPasteboard.general.string = store.text
+            } label: {
+                Label("Copy", systemImage: "doc.on.doc")
+            }
+            .accessibilityLabel("Copy device token")
+        }
+        .padding()
     }
 }

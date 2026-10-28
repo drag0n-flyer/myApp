@@ -1,0 +1,8 @@
+// Signing for the prototype. CI default: no team, ad-hoc signing.
+// The owner sets the team once, in the git-ignored Local.xcconfig next to this file:
+//   DEVELOPMENT_TEAM = <your 10-character team ID>
+//   CODE_SIGN_IDENTITY = Apple Development
+// or passes DEVELOPMENT_TEAM=<id> CODE_SIGN_IDENTITY="Apple Development" to xcodebuild.
+DEVELOPMENT_TEAM =
+CODE_SIGN_IDENTITY = -
+#include? "Local.xcconfig"
