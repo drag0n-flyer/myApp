@@ -103,11 +103,12 @@ jobs:
             :mls:pixel6Api29DebugAndroidTest :mls:pixel6Api36DebugAndroidTest \
             :store:pixel6Api29DebugAndroidTest :store:pixel6Api36DebugAndroidTest \
             :auth:pixel6Api29DebugAndroidTest :auth:pixel6Api36DebugAndroidTest \
+            :calls-android:pixel6Api29DebugAndroidTest :calls-android:pixel6Api36DebugAndroidTest \
             :app:pixel6Api29DebugAndroidTest :app:pixel6Api36DebugAndroidTest
       # Every module must have run at least its known test count on both API levels, none skipped (no silent no-op).
       - name: Check that every instrumented test ran
         if: always()
-        run: scripts/check-emulator-results.py apps/android mls:1 store:1 auth:8 app:4 | tee -a "$GITHUB_STEP_SUMMARY"
+        run: scripts/check-emulator-results.py apps/android mls:1 store:1 auth:8 calls-android:1 app:4 | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
