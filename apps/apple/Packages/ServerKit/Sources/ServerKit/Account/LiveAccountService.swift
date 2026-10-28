@@ -201,11 +201,10 @@ public final class LiveAccountService: AccountService {
     }
 
     /// Polls every 2 s until approved or the ticket's expiry passes. Every exit path forgets the ticket
-    /// and the private key. If the approver's snapshot cannot be opened after a successful claim, this
-    /// fails closed: the session is NOT saved, the device stays signed out, and `.server` is thrown (the
-    /// claim is single-use, so the person starts linking again; the orphaned device can be removed from
-    /// Linked devices on the other device).
-    public func waitForLinkApproval() async throws(AccountError) {
+    /// and the private key. A snapshot that is missing or cannot be opened is skipped: the session is
+    /// saved, the device signs in without its contacts, and the result says so (the claim is single-use,
+    /// so failing here would leave an orphaned device and make the person start again).
+    public func waitForLinkApproval() async throws(AccountError) -> LinkedResult {
         guard let ticket else { throw .linkExpired }
         let key = linkPrivateKey
         defer { self.ticket = nil; linkPrivateKey = nil }
@@ -216,13 +215,12 @@ public final class LiveAccountService: AccountService {
             }
             if case .approved(let s, let sealed) = claim {
                 var snapshot: Data?
-                if let sealed {
-                    guard let key else { throw .server }
-                    snapshot = try linkCrypto.open(sealed, privateKey: key)
+                if let sealed, let key {
+                    snapshot = try? linkCrypto.open(sealed, privateKey: key)
                 }
                 receivedLinkSnapshot = snapshot
                 try save(s)
-                return
+                return LinkedResult(contactsCopied: snapshot != nil)
             }
             if now() >= ticket.expiresAt { throw .linkExpired }
             do { try await sleep(.seconds(2)) } catch { throw .cancelled }
@@ -242,15 +240,21 @@ public final class LiveAccountService: AccountService {
                            requestedAt: info.createdAt)
     }
 
-    public func approveLink(_ request: LinkRequest) async throws(AccountError) {
+    /// The server refuses a larger sealed snapshot (`too_large`).
+    public static let maxSealedSnapshotBytes = 64 * 1024
+
+    public func approveLink(_ request: LinkRequest) async throws(AccountError) -> LinkApproval {
         guard isSignedIn else { throw .server }
         let code = try parseLink(request.qrText)
         let c = await ready()
         try await biometrics.confirm(reason: approvalReason)
         let sealed = try linkCrypto.seal(await linkSnapshot(), to: code.publicKey)
+        // Over the server's limit: approve without it; the new device starts without its contacts.
+        let fits = sealed.count <= Self.maxSealedSnapshotBytes
         try await call(link: true) { () async throws(ServerError) in
-            try await c.linkApprove(linkID: code.linkID, secret: code.secret, sealed: sealed)
+            try await c.linkApprove(linkID: code.linkID, secret: code.secret, sealed: fits ? sealed : nil)
         }
+        return LinkApproval(snapshotSent: fits)
     }
 
     // MARK: - Devices and account
@@ -331,10 +335,13 @@ public final class LiveAccountService: AccountService {
 
     private struct ParsedLink { let linkID: String; let secret: String; let publicKey: Data }
 
-    /// `https://<host>/link/<linkID>#<secret>.<publicKey b64url>`. The host must be this device's server.
+    /// `https://<host>/link/<linkID>#<secret>.<publicKey b64url>`. The authority (host and port) must be
+    /// exactly this device's server: another port, or user info (`own@evil`), is another server and
+    /// nothing is sent anywhere.
     private func parseLink(_ text: String) throws(AccountError) -> ParsedLink {
-        guard let url = URL(string: text), let linkHost = url.host else { throw .linkExpired }
-        guard let mine = sessions.current?.host, linkHost.lowercased() == mine.lowercased() else { throw .wrongServer }
+        guard let url = URL(string: text), let authority = Self.rawAuthority(text) else { throw .linkExpired }
+        guard let mine = sessions.current?.host, authority.lowercased() == mine.lowercased() else { throw .wrongServer }
+        guard url.scheme?.lowercased() == "https" else { throw .linkExpired }
         let parts = url.path.split(separator: "/")
         guard parts.count == 2, parts[0] == "link", let fragment = url.fragment, !fragment.isEmpty else { throw .linkExpired }
         // The QR public key is required and must be a 32-byte X25519 key; anything else is an invalid
@@ -344,6 +351,14 @@ public final class LiveAccountService: AccountService {
             throw .linkExpired
         }
         return ParsedLink(linkID: String(parts[1]), secret: bits[0], publicKey: key)
+    }
+
+    /// The text between `://` and the first `/`, `?` or `#`, exactly as written (host, and port if any).
+    private nonisolated static func rawAuthority(_ text: String) -> String? {
+        guard let start = text.range(of: "://")?.upperBound else { return nil }
+        let rest = text[start...]
+        let authority = rest[..<(rest.firstIndex { "/?#".contains($0) } ?? rest.endIndex)]
+        return authority.isEmpty ? nil : String(authority)
     }
 
     @_spi(Testing) public nonisolated static func wire(_ p: DevicePlatform) -> String {

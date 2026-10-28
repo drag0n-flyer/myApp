@@ -144,8 +144,10 @@ private actor StateLog {
         // The iPhone approves it; the code's host (localhost) matches the iPhone's server.
         let request = try await iphone.service.linkRequest(qrText: code.qrText)
         #expect(request.deviceName == "Ana's Mac")
-        try await iphone.service.approveLink(request)
-        try await waiting.value
+        let approval = try await iphone.service.approveLink(request)
+        #expect(approval.snapshotSent)
+        let linked = try await waiting.value
+        #expect(linked.contactsCopied)
 
         // The Mac now has the same account and a live connection.
         let phoneMe = try await iphone.client.me()

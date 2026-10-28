@@ -32,8 +32,16 @@ import Testing
     @Test func approveSplitAddsDevice() async throws {
         let s = SampleAccountService()
         let req = try await s.linkRequest(qrText: SampleAccountService.sampleLinkText)
-        try await s.approveLink(req)
+        let approval = try await s.approveLink(req)
+        #expect(approval == LinkApproval(snapshotSent: true))
         #expect(try await s.devices().count == 3)
+    }
+
+    @Test func sampleLinkCopiesContacts() async throws {
+        let s = SampleAccountService()
+        let result = try await s.waitForLinkApproval()
+        #expect(result == LinkedResult(contactsCopied: true))
+        #expect(s.isSignedIn)
     }
 
     @Test func linkRequestRejectsOtherServer() async {

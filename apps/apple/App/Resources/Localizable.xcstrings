@@ -89,6 +89,50 @@
         }
       }
     },
+    "Contacts weren't copied" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Contacts weren't copied"
+          }
+        }
+      }
+    },
+    "Device linked" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Device linked"
+          }
+        }
+      }
+    },
+    "The new device starts without its contacts." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The new device starts without its contacts."
+          }
+        }
+      }
+    },
+    "This device is linked, but it starts without your contacts." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This device is linked, but it starts without your contacts."
+          }
+        }
+      }
+    },
     "Confirm to approve this new device." : {
       "extractionState" : "manual",
       "localizations" : {
