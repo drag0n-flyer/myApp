@@ -25,7 +25,9 @@ import org.example.app.calls.session.MediaSessionFactory
 import org.example.app.contracts.CallSignalPayload
 import org.example.app.contracts.CallSignalSealer
 import org.example.app.contracts.RingOutcome
+import org.example.app.core.calls.CallEndReason
 import org.example.app.core.calls.CallEngine
+import org.example.app.core.calls.DataMode
 import org.example.app.core.calls.CallPhase
 import org.example.app.core.calls.CallState
 import org.example.app.core.calls.ModePreference
@@ -33,6 +35,7 @@ import org.example.app.core.calls.NetworkType
 import org.example.app.core.chats.CallSummary
 import org.example.app.core.chats.Contact
 import org.example.app.push.IncomingCallSink
+import org.example.app.push.MissedCallRecorder
 
 /**
  * The real [CallEngine]: runs [CallMachine] against the server ([signaling]), the peer connection ([media]) and
@@ -41,8 +44,8 @@ import org.example.app.push.IncomingCallSink
  *
  * Rings come two ways. Over the WebSocket ([attach]): the payload is opened with [sealer] (D7's sealer accepts a
  * ring only from the 1:1 chat with its sender), its device must be the frame's, and only a contact that is not
- * blocked rings. By push ([ring], after D7's `NotificationProcessor` checked the sender): the server is asked
- * `call.status` first, so a ring whose call is already over never rings. The ring (50 s) and setup (30 s)
+ * blocked rings; a stranger's ring is a quiet missed call. By push ([ring], after D7's `NotificationProcessor`
+ * checked the sender): the server is asked `call.status` first, so a ring whose call is already over never rings. The ring (50 s) and setup (30 s)
  * deadlines and the answering-device binding are the machine's.
  *
  * Call [attach] once before use.
@@ -56,6 +59,8 @@ class LiveCallEngine(
     private val context: (isContact: Boolean) -> CallContext,
     private val controller: CallController,
     private val history: CallHistory,
+    /** A stranger's ring writes the same quiet missed call as a stranger's push ring. */
+    private val strangers: MissedCallRecorder,
     private val clock: Clock,
     private val newCallId: () -> String = { UUID.randomUUID().toString().lowercase() },
 ) : CallEngine, IncomingCallSink {
@@ -67,8 +72,11 @@ class LiveCallEngine(
         const val STATUS_TIMEOUT_MS = 5_000L
         private const val MAX_REMEMBERED_CALLS = 64
 
-        /** A call that ended this way before anyone answered is a missed call (as in D7's processor). */
-        private val MISSED_REASONS = setOf("hangup", "missed", "not_found")
+        /**
+         * Only a call the server ended as `missed` is a missed call, as on iPhone (VoIPPushDecision): `hangup` cannot
+         * tell whether another device answered first.
+         */
+        private const val MISSED = "missed"
     }
 
     private val machine = CallMachine(context(false), sealer, clock)
@@ -107,8 +115,17 @@ class LiveCallEngine(
     override fun start(contactId: String, video: Boolean) = enqueue {
         if (live) return@enqueue
         val peer = peers.peer(contactId)
-        begin(newCallId(), peer?.contact ?: Contact(contactId, "", ""), isOutgoing = true, contact = peer?.isContact == true)
-        run(machine.handle(CallEvent.Start(contact, video, callId!!)))
+        val id = newCallId()
+        begin(id, peer?.contact ?: Contact(contactId, "", ""), isOutgoing = true, contact = peer?.isContact == true)
+        // The call service starts before anything goes out: a phone that refuses it fails the call before it rings anyone.
+        try {
+            controller.reportOutgoing(CallInfo(id, contact, video))
+        } catch (_: Exception) {
+            val net = callContext(isContact).network
+            _state.value = CallState(contactId, CallPhase.Ended(CallEndReason.Failed), video, false, DataMode.entries.first(), net)
+            return@enqueue
+        }
+        run(machine.handle(CallEvent.Start(contact, video, id)))
     }
 
     override fun answer(video: Boolean) = submit(CallEvent.Answer(video))
@@ -149,7 +166,7 @@ class LiveCallEngine(
         val who = peer?.contact ?: Contact(o.fromAccountId, o.callerName, "")
         when (status) {
             // Over before this device could ring: a missed call if nobody answered, otherwise nothing.
-            is CallStatus.Ended -> if (status.reason in MISSED_REASONS) enqueue { missed(CallInfo(o.callId, who, o.video)) }
+            is CallStatus.Ended -> if (status.reason == MISSED) enqueue { missed(CallInfo(o.callId, who, o.video)) }
             CallStatus.Answered -> Unit
             CallStatus.Ringing, CallStatus.Unknown -> enqueue {
                 // No WebSocket ring was seen, so no caller device: the machine binds to the device whose answer comes.
@@ -160,8 +177,8 @@ class LiveCallEngine(
 
     private suspend fun socketRing(e: CallServerEvent.Ring) {
         val peer = peers.peer(e.fromAccountID)
-        // A stranger or a blocked account never rings.
-        if (peer == null || !peer.isContact || peer.isBlocked) return
+        // A blocked account gets nothing.
+        if (peer?.isBlocked == true) return
         val opened = try {
             sealer.open(e.payload, e.fromAccountID)
         } catch (c: CancellationException) {
@@ -173,6 +190,16 @@ class LiveCallEngine(
         if (opened.senderDeviceID != null && opened.senderDeviceID != e.fromDeviceID) return
         val p = opened.payload
         if (p.kind != CallSignalPayload.Kind.ring || p.callID != e.callID) return
+        // A stranger never rings: a quiet missed call in the message request, as for a push ring (design §6.10).
+        if (peer == null || !peer.isContact) {
+            try {
+                strangers.recordMissedCall(e.callID, e.fromAccountID)
+            } catch (c: CancellationException) {
+                throw c
+            } catch (_: Exception) {
+            }
+            return
+        }
         enqueue { incoming(e.callID, peer.contact, e.fromDeviceID, p) }
     }
 
@@ -322,11 +349,11 @@ class LiveCallEngine(
         val call = CallInfo(id, contact, s.isVideoCall)
         return when (phase) {
             CallPhase.Incoming -> if (before == null) refused { controller.reportIncoming(call) } else null
-            CallPhase.Ringing -> if (before == null) refused { controller.reportOutgoing(call) } else null
-            CallPhase.Connecting -> {
-                if (before == CallPhase.Incoming || before == CallPhase.Ringing) safely { controller.reportAnswered(id, s.isVideoOn) }
-                null
-            }
+            // Reported by start(), before the invite.
+            CallPhase.Ringing -> null
+            // The call service starts here; a phone that refuses it (ForegroundServiceStartNotAllowedException) fails the call.
+            CallPhase.Connecting ->
+                if (before == CallPhase.Incoming || before == CallPhase.Ringing) refused { controller.reportAnswered(id, s.isVideoOn) } else null
             CallPhase.Active -> {
                 if (before != CallPhase.Reconnecting) safely { controller.reportActive(id) }
                 null

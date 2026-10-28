@@ -13,27 +13,26 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 
 /**
- * The foreground service that keeps a call alive. Type `phoneCall` while it rings; `microphone` is added once the
- * call is answered (or placed), and `camera` for video. The notification is [CallNotifications.incoming] while
- * ringing and [CallNotifications.ongoing] after.
+ * The foreground service that keeps an answered or placed call alive, with [CallNotifications.ongoing]. It never
+ * runs while a call rings (design: a push-woken app may not be allowed to start one; ringing uses the
+ * notification and Telecom). Types `phoneCall|microphone`, plus `camera` for video. A start the system refuses
+ * fails the call cleanly: from the caller it throws (ForegroundServiceStartNotAllowedException) and the engine
+ * fails the call; inside the service it hangs up.
  */
 class CallService : Service() {
     companion object {
-        private const val ACTION_RING = "org.example.app.calls.service.RING"
         private const val ACTION_ANSWERED = "org.example.app.calls.service.ANSWERED"
         private const val EXTRA_SEND_VIDEO = "org.example.app.calls.service.SEND_VIDEO"
 
         /** Android 10 has no microphone or camera foreground service types. */
         @SuppressLint("InlinedApi") // the R constants are used only from R on
-        fun serviceTypes(answered: Boolean, video: Boolean, sdk: Int = Build.VERSION.SDK_INT): Int {
+        fun serviceTypes(video: Boolean, sdk: Int = Build.VERSION.SDK_INT): Int {
             var types = ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
-            if (!answered || sdk < Build.VERSION_CODES.R) return types
+            if (sdk < Build.VERSION_CODES.R) return types
             types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
             if (video) types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
             return types
         }
-
-        fun ring(context: Context, call: CallInfo) = start(context, ACTION_RING, call, sendVideo = false)
 
         /** The user answered, or placed the call. [sendVideo] is whether the camera is on. */
         fun answered(context: Context, call: CallInfo, sendVideo: Boolean) = start(context, ACTION_ANSWERED, call, sendVideo)
@@ -59,12 +58,9 @@ class CallService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        when (intent?.action) {
-            ACTION_RING -> foreground(CallNotifications.incoming(this, call), serviceTypes(answered = false, video = false))
-            ACTION_ANSWERED -> {
-                val video = intent.getBooleanExtra(EXTRA_SEND_VIDEO, false)
-                foreground(CallNotifications.ongoing(this, call), allowed(serviceTypes(answered = true, video = video)))
-            }
+        if (intent?.action == ACTION_ANSWERED) {
+            val video = intent.getBooleanExtra(EXTRA_SEND_VIDEO, false)
+            foreground(CallNotifications.ongoing(this, call), allowed(serviceTypes(video)))
         }
         return START_NOT_STICKY
     }
@@ -84,9 +80,16 @@ class CallService : Service() {
     private fun foreground(notification: android.app.Notification, types: Int) {
         try {
             ServiceCompat.startForeground(this, CallNotifications.ID, notification, types)
+            return
         } catch (_: RuntimeException) {
-            // Started from the background where a microphone or camera type is not allowed: keep the call as a phone call.
+            // A microphone or camera type not allowed here (SecurityException): try as a phone call only.
+        }
+        try {
             ServiceCompat.startForeground(this, CallNotifications.ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)
+        } catch (_: RuntimeException) {
+            // ForegroundServiceStartNotAllowedException or a missing permission: no call without the service.
+            CallsRuntime.engine?.hangUp()
+            stopSelf()
         }
     }
 }

@@ -6,6 +6,7 @@ import org.example.app.calls.android.telecom.FallbackCallController
 import org.example.app.calls.session.MediaSessionFactory
 import org.example.app.core.calls.CallEngine
 import org.example.app.core.chats.Contact
+import org.example.app.core.settings.UserSettings
 
 /**
  * The app sets these in `Application.onCreate` (task I1). The Telecom service, the call service and the call
@@ -19,15 +20,19 @@ object CallsRuntime {
 
 /** Where the peer connection plugs into [LiveCallEngine]. */
 object CallMedia {
-    /** Until E5 lands every call fails at setup, cleanly: the engine turns the exception into a local failure. */
-    // TODO(E5): return MediaSessionFactory { WebRtcMediaSession(context) } here; nothing else changes.
+    /**
+     * [settings] is read when each call starts (the noise setting). Until E5 lands every call fails at setup,
+     * cleanly: the engine turns the exception into a local failure.
+     */
+    // TODO(E5): return MediaSessionFactory { WebRtcMediaSession(context, settings()) } here; nothing else changes.
+    // TODO(E5 part 2): WebRtcMediaSession.stats() maps E5's TransportStats (StatsMapper) into MediaStats.
     @Suppress("UNUSED_PARAMETER")
-    fun factory(context: Context): MediaSessionFactory =
+    fun factory(context: Context, settings: () -> UserSettings): MediaSessionFactory =
         MediaSessionFactory { throw UnsupportedOperationException("media session not available") }
 }
 
 /** [CallInfo] in intent and Telecom extras. IDs and names only. */
-internal object CallExtras {
+object CallExtras {
     private const val PREFIX = "org.example.app.calls."
     const val CALL_ID = PREFIX + "CALL_ID"
     private const val CONTACT_ID = PREFIX + "CONTACT_ID"

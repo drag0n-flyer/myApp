@@ -10,7 +10,13 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import android.telecom.Connection
+import android.telecom.ConnectionRequest
+import org.example.app.calls.android.telecom.AppConnectionService
 import org.example.app.calls.android.telecom.FallbackCallController
+import org.example.app.calls.android.telecom.PlainCallController
+import org.example.app.calls.android.telecom.TelecomCallController
+import org.robolectric.Robolectric
 import org.example.app.core.calls.CallEndReason
 import org.example.app.core.chats.Contact
 import org.junit.Test
@@ -32,7 +38,12 @@ class CallNotificationsTest {
         assertEquals(Notification.CATEGORY_CALL, n.category)
         assertEquals(NotificationCompat.CallStyle.CALL_TYPE_INCOMING, n.extras.getInt(NotificationCompat.EXTRA_CALL_TYPE))
         assertNotNull(n.fullScreenIntent)
-        assertTrue(shadowOf(n.fullScreenIntent).isActivityIntent)
+        // The full-screen intent opens the app's lock-screen call screen.
+        val screen = shadowOf(n.fullScreenIntent)
+        assertTrue(screen.isActivityIntent)
+        assertEquals(IncomingCallActivity.ACTION_SHOW, screen.savedIntent.action)
+        assertEquals(context.packageName, screen.savedIntent.`package`)
+        assertEquals("c1", CallExtras.read(screen.savedIntent.extras)?.callId)
         // Answer and Decline open an activity directly: no broadcast trampoline.
         val expected = mapOf(
             NotificationCompat.EXTRA_ANSWER_INTENT to IncomingCallActivity.ACTION_ANSWER,
@@ -57,6 +68,11 @@ class CallNotificationsTest {
         @Suppress("DEPRECATION")
         assertEquals(Notification.PRIORITY_HIGH, n.priority)
         assertTrue(shadowOf(n.contentIntent).isActivityIntent)
+        // Not CallStyle (it would need a foreground service): plain Answer and Decline actions, both activities.
+        assertEquals(0, n.extras.getInt(NotificationCompat.EXTRA_CALL_TYPE))
+        val actions = n.actions.orEmpty().map { shadowOf(it.actionIntent) }
+        assertEquals(listOf(IncomingCallActivity.ACTION_DECLINE, IncomingCallActivity.ACTION_ANSWER), actions.map { it.savedIntent.action })
+        assertTrue(actions.all { it.isActivityIntent })
     }
 
     @Test
@@ -64,11 +80,77 @@ class CallNotificationsTest {
         val phone = ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
         val mic = ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
         val camera = ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
-        assertEquals(phone, CallService.serviceTypes(answered = false, video = true, sdk = 36))
-        assertEquals(phone or mic, CallService.serviceTypes(answered = true, video = false, sdk = 36))
-        assertEquals(phone or mic or camera, CallService.serviceTypes(answered = true, video = true, sdk = 36))
+        assertEquals(phone or mic, CallService.serviceTypes(video = false, sdk = 36))
+        assertEquals(phone or mic or camera, CallService.serviceTypes(video = true, sdk = 36))
         // Android 10 has no microphone or camera types.
-        assertEquals(phone, CallService.serviceTypes(answered = true, video = true, sdk = 29))
+        assertEquals(phone, CallService.serviceTypes(video = true, sdk = 29))
+
+        // While it rings there is no foreground service at all, only the notification; it starts on answer.
+        val app = shadowOf(context as android.app.Application)
+        val ringer = FakeRinger()
+        val plain = PlainCallController(context, ringer)
+        plain.reportIncoming(call)
+        assertNull(app.nextStartedService)
+        assertEquals(1, shadowOf(notifications()).allNotifications.size)
+        plain.reportAnswered("c1", video = false)
+        assertEquals(CallService::class.java.name, app.nextStartedService?.component?.className)
+        assertEquals(0, shadowOf(notifications()).allNotifications.size)
+    }
+
+    @Test
+    fun ringsUntilAnsweredDeclinedOrEnded() {
+        for (finish in listOf<(PlainCallController) -> Unit>(
+            { it.reportAnswered("c1", video = false) },
+            { it.reportEnded("c1", CallEndReason.Declined) },
+            { it.reportEnded("c1", CallEndReason.AnsweredElsewhere) },
+        )) {
+            val ringer = FakeRinger()
+            val plain = PlainCallController(context, ringer)
+            plain.reportIncoming(call)
+            assertTrue(ringer.ringing)
+            finish(plain)
+            assertTrue(!ringer.ringing)
+            assertEquals(1, ringer.starts)
+        }
+    }
+
+    @Test
+    fun ringerFollowsSilentAndDoNotDisturb() {
+        val all = android.app.NotificationManager.INTERRUPTION_FILTER_ALL
+        val priority = android.app.NotificationManager.INTERRUPTION_FILTER_PRIORITY
+        val none = android.app.NotificationManager.INTERRUPTION_FILTER_NONE
+        val normal = android.media.AudioManager.RINGER_MODE_NORMAL
+        assertEquals(SystemRinger.Alert.Ring, SystemRinger.alert(normal, all, callsFromAnyone = false))
+        assertEquals(SystemRinger.Alert.Vibrate, SystemRinger.alert(android.media.AudioManager.RINGER_MODE_VIBRATE, all, false))
+        assertEquals(SystemRinger.Alert.Silent, SystemRinger.alert(android.media.AudioManager.RINGER_MODE_SILENT, all, false))
+        assertEquals(SystemRinger.Alert.Silent, SystemRinger.alert(normal, none, true))
+        assertEquals(SystemRinger.Alert.Silent, SystemRinger.alert(normal, priority, callsFromAnyone = false))
+        assertEquals(SystemRinger.Alert.Ring, SystemRinger.alert(normal, priority, callsFromAnyone = true))
+    }
+
+    @Test
+    fun telecomConnectionForAnEndedCallFails() {
+        // The engine ends the call before Telecom asks for its connection: it must not ring or dial.
+        val controller = TelecomCallController(context, FakeRinger())
+        controller.reportEnded("c1", CallEndReason.Declined)
+        val service = Robolectric.buildService(AppConnectionService::class.java).create().get()
+        val request = ConnectionRequest(null, null, CallExtras.bundle(call))
+        assertEquals(Connection.STATE_DISCONNECTED, service.onCreateIncomingConnection(null, request).state)
+        assertEquals(Connection.STATE_DISCONNECTED, service.onCreateOutgoingConnection(null, request).state)
+        val live = ConnectionRequest(null, null, CallExtras.bundle(call.copy(callId = "c2")))
+        val ringing = service.onCreateIncomingConnection(null, live)
+        assertEquals(Connection.STATE_RINGING, ringing.state)
+        controller.reportEnded("c2", CallEndReason.HungUp)
+        assertEquals(Connection.STATE_DISCONNECTED, ringing.state)
+    }
+
+    private fun notifications() = context.getSystemService(android.app.NotificationManager::class.java)
+
+    private class FakeRinger : Ringer {
+        var ringing = false
+        var starts = 0
+        override fun start() { if (!ringing) starts++; ringing = true }
+        override fun stop() { ringing = false }
     }
 
     @Test

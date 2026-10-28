@@ -10,18 +10,27 @@ import org.example.app.calls.android.CallExtras
 import org.example.app.calls.android.CallInfo
 import org.example.app.calls.android.CallNotifications
 import org.example.app.calls.android.CallService
+import org.example.app.calls.android.Ringer
+import org.example.app.calls.android.RingingCall
+import org.example.app.calls.android.SystemRinger
 import org.example.app.core.calls.CallEndReason
 
 /**
  * Calls through Telecom as a self-managed phone account: the system knows about the call (audio focus, Bluetooth,
- * other calls), and the app shows the UI ([AppConnection.onShowIncomingCallUi] starts [CallService]).
+ * other calls), and the app shows the UI ([AppConnection.onShowIncomingCallUi] posts the ringing call and rings;
+ * [CallService] starts only once the call is answered or placed).
  * [reportIncoming] and [reportOutgoing] throw when Telecom refuses; [FallbackCallController] then uses
  * [PlainCallController].
  */
-class TelecomCallController(private val context: Context) : CallController {
+class TelecomCallController(private val context: Context, ringer: Ringer = SystemRinger(context)) : CallController {
     private val telecom: TelecomManager?
         get() = context.getSystemService(TelecomManager::class.java)
     private val calls = ConcurrentHashMap<String, CallInfo>()
+    private val ringing = RingingCall(context, ringer)
+
+    init {
+        AppConnections.showIncomingUi = { ringing.show(it) }
+    }
 
     override fun reportIncoming(call: CallInfo) {
         val manager = telecom ?: throw IllegalStateException("no telecom")
@@ -40,6 +49,8 @@ class TelecomCallController(private val context: Context) : CallController {
         val manager = telecom ?: throw IllegalStateException("no telecom")
         val handle = PhoneAccounts.register(context)
         if (!manager.isOutgoingCallPermitted(handle)) throw IllegalStateException("outgoing call not permitted")
+        // The call service first: if the system refuses it, nothing has been placed with Telecom yet.
+        CallService.answered(context, call, sendVideo = call.video)
         calls[call.callId] = call
         val extras = Bundle().apply {
             putParcelable(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, handle)
@@ -48,12 +59,13 @@ class TelecomCallController(private val context: Context) : CallController {
         // Self-managed calls need MANAGE_OWN_CALLS (declared), not CALL_PHONE.
         @Suppress("MissingPermission")
         manager.placeCall(Uri.fromParts(PhoneAccounts.SCHEME, call.contact.id, null), extras)
-        CallService.answered(context, call, sendVideo = call.video)
     }
 
+    /** Throws when the call service cannot start (ForegroundServiceStartNotAllowedException): the engine fails the call. */
     override fun reportAnswered(callId: String, video: Boolean) {
-        AppConnections[callId]?.setActive()
+        ringing.dismiss()
         calls[callId]?.let { CallService.answered(context, it, sendVideo = video) }
+        AppConnections[callId]?.setActive()
     }
 
     override fun reportActive(callId: String) {
@@ -61,6 +73,9 @@ class TelecomCallController(private val context: Context) : CallController {
     }
 
     override fun reportEnded(callId: String, reason: CallEndReason) {
+        // Before the connection exists too: AppConnectionService then fails it.
+        AppConnections.markEnded(callId)
+        ringing.dismiss()
         calls.remove(callId)
         AppConnections.remove(callId)?.end(reason)
         CallService.stop(context)

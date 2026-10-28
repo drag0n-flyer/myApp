@@ -6,13 +6,15 @@ import android.content.Intent
 import android.os.Bundle
 
 /**
- * The target of every call notification action and of the full-screen intent. It shows over the lock screen,
- * passes Answer, Decline or Hang up to the engine, opens the app's call screen when there is a call to show,
- * and finishes. It has no UI of its own.
+ * The target of the call notification actions. It passes Answer, Decline or Hang up to the engine, opens the app
+ * on Answer and on [ACTION_OPEN], and finishes. It has no UI of its own; the full-screen intent goes to the app's
+ * lock-screen call screen ([ACTION_SHOW]).
  */
 class IncomingCallActivity : Activity() {
     companion object {
+        /** The app's lock-screen call screen answers this action (see [CallNotifications.showScreen]). */
         const val ACTION_SHOW = "org.example.app.calls.SHOW"
+        const val ACTION_OPEN = "org.example.app.calls.OPEN"
         const val ACTION_ANSWER = "org.example.app.calls.ANSWER"
         const val ACTION_DECLINE = "org.example.app.calls.DECLINE"
         const val ACTION_HANG_UP = "org.example.app.calls.HANG_UP"
@@ -48,7 +50,7 @@ class IncomingCallActivity : Activity() {
             }
             ACTION_DECLINE -> engine?.decline()
             ACTION_HANG_UP -> engine?.hangUp()
-            ACTION_SHOW -> openApp(call)
+            ACTION_OPEN -> openApp(call)
         }
     }
 

@@ -9,7 +9,6 @@ import android.telecom.VideoProfile
 import java.util.concurrent.ConcurrentHashMap
 import org.example.app.calls.android.CallExtras
 import org.example.app.calls.android.CallInfo
-import org.example.app.calls.android.CallService
 import org.example.app.calls.android.CallsRuntime
 import org.example.app.core.calls.CallEndReason
 
@@ -27,7 +26,10 @@ class AppConnection(private val context: Context, val call: CallInfo) : Connecti
         videoState = if (call.video) VideoProfile.STATE_BIDIRECTIONAL else VideoProfile.STATE_AUDIO_ONLY
     }
 
-    override fun onShowIncomingCallUi() = CallService.ring(context, call)
+    /** Self-managed: the app shows the ringing call and rings, with no foreground service until it is answered. */
+    override fun onShowIncomingCallUi() {
+        AppConnections.showIncomingUi?.invoke(call)
+    }
 
     override fun onAnswer() {
         CallsRuntime.engine?.answer(call.video)
@@ -64,9 +66,25 @@ class AppConnection(private val context: Context, val call: CallInfo) : Connecti
     }
 }
 
-/** The live connections by call ID. */
+/**
+ * The live connections by call ID, and the calls the engine already ended. `addNewIncomingCall` and `placeCall`
+ * are asynchronous: a call can end before Telecom creates its connection, which must then fail, not ring or dial
+ * forever.
+ */
 internal object AppConnections {
+    private const val MAX_ENDED = 64
     private val byCall = ConcurrentHashMap<String, AppConnection>()
+    private val ended = LinkedHashSet<String>()
+
+    /** Set by [TelecomCallController]: shows the ringing call. */
+    @Volatile var showIncomingUi: ((CallInfo) -> Unit)? = null
+
+    fun markEnded(callId: String) = synchronized(ended) {
+        ended += callId
+        if (ended.size > MAX_ENDED) ended.remove(ended.first())
+    }
+
+    fun isEnded(callId: String): Boolean = synchronized(ended) { callId in ended }
 
     fun put(connection: AppConnection) {
         byCall[connection.call.callId] = connection

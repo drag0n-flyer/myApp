@@ -57,9 +57,10 @@ class LiveCallSignalingTest {
     }
 
     @Test
-    fun forgottenCallIsEnded() = runTest {
+    fun forgottenCallIsUnknown() = runTest {
+        // As on iPhone: an unknown call rings, and the ring deadline ends it.
         val socket = FakeSocket { _, _ -> throw ServerException(0, "not_found", null, null) }
-        assertIs<CallStatus.Ended>(LiveCallSignaling(socket) { emptyList() }.status("c1"))
+        assertEquals(CallStatus.Unknown, LiveCallSignaling(socket) { emptyList() }.status("c1"))
     }
 
     @Test

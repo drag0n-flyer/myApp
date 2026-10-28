@@ -65,14 +65,14 @@ class LiveCallSignaling(
     }
 
     /**
-     * `not_found` means the server no longer knows the call (an ended call is kept for 60 s) or it was never ours:
-     * either way it is over, so it reads as ended.
+     * `not_found` (the server no longer knows the call) reads as [CallStatus.Unknown], as on iPhone: the call rings
+     * and the ring deadline ends it.
      */
     override suspend fun status(callID: String): CallStatus {
         val ack = try {
             socket.send(STATUS, buildJsonObject { put("callID", callID) })
         } catch (e: ServerException) {
-            if (e.code == "not_found") return CallStatus.Ended("not_found")
+            if (e.code == "not_found") return CallStatus.Unknown
             throw e
         }
         return when ((ack?.get("state") as? JsonPrimitive)?.content) {

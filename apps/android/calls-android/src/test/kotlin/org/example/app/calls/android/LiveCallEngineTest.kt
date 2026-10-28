@@ -4,6 +4,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -43,6 +44,7 @@ import org.example.app.core.settings.IPHiding
 import org.example.app.core.settings.NoiseSuppression
 import org.example.app.core.settings.ServerPolicy
 import org.example.app.core.settings.UserSettings
+import org.example.app.push.MissedCallRecorder
 import org.junit.Test
 import org.example.app.core.calls.DataMode as CoreMode
 
@@ -101,9 +103,17 @@ class LiveCallEngineTest {
 
     private class FakeController : CallController {
         val log = mutableListOf<String>()
+        /** Stands in for `ForegroundServiceStartNotAllowedException` from the call service. */
+        var serviceRefused = false
         override fun reportIncoming(call: CallInfo) { log += "incoming:${call.callId}" }
-        override fun reportOutgoing(call: CallInfo) { log += "outgoing:${call.callId}" }
-        override fun reportAnswered(callId: String, video: Boolean) { log += "answered:$callId" }
+        override fun reportOutgoing(call: CallInfo) {
+            if (serviceRefused) throw IllegalStateException("foreground service not allowed")
+            log += "outgoing:${call.callId}"
+        }
+        override fun reportAnswered(callId: String, video: Boolean) {
+            if (serviceRefused) throw IllegalStateException("foreground service not allowed")
+            log += "answered:$callId"
+        }
         override fun reportActive(callId: String) { log += "active:$callId" }
         override fun reportEnded(callId: String, reason: CallEndReason) { log += "ended:$callId:$reason" }
         override fun reportMissed(call: CallInfo) { log += "missed:${call.callId}" }
@@ -118,6 +128,7 @@ class LiveCallEngineTest {
         val signaling = FakeSignaling()
         val controller = FakeController()
         val history = mutableListOf<Pair<CallSummary, Boolean>>()
+        val strangerMissed = mutableListOf<Pair<String, String>>()
         val session = FakeMedia()
         val engine = LiveCallEngine(
             scope = scope,
@@ -128,6 +139,11 @@ class LiveCallEngineTest {
             context = { isContact -> context(isContact) },
             controller = controller,
             history = CallHistory { summary, _, outgoing -> history += summary to outgoing },
+            strangers = object : MissedCallRecorder {
+                override suspend fun recordMissedCall(callId: String, fromAccountId: String) {
+                    strangerMissed += callId to fromAccountId
+                }
+            },
             clock = Clock { 0L },
             newCallId = { "c1" },
         )
@@ -138,6 +154,7 @@ class LiveCallEngineTest {
     }
 
     private fun ring(video: Boolean = false) = RingOutcome.Ring("c1", "bob", "Bob", video)
+    private val ringPayload = CallSignalPayload(CallSignalPayload.Kind.ring, "c1", video = false)
 
     @Test
     fun recordsHistoryOnce() = runTest(UnconfinedTestDispatcher()) {
@@ -151,17 +168,111 @@ class LiveCallEngineTest {
         assertEquals(1, h.history.size)
         assertEquals(1, h.controller.log.count { it.startsWith("ended:c1") })
         assertEquals(1, h.session.closed)
+
+        // A call already written as missed (push, then call.status) is not written again when its socket ring comes late.
+        val g = harness()
+        g.signaling.status = { CallStatus.Ended("missed") }
+        g.engine.ring(ring())
+        g.engine.ring(ring())
+        runCurrent()
+        g.signaling.events.emit(CallServerEvent.Ring("c1", "bob", "d1", false, PlainSealer().from("bob", "d1", ringPayload)))
+        runCurrent()
+        assertEquals(listOf<Pair<CallSummary, Boolean>>(CallSummary.MissedAudio to false), g.history)
+        assertEquals(listOf("missed:c1"), g.controller.log)
     }
 
     @Test
     fun endedCallDoesNotRing() = runTest(UnconfinedTestDispatcher()) {
+        // Only `missed` is a missed call (as on iPhone): `hangup` cannot tell whether another device answered first.
         val h = harness()
-        h.signaling.status = { CallStatus.Ended("hangup") }
+        h.signaling.status = { CallStatus.Ended("missed") }
         h.engine.ring(ring())
         runCurrent()
         assertEquals(listOf("missed:c1"), h.controller.log)
         assertNull(h.engine.state.value)
         assertEquals(listOf<Pair<CallSummary, Boolean>>(CallSummary.MissedAudio to false), h.history)
+
+        val g = harness()
+        g.signaling.status = { CallStatus.Ended("hangup") }
+        g.engine.ring(ring())
+        runCurrent()
+        assertTrue(g.controller.log.isEmpty())
+        assertTrue(g.history.isEmpty())
+        assertNull(g.engine.state.value)
+    }
+
+    @Test
+    fun forgottenCallStillRings() = runTest(UnconfinedTestDispatcher()) {
+        // The server no longer knows the call: unknown, so it rings and the ring deadline ends it (as on iPhone).
+        val h = harness()
+        h.signaling.status = { CallStatus.Unknown }
+        h.engine.ring(ring())
+        runCurrent()
+        assertEquals(listOf("incoming:c1"), h.controller.log)
+    }
+
+    @Test
+    fun pushRingRacingSocketRingRingsOnce() = runTest(UnconfinedTestDispatcher()) {
+        val sealer = PlainSealer()
+        val socket = CallServerEvent.Ring("c1", "bob", "d1", false, sealer.from("bob", "d1", ringPayload))
+        // The socket ring lands while the push ring waits for call.status.
+        val h = harness()
+        val answer = CompletableDeferred<CallStatus>()
+        h.signaling.status = { answer.await() }
+        h.engine.ring(ring())
+        runCurrent()
+        h.signaling.events.emit(socket)
+        runCurrent()
+        answer.complete(CallStatus.Ringing)
+        runCurrent()
+        assertEquals(listOf("incoming:c1"), h.controller.log)
+        // The push ring wins: the socket ring for the same call does nothing more.
+        val g = harness()
+        g.engine.ring(ring())
+        runCurrent()
+        g.signaling.events.emit(socket)
+        runCurrent()
+        assertEquals(listOf("incoming:c1"), g.controller.log)
+    }
+
+    @Test
+    fun serviceRefusalFailsTheCallCleanly() = runTest(UnconfinedTestDispatcher()) {
+        val h = harness()
+        h.engine.ring(ring())
+        runCurrent()
+        h.controller.serviceRefused = true
+        h.engine.answer(video = false)
+        runCurrent()
+        assertEquals(CallPhase.Ended(CallEndReason.Failed), h.engine.state.value?.phase)
+        assertEquals("ended:c1:Failed", h.controller.log.last())
+        assertEquals(1, h.session.closed)
+
+        val g = harness()
+        g.controller.serviceRefused = true
+        g.engine.start("bob", video = false)
+        runCurrent()
+        assertEquals(CallPhase.Ended(CallEndReason.Failed), g.engine.state.value?.phase)
+        assertTrue(CallFrame.INVITE !in g.signaling.frames)
+    }
+
+    @Test
+    fun strangerSocketRingIsAQuietMissedCall() = runTest(UnconfinedTestDispatcher()) {
+        val sealer = PlainSealer()
+        val h = harness(CallPeer(bob, isContact = false, isBlocked = false))
+        h.signaling.events.emit(CallServerEvent.Ring("c1", "bob", "d1", false, sealer.from("bob", "d1", ringPayload)))
+        // A forged one (sealed by someone else) records nothing.
+        h.signaling.events.emit(CallServerEvent.Ring("c2", "bob", "d1", false, sealer.from("eve", "d1", ringPayload.copy(callID = "c2"))))
+        runCurrent()
+        assertEquals(listOf("c1" to "bob"), h.strangerMissed)
+        assertTrue(h.controller.log.isEmpty())
+        // Unknown accounts are strangers too; a blocked one gets nothing.
+        val g = harness(null)
+        g.signaling.events.emit(CallServerEvent.Ring("c1", "bob", "d1", false, sealer.from("bob", "d1", ringPayload)))
+        val b = harness(CallPeer(bob, isContact = true, isBlocked = true))
+        b.signaling.events.emit(CallServerEvent.Ring("c1", "bob", "d1", false, sealer.from("bob", "d1", ringPayload)))
+        runCurrent()
+        assertEquals(listOf("c1" to "bob"), g.strangerMissed)
+        assertTrue(b.strangerMissed.isEmpty())
     }
 
     @Test

@@ -4,4 +4,6 @@
     <string name="calls_incoming_video">Incoming video call</string>
     <string name="calls_ongoing">Ongoing call</string>
     <string name="calls_unknown_caller">Unknown caller</string>
+    <string name="calls_action_answer">Answer</string>
+    <string name="calls_action_decline">Decline</string>
 </resources>

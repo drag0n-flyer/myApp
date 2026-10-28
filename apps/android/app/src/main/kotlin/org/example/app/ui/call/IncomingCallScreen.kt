@@ -32,11 +32,24 @@ private val AnswerGreen = Color(0xFF2FB457)
 /** A ringing call shown in the app: who is calling, Decline and Answer. Always dark. */
 @Composable
 fun IncomingCallScreen(viewModel: CallViewModel, modifier: Modifier = Modifier) {
+    val call by viewModel.call.collectAsStateWithLifecycle()
+    val current = call ?: return
+    IncomingCallContent(
+        name = viewModel.contactName(current),
+        onDecline = viewModel::decline,
+        onAnswer = { viewModel.answer(current.isVideoCall) },
+        modifier = modifier,
+    )
+}
+
+/**
+ * The incoming-call screen itself, also shown over the lock screen by [LockScreenCallActivity] (the Android form
+ * of the iPhone's CallKit screen).
+ */
+@Composable
+fun IncomingCallContent(name: String, onDecline: () -> Unit, onAnswer: () -> Unit, modifier: Modifier = Modifier) {
     CallTheme {
-        val call by viewModel.call.collectAsStateWithLifecycle()
-        val current = call ?: return@CallTheme
         CallBackHandler(onMinimise = null)
-        val name = viewModel.contactName(current)
         Box(modifier.fillMaxSize().background(Backdrop).consumeTouches()) {
             Column(
                 Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(24.dp),
@@ -52,8 +65,8 @@ fun IncomingCallScreen(viewModel: CallViewModel, modifier: Modifier = Modifier) 
                     Text(stringResource(R.string.call_incoming), style = MaterialTheme.typography.titleMedium, color = Color.White.copy(alpha = 0.7f))
                 }
                 Row(Modifier.fillMaxWidth().padding(bottom = 24.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    CallControl(stringResource(R.string.call_decline), R.drawable.ic_call_end, tint = EndRed, onClick = viewModel::decline)
-                    CallControl(stringResource(R.string.call_answer), R.drawable.ic_call, tint = AnswerGreen, onClick = { viewModel.answer(current.isVideoCall) })
+                    CallControl(stringResource(R.string.call_decline), R.drawable.ic_call_end, tint = EndRed, onClick = onDecline)
+                    CallControl(stringResource(R.string.call_answer), R.drawable.ic_call, tint = AnswerGreen, onClick = onAnswer)
                 }
             }
         }
