@@ -5,7 +5,7 @@ Last updated: 2026-10-28, 15:30 UTC.
 | Track | Done | % |
 |---|---|---|
 | iPhone/Mac Phase 1 | 125 / 128 | 98% |
-| Android | 39 / 44 | 89% |
+| Android | 40 / 44 | 91% |
 | Admin dashboard | done, with admin accounts and 2FA, on `main` | 100% |
 
 Up to 15 agents work in parallel (on Opus until 2 Nov, when Sonnet's weekly limit resets). CI is the bottleneck: about 5 Mac jobs at once, and GitHub throttles status checks when many agents watch runs. Mac CI runs only the jobs a change needs. Android CI uses Linux runners only.
@@ -56,6 +56,7 @@ Extra work beyond the plans, in progress (each is reviewed before it merges; ETA
 | Android E6: Telecom calls and LiveCallEngine; sign-out and wipe end any call first | `android/e6` | merged (CI green on re-runs). Open, low: close the media in the 3 s hang-up timeout branch too (do it in E5); flaky `concurrentOpensAfterDeviceSwitchLeaveOneSession` (from I1, capture the failing assertion); `VoiceRecorderInstrumentedTest` timing window too tight on the API 36 emulator | done |
 | **Security fix:** iPhone safety numbers were built from placeholder keys while the screen showed them; switch to the real MLS signature keys | `fix/ios-real-member-keys` | found by the I2 review; being fixed | 2–3 h |
 | Port: a 401 wipes only when the server's own error and a second check (`GET /v1/me`) both confirm it; 4003 always wipes; local data records its device, and a sign-out with no recorded device wipes | `fix/ios-401-confirm` | merged (security review approved, CI green). Open, minor: the notification extension doesn't check who owns the data before opening it | done |
+| Android I2: Android and iPhone peers talk through one server (texts, photos, calls' signalling, linking, safety numbers); first Mac run green (18 steps passed, 1 honest skip: the iPhone app does not import the link snapshot yet, plan 7). Device checklist for you in `docs/release/android-device-checklist.md` | `android/i2` | merged | done |
 | App ID in one file (`apps/apple/AppID.xcconfig`) and a stronger photo-privacy test | `chore/appid-xcconfig` | merged (CI green). Open, low: `check-app-id.sh` also scans git-ignored build output, so it fails on a local checkout that has built the MLS Kotlin bindings; CI is clean | done |
 
 Android has the same inbox fixes (merged): a crafted invite can't stall the inbox, a new chat is abandoned only when really gone, and a failure after a chat starts never creates a second one.
