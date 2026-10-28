@@ -1,6 +1,7 @@
 package org.example.app
 
 import android.content.Context
+import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -47,8 +48,8 @@ class AppGraph(
     val deviceListChanged = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
 
     /**
-     * Own-device work on the live connection: reconcile on every connect (after the inbox sync, and again 11 minutes
-     * later while connected), and `device.revoked`. For the live wiring (plan Task I1) to start once signed in.
+     * Own-device work on the live connection (`OwnDeviceWatcher`): reconcile on every connect, `device.revoked`, and
+     * the wipe when the socket says this device was revoked. For the live wiring (plan Task I1) to start once signed in.
      */
     fun watchOwnDevices(socket: LiveSocket, deviceSync: DeviceSync, syncInbox: suspend () -> Unit) =
         OwnDeviceWatcher(
@@ -57,6 +58,8 @@ class AppGraph(
             reconcile = deviceSync::reconcileOwnDevices,
             handleRevoked = deviceSync::handleRevoked,
             refreshDevices = { deviceListChanged.emit(Unit) },
+            wipe = deviceSync::wipeLocalData,
+            log = { Log.w("OwnDevices", it) },
         ).start(socket.states, socket.events)
 
     val callEngine: SimulatedCallEngine by lazy {

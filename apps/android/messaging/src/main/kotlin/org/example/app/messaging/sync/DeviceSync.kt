@@ -21,6 +21,9 @@ import org.example.app.messaging.ports.Repository
 sealed class DeviceSyncException(message: String) : IllegalArgumentException(message) {
     /** `import` got bytes that are not a [LinkSnapshot] of version 1. */
     object InvalidSnapshot : DeviceSyncException("invalidSnapshot")
+
+    /** The server's device list proved this device was removed; local data was wiped. Stop all further work. */
+    object ThisDeviceRemoved : DeviceSyncException("thisDeviceRemoved")
 }
 
 /**
@@ -63,18 +66,25 @@ class DeviceSync(
      * - an own device that is listed and not in the group is added, then the `mode` envelope is sent again so the new
      *   device learns it (Design 18);
      * - an own device that is in the group and no longer listed is removed (a device that missed `device.revoked`
-     *   catches up here; the profile allows 24 hours from coming online), but only when the list is non-empty and
-     *   contains this device, and only when the device was missing from two lists at least ten minutes apart (the
+     *   catches up here; the profile allows 24 hours from coming online), but only when the list contains this device, and only when the device was missing from two lists at least ten minutes apart (the
      *   first time is stored; the injected clock is used) and was not listed within those ten minutes. A bad list or
      *   a device linked during the run cannot remove anyone.
+     * - a list that names other devices but not this one proves this device was removed: it wipes and throws
+     *   [DeviceSyncException.ThisDeviceRemoved] without posting anything.
      * Each conversation, and each of the two steps in it, is tried even when another fails; the first error is thrown
      * at the end.
      */
     suspend fun reconcileOwnDevices() {
         val records = server.devices()
         val listed = records.map { it.id }.toSet()
+        // The server's proof that this device was removed: the list answers, names other devices, but not this one.
+        // Nothing is posted: wipe, and tell the caller to stop.
+        if (listed.isNotEmpty() && me.deviceId !in listed) {
+            wipeLocalData()
+            throw DeviceSyncException.ThisDeviceRemoved
+        }
         val others = listed - me.deviceId
-        // A wrong, empty or partial answer must never remove anything: the list has to contain this device.
+        // An empty answer must never remove anything: the list has to contain this device.
         val trustworthy = me.deviceId in listed
         val now = clock.now()
         if (trustworthy) {
@@ -162,25 +172,13 @@ class DeviceSync(
     }
 
     /**
-     * Removes `"<me>/<deviceId>"` from every group that has it. If the revoked device is this one, the device wipes
-     * itself instead (it can no longer post commits). Every conversation is tried; the first error is thrown at the end.
+     * `device.revoked` is not signed, so it is only a hint: it starts [reconcileOwnDevices], and removal still needs
+     * two lists ten minutes apart. An event naming this device is ignored: the server never sends it to the revoked
+     * device, and only the server's own answer (the device list, or a 401 on an authenticated call) can prove it.
      */
     suspend fun handleRevoked(deviceId: String) {
-        if (deviceId == me.deviceId) {
-            wipeLocalData()
-            return
-        }
-        var failure: Exception? = null
-        for (conversation in activeConversations()) {
-            try {
-                remove(deviceId, conversation)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                failure = failure ?: e
-            }
-        }
-        failure?.let { throw it }
+        if (deviceId == me.deviceId) return
+        reconcileOwnDevices()
     }
 
     private suspend fun remove(deviceId: String, conversation: ConversationRecord) {

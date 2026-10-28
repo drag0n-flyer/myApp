@@ -29,8 +29,12 @@ class DeviceSyncTest {
     @Test
     fun revokedDeviceRemovedWithin24h() = runTest {
         val (rig, record) = joined()
-        // ana1 was online when the server revoked ana2: the event removes it at once.
+        // ana1 was online when the server revoked ana2. The event only starts a reconcile: the removal still needs
+        // two lists ten minutes apart.
         rig.server.revokeDevice("acc-ana", "ana2")
+        rig.ana1.deviceSync.handleRevoked("ana2")
+        assertTrue("acc-ana/ana2" in rig.membersOn(rig.ana1, record), "the event alone removes nothing")
+        rig.ana1.nowMs += 10 * 60_000L
         rig.ana1.deviceSync.handleRevoked("ana2")
         assertFalse("acc-ana/ana2" in rig.membersOn(rig.ana1, record))
         assertEquals(2L, rig.ana1.repo.conversation(record.serverId)!!.epoch)
@@ -63,6 +67,9 @@ class DeviceSyncTest {
     @Test
     fun revokingAnAlreadyRemovedDeviceDoesNothing() = runTest {
         val (rig, record) = joined()
+        rig.server.revokeDevice("acc-ana", "ana2")
+        rig.ana1.deviceSync.handleRevoked("ana2")
+        rig.ana1.nowMs += 10 * 60_000L
         rig.ana1.deviceSync.handleRevoked("ana2")
         val commits = rig.server.commitPosts.size
         rig.ana1.deviceSync.handleRevoked("ana2")
@@ -116,10 +123,24 @@ class DeviceSyncTest {
     }
 
     @Test
-    fun revokedSelfWipesAndPostsNoCommit() = runTest {
-        val (rig, _) = joined()
+    fun aRevokedEventNamingThisDeviceIsIgnored() = runTest {
+        // The event is not signed and the server never sends it to the revoked device: it proves nothing.
+        val (rig, record) = joined()
         val commits = rig.server.commitPosts.size
         rig.ana2.deviceSync.handleRevoked("ana2")
+        assertTrue(rig.ana2.repo.chats().isNotEmpty())
+        assertEquals(emptyList(), rig.ana2.wipes)
+        assertEquals(commits, rig.server.commitPosts.size)
+        assertTrue("acc-ana/ana2" in rig.membersOn(rig.ana2, record))
+    }
+
+    @Test
+    fun aDeviceListWithOthersButNotThisDeviceWipesAndPostsNoCommit() = runTest {
+        // The server's proof: GET /v1/devices succeeds and lists other devices, but not this one.
+        val (rig, _) = joined()
+        rig.server.revokeDevice("acc-ana", "ana2")
+        val commits = rig.server.commitPosts.size
+        assertFailsWith<DeviceSyncException.ThisDeviceRemoved> { rig.ana2.deviceSync.reconcileOwnDevices() }
         assertTrue(rig.ana2.repo.chats().isEmpty())
         assertEquals(listOf("mls", "signingKey"), rig.ana2.wipes)
         assertEquals(commits, rig.server.commitPosts.size)
@@ -228,37 +249,33 @@ class DeviceSyncTest {
         rig.ana1.reconcile()
         assertEquals(commits, rig.server.commitPosts.size)
         assertTrue("acc-ana/ana2" in rig.membersOn(rig.ana1, record))
+        assertEquals(emptyList(), rig.ana1.wipes, "an empty list is no proof")
     }
 
     @Test
-    fun listWithoutThisDeviceRemovesNothing() = runTest {
+    fun listWithoutThisDeviceRemovesNothingAndWipes() = runTest {
         val (rig, record) = joined()
         rig.server.deviceListOverride = { l -> l.filter { it.id == "ana2" } }
         val commits = rig.server.commitPosts.size
-        rig.ana1.reconcile()
-        rig.ana1.nowMs += 2 * tenMinutes
-        rig.ana1.reconcile()
+        assertFailsWith<DeviceSyncException.ThisDeviceRemoved> { rig.ana1.reconcile() }
         assertEquals(commits, rig.server.commitPosts.size)
         assertTrue("acc-ana/ana2" in rig.membersOn(rig.ana1, record))
-        assertTrue("acc-ana/ana1" in rig.membersOn(rig.ana1, record))
+        assertEquals(listOf("mls", "signingKey"), rig.ana1.wipes)
     }
 
     @Test
-    fun listWithoutThisDeviceButWithAForeignOneRemovesNothing() = runTest {
+    fun listWithoutThisDeviceButWithAForeignOneAddsAndRemovesNothing() = runTest {
         val (rig, record) = joined()
-        // Not empty, but neither ana1 (this device) nor ana2: the answer cannot be trusted. ana3 has KeyPackages, so
-        // adding it works and the removal step is reached.
+        // Not empty, but neither ana1 (this device) nor ana2: this device wipes and posts nothing.
         val ana3 = TestDevice(rig.server, "acc-ana", "ana3", rig.escrowKeys.publicKey)
         ana3.api.uploadKeyPackages(ana3.mls.makeKeyPackages(3))
         rig.server.deviceListOverride = { l -> l.filter { it.id == "ana3" } }
-        runCatching { rig.ana1.reconcile() }
-        rig.ana1.nowMs += 2 * tenMinutes
-        runCatching { rig.ana1.reconcile() }
-        rig.ana1.nowMs += 2 * tenMinutes
-        runCatching { rig.ana1.reconcile() }
-        assertTrue("acc-ana/ana3" in rig.membersOn(rig.ana1, record), "the add path ran, so the removal step was reached")
+        val commits = rig.server.commitPosts.size
+        assertFailsWith<DeviceSyncException.ThisDeviceRemoved> { rig.ana1.reconcile() }
+        assertEquals(commits, rig.server.commitPosts.size)
+        assertFalse("acc-ana/ana3" in rig.membersOn(rig.ana1, record))
         assertTrue("acc-ana/ana2" in rig.membersOn(rig.ana1, record))
-        assertTrue("acc-ana/ana1" in rig.membersOn(rig.ana1, record))
+        assertEquals(listOf("mls", "signingKey"), rig.ana1.wipes)
     }
 
     @Test
