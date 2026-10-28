@@ -49,6 +49,9 @@ class FakeDeliveryServer(var defaultMode: String = "e2ee") {
      */
     var holdNextCommitRequests = 0
 
+    /** The next commit post is refused with this error before anything is applied. */
+    var failNextCommitPost: ServerException? = null
+
     private class HeldCommit(val identity: String, val id: String, val epoch: Long, val commit: ByteArray, val welcome: ByteArray?, val add: List<String>, val remove: List<String>)
     private val held = mutableListOf<HeldCommit>()
 
@@ -191,6 +194,7 @@ class FakeDeliveryServer(var defaultMode: String = "e2ee") {
             call("postCommit")
             var lose = false
             val newEpoch = synchronized(lock) {
+                failNextCommitPost?.let { failNextCommitPost = null; throw it }
                 if (holdNextCommitRequests > 0) {
                     holdNextCommitRequests -= 1
                     held += HeldCommit(identity, id, epoch, commit, welcome, addDevices, removeDevices)

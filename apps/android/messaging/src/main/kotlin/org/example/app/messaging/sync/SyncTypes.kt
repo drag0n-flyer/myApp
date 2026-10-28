@@ -25,8 +25,13 @@ sealed class SyncException(message: String) : Exception(message) {
      * (never discarded, never posted again); try later.
      */
     object CommitInFlight : SyncException("commitInFlight")
-    /** A Welcome labelled with a conversation ID that is already bound to another group. */
+    /** A Welcome labelled with a conversation ID that is already bound to another group, or naming a group already bound to another conversation ID. */
     object ConversationRebound : SyncException("conversationRebound")
+    /**
+     * The server applied my add commit for a new conversation, but the engine no longer holds it (it never merged
+     * it). The create is abandoned; a new one may start.
+     */
+    object CreateLost : SyncException("createLost")
 }
 
 /** What `IncomingHandler.apply` did with one processed item. */
