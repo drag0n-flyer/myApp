@@ -54,6 +54,17 @@ class ChatInfoScreenTest {
     }
 
     @Test
+    fun unreadableMembersHideTheNumberAndSaySo() {
+        val sample = storeWith(messages)
+        sample.setVerified(true, "chat-riya")
+        val unreadable = object : ChatStore by sample { override fun membersUnreadable(chatId: String) = true }
+        launch(unreadable)
+        rule.onNodeWithText("Can't check the devices in this chat right now, so the safety number is hidden.").assertIsDisplayed()
+        rule.onNodeWithText("Verify").assertDoesNotExist()
+        rule.onNodeWithText("Verified").assertDoesNotExist()
+    }
+
+    @Test
     fun verifyAppearsWhenKeysAreReal_andMarksVerified() {
         val store = storeWith(messages)
         launch(store)

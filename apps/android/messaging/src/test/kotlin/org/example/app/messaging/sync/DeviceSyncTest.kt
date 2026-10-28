@@ -335,4 +335,14 @@ class DeviceSyncTest {
         rig.ana1.reconcile()
         assertTrue("acc-ana/ana2" in rig.membersOn(rig.ana1, record))
     }
+
+    /** A reconcile that cannot read a group's members flags that chat (and still reports the failure). */
+    @Test
+    fun unreadableMembersDuringReconcileFlagTheChat() = runTest {
+        val (rig, record) = joined()
+        assertFalse(Membership.membersUnreadable("acc-bob", rig.ana1.repo))
+        rig.ana1.mls.failMembers = { IllegalStateException("odd") }
+        assertFailsWith<IllegalStateException> { rig.ana1.deviceSync.reconcileOwnDevices() }
+        assertTrue(Membership.isUnreadable(record.serverId, rig.ana1.repo))
+    }
 }

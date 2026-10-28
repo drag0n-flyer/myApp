@@ -112,6 +112,7 @@
     <string name="info_mismatch">The server\'s settings for this chat don\'t match the ones it started with. Sending is paused to keep your messages private.</string>
     <string name="info_verified">Verified</string>
     <string name="info_verify">Verify</string>
+    <string name="info_members_unreadable">Can\'t check the devices in this chat right now, so the safety number is hidden.</string>
     <string name="verify_explainer">Compare these numbers with %1$s in person or over a call. If they match, mark the chat as verified.</string>
     <string name="verify_mark">Mark as verified</string>
     <string name="info_disappearing">Disappearing messages</string>

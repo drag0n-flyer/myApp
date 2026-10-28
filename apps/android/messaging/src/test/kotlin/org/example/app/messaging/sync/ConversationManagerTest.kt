@@ -562,4 +562,42 @@ class ConversationManagerTest {
         assertEquals("server_readable", record.innerMode)
         assertEquals("ESCROW", rig.server.messages.single().escrow?.decodeToString())
     }
+
+    /** My own commit is accepted but the members cannot be read afterwards: flagged, not skipped; the next read clears it. */
+    @Test
+    fun commitAcceptedWithUnreadableMembersFlagsTheChat() = runTest {
+        val rig = Rig().start()
+        val record = rig.ana1.manager.create("acc-bob")
+        val group = GroupId(record.groupId)
+        assertFalse(Membership.membersUnreadable("acc-bob", rig.ana1.repo))
+        rig.ana1.mls.failMembers = { MlsException.Crypto("unreadable credential") }
+        rig.ana1.manager.postCommitWithRetry(record.serverId, group, emptyList(), listOf("ana2")) {
+            rig.ana1.mls.remove(listOf("acc-ana/ana2"), group)
+        }
+        assertEquals(2L, rig.ana1.repo.conversation(record.serverId)?.epoch)
+        assertTrue(Membership.membersUnreadable("acc-bob", rig.ana1.repo))
+
+        rig.ana1.mls.failMembers = null
+        rig.ana1.manager.postCommitWithRetry(record.serverId, group, emptyList(), listOf("bob2")) {
+            rig.ana1.mls.remove(listOf("acc-bob/bob2"), group)
+        }
+        assertFalse(Membership.membersUnreadable("acc-bob", rig.ana1.repo))
+    }
+
+    /** `update` flags the conversation when the read fails and still throws; a database-only `apply` never sets it. */
+    @Test
+    fun updateFlagsOnFailureAndClearsOnSuccess() = runTest {
+        val rig = Rig().start()
+        val record = rig.ana1.manager.create("acc-bob")
+        val stored = rig.ana1.repo.conversation(record.serverId)!!
+        rig.ana1.mls.failMembers = { IllegalStateException("odd") }
+        assertFailsWith<IllegalStateException> { rig.ana1.lock.withLock { rig.ana1.membership.update(stored, rig.ana1.repo) } }
+        assertTrue(Membership.isUnreadable(record.serverId, rig.ana1.repo))
+        rig.ana1.mls.failMembers = null
+        rig.ana1.lock.withLock { rig.ana1.membership.update(stored, rig.ana1.repo) }
+        assertFalse(Membership.isUnreadable(record.serverId, rig.ana1.repo))
+        // An unknown conversation is never flagged.
+        Membership.markUnreadable("no-such-conversation", rig.ana1.repo)
+        assertFalse(Membership.isUnreadable("no-such-conversation", rig.ana1.repo))
+    }
 }
