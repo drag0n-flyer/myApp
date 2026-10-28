@@ -94,7 +94,7 @@ done
 mkdir -p "$cache_dir"
 tarball="$cache_dir/opus-$OPUS_VERSION.tar.gz"
 if [ ! -f "$tarball" ]; then
-  curl -fsSL --retry 3 --connect-timeout 30 -o "$tarball.part" "$OPUS_URL" || {
+  curl -fsSL --retry 8 --retry-all-errors --retry-delay 15 --connect-timeout 30 -o "$tarball.part" "$OPUS_URL" || {
     rm -f "$tarball.part"
     die "download of $OPUS_URL failed"
   }
