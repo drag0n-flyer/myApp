@@ -1,4 +1,5 @@
 import Foundation
+import SecureMessagingCore
 import Testing
 @testable import Messaging
 

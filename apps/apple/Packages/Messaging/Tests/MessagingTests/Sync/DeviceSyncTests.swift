@@ -102,6 +102,11 @@ private final class ProbeEngine: MLSEngine, @unchecked Sendable {
     func epoch(of group: GroupID) async throws -> UInt64 { try await inner.epoch(of: group) }
     func exportSecret(group: GroupID, label: String, length: Int) async throws -> Data { try await inner.exportSecret(group: group, label: label, length: length) }
     func members(of group: GroupID) async throws -> [String] { try await inner.members(of: group) }
+    func memberKeys(of group: GroupID) async throws -> [MemberKey] { try await inner.memberKeys(of: group) }
+    func stageProcess(_ group: GroupID, _ message: Data) async throws -> StagedProcess { try await inner.stageProcess(group, message) }
+    func confirm(_ staged: StagedProcess) async throws { probe.expectHeld("confirm"); try await inner.confirm(staged) }
+    func discard(_ staged: StagedProcess) { inner.discard(staged) }
+    func decryptApplication(_ group: GroupID, _ message: Data) async throws -> ApplicationMessage { try await inner.decryptApplication(group, message) }
 }
 
 private func keyPackages(_ device: TestDevice, count: Int = 5) async throws {
