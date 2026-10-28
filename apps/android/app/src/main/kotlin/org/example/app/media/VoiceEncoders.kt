@@ -2,6 +2,7 @@ package org.example.app.media
 
 import android.media.MediaCodec
 import android.media.MediaFormat
+import android.util.Log
 import org.example.app.messaging.media.MediaPlan
 import org.webrtc.OpusVoiceEncoder
 
@@ -110,20 +111,40 @@ internal class PlatformVoiceEncoder private constructor(private val codec: Media
     }
 
     companion object {
+        private const val TAG = "VoiceEncoder"
+
         fun open(): PlatformVoiceEncoder? {
             val format = MediaFormat.createAudioFormat(
                 MediaFormat.MIMETYPE_AUDIO_OPUS, MediaPlan.Voice.SAMPLE_RATE, MediaPlan.Voice.CHANNELS,
             ).apply { setInteger(MediaFormat.KEY_BIT_RATE, MediaPlan.Voice.BIT_RATE) }
-            var codec: MediaCodec? = null
-            return try {
-                codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_OPUS)
-                codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-                codec.start()
-                PlatformVoiceEncoder(codec)
+            // No Opus encoder on this phone (the API 29 AOSP image): the bundled one is the normal path, nothing to log.
+            val codec = try {
+                MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_OPUS)
             } catch (e: Exception) {
-                runCatching { codec?.release() }
-                null
+                return null
             }
+            return start(codec) {
+                it.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                it.start()
+            }
+        }
+
+        /**
+         * Runs [begin] (configure and start) on a phone encoder that exists. If it fails, [log] gets the codec's name
+         * and the error (never any recorded audio), the codec is released, and null makes the caller use the bundled one.
+         */
+        internal fun start(
+            codec: MediaCodec,
+            log: (String) -> Unit = { Log.w(TAG, it) },
+            begin: (MediaCodec) -> Unit,
+        ): PlatformVoiceEncoder? = try {
+            begin(codec)
+            PlatformVoiceEncoder(codec)
+        } catch (e: Exception) {
+            val name = runCatching { codec.name }.getOrNull() ?: MediaFormat.MIMETYPE_AUDIO_OPUS
+            log("phone Opus encoder $name did not start (${e.javaClass.simpleName}: ${e.message}); using the bundled one")
+            runCatching { codec.release() }
+            null
         }
     }
 }
