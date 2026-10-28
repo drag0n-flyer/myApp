@@ -112,12 +112,16 @@ public actor Outbox: ControlSender {
 
     /// Returns true when the head left the queue (sent or failed).
     private func process(_ item: OutboxRecord) async throws -> Bool {
-        let queuedAt = try deps.repo.message(id: item.messageID)?.receivedAt ?? deps.now()
+        // `decode` never throws: undecodable bytes give an envelope with `at == 0`, which the age check drops.
+        let envelope = ContentEnvelope.decode(item.envelope)
+        // A control message has no message row; its envelope time is when it was queued.
+        let queuedAt = try deps.repo.message(id: item.messageID)?.receivedAt
+            ?? Date(timeIntervalSince1970: Double(envelope.at) / 1000)
         if deps.now().timeIntervalSince(queuedAt) > Self.maxAge {
             try deps.repo.completeSend(id: item.messageID, status: "failed")
             return true
         }
-        switch await attempt(ContentEnvelope.decode(item.envelope), chatID: item.chatID) {
+        switch await attempt(envelope, chatID: item.chatID) {
         case .sent:
             try deps.repo.completeSend(id: item.messageID, status: "sent")
             return true
