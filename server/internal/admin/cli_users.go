@@ -79,9 +79,16 @@ func cliPassword(generate bool) (pw string, generated bool, err error) {
 	}
 	if f, ok := cliStdin.(*os.File); ok && isTerminal(f) {
 		fmt.Fprint(os.Stderr, "New password (not shown): ")
-		err = withoutEcho(f, func() (err error) { pw, err = readPasswordLine(f); return })
+		// The read runs in another goroutine that a signal can abandon, so
+		// it only hands its answer over through the channel-synchronised
+		// return of withoutEcho.
+		var line string
+		err = withoutEcho(f, func() (err error) { line, err = readPasswordLine(f); return })
 		fmt.Fprintln(os.Stderr)
-		return pw, false, err
+		if err != nil {
+			return "", false, err
+		}
+		return line, false, nil
 	}
 	pw, err = readPasswordLine(cliStdin)
 	return pw, false, err

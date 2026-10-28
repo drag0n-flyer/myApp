@@ -95,9 +95,16 @@ function newInput(type, autocomplete, extra) {
 
 // turnOnTwoStep walks through the setup: secret and QR code, then a code.
 async function turnOnTwoStep() {
+  const pw = newInput("password", "current-password");
+  const askPassword = await confirmDialog("Enter your password to start setting up two-step sign-in.", null, {
+    title: "Turn on two-step sign-in",
+    confirmLabel: "Continue",
+    extra: el("div", {}, el("p", {}, el("label", { for: pw.id }, "Your password")), el("p", {}, pw.input)),
+  });
+  if (!askPassword) return;
   let start;
   try {
-    start = await api("POST", "/admin/api/me/totp/start");
+    start = await api("POST", "/admin/api/me/totp/start", { password: pw.input.value });
   } catch (err) {
     fail(err);
     return;

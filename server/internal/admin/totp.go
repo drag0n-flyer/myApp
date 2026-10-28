@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -49,6 +50,13 @@ func totpMatch(secret []byte, code string, now time.Time, lastStep int64) (step 
 
 // otpauthURL is what an authenticator app reads from the QR code.
 func otpauthURL(host, username, secretBase32 string) string {
-	return "otpauth://totp/" + url.PathEscape(host) + ":" + url.PathEscape(username) +
+	return "otpauth://totp/" + labelEscape(host) + ":" + labelEscape(username) +
 		"?secret=" + secretBase32 + "&issuer=" + url.QueryEscape(host) + "&algorithm=SHA1&digits=6&period=30"
+}
+
+// labelEscape escapes one part of the otpauth label. PathEscape leaves ":"
+// alone, but the label is "issuer:account", so a port in the host would make
+// it ambiguous.
+func labelEscape(s string) string {
+	return strings.ReplaceAll(url.PathEscape(s), ":", "%3A")
 }
