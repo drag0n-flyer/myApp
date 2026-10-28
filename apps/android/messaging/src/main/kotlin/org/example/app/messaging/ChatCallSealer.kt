@@ -56,7 +56,10 @@ class ChatCallSealer(
         return lock.withLock { withContext(NonCancellable) { mls.encrypt(plaintext, GroupId(conversation.groupId)).ciphertext } }
     }
 
-    /** Throws [CallSealException.WrongSender] unless the MLS sender's account is [from]. */
+    /**
+     * Throws [CallSealException.WrongSender] unless the MLS sender's account is [from] and the message came in the
+     * 1:1 conversation with [from].
+     */
     override suspend fun open(data: ByteArray, from: String): OpenedCallSignal {
         val opened = openRecoveringSender(data)
         if (opened.senderAccountId != from) throw CallSealException.WrongSender
@@ -89,7 +92,26 @@ class ChatCallSealer(
         // The identity is `<accountId>/<deviceId>`: without both parts it is malformed.
         val slash = sender.indexOf('/')
         if (slash <= 0 || slash == sender.length - 1) throw CallSealException.WrongSender
-        return RecoveredCallSignal(envelope.p, sender.substring(0, slash), sender.substring(slash + 1))
+        val account = sender.substring(0, slash)
+        if (!isOneToOneWith(account, incoming.group)) throw CallSealException.WrongSender
+        return RecoveredCallSignal(envelope.p, account, sender.substring(slash + 1))
+    }
+
+    /**
+     * A call signal counts only in the 1:1 conversation with its sender (calls.md), whose chat ID is the sender's
+     * account. The caller creates that conversation, and a Welcome that came by push joins the group before the
+     * inbox writes its row: with no row, the group must hold this account's devices and the sender's, nobody else.
+     */
+    private suspend fun isOneToOneWith(account: String, group: GroupId): Boolean {
+        repo.conversationByGroup(group.raw)?.let { return it.chatId == account }
+        val accounts = try {
+            mls.members(group).map { it.substringBefore('/') }.toSet()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            return false
+        }
+        return accounts == setOf(conversations.localAccountId, account)
     }
 
     /** The engine already decrypted a message that is not a call signal: store it as the inbox would. */

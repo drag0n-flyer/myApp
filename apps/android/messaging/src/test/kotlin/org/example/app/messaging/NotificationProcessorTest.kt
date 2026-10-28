@@ -124,6 +124,21 @@ class NotificationProcessorTest {
         s.rig.assertLockDiscipline()
     }
 
+    /** calls.md: the caller creates the conversation. Its Welcome came by push, so no conversation row exists yet. */
+    @Test
+    fun firstRingFromANewContactWhoseWelcomeCameByPushRings() = runTest {
+        val rig = Rig().start()
+        rig.bob1.repo.upsertContact(ContactRecord("acc-ana", "ana", "Ana", true, NOW))
+        rig.ana1.manager.create("acc-bob")
+        val welcome = rig.server.pending("acc-bob/bob1").first { it.kind == "welcome" }
+        rig.bob1.lock.withLock { rig.bob1.mls.process(welcome.payload) }
+        assertTrue(rig.bob1.repo.conversations("acc-ana").isEmpty())
+        val sealed = rig.ana1.sealer().seal(ring, "acc-bob")
+        val np = rig.bob1.notifications()
+        val r = assertIs<RingOutcome.Ring>(rig.bob1.lock.withLock { np.onCallPush(pad(sealed)) })
+        assertEquals("call-9", r.callId); assertEquals("acc-ana", r.fromAccountId)
+    }
+
     @Test
     fun strangerRingIsSilentMissed() = runTest {
         val s = setup(contact = false)
