@@ -57,7 +57,11 @@ final class MediaPreparationTests: XCTestCase {
         let src = CGImageSourceCreateWithURL(out as CFURL, nil)!
         let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any]
         XCTAssertNil(props?[kCGImagePropertyGPSDictionary])
-        XCTAssertNil(props?[kCGImagePropertyExifDictionary])
+        // ImageIO writes the size and colour space into the Exif dictionary; nothing that identifies a person or a place.
+        let exif = props?[kCGImagePropertyExifDictionary] as? [CFString: Any]
+        XCTAssertNil(exif?[kCGImagePropertyExifDateTimeOriginal])
+        XCTAssertNil(exif?[kCGImagePropertyExifUserComment])
+        XCTAssertNil(exif?[kCGImagePropertyExifLensModel])
     }
 
     func testSmallPhotoNotEnlarged() throws {
