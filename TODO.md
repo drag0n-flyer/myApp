@@ -4,7 +4,7 @@ Last updated: 2026-10-29, 03:20 IST (21:50 UTC Oct 28).
 
 | Track | Done | % |
 |---|---|---|
-| iPhone/Mac Phase 1 | 125 / 128 | 98% |
+| iPhone/Mac Phase 1 | 126 / 128 | 98% |
 | Android | 44 / 44 | 100% |
 | Admin dashboard | done, with admin accounts and 2FA, on `main` | 100% |
 
@@ -39,7 +39,7 @@ Admin dashboard: `http://localhost:9044/admin/`. `.env` also sets `APP_ADMIN_HOS
 | [Client calling](docs/superpowers/plans/2026-10-27-client-calling.md) | 16 / 16 | 100% | I1 merged. With the real WebRTC build the encoder holds 10 kbps (about 19 kbps on the wire, inside GOAL.md's 17–21); the send-bitrate test now checks the audio payload, the encoder target and the wire total | done |
 | [Client messaging](docs/superpowers/plans/2026-10-27-client-messaging.md) | 16 / 16 | 100% | I1 merged: live store, calls tied to the caller's device, CallKit hang-up, sign-out ends calls first, a setup-error screen instead of sample chats; Apple CI green | done |
 | [Security docs and release](docs/superpowers/plans/2026-10-27-security-docs-release.md) | 13 / 14 | 93% | only Task 13 left, deferred by the owner | done for now |
-| [Call lab](docs/superpowers/plans/2026-10-27-call-lab.md) | 10 / 12 | 83% | L10a works end to end: the weekly Mac job runs 7 test calls (direct and relay, clean/loss/cap/3G) and passed ("CI, simulated"); lowest mode about 14 kbps per direction on a clean network. It found extra data use under packet loss (see below). L10 deferred (release gate). L11 waits for your decision: may it use the CI-simulated numbers, or wait for real phones? | waiting on you |
+| [Call lab](docs/superpowers/plans/2026-10-27-call-lab.md) | 11 / 12 | 92% | L10a and L11 done: the weekly Mac job runs 7 test calls; an `estimates` run measured all 4 modes (3 calls each, "CI, simulated") and both apps now show 2/3/5/6 MB per 10 min (High was 8). Yours: approve or reject the proposed GOAL.md §4 table change (measured 11.9/18.3/27.3/33.6 kbps per direction), and the placeholder line in the UI design spec (line 99). L10 (real phones) deferred; it is the release gate | waiting on you |
 
 Extra work beyond the plans, in progress (each is reviewed before it merges; ETAs are agent time):
 
