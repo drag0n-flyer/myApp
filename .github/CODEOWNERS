@@ -19,3 +19,17 @@
 /apps/android/calls-android/src/main/kotlin/org/example/app/calls/android/telecom/ @drag0n-flyer
 /apps/android/push/ @drag0n-flyer
 /tools/webrtc/ @drag0n-flyer
+# Security-docs Task 13: client crypto, auth, push, calls, protocol docs, deploy and CI.
+/apps/apple/Packages/SecureMessaging/ @drag0n-flyer
+/apps/apple/Packages/WebRTCBinary/ @drag0n-flyer
+/apps/apple/NotificationService/ @drag0n-flyer
+/apps/apple/App/Calls/Live* @drag0n-flyer
+/apps/android/webrtc/ @drag0n-flyer
+/apps/android/messaging/src/main/kotlin/org/example/app/messaging/NotificationProcessor.kt @drag0n-flyer
+/apps/android/calls-android/src/main/kotlin/org/example/app/calls/android/LiveCallEngine.kt @drag0n-flyer
+/apps/android/app/src/main/kotlin/org/example/app/live/SessionCallEngine.kt @drag0n-flyer
+/docs/protocol/ @drag0n-flyer
+/docs/security/ @drag0n-flyer
+/deploy/ @drag0n-flyer
+/.github/workflows/ @drag0n-flyer
+/.github/CODEOWNERS @drag0n-flyer
