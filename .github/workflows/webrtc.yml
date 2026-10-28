@@ -87,7 +87,16 @@ jobs:
           done
           sudo rm -rf ~/Library/Android /usr/local/share/dotnet
           df -h /
+      # The Opus tarball is fetched once and reused: downloads.xiph.org has failed whole builds.
+      # apply.sh checks the SHA-256 of a cached file too, so a bad cache entry stops the build.
+      - name: Opus tarball cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/webrtc-cache
+          key: opus-b7637334527201fdfd6dd6a02e67aceffb0e5e60155bbd89175647a80301c92c
       - name: Build ${{ matrix.slice }}
+        env:
+          APPLY_CACHE_DIR: ${{ runner.temp }}/webrtc-cache
         run: sh tools/webrtc/build.sh "${{ matrix.slice }}" "$WORK"
       - name: Disk after build
         if: always()
