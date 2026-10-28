@@ -55,9 +55,16 @@ public final class Database: @unchecked Sendable {
         try Database(path: ":memory:")
     }
 
-    private init(path: String) throws {
+    /// A strict read-only connection (the notification extension's ownership read): fails when the file is
+    /// missing and never creates it, writes, changes the journal mode or the file protection.
+    public static func readOnly(url: URL) throws -> Database {
+        try Database(path: url.path, readOnly: true)
+    }
+
+    private init(path: String, readOnly: Bool = false) throws {
         var h: OpaquePointer?
-        let rc = sqlite3_open_v2(path, &h, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nil)
+        let flags = readOnly ? SQLITE_OPEN_READONLY : SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE
+        let rc = sqlite3_open_v2(path, &h, flags | SQLITE_OPEN_FULLMUTEX, nil)
         guard rc == SQLITE_OK, let h else {
             let msg = h.map { String(cString: sqlite3_errmsg($0)) } ?? "open failed"
             if let h { sqlite3_close_v2(h) }
@@ -65,6 +72,10 @@ public final class Database: @unchecked Sendable {
         }
         handle = h
         sqlite3_busy_timeout(h, 5000)
+        if readOnly {
+            try execute("PRAGMA query_only=ON")
+            return
+        }
         try execute("PRAGMA foreign_keys=ON")
         try execute("PRAGMA journal_mode=WAL")
         try execute("PRAGMA busy_timeout=5000")

@@ -46,6 +46,13 @@ public enum LocalAccountData {
         }
     }
 
+    /// `isOwned` on the database file at `databaseURL`, opened strictly read-only (`Database.readOnly`): nothing is
+    /// created or written. A missing or unreadable file is not owned.
+    public static func isOwned(accountID: String, deviceID: String, container: URL, databaseURL: URL) -> Bool {
+        guard let db = try? Database.readOnly(url: databaseURL) else { return false }
+        return isOwned(accountID: accountID, deviceID: deviceID, container: container, repo: Repository(db: db, now: { Date() }))
+    }
+
     /// A stored account with no device is from before devices were recorded and belongs to the signed-in device.
     private static func needsWipe(owner: String?, ownerDevice: String?, accountID: String, deviceID: String, container: URL) -> Bool {
         isWipePending(in: container) || owner != accountID || (ownerDevice ?? deviceID) != deviceID

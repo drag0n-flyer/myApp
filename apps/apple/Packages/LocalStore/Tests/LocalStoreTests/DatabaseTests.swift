@@ -90,3 +90,19 @@ final class Failures: @unchecked Sendable {
     try db.execute("PRAGMA user_version = 99")
     #expect(throws: SchemaTooNew.self) { try migrate(db) }
 }
+
+/// The notification extension's ownership read: never creates the file, never writes.
+@Test func testReadOnlyOpenNeverCreatesOrWrites() throws {
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent("ls-\(UUID().uuidString).sqlite")
+    defer { for s in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: url.path + s) } }
+    #expect(throws: DatabaseError.self) { _ = try Database.readOnly(url: url) }
+    #expect(!FileManager.default.fileExists(atPath: url.path))
+
+    let rw = try Database(url: url)
+    try migrate(rw)
+    try Repository(db: rw, now: { Date() }).set("k", Data([1]))
+    let ro = try Database.readOnly(url: url)
+    #expect(try Repository(db: ro, now: { Date() }).get("k") == Data([1]))
+    #expect(throws: DatabaseError.self) { try Repository(db: ro, now: { Date() }).set("k", Data([2])) }
+    #expect(try ro.query("PRAGMA query_only") { $0.int(0) } == [1])
+}

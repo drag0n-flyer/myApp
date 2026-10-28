@@ -32,16 +32,18 @@ enum NSEWiring {
               let group = MessagingLocations.appGroupID,
               let container = StoreLocation.appGroup(group)
         else { return nil }
+        let databaseURL = MessagingLocations.databaseURL(in: container)
+        // Only the app wipes (`LocalAccountData.prepare`). The owner is read on a strict read-only connection: data
+        // of another account or device, with a wipe pending, or missing is left unopened (no database, no MLS
+        // storage), and the push shows the generic notification.
+        guard LocalAccountData.isOwned(
+            accountID: session.accountID, deviceID: session.deviceID, container: container, databaseURL: databaseURL)
+        else { return nil }
         do {
-            let db = try Database(url: MessagingLocations.databaseURL(in: container))
+            let db = try Database(url: databaseURL)
             try NotificationBudget.configure(db)
             let now: @Sendable () -> Date = { Date() }
             let repo = Repository(db: db, now: now)
-            // Only the app wipes (`LocalAccountData.prepare`): data of another account or device, or with a wipe
-            // pending, is left unmigrated and its MLS storage unopened, and the push shows the generic notification.
-            guard LocalAccountData.isOwned(
-                accountID: session.accountID, deviceID: session.deviceID, container: container, repo: repo)
-            else { return nil }
             try migrate(db)
             guard let mls = NSEAdapters.makeEngine(container: container, accountID: session.accountID, deviceID: session.deviceID)
             else { return nil }
