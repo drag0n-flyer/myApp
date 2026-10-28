@@ -8,7 +8,7 @@ Label: **CI, simulated**. Two simulated clients (headless CallLabMac processes) 
 |---|---|
 | Date | 2026-10-28 |
 | Protocol followed | call lab L10a, `tools/call-lab/ci/run_calls.sh --matrix estimates`, commit `04e5290` |
-| CI run | https://github.com/drag0n-flyer/myApp/actions/runs/40753746613 (workflow `call-lab-calls`, `-f matrix=estimates`), result: success |
+| CI run | <https://github.com/drag0n-flyer/myApp/actions/runs/40753746613> (workflow `call-lab-calls`, `-f matrix=estimates`), result: success |
 | Caller device (model, iOS version) | n/a: CallLabMac `--headless --role caller`, GitHub `macos-26` runner |
 | Callee device (model, iOS version) | n/a: CallLabMac `--headless --role callee` on the same runner (`client_b` = `mac-headless`) |
 | Network | loopback (`lo0`), profile `clean` (no dummynet shaping), path `direct` (host/host candidates) |
@@ -49,7 +49,7 @@ All columns: [2026-10-28-data-use-ci.csv](2026-10-28-data-use-ci.csv).
 
 ### Relayed path (for reference)
 
-From the weekly matrix, one run each, clean, through coturn on the runner (run https://github.com/drag0n-flyer/myApp/actions/runs/40744177096): `ultraLow` 2.31 MB per 10 min (15.4 kbps per direction), `balanced` 4.26 MB per 10 min (28.4 kbps per direction).
+From the weekly matrix, one run each, clean, through coturn on the runner (run <https://github.com/drag0n-flyer/myApp/actions/runs/40744177096>): `ultraLow` 2.31 MB per 10 min (15.4 kbps per direction), `balanced` 4.26 MB per 10 min (28.4 kbps per direction).
 
 ## Notes
 
