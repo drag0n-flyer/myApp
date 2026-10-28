@@ -380,16 +380,12 @@ final class AppModel {
         await messaging?.reconciler.connected()
     }
 
-    /// Another device of this account was removed: update the list and take it out of every chat. This device's
-    /// own removal goes through the sign-out path instead, which stops the store before wiping.
+    /// A `device.revoked` event (unsigned). For another device it only runs reconcile; one naming this device
+    /// signs out only when `GET /v1/devices` proves it (a 401 signs out through the client's own path).
     private func deviceRevoked(_ id: String) async {
         await refreshDevices()
         guard let messaging else { return }
-        if id == messaging.deviceID {
-            deviceWasRemoved()
-            return
-        }
-        try? await messaging.sync.handleRevoked(deviceID: id)
+        if await messaging.reconciler.deviceRevoked(id) == .signOut { deviceWasRemoved() }
     }
 
     private func stopLive(force: Bool = false) async {

@@ -25,10 +25,9 @@ struct LiveMessaging {
     let inbox: InboxProcessor
     /// Wipes this account's local data at sign-out (`wipeLocalData`).
     let sync: DeviceSync
-    /// Runs own-device reconcile on each live connect and once more 11 minutes later.
+    /// Runs own-device reconcile on each live connect and once more 11 minutes later, and handles
+    /// `device.revoked` events, one at a time.
     let reconciler: ReconcileScheduler
-    /// This device, to tell its own revocation from another device's.
-    let deviceID: String
     let network: SharedValue<NetworkType>
     let autoDownload: SharedValue<AutoDownloadSettings>
 
@@ -113,9 +112,11 @@ struct LiveMessaging {
             deps: deps, outbox: outbox, network: { networkBox.value }, settings: { settingsBox.value })
         let store = LiveChatStore(
             deps: deps, outbox: outbox, inbox: inbox, conversations: conversations, attachments: attachments)
-        let reconciler = ReconcileScheduler(reconcile: { try await sync.reconcileOwnDevices() })
+        let reconciler = ReconcileScheduler(
+            deviceID: session.deviceID, reconcile: { try await sync.reconcileOwnDevices() },
+            devices: { try await client.devices().map(\.id) })
         return LiveMessaging(
-            store: store, inbox: inbox, sync: sync, reconciler: reconciler, deviceID: session.deviceID,
+            store: store, inbox: inbox, sync: sync, reconciler: reconciler,
             network: networkBox, autoDownload: settingsBox)
     }
 

@@ -200,19 +200,14 @@ public actor DeviceSync {
         try await conversations.announceMode(fresh)
     }
 
-    /// Removes `"<me>/<deviceID>"` from every group that has it. If the revoked device is this one, the
-    /// device wipes itself instead (it can no longer post commits).
+    /// A `device.revoked` event. The event is unsigned and the server never sends it to the revoked device itself,
+    /// so it never removes or wipes by itself (owner ruling): for another device of this account it runs
+    /// `reconcileOwnDevices`, whose two-lists-ten-minutes rule decides; one naming this device is ignored (a real
+    /// revocation reaches this device as a 401 or close code 4003, and the app signs out and wipes then).
+    /// The app goes through `ReconcileScheduler.deviceRevoked`, which also keeps it from overlapping a reconcile.
     public func handleRevoked(deviceID: String) async throws {
-        if deviceID == deps.me.deviceID {
-            try await wipeLocalData()
-            return
-        }
-        let identity = "\(deps.me.accountID)/\(deviceID)"
-        var failure: Error?
-        for conversation in try activeConversations() {
-            do { try await remove(identity, deviceID: deviceID, from: conversation) } catch { failure = failure ?? error }
-        }
-        if let failure { throw failure }
+        guard deviceID != deps.me.deviceID else { return }
+        try await reconcileOwnDevices()
     }
 
     private func remove(_ identity: String, deviceID: String, from conversation: ConversationRecord) async throws {

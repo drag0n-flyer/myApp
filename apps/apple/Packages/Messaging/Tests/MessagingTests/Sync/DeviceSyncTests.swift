@@ -192,35 +192,44 @@ private final class CountingTransport: HTTPTransport, @unchecked Sendable {
         #expect(ana3Welcomes.count == 2)
     }
 
-    @Test func revokedRemoved() async throws {
-        let rig = try await Rig.make()
+    @Test func revokedEventOnlyRunsReconcile() async throws {
+        let clock = MutableClock()
+        let rig = try await Rig.make(clock: clock)
         let ana2ID = rig.ana2.device.deviceID
-        for id in rig.conversationIDs { #expect(await rig.server.memberDevices(of: id).contains(ana2ID)) }
+        // The event is unsigned: while the server still lists ana2 it removes nothing.
+        try await rig.ana1.sync.handleRevoked(deviceID: ana2ID)
+        clock.advance(10 * 60)
         try await rig.ana1.sync.handleRevoked(deviceID: ana2ID)
         for id in rig.conversationIDs {
-            let members = await rig.server.memberDevices(of: id)
-            #expect(!members.contains(ana2ID))
-            #expect(members.contains(rig.ana1.device.deviceID))
+            #expect(await rig.server.memberDevices(of: id).contains(ana2ID))
+            #expect(try rig.ana1.device.deps.repo.conversation(serverID: id)?.epoch == 1)
+        }
+        // Once the server has dropped it, the two-lists-ten-minutes rule applies: first a mark, then the Remove.
+        await rig.server.revokeDevice(account: "acc-ana", deviceID: ana2ID)
+        try await rig.ana1.sync.handleRevoked(deviceID: ana2ID)
+        #expect(try rig.ana1.device.deps.repo.conversation(serverID: rig.conversationIDs[0])?.epoch == 1)
+        clock.advance(10 * 60)
+        try await rig.ana1.sync.handleRevoked(deviceID: ana2ID)
+        for id in rig.conversationIDs {
+            let members = try await rig.ana1.device.deps.mls.members(of: GroupID(raw: try #require(
+                try rig.ana1.device.deps.repo.conversation(serverID: id)).groupID))
+            #expect(!members.contains("acc-ana/\(ana2ID)"))
             #expect(try rig.ana1.device.deps.repo.conversation(serverID: id)?.epoch == 2)
         }
-        // A second call has nothing left to do.
+        // A further event has nothing left to do.
         try await rig.ana1.sync.handleRevoked(deviceID: ana2ID)
         #expect(try rig.ana1.device.deps.repo.conversation(serverID: rig.conversationIDs[0])?.epoch == 2)
     }
 
-    @Test func revokedSelfWipes() async throws {
+    @Test func revokedEventNamingThisDeviceIsIgnored() async throws {
         let rig = try await Rig.make()
         let deps = rig.ana1.device.deps
-        try FileManager.default.createDirectory(at: deps.mediaDirectory, withIntermediateDirectories: true)
-        try Data([1]).write(to: deps.mediaDirectory.appendingPathComponent("x.bin"))
-        #expect(try !deps.repo.chats().isEmpty)
-
+        let commits = await rig.server.requests().count
+        // Unsigned, and never sent to the revoked device itself: forged or buggy. It must not wipe.
         try await rig.ana1.sync.handleRevoked(deviceID: deps.me.deviceID)
-        #expect(try deps.repo.chats().isEmpty)
-        #expect(!FileManager.default.fileExists(atPath: deps.mediaDirectory.path))
-        #expect(await rig.ana1.mlsWiped.value)
-        // The server still lists every member: a revoked device posts no commit.
-        for id in rig.conversationIDs { #expect(await rig.server.memberDevices(of: id).contains(deps.me.deviceID)) }
+        #expect(try !deps.repo.chats().isEmpty)
+        #expect(!(await rig.ana1.mlsWiped.value))
+        #expect(await rig.server.requests().count == commits, "no request at all")
     }
 
     @Test func replenish() async throws {
