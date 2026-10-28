@@ -73,10 +73,16 @@ public protocol AccountService: AnyObject {
     func connect(host: String) async throws(AccountError) -> ServerPolicy
     func checkUsername(_ name: String) async -> UsernameCheck
     func redeemInvite(code: String) async throws(AccountError) -> Bool
-    func startSignUp(username: String, email: String) async throws(AccountError)
+    /// Starts sign-up and sends the email code. `displayName` is the name shown to people the account
+    /// chats with. The live service keeps it and sends it with `PATCH /v1/me/settings` once sign-up has
+    /// finished (the server's `signup/start` takes no display name yet); a blank name is not sent.
+    func startSignUp(displayName: String, username: String, email: String) async throws(AccountError)
     func verifyEmail(code: String) async throws(AccountError)
     /// Creates the passkey when supported.
     func finishSignUp() async throws(AccountError)
+    /// Finishes sign-up without registering a passkey ("Use an email code instead"); later sign-in uses
+    /// an email code.
+    func finishSignUpWithEmailCode() async throws(AccountError)
     func signInWithPasskey() async throws(AccountError)
     func sendRecoveryCode(to email: String) async throws(AccountError)
     func recover(email: String, code: String) async throws(AccountError)

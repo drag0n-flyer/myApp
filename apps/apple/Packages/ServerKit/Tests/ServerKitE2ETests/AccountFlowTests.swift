@@ -100,15 +100,17 @@ private actor StateLog {
     var deviceID: String { store.current?.deviceID ?? "" }
 
     /// The server sends at most 3 codes an hour to one address, so each test uses its own address.
-    /// Connects, signs up `username` with a passkey and returns the account's username as the server sees it.
+    /// Connects, signs up `username` (display name "Ana") with a passkey and returns the account's username as the server sees it.
     func signUp(username: String, email: String, mail: Mailbox) async throws -> String {
         _ = try await service.connect(host: "localhost")
         #expect(try await service.redeemInvite(code: try env("E2E_INVITE_CODE")))
         let before = mail.newest()
-        try await service.startSignUp(username: username, email: email)
+        try await service.startSignUp(displayName: "Ana", username: username, email: email)
         try await service.verifyEmail(code: try await mail.code(after: before))
         try await service.finishSignUp()
-        return try await client.me().username
+        let me = try await client.me()
+        #expect(me.displayName == "Ana")
+        return me.username
     }
 }
 

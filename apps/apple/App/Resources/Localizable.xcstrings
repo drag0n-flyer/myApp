@@ -353,6 +353,17 @@
         }
       }
     },
+    "Signs in with a code sent to your email instead of a passkey." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Signs in with a code sent to your email instead of a passkey."
+          }
+        }
+      }
+    },
     "Something went wrong on the server. Try again later." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -536,6 +547,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Use 3–32 lowercase letters, numbers, or _, starting with a letter."
+          }
+        }
+      }
+    },
+    "Use an email code instead" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Use an email code instead"
           }
         }
       }
