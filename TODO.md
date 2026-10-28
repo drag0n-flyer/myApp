@@ -1,11 +1,11 @@
 # Progress
 
-Last updated: 2026-10-28, 15:30 UTC.
+Last updated: 2026-10-29, 00:10 UTC.
 
 | Track | Done | % |
 |---|---|---|
 | iPhone/Mac Phase 1 | 125 / 128 | 98% |
-| Android | 42 / 44 | 95% |
+| Android | 43 / 44 | 98% |
 | Admin dashboard | done, with admin accounts and 2FA, on `main` | 100% |
 
 Up to 15 agents work in parallel (on Opus until 2 Nov, when Sonnet's weekly limit resets). CI is the bottleneck: about 5 Mac jobs at once, and GitHub throttles status checks when many agents watch runs. Mac CI runs only the jobs a change needs. Android CI uses Linux runners only.
@@ -53,7 +53,7 @@ Extra work beyond the plans, in progress (each is reviewed before it merges; ETA
 | Port: sign-up sends the display name, email-code sign-up, read-receipts switch | `feat/ios-port-signup` | merged | done |
 | Port: linking skips an unreadable or too-large contact list; link-code check compares the port | `feat/ios-port-linking` | merged | done |
 | Small follow-ups: a pending link save stays tied to the server that issued it (switching server is refused meanwhile); after a claimed link only the session save is retried; read-receipt outbox tests | `fix/ios-followups` | merged (CI green, all 8 jobs). Open, low: capture the server at the start of the link wait, so a "Change" tap at the instant the claim succeeds can't file the session under the new server | done |
-| Android E6: Telecom calls and LiveCallEngine; sign-out and wipe end any call first | `android/e6` | merged (CI green on re-runs). Open, low: close the media in the 3 s hang-up timeout branch too (do it in E5); `VoiceRecorderInstrumentedTest` timing window too tight on the API 36 emulator | done |
+| Android E6: Telecom calls and LiveCallEngine; sign-out and wipe end any call first | `android/e6` | merged (CI green on re-runs). Open, low: `VoiceRecorderInstrumentedTest` timing window too tight on the API 36 emulator | done |
 | **Security fix:** iPhone safety numbers now cover the real signature keys; a number is shown or can be verified only if it matches the number rebuilt from the stored members (closes an oversized-identity route and a stale number after the main conversation switches) | `fix/ios-real-member-keys` | merged (three security review rounds, CI green). Ruling to confirm: one-time silent reset of stored placeholder keys on upgraded installs | done |
 | **Security fix:** a member whose name isn't readable text could join a chat and silently stop all device and key-change reporting. The shared encryption core now rejects such members on every way in (iPhone and Android); iPhone shows "Can't check the devices in this chat right now" and hides the safety number instead of failing silently | `fix/mls-unreadable-member` | merged (security review approved). To confirm: the 255-byte name limit (proposed in the protocol doc). Android port merged too (security review approved). Open, minor: two DeviceSync member reads throw without flagging (only groups stored before the fix) | done |
 | Port: a 401 wipes only when the server's own error and a second check (`GET /v1/me`) both confirm it; 4003 always wipes; local data records its device, and a sign-out with no recorded device wipes | `fix/ios-401-confirm` | merged (security review approved, CI green). Open, minor: the notification extension doesn't check who owns the data before opening it | done |
@@ -78,7 +78,7 @@ Green: Apple apps (every job, after the Swift 6.2 / Xcode 26 fix), MLS client co
 | B, networking and accounts | 7 | 7 | done, with B7's review follow-ups merged (the http/https choice is saved with a session, a link code is claimed only on the server that issued it, changing server clears the invite code) |
 | C, MLS bindings | 4 | 4 | done |
 | D, storage and messaging | 7 | 7 | done. D7 took M7's `decryptApplication` from the iPhone side; checking `call.status` for late ring pushes moved to E6/I1. A ring is accepted only from the 1:1 chat with its sender (merged) |
-| E, WebRTC and calls | 6 (+E5b) | 5 | E1 and E2 merged: Android WebRTC + Opus builds in CI, release `webrtc-android-m156.1` published (smoke test green), and the `:webrtc` module downloads it with a SHA-256 check. E3, E4, E5 part 1 and E6 on `main`. E5 part 2 (real call media, approved; emulator tests 9/9 on API 29 and 36) merges next. Then E5b | E5 part 2 ~1 h, E5b ~0.5 day |
+| E, WebRTC and calls | 6 (+E5b) | 6 | All six on `main`: Android WebRTC + Opus build and release `webrtc-android-m156.1`, the `:webrtc` module (SHA-256 checked), call policy and session machine, Telecom, and E5's real call media (WebRTC session, stats, RNNoise; emulator tests 9/9 on API 29 and 36, CI green). Yours: measure Standard vs Enhanced noise reduction CPU on the OnePlus 5. Next: E5b | E5b ~0.5 day |
 | F, push | 4 | 4 | done |
 | G, CI | 4 | 4 | done; G4: release bundle, license notices, Play documents. A `v*` tag release fails until the SQLCipher, WebRTC and Opus notice texts are filled in |
 | I, integration and iPhone↔Android test | 2 | 1 | I1 merged: the app runs on the live server (accounts, messaging, push, device cleanup; crash-safe wipe). Calls switch on with E6. I2 (iPhone↔Android test) waits for calls |
