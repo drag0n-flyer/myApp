@@ -1,5 +1,5 @@
 diff --git a/sdk/android/BUILD.gn b/sdk/android/BUILD.gn
-index 2522e5a..d184025 100644
+index 2522e5a..16a6440 100644
 --- a/sdk/android/BUILD.gn
 +++ b/sdk/android/BUILD.gn
 @@ -35,6 +35,7 @@ if (is_android) {
@@ -64,7 +64,7 @@ index 2522e5a..d184025 100644
    }
  
    #######################
-@@ -505,6 +537,26 @@ if (is_android) {
+@@ -505,6 +537,31 @@ if (is_android) {
      ]
    }
  
@@ -84,14 +84,19 @@ index 2522e5a..d184025 100644
 +  # srcjar; an AAR has no app build, so it is compiled into libwebrtc.jar here.
 +  rtc_android_library("app_gen_jni_java") {
 +    visibility = [ "*" ]
-+    srcjar_deps = [ ":libjingle_peerconnection_so__jni_registration" ]
-+    deps = [ "//third_party/jni_zero:jni_zero_java" ]
++    # Not srcjar_deps: android_library then adds "*/*GEN_JNI.class" to jar_excluded_patterns
++    # for any srcjar dep with "jni" in its name, which would drop the class.
++    srcjars = [ "$target_gen_dir/libjingle_peerconnection_so__jni_registration.srcjar" ]
++    deps = [
++      ":libjingle_peerconnection_so__jni_registration",
++      "//third_party/jni_zero:jni_zero_java",
++    ]
 +  }
 +
    rtc_android_library("screencapturer_java") {
      visibility = [ "*" ]
      sources = [ "api/org/webrtc/ScreenCapturerAndroid.java" ]
-@@ -673,6 +725,28 @@ if (current_os == "linux" || is_android) {
+@@ -673,6 +730,28 @@ if (current_os == "linux" || is_android) {
      ]
    }
  
@@ -120,7 +125,7 @@ index 2522e5a..d184025 100644
    rtc_library("builtin_audio_codecs_jni") {
      visibility = [ "*" ]
      allow_poison = [ "audio_codecs" ]
-@@ -1602,6 +1676,12 @@ if (current_os == "linux" || is_android) {
+@@ -1602,6 +1681,12 @@ if (current_os == "linux" || is_android) {
      namespace = "webrtc::jni"
    }
  

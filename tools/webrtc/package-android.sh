@@ -84,7 +84,7 @@ import sys, zipfile
 names = set(zipfile.ZipFile(sys.argv[1]).namelist())
 missing = [c for c in ("org/webrtc/OpusInfo.class", "org/webrtc/AudioCapturePostProcessing.class", "org/webrtc/PeerConnectionFactoryJni.class", "org/jni_zero/GEN_JNI.class") if c not in names]
 if missing:
-    sys.exit("error: %s lacks %s; are patches 0006 and 0007 applied (they add the generated Jni classes to libwebrtc)?" % (sys.argv[1], ", ".join(missing)))
+    sys.exit("error: %s lacks %s; are patches 0006 and 0007 applied (they add the generated Jni classes and GEN_JNI to libwebrtc)?" % (sys.argv[1], ", ".join(missing)))
 PY
 
 # 4. The AAR.
