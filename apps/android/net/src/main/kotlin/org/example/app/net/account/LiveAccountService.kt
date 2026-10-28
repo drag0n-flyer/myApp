@@ -105,8 +105,11 @@ class LiveAccountService(
     /** A claimed link session whose save failed; memory only. A retry saves it and never claims again. */
     private var unsaved: LinkApproved? = null
 
-    /** Called when the server ended this session (401, or this device was removed); not on a local sign-out. */
-    var onSignedOut: (() -> Unit)? = null
+    /**
+     * Called when the server ended this session; not on a local sign-out. [org.example.app.net.SignOutReason.Revoked]
+     * (a 4003 close or a confirmed 401) is the only reason the app wipes.
+     */
+    var onSignedOut: ((org.example.app.net.SignOutReason) -> Unit)? = null
 
     /** True once the connected server's protocol is newer than this app knows: nothing more is sent to it. */
     @Volatile var updateRequired: Boolean = false
@@ -130,6 +133,13 @@ class LiveAccountService(
 
     /** Absent, present or unavailable (the secret store was busy); the UI maps `Unavailable` to a retry screen. */
     val sessionState: SessionState get() = sessionStore.state
+
+    /**
+     * The client bound to the stored session's host, for the app's messaging stack and live socket (task I1); a
+     * 401 on it signs out like any other call. Null when signed out or when the session cannot be read.
+     */
+    val sessionClient: ServerClient?
+        get() = if (!isSignedIn) null else try { ready() } catch (_: AccountError) { null }
 
     init {
         install(client)
@@ -358,9 +368,9 @@ class LiveAccountService(
     // ---- helpers
 
     private fun install(c: ServerClient) {
-        c.setOnUnauthorized {
+        c.setOnUnauthorized { reason ->
             forcedOut = true
-            onSignedOut?.invoke()
+            onSignedOut?.invoke(reason)
         }
     }
 

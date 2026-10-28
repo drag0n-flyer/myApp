@@ -7,3 +7,5 @@ f8132294f5c2f63ccb6caaf2ce01cc2e73f3dd8d:server/internal/vectors/vectors_test.go
 13d474b6bfb3957447d5df29c36ebb3b11f94b46:docs/superpowers/plans/2026-10-28-admin-dashboard.md:app-turn-secret:313
 # Reviewed false positive: the .env parser test uses a made-up SMTP URL (user:p%40ss@mail.test).
 b8edb85c20e2bc25e905a8dac8b7b744d01251a0:server/internal/config/envfile_test.go:app-smtp-url-credentials:16
+801c4bd21d2529bf7a5dbc2fa644aa7ffb16c221:.github/workflows/webrtc.yml:generic-api-key:96
+712be9eb4452c458c30cf15cccfaef3aa00e8f07:.github/workflows/webrtc-android.yml:generic-api-key:62
