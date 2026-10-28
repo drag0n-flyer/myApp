@@ -4,7 +4,7 @@ Last updated: 2026-10-29, 03:20 IST (21:50 UTC Oct 28).
 
 | Track | Done | % |
 |---|---|---|
-| iPhone/Mac Phase 1 | 126 / 128 | 98% |
+| iPhone/Mac Phase 1 | 127 / 128 | 99% |
 | Android | 44 / 44 | 100% |
 | Admin dashboard | done, with admin accounts and 2FA, on `main` | 100% |
 
@@ -38,7 +38,7 @@ Admin dashboard: `http://localhost:9044/admin/`. `.env` also sets `APP_ADMIN_HOS
 | [WebRTC + Opus build](docs/superpowers/plans/2026-10-27-webrtc-opus-build.md) | 6 / 6 | 100% | Release `webrtc-m156.1` published; the package is pinned to it and all Apple CI jobs, including the real call-media tests, are green. Open, minor: add WebRTC's PATENTS file to the generated license notice and fix the `&quot;` escaping (in `package.sh`); the bitrate test skips the 10 kbps target check when the runner reports no target | done |
 | [Client calling](docs/superpowers/plans/2026-10-27-client-calling.md) | 16 / 16 | 100% | I1 merged. With the real WebRTC build the encoder holds 10 kbps (about 19 kbps on the wire, inside GOAL.md's 17–21); the send-bitrate test now checks the audio payload, the encoder target and the wire total | done |
 | [Client messaging](docs/superpowers/plans/2026-10-27-client-messaging.md) | 16 / 16 | 100% | I1 merged: live store, calls tied to the caller's device, CallKit hang-up, sign-out ends calls first, a setup-error screen instead of sample chats; Apple CI green | done |
-| [Security docs and release](docs/superpowers/plans/2026-10-27-security-docs-release.md) | 13 / 14 | 93% | only Task 13 left, deferred by the owner | done for now |
+| [Security docs and release](docs/superpowers/plans/2026-10-27-security-docs-release.md) | 14 / 14 | 100% | Task 13 merged: code owners, `scripts/setup-branch-protection.sh` (dry-run tested; NOT applied, because it would block the agents' direct merges) and `docs/ops/repo-setup.md`. Yours: before applying it, make the server, apple and docs workflows report on every pull request (they run only when their files change), then run the script | done |
 | [Call lab](docs/superpowers/plans/2026-10-27-call-lab.md) | 11 / 12 | 92% | L10a and L11 done: the weekly Mac job runs 7 test calls; an `estimates` run measured all 4 modes (3 calls each, "CI, simulated") and both apps now show 2/3/5/6 MB per 10 min (High was 8). Yours: approve or reject the proposed GOAL.md §4 table change (measured 11.9/18.3/27.3/33.6 kbps per direction), and the placeholder line in the UI design spec (line 99). L10 (real phones) deferred; it is the release gate | waiting on you |
 
 Extra work beyond the plans, in progress (each is reviewed before it merges; ETAs are agent time):
