@@ -264,8 +264,7 @@ private func text(_ message: Message?) -> String? {
         let requestsBefore = await rig.server.requests().count
         _ = store.ensureChat(with: "acc-bob")
         #expect(store.safetyNumber(for: "acc-bob") == nil)
-        let first = (0..<12).map { String(format: "%05d", $0 * 7 + 1) }.joined()
-        try rig.ana.repo.setSafetyCurrent(chatID: "acc-bob", first)
+        let first = try storeNumber(rig.ana.repo, me: "acc-ana", peer: "acc-bob", key: 1)
         let before = try #require(store.safetyNumber(for: "acc-bob"))
         #expect(before.groups.count == 12 && before.groups.allSatisfy { $0.count == 5 })
         #expect(before.groups.joined() == first)
@@ -274,7 +273,7 @@ private func text(_ message: Message?) -> String? {
         store.setVerified(true, chatID: "acc-bob")
         #expect(store.safetyNumber(for: "acc-bob")?.isVerified == true)
         // A4 stores a new number after a device change: the old verification no longer counts.
-        try rig.ana.repo.setSafetyCurrent(chatID: "acc-bob", String(repeating: "9", count: 60))
+        try storeNumber(rig.ana.repo, me: "acc-ana", peer: "acc-bob", key: 5)
         #expect(store.safetyNumber(for: "acc-bob")?.isVerified == false)
         store.setVerified(true, chatID: "acc-bob")
         store.setVerified(false, chatID: "acc-bob")
