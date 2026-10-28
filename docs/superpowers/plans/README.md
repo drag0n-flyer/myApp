@@ -214,3 +214,4 @@ The sample services stay. The launch argument `-sampleData` selects them, so the
 | 2026-10-28 | Admin sign-in is username + password only; token sign-in removed. **Owner decision.** |
 | 2026-10-28 | Optional TOTP 2FA per admin, QR via skip2/go-qrcode, recovery by CLI reset-2fa only. **Owner decision.** |
 | 2026-10-28 | Ruling: sign-up display name sent via PATCH /v1/me/settings after signupFinish on both platforms until signup/start takes it — iPhone must match — cost if wrong: one extra request |
+| 2026-10-29 | Android biometric gate on API 29: the screen-lock fallback (`setDeviceCredentialAllowed`) also accepts weak biometrics. Accepted: the gate is a presence check tied to no key, and the phone's own lock screen accepts the same biometric; if the gate is ever tied to a key, API 29 becomes strong-only. Ruling — cost if wrong: a weak face unlock opens the app on some Android 10 phones. |
