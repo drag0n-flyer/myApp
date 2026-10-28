@@ -222,29 +222,61 @@ private struct SeededRNG: RandomNumberGenerator {
         #expect(a.currentMode == .ultraLow)
     }
 
-    @Test func failedStepUpHoldsOffAndBacksOff() {
+    /// A step-up whose estimate is still under the new level's step-down line when the grace period ends.
+    private func failAfterGrace(_ a: inout QualityAdaptor, _ avail: Double) {
+        for _ in 0..<QualityAdaptor.stepUpGraceSamples { _ = a.ingest(sample(avail)) }
+    }
+
+    @Test func slowlyRampingEstimateAfterAStepUpHolds() {
         var a = QualityAdaptor(ceiling: .balanced, videoWanted: false)
         _ = a.ingest(sample(30_000))
         feedCapped(&a, QualityAdaptor.goodSamplesToStepUp)
         #expect(a.currentMode == .dataSaver)
-        _ = a.ingest(sample(20_000))   // the network cannot sustain it
+        // WebRTC ramps up over several seconds; Data saver's step-down line is 25.5k.
+        for est in [22_000.0, 23_500, 25_000, 27_000, 30_000] {
+            _ = a.ingest(MediaStats(availableOutgoingBitrate: est, bweCeiling: 30_000))
+            #expect(a.currentMode == .dataSaver, "\(est)")
+        }
+        feedCapped(&a, QualityAdaptor.goodSamplesToStepUp)
+        #expect(a.currentMode == .balanced)   // the step-up held, so no hold-off
+    }
+
+    @Test func lossDuringTheGracePeriodFallsBackAndHoldsOff() {
+        var a = QualityAdaptor(ceiling: .balanced, videoWanted: false)
+        _ = a.ingest(sample(30_000))
+        feedCapped(&a, QualityAdaptor.goodSamplesToStepUp)
+        #expect(a.currentMode == .dataSaver)
+        feedCapped(&a, 2, loss: 0.15)   // two samples over the loss limit: down at once
         #expect(a.currentMode == .ultraLow)
-        let hold = QualityAdaptor.stepUpHoldOffSamples
-        feedCapped(&a, hold + QualityAdaptor.goodSamplesToStepUp - 1)
+        feedCapped(&a, QualityAdaptor.stepUpHoldOffSamples + QualityAdaptor.goodSamplesToStepUp - 1)
         #expect(a.currentMode == .ultraLow)
         feedCapped(&a, 1)
         #expect(a.currentMode == .dataSaver)
-        _ = a.ingest(sample(20_000))   // fails again: the hold-off doubles
-        feedCapped(&a, 2 * hold + QualityAdaptor.goodSamplesToStepUp - 1)
+    }
+
+    @Test func failedStepUpHoldsOffAndBacksOff() {
+        var a = QualityAdaptor(ceiling: .balanced, videoWanted: false)
+        let up = QualityAdaptor.goodSamplesToStepUp, hold = QualityAdaptor.stepUpHoldOffSamples
+        _ = a.ingest(sample(30_000))
+        feedCapped(&a, up)
+        #expect(a.currentMode == .dataSaver)
+        failAfterGrace(&a, 20_000)   // the network cannot sustain it
+        #expect(a.currentMode == .ultraLow)
+        feedCapped(&a, hold + up - 1)
+        #expect(a.currentMode == .ultraLow)
+        feedCapped(&a, 1)
+        #expect(a.currentMode == .dataSaver)
+        failAfterGrace(&a, 20_000)   // fails again: the hold-off doubles
+        feedCapped(&a, 2 * hold + up - 1)
         #expect(a.currentMode == .ultraLow)
         feedCapped(&a, 1)
         #expect(a.currentMode == .dataSaver)
         // A step-up that holds clears the back-off.
-        feedCapped(&a, QualityAdaptor.goodSamplesToStepUp)
+        feedCapped(&a, up)
         #expect(a.currentMode == .balanced)
-        _ = a.ingest(sample(40_000))
+        failAfterGrace(&a, 40_000)
         #expect(a.currentMode == .dataSaver)
-        feedCapped(&a, hold + QualityAdaptor.goodSamplesToStepUp)
+        feedCapped(&a, hold + up)
         #expect(a.currentMode == .balanced)
     }
 

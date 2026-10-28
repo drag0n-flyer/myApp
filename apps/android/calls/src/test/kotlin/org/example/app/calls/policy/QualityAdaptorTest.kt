@@ -198,6 +198,38 @@ class QualityAdaptorTest {
         assertEquals(DataMode.UltraLow, a.currentMode)
     }
 
+    /** A step-up whose estimate is still under the new level's step-down line when the grace period ends. */
+    private fun failAfterGrace(a: QualityAdaptor, avail: Double) {
+        repeat(QualityAdaptor.STEP_UP_GRACE_SAMPLES) { a.step(sample(avail)) }
+    }
+
+    @Test fun slowlyRampingEstimateAfterAStepUpHolds() {
+        val a = QualityAdaptor(DataMode.Balanced, videoWanted = false)
+        a.step(sample(30_000.0))
+        feedCapped(a, QualityAdaptor.GOOD_SAMPLES_TO_STEP_UP)
+        assertEquals(DataMode.DataSaver, a.currentMode)
+        // WebRTC ramps up over several seconds; Data saver's step-down line is 25.5k.
+        for (est in listOf(22_000.0, 23_500.0, 25_000.0, 27_000.0, 30_000.0)) {
+            a.step(MediaStats(availableOutgoingBitrate = est, bweCeiling = 30_000.0))
+            assertEquals(DataMode.DataSaver, a.currentMode, "$est")
+        }
+        feedCapped(a, QualityAdaptor.GOOD_SAMPLES_TO_STEP_UP)
+        assertEquals(DataMode.Balanced, a.currentMode) // the step-up held, so no hold-off
+    }
+
+    @Test fun lossDuringTheGracePeriodFallsBackAndHoldsOff() {
+        val a = QualityAdaptor(DataMode.Balanced, videoWanted = false)
+        a.step(sample(30_000.0))
+        feedCapped(a, QualityAdaptor.GOOD_SAMPLES_TO_STEP_UP)
+        assertEquals(DataMode.DataSaver, a.currentMode)
+        feedCapped(a, 2, loss = 0.15) // two samples over the loss limit: down at once
+        assertEquals(DataMode.UltraLow, a.currentMode)
+        feedCapped(a, QualityAdaptor.STEP_UP_HOLD_OFF_SAMPLES + QualityAdaptor.GOOD_SAMPLES_TO_STEP_UP - 1)
+        assertEquals(DataMode.UltraLow, a.currentMode)
+        feedCapped(a, 1)
+        assertEquals(DataMode.DataSaver, a.currentMode)
+    }
+
     @Test fun failedStepUpHoldsOffAndBacksOff() {
         val a = QualityAdaptor(DataMode.Balanced, videoWanted = false)
         val up = QualityAdaptor.GOOD_SAMPLES_TO_STEP_UP
@@ -205,13 +237,13 @@ class QualityAdaptorTest {
         a.step(sample(30_000.0))
         feedCapped(a, up)
         assertEquals(DataMode.DataSaver, a.currentMode)
-        a.step(sample(20_000.0)) // the network cannot sustain it
+        failAfterGrace(a, 20_000.0) // the network cannot sustain it
         assertEquals(DataMode.UltraLow, a.currentMode)
         feedCapped(a, hold + up - 1)
         assertEquals(DataMode.UltraLow, a.currentMode)
         feedCapped(a, 1)
         assertEquals(DataMode.DataSaver, a.currentMode)
-        a.step(sample(20_000.0)) // fails again: the hold-off doubles
+        failAfterGrace(a, 20_000.0) // fails again: the hold-off doubles
         feedCapped(a, 2 * hold + up - 1)
         assertEquals(DataMode.UltraLow, a.currentMode)
         feedCapped(a, 1)
@@ -219,7 +251,7 @@ class QualityAdaptorTest {
         // A step-up that holds clears the back-off.
         feedCapped(a, up)
         assertEquals(DataMode.Balanced, a.currentMode)
-        a.step(sample(40_000.0))
+        failAfterGrace(a, 40_000.0)
         assertEquals(DataMode.DataSaver, a.currentMode)
         feedCapped(a, hold + up)
         assertEquals(DataMode.Balanced, a.currentMode)

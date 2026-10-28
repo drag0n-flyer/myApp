@@ -11,8 +11,9 @@ public struct AdaptorOutput: Equatable, Sendable {
 /// Picks the audio mode and video tier a network can sustain, from a `MediaStats` sample every 2 s.
 /// Degrades video tier, then video off, then audio. Recovers one level after several good samples.
 /// The session caps the estimate at the current level's ceiling (`MediaStats.bweCeiling`), so an estimate at the cap
-/// means "at least the cap": it counts as enough headroom to try the next level. A step-up that fails within the
-/// recover window starts a hold-off before the next try, doubling with each failure in a row.
+/// means "at least the cap": it counts as enough headroom to try the next level. For a grace period after a step-up a
+/// low estimate alone does not step down (WebRTC ramps up gradually); loss still does. A step-up that fails (loss in
+/// the grace period, or an estimate still low when it ends) starts a hold-off, doubling with each failure in a row.
 public struct QualityAdaptor: Sendable {
     public static let stepDownMargin = 0.85
     public static let stepUpMargin = 1.3
@@ -25,6 +26,8 @@ public struct QualityAdaptor: Sendable {
     /// Samples without a step-up after a failed one (30 s); doubles per failure in a row, up to `maxHoldOffFactor`.
     public static let stepUpHoldOffSamples = 15
     public static let maxHoldOffFactor = 4
+    /// Samples after a step-up (10 s) in which a low estimate alone does not step down: WebRTC ramps up gradually.
+    public static let stepUpGraceSamples = 5
 
     private struct Level: Equatable { var mode: DataMode; var tier: VideoTier? }
 
@@ -34,7 +37,7 @@ public struct QualityAdaptor: Sendable {
     private var badLossRun = 0
     private var goodRun = 0
     private var lastAvail: Double?
-    private var samplesSinceStepUp: Int?   // set while a step-up is on probation (the recover window after it)
+    private var samplesSinceStepUp: Int?   // set from a step-up until its grace period ends
     private var failedStepUps = 0
     private var holdOff = 0
 
@@ -76,10 +79,6 @@ public struct QualityAdaptor: Sendable {
 
         badLossRun = s.inboundLossFraction > Self.lossDown ? badLossRun + 1 : 0
         let lossTrigger = badLossRun >= 2
-        if let n = samplesSinceStepUp {
-            // Survived the recover window: the step-up held.
-            if n + 1 > Self.goodSamplesToStepUp { samplesSinceStepUp = nil; failedStepUps = 0 } else { samplesSinceStepUp = n + 1 }
-        }
 
         // No bandwidth estimate: hold. Only the loss rule applies, and goodRun is neither counted nor reset.
         guard let measured = s.availableOutgoingBitrate else {
@@ -92,8 +91,20 @@ public struct QualityAdaptor: Sendable {
         }
         let avail = measured
         lastAvail = measured
-        let bandwidthBad = avail < Double(need(ladder[idx])) * Self.stepDownMargin
+        // After a step-up the estimate needs a few samples to climb: a low estimate alone waits for the grace period.
+        var graceEnded = false
+        if let n = samplesSinceStepUp {
+            samplesSinceStepUp = n + 1
+            graceEnded = n + 1 >= Self.stepUpGraceSamples
+        }
+        let inGrace = samplesSinceStepUp != nil && !graceEnded
+        let lowEstimate = avail < Double(need(ladder[idx])) * Self.stepDownMargin
             || (current.tier != nil && avail < Self.audioOnlyBelow)
+        let bandwidthBad = lowEstimate && !inGrace
+        if graceEnded && !bandwidthBad && !lossTrigger {
+            samplesSinceStepUp = nil   // the step-up held
+            failedStepUps = 0
+        }
 
         if bandwidthBad || lossTrigger {
             goodRun = 0
@@ -118,8 +129,7 @@ public struct QualityAdaptor: Sendable {
             } else {
                 goodRun = good ? goodRun + 1 : 0
             }
-            if goodRun >= Self.goodSamplesToStepUp {
-                if samplesSinceStepUp != nil { failedStepUps = 0 }   // the previous step-up held
+            if goodRun >= Self.goodSamplesToStepUp && samplesSinceStepUp == nil {
                 current = next
                 goodRun = 0
                 samplesSinceStepUp = 0
@@ -135,7 +145,8 @@ public struct QualityAdaptor: Sendable {
 
     // MARK: - Private
 
-    /// A step down within the recover window after a step-up means that step-up failed: hold off before retrying.
+    /// A step down for loss during the grace period after a step-up, or for a low estimate when it ends, means the
+    /// step-up failed: hold off before retrying.
     private mutating func stepDown(to level: Level) {
         current = level
         guard samplesSinceStepUp != nil else { return }

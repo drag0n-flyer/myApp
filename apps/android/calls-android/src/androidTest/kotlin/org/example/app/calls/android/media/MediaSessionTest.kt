@@ -24,6 +24,8 @@ import kotlinx.coroutines.sync.withLock
 import org.example.app.calls.policy.AudioProfile
 import org.example.app.calls.policy.IceState
 import org.example.app.calls.policy.IceTransportPolicy
+import org.example.app.calls.policy.MediaStats
+import org.example.app.calls.policy.QualityAdaptor
 import org.example.app.calls.session.MediaEvent
 import org.example.app.contracts.DataMode
 import org.example.app.contracts.IceCandidate
@@ -228,22 +230,37 @@ class MediaSessionTest {
      */
     @Test
     fun bweCeilingFollowsTheMode() = runBlocking {
+        CaptureHook.tone = true // speech-like sending: in silence (DTX) the estimate has nothing to climb on
         val (a, b) = connected(send = DataMode.UltraLow)
         assertTrue(waitFor(5_000) { has("A", IceState.Connected) || has("A", IceState.Completed) }, "the call must connect")
         val seen = mutableListOf<String>()
+        // After the ceiling moves to the mode's budget, the estimate is at or over that level's step-down line when the
+        // adaptor's grace period ends (so a step-up holds), and at or under the budget.
         suspend fun estimateWithin(mode: DataMode) {
             val budget = AudioProfile.forMode(mode).wireBudget
             assertEquals(budget, a.bweMaxForTesting, "$mode")
             assertEquals(budget, b.bweMaxForTesting, "$mode")
-            delay(2_000)
-            val stats = a.stats()
-            val est = stats.availableOutgoingBitrate
-            assertEquals(budget.toDouble(), stats.bweCeiling, "the adaptor needs the ceiling in the sample")
-            seen += "$mode: estimate $est, budget $budget"
+            val line = budget * QualityAdaptor.STEP_DOWN_MARGIN
+            val estimates = mutableListOf<Double>()
+            var last = MediaStats()
+            for (i in 0 until QualityAdaptor.STEP_UP_GRACE_SAMPLES * 2) { // one sample a second for the 10 s grace period
+                delay(1_000)
+                last = a.stats()
+                last.availableOutgoingBitrate?.let { estimates += it }
+            }
+            assertEquals(budget.toDouble(), last.bweCeiling, "the adaptor needs the ceiling in the sample")
+            seen += "$mode: estimates $estimates, line $line, budget $budget"
+            val est = estimates.lastOrNull()
             assertNotNull(est, "audio must use send-side bandwidth estimation")
+            // High is not checked: its line (63.75k) is above what an audio-only High call sends (about 54k), and while
+            // audio is app-limited WebRTC keeps the estimate near the send rate (here 53-58k after 10 s).
+            if (mode != DataMode.High) {
+                assertTrue(est >= line, "$mode: at the end of the grace period the estimate must be at the level; $seen")
+            }
             // WebRTC keeps the estimate at or above the audio allocation floor (Opus target plus per-packet headers),
-            // which for Data saver at 40 ms packets is about 30.3k, just over its 30k budget: allow 2 %.
-            assertTrue(est <= budget * 1.02, "$mode: estimate $est bit/s over the wire budget $budget; $seen")
+            // which for Data saver at 40 ms packets is about 30.3k, just over its 30k budget: 2 % there, none elsewhere.
+            val tolerance = if (mode == DataMode.DataSaver) 1.02 else 1.0
+            assertTrue(est <= budget * tolerance, "$mode: estimate $est bit/s over the wire budget $budget; $seen")
         }
         estimateWithin(DataMode.UltraLow)
         // A lower Opus cap within the mode (network step-down) keeps the mode's ceiling.
