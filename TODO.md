@@ -8,7 +8,7 @@ Last updated: 2026-10-29 (morning).
 | Android | 37 / 44 | 84% |
 | Admin dashboard | done, with admin accounts and 2FA, on `main` | 100% |
 
-About 10–12 agents work in parallel. Mac CI runs only the jobs a change needs. Android CI uses Linux runners only.
+Up to 15 agents work in parallel (on Opus until 2 Nov, when Sonnet's weekly limit resets). Mac CI runs only the jobs a change needs. Android CI uses Linux runners only.
 
 App code is written on Linux. It counts as done here once it is written, reviewed and merged. It is checked for real only when its CI run is green.
 
@@ -41,7 +41,7 @@ Admin dashboard: `http://localhost:9044/admin/`. `.env` also sets `APP_ADMIN_HOS
 | [Security docs and release](docs/superpowers/plans/2026-10-27-security-docs-release.md) | 13 / 14 | 93% | only Task 13 left, deferred by the owner | done for now |
 | [Call lab](docs/superpowers/plans/2026-10-27-call-lab.md) | 9 / 12 | 75% | L10a waits for WebRTC; L10 deferred; L11 last | 1 day after WebRTC |
 
-Queued for the iPhone/Mac after the current work:
+In progress for the iPhone/Mac (one agent each, started 2026-10-28):
 - the app ID moves into one file, `apps/apple/AppID.xcconfig`
 - bugs the Android port found that the iPhone shares: a chat can be orphaned if the reply to its first commit is lost; one bad join can stop the whole inbox
 - the call machine should check the answering device against its encryption identity, and give up on calls that never connect (ring and setup deadlines)
@@ -84,7 +84,7 @@ Added 2026-10-29 (owner decisions), reviewed twice, on `main`:
 - **Plain HTTP on the LAN** for hosts in `APP_ADMIN_HOSTS` when `APP_ADMIN_ALLOW_HTTP=true` (default off; logs a warning).
 - **CLI recovery:** `bin/appserver admin user list|add|reset-password|reset-2fa|disable|enable`; passwords are typed without echo.
 
-Small follow-ups from the last review: a rare race needing the password and two valid codes at once, a few extra tests.
+Follow-ups from the last review are merged too (one session per pending login, escaped QR label, turning on two-step sign-in asks for the password).
 
 ## Waiting on the owner
 
