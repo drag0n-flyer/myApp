@@ -33,6 +33,7 @@ import org.example.app.messaging.ports.Repository
  *   current epoch. It takes the lock itself, so it is never called from inside [critical]. It also takes the inbox
  *   processor's own (non-re-entrant) mutexes, so [postCommitWithRetry] and [create] must never be called from inside
  *   `InboxProcessor.drain` (D5, D7).
+ * @param log Logs IDs only, never content.
  */
 class ConversationManager(
     private val me: LocalDevice,
@@ -44,6 +45,7 @@ class ConversationManager(
     private val membership: Membership,
     private val escrow: EscrowSealer? = null,
     private val syncOnce: suspend () -> Unit,
+    private val log: (String) -> Unit = { System.err.println(it) },
 ) {
     /** This device's account. */
     val localAccountId: String get() = me.accountId
@@ -80,9 +82,12 @@ class ConversationManager(
         pendingCreate(contactId)?.let { serverId ->
             try {
                 return finishCreate(serverId, resumed = true)
-            } catch (e: ServerException) {
-                // The server refused that conversation for good: it was abandoned, so start a new one below.
-                if (PendingCreate.isPending(repo, serverId)) throw e
+            } catch (e: Exception) {
+                if (e !is ServerException && e !is SyncException.CreateLost) throw e
+                // Start a new one below only when that conversation was abandoned (the server refused it for good, or
+                // the engine lost its commit): neither pending nor active. An active one (a later step failed, such
+                // as the `mode` post) is kept: a new group would leave the peer holding the first Welcome.
+                if (PendingCreate.isPending(repo, serverId) || activeOrNull(serverId) != null) throw e
             }
         }
 
@@ -144,6 +149,7 @@ class ConversationManager(
      * - A definite rejection of the post (4xx other than 408, 429, `stale_epoch`): not applied, so no Welcome went
      *   out; abandoned (`commitRejected`; the row stays inactive and is never used). On the epoch check only a `404`
      *   abandons.
+     * - The engine lost the commit although the server applied it: logged and abandoned (`CreateLost`).
      * - An unknown outcome: read the inbox; still pending means the error is thrown and the create stays pending.
      */
     private suspend fun finishCreate(serverId: String, resumed: Boolean): ConversationRecord {
@@ -202,12 +208,26 @@ class ConversationManager(
     private fun activeOrNull(serverId: String): ConversationRecord? =
         repo.conversation(serverId)?.takeIf { it.active && !PendingCreate.isPending(repo, serverId) }
 
-    /** The server applied the add commit: merge it (a no-op when the echo already did) and activate the row. */
-    private suspend fun acceptCreate(serverId: String): ConversationRecord = critical {
+    /**
+     * The server applied the add commit: merge it (a no-op when the echo already did) and activate the row. When the
+     * engine lost the commit (still at epoch 0), the create is logged (IDs only) and abandoned: [SyncException.CreateLost].
+     */
+    private suspend fun acceptCreate(serverId: String): ConversationRecord = try {
+        activateCreate(serverId)
+    } catch (e: SyncException.CreateLost) {
+        // Abandoned outside the lock (`abandonCreate` takes it).
+        log("create_lost conversation=$serverId")
+        abandonCreate(serverId)
+        throw e
+    }
+
+    private suspend fun activateCreate(serverId: String): ConversationRecord = critical {
         val record = repo.conversation(serverId) ?: throw SyncException.CommitInFlight
         val group = GroupId(record.groupId)
         mls.commitAccepted(group)
         val epoch = mls.epoch(group)
+        // The engine must have merged the add commit; still at epoch 0 means it lost it. Never activated at epoch 0.
+        if (epoch <= 0) throw SyncException.CreateLost
         val keys = membership.keys(group)
         repo.transaction {
             val active = (repo.conversation(serverId) ?: record).copy(active = true, epoch = epoch)

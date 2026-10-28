@@ -336,6 +336,53 @@ class ConversationManagerTest {
         rig.assertLockDiscipline()
     }
 
+    /**
+     * A resumed create is activated, then its `mode` post fails: the chat is active (not abandoned), so the error is
+     * passed on and no second group is made. A retry reuses the first conversation and sends the mode then.
+     */
+    @Test
+    fun failedModePostAfterResumeKeepsTheFirstConversation() = runTest {
+        val rig = Rig().start()
+        rig.server.holdNextCommitRequests = 1
+        assertFailsWith<ServerException> { rig.ana1.manager.preferredConversation("acc-bob") }
+        val id = rig.server.conversationIds().single()
+
+        rig.server.failNextMessages = 1
+        assertEquals(503, assertFailsWith<ServerException> { rig.ana1.manager.preferredConversation("acc-bob") }.status)
+        assertEquals(listOf(id), rig.server.conversationIds(), "no second conversation")
+        assertEquals(true, rig.ana1.repo.conversation(id)?.active)
+        assertEquals(1, rig.ana1.repo.conversations("acc-bob").size, "no second group")
+
+        val record = rig.ana1.manager.preferredConversation("acc-bob")
+        assertEquals(id, record.serverId)
+        assertEquals(listOf(id), rig.server.conversationIds())
+        assertEquals(1, rig.server.messages.count { it.sender == "acc-ana/ana1" }, "the mode envelope")
+        rig.assertLockDiscipline()
+    }
+
+    /**
+     * The server applied the add commit but the engine no longer holds it (it never merged it): the conversation is
+     * never activated at epoch 0. The create is logged (IDs only) and abandoned, and a new one starts.
+     */
+    @Test
+    fun engineThatLostThePendingCommitAbandonsTheCreate() = runTest {
+        val rig = Rig().start()
+        rig.server.loseNextCommitResponses = 1
+        rig.server.failNextInboxReads = 1
+        assertFailsWith<ServerException> { rig.ana1.manager.preferredConversation("acc-bob") }
+        val old = assertNotNull(rig.ana1.repo.conversation(rig.server.conversationIds().single()))
+        rig.ana1.lock.withLock { rig.ana1.mls.commitRejected(GroupId(old.groupId)) }
+
+        val record = rig.ana1.manager.preferredConversation("acc-bob")
+        assertTrue(record.serverId != old.serverId)
+        assertTrue(record.active)
+        assertFalse(record.groupId.contentEquals(old.groupId), "a fresh group")
+        assertEquals(false, rig.ana1.repo.conversation(old.serverId)?.active)
+        assertFalse(PendingCreate.isPending(rig.ana1.repo, old.serverId))
+        assertTrue(rig.ana1.logs.contains("create_lost conversation=${old.serverId}"))
+        rig.assertLockDiscipline()
+    }
+
     /** The epoch check is refused with a 403: the commit may already be applied, so the create stays pending. */
     @Test
     fun forbiddenEpochCheckKeepsTheCreatePending() = runTest {

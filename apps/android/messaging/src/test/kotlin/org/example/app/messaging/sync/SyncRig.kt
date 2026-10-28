@@ -50,7 +50,7 @@ class TestDevice(val server: FakeDeliveryServer, account: String, device: String
         private set
     var wipes = mutableListOf<String>()
 
-    private fun makeManager() = ConversationManager(me, mls, api, repo, lock, clock, membership, escrow, syncOnce = { syncs += 1; processor.sync() })
+    private fun makeManager() = ConversationManager(me, mls, api, repo, lock, clock, membership, escrow, syncOnce = { syncs += 1; processor.sync() }, log = { logs += it })
     private fun makeProcessor() = InboxProcessor(mls, api, repo, lock, clock, manager, handler, membership, OwnDeviceNotices(repo, api, notifier))
     private fun makeOutbox() = Outbox(me, mls, api, repo, lock, clock, manager, escrow, syncOnce = { processor.sync() }, readReceiptsEnabled = { readReceiptsSwitch() })
     private fun makeDeviceSync() = DeviceSync(
