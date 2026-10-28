@@ -18,6 +18,10 @@ public actor ServerClient {
     private var onUnauthorized: (@Sendable (SignOutReason) async -> Void)?
     /// Set once a 401 has been handled; stays set until the next `SessionStore.save`.
     private var signedOutAtGeneration: Int?
+    /// The reason given for that sign-out; nil while its confirming call is in flight.
+    private var signedOutReason: SignOutReason?
+    /// A 4003 arrived while the confirming call was in flight: the sign-out wipes whatever the call says.
+    private var revokedWhileConfirming = false
 
     public init(host: String, session: SessionStore, transport: HTTPTransport = URLSessionTransport()) {
         var c = URLComponents()
@@ -136,10 +140,23 @@ public actor ServerClient {
     func handleUnauthorized(sentAt: Int, serverError: Bool, revoked: Bool = false) async -> SignOutReason {
         // A login (save) since the request was sent means the 401 is about an old token.
         guard session.generation == sentAt else { return .sessionEnded }
-        if signedOutAtGeneration == sentAt { return .sessionEnded }
+        if signedOutAtGeneration == sentAt {
+            // Already handled. A 4003 still upgrades it to a wipe: the pending one, or one that ended without.
+            guard revoked else { return .sessionEnded }
+            switch signedOutReason {
+            case nil: revokedWhileConfirming = true
+            case .sessionEnded?:
+                signedOutReason = .revoked
+                await onUnauthorized?(.revoked)
+            case .revoked?: break
+            }
+            return .revoked
+        }
         // Set before the confirming call suspends this actor: a second 401 meanwhile does not sign out again.
         signedOutAtGeneration = sentAt
-        let reason: SignOutReason
+        signedOutReason = nil
+        revokedWhileConfirming = false
+        var reason: SignOutReason
         if revoked {
             reason = .revoked
         } else if serverError, await confirmUnauthorized() {
@@ -149,6 +166,8 @@ public actor ServerClient {
         }
         // A login during the confirming call: the 401 was about the old token.
         guard session.generation == sentAt else { return .sessionEnded }
+        if revokedWhileConfirming { reason = .revoked }
+        signedOutReason = reason
         // If the storage delete fails the cache is kept consistent with disk; the app is still
         // told to sign out and may retry clear().
         try? session.clear()

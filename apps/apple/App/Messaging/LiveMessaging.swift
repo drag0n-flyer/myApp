@@ -55,6 +55,15 @@ struct LiveMessaging {
         try LocalAccountData.clearWipePending(in: container)
     }
 
+    /// Whether the data in the container records its owning device (`LocalAccountData.hasRecordedDevice`); false
+    /// when it cannot be read.
+    static func hasRecordedDevice() -> Bool {
+        guard let container, let database = try? Database(url: MessagingLocations.databaseURL(in: container)) else {
+            return false
+        }
+        return LocalAccountData.hasRecordedDevice(repo: Repository(db: database, now: { Date() }))
+    }
+
     /// Sign-out: stop this graph (no task can write afterwards), then wipe its data. Throws when the wipe fails;
     /// the pending marker (written by the caller before it started) stays, so the next launch retries.
     func wipeAfterSignOut() async throws {

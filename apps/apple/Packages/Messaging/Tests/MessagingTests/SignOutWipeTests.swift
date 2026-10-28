@@ -150,6 +150,18 @@ private struct Boom: Error {}
             accountID: "acc-ana", deviceID: "dev-2", container: container, repo: repo, wipe: wipeSteps(device, Calls())) == true)
     }
 
+    // A sign-out that keeps the data needs the owning device recorded; legacy or empty data has none.
+    @Test func recordedDeviceIsReported() async throws {
+        let (device, container) = try await device()
+        let repo = device.deps.repo
+        #expect(!LocalAccountData.hasRecordedDevice(repo: repo))
+        try repo.set(LocalAccountData.ownerKey, Data("acc-ana".utf8))
+        #expect(!LocalAccountData.hasRecordedDevice(repo: repo))
+        try await LocalAccountData.prepare(
+            accountID: "acc-ana", deviceID: "dev-1", container: container, repo: repo, wipe: wipeSteps(device, Calls()))
+        #expect(LocalAccountData.hasRecordedDevice(repo: repo))
+    }
+
     @Test func freshDatabaseGetsOwnerWithoutError() async throws {
         let (device, container) = try await device()
         #expect(try await LocalAccountData.prepare(

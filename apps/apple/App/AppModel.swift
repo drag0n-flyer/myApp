@@ -326,21 +326,25 @@ final class AppModel {
         return nil
     }
 
-    /// `wipe: false` (a sign-out the server did not prove a revocation, ruling 2026-10-28) stops the old graph and
-    /// keeps its data; the next sign-in, always a new device, wipes it before opening it (`LocalAccountData`).
-    private func resetToWelcome(wipe: Bool = true) {
+    /// `revoked: false` (a sign-out the server did not prove a revocation, ruling 2026-10-28) stops the old graph and
+    /// keeps its data when it records its device; the next sign-in, always a new device, wipes it before opening it
+    /// (`LocalAccountData`). Steps and their order: `SignOutPlan`.
+    private func resetToWelcome(revoked: Bool = true) {
         // The live store belongs to the signed-out account. An empty store stands in until the next sign-in.
-        if wipe, !isSampleData, let container = LiveMessaging.container {
-            // Durable first: if the app is killed or a step fails, the next launch (or the next sign-in) wipes.
-            try? LocalAccountData.markWipePending(in: container)
-        }
         if !isSampleData {
             let old = messaging
+            // A running graph passed `LocalAccountData.prepare`, which records the device.
+            let steps = SignOutPlan.steps(
+                revoked: revoked, deviceRecorded: old != nil || LiveMessaging.hasRecordedDevice())
+            if steps.first == .markWipePending, let container = LiveMessaging.container {
+                // Durable first: if the app is killed or a step fails, the next launch (or the next sign-in) wipes.
+                try? LocalAccountData.markWipePending(in: container)
+            }
             wipeTask = Task { [previous = wipeTask] in
                 await previous?.value
                 // The old graph stops first: no event task, send or sync can write after the wipe.
                 await stopLive(force: true)
-                guard wipe else {
+                guard steps.contains(.wipe) else {
                     await old?.stop()
                     return
                 }
@@ -375,7 +379,7 @@ final class AppModel {
     /// confirms) wipes and says the device was removed; any other 401 only signs out (ruling 2026-10-28).
     private func serverEndedSession(_ reason: SignOutReason) {
         Task { await stopLive() }
-        resetToWelcome(wipe: reason == .revoked)
+        resetToWelcome(revoked: reason == .revoked)
         if reason == .revoked { deviceRemovedAlert = true }
     }
 

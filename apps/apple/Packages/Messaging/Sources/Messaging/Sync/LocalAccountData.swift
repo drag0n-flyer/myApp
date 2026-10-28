@@ -27,6 +27,12 @@ public enum LocalAccountData {
         if isWipePending(in: container) { try FileManager.default.removeItem(at: pendingURL(in: container)) }
     }
 
+    /// Whether the data records its owning device. Only then may a sign-out keep it: the next sign-in, a new
+    /// device, wipes it in `prepare`. Unreadable counts as not recorded.
+    public static func hasRecordedDevice(repo: Repository) -> Bool {
+        ((try? repo.get(ownerDeviceKey)) ?? nil) != nil
+    }
+
     /// Makes the data in `repo` safe to use for `accountID` on `deviceID`. Wipes (with `wipe`) when a wipe is pending,
     /// when the stored owner is another account or device, or when no owner is recorded; then records the owner.
     /// A stored account with no device is from before devices were recorded, when every server sign-out wiped, so
