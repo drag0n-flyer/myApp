@@ -13,7 +13,7 @@ import org.example.app.net.models.NewSession
 import org.example.app.net.models.LinkTicket
 
 /** What the new device learns when its link is approved. [snapshot] is null when `sealed` was missing or did not open. */
-class LinkApproved(val session: NewSession, val snapshot: ByteArray?)
+class LinkApproved(val session: NewSession, val snapshot: ByteArray?, val host: String)
 
 /**
  * The new-device half of device linking. The link key pair and the claim token live here, in memory only,
@@ -25,6 +25,7 @@ internal class LinkFlow(
 ) {
     private var ticket: LinkTicket? = null
     private var keys: X25519KeyPair? = null
+    private var host: String? = null
 
     suspend fun start(api: IdentityApi, host: String, deviceName: String, platform: String): LinkCode {
         forget()
@@ -37,6 +38,7 @@ internal class LinkFlow(
         }
         ticket = t
         keys = pair
+        this.host = host
         return LinkCode(LinkQr.build(host, t.linkId(), t.secret, pair.publicKey), t.expiresAt)
     }
 
@@ -49,6 +51,7 @@ internal class LinkFlow(
     suspend fun awaitApproval(api: IdentityApi): LinkApproved {
         val t = ticket ?: throw AccountError.LinkExpired
         val pair = keys
+        val issuer = host ?: throw AccountError.LinkExpired
         try {
             var waited = 0L
             var failures = 0
@@ -71,7 +74,7 @@ internal class LinkFlow(
                 } catch (e: Exception) {
                     throw AccountError.Server
                 }
-                if (claim is LinkClaim.Approved) return LinkApproved(claim.session, open(pair, claim.sealed))
+                if (claim is LinkClaim.Approved) return LinkApproved(claim.session, open(pair, claim.sealed), issuer)
                 if (waited + POLL_MS > MAX_WAIT_MS) throw AccountError.LinkExpired
                 sleep(POLL_MS)
                 waited += POLL_MS
@@ -87,6 +90,7 @@ internal class LinkFlow(
         keys?.privateKey?.fill(0)
         keys = null
         ticket = null
+        host = null
     }
 
     /** Missing, or fails to open: import nothing (the link still works). */

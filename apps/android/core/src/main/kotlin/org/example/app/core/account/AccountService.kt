@@ -75,10 +75,15 @@ data class DeviceInfo(
 )
 
 /** Account sign-up and linking. Every call throws [AccountError]. `SampleAccountService` now; the Go server later. */
+/** What the app shows first: the chats, onboarding, or a retry screen when the account could not be read. */
+enum class AccountState { SignedIn, SignedOut, Unavailable }
+
 interface AccountService {
     val defaultServer: ServerPolicy
     val currentServer: ServerPolicy?
     val isSignedIn: Boolean
+    /** Like [isSignedIn], but tells "signed out" from "could not read the account right now". */
+    val accountState: AccountState get() = if (isSignedIn) AccountState.SignedIn else AccountState.SignedOut
     /** For `currentServer`, else `defaultServer`. */
     val supportsPasskeys: Boolean
 

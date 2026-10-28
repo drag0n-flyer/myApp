@@ -13,6 +13,7 @@ import org.example.app.contracts.ServerException
 import org.example.app.contracts.SnapshotSource
 import org.example.app.core.account.AccountError
 import org.example.app.core.account.AccountService
+import org.example.app.core.account.AccountState
 import org.example.app.core.account.DeviceInfo
 import org.example.app.core.account.DevicePlatform
 import org.example.app.core.account.LinkApproval
@@ -91,6 +92,7 @@ class LiveAccountService(
         ServerClient(url, sessionStore, OkHttpClient())
     },
     private val sleep: suspend (Long) -> Unit = { delay(it) },
+    @Suppress("unused") private val clock: () -> java.time.Instant = java.time.Instant::now,
 ) : AccountService {
     private var client: ServerClient = client
     private val link = LinkFlow(hpke, sleep)
@@ -117,7 +119,14 @@ class LiveAccountService(
     override var currentServer: ServerPolicy? = null
         private set
 
+    /** False while the session cannot be read; use [accountState] to tell that from signed out. */
     override val isSignedIn: Boolean get() = !forcedOut && sessionStore.current != null
+    override val accountState: AccountState
+        get() = when (sessionState) {
+            SessionState.Unavailable -> AccountState.Unavailable
+            is SessionState.Present -> if (forcedOut) AccountState.SignedOut else AccountState.SignedIn
+            SessionState.Absent -> AccountState.SignedOut
+        }
     override val supportsPasskeys: Boolean get() = passkeysOk
 
     /** Absent, present or unavailable (the secret store was busy); the UI maps `Unavailable` to a retry screen. */
@@ -149,6 +158,9 @@ class LiveAccountService(
         val c = if (hostPortOf(client.baseUrl).equals(wanted, ignoreCase = true)) client else makeClient(address)
         val info = ServerInfoApi(c).serverInfo()
         if (c !== client) {
+            // A claimed link session and the link code belong to the host that issued them.
+            unsaved = null
+            link.forget()
             client = c
             install(c)
         }
@@ -262,7 +274,7 @@ class LiveAccountService(
         val c = ready()
         // The claim answers once. If saving the session failed on an earlier call, only the save is retried.
         val approved = unsaved ?: link.awaitApproval(IdentityApi(c)).also { unsaved = it }
-        accountCall { persist(approved.session, LINK_SAVE_ATTEMPTS) }
+        accountCall { persist(approved.session, LINK_SAVE_ATTEMPTS, approved.host) }
         unsaved = null
         // A snapshot that did not open is null here and nothing is imported. A failed import leaves the
         // account without the contact list, as an absent snapshot would.
@@ -362,10 +374,11 @@ class LiveAccountService(
 
     /** Makes [client] the one for [host], so the session token cannot go to another host. */
     private fun bindTo(host: String) {
-        if (hostPortOf(client.baseUrl).equals(host, ignoreCase = true)) return
-        val address = ServerAddress.parse(host) ?: throw AccountError.Server
+        val address = sessionAddress(host) ?: throw AccountError.Server
+        val wanted = canonical(address)
+        if (hostPortOf(client.baseUrl).equals(wanted, ignoreCase = true) && schemeOk(client)) return
         val c = makeClient(address)
-        if (!hostPortOf(c.baseUrl).equals(host, ignoreCase = true)) throw AccountError.Server
+        if (!hostPortOf(c.baseUrl).equals(wanted, ignoreCase = true) || !schemeOk(c)) throw AccountError.Server
         client = c
         install(c)
     }
@@ -374,7 +387,8 @@ class LiveAccountService(
         if (forcedOut) throw AccountError.Server
         ready()
         val s = sessionStore.current ?: throw AccountError.Server
-        if (!hostPortOf(client.baseUrl).equals(s.host, ignoreCase = true)) throw AccountError.Server
+        val wanted = sessionAddress(s.host)?.let { canonical(it) } ?: throw AccountError.Server
+        if (!hostPortOf(client.baseUrl).equals(wanted, ignoreCase = true)) throw AccountError.Server
         return s
     }
 
@@ -382,8 +396,8 @@ class LiveAccountService(
      * Saves the session. A busy secret store is retried with backoff; if it stays busy nothing is signed in or
      * out. Never overwrites a stored session that could not be read (the store refuses).
      */
-    private suspend fun persist(s: NewSession, attempts: Int = SAVE_ATTEMPTS) {
-        val session = Session(hostPortOf(client.baseUrl), s.accountID, s.deviceID, s.sessionToken)
+    private suspend fun persist(s: NewSession, attempts: Int = SAVE_ATTEMPTS, host: String = hostPortOf(client.baseUrl)) {
+        val session = Session(host, s.accountID, s.deviceID, s.sessionToken)
         var attempt = 0
         var wait = SAVE_RETRY_MS
         while (true) {
@@ -447,15 +461,35 @@ class LiveAccountService(
         /** A claimed link session is worth waiting for: about 11 seconds of backoff before giving up for now. */
         const val LINK_SAVE_ATTEMPTS = 8
 
+        private val LOOPBACK = setOf("localhost", "127.0.0.1", "::1")
+
+        fun isLoopback(host: String) = host in LOOPBACK
+
+        /** https, except for loopback (development servers). */
+        fun schemeOk(c: ServerClient) = c.baseUrl.isHttps || isLoopback(c.baseUrl.host)
+
+        /**
+         * The address a stored session host stands for. Loopback keeps its port (no port means plain http on 80);
+         * 443 means https. Any other host is https.
+         */
+        fun sessionAddress(host: String): ServerAddress? {
+            val a = ServerAddress.parse(host) ?: return null
+            if (!isLoopback(a.host)) return a
+            val port = a.port ?: 80
+            return ServerAddress(a.host, port, port == 443)
+        }
+
+        /** Default ports are dropped, except for loopback, where the port is always kept. */
         fun canonical(a: ServerAddress): String {
             val default = if (a.secure) 443 else 80
             val h = if (':' in a.host) "[${a.host}]" else a.host
-            return if (a.port != null && a.port != default) "$h:${a.port}" else h
+            val port = a.port ?: default
+            return if (port != default || isLoopback(a.host)) "$h:$port" else h
         }
 
         fun hostPortOf(url: HttpUrl): String {
             val h = if (':' in url.host) "[${url.host}]" else url.host
-            return if (url.port != HttpUrl.defaultPort(url.scheme)) "$h:${url.port}" else h
+            return if (url.port != HttpUrl.defaultPort(url.scheme) || isLoopback(url.host)) "$h:${url.port}" else h
         }
     }
 }

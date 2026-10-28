@@ -16,6 +16,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import org.example.app.core.account.AccountState
 import org.example.app.core.account.SampleAccountService
 import org.example.app.ui.contacts.AddContactScreen
 import org.example.app.ui.contacts.ContactsScreen
@@ -90,9 +91,16 @@ private inline fun <reified T : ViewModel> factory(crossinline make: () -> T) = 
 fun AppRoot(
     graph: AppGraph,
     // Sample mode goes straight to the chats; the live build starts with onboarding until signed in.
-    startWithOnboarding: Boolean = !graph.sampleData && !graph.accountService.isSignedIn,
+    startWithOnboarding: Boolean? = null,
 ) {
     AppTheme {
+        // An account that cannot be read right now is not a signed-out one: ask again, never onboard over it.
+        var accountState by remember { mutableStateOf(if (graph.sampleData) AccountState.SignedIn else graph.accountService.accountState) }
+        if (startWithOnboarding == null && accountState == AccountState.Unavailable) {
+            AccountUnavailableScreen(onTryAgain = { accountState = graph.accountService.accountState })
+            return@AppTheme
+        }
+        val onboarding = startWithOnboarding ?: (accountState == AccountState.SignedOut)
         val nav = rememberNavController()
         val idArg = listOf(navArgument("id") { type = NavType.StringType })
         val context = LocalContext.current
@@ -107,7 +115,7 @@ fun AppRoot(
         )
         val call by callVm.call.collectAsState()
         Box {
-        NavHost(nav, startDestination = if (startWithOnboarding) ONBOARDING else MAIN) {
+        NavHost(nav, startDestination = if (onboarding) ONBOARDING else MAIN) {
             composable(ONBOARDING) {
                 val vm = viewModel<OnboardingViewModel>(
                     factory = viewModelFactory { initializer { OnboardingViewModel(graph.accountService, saved = createSavedStateHandle()) } },

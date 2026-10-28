@@ -386,4 +386,6 @@
     <string name="server_status">Status</string>
     <string name="server_connected">Connected</string>
     <string name="server_footer">Switching to another server doesn\'t move your contacts or chats.</string>
+    <string name="account_unavailable_message">Can\'t open your account right now</string>
+    <string name="account_unavailable_retry">Try again</string>
 </resources>

@@ -87,6 +87,7 @@ class Fixture(
         passkeySupport = PasskeySupportCheck { _, _ -> passkeysSupported },
         makeClient = { addr -> if (addr.hostPort == hostPort) client else error("unexpected host ${addr.hostPort}") },
         sleep = { ms -> sleeps += ms },
+        clock = { clock },
     )
 
     fun serverInfo(protocol: Int = 1) = server.json(
