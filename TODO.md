@@ -1,6 +1,6 @@
 # Progress
 
-Last updated: 2026-10-28 (evening).
+Last updated: 2026-10-28, 08:20 UTC.
 
 | Track | Done | % |
 |---|---|---|
@@ -8,7 +8,7 @@ Last updated: 2026-10-28 (evening).
 | Android | 37 / 44 | 84% |
 | Admin dashboard | done, with admin accounts and 2FA, on `main` | 100% |
 
-Up to 15 agents work in parallel (on Opus until 2 Nov, when Sonnet's weekly limit resets). Mac CI runs only the jobs a change needs. Android CI uses Linux runners only.
+Up to 15 agents work in parallel (on Opus until 2 Nov, when Sonnet's weekly limit resets). CI is the bottleneck: about 5 Mac jobs at once, and GitHub throttles status checks when many agents watch runs. Mac CI runs only the jobs a change needs. Android CI uses Linux runners only.
 
 App code is written on Linux. It counts as done here once it is written, reviewed and merged. It is checked for real only when its CI run is green.
 
@@ -37,18 +37,24 @@ Admin dashboard: `http://localhost:9044/admin/`. `.env` also sets `APP_ADMIN_HOS
 | [MLS client core](docs/superpowers/plans/2026-10-27-mls-client-core.md) | 7 / 7 | 100% | on `main`; the real-iPhone checklist for the notification extension is yours (see "Waiting on the owner") | done |
 | [WebRTC + Opus build](docs/superpowers/plans/2026-10-27-webrtc-opus-build.md) | 4 / 6 | 67% | Task 5: Mac CI build, fixing the last Swift errors (agent running); then Task 6, the first release | 1 day |
 | [Client calling](docs/superpowers/plans/2026-10-27-client-calling.md) | 15 / 16 | 94% | I1 left | 1 day after WebRTC |
-| [Client messaging](docs/superpowers/plans/2026-10-27-client-messaging.md) | 15 / 16 | 94% | I1 (integration with calling): main merged in; fixing the call info sheet test (the button's tap target was the whole screen) and two lock tests, then the iPhone and Mac builds on CI (agent running) | 0.5 day |
+| [Client messaging](docs/superpowers/plans/2026-10-27-client-messaging.md) | 15 / 16 | 94% | I1 (integration with calling): lock tests fixed (a merge had silently restored old code), call info button fixed, all Linux tests pass; the photo test fix is on CI, then the first iPhone and Mac app runs | 2–4 h |
 | [Security docs and release](docs/superpowers/plans/2026-10-27-security-docs-release.md) | 13 / 14 | 93% | only Task 13 left, deferred by the owner | done for now |
 | [Call lab](docs/superpowers/plans/2026-10-27-call-lab.md) | 9 / 12 | 75% | L10a waits for WebRTC; L10 deferred; L11 last | 1 day after WebRTC |
 
-In progress for the iPhone/Mac (one agent each, started 2026-10-28):
-- the app ID moves into one file, `apps/apple/AppID.xcconfig`, plus a stronger photo-privacy test (starts from a photo with location, camera and date data)
-- bugs the Android port found that the iPhone shares: a chat can be orphaned if the reply to its first commit is lost; one bad join can stop the whole inbox
-- the call machine should check the answering device against its encryption identity, and give up on calls that never connect (ring and setup deadlines)
-- sign-up sends the display name (`PATCH /v1/me/settings` after sign-up) and has an email-code path that never registers a passkey, matching Android
-- the read-receipts switch works (off stops sending read receipts and hides others' read ticks; not retroactive), matching Android
-- linking: a contact list that can't be opened is skipped (sign in, tell the user) instead of failing the link; a too-large one is skipped with a note to the approver; the link-code check must compare the port too
-- own-device reconcile (protocol requirement) with Android's safety checks; control messages in the outbox expire after 24 h
+Extra work beyond the plans, in progress (each is reviewed before it merges; ETAs are agent time):
+
+| Work | Branch | Now | ETA |
+|---|---|---|---|
+| Android review follow-ups (server binding, invite clearing, 1:1 call signals) | `android/followups` | merged | done |
+| Port: a lost reply to a new chat's first commit no longer orphans it; one bad invite no longer stalls the inbox | `fix/ios-port-inbox` | 2nd fix round (when to give up on a new chat) on CI; review found and fixed a remote inbox stall | 1–2 h |
+| Port: calls check the answering device; ring (50 s) and setup (30 s) deadlines | `fix/ios-port-calls` | review approved; fix round (sender device wired through, 2 tests) on CI | 1 h |
+| Port: own devices kept in line with the account; old control messages expire after 24 h | `feat/ios-port-reconcile` | review approved; fix round (wiring, a faked "device revoked" can never wipe or remove) on CI | 1–2 h |
+| Android: the same own-device wiring, with the same protection | `android/reconcile-wiring` | review found the faked-revoke wipe; fixed, on CI | 1–2 h |
+| Port: sign-up sends the display name, email-code sign-up, read-receipts switch | `feat/ios-port-signup` | written, on CI, review next | 2–3 h |
+| Port: linking skips an unreadable or too-large contact list; link-code check compares the port | `feat/ios-port-linking` | written, on CI, review next | 2–3 h |
+| App ID in one file (`apps/apple/AppID.xcconfig`) and a stronger photo-privacy test | `chore/appid-xcconfig` | written, waiting for Mac CI | 1–2 h |
+
+Still to port to Android after the iPhone inbox review: a crafted invite reusing another chat's group must be set aside, not stall the inbox; a new chat is abandoned only on a definite refusal.
 
 ## Main CI
 
