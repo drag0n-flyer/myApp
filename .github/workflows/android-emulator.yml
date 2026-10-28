@@ -65,6 +65,8 @@ jobs:
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" >/dev/null
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+      - name: Fetch the RNNoise model (checksum verified)
+        run: scripts/android-fetch-rnnoise-model.sh
       - name: Cross-build mlsffi
         timeout-minutes: 25
         run: scripts/build-mlsffi-android.sh
