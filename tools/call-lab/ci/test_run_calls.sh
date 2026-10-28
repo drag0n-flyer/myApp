@@ -36,6 +36,22 @@ test_missing_info_plist_fails() {
     check missing_info_plist_fails "2 no CFBundleExecutable in $tmp/Empty.app/Contents/Info.plist" "$rc $out"
 }
 
+# coturn exits with its usage text on an unknown option (4.18 dropped --no-dtls), and then every
+# relay call silently has no TURN server. Every option run_calls.sh passes must exist in 4.18.0.
+test_turnserver_options_exist() {
+    make_app "$tmp/CallLab.app" CallLab
+    line=$(sh "$S" --app "$tmp/CallLab.app" --server s --stimulus x.wav --out o --dry-run 2>&1 | grep '^turnserver: ')
+    [ -n "$line" ] || { check turnserver_line_printed yes no; return; }
+    bad=
+    for o in $(echo "$line" | tr ' ' '\n' | sed -n 's/^--\([a-z0-9-]*\).*/\1/p'); do
+        grep -qx "$o" "$dir/fixtures/coturn-4.18.0-options.txt" || bad="$bad $o"
+    done
+    check turnserver_options_exist "" "$bad"
+    case "$line" in *--no-cli*) r=yes ;; *) r=no ;; esac   # --allow-loopback-peers needs the CLI off
+    check turnserver_cli_off yes "$r"
+}
+
 test_binary_from_info_plist
 test_missing_info_plist_fails
+test_turnserver_options_exist
 if [ "$fail" -eq 0 ]; then echo "PASS $total/$total"; else echo "FAIL $((total - fail))/$total"; exit 1; fi

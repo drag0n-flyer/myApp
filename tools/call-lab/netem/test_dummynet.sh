@@ -119,7 +119,7 @@ test_packets_from_pf_rule_counter() {
     cat > "$tmp/pf-shaped" <<'OUT'
 dummynet out quick on lo0 proto udp all pipe 1
   [ Evaluations: 25345     Packets: 25345     Bytes: 3254400     States: 0     ]
-  [ Inserted: uid 0 pid 4242 State Creations: 0     ]
+  [ Inserted: uid 0 pid 36410 ]
 OUT
     fake_tools "$tmp/pf-shaped"
     check packets_from_pf_rule_counter 25345 "$(PATH="$tmp/bin:$PATH" sh "$S" packets 2>&1)"
@@ -139,6 +139,29 @@ OUT
     : > "$tmp/pf-empty"
     fake_tools "$tmp/pf-empty"
     PATH="$tmp/bin:$PATH" sh "$S" check-shaped >/dev/null 2>&1; check check_shaped_fails_no_rule 1 "$?"
+}
+
+# dnctl can fail once with ENOMEM on a fresh runner (run 40738133728); apply retries the pipe
+# config a few times, and still fails when it keeps failing.
+test_pipe_config_retried() {
+    mkdir -p "$tmp/bin"
+    printf '#!/bin/sh\nexit 0\n' > "$tmp/bin/pfctl"; printf '#!/bin/sh\nexit 0\n' > "$tmp/bin/ifconfig"
+    printf '#!/bin/sh\nexit 0\n' > "$tmp/bin/sleep"
+    cat > "$tmp/bin/dnctl" <<EOS
+#!/bin/sh
+n=\$(cat "$tmp/dn" 2>/dev/null || echo 0); n=\$((n + 1)); echo \$n > "$tmp/dn"
+[ \$n -ge \$(cat "$tmp/dn-ok") ] && exit 0
+echo "dnctl: setsockopt(IP_DUMMYNET_CONFIGURE): Cannot allocate memory" >&2; exit 71
+EOS
+    chmod +x "$tmp/bin/"*
+    echo 2 > "$tmp/dn-ok"; rm -f "$tmp/dn"
+    PATH="$tmp/bin:$PATH" sh "$S" apply lo0 loss5 >/dev/null 2>&1; rc=$?
+    check pipe_config_retried "0 2" "$rc $(cat "$tmp/dn")"
+    echo 99 > "$tmp/dn-ok"; rm -f "$tmp/dn"
+    PATH="$tmp/bin:$PATH" sh "$S" apply lo0 loss5 >/dev/null 2>&1; rc=$?
+    [ "$rc" -ne 0 ] && r=nonzero || r=zero
+    check pipe_config_gives_up "nonzero 3" "$r $(cat "$tmp/dn")"
+    rm -f "$tmp/bin/sleep"
 }
 
 test_unknown_profile() {
@@ -174,6 +197,7 @@ test_main_ruleset_loaded_before_anchor
 test_token_kept_and_released
 test_packets_from_pf_rule_counter
 test_check_shaped_fails_when_not_applied
+test_pipe_config_retried
 test_unknown_profile
 test_bad_interface_name
 test_usage

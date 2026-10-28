@@ -52,8 +52,16 @@ with open(sys.argv[1], "rb") as f:
 [ -n "$exe" ] || { echo "no CFBundleExecutable in $app/Contents/Info.plist" >&2; exit 2; }
 bin="$app/Contents/MacOS/$exe"
 
+# coturn's arguments (address, secret). No value contains spaces.
+turn_args() {
+    echo "-n --listening-ip=$1 --relay-ip=$1 --listening-port=3478 --use-auth-secret" \
+        "--static-auth-secret=$2 --realm=lab.invalid --no-tls --no-cli --allow-loopback-peers" \
+        "--verbose --log-file=stdout"
+}
+
 if [ "$dry" -eq 1 ]; then
     echo "app binary: $bin"
+    echo "turnserver: $(turn_args "<turn-ip>" "<secret>")"
     echo "$MATRIX" | while read -r preset path profile snr; do
         echo "call $preset $path $profile noise=$snr ${seconds}s"
         sh "$lab/netem/dummynet.sh" --dry-run apply lo0 "$profile" "$path" 2>/dev/null | sed 's/^/  /'
@@ -80,17 +88,21 @@ trap 'cleanup; exit 143' TERM
 ip=$(ipconfig getifaddr en0 2>/dev/null || true)
 locals=127.0.0.1${ip:+,$ip}
 
-# coturn listens and relays on the runner's en0 address, not 127.0.0.1: with 127.0.0.1 the relay
-# calls got no audio (suspected cause: WebRTC leaves loopback networks out of ICE). Traffic between
-# local addresses still crosses lo0, where the capture and the shaping are. Loopback peers stay
-# allowed for runners without an en0 address.
+# coturn listens and relays on the runner's en0 address (traffic between local addresses still
+# crosses lo0, where the capture and the shaping are); 127.0.0.1 on a runner without en0.
+# Every option must exist in the installed coturn: on an unknown one (4.18 dropped --no-dtls; DTLS
+# is now off unless --dtls) it prints its usage and exits, and the relay calls get no TURN server.
+# --allow-loopback-peers needs --no-cli (coturn refuses it with an open, password-less CLI).
 turn_ip=${ip:-127.0.0.1}
 # The TURN secret is made fresh for this run and never leaves the runner.
 secret=$(openssl rand -hex 24)
-turnserver -n --listening-ip="$turn_ip" --relay-ip="$turn_ip" --listening-port=3478 \
-    --use-auth-secret --static-auth-secret="$secret" --realm=lab.invalid \
-    --no-tls --no-dtls --no-cli --allow-loopback-peers --verbose --log-file=stdout >"$tmp/turn.log" 2>&1 &
-pids="$pids $!"
+turnserver $(turn_args "$turn_ip" "$secret") >"$tmp/turn.log" 2>&1 &
+turn_pid=$!
+pids="$pids $turn_pid"
+sleep 2
+if ! kill -0 "$turn_pid" 2>/dev/null; then
+    echo "coturn exited at start:" >&2; grep -vi secret "$tmp/turn.log" | head -5 >&2; exit 1
+fi
 
 export APP_HOST=localhost APP_LISTEN=127.0.0.1:8080 APP_ADMIN_LISTEN=127.0.0.1:9090
 export APP_DATA_DIR="$tmp/data" APP_TURN_SECRET="$secret" APP_RELAYS=$turn_ip APP_LAB_MODE=1

@@ -40,12 +40,22 @@ check_iface() {
     if ! ifconfig "$1" >/dev/null 2>&1; then echo "no such interface: $1" >&2; exit 2; fi
 }
 
+# Like run, but tries 3 times, 1 s apart: dnctl has failed once with ENOMEM on a fresh runner.
+run_retry() {
+    if [ "$dry" -eq 1 ]; then echo "$*"; return 0; fi
+    for try in 1 2 3; do
+        "$@" && return 0
+        [ "$try" -lt 3 ] && sleep 1
+    done
+    echo "failed: $*" >&2; exit 1
+}
+
 pipe() { # number delay loss_pct rate
     plr=$(awk -v l="$3" 'BEGIN { printf "%g", l / 100 }')
     if [ "$4" = "-" ]; then
-        run dnctl pipe "$1" config delay "$2" plr "$plr" mask src-ip 0xffffffff src-port 0xffff
+        run_retry dnctl pipe "$1" config delay "$2" plr "$plr" mask src-ip 0xffffffff src-port 0xffff
     else
-        run dnctl pipe "$1" config bw "$4"Kbit/s delay "$2" plr "$plr" mask src-ip 0xffffffff src-port 0xffff
+        run_retry dnctl pipe "$1" config bw "$4"Kbit/s delay "$2" plr "$plr" mask src-ip 0xffffffff src-port 0xffff
     fi
 }
 
