@@ -6,8 +6,7 @@ name: interop
 on:
   workflow_dispatch:
   push:
-    # TEMPORARY: android/i2 runs it once before merge (dispatch needs the file on main). Removed before merge.
-    branches: [main, android/i2]
+    branches: [main]
     paths:
       - 'scripts/interop.sh'
       - '.github/workflows/interop.yml'
