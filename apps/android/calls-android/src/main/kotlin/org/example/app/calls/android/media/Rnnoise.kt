@@ -106,6 +106,12 @@ internal object CaptureHookJni {
     @JvmStatic external fun nativeDenoisedFrames(): Long
 
     @JvmStatic external fun nativeLastFrameSize(): Int
+
+    @JvmStatic external fun nativeResetForCall()
+
+    @JvmStatic external fun nativeSetTone(on: Boolean)
+
+    @JvmStatic external fun nativeToneFrames(): Long
 }
 
 /**
@@ -128,4 +134,17 @@ object CaptureHook {
 
     /** The size of the last frame the hook saw (480 at 48 kHz), or 0 before any. */
     val lastFrameSize: Int get() = CaptureHookJni.nativeLastFrameSize()
+
+    /** Drops RNNoise's history before the next frame, so a call does not start from the last call's state. */
+    fun resetForCall() = CaptureHookJni.nativeResetForCall()
+
+    /** Test stimulus: replaces the captured audio with a 440 Hz tone, so loopback tests send real audio. */
+    internal var tone: Boolean = false
+        set(value) {
+            field = value
+            CaptureHookJni.nativeSetTone(value)
+        }
+
+    /** Frames the tone has been written into. */
+    internal val toneFrames: Long get() = CaptureHookJni.nativeToneFrames()
 }
