@@ -40,7 +40,10 @@ sealed class AccountError : Exception() {
 }
 
 /** Shown as a QR code on a device waiting to be linked. */
-data class LinkCode(val qrText: String, val expiresAt: Instant)
+data class LinkCode(val qrText: String, val expiresAt: Instant) {
+    /** The QR text holds the link secret and key: never printed. */
+    override fun toString() = "LinkCode(expiresAt=$expiresAt)"
+}
 
 /** What the approving device learns from a scanned code, shown before it approves. */
 data class LinkRequest(
@@ -49,6 +52,21 @@ data class LinkRequest(
     val platform: DevicePlatform,
     /** When the new device asked to be linked, as reported by the server. */
     val requestedAt: Instant? = null,
+) {
+    /** [qrText] holds the link secret: never printed. */
+    override fun toString() = "LinkRequest(deviceName=$deviceName, platform=$platform, requestedAt=$requestedAt)"
+}
+
+/** How linking ended on the new device. The account is signed in either way. */
+data class LinkedResult(
+    /** False when no contact list arrived (none sent, or it did not open or import); the UI says "Contacts weren't copied". */
+    val contactsCopied: Boolean,
+)
+
+/** How approving ended on the approving device. */
+data class LinkApproval(
+    /** False when the snapshot was too large to send: the new device was approved without it; the UI says so. */
+    val snapshotSent: Boolean,
 )
 
 data class DeviceInfo(
@@ -60,10 +78,15 @@ data class DeviceInfo(
 )
 
 /** Account sign-up and linking. Every call throws [AccountError]. `SampleAccountService` now; the Go server later. */
+/** What the app shows first: the chats, onboarding, or a retry screen when the account could not be read. */
+enum class AccountState { SignedIn, SignedOut, Unavailable }
+
 interface AccountService {
     val defaultServer: ServerPolicy
     val currentServer: ServerPolicy?
     val isSignedIn: Boolean
+    /** Like [isSignedIn], but tells "signed out" from "could not read the account right now". */
+    val accountState: AccountState get() = if (isSignedIn) AccountState.SignedIn else AccountState.SignedOut
     /** For `currentServer`, else `defaultServer`. */
     val supportsPasskeys: Boolean
 
@@ -88,11 +111,11 @@ interface AccountService {
     suspend fun addPasskey()
     suspend fun makeLinkCode(): LinkCode
     /** Returns when this device is signed in. */
-    suspend fun waitForLinkApproval()
+    suspend fun waitForLinkApproval(): LinkedResult
     /** Approving side, step 1: read a scanned code. Throws [AccountError.WrongServer] or [AccountError.LinkExpired]. */
     suspend fun linkRequest(qrText: String): LinkRequest
     /** Approving side, step 2: confirm with biometrics, then approve. Throws [AccountError.BiometricsUnavailable]. */
-    suspend fun approveLink(request: LinkRequest)
+    suspend fun approveLink(request: LinkRequest): LinkApproval
     suspend fun devices(): List<DeviceInfo>
     suspend fun removeDevice(id: String)
     suspend fun deleteAccount()

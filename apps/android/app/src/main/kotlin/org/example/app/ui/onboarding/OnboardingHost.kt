@@ -58,25 +58,17 @@ fun OnboardingHost(vm: OnboardingViewModel, onFinished: () -> Unit) {
 }
 
 /**
- * Approving phone: scan the new device's code, show who is asking, confirm with a fingerprint,
- * face or screen lock, approve. [scanner] is the camera view and [confirm] the biometric prompt
- * (fakes in tests). The prompt runs here, with the current Activity, not in the view model.
+ * Approving phone: scan the new device's code, show who is asking, approve. [scanner] is the camera view
+ * (a fake in tests). The biometric check runs once, inside the service's `approveLink`.
  */
 @Composable
 fun LinkApprovalFlow(
     vm: LinkApprovalViewModel,
     onDone: () -> Unit,
     scanner: @Composable (onResult: (String) -> Unit) -> Unit = { PermissionedQrScanner(it) },
-    confirm: (suspend () -> BiometricResult)? = null,
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
-    val platformConfirm = rememberBiometricConfirm()
-    val runConfirm = confirm ?: platformConfirm
     LaunchedEffect(state.approved) { if (state.approved) onDone() }
-    // If the screen is recreated while the prompt is up, the prompt is asked again here.
-    LaunchedEffect(state.awaitingBiometric) {
-        if (state.awaitingBiometric) vm.biometricResult(runConfirm())
-    }
     val request = state.request
     if (request == null) {
         Scaffold { padding ->

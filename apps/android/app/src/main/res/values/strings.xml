@@ -222,6 +222,7 @@
     <string name="platform_iphone">iPhone</string>
     <string name="platform_mac">Mac</string>
     <string name="platform_android">Android</string>
+    <string name="platform_other">Other device</string>
 
     <string name="lost_title">Sign in on a new phone</string>
     <string name="lost_message">Your account comes back, but old messages can only be restored from a backup.</string>
@@ -313,6 +314,10 @@
     <string name="settings_notifications">Notifications</string>
     <string name="settings_folders">Chat folders</string>
     <string name="settings_calls_audio">Calls &amp; Audio</string>
+    <string name="settings_licenses">Open-source licenses</string>
+    <string name="licenses_title">Open-source licenses</string>
+    <string name="licenses_load_failed">Couldn\'t load the licenses.</string>
+    <string name="licenses_pending">The full license text is added with this component\'s first release.</string>
     <string name="settings_server_connected">Connected</string>
 
     <!-- Privacy -->
@@ -363,6 +368,7 @@
     <string name="device_iphone">iPhone</string>
     <string name="device_mac">Mac</string>
     <string name="device_android">Android</string>
+    <string name="device_other">Other device</string>
     <string name="devices_remove">Remove %1$s</string>
     <string name="devices_remove_title">Remove this device?</string>
     <string name="devices_link">Link a device</string>
@@ -391,4 +397,6 @@
     <string name="server_status">Status</string>
     <string name="server_connected">Connected</string>
     <string name="server_footer">Switching to another server doesn\'t move your contacts or chats.</string>
+    <string name="account_unavailable_message">Can\'t open your account right now</string>
+    <string name="account_unavailable_retry">Try again</string>
 </resources>
