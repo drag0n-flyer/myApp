@@ -86,6 +86,10 @@ final class LabCall: ObservableObject {
     private var pathMonitor: NWPathMonitor?
     private var lastPathSignature: String?
 
+    /// Capture hook for the next peer connection factory (headless `--stimulus`, L10a). The factory holds it weakly,
+    /// so it is kept here.
+    static var capturePostProcessing: (any RTCAudioCapturePostProcessing)?
+
     func configure(host: String, token: String) { self.host = host; self.token = token }
 
     // MARK: entry points
@@ -254,7 +258,15 @@ final class LabCall: ObservableObject {
 
     private func makePeerConnection(turn: TurnConfig) async throws {
         configureAudioSession()
-        let factory = RTCPeerConnectionFactory()
+        let factory: RTCPeerConnectionFactory
+        if let hook = Self.capturePostProcessing, RTCPeerConnectionFactory.hasCapturePostProcessingHook {
+            // Headless CI runs (L10a): the stimulus replaces the microphone samples in the capture path.
+            factory = RTCPeerConnectionFactory(encoderFactory: RTCDefaultVideoEncoderFactory(),
+                                               decoderFactory: RTCDefaultVideoDecoderFactory(),
+                                               capturePostProcessing: hook)
+        } else {
+            factory = RTCPeerConnectionFactory()
+        }
         self.factory = factory
         let cfg = RTCConfiguration()
         cfg.iceServers = turn.iceServers.map { RTCIceServer(urlStrings: $0.urls, username: $0.username, credential: $0.credential) }
