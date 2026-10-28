@@ -181,7 +181,10 @@ jobs:
           WEBRTC_LOCAL_XCFRAMEWORK: WebRTC.xcframework
         run: |
           softwareupdate --install-rosetta --agree-to-license || true
-          swift test --arch x86_64
+          # Run SwiftPM itself under Rosetta: a native swift test launches the
+          # arm64 test helper, which cannot load the x86_64 test bundle.
+          arch -x86_64 /usr/bin/uname -m
+          arch -x86_64 swift test --arch x86_64
       - name: xcodebuild test (iOS Simulator)
         working-directory: apps/apple/Packages/WebRTCBinary
         env:
