@@ -1,7 +1,7 @@
 #!/bin/sh
 # Linux tests for the Android WebRTC build: build-android.sh (arguments and gn
 # arguments), package-android.sh (the AAR), apply.sh's platform switch, and
-# patches 0005 and 0006 against the real upstream files at WEBRTC_COMMIT.
+# patches 0006 and 0007 against the real upstream files at WEBRTC_COMMIT.
 # Run: sh tools/webrtc/build_android_test.sh
 #
 # Needs git, python3, curl and base64. The patch checks fetch the files the
@@ -193,13 +193,13 @@ new_tree() { # new_tree <dir>: fixture WebRTC tree
   g -C "$1/third_party" init -q
   g -C "$1/third_party" add opus/BUILD.gn
   g -C "$1/third_party" commit -q -m base
-  for f in f3 f4 f5 f6; do printf 'base\n' >"$1/$f.txt"; done
+  for f in f3 f4 f5 f6 f7; do printf 'base\n' >"$1/$f.txt"; done
   printf 'generate_plc_(field_trials.IsEnabled("%s"))\n' "$FIELD_TRIAL_OPUS_PLC" >"$1/modules/audio_coding/codecs/opus/audio_decoder_opus.cc"
   g -C "$1" init -q
-  g -C "$1" add f3.txt f4.txt f5.txt f6.txt modules
+  g -C "$1" add f3.txt f4.txt f5.txt f6.txt f7.txt modules
   g -C "$1" commit -q -m base
 }
-# Fixture patches 0001..0006, each changing one file (0001 is for third_party).
+# Fixture patches 0001..0007, each changing one file (0001 is for third_party).
 pd="$work/patches"
 mkdir -p "$pd"
 t0="$work/t0"
@@ -207,7 +207,7 @@ new_tree "$t0"
 printf 'one\ntwo\nTHREE\nfour\nfive\n' >"$t0/third_party/opus/BUILD.gn"
 g -C "$t0/third_party" diff --no-prefix >"$pd/0001-fixture.patch"
 g -C "$t0/third_party" checkout -q -- opus/BUILD.gn
-for n in 3 4 5 6; do
+for n in 3 4 5 6 7; do
   printf 'patched\n' >"$t0/f$n.txt"
   g -C "$t0" diff -- "f$n.txt" >"$pd/000$n-fixture.patch"
   g -C "$t0" checkout -q -- "f$n.txt"
@@ -227,8 +227,8 @@ ta="$work/android"
 new_tree "$ta"
 run_apply "$ta" android
 check "apply android: exit 0" test "$code" -eq 0
-check "apply android: 0005 and 0006 applied" sh -c '[ "$(cat "$1/f5.txt")" = patched ] && [ "$(cat "$1/f6.txt")" = patched ]' _ "$ta"
-check "apply android: 0003 and 0004 not applied" sh -c '[ "$(cat "$1/f3.txt")" = base ] && [ "$(cat "$1/f4.txt")" = base ]' _ "$ta"
+check "apply android: 0006 and 0007 applied" sh -c '[ "$(cat "$1/f6.txt")" = patched ] && [ "$(cat "$1/f7.txt")" = patched ]' _ "$ta"
+check "apply android: 0003, 0004 and 0005 not applied" sh -c '[ "$(cat "$1/f3.txt")" = base ] && [ "$(cat "$1/f4.txt")" = base ] && [ "$(cat "$1/f5.txt")" = base ]' _ "$ta"
 check "apply android: 0001 applied" has '^THREE$' "$ta/third_party/opus/BUILD.gn"
 check "apply android: probe in sdk/android/src/jni/app" test -f "$ta/sdk/android/src/jni/app/opus_probe.c" -a -f "$ta/sdk/android/src/jni/app/opus_probe.h"
 check "apply android: no probe in the Objective-C tree" test ! -e "$ta/sdk/objc/components/app/opus_probe.c"
@@ -237,10 +237,18 @@ tp="$work/apple"
 new_tree "$tp"
 run_apply "$tp"
 check "apply default (Apple): exit 0" test "$code" -eq 0
-check "apply default (Apple): 0003 and 0004 applied" sh -c '[ "$(cat "$1/f3.txt")" = patched ] && [ "$(cat "$1/f4.txt")" = patched ]' _ "$tp"
-check "apply default (Apple): 0005 and 0006 not applied" sh -c '[ "$(cat "$1/f5.txt")" = base ] && [ "$(cat "$1/f6.txt")" = base ]' _ "$tp"
+check "apply default (Apple): 0003, 0004 and 0005 applied" sh -c '[ "$(cat "$1/f3.txt")" = patched ] && [ "$(cat "$1/f4.txt")" = patched ] && [ "$(cat "$1/f5.txt")" = patched ]' _ "$tp"
+check "apply default (Apple): 0006 and 0007 not applied" sh -c '[ "$(cat "$1/f6.txt")" = base ] && [ "$(cat "$1/f7.txt")" = base ]' _ "$tp"
 check "apply default (Apple): probe in the Objective-C tree" test -f "$tp/sdk/objc/components/app/opus_probe.c"
 check "apply default (Apple): no probe in sdk/android" test ! -e "$tp/sdk/android/src/jni/app/opus_probe.c"
+
+# The real patch directory: which patch files each platform applies, pinned by name.
+expect_list() { # expect_list <platform> <expected names, space separated>
+  APPLY_PLATFORM=$1 sh "$here/apply.sh" --list-patches >"$work/list.txt" 2>&1
+  check "apply $1 applies exactly: $2" test "$(tr '\n' ' ' <"$work/list.txt" | sed 's/ $//')" = "$2"
+}
+expect_list apple "0001-third-party-opus-1.6.patch 0002-opus-decoder-complexity.patch 0003-objc-opus-info.patch 0004-objc-capture-post-processing.patch 0005-mac-framework-headers.patch"
+expect_list android "0001-third-party-opus-1.6.patch 0002-opus-decoder-complexity.patch 0006-android-opus-info.patch 0007-android-capture-post-processing.patch"
 
 tb="$work/badplat"
 new_tree "$tb"
@@ -248,7 +256,7 @@ run_apply "$tb" windows
 check "apply: unknown platform fails" test "$code" -eq 1
 check "apply: unknown platform is named" has "unknown APPLY_PLATFORM 'windows'" "$work/apply.txt"
 
-# --- patches 0005 and 0006 against the upstream files ---
+# --- patches 0006 and 0007 against the upstream files ---
 cache="${TMPDIR:-/tmp}/app-webrtc-cache/upstream-$WEBRTC_COMMIT"
 mkdir -p "$cache"
 fetch() { # fetch <path-in-webrtc-src> <dest>: cached
@@ -265,15 +273,15 @@ fetch() { # fetch <path-in-webrtc-src> <dest>: cached
   mkdir -p "$(dirname "$2")"
   cp "$c" "$2"
 }
-patch_05=$(ls "$here"/patches/0005-*.patch 2>/dev/null | head -1)
 patch_06=$(ls "$here"/patches/0006-*.patch 2>/dev/null | head -1)
-if [ ! -f "$patch_05" ] || [ ! -f "$patch_06" ]; then
-  fail "patches 0005 and 0006 exist"
+patch_07=$(ls "$here"/patches/0007-*.patch 2>/dev/null | head -1)
+if [ ! -f "$patch_06" ] || [ ! -f "$patch_07" ]; then
+  fail "patches 0006 and 0007 exist"
   echo
   echo "$failures check(s) failed"
   exit 1
 fi
-files=$(for p in "$patch_05" "$patch_06"; do awk '/^diff --git /{f=substr($4,3)} /^--- a\//{print f}' "$p"; done | sort -u)
+files=$(for p in "$patch_06" "$patch_07"; do awk '/^diff --git /{f=substr($4,3)} /^--- a\//{print f}' "$p"; done | sort -u)
 mkrepo() { # mkrepo <dir>: the upstream files the patches modify, committed
   mkdir -p "$1"
   for f in $files; do fetch "$f" "$1/$f"; done
@@ -283,44 +291,44 @@ mkrepo() { # mkrepo <dir>: the upstream files the patches modify, committed
 }
 repo="$work/src"
 mkrepo "$repo"
-check "0005: git apply --check --3way (alone)" g -C "$repo" apply --check --3way "$patch_05"
 check "0006: git apply --check --3way (alone)" g -C "$repo" apply --check --3way "$patch_06"
-g -C "$repo" apply --3way "$patch_05" >/dev/null 2>&1
-g -C "$repo" add -A
-g -C "$repo" commit -q -m 0005
-check "0006: git apply --check --3way (after 0005)" g -C "$repo" apply --check --3way "$patch_06"
+check "0007: git apply --check --3way (alone)" g -C "$repo" apply --check --3way "$patch_07"
 g -C "$repo" apply --3way "$patch_06" >/dev/null 2>&1
-check "0005 and 0006 leave no conflict markers" sh -c '! grep -rn "^<<<<<<<" "$1" --exclude-dir=.git' _ "$repo"
+g -C "$repo" add -A
+g -C "$repo" commit -q -m 0006
+check "0007: git apply --check --3way (after 0006)" g -C "$repo" apply --check --3way "$patch_07"
+g -C "$repo" apply --3way "$patch_07" >/dev/null 2>&1
+check "0006 and 0007 leave no conflict markers" sh -c '! grep -rn "^<<<<<<<" "$1" --exclude-dir=.git' _ "$repo"
 # Applying in the other order must work too (apply.sh runs them in name order,
 # but a rebase of one patch must not need the other).
 repo2="$work/src2"
 mkrepo "$repo2"
-g -C "$repo2" apply --3way "$patch_06" >/dev/null 2>&1
+g -C "$repo2" apply --3way "$patch_07" >/dev/null 2>&1
 g -C "$repo2" add -A
-g -C "$repo2" commit -q -m 0006
-check "0005: git apply --check --3way (after 0006)" g -C "$repo2" apply --check --3way "$patch_05"
+g -C "$repo2" commit -q -m 0007
+check "0006: git apply --check --3way (after 0007)" g -C "$repo2" apply --check --3way "$patch_06"
 
 a="$repo/sdk/android"
-check "0005: OpusInfo.java declares the four natives" sh -c 'for m in decoderComplexity hasDeepPlc hasOsce maxPacketMs; do grep -q "public static .* $m()" "$1" || exit 1; done' _ "$a/api/org/webrtc/OpusInfo.java"
-check "0005: JNI functions" sh -c 'for m in DecoderComplexity HasDeepPlc HasOsce MaxPacketMs; do grep -q "JNI_OpusInfo_$m" "$1" || exit 1; done' _ "$a/src/jni/app/opus_info.cc"
-check "0005: JNI file ends with DEFINE_JNI" has '^DEFINE_JNI(OpusInfo)' "$a/src/jni/app/opus_info.cc"
-check "0005: probe files are listed as sources" sh -c 'grep -q "src/jni/app/opus_probe.c" "$1" && grep -q "src/jni/app/opus_probe.h" "$1"' _ "$a/BUILD.gn"
-check "0005: Java library is in libwebrtc.jar" has '":app_opus_java",' "$a/BUILD.gn"
-check "0005: JNI library is linked into the .so" has '":app_opus_jni",' "$a/BUILD.gn"
-check "0005: depends on //third_party/opus" has '"//third_party/opus",' "$a/BUILD.gn"
-check "0006: AudioCapturePostProcessing implements AudioProcessingFactory" has 'class AudioCapturePostProcessing implements AudioProcessingFactory' "$a/api/org/webrtc/AudioCapturePostProcessing.java"
-check "0006: no jni_zero::ToJavaFloatArray (not in jni_zero at the pin)" sh -c '! grep -q "jni_zero::ToJavaFloatArray" "$1"' _ "$a/src/jni/app/audio_capture_post_processing.cc"
-check "0006: float array built with NewFloatArray and AdoptRef" sh -c 'grep -q "NewFloatArray" "$1" && grep -q "jni_zero::AdoptRef" "$1"' _ "$a/src/jni/app/audio_capture_post_processing.cc"
-check "0006: Java object is single use" sh -c 'grep -q "IllegalStateException" "$1" && grep -q "nativeProcessor = 0;" "$1"' _ "$a/api/org/webrtc/AudioCapturePostProcessing.java"
-check "0006: createNative and selfTest both take the handle" sh -c '[ "$(grep -c "take())" "$1")" -eq 2 ]' _ "$a/api/org/webrtc/AudioCapturePostProcessing.java"
-check "0006: header says the struct must stay valid" has "must stay valid until createNative" "$a/src/jni/app/audio_capture_processor.h"
-check "0006: C ABI header" test -f "$a/src/jni/app/audio_capture_processor.h"
-check "0006: uses SetCapturePostProcessing" has "SetCapturePostProcessing" "$a/src/jni/app/audio_capture_post_processing.cc"
-check "0006: JNI file ends with DEFINE_JNI" has '^DEFINE_JNI(AudioCapturePostProcessing)' "$a/src/jni/app/audio_capture_post_processing.cc"
-check "0006: Java library is in libwebrtc.jar" has '":capture_post_processing_java",' "$a/BUILD.gn"
-check "0006: JNI library is linked into the .so" has '":capture_post_processing_jni",' "$a/BUILD.gn"
-check "0006: factory takes ownership of the processor reference" has 'TakeOwnershipOfRefPtr<AudioProcessing>(native_audio_processor)' "$a/src/jni/pc/peer_connection_factory.cc"
-check "0006: the leaking conversion is gone" sh -c '! grep -q "reinterpret_cast<AudioProcessing\*>(native_audio_processor)" "$1"' _ "$a/src/jni/pc/peer_connection_factory.cc"
+check "0006: OpusInfo.java declares the four natives" sh -c 'for m in decoderComplexity hasDeepPlc hasOsce maxPacketMs; do grep -q "public static .* $m()" "$1" || exit 1; done' _ "$a/api/org/webrtc/OpusInfo.java"
+check "0006: JNI functions" sh -c 'for m in DecoderComplexity HasDeepPlc HasOsce MaxPacketMs; do grep -q "JNI_OpusInfo_$m" "$1" || exit 1; done' _ "$a/src/jni/app/opus_info.cc"
+check "0006: JNI file ends with DEFINE_JNI" has '^DEFINE_JNI(OpusInfo)' "$a/src/jni/app/opus_info.cc"
+check "0006: probe files are listed as sources" sh -c 'grep -q "src/jni/app/opus_probe.c" "$1" && grep -q "src/jni/app/opus_probe.h" "$1"' _ "$a/BUILD.gn"
+check "0006: Java library is in libwebrtc.jar" has '":app_opus_java",' "$a/BUILD.gn"
+check "0006: JNI library is linked into the .so" has '":app_opus_jni",' "$a/BUILD.gn"
+check "0006: depends on //third_party/opus" has '"//third_party/opus",' "$a/BUILD.gn"
+check "0007: AudioCapturePostProcessing implements AudioProcessingFactory" has 'class AudioCapturePostProcessing implements AudioProcessingFactory' "$a/api/org/webrtc/AudioCapturePostProcessing.java"
+check "0007: no jni_zero::ToJavaFloatArray (not in jni_zero at the pin)" sh -c '! grep -q "jni_zero::ToJavaFloatArray" "$1"' _ "$a/src/jni/app/audio_capture_post_processing.cc"
+check "0007: float array built with NewFloatArray and AdoptRef" sh -c 'grep -q "NewFloatArray" "$1" && grep -q "jni_zero::AdoptRef" "$1"' _ "$a/src/jni/app/audio_capture_post_processing.cc"
+check "0007: Java object is single use" sh -c 'grep -q "IllegalStateException" "$1" && grep -q "nativeProcessor = 0;" "$1"' _ "$a/api/org/webrtc/AudioCapturePostProcessing.java"
+check "0007: createNative and selfTest both take the handle" sh -c '[ "$(grep -c "take())" "$1")" -eq 2 ]' _ "$a/api/org/webrtc/AudioCapturePostProcessing.java"
+check "0007: header says the struct must stay valid" has "must stay valid until createNative" "$a/src/jni/app/audio_capture_processor.h"
+check "0007: C ABI header" test -f "$a/src/jni/app/audio_capture_processor.h"
+check "0007: uses SetCapturePostProcessing" has "SetCapturePostProcessing" "$a/src/jni/app/audio_capture_post_processing.cc"
+check "0007: JNI file ends with DEFINE_JNI" has '^DEFINE_JNI(AudioCapturePostProcessing)' "$a/src/jni/app/audio_capture_post_processing.cc"
+check "0007: Java library is in libwebrtc.jar" has '":capture_post_processing_java",' "$a/BUILD.gn"
+check "0007: JNI library is linked into the .so" has '":capture_post_processing_jni",' "$a/BUILD.gn"
+check "0007: factory takes ownership of the processor reference" has 'TakeOwnershipOfRefPtr<AudioProcessing>(native_audio_processor)' "$a/src/jni/pc/peer_connection_factory.cc"
+check "0007: the leaking conversion is gone" sh -c '! grep -q "reinterpret_cast<AudioProcessing\*>(native_audio_processor)" "$1"' _ "$a/src/jni/pc/peer_connection_factory.cc"
 # Every .cc, .h and .java a patch adds must be listed in a BUILD.gn source list.
 for f in api/org/webrtc/OpusInfo.java api/org/webrtc/AudioCapturePostProcessing.java \
   src/jni/app/opus_info.cc src/jni/app/audio_capture_post_processing.cc src/jni/app/audio_capture_processor.h; do

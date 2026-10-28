@@ -11,7 +11,7 @@
 #   5. copy the Opus probe into sdk/objc/components/app/ (Apple) or
 #      sdk/android/src/jni/app/ (Android)
 #   6. apply patches/0001-* inside third_party, the other patches inside src
-#      (Apple: not 0005 and 0006; Android: not 0003 and 0004)
+#      (Apple: not 0006 and 0007; Android: not 0003, 0004 and 0005)
 #   7. fail on any reject or conflict marker
 #   8. fail (exit 3) if the Opus PLC field trial named in VERSION
 #      (FIELD_TRIAL_OPUS_PLC) is not in audio_decoder_opus.cc at this pin
@@ -23,7 +23,7 @@
 #
 # Platform (environment): APPLY_PLATFORM=apple (the default) or android.
 # 0001 and 0002 are C/C++ and apply on both. 0003 and 0004 are Objective-C
-# (Apple only). 0005 and 0006 are Java and JNI (Android only).
+# (Apple only), 0005 is the Mac framework headers (Apple only). 0006 and 0007 are Java and JNI (Android only).
 #
 # Test overrides (environment): OPUS_SHA256, APPLY_PATCH_DIR,
 # APPLY_THIRD_PARTY_PATCH, APPLY_CACHE_DIR.
@@ -39,6 +39,20 @@ die() {
   exit 1
 }
 
+if [ "${1-}" = "--list-patches" ]; then
+  # Prints the patch files the platform applies (APPLY_PLATFORM), one per line, and exits.
+  case "${APPLY_PLATFORM:-apple}" in
+    apple) lp_skip="0006 0007" ;;
+    android) lp_skip="0003 0004 0005" ;;
+    *) die "unknown APPLY_PLATFORM '${APPLY_PLATFORM}' (apple or android)" ;;
+  esac
+  for p in "${APPLY_PATCH_DIR:-$here/patches}"/*.patch; do
+    case " $lp_skip " in *" $(basename "$p" | cut -c 1-4) "*) continue ;; esac
+    basename "$p"
+  done
+  exit 0
+fi
+
 if [ "$#" -ne 1 ]; then
   echo "usage: sh tools/webrtc/apply.sh <webrtc-src-dir>" >&2
   exit 1
@@ -46,8 +60,8 @@ fi
 [ -d "$1" ] || die "$1 is not a directory"
 platform=${APPLY_PLATFORM:-apple}
 case "$platform" in
-  apple) skip_patches="0005 0006"; probe_dir=sdk/objc/components/app ;;
-  android) skip_patches="0003 0004"; probe_dir=sdk/android/src/jni/app ;;
+  apple) skip_patches="0006 0007"; probe_dir=sdk/objc/components/app ;;
+  android) skip_patches="0003 0004 0005"; probe_dir=sdk/android/src/jni/app ;;
   *) die "unknown APPLY_PLATFORM '$platform' (apple or android)" ;;
 esac
 srcdir=$(cd "$1" && pwd)

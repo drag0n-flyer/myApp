@@ -10,6 +10,9 @@ options:
 packages:
   ServerKit:
     path: Packages/ServerKit
+configFiles:
+  Debug: AppID.xcconfig
+  Release: AppID.xcconfig
 settings:
   base:
     SWIFT_VERSION: '6.0'
@@ -26,7 +29,7 @@ targets:
         excludes: ['*.entitlements']
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: org.example.app.serverkit-testhost
+        PRODUCT_BUNDLE_IDENTIFIER: $(APP_ID).serverkit-testhost
         CODE_SIGN_ENTITLEMENTS: ServerKitTestHost/ServerKitTestHost.entitlements
         TARGETED_DEVICE_FAMILY: '1'
         INFOPLIST_KEY_UILaunchScreen_Generation: 'YES'
@@ -38,7 +41,7 @@ targets:
       - path: Packages/ServerKit/Tests/ServerKitAppleTests
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: org.example.app.serverkit-testhost.tests
+        PRODUCT_BUNDLE_IDENTIFIER: $(APP_ID).serverkit-testhost.tests
         ENABLE_TESTABILITY: 'YES'
     dependencies:
       - target: ServerKitTestHost

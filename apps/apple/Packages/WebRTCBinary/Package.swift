@@ -5,15 +5,15 @@ import PackageDescription
 // Set WEBRTC_LOCAL_XCFRAMEWORK to a local WebRTC.xcframework path to test a
 // fresh build before it is released (CI does this for the smoke tests).
 //
-// The URL and checksum below are placeholders. Task 6 replaces them with the
-// first release's URL and `swift package compute-checksum` value. Until then,
-// resolving the package without WEBRTC_LOCAL_XCFRAMEWORK fails on the checksum.
+// The URL and checksum name the release in tools/webrtc/VERSION (webrtc-m156.1);
+// the checksum is the release's checksum.txt (`swift package compute-checksum`).
+// tools/webrtc/check-package-pin.sh checks both; see tools/webrtc/UPDATING.md.
 let local = Context.environment["WEBRTC_LOCAL_XCFRAMEWORK"]
 let webrtc: Target = local.map { .binaryTarget(name: "WebRTC", path: $0) }
     ?? .binaryTarget(
         name: "WebRTC",
         url: "https://github.com/drag0n-flyer/myApp/releases/download/webrtc-m156.1/WebRTC.xcframework.zip",
-        checksum: "0000000000000000000000000000000000000000000000000000000000000000")
+        checksum: "2d77a8c23295af6fb63af4c2fec36d50ad1d9d33e3bc9bf250f5ad29bb3be488")
 
 let package = Package(
     name: "WebRTCBinary",

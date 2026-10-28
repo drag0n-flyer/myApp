@@ -90,10 +90,12 @@ xcodebuild -create-xcframework \
   -output "$work/WebRTC.xcframework"
 
 # 4. Symbols, on every slice of the finished XCFramework.
+bad_symbols=0
 for fw in "$work"/WebRTC.xcframework/*/WebRTC.framework; do
   echo "check-symbols: $fw"
-  sh "$here/check-symbols.sh" "$(fw_binary "$fw")"
+  sh "$here/check-symbols.sh" "$(fw_binary "$fw")" || bad_symbols=1  # check every slice before failing
 done
+[ "$bad_symbols" -eq 0 ] || exit 5
 
 # 5. Zips and the rest.
 rm -f "$out/WebRTC.xcframework.zip" "$out/WebRTC.dSYMs.zip"

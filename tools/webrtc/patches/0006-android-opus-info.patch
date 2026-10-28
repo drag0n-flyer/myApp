@@ -14,10 +14,10 @@ index 2522e5a..d184025 100644
        ":video_java",
        "../../rtc_base:base_java",
        "../../third_party/jni_zero:jni_zero_java",
-+      # App patch (tools/webrtc/patches/0005): the generated <Class>Jni proxy classes. The
++      # App patch (tools/webrtc/patches/0006): the generated <Class>Jni proxy classes. The
 +      # dist_jar takes direct deps only, so without these the AAR has the Natives
 +      # interfaces but no FooJni classes and NoClassDefFoundError follows at runtime.
-+      # (generated_capture_post_processing_jni_java is made by patch 0006.)
++      # (generated_capture_post_processing_jni_java is made by patch 0007.)
 +      ":app_gen_jni_java",
 +      ":generated_app_opus_jni_java",
 +      ":generated_audio_device_module_base_jni_java",
@@ -57,8 +57,8 @@ index 2522e5a..d184025 100644
      # All APKs that use this shared library must depend on this list of targets
 -    java_targets = [ ":libjingle_peerconnection_metrics_default_java" ]
 +    java_targets = [
-+      ":app_opus_java",  # App patch 0005
-+      ":capture_post_processing_java",  # App patch 0006
++      ":app_opus_java",  # App patch 0006
++      ":capture_post_processing_java",  # App patch 0007
 +      ":libjingle_peerconnection_metrics_default_java",
 +    ]
    }
@@ -68,7 +68,7 @@ index 2522e5a..d184025 100644
      ]
    }
  
-+  # App patch (tools/webrtc/patches/0005): OpusInfo.
++  # App patch (tools/webrtc/patches/0006): OpusInfo.
 +  rtc_android_library("app_opus_java") {
 +    visibility = [ "*" ]
 +    sources = [ "api/org/webrtc/OpusInfo.java" ]
@@ -79,7 +79,7 @@ index 2522e5a..d184025 100644
 +    ]
 +  }
 +
-+  # App patch (tools/webrtc/patches/0005): the real org.jni_zero.GEN_JNI, which declares
++  # App patch (tools/webrtc/patches/0006): the real org.jni_zero.GEN_JNI, which declares
 +  # every native method of the library. Apps get it from the .so's __jni_registration
 +  # srcjar; an AAR has no app build, so it is compiled into libwebrtc.jar here.
 +  rtc_android_library("app_gen_jni_java") {
@@ -95,7 +95,7 @@ index 2522e5a..d184025 100644
      ]
    }
  
-+  # App patch (tools/webrtc/patches/0005): OpusInfo. opus_probe.c and
++  # App patch (tools/webrtc/patches/0006): OpusInfo. opus_probe.c and
 +  # opus_probe.h are written by tools/webrtc/apply.sh, not upstream.
 +  rtc_library("app_opus_jni") {
 +    visibility = [ "*" ]
@@ -124,7 +124,7 @@ index 2522e5a..d184025 100644
      namespace = "webrtc::jni"
    }
  
-+  # App patch (tools/webrtc/patches/0005): OpusInfo.
++  # App patch (tools/webrtc/patches/0006): OpusInfo.
 +  generate_jni("generated_app_opus_jni") {
 +    sources = [ "api/org/webrtc/OpusInfo.java" ]
 +    namespace = "webrtc::jni"
@@ -140,7 +140,7 @@ index 0000000..578cac3
 +++ b/sdk/android/api/org/webrtc/OpusInfo.java
 @@ -0,0 +1,50 @@
 +/*
-+ *  Application patch (tools/webrtc/patches/0005): reports what the Opus inside
++ *  Application patch (tools/webrtc/patches/0006): reports what the Opus inside
 + *  this WebRTC build can do, so the app and its tests can check the build
 + *  instead of trusting it. The Android form of RTCOpusInfo (patch 0003).
 + *
@@ -196,7 +196,7 @@ index 0000000..5c68eac
 +++ b/sdk/android/src/jni/app/opus_info.cc
 @@ -0,0 +1,51 @@
 +/*
-+ *  Application patch (tools/webrtc/patches/0005). See
++ *  Application patch (tools/webrtc/patches/0006). See
 + *  api/org/webrtc/OpusInfo.java.
 + */
 +

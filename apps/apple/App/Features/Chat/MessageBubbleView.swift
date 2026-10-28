@@ -8,6 +8,8 @@ struct MessageBubbleView: View {
     let replySenderName: (String) -> String
     let showsMedia: Bool
     let download: () -> Void
+    /// Sends a message that is marked "Not sent" again.
+    var retry: () -> Void = {}
 
     var body: some View {
         if case .system(let event) = message.content {
@@ -40,7 +42,7 @@ struct MessageBubbleView: View {
                     }
                 }
                 content
-                MetaLine(message: message, isMine: isMine)
+                MetaLine(message: message, isMine: isMine, retry: retry)
             }
             .padding(.horizontal, 10)
             .padding(.top, 7)
@@ -116,12 +118,22 @@ struct SystemEventText: View {
 private struct MetaLine: View {
     let message: Message
     let isMine: Bool
+    let retry: () -> Void
 
     var body: some View {
         HStack(spacing: 3) {
             Spacer(minLength: 0)
+            if isMine, message.status == .failed {
+                Label("Not sent", systemImage: "exclamationmark.circle.fill")
+                Button("Try again", action: retry)
+                    .buttonStyle(.borderless)
+                    .underline()
+                    .accessibilityLabel(Text("Try again"))
+                    .accessibilityHint(Text("Sends this message again"))
+                    .accessibilityIdentifier("chat.retry.\(message.id)")
+            }
             Text(message.sentAt, format: .dateTime.hour().minute())
-            if isMine {
+            if isMine, message.status != .failed {
                 Image(systemName: message.status == .sent || message.status == .sending ? "checkmark" : "checkmark.circle.fill")
                     .accessibilityLabel(statusLabel)
             }
@@ -136,6 +148,7 @@ private struct MetaLine: View {
         case .sent: Text("Sent")
         case .delivered: Text("Delivered")
         case .read: Text("Read")
+        case .failed: Text("Not sent")
         }
     }
 }

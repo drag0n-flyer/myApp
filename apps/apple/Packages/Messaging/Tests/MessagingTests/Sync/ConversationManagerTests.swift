@@ -1,3 +1,6 @@
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import Foundation
 import LocalStore
 import SecureMessagingCore
@@ -110,23 +113,37 @@ private func syncInbox(_ device: TestDevice, joinWith joiner: ConversationManage
         #expect(bobSide.innerMode == "e2ee" && bobSide.mode == "e2ee")
     }
 
+    /// A create's add commit is never rebuilt (MLS profile, "Commits" step 5, exception), so the stale-epoch
+    /// retry is checked on a later commit.
     @Test func staleEpochRetries() async throws {
         let rig = try await Rig.make()
-        await rig.server.rejectNextCommits(1)
         let syncs = Counter()
-        let record = try await manager(rig.ana1, syncs: syncs).create(with: "acc-bob")
+        let mgr = manager(rig.ana1, syncs: syncs)
+        let record = try await mgr.create(with: "acc-bob")
+        let group = GroupID(raw: record.groupID)
+        await rig.server.rejectNextCommits(1)
+        let epoch = try await mgr.postCommitWithRetry(
+            serverID: record.serverID, group: group, addDevices: [], removeDevices: [rig.ana2.deviceID]
+        ) { try await rig.ana1.deps.mls.remove(members: ["acc-ana/\(rig.ana2.deviceID)"], from: group) }
         #expect(await syncs.value == 1)
-        #expect(record.epoch == 1)
-        #expect(try await rig.ana1.deps.mls.epoch(of: GroupID(raw: record.groupID)) == 1)
-        #expect(await rig.server.memberDevices(of: record.serverID).count == 4)
+        #expect(epoch == 2)
+        #expect(try await rig.ana1.deps.mls.epoch(of: group) == 2)
+        #expect(await rig.server.memberDevices(of: record.serverID).count == 3)
     }
 
     @Test func staleEpochGivesUp() async throws {
         let rig = try await Rig.make()
+        let mgr = manager(rig.ana1)
+        let record = try await mgr.create(with: "acc-bob")
+        let group = GroupID(raw: record.groupID)
         await rig.server.rejectNextCommits(4)
-        await #expect(throws: SyncError.epochConflict) { try await manager(rig.ana1).create(with: "acc-bob") }
-        #expect(try rig.ana1.deps.repo.conversations(chatID: "acc-bob").isEmpty)
-        #expect(await rig.server.memberDevices(of: try #require(await rig.server.conversationIDs().first)).count == 1)
+        await #expect(throws: SyncError.epochConflict) {
+            try await mgr.postCommitWithRetry(
+                serverID: record.serverID, group: group, addDevices: [], removeDevices: [rig.ana2.deviceID]
+            ) { try await rig.ana1.deps.mls.remove(members: ["acc-ana/\(rig.ana2.deviceID)"], from: group) }
+        }
+        #expect(try await rig.ana1.deps.mls.epoch(of: group) == 1)
+        #expect(await rig.server.memberDevices(of: record.serverID).count == 4)
     }
 
     @Test func simultaneousCreate() async throws {
@@ -142,7 +159,8 @@ private func syncInbox(_ device: TestDevice, joinWith joiner: ConversationManage
         let first = try await ana.preferredConversation(with: "acc-bob")
         let second = try await bob.preferredConversation(with: "acc-ana")
         #expect(first.serverID == second.serverID)
-        #expect(first.serverID == (await rig.server.conversationIDs()).min())
+        let smallest = await rig.server.conversationIDs().min()
+        #expect(first.serverID == smallest)
         #expect(try rig.ana1.deps.repo.chats().count == 1 && rig.bob1.deps.repo.chats().count == 1)
         #expect(try rig.ana1.deps.repo.conversations(chatID: "acc-bob").count == 2)
     }
@@ -206,14 +224,14 @@ private func syncInbox(_ device: TestDevice, joinWith joiner: ConversationManage
         try await rig.bob1.deps.mls.commitAccepted(bobGroup)
 
         let group = GroupID(raw: record.groupID)
-        var builds = 0
+        let builds = Counter()
         let newEpoch = try await manager(rig.ana1, syncs: syncs).postCommitWithRetry(
             serverID: record.serverID, group: group, addDevices: [], removeDevices: [rig.ana2.deviceID]
         ) {
-            builds += 1
+            await builds.bump()
             return try await rig.ana1.deps.mls.remove(members: ["acc-ana/\(rig.ana2.deviceID)"], from: group)
         }
-        #expect(builds == 2 && newEpoch == 3)
+        #expect(await builds.value == 2 && newEpoch == 3)
         #expect(await syncs.value == 1)
         #expect(try await rig.ana1.deps.mls.epoch(of: group) == 3)
         #expect(await rig.server.memberDevices(of: record.serverID) == [rig.ana1.deviceID, rig.bob1.deviceID].sorted())
@@ -243,7 +261,8 @@ private func syncInbox(_ device: TestDevice, joinWith joiner: ConversationManage
         let mgr = manager(rig.ana1)
         await rig.server.failNextMessages(statuses: [503])
         await #expect(throws: (any Error).self) { try await mgr.create(with: "acc-bob") }
-        let serverID = try #require(await rig.server.conversationIDs().first)
+        let allIDs = await rig.server.conversationIDs()
+        let serverID = try #require(allIDs.first)
         #expect(await rig.server.storedMessages(in: serverID).isEmpty)
 
         // The outbox path: ask for the conversation, then send a text.
@@ -267,10 +286,95 @@ private func syncInbox(_ device: TestDevice, joinWith joiner: ConversationManage
     @Test func escrowSentAtIsRFC3339Milliseconds() async throws {
         let rig = try await Rig.make(mode: "server_readable")
         let record = try await manager(rig.ana1).create(with: "acc-bob")
-        let escrow = try #require(await rig.server.storedMessages(in: record.serverID).first?.escrow)
+        let storedFirst = await rig.server.storedMessages(in: record.serverID).first
+        let escrow = try #require(storedFirst?.escrow)
         let json = try #require(try JSONSerialization.jsonObject(with: escrow.dropFirst("ESCROW:".count)) as? [String: Any])
         #expect(json["sentAt"] as? String == "2023-11-14T22:13:20.000Z")
         #expect(json["conversationID"] as? String == record.serverID && json["senderAccountID"] as? String == "acc-ana")
         #expect((json["body"] as? [String: Any])?["k"] as? String == "mode")
+    }
+}
+
+/// Holds the process lock after the commit POST is answered, as the notification extension would: for `hold`, or,
+/// when `hold` is nil, until `release` is signalled. The second keeps the lock busy for the whole call however slowly
+/// a loaded machine runs the retries (on CI the retries can take longer than any fixed hold).
+private struct BusyLockAfterCommit: HTTPTransport {
+    let inner: HTTPTransport
+    let lockURL: URL
+    let hold: Duration?
+    let release: DispatchSemaphore
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let reply = try await inner.send(request)
+        guard request.httpMethod == "POST", request.url?.path.hasSuffix("/commits") == true else { return reply }
+        holdLockOnAnotherThread()
+        return reply
+    }
+
+    /// Returns once the other thread holds the lock. Synchronous: Darwin forbids a semaphore wait in async code.
+    private func holdLockOnAnotherThread() {
+        let ready = DispatchSemaphore(value: 0)
+        let hold = self.hold, release = self.release
+        Thread {
+            try? ProcessLock(url: lockURL).withLock(timeout: .seconds(1)) {
+                ready.signal()
+                if let hold {
+                    Thread.sleep(forTimeInterval: Double(hold.components.seconds) + Double(hold.components.attoseconds) / 1e18)
+                } else {
+                    release.wait()
+                }
+            }
+        }.start()
+        ready.wait()
+    }
+}
+
+@Suite("TestRejectedCommit") struct TestRejectedCommit {
+    /// `hold` nil: the lock stays busy until the post has returned.
+    private func post(hold: Duration?) async throws -> (spy: SpyMLSEngine, result: Result<UInt64, Error>) {
+        let rig = try await Rig.make()
+        let device = rig.ana1
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }   // a `hold: nil` holder lets go once the post has returned
+        let spy = SpyMLSEngine(device.deps.mls)
+        var deps = device.deps
+        deps.mls = spy
+        deps.server = ServerClient(
+            host: FakeServer.host,
+            session: SessionStore(storage: MemorySessionStorage(Session(
+                host: FakeServer.host, accountID: device.accountID, deviceID: device.deviceID,
+                token: "test.\(device.accountID).\(device.deviceID)"))),
+            transport: BusyLockAfterCommit(
+                inner: await rig.server.transport(for: device),
+                lockURL: device.directory.appendingPathComponent("messaging.lock"), hold: hold, release: release))
+        let created = try await deps.server.createConversation(with: "acc-bob")
+        let group = try await deps.mls.createGroup()
+        let packages = try await rig.bob1.deps.mls.makeKeyPackages(count: 1)
+        let manager = ConversationManager(deps: deps, lockTimeout: .milliseconds(100))
+        let mls = deps.mls
+        do {
+            // The server answers 400: "dev-nope" is not a device.
+            let epoch = try await manager.postCommitWithRetry(
+                serverID: created.conversationID, group: group, addDevices: ["dev-nope"], removeDevices: []
+            ) { try await mls.add(keyPackages: packages, to: group) }
+            return (spy, .success(epoch))
+        } catch {
+            return (spy, .failure(error))
+        }
+    }
+
+    @Test func discardIsRetriedWhenTheLockIsBusyAtFirst() async throws {
+        let (spy, result) = try await post(hold: .milliseconds(150))
+        #expect(spy.commitRejectedCount == 1)   // the second attempt got the lock
+        guard case .failure(let error) = result, let server = error as? ServerError else {
+            Issue.record("expected the server's rejection, got \(result)"); return
+        }
+        #expect(server.status == 400)
+    }
+
+    @Test func discardThatNeverGetsTheLockIsNotSwallowed() async throws {
+        let (spy, result) = try await post(hold: nil)
+        #expect(spy.commitRejectedCount == 0)
+        guard case .failure(let error) = result else { Issue.record("expected a failure"); return }
+        #expect(error is LockTimeout)   // the pending commit is still there: the caller must know
     }
 }

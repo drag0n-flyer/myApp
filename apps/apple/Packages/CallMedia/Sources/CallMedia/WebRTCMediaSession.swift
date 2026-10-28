@@ -43,6 +43,12 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
     /// Test hook: `maxBitrateBps` of the audio sender's first encoding.
     var audioMaxBitrateForTesting: Int? { lock.withLock { audioSender }?.parameters.encodings.first?.maxBitrateBps?.intValue }
 
+    /// Test hook: the flattened stats report (`outbound-rtp` payload counters and `targetBitrate` are not in `MediaStats`).
+    func rawStatsForTesting() async -> [RawStat] {
+        guard let pc = lock.withLock({ pc }) else { return [] }
+        return await StatsReader(pc: pc).rawStats()
+    }
+
     public init(prewarm: Bool = false) {
         self.prewarm = prewarm
         (events, continuation) = AsyncStream.makeStream(of: MediaEvent.self)

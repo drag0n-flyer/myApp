@@ -35,8 +35,14 @@ public final class LiveAccountService: AccountService {
 
     private var inviteCode: String?
     private var signupID: String?
+    /// Sent with `PATCH /v1/me/settings` once sign-up has finished; nil when blank.
+    private var pendingDisplayName: String?
     private var ticket: LinkTicket?
     private var linkPrivateKey: Data?
+    /// A claimed link session whose save failed, with its opened snapshot; memory only. The claim answers
+    /// once, so a later `waitForLinkApproval` retries only the save and never claims again. `host` is the
+    /// server that issued the session: it is filed under that host only, and `connect` refuses another.
+    private var unsaved: (session: NewSession, snapshot: Data?, host: String)?
 
     public init(defaultHost: String, passkeyDomains: [String], platform: DevicePlatform, deviceName: String,
                 sessions: SessionStore, makeClient: @escaping @Sendable (String) -> ServerClient,
@@ -74,7 +80,7 @@ public final class LiveAccountService: AccountService {
     /// While signed in, the session token must never reach another host, so only the session's own
     /// host can be connected to.
     public func connect(host: String) async throws(AccountError) -> ServerPolicy {
-        if let mine = sessions.current?.host, mine.lowercased() != host.lowercased() { throw .wrongServer }
+        if let mine = sessions.current?.host ?? unsaved?.host, mine.lowercased() != host.lowercased() { throw .wrongServer }
         self.host = host
         adopt(makeClient(host))
         let c = await ready()
@@ -109,9 +115,11 @@ public final class LiveAccountService: AccountService {
         }
     }
 
-    public func startSignUp(username: String, email: String) async throws(AccountError) {
+    public func startSignUp(displayName: String, username: String, email: String) async throws(AccountError) {
         do throws(ServerError) {
             signupID = try await ready().signupStart(inviteCode: inviteCode, username: username, email: email)
+            let name = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            pendingDisplayName = name.isEmpty ? nil : name
         } catch {
             throw Self.map(error)
         }
@@ -127,10 +135,19 @@ public final class LiveAccountService: AccountService {
     }
 
     public func finishSignUp() async throws(AccountError) {
+        try await finishSignUp(withPasskey: true)
+    }
+
+    /// Never registers a passkey, even on a host that supports them.
+    public func finishSignUpWithEmailCode() async throws(AccountError) {
+        try await finishSignUp(withPasskey: false)
+    }
+
+    private func finishSignUp(withPasskey: Bool) async throws(AccountError) {
         guard let signupID else { throw .server }
         let c = await ready()
         var credential: RegistrationCredential?
-        if supportsPasskeys {
+        if withPasskey && supportsPasskeys {
             do throws(ServerError) {
                 let options = try await c.signupPasskeyOptions(signupID: signupID)
                 credential = try await register(options)
@@ -147,6 +164,12 @@ public final class LiveAccountService: AccountService {
         } catch {
             throw Self.map(error)
         }
+        // The server's signup/start takes no display name yet: set it now that the session exists.
+        // A failure here does not fail the sign-up.
+        if let name = pendingDisplayName {
+            try? await c.updateSettings(displayName: name, findByEmail: nil)
+        }
+        pendingDisplayName = nil
     }
 
     // MARK: - Sign-in and recovery
@@ -188,8 +211,11 @@ public final class LiveAccountService: AccountService {
 
     // MARK: - Linking, new device
 
+    public var linkSavePending: Bool { unsaved != nil }
+
     public func makeLinkCode() async throws(AccountError) -> LinkCode {
         let c = await ready()
+        unsaved = nil
         let keys = try linkCrypto.makeKeyPair()
         let t = try await call(link: true) { () async throws(ServerError) in
             try await c.linkStart(deviceName: self.deviceName, platform: Self.wire(self.platform))
@@ -201,11 +227,12 @@ public final class LiveAccountService: AccountService {
     }
 
     /// Polls every 2 s until approved or the ticket's expiry passes. Every exit path forgets the ticket
-    /// and the private key. If the approver's snapshot cannot be opened after a successful claim, this
-    /// fails closed: the session is NOT saved, the device stays signed out, and `.server` is thrown (the
-    /// claim is single-use, so the person starts linking again; the orphaned device can be removed from
-    /// Linked devices on the other device).
-    public func waitForLinkApproval() async throws(AccountError) {
+    /// and the private key. A snapshot that is missing or cannot be opened is skipped: the session is
+    /// saved, the device signs in without its contacts, and the result says so (the claim is single-use,
+    /// so failing here would leave an orphaned device and make the person start again). For the same
+    /// reason a failing session save is retried, and after an error the next call retries only the save.
+    public func waitForLinkApproval() async throws(AccountError) -> LinkedResult {
+        if let unsaved { return try await saveLinked(unsaved.session, snapshot: unsaved.snapshot, host: unsaved.host) }
         guard let ticket else { throw .linkExpired }
         let key = linkPrivateKey
         defer { self.ticket = nil; linkPrivateKey = nil }
@@ -216,17 +243,42 @@ public final class LiveAccountService: AccountService {
             }
             if case .approved(let s, let sealed) = claim {
                 var snapshot: Data?
-                if let sealed {
-                    guard let key else { throw .server }
-                    snapshot = try linkCrypto.open(sealed, privateKey: key)
+                if let sealed, let key {
+                    snapshot = try? linkCrypto.open(sealed, privateKey: key)
                 }
-                receivedLinkSnapshot = snapshot
-                try save(s)
-                return
+                unsaved = (s, snapshot, host)
+                return try await saveLinked(s, snapshot: snapshot, host: host)
             }
             if now() >= ticket.expiresAt { throw .linkExpired }
             do { try await sleep(.seconds(2)) } catch { throw .cancelled }
         }
+    }
+
+    /// About 11 seconds of backoff (0.25 s doubling, at most 4 s) before giving up for now, as on Android:
+    /// a claimed link session is worth waiting for.
+    public static let linkSaveAttempts = 8
+
+    /// Saves a claimed link session, retrying a failing store with backoff. When it still fails the error
+    /// is thrown and the session is kept in `unsaved`, so the next wait retries the save alone.
+    private func saveLinked(_ s: NewSession, snapshot: Data?, host: String) async throws(AccountError) -> LinkedResult {
+        var wait = Duration.milliseconds(250)
+        var attempt = 0
+        while true {
+            do throws(ServerError) {
+                try store(s, host: host)
+                break
+            } catch {
+                attempt += 1
+                if attempt >= Self.linkSaveAttempts { throw Self.map(error) }
+                do { try await sleep(wait) } catch { throw .cancelled }
+                wait = min(wait * 2, .seconds(4))
+            }
+        }
+        unsaved = nil
+        receivedLinkSnapshot = snapshot
+        // TODO(plan 7): import `snapshot` and report copied only when the import succeeds, as Android
+        // does. Nothing imports it yet, so the contacts were not copied.
+        return LinkedResult(contactsCopied: false)
     }
 
     // MARK: - Linking, approving device
@@ -242,15 +294,21 @@ public final class LiveAccountService: AccountService {
                            requestedAt: info.createdAt)
     }
 
-    public func approveLink(_ request: LinkRequest) async throws(AccountError) {
+    /// The server refuses a larger sealed snapshot (`too_large`).
+    public static let maxSealedSnapshotBytes = 64 * 1024
+
+    public func approveLink(_ request: LinkRequest) async throws(AccountError) -> LinkApproval {
         guard isSignedIn else { throw .server }
         let code = try parseLink(request.qrText)
         let c = await ready()
         try await biometrics.confirm(reason: approvalReason)
         let sealed = try linkCrypto.seal(await linkSnapshot(), to: code.publicKey)
+        // Over the server's limit: approve without it; the new device starts without its contacts.
+        let fits = sealed.count <= Self.maxSealedSnapshotBytes
         try await call(link: true) { () async throws(ServerError) in
-            try await c.linkApprove(linkID: code.linkID, secret: code.secret, sealed: sealed)
+            try await c.linkApprove(linkID: code.linkID, secret: code.secret, sealed: fits ? sealed : nil)
         }
+        return LinkApproval(snapshotSent: fits)
     }
 
     // MARK: - Devices and account
@@ -316,7 +374,8 @@ public final class LiveAccountService: AccountService {
         do throws(ServerError) { try store(s) } catch { throw Self.map(error) }
     }
 
-    private func store(_ s: NewSession) throws(ServerError) {
+    private func store(_ s: NewSession, host: String? = nil) throws(ServerError) {
+        let host = host ?? self.host
         do {
             try sessions.save(Session(host: host, accountID: s.accountID, deviceID: s.deviceID, token: s.sessionToken))
         } catch {
@@ -331,10 +390,18 @@ public final class LiveAccountService: AccountService {
 
     private struct ParsedLink { let linkID: String; let secret: String; let publicKey: Data }
 
-    /// `https://<host>/link/<linkID>#<secret>.<publicKey b64url>`. The host must be this device's server.
-    private func parseLink(_ text: String) throws(AccountError) -> ParsedLink {
-        guard let url = URL(string: text), let linkHost = url.host else { throw .linkExpired }
-        guard let mine = sessions.current?.host, linkHost.lowercased() == mine.lowercased() else { throw .wrongServer }
+    /// `https://<host>/link/<linkID>#<secret>.<publicKey b64url>`. The authority (host and port) must be
+    /// exactly this device's server: another port, or user info (`own@evil`), is another server and
+    /// nothing is sent anywhere.
+    private func parseLink(_ raw: String) throws(AccountError) -> ParsedLink {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        // A code with no `scheme://` authority at its very start (`https:/link?…https://own`) is another server too.
+        guard let mine = sessions.current?.host, let authority = Self.rawAuthority(text),
+              authority.lowercased() == mine.lowercased() else { throw .wrongServer }
+        // The host check above and the parsed URL below must agree: the text starts with exactly
+        // `https://<host[:port]>/` and the parsed URL has a host.
+        guard text.lowercased().hasPrefix("https://" + mine.lowercased() + "/"),
+              let url = URL(string: text), url.host != nil else { throw .linkExpired }
         let parts = url.path.split(separator: "/")
         guard parts.count == 2, parts[0] == "link", let fragment = url.fragment, !fragment.isEmpty else { throw .linkExpired }
         // The QR public key is required and must be a 32-byte X25519 key; anything else is an invalid
@@ -344,6 +411,18 @@ public final class LiveAccountService: AccountService {
             throw .linkExpired
         }
         return ParsedLink(linkID: String(parts[1]), secret: bits[0], publicKey: key)
+    }
+
+    /// For `scheme://authority…` at the start of the text: the authority between `://` and the first `/`,
+    /// `?` or `#`, exactly as written (host, and port if any). Nil when the text does not start that way.
+    private nonisolated static func rawAuthority(_ text: String) -> String? {
+        guard let sep = text.range(of: "://") else { return nil }
+        let scheme = text[..<sep.lowerBound]
+        guard let first = scheme.first, first.isASCII, first.isLetter,
+              scheme.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "+-.".contains($0)) }) else { return nil }
+        let rest = text[sep.upperBound...]
+        let authority = rest[..<(rest.firstIndex { "/?#".contains($0) } ?? rest.endIndex)]
+        return authority.isEmpty ? nil : String(authority)
     }
 
     @_spi(Testing) public nonisolated static func wire(_ p: DevicePlatform) -> String {

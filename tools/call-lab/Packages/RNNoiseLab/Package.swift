@@ -10,7 +10,7 @@ let package = Package(
             name: "CRNNoise",
             path: "Sources/CRNNoise",
             publicHeadersPath: "include",
-            cSettings: [.define("NDEBUG"), .headerSearchPath(".")]
+            cSettings: [.define("NDEBUG"), .define("DISABLE_DEBUG_FLOAT"), .headerSearchPath(".")]
         ),
         .target(name: "RNNoiseLab", dependencies: ["CRNNoise"]),
         .testTarget(name: "RNNoiseLabTests", dependencies: ["RNNoiseLab"]),

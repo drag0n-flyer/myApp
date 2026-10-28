@@ -4,6 +4,7 @@ import LocalStore
 import Messaging
 import SecureMessaging
 import ServerKit
+import UserNotifications
 
 /// Builds `MessagingDeps` from the app group and runs one push through `NotificationProcessor`.
 ///
@@ -24,10 +25,11 @@ enum NSEWiring {
     /// engine cannot be made, or the stored database cannot be opened or is newer than this build.
     private static func makeDeps() -> MessagingDeps? {
         let info = Bundle.main.infoDictionary ?? [:]
-        let accessGroup = (info["KeychainAccessGroup"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        let accessGroup = MessagingLocations.requiredInfoValue("KeychainAccessGroup", in: info)
         let sessions = SessionStore(storage: KeychainSessionStorage(accessGroup: accessGroup))
         guard let session = sessions.current,
-              let container = StoreLocation.appGroup(MessagingLocations.appGroupID)
+              let group = MessagingLocations.appGroupID,
+              let container = StoreLocation.appGroup(group)
         else { return nil }
         do {
             let db = try Database(url: MessagingLocations.databaseURL(in: container))
@@ -42,7 +44,7 @@ enum NSEWiring {
                 mls: mls,
                 repo: Repository(db: db, now: now),
                 lock: ProcessLock(url: MessagingLocations.lockURL(in: container)),
-                escrow: NSEUnavailable(), attachments: NSEUnavailable(), notifier: NSEUnavailable(),
+                escrow: NSEUnavailable(), attachments: NSEUnavailable(), notifier: NSEDeviceNotice(),
                 mediaDirectory: MessagingLocations.mediaURL(in: container),
                 now: now)
         } catch {
@@ -52,12 +54,26 @@ enum NSEWiring {
 }
 
 /// The extension never sends, seals or downloads: these ports exist only to fill `MessagingDeps`.
-private struct NSEUnavailable: EscrowSealer, AttachmentCipher, DeviceNotifier {
+private struct NSEUnavailable: EscrowSealer, AttachmentCipher {
     func seal(_ plaintext: Data, to recipientKey: Data) throws -> Data { throw EscrowError.unavailable }
     func encrypt(file: URL, to: URL) throws -> (key: Data, digest: Data, size: Int64, cipherSize: Int64) {
         throw EscrowError.unavailable
     }
     func decrypt(file: URL, to: URL, key: Data, digest: Data) throws { throw EscrowError.unavailable }
-    /// The notification processor shows "New device added" itself (Design 19).
-    func ownDeviceAdded(deviceID: String, name: String) async {}
+}
+
+/// "New device added" (Design 19) when a sync the extension runs (a Welcome's batch) finds a new device of this
+/// account. A push that carries the commit itself is shown by the notification processor, which also writes
+/// `notified.device.<id>`, so the notice is never posted twice.
+private struct NSEDeviceNotice: DeviceNotifier {
+    func ownDeviceAdded(deviceID: String, name: String) async {
+        let strings = NotificationStrings.localized()
+        let content = UNMutableNotificationContent()
+        content.title = strings.newDeviceTitle
+        content.body = String(format: strings.newDeviceBodyFormat, name)
+        content.sound = .default
+        content.threadIdentifier = NotificationProcessor.devicesThreadID
+        try? await UNUserNotificationCenter.current().add(
+            UNNotificationRequest(identifier: "new-device-\(deviceID)", content: content, trigger: nil))
+    }
 }

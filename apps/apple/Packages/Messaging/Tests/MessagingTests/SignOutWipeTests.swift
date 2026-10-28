@@ -16,7 +16,7 @@ import MessagingTestKit
         try Data([1]).write(to: device.deps.mediaDirectory.appendingPathComponent("a.bin"))
 
         let manager = ConversationManager(deps: device.deps)
-        let outbox = Outbox(deps: device.deps, conversations: manager)
+        let outbox = Outbox(deps: device.deps, conversations: manager, readReceiptsEnabled: { true })
         let inbox = InboxProcessor(
             deps: device.deps, conversations: manager, handler: IncomingHandler(me: device.deps.me, now: device.deps.now, log: { _ in }))
         let store = LiveChatStore(deps: device.deps, outbox: outbox, inbox: inbox, conversations: manager, attachments: nil)
@@ -110,8 +110,9 @@ private struct Boom: Error {}
             try await LocalAccountData.prepare(
                 accountID: "acc-bob", container: container, repo: repo, wipe: wipeSteps(device, calls, failSigningKey: true))
         }
-        // The other steps still ran, the marker stays for the next launch, and bob does not own the data.
-        #expect(calls.count("mls") == 1)
+        // Tried `wipeAttempts` times; the other steps still ran each time, the marker stays for the next launch,
+        // and bob does not own the data.
+        #expect(calls.count("mls") == DeviceSync.wipeAttempts)
         #expect(LocalAccountData.isWipePending(in: container))
         #expect(try repo.get(LocalAccountData.ownerKey).flatMap { String(data: $0, encoding: .utf8) } != "acc-bob")
         // The next launch retries and succeeds.
@@ -134,7 +135,7 @@ private struct Boom: Error {}
         let device = await makeDevice(server, account: "acc-ana", username: "ana")
         _ = try await device.deps.server.uploadKeyPackages(try await device.deps.mls.makeKeyPackages(count: 1))
         let manager = ConversationManager(deps: device.deps)
-        let outbox = Outbox(deps: device.deps, conversations: manager)
+        let outbox = Outbox(deps: device.deps, conversations: manager, readReceiptsEnabled: { true })
         let inbox = InboxProcessor(
             deps: device.deps, conversations: manager, handler: IncomingHandler(me: device.deps.me, now: device.deps.now, log: { _ in }))
         let store = LiveChatStore(deps: device.deps, outbox: outbox, inbox: inbox, conversations: manager, attachments: nil)

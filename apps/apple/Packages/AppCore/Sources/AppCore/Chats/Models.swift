@@ -103,6 +103,8 @@ public struct SafetyNumber: Hashable, Sendable {
 
 public enum DeliveryStatus: Hashable, Codable, Sendable {
     case sending, sent, delivered, read
+    /// Gave up sending (the chat bubble shows "Not sent" and offers a retry).
+    case failed
 }
 
 public struct Message: Identifiable, Hashable, Codable, Sendable {

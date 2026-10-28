@@ -18,7 +18,7 @@ DEPENDENTS=(
   "calls:calls-android app"
   "webrtc:calls-android app"
   "calls-android:app"
-  "push:app"
+  "push:calls-android app"
 )
 
 declare -A changed=()

@@ -19,7 +19,10 @@ public enum CallInput: Sendable {
     case setPreference(ModePreference), setVideo(Bool), setMuted(Bool), setSpeaker(Bool)
     case server(CallServerEvent)                 // events with payloads only after `remote`
     /// An opened payload from the expected contact. `fromDeviceID` is the server-reported sender device.
-    case remote(CallSignalPayload, fromDeviceID: String)
+    /// `senderDeviceID` is the device part of the sender's MLS credential identity (`<accountID>/<deviceID>`);
+    /// a payload whose credential device differs from `fromDeviceID` is dropped (docs/protocol/calls.md, check 2).
+    /// Nil only when the sealer cannot tell; the machine then trusts `fromDeviceID`.
+    case remote(CallSignalPayload, fromDeviceID: String, senderDeviceID: String? = nil)
     /// A payload from `fromDeviceID` that failed to open. Only the answering device can end the call this way.
     case remoteRejected(CallSealError, fromDeviceID: String)
     case media(MediaEvent)
@@ -27,6 +30,8 @@ public enum CallInput: Sendable {
     case localAnswer(String)
     case stats(MediaStats)
     case pathChanged
+    /// Media, ICE or sealing failed on this device. Ends as failed; a ringing callee does not touch the server.
+    case localFailure
     case tick
     case contextChanged(CallContext)
 }

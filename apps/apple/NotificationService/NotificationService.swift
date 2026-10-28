@@ -44,12 +44,14 @@ private final class Delivery: @unchecked Sendable {
     private var content: UNMutableNotificationContent?
     private var task: Task<Void, Never>?
     private var expired = false
+    private var startedAt = Date()
     private let strings = NotificationStrings.localized()
 
     func start(handler: @escaping (UNNotificationContent) -> Void, content: UNMutableNotificationContent) {
         lock.withLock {
             self.handler = handler
             self.content = content
+            self.startedAt = Date()
         }
     }
 
@@ -94,7 +96,8 @@ private final class Delivery: @unchecked Sendable {
                 handler(content)
             case .call(let payload, let contact):
                 let content = content ?? UNMutableNotificationContent()
-                NotificationService.applyCall(payload, from: contact, to: content)
+                let ringedAt = lock.withLock { startedAt }
+                NotificationService.applyCall(payload, from: contact, to: content, ringedAt: ringedAt)
                 handler(content)
             }
         }

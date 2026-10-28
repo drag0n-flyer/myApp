@@ -165,7 +165,8 @@ private func raw(_ conv: ConversationRecord, cursor: Int64 = 900, kind: String =
         let bob = Side(rig.bob1)
         _ = try await bob.processor.syncOnce()
         try await send(rig.ana1, record, .text("once", replyTo: nil))
-        let payload = try #require(await rig.server.storedMessages(in: record.serverID).last).ciphertext
+        let storedLast = await rig.server.storedMessages(in: record.serverID).last
+        let payload = try #require(storedLast).ciphertext
         try bob.deps.repo.markProcessed(hash: PortableSHA256.hash(payload))
         let before = bob.spy.processed.count
         _ = try await bob.processor.syncOnce()
@@ -259,6 +260,34 @@ private func raw(_ conv: ConversationRecord, cursor: Int64 = 900, kind: String =
         #expect(sent[0].body == .receipt(.delivered, ids: ["t1", "t2"]))
     }
 
+    @Test func withoutAControlSenderTheReceiptsAreLeftAsMarkers() async throws {
+        // The notification extension syncs a Welcome's batch with no outbox: the app sends those receipts later.
+        let rig = try await Rig.make()
+        let record = try await startChat(rig)
+        let side = Side(rig.bob1)
+        let quiet = InboxProcessor(
+            deps: side.deps, conversations: ConversationManager(deps: side.deps), handler: side.handler, controls: nil)
+        try await send(rig.ana1, record, .text("x", replyTo: nil), id: "t1")
+        _ = try await quiet.syncOnce()
+        #expect(try side.deps.repo.get("receipt.pending.t1") == Data("acc-ana".utf8))
+    }
+
+    @Test func pendingReceiptsFromTheNotificationExtensionAreSent() async throws {
+        let rig = try await Rig.make()
+        let bob = Side(rig.bob1)
+        // The extension applied these two messages and left a marker (value = chat ID) for the app.
+        try bob.deps.repo.set("receipt.pending.x1", Data("acc-ana".utf8))
+        try bob.deps.repo.set("receipt.pending.x2", Data("acc-ana".utf8))
+        await bob.processor.drainRaw()
+        let sent = await bob.controls.sent
+        #expect(sent.count == 1 && sent[0].chatID == "acc-ana")
+        #expect(sent[0].body == .receipt(.delivered, ids: ["x1", "x2"]))
+        let left = try bob.deps.repo.entries(prefix: "receipt.pending.").filter { !$0.value.isEmpty }
+        #expect(left.isEmpty)
+        await bob.processor.drainRaw()
+        #expect(await bob.controls.sent.count == 1)   // sent once
+    }
+
     @Test func removedMeDeactivates() async throws {
         let rig = try await Rig.make()
         let record = try await startChat(rig)
@@ -312,7 +341,8 @@ private func raw(_ conv: ConversationRecord, cursor: Int64 = 900, kind: String =
         _ = try await bob.processor.syncOnce()
         let payload = CallSignalPayload(kind: .ring, callID: "call-1", video: false)
         try await send(rig.ana1, record, .callSignal(payload), id: "cs1")
-        let item = try #require(await rig.server.storedMessages(in: record.serverID).last)
+        let storedLast = await rig.server.storedMessages(in: record.serverID).last
+        let item = try #require(storedLast)
 
         // Through the processor the inbox copy is dropped and its hash marked processed.
         _ = try await bob.processor.syncOnce()
@@ -457,7 +487,8 @@ private final class LogBox: @unchecked Sendable {
         await running.value
         #expect(try bob.texts("acc-ana") == ["first", "second"])
         let order = bob.spy.processed.suffix(2)
-        #expect(Array(order) == (await rig.server.storedMessages(in: record.serverID)).suffix(2).map(\.ciphertext))
+        let lastTwo = await rig.server.storedMessages(in: record.serverID).suffix(2).map(\.ciphertext)
+        #expect(Array(order) == lastTwo)
         #expect(try await rig.bob1.deps.server.inbox(after: nil).items.isEmpty)
     }
 
@@ -549,5 +580,160 @@ private final class LogBox: @unchecked Sendable {
         #expect(try bob1.deps.repo.chats().isEmpty)
         #expect(try bob1.deps.repo.rawItems(limit: 10).isEmpty)
         #expect(try bob1.deps.repo.isProcessed(hash: PortableSHA256.hash(bundle.welcome ?? Data())))
+    }
+}
+
+/// One bad join must not stop the inbox: a Welcome that cannot be joined is recorded (parked, with a "couldn't open
+/// this chat" placeholder) and skipped, and later items are processed.
+@Suite("TestInboxProcessorBadJoin") struct TestInboxProcessorBadJoin {
+    /// Two Welcomes for bob1: ana1's chat first, then ana2's.
+    private func twoChats(_ rig: Rig) async throws -> (first: ConversationRecord, second: ConversationRecord) {
+        let first = try await startChat(rig)
+        let second = try await ConversationManager(deps: rig.ana2.deps, escrowKey: { Data(repeating: 7, count: 32) })
+            .create(with: "acc-bob")
+        return (first, second)
+    }
+
+    private func welcome(_ device: TestDevice, _ conversationID: String) async throws -> InboxItem {
+        try #require(try await device.deps.server.inbox(after: nil).items.first {
+            $0.kind == "welcome" && $0.conversationID == conversationID
+        })
+    }
+
+    private func isParked(_ side: Side, _ cursor: Int64) throws -> Bool {
+        !(try side.deps.repo.get(ParkedItem.key(cursor: cursor)) ?? Data()).isEmpty
+    }
+
+    private func joinFailedPlaceholder(_ side: Side, _ cursor: Int64) throws -> MessageRecord? {
+        try side.deps.repo.messages(chatID: "acc-ana", before: nil, limit: 100).first { $0.id == "join-failed-\(cursor)" }
+    }
+
+    @Test func permanentJoinFailureIsParkedAndLaterItemsRun() async throws {
+        let rig = try await Rig.make()
+        let (first, second) = try await twoChats(rig)
+        let bob = Side(rig.bob1)
+        let bad = try await welcome(rig.bob1, first.serverID)
+        bob.spy.failNextMembers(1, with: .crypto("bad credential"))
+        _ = try await bob.processor.syncOnce()
+
+        #expect(try bob.deps.repo.conversation(serverID: first.serverID) == nil)
+        #expect(try bob.deps.repo.conversation(serverID: second.serverID) != nil)
+        #expect(try bob.deps.repo.rawItems(limit: 10).isEmpty)
+        #expect(try bob.deps.repo.isProcessed(hash: PortableSHA256.hash(bad.payload)))
+        #expect(try isParked(bob, bad.cursor))
+        let placeholder = try #require(try joinFailedPlaceholder(bob, bad.cursor))
+        #expect(placeholder.undecryptable)
+        #expect(placeholder.conversationID == nil)
+    }
+
+    @Test func temporaryJoinFailureIsRetriedThenParked() async throws {
+        let rig = try await Rig.make()
+        let (first, second) = try await twoChats(rig)
+        let bob = Side(rig.bob1)
+        let bad = try await welcome(rig.bob1, first.serverID)
+        bob.spy.failNextMembers(InboxProcessor.maxJoinTries, with: .storage("disk"))
+        _ = try await bob.processor.syncOnce()
+        for _ in 1..<(InboxProcessor.maxJoinTries - 1) { await bob.processor.drainRaw() }
+        // Still retried: nothing behind it has run.
+        #expect(try bob.deps.repo.conversation(serverID: second.serverID) == nil)
+        #expect(try !isParked(bob, bad.cursor))
+
+        await bob.processor.drainRaw()  // the last try
+        #expect(try isParked(bob, bad.cursor))
+        #expect(try bob.deps.repo.conversation(serverID: second.serverID) != nil)
+        #expect(try bob.deps.repo.rawItems(limit: 10).isEmpty)
+        #expect(bob.spy.processed.filter { $0 == bad.payload }.count == 1)  // the engine saw it once
+    }
+
+    @Test func welcomeForABoundConversationIsParked() async throws {
+        let rig = try await Rig.make()
+        let (first, second) = try await twoChats(rig)
+        let bob = Side(rig.bob1)
+        let bad = try await welcome(rig.bob1, first.serverID)
+        // The server ID is already bound to another group here: never rebound.
+        try bob.deps.repo.upsertChat(ChatRecord(id: "acc-ana", isRequest: true, unread: 0, muted: false, lastActivity: testEpochDate))
+        try bob.deps.repo.upsertConversation(ConversationRecord(
+            serverID: first.serverID, chatID: "acc-ana", groupID: Data([9, 9, 9]), mode: "e2ee", innerMode: nil,
+            modeMismatch: false, epoch: 0, active: false, createdAt: testEpochDate))
+        _ = try await bob.processor.syncOnce()
+
+        #expect(try isParked(bob, bad.cursor))
+        #expect(try bob.deps.repo.conversation(serverID: first.serverID)?.groupID == Data([9, 9, 9]))
+        #expect(try bob.deps.repo.conversation(serverID: second.serverID) != nil)
+        #expect(try bob.deps.repo.rawItems(limit: 10).isEmpty)
+    }
+
+    /// Someone who shares a chat with me sends a Welcome for a new server conversation that names the group of an
+    /// existing one. Its rows would break `group_id UNIQUE` on every retry: it is parked at once instead.
+    @Test func welcomeReusingAnotherConversationsGroupIsParked() async throws {
+        let rig = try await Rig.make()
+        let first = try await startChat(rig)
+        let bob = Side(rig.bob1)
+        _ = try await bob.processor.syncOnce()
+        let group = GroupID(raw: first.groupID)
+        // ana removes bob1, so bob1's engine accepts a new Welcome for the same group.
+        let removal = try await rig.ana1.deps.mls.remove(members: ["acc-bob/\(rig.bob1.deviceID)"], from: group)
+        _ = try await rig.ana1.deps.server.postCommit(
+            conversationID: first.serverID, epoch: 1, commit: removal.commit, welcome: nil, addDevices: [],
+            removeDevices: [rig.bob1.deviceID])
+        try await rig.ana1.deps.mls.commitAccepted(group)
+        _ = try await bob.processor.syncOnce()
+        #expect(try bob.deps.repo.conversation(serverID: first.serverID)?.active == false)
+
+        // A second server conversation whose Welcome names the first one's group.
+        let second = try await rig.ana1.deps.server.createConversation(with: "acc-bob")
+        let keyPackage = try #require(try await rig.ana1.deps.server.claimKeyPackages(accountID: "acc-bob")
+            .first { $0.deviceID == rig.bob1.deviceID })
+        let readd = try await rig.ana1.deps.mls.add(keyPackages: [keyPackage.keyPackage], to: group)
+        _ = try await rig.ana1.deps.server.postCommit(
+            conversationID: second.conversationID, epoch: 0, commit: readd.commit, welcome: readd.welcome,
+            addDevices: [rig.bob1.deviceID], removeDevices: [])
+        let bad = try await welcome(rig.bob1, second.conversationID)
+        _ = try await bob.processor.syncOnce()
+
+        #expect(try isParked(bob, bad.cursor))
+        #expect(try bob.deps.repo.rawItems(limit: 10).isEmpty)
+        #expect(try bob.deps.repo.conversation(serverID: second.conversationID) == nil)
+        #expect(try bob.deps.repo.conversation(serverID: first.serverID)?.groupID == first.groupID)
+    }
+
+    @Test func welcomeWithAnUnknownServerModeIsParked() async throws {
+        let rig = try await Rig.make()
+        let (first, second) = try await twoChats(rig)
+        await rig.server.setMode("future_mode", of: first.serverID)
+        let bob = Side(rig.bob1)
+        let bad = try await welcome(rig.bob1, first.serverID)
+        _ = try await bob.processor.syncOnce()
+
+        #expect(try isParked(bob, bad.cursor))
+        #expect(try bob.deps.repo.conversation(serverID: first.serverID) == nil)
+        #expect(try bob.deps.repo.conversation(serverID: second.serverID) != nil)
+        #expect(try bob.deps.repo.rawItems(limit: 10).isEmpty)
+    }
+
+    @Test func welcomeTheEngineRejectsLeavesAJoinFailedPlaceholder() async throws {
+        let rig = try await Rig.make()
+        let (first, second) = try await twoChats(rig)
+        let bob = Side(rig.bob1)
+        let bad = try await welcome(rig.bob1, first.serverID)
+        bob.spy.fail(bad.payload)
+        _ = try await bob.processor.syncOnce()
+
+        #expect(try isParked(bob, bad.cursor))
+        #expect(try joinFailedPlaceholder(bob, bad.cursor) != nil)
+        #expect(try bob.deps.repo.conversation(serverID: second.serverID) != nil)
+    }
+
+    @Test func welcomeForAConversationTheServerForgotLeavesAJoinFailedPlaceholder() async throws {
+        let rig = try await Rig.make()
+        let (first, second) = try await twoChats(rig)
+        await rig.server.removeConversation(first.serverID)
+        let bob = Side(rig.bob1)
+        let bad = try await welcome(rig.bob1, first.serverID)
+        _ = try await bob.processor.syncOnce()
+
+        #expect(try isParked(bob, bad.cursor))
+        #expect(try joinFailedPlaceholder(bob, bad.cursor) != nil)
+        #expect(try bob.deps.repo.conversation(serverID: second.serverID) != nil)
     }
 }

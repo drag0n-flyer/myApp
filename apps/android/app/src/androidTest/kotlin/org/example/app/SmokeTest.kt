@@ -1,7 +1,12 @@
 package org.example.app
 
 import androidx.compose.ui.test.hasContentDescription
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import android.content.Intent
+import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.test.core.app.ActivityScenario
+import androidx.test.core.app.ApplicationProvider
+import org.junit.After
+import org.junit.Before
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -17,7 +22,19 @@ import org.junit.runner.RunWith
  */
 @RunWith(AndroidJUnit4::class)
 class SmokeTest {
-    @get:Rule val rule = createAndroidComposeRule<MainActivity>()
+    @get:Rule val rule = createEmptyComposeRule()
+    private lateinit var scenario: ActivityScenario<MainActivity>
+
+    /** The live services are the default since task I1: this test asks for the sample ones. */
+    @Before
+    fun launch() {
+        val intent = Intent(ApplicationProvider.getApplicationContext(), MainActivity::class.java)
+            .putExtra(MainActivity.EXTRA_SAMPLE_DATA, true)
+        scenario = ActivityScenario.launch(intent)
+    }
+
+    @After
+    fun close() = scenario.close()
 
     @Test
     fun launchOpenChatSendAndCall() {
