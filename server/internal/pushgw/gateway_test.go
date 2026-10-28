@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -20,9 +21,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/velixio/myApp/server/internal/pushgw"
-	"github.com/velixio/myApp/server/internal/pushproto"
-	"github.com/velixio/myApp/server/internal/testkit"
+	"github.com/drag0n-flyer/myApp/server/internal/pushgw"
+	"github.com/drag0n-flyer/myApp/server/internal/pushproto"
+	"github.com/drag0n-flyer/myApp/server/internal/testkit"
 )
 
 type sent struct {
@@ -60,6 +61,7 @@ type env struct {
 	t        *testing.T
 	h        http.Handler
 	apns     *fakeAPNs
+	fcm      *fakeAPNs
 	clock    *testkit.Clock
 	hpub     hpke.PublicKey
 	serverID string
@@ -80,7 +82,24 @@ func newHPKE(t *testing.T) hpke.PrivateKey {
 	return p
 }
 
-func setup(t *testing.T) *env {
+func setup(t *testing.T) *env { return setupWith(t, true) }
+
+func setupWith(t *testing.T, withFCM bool) *env {
+	return setupCfg(t, func(cfg *pushgw.GatewayConfig, fcm *fakeAPNs) {
+		if withFCM {
+			cfg.FCM, cfg.AndroidAppIDs = fcm, []string{"com.example.android"}
+		}
+	})
+}
+
+// setupAndroidIDsOnly lists an Android application ID but configures no FCM sender.
+func setupAndroidIDsOnly(t *testing.T) *env {
+	return setupCfg(t, func(cfg *pushgw.GatewayConfig, _ *fakeAPNs) {
+		cfg.AndroidAppIDs = []string{"com.example.android"}
+	})
+}
+
+func setupCfg(t *testing.T, tweak func(*pushgw.GatewayConfig, *fakeAPNs)) *env {
 	t.Helper()
 	pool := testkit.DB(t)
 	if err := pushgw.Migrate(context.Background(), pool); err != nil {
@@ -88,12 +107,14 @@ func setup(t *testing.T) *env {
 	}
 	clock := testkit.NewClock()
 	hk := newHPKE(t)
-	apns := &fakeAPNs{}
-	h := pushgw.NewGateway(pool, pushgw.GatewayConfig{
+	apns, fcm := &fakeAPNs{}, &fakeAPNs{}
+	cfg := pushgw.GatewayConfig{
 		HPKEKey: hk, HPKEPublic: hk.PublicKey().Bytes(),
 		BundleIDs: []string{"com.example.app"}, Now: clock.Now,
-	}, apns, slog.New(slog.DiscardHandler))
-	e := &env{t: t, h: h, apns: apns, clock: clock, hpub: hk.PublicKey()}
+	}
+	tweak(&cfg, fcm)
+	h := pushgw.NewGateway(pool, cfg, apns, slog.New(slog.DiscardHandler))
+	e := &env{t: t, h: h, apns: apns, fcm: fcm, clock: clock, hpub: hk.PublicKey()}
 	e.dbExec = func(sql string, args ...any) {
 		if _, err := pool.Exec(context.Background(), sql, args...); err != nil {
 			t.Fatal(err)
@@ -419,6 +440,45 @@ func TestReplayExpires(t *testing.T) {
 	e.clock.Advance(11 * time.Minute)
 	if r := e.push(b); r.status != 202 {
 		t.Fatal(r.status)
+	}
+}
+
+// A request signed 300 s in the future is accepted on arrival and again up to
+// 300 s past its timestamp, so 600 s after first use. It must still be a replay.
+func TestReplayWindowCoversFullSkewRange(t *testing.T) {
+	e := setup(t)
+	b := e.body(e.handle(goodHandle), "message", "x")
+	signedAhead := e.clock.Now().Add(300 * time.Second)
+	send := func() resp {
+		return e.do("POST", "/v1/push", "10.0.0.9:1", b, func(r *http.Request) {
+			pushproto.Sign(e.priv, r, b, e.serverID, signedAhead)
+		})
+	}
+	if r := send(); r.status != 202 {
+		t.Fatalf("first: %d %s", r.status, r.body)
+	}
+	e.clock.Advance(600 * time.Second)
+	if r := send(); r.status != 409 {
+		t.Fatalf("replay at +600 s: %d %s", r.status, r.body)
+	}
+}
+
+type failingBody struct{}
+
+func (failingBody) Read([]byte) (int, error) { return 0, errors.New("connection reset") }
+
+func TestBodyReadErrors(t *testing.T) {
+	e := setup(t)
+	big := bytes.Repeat([]byte("a"), 33<<10)
+	if r := e.do("POST", "/v1/servers", "10.0.0.2:1", big, nil); r.status != 413 {
+		t.Errorf("oversize: %d %s", r.status, r.body)
+	}
+	req := httptest.NewRequest("POST", "/v1/servers", failingBody{})
+	req.RemoteAddr = "10.0.0.3:1"
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, req)
+	if rec.Code != 400 {
+		t.Errorf("read error: %d %s", rec.Code, rec.Body)
 	}
 }
 

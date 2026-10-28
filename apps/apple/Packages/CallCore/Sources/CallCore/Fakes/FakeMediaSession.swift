@@ -22,7 +22,7 @@ public final class FakeMediaSession: MediaSession, @unchecked Sendable {
     public func rollback() async throws { rec("rollback") }
     public func add(_ candidate: IceCandidate) async throws { rec("add") }
     public func setAudioMaxBitrate(_ bps: Int) async { rec("setAudioMaxBitrate(\(bps))") }
-    public func setVideo(_ tier: VideoTier?) async { rec("setVideo(\(tier.map { "\($0)" } ?? "nil"))") }
+    public func setVideo(_ tier: VideoTier?, ceiling: DataMode) async { rec("setVideo(\(tier.map { "\($0)" } ?? "nil"),\(ceiling))") }
     public func setMuted(_ on: Bool) async { rec("setMuted(\(on))") }
     public func setNoiseSuppression(_ mode: NoiseSuppression) async { rec("setNoiseSuppression(\(mode.rawValue))") }
     public func stats() async -> MediaStats { rec("stats"); return statsResult }

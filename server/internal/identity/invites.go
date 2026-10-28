@@ -10,7 +10,7 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/velixio/myApp/server/internal/httpx"
+	"github.com/drag0n-flyer/myApp/server/internal/httpx"
 )
 
 // inviteAlphabet has 32 letters and digits, without I, O, 0 and 1.
@@ -37,17 +37,8 @@ func NewInviteCode() string {
 // CreateInvite stores a new invite good for uses sign-ups until ttl from now,
 // and returns its code.
 func (m *Module) CreateInvite(ctx context.Context, uses int, ttl time.Duration) (string, error) {
-	if uses < 1 || ttl <= 0 {
-		return "", fmt.Errorf("invite needs at least one use and a positive lifetime")
-	}
-	code := NewInviteCode()
-	_, err := m.d.DB.Exec(ctx,
-		`insert into invites (code, uses_left, expires_at) values ($1, $2, $3)`,
-		code, uses, m.d.Now().Add(ttl))
-	if err != nil {
-		return "", err
-	}
-	return code, nil
+	_, code, err := m.CreateInviteID(ctx, uses, ttl)
+	return code, err
 }
 
 // inviteUsable reports whether code names an invite that has uses left and

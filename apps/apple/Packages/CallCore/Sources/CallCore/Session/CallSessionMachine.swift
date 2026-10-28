@@ -42,6 +42,7 @@ public struct CallSessionMachine: Sendable {
     private var everActive = false
     private var lastSentMode: DataMode?
     private var lastSentTier: VideoTier?
+    private var lastSentCeiling: DataMode?   // the ceiling the media layer last got with a `.setVideo`
 
     public init(context: CallContext, clock: Clock) {
         self.context = context
@@ -111,7 +112,7 @@ public struct CallSessionMachine: Sendable {
         outstandingSince = nil; lastHonouredRequest = nil; negotiatedSend = nil
         pinnedFingerprint = nil; renegotiateOutstanding = false
         pendingLocalCandidates = []; earlyRemoteCandidates = [:]
-        activeSince = nil; everActive = false; lastSentMode = nil; lastSentTier = nil
+        activeSince = nil; everActive = false; lastSentMode = nil; lastSentTier = nil; lastSentCeiling = nil
         reconnect = ReconnectPolicy(isCaller: isOutgoing)
     }
 
@@ -217,6 +218,7 @@ public struct CallSessionMachine: Sendable {
                                                 receive: .for(ownCeiling))]
             for c in earlyRemoteCandidates.removeValue(forKey: answering) ?? [] { fx.append(.addCandidate(c)) }
             update { $0.phase = .connecting }
+            fx += syncMedia()   // the peer's ceiling may be lower than ours: clamp video now
             fx.append(.publish(state))
             return fx
         case .answer:
@@ -230,6 +232,7 @@ public struct CallSessionMachine: Sendable {
             negotiatedSend = .for(state?.effectiveMode ?? ownCeiling)
             var fx: [CallEffect] = [.acceptAnswer(sdp: sdp, send: .for(state?.effectiveMode ?? ownCeiling))]
             for c in earlyRemoteCandidates.removeValue(forKey: answering) ?? [] { fx.append(.addCandidate(c)) }
+            fx += syncMedia()   // the peer's ceiling may be lower than ours: clamp video now
             fx.append(.publish(state))
             return fx
         case .renegotiate:
@@ -410,9 +413,12 @@ public struct CallSessionMachine: Sendable {
             lastSentMode = mode
             fx.append(.setAudioMaxBitrate(AudioProfile.for(mode).maxAverageBitrate))
         }
-        if tier != lastSentTier {
+        // The media layer clamps the tier to the ceiling it is given, so a ceiling change re-sends a running tier.
+        let ceiling = effectiveCeiling
+        if tier != lastSentTier || (tier != nil && ceiling != lastSentCeiling) {
             lastSentTier = tier
-            fx.append(.setVideo(tier))
+            lastSentCeiling = ceiling
+            fx.append(.setVideo(tier, ceiling: ceiling))
         }
         return fx
     }
@@ -453,8 +459,9 @@ public struct CallSessionMachine: Sendable {
         adaptor.setVideoWanted(on)
         let tier = adaptor.currentTier
         lastSentTier = tier
+        lastSentCeiling = effectiveCeiling
         update { $0.isVideoOn = tier != nil }
-        return [.setVideo(tier), .publish(state)]
+        return [.setVideo(tier, ceiling: effectiveCeiling), .publish(state)]
     }
 
     private mutating func contextChanged(_ c: CallContext) -> [CallEffect] {

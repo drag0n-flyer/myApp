@@ -60,16 +60,24 @@ Repeat for every app, every profile, and 3 runs.
    Port 443 is not excluded (for these apps there is no single-host setup to worry about): some apps send call audio over UDP port 443, and excluding it would hide them. `--udp-only` drops TCP 443 signaling and other web traffic. `--peer` keeps only the call flow. `duration_s` runs from the first to the last media packet.
    If the capture is made on the day-one fallback setup (see [protocol-data-use.md](protocol-data-use.md), Day-one check), write it in the `capture_setup` field of the result.
    Expected: one line of JSON with `duration_s` near 300 and non-zero `up_bytes` and `down_bytes`.
-8. Score the voice quality against the stimulus:
+8. Convert and move the recording to the scoring machine. `afconvert` exists only on the Mac, and ViSQOL installs ready-made only on Linux x86_64 (see `tools/call-lab/scoring/README.md`). On the Mac:
+
+    ```
+    afconvert -f WAVE -d LEI16@48000 -c 1 tools/call-lab/runs/<run>/received.wav tools/call-lab/runs/<run>/received-48k.wav
+    rsync -a tools/call-lab/runs/<run>/received-48k.wav stimulus.wav <user>@<linux-host>:myApp/tools/call-lab/runs/<run>/
+    ```
+
+    Expected: both files are on the Linux machine. Use `received-48k.wav` and `stimulus.wav` (convert `stimulus.wav` the same way if it is not already 48 kHz mono 16-bit) in the next step, and run it on the Linux machine.
+9. Score the voice quality against the stimulus:
 
    ```
-   python3 tools/call-lab/scoring/score.py visqol --ref stimulus.wav --deg tools/call-lab/runs/<run>/received.wav
+   tools/call-lab/scoring/.venv/bin/python tools/call-lab/scoring/score.py visqol --ref stimulus.wav --deg tools/call-lab/runs/<run>/received-48k.wav
    ```
 
    Expected: one line like `{"visqol_moslqo": 3.8}`.
-9. Add a row to your CSV (the same columns as [templates/data-use.csv](templates/data-use.csv)). Use the app name in `app`. For apps other than Call Lab write `n/a` in `preset`, `path` and `concealed_pct`, since they have no lab stats.
+10. Add a row to your CSV (the same columns as [templates/data-use.csv](templates/data-use.csv)). Use the app name in `app`. For apps other than Call Lab write `n/a` in `preset`, `path` and `concealed_pct`, since they have no lab stats.
    Expected: the row has no empty cells.
-10. Check the run: the call must not have dropped, and the three runs' `bytes_per_min` must be within 10% of their median (the same check as in [protocol-data-use.md](protocol-data-use.md)). For other apps there is no `events.csv`, so note "no drop heard and call stayed connected" instead. Repeat any invalid run.
+11. Check the run: the call must not have dropped, and the three runs' `bytes_per_min` must be within 10% of their median (the same check as in [protocol-data-use.md](protocol-data-use.md)). For other apps there is no `events.csv`, so note "no drop heard and call stayed connected" instead. Repeat any invalid run.
    Expected: three valid runs for the cell.
 
 ## Where each number comes from

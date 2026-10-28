@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/velixio/myApp/server/internal/core"
-	"github.com/velixio/myApp/server/internal/httpx"
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/httpx"
 )
 
 // Module is the attachments module.
@@ -160,7 +160,7 @@ func (m *Module) download(w http.ResponseWriter, r *http.Request) error {
 
 // PruneOnce deletes every expired attachment, file first, then row.
 func (m *Module) PruneOnce(ctx context.Context) error {
-	rows, err := m.d.DB.Query(ctx, `select id from attachments where expires_at <= $1`, m.d.Now())
+	rows, err := m.d.DB.Query(ctx, `select id from attachments where expires_at <= $1 order by id`, m.d.Now())
 	if err != nil {
 		return err
 	}
@@ -177,15 +177,18 @@ func (m *Module) PruneOnce(ctx context.Context) error {
 	if err := rows.Err(); err != nil {
 		return err
 	}
+	// One bad blob must not stop the rest: keep going and report all failures.
+	var errs []error
 	for _, id := range ids {
 		if err := m.store.Delete(ctx, id); err != nil {
-			return err
+			errs = append(errs, err)
+			continue
 		}
 		if _, err := m.d.DB.Exec(ctx, `delete from attachments where id = $1`, id); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // Run deletes expired attachments every hour until ctx is cancelled.

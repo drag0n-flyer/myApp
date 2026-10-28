@@ -3,13 +3,15 @@ package identity_test
 import (
 	"bytes"
 	"context"
+	"errors"
+	"github.com/drag0n-flyer/myApp/server/internal/core"
 	"net/http"
 	"regexp"
 	"testing"
 	"time"
 
-	"github.com/velixio/myApp/server/internal/identity"
-	"github.com/velixio/myApp/server/internal/testkit"
+	"github.com/drag0n-flyer/myApp/server/internal/identity"
+	"github.com/drag0n-flyer/myApp/server/internal/testkit"
 )
 
 func TestUsernameAvailability(t *testing.T) {
@@ -72,7 +74,9 @@ func TestInviteCheck(t *testing.T) {
 		t.Fatal("malformed code valid")
 	}
 	empty, _ := m.CreateInvite(ctx, 1, time.Hour)
-	d.DB.Exec(ctx, `update invites set uses_left=0 where code=$1`, empty)
+	if _, err := d.DB.Exec(ctx, `update invites set uses_left=0 where code=$1`, empty); err != nil {
+		t.Fatal(err)
+	}
 	if _, v := checkInvite(t, c, empty); v {
 		t.Fatal("used-up code valid")
 	}
@@ -109,8 +113,70 @@ func TestInviteCreateCommand(t *testing.T) {
 		t.Fatalf("output %q", out.String())
 	}
 	var n int
-	d.DB.QueryRow(context.Background(), `select uses_left from invites`).Scan(&n)
+	if err := d.DB.QueryRow(context.Background(), `select uses_left from invites`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
 	if n != 3 {
 		t.Fatalf("uses_left %d", n)
+	}
+}
+
+func TestRevokeInvite(t *testing.T) {
+	d, _ := testkit.NewDeps(t)
+	m := identity.New(d)
+	c := testkit.Serve(t, d, m)
+	ctx := context.Background()
+	id, code, err := m.CreateInviteID(ctx, 3, time.Hour)
+	if err != nil || id == "" || code == "" {
+		t.Fatalf("%q %q %v", id, code, err)
+	}
+	if _, v := checkInvite(t, c, code); !v {
+		t.Fatal("fresh code invalid")
+	}
+	if err := m.RevokeInvite(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, v := checkInvite(t, c, code); v {
+		t.Fatal("revoked code still valid")
+	}
+	r := c.Do(nil, "POST", "/v1/signup/start", map[string]string{
+		"inviteCode": code, "username": "ana", "email": "ana@example.org"})
+	if r.Status != 403 || r.Code() != "invite_invalid" {
+		t.Fatalf("signup with revoked invite: %s", r)
+	}
+	var at1 time.Time
+	if err := d.DB.QueryRow(ctx, `select revoked_at from invites where id=$1`, id).Scan(&at1); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.RevokeInvite(ctx, id); err != nil {
+		t.Fatalf("second revoke: %v", err)
+	}
+	var at2 time.Time
+	_ = d.DB.QueryRow(ctx, `select revoked_at from invites where id=$1`, id).Scan(&at2)
+	if !at1.Equal(at2) {
+		t.Fatal("second revoke changed revoked_at")
+	}
+	if err := m.RevokeInvite(ctx, "33333333-3333-3333-3333-333333333333"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("unknown id: %v", err)
+	}
+	if err := m.RevokeInvite(ctx, "not-a-uuid"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("bad id: %v", err)
+	}
+}
+
+func TestInviteCreateCommandUnchanged(t *testing.T) {
+	d, _ := testkit.NewDeps(t)
+	m := identity.New(d)
+	var out bytes.Buffer
+	if err := m.Commands()["invite create"](context.Background(), []string{"--uses", "2"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	re := regexp.MustCompile(`^https://chat\.test/invite/[ABCDEFGHJKLMNPQRSTUVWXYZ2-9]{5}-[ABCDEFGHJKLMNPQRSTUVWXYZ2-9]{5}\n$`)
+	if !re.MatchString(out.String()) {
+		t.Fatalf("output %q", out.String())
+	}
+	var n int
+	if err := d.DB.QueryRow(context.Background(), `select count(*) from invites where uses_left = 2`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("%d %v", n, err)
 	}
 }

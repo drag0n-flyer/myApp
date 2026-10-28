@@ -18,11 +18,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/velixio/myApp/server/internal/core"
-	"github.com/velixio/myApp/server/internal/httpx"
-	"github.com/velixio/myApp/server/internal/push"
-	"github.com/velixio/myApp/server/internal/pushproto"
-	"github.com/velixio/myApp/server/internal/testkit"
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/httpx"
+	"github.com/drag0n-flyer/myApp/server/internal/push"
+	"github.com/drag0n-flyer/myApp/server/internal/pushproto"
+	"github.com/drag0n-flyer/myApp/server/internal/testkit"
 )
 
 type recorded struct {
@@ -48,6 +48,11 @@ func (g *gateway) requests() []recorded {
 // setup starts a fake gateway and returns push deps pointed at it.
 func setup(t *testing.T, gwStatus int) (core.Deps, *testkit.Fakes, *gateway) {
 	t.Helper()
+	return setupWith(t, gwStatus, func(*core.Deps) {})
+}
+
+func setupWith(t *testing.T, gwStatus int, extra func(*core.Deps)) (core.Deps, *testkit.Fakes, *gateway) {
+	t.Helper()
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	der, _ := x509.MarshalPKCS8PrivateKey(priv)
 	keyFile := filepath.Join(t.TempDir(), "push.pem")
@@ -72,6 +77,7 @@ func setup(t *testing.T, gwStatus int) (core.Deps, *testkit.Fakes, *gateway) {
 		d.Config.PushGatewayURL = g.srv.URL
 		d.Config.PushKeyFile = keyFile
 		d.Config.PushServerID = "srv1"
+		extra(d)
 	})
 	// the gateway shares the fake clock
 	clock = f.Clock
@@ -240,6 +246,35 @@ func TestGatewayErrorIsReturned(t *testing.T) {
 	}
 	if count(t, d, p.DeviceID) != 1 {
 		t.Fatal("handle deleted on 500")
+	}
+}
+
+func TestRedirectIsNotFollowed(t *testing.T) {
+	d, _, _ := setup(t, 200)
+	var hits int
+	var mu sync.Mutex
+	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		mu.Lock()
+		hits++
+		mu.Unlock()
+	}))
+	t.Cleanup(target.Close)
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/v1/push", http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(redirector.Close)
+	d.Config.PushGatewayURL = redirector.URL
+	m := push.New(d)
+	c := testkit.Serve(t, d, m)
+	p := testkit.Account(t, d, "alice")
+	putToken(t, c, p, "alert", []byte("h"))
+	if err := m.Push(context.Background(), p.DeviceID, core.PushMessage, []byte("x")); err == nil {
+		t.Fatal("a redirect answer must be an error")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if hits != 0 {
+		t.Fatalf("the signed request was replayed to the redirect target %d times", hits)
 	}
 }
 

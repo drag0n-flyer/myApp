@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/httpx"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/velixio/myApp/server/internal/core"
-	"github.com/velixio/myApp/server/internal/httpx"
 )
 
 // uuidBytes returns the 16 bytes of a UUID string, the WebAuthn user handle.

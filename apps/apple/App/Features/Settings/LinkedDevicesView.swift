@@ -10,7 +10,8 @@ struct LinkedDevicesView: View {
             Section {
                 ForEach(model.linkedDevices) { device in
                     HStack(spacing: 12) {
-                        Image(systemName: device.platform == .mac ? "laptopcomputer" : "iphone").font(.title2).frame(width: 34)
+                        Image(systemName: device.platform.symbolName).font(.title2).frame(width: 34)
+                            .accessibilityLabel(device.platform.displayName)
                         VStack(alignment: .leading) {
                             Text(device.name)
                             if device.isThisDevice {

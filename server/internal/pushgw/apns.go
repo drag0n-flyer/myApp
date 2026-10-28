@@ -19,7 +19,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/velixio/myApp/server/internal/pushproto"
+	"github.com/drag0n-flyer/myApp/server/internal/pushproto"
 )
 
 const (
@@ -61,7 +61,11 @@ func NewAPNsClient(keyPEM []byte, keyID, teamID, baseURL string, httpClient *htt
 		return nil, errors.New("pushgw: APNs key must be ECDSA P-256")
 	}
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: apnsTimeout}
+		// A redirect must not carry the provider token to another host.
+		httpClient = &http.Client{
+			Timeout:       apnsTimeout,
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		}
 	}
 	if now == nil {
 		now = time.Now

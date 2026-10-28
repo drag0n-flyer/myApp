@@ -1,0 +1,49 @@
+name: call-lab
+
+# Call Lab (tools/call-lab): internal measurement app, not the shipped app.
+# Mac runners are scarce: this runs only by hand and on pushes to its own branch.
+# The `build` job needs the released WebRTC.xcframework (WebRTCBinary placeholders until webrtc Task 6).
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/call-lab-l3]
+    paths:
+      - "tools/call-lab/**"
+      - ".github/workflows/call-lab.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  kit:
+    runs-on: ubuntu-latest
+    container: swift:6.0
+    steps:
+      - uses: actions/checkout@v4
+      - name: swift test
+        working-directory: tools/call-lab/Packages/CallLabKit
+        run: swift test
+
+  build:
+    runs-on: macos-26
+    needs: kit
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate project
+        working-directory: tools/call-lab
+        run: xcodegen generate
+      - name: Build CallLabiOS
+        working-directory: tools/call-lab
+        run: |
+          xcodebuild build -project CallLab.xcodeproj -scheme CallLabiOS \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
+      - name: Build CallLabMac
+        working-directory: tools/call-lab
+        run: |
+          xcodebuild build -project CallLab.xcodeproj -scheme CallLabMac \
+            -destination 'generic/platform=macOS' \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""

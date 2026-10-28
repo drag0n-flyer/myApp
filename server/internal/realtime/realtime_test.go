@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/velixio/myApp/server/internal/core"
-	"github.com/velixio/myApp/server/internal/httpx"
-	"github.com/velixio/myApp/server/internal/testkit"
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/httpx"
+	"github.com/drag0n-flyer/myApp/server/internal/testkit"
 )
 
 type env struct {
@@ -308,4 +308,19 @@ func (slowPusher) Push(ctx context.Context, _ string, _ core.PushKind, _ []byte)
 	case <-ctx.Done():
 	}
 	return nil
+}
+
+func TestConnectionCount(t *testing.T) {
+	e := setup(t)
+	if n := e.m.ConnectionCount(); n != 0 {
+		t.Fatalf("empty hub = %d", n)
+	}
+	other := testkit.Device(t, e.m.d, e.p.AccountID, "mac")
+	e.dial(t, e.p)
+	c2 := e.dial(t, other)
+	if n := e.m.ConnectionCount(); n != 2 {
+		t.Fatalf("two devices = %d", n)
+	}
+	c2.Close(websocket.StatusNormalClosure, "bye")
+	waitFor(t, func() bool { return e.m.ConnectionCount() == 1 })
 }

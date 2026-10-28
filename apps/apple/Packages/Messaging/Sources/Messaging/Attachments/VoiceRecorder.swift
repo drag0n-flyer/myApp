@@ -6,9 +6,11 @@ public enum VoiceRecorderError: Error, Equatable, Sendable {
     case permissionDenied
     case couldNotStart
     case notRecording
+    case couldNotConvert
 }
 
-/// Records a voice note as Opus in CAF, 16 kHz mono, 16 kbps (Design 9; values in `MediaPlan.Voice`).
+/// Records a voice note as Opus, 16 kHz mono, 16 kbps (Design 9; values in `MediaPlan.Voice`). The recorder
+/// writes CAF; `stop()` repackages the packets as Ogg Opus (RFC 7845) and returns that file.
 /// Main-actor only: it is driven by the composer.
 @MainActor
 public final class VoiceRecorder {
@@ -48,7 +50,7 @@ public final class VoiceRecorder {
         try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
         try session.setActive(true)
         #endif
-        let url = directory.appendingPathComponent("voice-\(UUID().uuidString.lowercased()).\(MediaPlan.Voice.fileExtension)")
+        let url = directory.appendingPathComponent("voice-\(UUID().uuidString.lowercased()).\(MediaPlan.Voice.recordingExtension)")
         let rec = try AVAudioRecorder(url: url, settings: Self.settings)
         guard rec.prepareToRecord(), rec.record(forDuration: MediaPlan.Voice.maxDuration) else {
             throw VoiceRecorderError.couldNotStart
@@ -58,7 +60,7 @@ public final class VoiceRecorder {
         startedAt = ProcessInfo.processInfo.systemUptime
     }
 
-    /// Stops and returns the file and its length in seconds.
+    /// Stops and returns the Ogg Opus file and its length in seconds.
     @discardableResult
     public func stop() throws -> (URL, Double) {
         guard let rec = recorder, let url = fileURL else { throw VoiceRecorderError.notRecording }
@@ -68,7 +70,10 @@ public final class VoiceRecorder {
         recorder = nil
         fileURL = nil
         deactivate()
-        return (url, seconds)
+        do { return (try CAFOpusConverter.convertToOgg(caf: url), seconds) } catch {
+            try? FileManager.default.removeItem(at: url)
+            throw VoiceRecorderError.couldNotConvert
+        }
     }
 
     /// Stops and deletes the recording.

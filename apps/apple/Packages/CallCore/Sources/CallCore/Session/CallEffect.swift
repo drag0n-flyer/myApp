@@ -9,7 +9,7 @@ public enum CallEffect: Sendable, Equatable {
     case acceptOffer(sdp: String, send: AudioProfile, receive: AudioProfile)  // engine replies with `.localAnswer(sdp)`
     case acceptAnswer(sdp: String, send: AudioProfile)
     case rollback, addCandidate(IceCandidate)
-    case setAudioMaxBitrate(Int), setVideo(VideoTier?), setMuted(Bool), setNoiseSuppression(NoiseSuppression)
+    case setAudioMaxBitrate(Int), setVideo(VideoTier?, ceiling: DataMode), setMuted(Bool), setNoiseSuppression(NoiseSuppression)
     case closeMedia
     case recordHistory(CallSummary, outgoing: Bool)
     case publish(CallState?)

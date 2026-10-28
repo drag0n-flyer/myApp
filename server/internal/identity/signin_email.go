@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/httpx"
 	"github.com/jackc/pgx/v5"
-	"github.com/velixio/myApp/server/internal/core"
-	"github.com/velixio/myApp/server/internal/httpx"
 )
 
 // emailSignInStart answers POST /v1/signin/email/start. It always answers
@@ -57,13 +57,22 @@ func (m *Module) sendSignInCode(ctx context.Context, emailLower string) error {
 	}
 	code := newCode()
 	now := m.d.Now()
-	// Only the newest code works.
-	if _, err := m.d.DB.Exec(ctx, `delete from email_codes where email_lower = $1 or expires_at <= $2`, emailLower, now); err != nil {
+	// Only the newest code works. Replace the old one in one transaction, so a
+	// failed insert cannot leave the account with no code at all.
+	tx, err := m.d.DB.Begin(ctx)
+	if err != nil {
 		return err
 	}
-	if _, err := m.d.DB.Exec(ctx,
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
+	if _, err := tx.Exec(ctx, `delete from email_codes where email_lower = $1 or expires_at <= $2`, emailLower, now); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx,
 		`insert into email_codes (id, email_lower, code_hash, expires_at) values ($1, $2, $3, $4)`,
 		core.NewID(), emailLower, hashCode(code), now.Add(codeTTL*time.Minute)); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
 	subject, body := codeEmail(code)

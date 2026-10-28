@@ -136,9 +136,87 @@ On the admin port (`127.0.0.1:9090`):
 
 - `/healthz` answers 200 while the process runs.
 - `/readyz` answers 200 only when the database is reachable; use it for restarts and uptime checks.
-- `/debug/vars` shows counters (connections, requests, errors) as JSON.
+- `/debug/vars` shows the Go runtime's numbers as JSON. The dashboard's overview (see "Admin dashboard") shows the server's own: connections, accounts, pushes and call relays.
 
 Logs go to stdout (`docker compose logs appserver`). The server never logs tokens, codes, email addresses, push handles, message data or client addresses.
+
+## Admin dashboard
+
+A small web page on the admin port for the operator. It is plain HTML served by the server itself, with no outside scripts or fonts.
+
+What it shows:
+- Overview: health, version, uptime, and counts of accounts, devices, conversations, messages today, live connections, pushes sent and failed, and call relays.
+- Invites: list, create (with the link shown once) and revoke.
+- Accounts: search by username, see devices, sign out a device, delete an account.
+- Reports: who reported whom and why, with counts of shared messages; mark a report handled.
+- Admins: add admins, disable or enable them, reset a password, remove an admin.
+- Server: the loaded policy and non-secret settings, read-only.
+- Audit log: every change made in the dashboard or with `admin` commands, and every account or report opened. Searches, the overview and the server page are not logged.
+
+What it never shows:
+- message or attachment content, or escrow plaintext (escrow export stays a command-line action);
+- session tokens, admin tokens, push handles, link secrets, email codes or IP addresses;
+- secrets from the configuration (`APP_SMTP_URL`, `APP_DATABASE_URL`, `APP_TURN_SECRET`, key files): only "configured" or "not configured";
+- full email addresses (shown as `a•••@example.org`) or the text of reports.
+
+How to reach it: open an SSH tunnel, then browse to it.
+
+```
+ssh -N -L 9090:127.0.0.1:9090 you@<host>
+```
+
+Then open `http://localhost:9090/admin/`.
+
+### First visit: create the first admin
+
+When no admin account exists yet, the sign-in page shows "Create the first admin" instead. Choose a username (3 to 32 characters: letters, digits, dot, underscore, hyphen) and a password (12 to 128 characters), type the password twice, and you are signed in. There is no setup code and no other check.
+
+**Warning: until the first admin exists, anyone who can reach the admin port can create it.** The admin listener defaults to `127.0.0.1` and you reach it through an SSH tunnel, so in the normal setup that is only you. Keep `APP_ADMIN_LISTEN` on `127.0.0.1`. If you change it, or put a proxy in front of the admin port, create the first admin before you open the port to anyone else, or create it from the command line with `appserver admin user add <username>`.
+
+### Sign in and manage admins
+
+Sign in with your username and password. After five wrong tries in a minute from one address, ten wrong tries in an hour for one username, or thirty password tries in an hour in total, sign-in stops for a while. A wrong username, a wrong password and a disabled account all give the same answer.
+
+The Admins page lists the admins. You can add an admin, disable or enable one, reset a password and remove an admin. Disabling, removing or changing the password of an admin signs that admin out everywhere. You cannot disable or remove yourself (ask another admin, or use the command line), and the last enabled admin cannot be disabled or removed. You can change your own password, which signs you out everywhere.
+
+### Command line
+
+The commands read the same `.env`. Use `docker compose exec appserver /appserver ...` (Docker) or `bin/appserver ...` after `make run`. When you pipe a password in, use `docker compose exec -T appserver /appserver ...`; without `-T` Docker opens a terminal and the pipe fails. On a terminal the password you type is not shown.
+
+| Command | What it does |
+|---|---|
+| `admin user list` | Lists admins, whether each is enabled, and the last sign-in. |
+| `admin user add <username>` | Adds an admin. The password is read from standard input, one line; pipe it in, for example `printf '%s\n' "$PW" \| appserver admin user add alice`. Run in a terminal, the typing is not shown. |
+| `admin user add <username> --generate` | Adds an admin with a random 20-character password, printed once. |
+| `admin user reset-password <username>` | Sets a new password (from standard input, or `--generate`) and signs that admin out everywhere. It does not enable a disabled admin. |
+| `admin user reset-2fa <username>` | Turns two-step sign-in off for an admin who lost their authenticator, and signs that admin out everywhere. |
+| `admin user disable <username>` / `enable <username>` | Disables (signs the admin out everywhere) or enables an admin. From the command line the last admin can be disabled; it prints a warning. |
+
+Every command is written to the audit log as the command line.
+
+### Two-step sign-in (optional)
+
+Each admin can add a second step: a 6-digit code from an authenticator app (any app that does TOTP). On the Admins page, in your own row, choose "Turn on two-step sign-in" and enter your password. Scan the picture with the app (or type the key it shows), enter the code the app gives, and confirm. It turns on only after a correct code, and the setup is good for 10 minutes. Turning it on signs out your other sessions and keeps the one you are using. To turn it off, choose "Turn off two-step sign-in" and enter your password and a current code.
+
+When it is on, sign-in asks for the password first, then the code. You get five tries at the code, and five minutes between the password and the code, then you start again. A code works once. Someone who already has your password can still guess codes, about 50 guesses an hour (each wrong one is in the audit log as `login.code_failed`); there is no lockout beyond the limits above, so keep passwords strong. Other admins can see whether you have it on, never the key.
+
+The key is stored in the database as it is, not encrypted, because the server has no key meant for that. Whoever can read the database can already read the password hashes, so protect database backups.
+
+**There are no recovery codes.** If you lose the authenticator, another person with command-line access runs `appserver admin user reset-2fa <username>`, which turns it off and signs you out everywhere. Then sign in with your password and turn it on again.
+
+### Locked out?
+
+- Forgot a password: `appserver admin user reset-password <username>`.
+- Lost the authenticator: `appserver admin user reset-2fa <username>`.
+- Every admin is disabled: `appserver admin user enable <username>`, or `appserver admin user add <username>` for a new one.
+
+All of these run on the server (see "Command line"). The dashboard has no other way in; the old one-time token sign-in is gone. Run `appserver admin sessions end` (for example `docker compose exec appserver /appserver admin sessions end`) to end every session, for instance after a lost laptop. A session ends after 15 minutes without use, and after 8 hours at most. The overview's automatic refresh does not count as use.
+
+Never publish port 9090. It must stay on `127.0.0.1`. Set `APP_ADMIN_HOSTS` only when you put your own HTTPS proxy in front of it, and give that proxy its own access control.
+
+To use the dashboard over plain HTTP on a trusted local network (for example `http://192.168.0.174:9044/admin/`), list that address in `APP_ADMIN_HOSTS`, publish the admin port on that address, and set `APP_ADMIN_ALLOW_HTTP=true` (default `false`). The session cookie then is not marked Secure for the listed hosts, and the server logs a warning at start-up. Sign-in codes, passwords and session cookies cross the network unencrypted, so anyone on that network can read them. Hosts not listed are still refused.
+
+Every action is written to the audit log and kept 365 days. The log holds IDs and admin usernames, not passwords or email addresses. Escrow export stays a command-line action.
 
 ## What the operator can see
 

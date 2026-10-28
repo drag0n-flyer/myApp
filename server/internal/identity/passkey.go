@@ -9,7 +9,7 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 
-	"github.com/velixio/myApp/server/internal/config"
+	"github.com/drag0n-flyer/myApp/server/internal/config"
 )
 
 // This file is the only importer of go-webauthn. Everything it exposes is
@@ -21,11 +21,16 @@ const challengeTTL = 5 * time.Minute
 // and user verification required, and no attestation.
 func newWebAuthn(cfg config.Config) (*webauthn.WebAuthn, error) {
 	required := true
+	var opaque []string // android:apk-key-hash: origins, matched exactly
+	for _, a := range cfg.AndroidApps {
+		opaque = append(opaque, a.Origin())
+	}
 	timeout := webauthn.TimeoutConfig{Enforce: true, Timeout: challengeTTL, TimeoutUVD: challengeTTL}
 	return webauthn.New(&webauthn.Config{
 		RPID:                  cfg.Host,
 		RPDisplayName:         "[App]",
 		RPOrigins:             []string{"https://" + cfg.Host},
+		RPOpaqueOrigins:       opaque,
 		AttestationPreference: protocol.PreferNoAttestation,
 		AuthenticatorSelection: protocol.AuthenticatorSelection{
 			RequireResidentKey: &required,

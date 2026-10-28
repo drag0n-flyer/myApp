@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/velixio/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/core"
 )
 
 func TestDocsServed(t *testing.T) {

@@ -8,9 +8,9 @@ import (
 	"errors"
 	"time"
 
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/httpx"
 	"github.com/jackc/pgx/v5"
-	"github.com/velixio/myApp/server/internal/core"
-	"github.com/velixio/myApp/server/internal/httpx"
 )
 
 // touchEvery is how often a session's last_used_at (and its device's
@@ -28,8 +28,8 @@ func validDevice(name, platform string) error {
 	if name == "" || len(name) > 64 {
 		return httpx.Err("bad_request", "deviceName must be 1 to 64 characters")
 	}
-	if platform != "iphone" && platform != "mac" {
-		return httpx.Err("bad_request", "platform must be iphone or mac")
+	if platform != "iphone" && platform != "mac" && platform != "android" {
+		return httpx.Err("bad_request", "platform must be iphone, mac or android")
 	}
 	return nil
 }

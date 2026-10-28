@@ -29,6 +29,7 @@ jobs:
       localstore: ${{ steps.pick.outputs.localstore }}
       serverkit: ${{ steps.pick.outputs.serverkit }}
       callcore: ${{ steps.pick.outputs.callcore }}
+      callmedia: ${{ steps.pick.outputs.callmedia }}
       messaging: ${{ steps.pick.outputs.messaging }}
       app: ${{ steps.pick.outputs.app }}
     steps:
@@ -61,15 +62,17 @@ jobs:
           echo "$files" | grep -qx '.github/workflows/apple.yml' && all=1
           has() { [ "$all" = 1 ] || echo "$files" | grep -qE "$1"; }
           P=apps/apple/Packages
-          appcore=false; localstore=false; serverkit=false; callcore=false; messaging=false; app=false
-          if has "^$P/AppCore/"; then appcore=true; serverkit=true; callcore=true; messaging=true; app=true; fi
+          appcore=false; localstore=false; serverkit=false; callcore=false; callmedia=false; messaging=false; app=false
+          if has "^$P/AppCore/"; then appcore=true; serverkit=true; callcore=true; callmedia=true; messaging=true; app=true; fi
           if has "^$P/LocalStore/"; then localstore=true; messaging=true; app=true; fi
-          if has "^$P/ServerKit/"; then serverkit=true; messaging=true; app=true; fi
+          if has "^$P/ServerKit/|^apps/apple/(serverkit-tests\.yml|ServerKitTestHost/)"; then serverkit=true; messaging=true; app=true; fi
           if has "^$P/SecureMessaging/"; then messaging=true; app=true; fi
           if has "^$P/Messaging/"; then messaging=true; app=true; fi
-          if has "^$P/CallCore/"; then callcore=true; app=true; fi
+          if has "^$P/CallCore/"; then callcore=true; callmedia=true; app=true; fi
+          # The app does not use CallMedia yet, so no app build for these.
+          if has "^$P/(CallMedia|WebRTCBinary)/"; then callmedia=true; fi
           if has "^apps/apple/(App|AppUITests|NotificationService|scripts)/|^apps/apple/project\.yml$"; then app=true; fi
-          for k in appcore localstore serverkit callcore messaging app; do
+          for k in appcore localstore serverkit callcore callmedia messaging app; do
             echo "$k=${!k}" >> "$GITHUB_OUTPUT"
             echo "$k=${!k}"
           done
@@ -80,7 +83,7 @@ jobs:
     if: >-
       needs.changes.outputs.appcore == 'true' || needs.changes.outputs.localstore == 'true' ||
       needs.changes.outputs.serverkit == 'true' || needs.changes.outputs.callcore == 'true' ||
-      needs.changes.outputs.messaging == 'true'
+      needs.changes.outputs.messaging == 'true' || needs.changes.outputs.callmedia == 'true'
     runs-on: ubuntu-24.04
     container: swift:6.0
     timeout-minutes: 30
@@ -110,6 +113,12 @@ jobs:
         if: needs.changes.outputs.messaging == 'true'
         working-directory: apps/apple/Packages/Messaging
         run: swift test --no-parallel
+      - name: CallMedia tests
+        if: needs.changes.outputs.callmedia == 'true'
+        working-directory: apps/apple/Packages/CallMedia
+        run: |
+          ./scripts/fetch-rnnoise-model.sh
+          swift test --no-parallel
 
   # Only what needs Apple frameworks: CryptoKit paths, SQLite file protection, the simulator.
   packages-macos:
@@ -142,6 +151,41 @@ jobs:
         working-directory: apps/apple/Packages/Messaging
         run: swift test
 
+  # WebRTC media session tests: loopback calls in one process on a Mac.
+  # Needs the released WebRTC.xcframework (Task 6 sets the checksum in WebRTCBinary).
+  callmedia:
+    needs: changes
+    if: needs.changes.outputs.callmedia == 'true'
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm
+            ~/Library/org.swift.swiftpm
+            apps/apple/Packages/*/.build
+          key: spm-${{ runner.os }}-${{ hashFiles('apps/apple/Packages/*/Package.swift', 'apps/apple/Packages/*/Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+      - name: Is the WebRTC release published?
+        id: gate
+        run: |
+          if grep -q 'checksum: "0\{64\}"' apps/apple/Packages/WebRTCBinary/Package.swift; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::CallMedia tests skipped: WebRTCBinary still has the placeholder checksum (WebRTC Task 6)."
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: CallMedia tests
+        if: steps.gate.outputs.ready == 'true'
+        working-directory: apps/apple/Packages/CallMedia
+        run: |
+          ./scripts/fetch-rnnoise-model.sh
+          swift test
+
   serverkit-ios:
     needs: changes
     if: needs.changes.outputs.serverkit == 'true'
@@ -159,6 +203,8 @@ jobs:
             apps/apple/Packages/*/.build
           key: spm-${{ runner.os }}-${{ hashFiles('apps/apple/Packages/*/Package.swift', 'apps/apple/Packages/*/Package.resolved') }}
           restore-keys: spm-${{ runner.os }}-
+      - name: Install XcodeGen
+        run: brew install xcodegen
       - name: ServerKit tests on an iOS simulator
         run: apps/apple/scripts/test-serverkit-ios.sh
       - name: Keep test results
@@ -166,7 +212,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: serverkit-ios-xcresult
-          path: ${{ runner.temp }}/serverkit-ios.xcresult
+          path: |
+            ${{ runner.temp }}/serverkit-ios.xcresult
+            ${{ runner.temp }}/serverkit-ios-hosted.xcresult
 
   # Full app builds and UI tests: when app code (or a package it uses) changed,
   # and only on main, pull requests and manual runs.

@@ -18,13 +18,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/drag0n-flyer/myApp/server/internal/app"
+	"github.com/drag0n-flyer/myApp/server/internal/config"
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/db"
+	"github.com/drag0n-flyer/myApp/server/internal/mail"
+	"github.com/drag0n-flyer/myApp/server/internal/serverinfo"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/velixio/myApp/server/internal/app"
-	"github.com/velixio/myApp/server/internal/config"
-	"github.com/velixio/myApp/server/internal/core"
-	"github.com/velixio/myApp/server/internal/db"
-	"github.com/velixio/myApp/server/internal/mail"
-	"github.com/velixio/myApp/server/internal/serverinfo"
 )
 
 const shutdownTimeout = 10 * time.Second
@@ -42,7 +42,17 @@ func main() {
 func run(ctx context.Context, args []string) error {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 
-	cfg, policy, err := config.Load(os.Getenv, os.ReadFile)
+	// Settings come from the environment, then from APP_ENV_FILE (default
+	// ./.env, optional); the environment wins.
+	envFile, required := os.LookupEnv("APP_ENV_FILE")
+	if !required {
+		envFile = ".env"
+	}
+	getenv, err := config.EnvWithFile(os.LookupEnv, os.ReadFile, envFile, required)
+	if err != nil {
+		return err
+	}
+	cfg, policy, err := config.Load(getenv, os.ReadFile)
 	if err != nil {
 		return err
 	}

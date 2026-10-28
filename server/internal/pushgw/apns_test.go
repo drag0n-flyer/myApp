@@ -20,8 +20,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/velixio/myApp/server/internal/pushgw"
-	"github.com/velixio/myApp/server/internal/pushproto"
+	"github.com/drag0n-flyer/myApp/server/internal/pushgw"
+	"github.com/drag0n-flyer/myApp/server/internal/pushproto"
 )
 
 type apnsReq struct {
@@ -237,6 +237,35 @@ func TestGoneResponses(t *testing.T) {
 				t.Errorf("error mentions the token: %v", err)
 			}
 		})
+	}
+}
+
+func TestDefaultClientDoesNotFollowRedirects(t *testing.T) {
+	var mu sync.Mutex
+	hits := 0
+	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		mu.Lock()
+		hits++
+		mu.Unlock()
+	}))
+	t.Cleanup(target.Close)
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+r.URL.Path, http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(redirector.Close)
+	_, pemBytes := p8(t)
+	c, err := pushgw.NewAPNsClient(pemBytes, "KEYID", "TEAMID", redirector.URL, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := pushproto.Handle{Token: "aabb01", Kind: "alert", Env: "sandbox", Bundle: "com.example.app"}
+	if gone, err := c.Send(context.Background(), h, "message", []byte{1}); err == nil || gone {
+		t.Fatalf("a redirect answer must be an error: gone=%v err=%v", gone, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if hits != 0 {
+		t.Fatalf("the provider token was sent to the redirect target %d times", hits)
 	}
 }
 

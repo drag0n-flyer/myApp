@@ -2,13 +2,14 @@ package identity_test
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"testing"
 	"time"
 
-	"github.com/velixio/myApp/server/internal/core"
-	"github.com/velixio/myApp/server/internal/identity"
-	"github.com/velixio/myApp/server/internal/testkit"
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/identity"
+	"github.com/drag0n-flyer/myApp/server/internal/testkit"
 )
 
 type signupEnv struct {
@@ -162,6 +163,28 @@ func TestEmailCodeSendLimit(t *testing.T) {
 	}
 	if n := len(e.f.Mail.Sent); n != 3 {
 		t.Fatalf("%d mails sent", n)
+	}
+}
+
+func TestIPLimitedStartsDoNotChargeTheEmail(t *testing.T) {
+	e := newSignupEnv(t)
+	for i := 0; i < 5; i++ { // the route allows 5 starts per hour per IP
+		email := fmt.Sprintf("user%d@example.org", i)
+		if r := e.start(t, e.code, "ana", email); r.Status != 200 {
+			t.Fatalf("start %d: %s", i, r)
+		}
+	}
+	// The IP is spent. Refused starts must not use up the victim's email limit.
+	for i := 0; i < 4; i++ {
+		if r := e.start(t, e.code, "ana", "victim@example.org"); r.Status != 429 {
+			t.Fatalf("over IP limit %d: %s", i, r)
+		}
+	}
+	other := testkit.Serve(t, e.d, e.m, testkit.WithVerifier(e.m), testkit.WithRemoteAddr("192.0.2.77:1234"))
+	r := other.Do(nil, "POST", "/v1/signup/start", map[string]string{
+		"username": "ana", "email": "victim@example.org", "inviteCode": e.code})
+	if r.Status != 200 {
+		t.Fatalf("victim from another IP: %s", r)
 	}
 }
 

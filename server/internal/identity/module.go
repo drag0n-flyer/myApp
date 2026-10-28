@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/velixio/myApp/server/internal/core"
-	"github.com/velixio/myApp/server/internal/httpx"
-	"github.com/velixio/myApp/server/internal/ratelimit"
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/httpx"
+	"github.com/drag0n-flyer/myApp/server/internal/ratelimit"
 )
 
 var _ core.SessionVerifier = (*Module)(nil)
@@ -72,9 +72,9 @@ func (m *Module) Routes(r *httpx.Router) {
 	r.Authed("POST /v1/link/{id}/approve", m.linkApprove)
 	r.Public("POST /v1/link/{id}/claim", httpx.Limited(m.linkClaim, func(r *http.Request) string { return r.PathValue("id") }, m.linkClaimHandler))
 	r.Authed("GET /v1/me", m.me)
-	r.Authed("DELETE /v1/me", m.deleteAccount)
+	r.Authed("DELETE /v1/me", m.deleteAccountHandler)
 	r.Authed("GET /v1/devices", m.listDevices)
-	r.Authed("DELETE /v1/devices/{id}", m.revokeDevice)
+	r.Authed("DELETE /v1/devices/{id}", m.revokeDeviceHandler)
 }
 
 // Commands returns the admin CLI subcommands, keyed like "invite create".

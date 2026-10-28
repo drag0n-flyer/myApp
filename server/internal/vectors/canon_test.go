@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/velixio/myApp/server/internal/pushproto"
+	"github.com/drag0n-flyer/myApp/server/internal/pushproto"
 )
 
 // canon makes JSON comparable regardless of key order and white space.

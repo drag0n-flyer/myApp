@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/velixio/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/core"
 )
 
 type principalKey struct{}
@@ -24,8 +24,9 @@ func PrincipalFrom(ctx context.Context) core.Principal {
 // as is and becomes a retryable 500, because clients treat 401 as signed out.
 func authenticate(v core.SessionVerifier, h HandlerFunc) HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) error {
-		token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if !ok || token == "" {
+		// The scheme name is case-insensitive (RFC 9110 section 11.1).
+		scheme, token, ok := strings.Cut(r.Header.Get("Authorization"), " ")
+		if !ok || !strings.EqualFold(scheme, "Bearer") || token == "" {
 			return Err("unauthorized", "missing or malformed bearer token")
 		}
 		p, err := v.Verify(r.Context(), token)

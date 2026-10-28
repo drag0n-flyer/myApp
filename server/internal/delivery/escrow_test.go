@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/velixio/myApp/server/internal/core"
-	"github.com/velixio/myApp/server/internal/delivery"
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/delivery"
 )
 
 func writeKey(t *testing.T) (path string, priv hpke.PrivateKey) {
@@ -52,12 +52,16 @@ func TestKeygenAndLoad(t *testing.T) {
 	p256, _ := ecdh.P256().GenerateKey(rand.Reader)
 	der, _ := x509.MarshalPKCS8PrivateKey(p256)
 	bad := filepath.Join(t.TempDir(), "p256.pem")
-	os.WriteFile(bad, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600)
+	if err := os.WriteFile(bad, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := delivery.LoadEscrowKey(bad); err == nil {
 		t.Fatal("P-256 key loaded")
 	}
 	junk := filepath.Join(t.TempDir(), "junk.pem")
-	os.WriteFile(junk, []byte("not pem"), 0o600)
+	if err := os.WriteFile(junk, []byte("not pem"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := delivery.LoadEscrowKey(junk); err == nil {
 		t.Fatal("junk loaded")
 	}

@@ -8,10 +8,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/velixio/myApp/server/internal/app"
-	"github.com/velixio/myApp/server/internal/core"
-	"github.com/velixio/myApp/server/internal/httpx"
-	"github.com/velixio/myApp/server/internal/testkit"
+	"github.com/drag0n-flyer/myApp/server/internal/admin"
+	"github.com/drag0n-flyer/myApp/server/internal/app"
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/httpx"
+	"github.com/drag0n-flyer/myApp/server/internal/testkit"
 )
 
 func get(h http.Handler, path string) *httptest.ResponseRecorder {
@@ -108,5 +109,56 @@ func TestTestkitClient(t *testing.T) {
 	// The account and its device really exist.
 	if acct, err := d.Directory.AccountOf(context.Background(), p.DeviceID); err != nil || acct != p.AccountID {
 		t.Errorf("AccountOf = %q, %v", acct, err)
+	}
+}
+
+func TestAdminNotOnPublicHandler(t *testing.T) {
+	d, _ := testkit.NewDeps(t)
+	a := app.New(d)
+	for _, c := range [][2]string{{"GET", "/admin/"}, {"GET", "/admin/api/session"}, {"POST", "/admin/api/login"}} {
+		rec := httptest.NewRecorder()
+		a.Handler().ServeHTTP(rec, httptest.NewRequest(c[0], c[1], nil))
+		if rec.Code != 404 || !strings.Contains(rec.Body.String(), `"code":"not_found"`) {
+			t.Errorf("%s %s = %d %s", c[0], c[1], rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestAdminHasNoPublicRoutes(t *testing.T) {
+	d, _ := testkit.NewDeps(t)
+	m := admin.New(d, admin.Sources{Started: d.Now()})
+	if _, ok := any(m).(interface{ Routes(*httpx.Router) }); ok {
+		t.Error("admin.Module must not have a public Routes method")
+	}
+}
+
+func TestAdminMounted(t *testing.T) {
+	d, _ := testkit.NewDeps(t)
+	a := app.New(d)
+	req := httptest.NewRequest("GET", "/admin/", nil)
+	req.Host = "127.0.0.1:9090"
+	rec := httptest.NewRecorder()
+	a.AdminHandler().ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Errorf("/admin/ = %d", rec.Code)
+	}
+	if rec := get(a.AdminHandler(), "/"); rec.Code != 302 || rec.Header().Get("Location") != "/admin/" {
+		t.Errorf("/ = %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	if rec := get(a.AdminHandler(), "/healthz"); rec.Code != 200 {
+		t.Errorf("/healthz = %d", rec.Code)
+	}
+}
+
+func TestThreeWordCommand(t *testing.T) {
+	d, _ := testkit.NewDeps(t)
+	a := app.New(d)
+	var out bytes.Buffer
+	err := a.Command(context.Background(), []string{"admin", "user", "list"}, &out)
+	if err != nil || !strings.HasPrefix(out.String(), "no admins yet") {
+		t.Errorf("admin user list = %q, %v", out.String(), err)
+	}
+	if err := a.Command(context.Background(), []string{"invite", "create"}, &out); err != nil {
+		t.Errorf("invite create: %v", err)
 	}
 }

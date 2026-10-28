@@ -1,0 +1,3 @@
+[bindings.kotlin]
+package_name = "org.example.app.mls.ffi"
+cdylib_name = "mlsffi"

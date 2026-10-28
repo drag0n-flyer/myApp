@@ -8,7 +8,7 @@ This document is the contract the five build lanes share. If code and this docum
 
 **In:** accounts (username, email for recovery), invite-only sign-up, passkey sign-in with email-code backup, devices, device linking and revocation, account deletion, the MLS Delivery Service for 1:1 conversations, offline inbox and sync, server-readable mode, encrypted attachments, user lookup and opt-in email discovery, blocking and reporting, WebSocket live events, 1:1 call signaling, TURN credentials with relay health checks, the push gateway (a separate binary) and the server's push sender, the server info document, Docker Compose deployment, and an admin CLI.
 
-**Out (later phases):** federation, groups with more than two accounts, the SFU, S3 object storage (attachments use a local directory behind an interface), phone-number discovery, encrypted backups, multiple server nodes, an admin web UI, and Android push.
+**Out (later phases):** federation, groups with more than two accounts, the SFU, S3 object storage (attachments use a local directory behind an interface), phone-number discovery, encrypted backups, multiple server nodes, an admin web UI (see the [admin dashboard design](2026-10-28-admin-dashboard-design.md)), and Android push.
 
 ## 2. Decisions I made — owner to confirm
 
@@ -21,7 +21,7 @@ These were not decided in GOAL.md. Each one changes what gets built.
 5. **Call state lives in memory** on the single server node. A restart ends ringing calls; calls that are already connected keep running, because media is peer-to-peer.
 6. **Display names are stored on the server in plain text** (Phase 1). Encrypted profiles come later.
 7. **TURN credentials last 12 hours.** coturn checks them on every allocation refresh, so the lifetime must cover the longest call. The TURN username is `<expiry>:<random 8 hex>`, which never contains an account or device ID.
-8. **Go module path** `github.com/velixio/myApp/server`. Confirmed against the repo `velixio/myApp` (2026-10-27).
+8. **Go module path** `github.com/drag0n-flyer/myApp/server`. Confirmed against the repo `drag0n-flyer/myApp` (2026-10-27).
 
 ## 3. Components
 
@@ -45,7 +45,7 @@ One Go module in `server/` produces two binaries.
 | `pushgw` | The push gateway: server registry, request signatures, sealed handles, APNs | D |
 | `social` | User lookup, email discovery, profile settings, blocks, reports | E |
 | `attachments` | Encrypted blob upload, download and expiry | E |
-| `serverinfo` | `GET /v1/server`, `/invite/{code}` page, apple-app-site-association | E |
+| `serverinfo` | `GET /v1/server`, `/invite/{code}` page, apple-app-site-association, assetlinks.json | E |
 
 Binaries: `server/cmd/appserver` and `server/cmd/pushgw`. Deployment files go in `deploy/`.
 
@@ -96,7 +96,8 @@ Environment variables (`APP_` prefix). Required ones are marked ★.
 |---|---|---|
 | `APP_HOST` ★ | — | Public host name, e.g. `chat.example.org`; also the WebAuthn RP ID |
 | `APP_LISTEN` | `:8080` | Public HTTP listener (TLS is terminated by the reverse proxy) |
-| `APP_ADMIN_LISTEN` | `127.0.0.1:9090` | `/healthz`, `/readyz`, `/debug/vars` |
+| `APP_ADMIN_LISTEN` | `127.0.0.1:9090` | `/healthz`, `/readyz`, `/debug/vars` and the admin dashboard (`/admin/`) |
+| `APP_ADMIN_HOSTS` | empty | Comma list of extra `Host` names the admin listener accepts, for an operator's own HTTPS proxy |
 | `APP_DATABASE_URL` ★ | — | Postgres URL |
 | `APP_DATA_DIR` | `/var/lib/appserver` | Attachments directory root |
 | `APP_POLICY_FILE` | — | JSON policy file; defaults below if unset |
@@ -109,6 +110,7 @@ Environment variables (`APP_` prefix). Required ones are marked ★.
 | `APP_PUSH_SERVER_ID` | — | ID the gateway gave this server at registration |
 | `APP_ESCROW_KEY_FILE` | — | X25519 private key (PKCS#8 PEM); required only when the policy allows server-readable |
 | `APP_APPLE_APP_IDS` | — | Comma list `TEAMID.bundle.id` for apple-app-site-association |
+| `APP_ANDROID_APPS` | — | Comma list `package:<64 hex>` (the app's signing-certificate SHA-256) for `assetlinks.json` and Android passkey origins; empty accepts no Android origins |
 | `APP_TRUST_PROXY` | `false` | Use the last `X-Forwarded-For` hop as the client IP |
 | `APP_DOCS_DIR` | — | Operator documents served at `/.well-known/security.txt`, `/privacy`, `/terms` (plan 9) |
 
@@ -137,6 +139,8 @@ Migrations are embedded SQL files run in filename order. Prefixes are reserved p
 - `accounts(id uuid pk, username text unique not null, email text not null, email_lower text unique not null, display_name text not null default '', find_by_email bool not null default false, created_at timestamptz not null default now())`
 - `devices(id uuid pk, account_id uuid not null references accounts on delete cascade, name text not null, platform text not null check (platform in ('iphone','mac')), created_at timestamptz not null default now(), last_seen_at timestamptz not null default now())`
 
+`1003_android_platform.sql` (A): `devices.platform` and `link_requests.platform` also accept `android`.
+
 All later tables reference `accounts(id)` or `devices(id)` with `on delete cascade`. **Revoking a device deletes its row, and deleting an account deletes its row.** The cascade removes sessions, KeyPackages, inbox items, conversation membership, push tokens and blocks, with no code in other lanes.
 
 ## 7. HTTP API
@@ -150,10 +154,13 @@ JSON in and out. Authenticated endpoints need `Authorization: Bearer <session to
 | `unauthorized` | 401 | `forbidden` | 403 |
 | `not_found` | 404 | `username_taken` | 409 |
 | `stale_epoch` | 409 | `invite_required` | 403 |
+| `conflict` | 409 | | |
 | `invite_invalid` | 403 | `expired` | 410 |
 | `too_large` | 413 | `rate_limited` | 429 |
 | `escrow_required` | 400 | `escrow_forbidden` | 400 |
 | `calls_disabled` | 503 | `internal` | 500 |
+
+`conflict` (409) is the admin API's answer when a change would break a rule, such as removing the last enabled admin.
 
 ### 7.1 Identity (lane A)
 
@@ -166,7 +173,7 @@ Usernames: `^[a-z][a-z0-9_]{2,31}$` (same rule as AppCore `UsernameCheck`). Rese
 | `POST /v1/signup/start` | – | `{inviteCode?, username, email}` → `{signupID}`; sends the email code. Errors: `invite_required`, `invite_invalid`, `invalid_username`, `username_taken`, `invalid_email` |
 | `POST /v1/signup/verify` | – | `{signupID, code}` → `{}`; `code_invalid`, `expired`, `rate_limited` (after 5 wrong codes) |
 | `POST /v1/signup/passkey/options` | – | `{signupID}` (must be verified) → WebAuthn `PublicKeyCredentialCreationOptions` JSON |
-| `POST /v1/signup/finish` | – | `{signupID, credential?, deviceName, platform}` → `{accountID, deviceID, sessionToken}`. Uses up the invite and creates the account, device, passkey (if `credential` is given) and session in one transaction. `username_taken` if the name was taken meanwhile. `credential` is optional because iOS allows passkeys only for hosts in the app's associated domains: on other self-hosted servers the account signs in by email code (client plan 6) |
+| `POST /v1/signup/finish` | – | `{signupID, credential?, deviceName, platform}` → `{accountID, deviceID, sessionToken}`. Uses up the invite and creates the account, device, passkey (if `credential` is given) and session in one transaction. `platform` is `iphone`, `mac` or `android`. `username_taken` if the name was taken meanwhile. `credential` is optional because iOS allows passkeys only for hosts in the app's associated domains: on other self-hosted servers the account signs in by email code (client plan 6). Android passkeys are accepted only from origins `android:apk-key-hash:<base64url, no padding, of the fingerprint>` for the apps in `APP_ANDROID_APPS` (none by default) |
 | `POST /v1/signin/passkey/options` | – | `{}` → `{challengeID, options}` (discoverable credential, user verification required) |
 | `POST /v1/signin/passkey/finish` | – | `{challengeID, credential, deviceName, platform}` → `{accountID, deviceID, sessionToken}` (new device) |
 | `POST /v1/signin/email/start` | – | `{email}` → `202 {}` always, whether or not the email exists |
@@ -230,7 +237,7 @@ Client → server, for calls (`payload` is always an opaque MLS application mess
 | `call.signal` | `{callID, payload}` | Before the answer, caller signals go to every ringing device and callee signals go to the caller. After the answer, signals go only between the two connected devices |
 | `call.decline` | `{callID}` | Ends the call as `declined` on every device |
 | `call.hangup` | `{callID}` | Ends the call as `hangup` on every device |
-| `call.status` | `{callID}` | Acknowledged with `data:{state:"ringing"|"answered"|"ended", reason?}`. Used by a device woken by a push |
+| `call.status` | `{callID}` | Acknowledged with `data:{state:"ringing"\|"answered"\|"ended", reason?}`. Used by a device woken by a push |
 
 Call states are `ringing`, `answered` and `ended`. End reasons are `declined`, `hangup`, `missed`, `answered_elsewhere`, `failed`, and `missed` is used when ringing goes unanswered for 45 s. An answered call is forgotten after 4 h. An ended call is kept for 60 s so `call.status` can report it. Only the caller's device and the callee account's devices may act on a call. Anything else gets `not_found`.
 
@@ -240,13 +247,14 @@ Relay health: every 30 s, send a STUN Binding Request (RFC 5389) over UDP to `H:
 
 ### 7.4 Push (lane D)
 
-Server endpoints: `PUT /v1/push/tokens/{kind}` (kind `alert` or `voip`) `{sealed:b64url}` → `204` (at most 2 KiB decoded; larger is `bad_request`), and `DELETE /v1/push/tokens/{kind}` → `204`.
+Server endpoints: `PUT /v1/push/tokens/{kind}` (kind `alert`, `voip` or `fcm`) `{sealed:b64url}` → `204` (at most 2 KiB decoded; larger is `bad_request`), `PUT /v1/push/tokens/unifiedpush` `{endpoint, p256dh, auth}` (not sealed; endpoint at most 1024 characters, `https` and port 443 only; `bad_request` when the server has no VAPID key) → `204`, and `DELETE /v1/push/tokens/{kind}` → `204`. A device has one of `fcm` and `unifiedpush`: uploading one deletes the other.
 
 **Sealed handle:** the device seals `{"t":"<apns token hex>","k":"alert"|"voip","e":"production"|"sandbox","b":"<bundle id>"}` with HPKE to the gateway's public key (the same suite as escrow, `info = "push-handle-v1"`). The server stores it as received and cannot read it.
 
 **Sending (`push.Sender`, implements `core.Pusher`):**
-- `PushCall` uses the device's `voip` handle if it has one (iPhone), otherwise its `alert` handle (Mac).
-- `PushMessage` uses the `alert` handle.
+- `PushCall` uses the device's `voip` handle if it has one (iPhone), then `alert` (Mac), then `fcm`, then `unifiedpush`.
+- `PushMessage` uses `alert`, then `fcm`, then `unifiedpush`.
+- A `unifiedpush` push goes straight to the distributor endpoint (RFC 8030/8291/8292, see [push](../../protocol/push.md#android-pushes-through-unifiedpush)), with no gateway, so it works when `APP_PUSH_GATEWAY_URL` is empty. The endpoint is untrusted: https and port 443 only, no redirects, no proxy, and the resolved address must be public (checked at connect time). `APP_VAPID_KEY_FILE` holds the P-256 VAPID key (`appserver keygen vapid`); `/v1/server` publishes it as `push.vapidKey`. `404` and `410` delete the registration. UnifiedPush sends run in their own pool and never hold a gateway push slot. Each send has an 8-second limit. At most 64 are in flight in all, and at most 8 message sends to one endpoint host; a send over either limit is dropped and the device fetches its inbox. A device has one message send in flight: later message pushes are coalesced, keeping only the latest payload, which goes out when the current send finishes, so the per-device limit never drops a message. A call push skips that queue and goes out at once; only the global limit can drop it. `push.Module.WaitBackground` waits for in-flight sends at shutdown.
 - No handle means no push and no error.
 
 **Padding:** the body is a 2-byte big-endian length, then the payload, then zeros up to the smallest bucket of 256, 512, 1024, 2048 or 3072 bytes. A payload over 3070 bytes is replaced by an empty one, and the device then fetches its inbox.
@@ -270,8 +278,8 @@ Checks before sending:
 - The timestamp is within ±300 s of the gateway's clock.
 - The same signature has not been seen in the last 10 minutes (a replay).
 - The handle opens with the gateway's key.
-- The handle's bundle ID is in `PUSHGW_BUNDLE_IDS`.
-- The handle's kind fits: `call` may use `voip` or `alert`; `message` must use `alert`.
+- The handle's bundle ID is in `PUSHGW_BUNDLE_IDS` (for an `fcm` handle: its application ID is in `PUSHGW_ANDROID_APP_IDS`, and the gateway has FCM configured).
+- The handle's kind fits: `call` may use `voip`, `alert` or `fcm`; `message` must use `alert` or `fcm`.
 
 Limits: 1000 per minute per server, 120 per hour per handle for messages, and 20 per hour per handle for calls.
 
@@ -289,7 +297,14 @@ Besides the codes of section 7, the gateway also answers `conflict` (409, a repl
   - body `{"d":"<b64 data>"}`
 - APNs `410`, or `400 BadDeviceToken`, becomes a `410` to the server.
 
-`appserver keygen push` prints a new Ed25519 private key as PKCS#8 PEM; `appserver push register --gateway URL --name N --contact C` registers it and prints the server ID. Gateway configuration: `PUSHGW_LISTEN`, `PUSHGW_DATABASE_URL`, `PUSHGW_HPKE_KEY_FILE`, `PUSHGW_APNS_KEY_FILE` (.p8, held by the owner only), `PUSHGW_APNS_KEY_ID`, `PUSHGW_APNS_TEAM_ID`, `PUSHGW_BUNDLE_IDS`, `PUSHGW_APNS_URL` (overrides both APNs hosts; for tests).
+**FCM (`fcm` handles):**
+- HTTP/2 or HTTP/1.1 `POST https://fcm.googleapis.com/v1/projects/<PUSHGW_FCM_PROJECT_ID>/messages:send` with `Authorization: Bearer <access token>`. The access token comes from the service-account key: an RS256 JWT (`iss` = the account's email, `scope` = `https://www.googleapis.com/auth/firebase.messaging`, `aud` = the key's `token_uri`, one hour lifetime) exchanged at that URI. It is cached until 5 minutes before it expires, and a new one is never minted more than once a minute. No redirects are followed.
+- Body `{"message":{"token":"<t>","data":{"k":"message"|"call","d":"<b64 data>"},"android":{"priority":"HIGH","ttl":"86400s"|"45s"}}}`. `d` is standard base64 with padding of the padded payload, unchanged, as for APNs. The TTL is `45s` for a call and `86400s` for a message.
+- **Size rule:** FCM data is limited to 4096 bytes. A padded payload over 2048 bytes (the 3072 bucket, 4096 characters in base64) is replaced by the 256-byte empty one (length 0, "fetch the inbox"). The gateway decides this from the padded length alone.
+- FCM `UNREGISTERED` becomes a `410` to the server. Any other `404`, including `NOT_FOUND` (which a wrong URL, proxy or project also returns), is a gateway-side error: `502`, and the handle is kept.
+- An `fcm` handle must have `e = "production"`; anything else is `bad_request`.
+
+`appserver keygen push` prints a new Ed25519 private key as PKCS#8 PEM; `appserver push register --gateway URL --name N --contact C` registers it and prints the server ID. Gateway configuration: `PUSHGW_LISTEN`, `PUSHGW_DATABASE_URL`, `PUSHGW_HPKE_KEY_FILE`, `PUSHGW_APNS_KEY_FILE` (.p8, held by the owner only), `PUSHGW_APNS_KEY_ID`, `PUSHGW_APNS_TEAM_ID`, `PUSHGW_BUNDLE_IDS`, `PUSHGW_APNS_URL` (overrides both APNs hosts; for tests). Android handles need `PUSHGW_FCM_PROJECT_ID`, `PUSHGW_FCM_KEY_FILE` (the service-account JSON, held by the owner only) and `PUSHGW_ANDROID_APP_IDS` (all three or none), plus `PUSHGW_FCM_URL` (overrides the FCM host; for tests).
 
 ### 7.5 Social, attachments, server info (lane E)
 
@@ -300,19 +315,20 @@ Besides the codes of section 7, the gateway also answers `conflict` (409, a repl
 | `PATCH /v1/me/settings` | ✓ | `{displayName?, findByEmail?}` → `204`. The display name is at most 64 characters with no control characters |
 | `PUT /v1/blocks/{accountID}` / `DELETE …` | ✓ | → `204` |
 | `GET /v1/blocks` | ✓ | → `{accountIDs:[…]}` |
-| `POST /v1/reports` | ✓ | `{accountID, conversationID?, reason:"spam"|"abuse"|"other", messages:[{sentAt, text}] (≤50, shared with the user's consent), note?}` → `202`. Emailed to `abuseContact` if one is set. CLI: `appserver reports list` |
+| `POST /v1/reports` | ✓ | `{accountID, conversationID?, reason:"spam"\|"abuse"\|"other", messages:[{sentAt, text}] (≤50, shared with the user's consent), note?}` → `202`. Emailed to `abuseContact` if one is set. CLI: `appserver reports list` |
 | `POST /v1/attachments` | ✓ | raw body (already encrypted by the client), `Content-Length` required → `{id, expiresAt}`; `too_large` |
 | `GET /v1/attachments/{id}` | ✓ | → bytes, with HTTP Range support. The ID is 128 random bits and works as the access key |
 | `GET /v1/server` | – | the server info document below |
 | `GET /invite/{code}` | – | small HTML page: "Open this invite in [App]" (target of the universal link) |
 | `GET /.well-known/apple-app-site-association` | – | `applinks` for `/invite/*` and `/link/*`, plus `webcredentials`, for `APP_APPLE_APP_IDS` |
+| `GET /.well-known/assetlinks.json` | – | Digital Asset Links for `APP_ANDROID_APPS`: one entry per package with relations `delegate_permission/common.get_login_creds` and `delegate_permission/common.handle_all_urls` and the fingerprints as upper-case colon hex; `[]` when unset |
 
 Server info document:
 ```json
 { "protocol": 1, "host": "chat.example.org", "requiresInvite": true,
   "policy": { "defaultMode": "auto", "maxMode": "high", "defaultIPHiding": "nonContacts" },
   "encryption": { "newConversations": "e2ee", "escrowKey": null },
-  "push": { "gateway": "https://push.example.org" },
+  "push": { "gateway": "https://push.example.org", "vapidKey": "<base64url P-256 public key, or null>" },
   "features": ["calls", "video", "linking"], "federation": false,
   "limits": { "attachmentBytes": 104857600 } }
 ```
