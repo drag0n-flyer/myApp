@@ -16,7 +16,7 @@ final class GainHook: NSObject, RTCAudioCapturePostProcessing, @unchecked Sendab
     }
 
     @objc(processChannels:frames:channelCount:)
-    func process(channels: UnsafePointer<UnsafeMutablePointer<Float>>, frames: Int, channelCount: Int) {
+    func processChannels(_ channels: UnsafePointer<UnsafeMutablePointer<Float>>, frames: Int, channelCount: Int) {
         processedFrames += frames
         for c in 0..<channelCount {
             for i in 0..<frames { channels[c][i] *= gain }
@@ -58,12 +58,12 @@ struct MediaAPITests {
         #expect(RTCPeerConnectionFactory.hasCapturePostProcessingHook)
 
         let zero = GainHook(gain: 0)
-        let silenced = RTCPeerConnectionFactory.selfTestCapturePostProcessing(zero).map(\.floatValue)
+        let silenced = RTCPeerConnectionFactory.selfTest(zero).map(\.floatValue)
         #expect(silenced.count == 480)
         #expect(silenced.allSatisfy { $0 == 0 })
 
         let passThrough = GainHook(gain: 1)
-        let samples = RTCPeerConnectionFactory.selfTestCapturePostProcessing(passThrough).map(\.floatValue)
+        let samples = RTCPeerConnectionFactory.selfTest(passThrough).map(\.floatValue)
         #expect(samples.count == 480)
         #expect(samples.allSatisfy { abs($0 - 0.5) <= 0.01 })
         #expect(passThrough.initializedWith?.rate == 48_000)
