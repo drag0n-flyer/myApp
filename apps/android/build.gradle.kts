@@ -44,16 +44,36 @@ subprojects {
                 targetSdk = appTargetSdk
                 versionCode = 1
                 versionName = "0.1.0"
+                // 64-bit ARM, 32-bit ARM (owner decision 2026-10-28) and x86_64 (emulators); no 32-bit x86.
+                ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
             }
             compileOptions {
                 sourceCompatibility = JavaVersion.VERSION_17
                 targetCompatibility = JavaVersion.VERSION_17
             }
+            // Upload-key signing comes only from Gradle properties or environment variables that the
+            // owner sets (see docs/release/android-play.md). Without all four the bundle is unsigned,
+            // which is what CI builds. No key, keystore or password is ever stored in the repository.
+            fun setting(name: String): String? =
+                providers.gradleProperty(name).orElse(providers.environmentVariable(name)).orNull?.takeIf { it.isNotBlank() }
+            val uploadStore = setting("APP_UPLOAD_STORE_FILE")
+            val uploadStorePassword = setting("APP_UPLOAD_STORE_PASSWORD")
+            val uploadAlias = setting("APP_UPLOAD_KEY_ALIAS")
+            val uploadKeyPassword = setting("APP_UPLOAD_KEY_PASSWORD")
+            val uploadSigning = if (uploadStore != null && uploadStorePassword != null && uploadAlias != null && uploadKeyPassword != null) {
+                signingConfigs.create("upload") {
+                    storeFile = file(uploadStore)
+                    storePassword = uploadStorePassword
+                    keyAlias = uploadAlias
+                    keyPassword = uploadKeyPassword
+                }
+            } else null
             buildTypes {
                 release {
                     isMinifyEnabled = true
                     isShrinkResources = true
                     proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+                    if (uploadSigning != null) signingConfig = uploadSigning
                 }
             }
             testOptions { unitTests.isIncludeAndroidResources = true }

@@ -1,5 +1,11 @@
 package org.example.app.ui.settings
 
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.semantics.Role
 import android.text.format.DateUtils
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -39,11 +45,30 @@ private fun platformName(platform: DevicePlatform): Int = when (platform) {
 @Composable
 fun LinkedDevicesScreen(account: AccountService, onBack: () -> Unit, modifier: Modifier = Modifier, onLinkDevice: () -> Unit = {}, now: () -> Instant = Instant::now) {
     var devices by remember { mutableStateOf<List<DeviceInfo>>(emptyList()) }
-    var removing by remember { mutableStateOf<DeviceInfo?>(null) }
+    var removingId by rememberSaveable { mutableStateOf<String?>(null) }
+    val removing = devices.firstOrNull { it.id == removingId }
+    var loadFailed by remember { mutableStateOf(false) }
+    var removeFailed by remember { mutableStateOf(false) }
+    var reload by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
-    LaunchedEffect(account) { devices = try { account.devices() } catch (_: AccountError) { emptyList() } }
+    LaunchedEffect(account, reload) {
+        try { devices = account.devices(); loadFailed = false } catch (_: AccountError) { loadFailed = true }
+    }
 
     SettingsPage(stringResource(R.string.settings_linked_devices), onBack, modifier) {
+        if (loadFailed) item {
+            ListItem(
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                headlineContent = { Text(stringResource(R.string.devices_load_failed)) },
+                trailingContent = { TextButton(onClick = { reload++ }) { Text(stringResource(R.string.try_again)) } },
+            )
+        }
+        if (removeFailed) item {
+            ListItem(
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                headlineContent = { Text(stringResource(R.string.devices_remove_failed), color = MaterialTheme.colorScheme.error) },
+            )
+        }
         items(devices, key = { it.id }) { device ->
             val name = device.name
             ListItem(
@@ -59,7 +84,7 @@ fun LinkedDevicesScreen(account: AccountService, onBack: () -> Unit, modifier: M
                 },
                 trailingContent = if (device.isThisDevice) null else {
                     {
-                        IconButton(onClick = { removing = device }) {
+                        IconButton(onClick = { removingId = device.id }) {
                             Icon(painterResource(R.drawable.ic_close), contentDescription = stringResource(R.string.devices_remove, name))
                         }
                     }
@@ -70,26 +95,26 @@ fun LinkedDevicesScreen(account: AccountService, onBack: () -> Unit, modifier: M
             val label = stringResource(R.string.devices_link)
             ListItem(
                 headlineContent = { Text(label) },
-                modifier = Modifier.clickable(onClickLabel = label, onClick = onLinkDevice),
+                modifier = Modifier.clickable(onClickLabel = label, role = Role.Button, onClick = onLinkDevice),
             )
         }
         item { FooterText(stringResource(R.string.devices_footer)) }
     }
     removing?.let { device ->
         AlertDialog(
-            onDismissRequest = { removing = null },
+            onDismissRequest = { removingId = null },
             title = { Text(stringResource(R.string.devices_remove_title)) },
             text = { Text(device.name) },
             confirmButton = {
                 TextButton(onClick = {
-                    removing = null
+                    removingId = null
                     scope.launch {
-                        try { account.removeDevice(device.id) } catch (_: AccountError) { }
-                        devices = try { account.devices() } catch (_: AccountError) { devices }
+                        removeFailed = try { account.removeDevice(device.id); false } catch (_: AccountError) { true }
+                        try { devices = account.devices() } catch (_: AccountError) { }
                     }
                 }) { Text(stringResource(R.string.remove)) }
             },
-            dismissButton = { TextButton(onClick = { removing = null }) { Text(stringResource(R.string.cancel)) } },
+            dismissButton = { TextButton(onClick = { removingId = null }) { Text(stringResource(R.string.cancel)) } },
         )
     }
 }

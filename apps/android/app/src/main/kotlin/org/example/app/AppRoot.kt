@@ -1,5 +1,6 @@
 package org.example.app
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
@@ -8,7 +9,6 @@ import android.os.Build
 import android.provider.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -113,7 +113,7 @@ fun AppRoot(
                 )
             },
         )
-        val call by callVm.call.collectAsState()
+        val call by callVm.call.collectAsStateWithLifecycle()
         Box {
         NavHost(nav, startDestination = if (onboarding) ONBOARDING else MAIN) {
             composable(ONBOARDING) {
@@ -166,9 +166,10 @@ fun AppRoot(
             composable(SettingsPage.DataStorage.route) { DataStorageScreen(graph.settingsStore, graph.serverPolicy, onBack = { nav.popBackStack() }) }
             composable(SettingsPage.ChatFolders.route) { ChatFoldersScreen(graph.chatStore, onBack = { nav.popBackStack() }) }
             composable(SettingsPage.CallsAudio.route) { CallsAudioScreen(graph.settingsStore, onBack = { nav.popBackStack() }) }
+            composable(SettingsPage.Licenses.route) { LicensesScreen(onBack = { nav.popBackStack() }) }
             composable(SettingsPage.Notifications.route) {
                 val context = LocalContext.current
-                val delivery by graph.settingsStore.delivery.collectAsState()
+                val delivery by graph.settingsStore.delivery.collectAsStateWithLifecycle()
                 val fullScreenAllowed by rememberRefreshedOnResume { canUseFullScreenIntent(context) }
                 NotificationsScreen(
                     delivery, graph.settingsStore::setDelivery,

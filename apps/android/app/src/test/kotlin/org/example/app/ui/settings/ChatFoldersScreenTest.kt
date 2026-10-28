@@ -40,6 +40,48 @@ class ChatFoldersScreenTest {
         rule.setContent { AppTheme { ChatFoldersScreen(store, onBack = {}) } }
         rule.onNodeWithContentDescription("Delete Work").performClick()
         rule.waitForIdle()
+        assertTrue(store.folders.value.any { it.name == "Work" }, "nothing is deleted before the user confirms")
+        rule.onNodeWithText("Delete this folder?").assertIsDisplayed()
+        rule.onNodeWithText("Cancel").performClick()
+        rule.waitForIdle()
+        assertTrue(store.folders.value.any { it.name == "Work" })
+        rule.onNodeWithContentDescription("Delete Work").performClick()
+        rule.onNodeWithText("Delete").performClick()
+        rule.waitForIdle()
         assertTrue(store.folders.value.none { it.name == "Work" })
+    }
+
+    private fun customNames() = store.folders.value.filter { it.kind == org.example.app.core.chats.ChatFolder.Kind.Custom }.map { it.name }
+
+    @Test
+    fun moveUpAndDownReorderCustomFolders() {
+        store.addFolder("Family", emptySet())
+        assertEquals(listOf("Personal", "Work", "Family"), customNames())
+        rule.setContent { AppTheme { ChatFoldersScreen(store, onBack = {}) } }
+        rule.onNodeWithContentDescription("Move Family up").performClick()
+        rule.waitForIdle()
+        assertEquals(listOf("Personal", "Family", "Work"), customNames())
+        rule.onNodeWithContentDescription("Move Family down").performClick()
+        rule.waitForIdle()
+        assertEquals(listOf("Personal", "Work", "Family"), customNames())
+    }
+
+    @Test
+    fun firstFolderCannotMoveUpAndLastCannotMoveDown() {
+        store.addFolder("Family", emptySet())
+        rule.setContent { AppTheme { ChatFoldersScreen(store, onBack = {}) } }
+        rule.onNodeWithContentDescription("Move Personal up").assertDoesNotExist()
+        rule.onNodeWithContentDescription("Move Family down").assertDoesNotExist()
+    }
+
+    @Test
+    fun openDialogsSurviveRotation() {
+        val tester = androidx.compose.ui.test.junit4.StateRestorationTester(rule)
+        tester.setContent { AppTheme { ChatFoldersScreen(store, onBack = {}) } }
+        rule.onNodeWithContentDescription("Delete Work").performClick()
+        rule.onNodeWithText("Delete this folder?").assertIsDisplayed()
+        tester.emulateSavedInstanceStateRestore()
+        rule.onNodeWithText("Delete this folder?").assertIsDisplayed()
+        rule.onNodeWithText("Work will be removed.", substring = true).assertIsDisplayed()
     }
 }

@@ -4,12 +4,17 @@ on:
   workflow_dispatch:
   push:
     branches-ignore: [feat/server]
+    tags: ['v*']
     paths:
       - 'apps/android/**'
       - '.github/workflows/android.yml'
       - 'scripts/android-*.sh'
       - 'scripts/build-mlsffi-android.sh'
       - 'scripts/check-16kb.sh'
+      - 'scripts/check-android-bundle*.sh'
+      - 'scripts/generate-oss-notices.py'
+      - 'scripts/license-texts/**'
+      - 'docs/security/license-allowlist.md'
       - 'apps/apple/Packages/SecureMessaging/mlsffi/**'
   pull_request:
     paths:
@@ -18,6 +23,10 @@ on:
       - 'scripts/android-*.sh'
       - 'scripts/build-mlsffi-android.sh'
       - 'scripts/check-16kb.sh'
+      - 'scripts/check-android-bundle*.sh'
+      - 'scripts/generate-oss-notices.py'
+      - 'scripts/license-texts/**'
+      - 'docs/security/license-allowlist.md'
       - 'apps/apple/Packages/SecureMessaging/mlsffi/**'
 
 permissions:
@@ -260,11 +269,71 @@ jobs:
         working-directory: apps/android
         run: ./gradlew --no-daemon :app:checkNoComponentProcess
 
+  release-bundle:
+    # Release checks on main and by hand: an unsigned bundle (CI has no signing key; the owner
+    # signs with the upload key outside CI), native ABIs and 16 KB alignment, dependency licenses
+    # and the notices shipped in the app, and a secret scan.
+    needs: [changes, mlsffi-android]
+    if: (needs.changes.outputs.any == 'true' || startsWith(github.ref, 'refs/tags/')) && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: jniLibs
+          path: apps/android/mls/src/main/jniLibs
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build the unsigned release bundle (no signing properties are set on CI)
+        working-directory: apps/android
+        run: ./gradlew --no-daemon :app:bundleRelease :app:exportRuntimeDependencies
+      - name: Bundle ABIs are exactly arm64-v8a, armeabi-v7a, x86_64; 16 KB alignment of 64-bit libraries
+        run: scripts/check-android-bundle.sh --require libmlsffi.so apps/android/app/build/outputs/bundle/release/app-release.aab
+      - name: The bundle is unsigned
+        run: |
+          set -euo pipefail
+          if unzip -l apps/android/app/build/outputs/bundle/release/app-release.aab | grep -E 'META-INF/.*\.(SF|RSA|DSA|EC)$'; then
+            echo "bundle is signed; CI must not hold a signing key"; exit 1
+          fi
+      - name: Dependency licenses against the approved list, and the notices shipped in the app
+        run: |
+          set -euo pipefail
+          cargo fetch --locked --manifest-path apps/apple/Packages/SecureMessaging/mlsffi/Cargo.toml
+          # Pending notices only warn, except on a tag push, where they fail the release.
+          RELEASE=""
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then RELEASE="--release"; fi
+          python3 scripts/generate-oss-notices.py --check-android $RELEASE --android-output apps/android/app/src/main/assets/oss-notices.json
+          git diff --exit-code -- apps/android/app/src/main/assets/oss-notices.json
+      - name: Install gitleaks v8.28.0 (checksum verified)
+        run: |
+          set -euo pipefail
+          V=8.28.0
+          T=gitleaks_${V}_linux_x64.tar.gz
+          curl -fsSL -O "https://github.com/gitleaks/gitleaks/releases/download/v${V}/${T}"
+          echo "a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb  ${T}" | sha256sum -c -
+          tar xzf "$T" gitleaks
+          sudo install gitleaks /usr/local/bin/gitleaks
+      - name: Secret scan of apps/android
+        run: gitleaks dir apps/android --redact --no-banner --config .gitleaks.toml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-release-bundle-unsigned
+          path: apps/android/app/build/outputs/bundle/release/app-release.aab
+          retention-days: 7
+          if-no-files-found: error
+
   android-ci:
     # The one check to require in branch protection. Fails closed: a failed or cancelled
     # job fails it, and skipped jobs pass only when `changes` itself succeeded.
     if: always()
-    needs: [changes, mlsffi-android, jvm, robolectric, lint, assemble]
+    needs: [changes, mlsffi-android, jvm, robolectric, lint, assemble, release-bundle]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

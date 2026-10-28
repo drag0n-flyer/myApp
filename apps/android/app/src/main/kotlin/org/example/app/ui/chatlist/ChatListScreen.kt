@@ -1,5 +1,10 @@
 package org.example.app.ui.chatlist
 
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,7 +24,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -40,9 +44,9 @@ fun ChatListScreen(
     onNewChat: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val state by viewModel.state.collectAsState()
+    val state by viewModel.state.collectAsStateWithLifecycle()
     val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
-    var menuOpen by remember { mutableStateOf(false) }
+    var menuOpen by rememberSaveable { mutableStateOf(false) }
     Scaffold(
         modifier = modifier.nestedScroll(scroll.nestedScrollConnection),
         topBar = {
@@ -57,6 +61,7 @@ fun ChatListScreen(
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.mark_all_read)) },
                                 onClick = { menuOpen = false; viewModel.markAllRead() },
+                                modifier = Modifier.semantics { role = Role.Button },
                             )
                         }
                     }
@@ -78,7 +83,7 @@ fun ChatListScreen(
                     item(key = "requests") {
                         val title = stringResource(R.string.requests_row, state.requestCount)
                         ListItem(
-                            modifier = Modifier.clickable(onClick = onOpenRequests),
+                            modifier = Modifier.clickable(role = Role.Button, onClick = onOpenRequests),
                             leadingContent = { Icon(painterResource(R.drawable.ic_inbox), contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                             headlineContent = { Text(title, color = MaterialTheme.colorScheme.primary) },
                         )
