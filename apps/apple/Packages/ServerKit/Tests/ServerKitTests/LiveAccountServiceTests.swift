@@ -50,6 +50,25 @@ private final class ClockBox: @unchecked Sendable {
     func advance(_ d: Duration) { lock.withLock { t += Double(d.components.seconds) } }
 }
 
+/// Fails the first `failures` saves, then saves; `failures` can be raised again between calls.
+private final class FlakyStorage: SessionStorage, @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Session?
+    private var left: Int
+    private(set) var attempts = 0
+    init(failures: Int) { left = failures }
+    func fail(_ n: Int) { lock.withLock { left = n } }
+    func load() throws -> Session? { lock.withLock { value } }
+    func save(_ s: Session) throws {
+        try lock.withLock {
+            attempts += 1
+            if left > 0 { left -= 1; throw CocoaError(.fileWriteUnknown) }
+            value = s
+        }
+    }
+    func clear() throws { lock.withLock { value = nil } }
+}
+
 private actor SleepLog {
     private(set) var total = Duration.zero
     private(set) var count = 0
@@ -63,7 +82,7 @@ private func err(_ code: String) -> String { #"{"error":{"code":"\#(code)","mess
 
 @MainActor private struct Rig {
     let t = StubTransport()
-    let store = SessionStore(storage: MemorySessionStorage())
+    let store: SessionStore
     let passkey = FakePasskey()
     let service: LiveAccountService
     let sleeps = SleepLog()
@@ -71,8 +90,9 @@ private func err(_ code: String) -> String { #"{"error":{"code":"\#(code)","mess
 
     init(host: String = "chat.test", signedIn: Bool = false, sessionHost: String = "chat.test",
          biometrics: FakeBiometrics = FakeBiometrics(), crypto: FakeCrypto = FakeCrypto(),
-         snapshot: Data = Data("snap".utf8),
+         snapshot: Data = Data("snap".utf8), storage: any SessionStorage = MemorySessionStorage(),
          onSleep: @escaping @Sendable (Int, StubTransport) async -> Void = { _, _ in }) {
+        store = SessionStore(storage: storage)
         if signedIn { try? store.save(Session(host: sessionHost, accountID: "a", deviceID: "d", token: "tok")) }
         self.biometrics = biometrics
         let t = t, store = store, sleeps = sleeps
@@ -347,6 +367,41 @@ private func err(_ code: String) -> String { #"{"error":{"code":"\#(code)","mess
         #expect(r.service.receivedLinkSnapshot == nil)
         // The ticket is gone: waiting again needs a new code.
         await #expect(throws: AccountError.linkExpired) { _ = try await r.service.waitForLinkApproval() }
+    }
+
+    private static func claims(_ t: StubTransport) async -> Int {
+        await t.requests.filter { $0.url?.path == "/v1/link/L1/claim" }.count
+    }
+
+    @Test func linkSessionSaveIsRetriedAfterTheClaim() async throws {
+        let storage = FlakyStorage(failures: 3)
+        let r = Rig(storage: storage)
+        await r.t.respond("POST", "/v1/link", status: 200, json: #"{"linkID":"L1","secret":"S1","claimToken":"C1","expiresAt":"2026-11-01T12:05:00Z"}"#)
+        await r.t.respond("POST", "/v1/link/L1/claim", status: 200, json: #"{"accountID":"a1","deviceID":"d1","sessionToken":"t1"}"#)
+        _ = try await r.service.makeLinkCode()
+        _ = try await r.service.waitForLinkApproval()
+        #expect(await Self.claims(r.t) == 1)
+        #expect(storage.attempts == 4)
+        #expect(r.service.isSignedIn)
+        #expect(r.store.current?.token == "t1")
+    }
+
+    @Test func linkSessionSaveThatKeepsFailingIsReportedAndRetriedWithoutClaimingAgain() async throws {
+        let storage = FlakyStorage(failures: 100)
+        let r = Rig(storage: storage)
+        await r.t.respond("POST", "/v1/link", status: 200, json: #"{"linkID":"L1","secret":"S1","claimToken":"C1","expiresAt":"2026-11-01T12:05:00Z"}"#)
+        await r.t.respond("POST", "/v1/link/L1/claim", status: 200, json: #"{"accountID":"a1","deviceID":"d1","sessionToken":"t1"}"#)
+        _ = try await r.service.makeLinkCode()
+        await #expect(throws: AccountError.server) { _ = try await r.service.waitForLinkApproval() }
+        #expect(storage.attempts == LiveAccountService.linkSaveAttempts)
+        #expect(await Self.claims(r.t) == 1)
+        #expect(!r.service.isSignedIn)
+        // The person tries again: only the save is retried; the spent claim is not sent again.
+        storage.fail(0)
+        _ = try await r.service.waitForLinkApproval()
+        #expect(await Self.claims(r.t) == 1)
+        #expect(r.service.isSignedIn)
+        #expect(r.store.current?.token == "t1")
     }
 
     @Test func approvalWithoutSnapshotSignsInWithoutContacts() async throws {

@@ -39,6 +39,9 @@ public final class LiveAccountService: AccountService {
     private var pendingDisplayName: String?
     private var ticket: LinkTicket?
     private var linkPrivateKey: Data?
+    /// A claimed link session whose save failed, with its opened snapshot; memory only. The claim answers
+    /// once, so a later `waitForLinkApproval` retries only the save and never claims again.
+    private var unsaved: (session: NewSession, snapshot: Data?)?
 
     public init(defaultHost: String, passkeyDomains: [String], platform: DevicePlatform, deviceName: String,
                 sessions: SessionStore, makeClient: @escaping @Sendable (String) -> ServerClient,
@@ -209,6 +212,7 @@ public final class LiveAccountService: AccountService {
 
     public func makeLinkCode() async throws(AccountError) -> LinkCode {
         let c = await ready()
+        unsaved = nil
         let keys = try linkCrypto.makeKeyPair()
         let t = try await call(link: true) { () async throws(ServerError) in
             try await c.linkStart(deviceName: self.deviceName, platform: Self.wire(self.platform))
@@ -222,8 +226,10 @@ public final class LiveAccountService: AccountService {
     /// Polls every 2 s until approved or the ticket's expiry passes. Every exit path forgets the ticket
     /// and the private key. A snapshot that is missing or cannot be opened is skipped: the session is
     /// saved, the device signs in without its contacts, and the result says so (the claim is single-use,
-    /// so failing here would leave an orphaned device and make the person start again).
+    /// so failing here would leave an orphaned device and make the person start again). For the same
+    /// reason a failing session save is retried, and after an error the next call retries only the save.
     public func waitForLinkApproval() async throws(AccountError) -> LinkedResult {
+        if let unsaved { return try await saveLinked(unsaved.session, snapshot: unsaved.snapshot) }
         guard let ticket else { throw .linkExpired }
         let key = linkPrivateKey
         defer { self.ticket = nil; linkPrivateKey = nil }
@@ -237,15 +243,39 @@ public final class LiveAccountService: AccountService {
                 if let sealed, let key {
                     snapshot = try? linkCrypto.open(sealed, privateKey: key)
                 }
-                receivedLinkSnapshot = snapshot
-                try save(s)
-                // TODO(plan 7): import `snapshot` and report copied only when the import succeeds, as Android
-                // does. Nothing imports it yet, so the contacts were not copied.
-                return LinkedResult(contactsCopied: false)
+                unsaved = (s, snapshot)
+                return try await saveLinked(s, snapshot: snapshot)
             }
             if now() >= ticket.expiresAt { throw .linkExpired }
             do { try await sleep(.seconds(2)) } catch { throw .cancelled }
         }
+    }
+
+    /// About 11 seconds of backoff (0.25 s doubling, at most 4 s) before giving up for now, as on Android:
+    /// a claimed link session is worth waiting for.
+    public static let linkSaveAttempts = 8
+
+    /// Saves a claimed link session, retrying a failing store with backoff. When it still fails the error
+    /// is thrown and the session is kept in `unsaved`, so the next wait retries the save alone.
+    private func saveLinked(_ s: NewSession, snapshot: Data?) async throws(AccountError) -> LinkedResult {
+        var wait = Duration.milliseconds(250)
+        var attempt = 0
+        while true {
+            do throws(ServerError) {
+                try store(s)
+                break
+            } catch {
+                attempt += 1
+                if attempt >= Self.linkSaveAttempts { throw Self.map(error) }
+                do { try await sleep(wait) } catch { throw .cancelled }
+                wait = min(wait * 2, .seconds(4))
+            }
+        }
+        unsaved = nil
+        receivedLinkSnapshot = snapshot
+        // TODO(plan 7): import `snapshot` and report copied only when the import succeeds, as Android
+        // does. Nothing imports it yet, so the contacts were not copied.
+        return LinkedResult(contactsCopied: false)
     }
 
     // MARK: - Linking, approving device
