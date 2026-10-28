@@ -38,7 +38,7 @@ Java_org_example_app_calls_android_media_RnnoiseJni_nativeDestroy(JNIEnv *env, j
 }
 
 /*
- * The WebRTC capture hook (tools/webrtc/patches/0006, sdk/android/src/jni/app/audio_capture_processor.h).
+ * The WebRTC capture hook (tools/webrtc/patches/0007, sdk/android/src/jni/app/audio_capture_processor.h).
  * The struct is declared again here because that header is not shipped in the AAR; it is plain C and
  * versioned by abi_version. One hook per process: the PeerConnectionFactory is a process-wide singleton.
  * RNNoise runs only while `enabled` (Enhanced) and only on 480-sample (10 ms at 48 kHz) mono frames.

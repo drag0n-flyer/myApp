@@ -109,7 +109,7 @@ internal object CaptureHookJni {
 }
 
 /**
- * RNNoise in WebRTC's capture path (patch 0006's `AudioCapturePostProcessing`): native code, so audio frames
+ * RNNoise in WebRTC's capture path (patch 0007's `AudioCapturePostProcessing`): native code, so audio frames
  * never cross JNI. One hook per process, as the peer connection factory is one per process; [enabled] turns
  * RNNoise on for Enhanced. It denoises 480-sample frames (10 ms at 48 kHz) and passes other rates through.
  */
