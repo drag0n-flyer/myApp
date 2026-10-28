@@ -8,8 +8,10 @@
 #   2. check the SHA-256 of the opus tarball (exit 2 on a mismatch)
 #   3. replace third_party/opus/src with the tarball contents
 #   4. write third_party/opus/dnn_sources.gni (gen_dnn_gni.py)
-#   5. copy the Opus probe into sdk/objc/components/app/
+#   5. copy the Opus probe into sdk/objc/components/app/ (Apple) or
+#      sdk/android/src/jni/app/ (Android)
 #   6. apply patches/0001-* inside third_party, the other patches inside src
+#      (Apple: not 0006 and 0007; Android: not 0003, 0004 and 0005)
 #   7. fail on any reject or conflict marker
 #   8. fail (exit 3) if the Opus PLC field trial named in VERSION
 #      (FIELD_TRIAL_OPUS_PLC) is not in audio_decoder_opus.cc at this pin
@@ -18,6 +20,10 @@
 # in third_party and src to HEAD, so running it again starts clean. When it
 # succeeds it writes .app-webrtc-applied (the VERSION hash) into <webrtc-src-dir>;
 # a second run then prints "already applied" and exits 0.
+#
+# Platform (environment): APPLY_PLATFORM=apple (the default) or android.
+# 0001 and 0002 are C/C++ and apply on both. 0003 and 0004 are Objective-C
+# (Apple only), 0005 is the Mac framework headers (Apple only). 0006 and 0007 are Java and JNI (Android only).
 #
 # Test overrides (environment): OPUS_SHA256, APPLY_PATCH_DIR,
 # APPLY_THIRD_PARTY_PATCH, APPLY_CACHE_DIR.
@@ -33,11 +39,31 @@ die() {
   exit 1
 }
 
+if [ "${1-}" = "--list-patches" ]; then
+  # Prints the patch files the platform applies (APPLY_PLATFORM), one per line, and exits.
+  case "${APPLY_PLATFORM:-apple}" in
+    apple) lp_skip="0006 0007" ;;
+    android) lp_skip="0003 0004 0005" ;;
+    *) die "unknown APPLY_PLATFORM '${APPLY_PLATFORM}' (apple or android)" ;;
+  esac
+  for p in "${APPLY_PATCH_DIR:-$here/patches}"/*.patch; do
+    case " $lp_skip " in *" $(basename "$p" | cut -c 1-4) "*) continue ;; esac
+    basename "$p"
+  done
+  exit 0
+fi
+
 if [ "$#" -ne 1 ]; then
   echo "usage: sh tools/webrtc/apply.sh <webrtc-src-dir>" >&2
   exit 1
 fi
 [ -d "$1" ] || die "$1 is not a directory"
+platform=${APPLY_PLATFORM:-apple}
+case "$platform" in
+  apple) skip_patches="0006 0007"; probe_dir=sdk/objc/components/app ;;
+  android) skip_patches="0003 0004 0005"; probe_dir=sdk/android/src/jni/app ;;
+  *) die "unknown APPLY_PLATFORM '$platform' (apple or android)" ;;
+esac
 srcdir=$(cd "$1" && pwd)
 
 sha256_of() {
@@ -128,8 +154,8 @@ python3 -I "$here/opus/gen_dnn_gni.py" "$tp/opus/src/lpcnet_sources.mk" \
   "$tp/opus/dnn_sources.gni" --version "$pkg_version" || die "gen_dnn_gni.py failed"
 
 # 5. The Opus probe.
-mkdir -p "$srcdir/sdk/objc/components/app"
-cp "$here/opus-probe/opus_probe.c" "$here/opus-probe/opus_probe.h" "$srcdir/sdk/objc/components/app/"
+mkdir -p "$srcdir/$probe_dir"
+cp "$here/opus-probe/opus_probe.c" "$here/opus-probe/opus_probe.h" "$srcdir/$probe_dir/"
 
 # 6. Patches. 0001 is relative to third_party (git diff --no-prefix, so -p0);
 #    the others apply inside src.
@@ -148,6 +174,8 @@ for p in "$patch_dir"/*.patch; do
   [ -f "$p" ] || continue
   [ "$p" = "$third_party_patch" ] && continue
   case "$(basename "$p")" in 0001-*) continue ;; esac
+  num=$(basename "$p" | cut -c 1-4)
+  case " $skip_patches " in *" $num "*) continue ;; esac
   git -C "$srcdir" apply --3way "$p" || restore_and_fail "$(basename "$p") did not apply cleanly"
 done
 
@@ -169,4 +197,4 @@ grep -q "\"$FIELD_TRIAL_OPUS_PLC\"" "$srcdir/modules/audio_coding/codecs/opus/au
 }
 
 printf '%s\n' "$version_hash" >"$marker"
-echo "applied opus $pkg_version and patches to $srcdir"
+echo "applied opus $pkg_version and patches ($platform) to $srcdir"

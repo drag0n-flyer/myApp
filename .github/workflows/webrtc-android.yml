@@ -1,0 +1,194 @@
+name: webrtc-android
+
+# Builds the custom WebRTC AAR for Android (tools/webrtc, Linux only). Every file
+# under tools/webrtc/ and this workflow need the owner's review before merge.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Publish a GitHub release after the smoke test passes
+        type: boolean
+        default: false
+  push:
+    # Hours per build: only its own branch builds on push; elsewhere start it by hand.
+    branches: [feat/webrtc-android]
+    paths:
+      - "tools/webrtc/**"
+      - ".github/workflows/webrtc-android.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  scripts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Android build scripts and patches
+        run: sh tools/webrtc/build_android_test.sh
+
+  build:
+    needs: scripts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, armeabi-v7a, x86_64]
+    env:
+      WEBRTC_WORKDIR: /mnt/webrtc-android
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space
+        run: |
+          df -h / /mnt
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost /usr/share/swift /usr/local/lib/node_modules
+          sudo docker image prune --all --force || true
+          sudo apt-get clean
+          df -h / /mnt
+          sudo mkdir -p "$WEBRTC_WORKDIR"
+          sudo chown "$USER" "$WEBRTC_WORKDIR"
+      - name: Build tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends lbzip2 xz-utils pkg-config gperf
+      # The Opus tarball is fetched once and reused: downloads.xiph.org has failed whole builds.
+      # apply.sh checks the SHA-256 of a cached file too, so a bad cache entry stops the build.
+      - name: Opus tarball cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/webrtc-cache
+          key: opus-${{ hashFiles('tools/webrtc/VERSION') }}
+      - name: Build ${{ matrix.abi }}
+        env:
+          APPLY_CACHE_DIR: ${{ runner.temp }}/webrtc-cache
+        run: sh tools/webrtc/build-android.sh "${{ matrix.abi }}"
+      - name: Disk after build
+        if: always()
+        run: df -h / /mnt
+      - name: Collect
+        run: |
+          mkdir -p collected
+          cp -r "$WEBRTC_WORKDIR/out/android/${{ matrix.abi }}" "collected/${{ matrix.abi }}"
+          cp "$WEBRTC_WORKDIR/out/android/AndroidManifest.xml" "$WEBRTC_WORKDIR/out/android/LICENSE.md" collected/
+          # This ABI's license (generate_licenses.py over this job's build); package merges the three.
+          cp "$WEBRTC_WORKDIR/out/android/LICENSE.md" "collected/${{ matrix.abi }}/"
+          ls -lR collected
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.abi }}
+          path: collected
+          if-no-files-found: error
+
+  package:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: downloaded
+      - name: Assemble the AAR
+        run: |
+          mkdir -p out
+          for abi in arm64-v8a armeabi-v7a x86_64; do cp -r "downloaded/build-$abi/$abi" "out/$abi"; done
+          # The manifest is the same in every build. Each ABI dir carries its own LICENSE.md,
+          # which package-android.sh merges.
+          cp downloaded/build-arm64-v8a/AndroidManifest.xml out/
+          sh tools/webrtc/package-android.sh out
+          ls -l out
+      - name: License check (explicit)
+        run: |
+          for pat in "GNU General Public License" "GNU Lesser General Public License" "GNU Affero"; do
+            if grep -q "$pat" out/LICENSE.md; then echo "error: LICENSE.md names $pat"; exit 1; fi
+          done
+      - name: 16 KB page alignment
+        # The paths keep the ABI directory: scripts/check-16kb.sh skips /armeabi-v7a/ (32-bit
+        # ABIs are exempt) and checks the 64-bit ones.
+        run: bash scripts/check-16kb.sh out/arm64-v8a out/armeabi-v7a out/x86_64
+      - name: Unpacked listing
+        run: |
+          mkdir -p /tmp/aar && cd /tmp/aar && unzip -q "$GITHUB_WORKSPACE/out/libwebrtc.aar" && find . -type f | sort
+      - name: Release files
+        run: |
+          mkdir release
+          cp out/libwebrtc.aar out/libwebrtc.aar.sha256 out/LICENSE.md release/
+          cp tools/webrtc/VERSION release/VERSION
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: release
+          if-no-files-found: error
+
+  smoke:
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: release
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+      - name: Check the AAR hash
+        working-directory: release
+        run: sha256sum -c libwebrtc.aar.sha256
+      - name: Run the smoke test (API 29, x86_64)
+        working-directory: tools/webrtc/android-smoke
+        run: |
+          mkdir -p app/libs
+          cp "$GITHUB_WORKSPACE/release/libwebrtc.aar" app/libs/libwebrtc.aar
+          gradle --no-daemon :app:pixel6Api29DebugAndroidTest -Pandroid.testoptions.manageddevices.emulator.gpu=swiftshader_indirect
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-reports
+          path: tools/webrtc/android-smoke/app/build/reports
+          if-no-files-found: ignore
+
+  release:
+    needs: smoke
+    if: github.event_name == 'workflow_dispatch' && inputs.release && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/webrtc-android')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: release
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          . tools/webrtc/VERSION
+          tag="webrtc-android-m${WEBRTC_MILESTONE}.${RELEASE}"
+          cat > notes.md <<NOTES
+          WebRTC M${WEBRTC_MILESTONE} (${WEBRTC_BRANCH}, commit ${WEBRTC_COMMIT}) for Android with libopus ${OPUS_VERSION}.
+
+          Opus features: Deep PLC, OSCE (LACE and NoLACE), OSCE bandwidth extension. DRED is off.
+          Decoder complexity 7. Packet lengths up to 120 ms. Hardware H.264 only (software H.264 and dav1d are off).
+          ABIs: arm64-v8a, armeabi-v7a, x86_64. The 64-bit libraries are 16 KB page aligned.
+
+          Device check: pending
+          NOTES
+          cd release
+          gh release create "$tag" --target "${{ github.sha }}" libwebrtc.aar libwebrtc.aar.sha256 LICENSE.md VERSION \
+            --title "WebRTC M${WEBRTC_MILESTONE} Android + Opus ${OPUS_VERSION} (${RELEASE})" --notes-file ../notes.md
