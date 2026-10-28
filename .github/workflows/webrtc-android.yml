@@ -140,6 +140,7 @@ jobs:
       - name: Run the smoke test (API 29, x86_64)
         working-directory: tools/webrtc/android-smoke
         run: |
+          mkdir -p app/libs
           cp "$GITHUB_WORKSPACE/release/libwebrtc.aar" app/libs/libwebrtc.aar
           gradle --no-daemon :app:pixel6Api29DebugAndroidTest -Pandroid.testoptions.manageddevices.emulator.gpu=swiftshader_indirect
       - uses: actions/upload-artifact@v4
