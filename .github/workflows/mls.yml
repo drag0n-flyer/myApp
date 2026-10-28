@@ -1,0 +1,106 @@
+name: MLS client core
+
+on:
+  workflow_dispatch:
+  push:
+    branches-ignore: [feat/server]
+    paths:
+      - "apps/apple/Packages/SecureMessaging/**"
+      - "mlsffi/**"
+      - "apps/apple/Prototypes/NSEPrototype/**"
+      - ".github/workflows/mls.yml"
+  pull_request:
+    paths:
+      - "apps/apple/Packages/SecureMessaging/**"
+      - "mlsffi/**"
+      - "apps/apple/Prototypes/NSEPrototype/**"
+      - ".github/workflows/mls.yml"
+
+concurrency:
+  group: mls-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: cargo test (RustCrypto provider)
+        working-directory: apps/apple/Packages/SecureMessaging/mlsffi
+        run: cargo test --locked
+
+  apple:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build XCFramework and bindings
+        working-directory: apps/apple/Packages/SecureMessaging
+        run: scripts/build-mlsffi.sh
+      - name: cargo test (RustCrypto provider)
+        working-directory: apps/apple/Packages/SecureMessaging/mlsffi
+        run: cargo test --locked
+      - name: Check minimum OS versions
+        working-directory: apps/apple/Packages/SecureMessaging/mlsffi
+        run: |
+          set -euo pipefail
+          check() { # target, platform name, minos
+            d="$(mktemp -d)"; (cd "$d" && ar -x "$OLDPWD/target/$1/release/libmlsffi.a")
+            out="$(find "$d" -name '*.o' -exec vtool -show-build {} \; | grep -E ' platform | minos ' | sort | uniq -c)"
+            echo "$1:"; echo "$out"
+            grep -q "platform $2" <<<"$out"
+            grep -q "minos $3" <<<"$out"
+            ! grep ' minos ' <<<"$out" | grep -qv "minos $3"
+            ! grep ' platform ' <<<"$out" | grep -qv "platform $2"
+          }
+          check aarch64-apple-ios IOS 17.0
+          check aarch64-apple-ios-sim IOSSIMULATOR 17.0
+          check aarch64-apple-darwin MACOS 14.0
+          check x86_64-apple-darwin MACOS 14.0
+      - name: Binding drift check
+        working-directory: apps/apple/Packages/SecureMessaging
+        run: git diff --exit-code Sources/MLSFFIBindings
+      - name: Swift package builds with the XCFramework
+        working-directory: apps/apple/Packages/SecureMessaging
+        run: swift build
+      - name: SecureMessaging tests with the real engine
+        working-directory: apps/apple/Packages/SecureMessaging
+        run: swift test
+      - name: xcodebuild test (iOS simulator)
+        working-directory: apps/apple/Packages/SecureMessaging
+        run: |
+          set -euo pipefail
+          # Resolve an available iPhone simulator at run time; never hard-code a model.
+          udid="$(xcrun simctl list devices available iPhone | grep -m1 -oE '[0-9A-F]{8}(-[0-9A-F]{4}){3}-[0-9A-F]{12}')"
+          test -n "$udid"
+          xcrun simctl list devices available iPhone | head -5
+          xcodebuild test -scheme SecureMessaging-Package \
+            -destination "platform=iOS Simulator,id=$udid" \
+            -skipPackagePluginValidation | tail -n 80
+          exit "${PIPESTATUS[0]}"
+      - name: nse-prototype (simulator push through the notification extension)
+        working-directory: apps/apple/Prototypes/NSEPrototype
+        run: |
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          ./run-sim-push.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MLSFFI-xcframework
+          path: apps/apple/Packages/SecureMessaging/Artifacts/MLSFFI.xcframework
+
+  swift-linux:
+    runs-on: ubuntu-24.04
+    container: swift:6.0
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: SecureMessagingCore tests
+        working-directory: apps/apple/Packages/SecureMessaging
+        run: swift test

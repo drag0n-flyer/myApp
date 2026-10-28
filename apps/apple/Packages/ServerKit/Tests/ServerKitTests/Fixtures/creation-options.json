@@ -1,0 +1,1 @@
+{"challenge":"AAECAwQFBgcICQoLDA0ODw","rp":{"name":"Chat","id":"chat.test"},"user":{"name":"ana","displayName":"ana","id":"EBESExQVFhcYGRobHB0eHw"},"pubKeyCredParams":[{"type":"public-key","alg":-7}],"authenticatorSelection":{"residentKey":"required","userVerification":"required"},"timeout":300000}

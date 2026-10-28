@@ -1,0 +1,211 @@
+{
+  "cases": [
+    {
+      "name": "two accounts, three devices",
+      "accountA": "acc-ana",
+      "accountB": "acc-bob",
+      "members": [
+        {
+          "identity": "acc-ana/dev-1",
+          "signatureKeyHex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+        },
+        {
+          "identity": "acc-ana/dev-2",
+          "signatureKeyHex": "28292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f4041424344454647"
+        },
+        {
+          "identity": "acc-bob/dev-3",
+          "signatureKeyHex": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f"
+        }
+      ],
+      "expected": [
+        "36784",
+        "92198",
+        "18404",
+        "60386",
+        "19040",
+        "54662",
+        "32297",
+        "10523",
+        "97395",
+        "09831",
+        "01688",
+        "83992"
+      ]
+    },
+    {
+      "name": "same, accounts swapped",
+      "accountA": "acc-bob",
+      "accountB": "acc-ana",
+      "members": [
+        {
+          "identity": "acc-ana/dev-1",
+          "signatureKeyHex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+        },
+        {
+          "identity": "acc-ana/dev-2",
+          "signatureKeyHex": "28292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f4041424344454647"
+        },
+        {
+          "identity": "acc-bob/dev-3",
+          "signatureKeyHex": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f"
+        }
+      ],
+      "expected": [
+        "36784",
+        "92198",
+        "18404",
+        "60386",
+        "19040",
+        "54662",
+        "32297",
+        "10523",
+        "97395",
+        "09831",
+        "01688",
+        "83992"
+      ]
+    },
+    {
+      "name": "same, members reordered",
+      "accountA": "acc-ana",
+      "accountB": "acc-bob",
+      "members": [
+        {
+          "identity": "acc-bob/dev-3",
+          "signatureKeyHex": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f"
+        },
+        {
+          "identity": "acc-ana/dev-2",
+          "signatureKeyHex": "28292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f4041424344454647"
+        },
+        {
+          "identity": "acc-ana/dev-1",
+          "signatureKeyHex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+        }
+      ],
+      "expected": [
+        "36784",
+        "92198",
+        "18404",
+        "60386",
+        "19040",
+        "54662",
+        "32297",
+        "10523",
+        "97395",
+        "09831",
+        "01688",
+        "83992"
+      ]
+    },
+    {
+      "name": "a device added",
+      "accountA": "acc-ana",
+      "accountB": "acc-bob",
+      "members": [
+        {
+          "identity": "acc-ana/dev-1",
+          "signatureKeyHex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+        },
+        {
+          "identity": "acc-ana/dev-2",
+          "signatureKeyHex": "28292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f4041424344454647"
+        },
+        {
+          "identity": "acc-bob/dev-3",
+          "signatureKeyHex": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f"
+        },
+        {
+          "identity": "acc-ana/dev-4",
+          "signatureKeyHex": "78797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f9091929394959697"
+        }
+      ],
+      "expected": [
+        "84226",
+        "10638",
+        "81380",
+        "48895",
+        "04275",
+        "23584",
+        "32297",
+        "10523",
+        "97395",
+        "09831",
+        "01688",
+        "83992"
+      ]
+    },
+    {
+      "name": "a third account is ignored",
+      "accountA": "acc-ana",
+      "accountB": "acc-bob",
+      "members": [
+        {
+          "identity": "acc-ana/dev-1",
+          "signatureKeyHex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+        },
+        {
+          "identity": "acc-ana/dev-2",
+          "signatureKeyHex": "28292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f4041424344454647"
+        },
+        {
+          "identity": "acc-bob/dev-3",
+          "signatureKeyHex": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f"
+        },
+        {
+          "identity": "acc-carol/dev-5",
+          "signatureKeyHex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf"
+        }
+      ],
+      "expected": [
+        "36784",
+        "92198",
+        "18404",
+        "60386",
+        "19040",
+        "54662",
+        "32297",
+        "10523",
+        "97395",
+        "09831",
+        "01688",
+        "83992"
+      ]
+    },
+    {
+      "name": "identity byte order",
+      "accountA": "acc-ana",
+      "accountB": "acc-bob",
+      "members": [
+        {
+          "identity": "acc-ana/dev-2",
+          "signatureKeyHex": "28292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f4041424344454647"
+        },
+        {
+          "identity": "acc-ana/dev-10",
+          "signatureKeyHex": "c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7"
+        },
+        {
+          "identity": "acc-bob/dev-3",
+          "signatureKeyHex": "505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f"
+        }
+      ],
+      "expected": [
+        "31472",
+        "62551",
+        "87838",
+        "78660",
+        "77837",
+        "49580",
+        "32297",
+        "10523",
+        "97395",
+        "09831",
+        "01688",
+        "83992"
+      ]
+    }
+  ],
+  "version": "safety-v1"
+}

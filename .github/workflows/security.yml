@@ -1,0 +1,65 @@
+name: security
+
+on:
+  workflow_dispatch:
+  push:
+    branches-ignore: [feat/server]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install gitleaks v8.28.0 (checksum verified)
+        run: |
+          set -euo pipefail
+          V=8.28.0
+          T=gitleaks_${V}_linux_x64.tar.gz
+          curl -fsSL -O "https://github.com/gitleaks/gitleaks/releases/download/v${V}/${T}"
+          echo "a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb  ${T}" | sha256sum -c -
+          tar xzf "$T" gitleaks
+          sudo install gitleaks /usr/local/bin/gitleaks
+      - name: Scan full history
+        run: gitleaks git --redact --no-banner --config .gitleaks.toml
+
+  go-licenses:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+          cache-dependency-path: server/go.sum
+      - run: scripts/check-go-licenses.sh
+
+  swift-licenses:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Script tests
+        run: python3 -m unittest scripts/test_check_swift_licenses.py
+      - name: Check Package.resolved files against the allowlist
+        run: python3 scripts/check-swift-licenses.py
+
+  rust-licenses:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Script tests
+        run: python3 -m unittest scripts/test_check_rust_licenses.py scripts/test_generate_oss_notices.py
+      - name: Check crate licenses (cargo metadata)
+        run: python3 scripts/check-rust-licenses.py
+      - name: Check the open-source notices are up to date
+        run: |
+          python3 scripts/generate-oss-notices.py
+          git diff --exit-code -- apps/apple/Packages/AppCore/Sources/AppCore/Resources/oss-notices.json || {
+            echo "::error::oss-notices.json is stale. Run scripts/generate-oss-notices.py and commit the result."
+            exit 1
+          }

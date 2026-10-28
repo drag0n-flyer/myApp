@@ -1,0 +1,314 @@
+name: Apple apps
+
+permissions:
+  contents: read
+
+on:
+  push:
+    # feat/server mirrors main; building it again only doubles the Mac queue.
+    branches-ignore: [feat/server]
+    paths:
+      - "apps/apple/**"
+      - "server/**"
+      - "tools/smtp-sink/**"
+      - ".github/workflows/apple.yml"
+  pull_request:
+    paths:
+      - "apps/apple/**"
+      - "server/**"
+      - "tools/smtp-sink/**"
+      - ".github/workflows/apple.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: apple-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Decides which tests this change needs, so a change in one package does not
+  # spend Mac runners on the others. A package's tests also run when a package
+  # it depends on changes. A manual run, or a change to this file, runs everything.
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      appcore: ${{ steps.pick.outputs.appcore }}
+      localstore: ${{ steps.pick.outputs.localstore }}
+      serverkit: ${{ steps.pick.outputs.serverkit }}
+      callcore: ${{ steps.pick.outputs.callcore }}
+      callmedia: ${{ steps.pick.outputs.callmedia }}
+      messaging: ${{ steps.pick.outputs.messaging }}
+      app: ${{ steps.pick.outputs.app }}
+      e2e: ${{ steps.pick.outputs.e2e }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: pick
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          all=0
+          case "$EVENT" in
+            workflow_dispatch) all=1 ;;
+            pull_request) base="$PR_BASE" ;;
+            *) base="$BEFORE" ;;
+          esac
+          # A new branch has no "before": compare with where it left main.
+          if [ "$all" = 0 ] && { [ -z "${base:-}" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; }; then
+            git fetch -q origin main || true
+            base=$(git merge-base origin/main "$HEAD" 2>/dev/null || echo "")
+            [ -n "$base" ] || all=1
+          fi
+          files=""
+          [ "$all" = 1 ] || files=$(git diff --name-only "$base" "$HEAD")
+          echo "$files" | grep -qx '.github/workflows/apple.yml' && all=1
+          has() { [ "$all" = 1 ] || echo "$files" | grep -qE "$1"; }
+          P=apps/apple/Packages
+          appcore=false; localstore=false; serverkit=false; callcore=false; callmedia=false; messaging=false; app=false; e2e=false
+          if has "^$P/AppCore/"; then appcore=true; serverkit=true; callcore=true; callmedia=true; messaging=true; app=true; fi
+          if has "^$P/LocalStore/"; then localstore=true; messaging=true; app=true; fi
+          if has "^$P/ServerKit/|^apps/apple/(serverkit-tests\.yml|ServerKitTestHost/)"; then serverkit=true; messaging=true; app=true; fi
+          if has "^$P/SecureMessaging/"; then messaging=true; app=true; fi
+          if has "^$P/Messaging/"; then messaging=true; app=true; fi
+          if has "^$P/CallCore/"; then callcore=true; callmedia=true; app=true; fi
+          # The app does not use CallMedia yet, so no app build for these.
+          if has "^$P/(CallMedia|WebRTCBinary)/"; then callmedia=true; fi
+          if has "^apps/apple/(App|AppUITests|NotificationService|scripts)/|^apps/apple/project\.yml$"; then app=true; fi
+          # The end-to-end job also depends on the server and the mail sink, which no other job uses.
+          if has "^apps/apple/Packages/(AppCore|ServerKit)/|^apps/apple/scripts/e2e-server\.sh$|^server/|^tools/smtp-sink/"; then e2e=true; fi
+          for k in appcore localstore serverkit callcore callmedia messaging app e2e; do
+            echo "$k=${!k}" >> "$GITHUB_OUTPUT"
+            echo "$k=${!k}"
+          done
+
+  # Package tests on Linux: cheap, and most package code is plain Swift.
+  linux-packages:
+    needs: changes
+    if: >-
+      needs.changes.outputs.appcore == 'true' || needs.changes.outputs.localstore == 'true' ||
+      needs.changes.outputs.serverkit == 'true' || needs.changes.outputs.callcore == 'true' ||
+      needs.changes.outputs.messaging == 'true' || needs.changes.outputs.callmedia == 'true'
+    runs-on: ubuntu-24.04
+    container: swift:6.2
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install SQLite headers
+        run: apt-get update && apt-get install -y libsqlite3-dev curl ca-certificates
+      - name: AppCore tests
+        if: needs.changes.outputs.appcore == 'true'
+        working-directory: apps/apple/Packages/AppCore
+        run: swift test --no-parallel
+      - name: LocalStore tests
+        if: needs.changes.outputs.localstore == 'true'
+        working-directory: apps/apple/Packages/LocalStore
+        run: swift test --no-parallel
+      - name: ServerKit tests
+        if: needs.changes.outputs.serverkit == 'true'
+        working-directory: apps/apple/Packages/ServerKit
+        # The end-to-end tests need the real server: the e2e job runs them.
+        run: swift test --no-parallel --skip ServerKitE2ETests
+      - name: CallCore tests
+        if: needs.changes.outputs.callcore == 'true'
+        working-directory: apps/apple/Packages/CallCore
+        run: swift test --no-parallel
+      - name: Messaging tests
+        if: needs.changes.outputs.messaging == 'true'
+        working-directory: apps/apple/Packages/Messaging
+        run: swift test --no-parallel
+      - name: CallMedia tests
+        if: needs.changes.outputs.callmedia == 'true'
+        working-directory: apps/apple/Packages/CallMedia
+        run: |
+          ./scripts/fetch-rnnoise-model.sh
+          swift test --no-parallel
+
+  # Only what needs Apple frameworks: CryptoKit paths, SQLite file protection, the simulator.
+  packages-macos:
+    needs: changes
+    if: needs.changes.outputs.localstore == 'true' || needs.changes.outputs.messaging == 'true'
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm
+            ~/Library/org.swift.swiftpm
+            apps/apple/Packages/*/.build
+          key: spm-${{ runner.os }}-${{ hashFiles('apps/apple/Packages/*/Package.swift', 'apps/apple/Packages/*/Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+      - name: LocalStore tests
+        if: needs.changes.outputs.localstore == 'true'
+        working-directory: apps/apple/Packages/LocalStore
+        run: swift test
+      - name: LocalStore tests on iOS Simulator
+        if: needs.changes.outputs.localstore == 'true'
+        working-directory: apps/apple/Packages/LocalStore
+        # Runner images change which iPhones they ship; take the first available one.
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for rt in sorted(d,reverse=True) if "iOS" in rt for x in d[rt] if x["name"].startswith("iPhone")))')
+          xcodebuild -scheme LocalStore test -destination "id=$UDID"
+      - name: Messaging tests
+        if: needs.changes.outputs.messaging == 'true'
+        working-directory: apps/apple/Packages/Messaging
+        run: swift test
+
+  # WebRTC media session tests: loopback calls in one process on a Mac.
+  # Needs the released WebRTC.xcframework (Task 6 sets the checksum in WebRTCBinary).
+  callmedia:
+    needs: changes
+    if: needs.changes.outputs.callmedia == 'true'
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm
+            ~/Library/org.swift.swiftpm
+            apps/apple/Packages/*/.build
+          key: spm-${{ runner.os }}-${{ hashFiles('apps/apple/Packages/*/Package.swift', 'apps/apple/Packages/*/Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+      - name: Is the WebRTC release published?
+        id: gate
+        run: |
+          if grep -q 'checksum: "0\{64\}"' apps/apple/Packages/WebRTCBinary/Package.swift; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::CallMedia tests skipped: WebRTCBinary still has the placeholder checksum (WebRTC Task 6)."
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: CallMedia tests
+        if: steps.gate.outputs.ready == 'true'
+        working-directory: apps/apple/Packages/CallMedia
+        run: |
+          ./scripts/fetch-rnnoise-model.sh
+          swift test
+
+  serverkit-ios:
+    needs: changes
+    if: needs.changes.outputs.serverkit == 'true'
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm
+            ~/Library/org.swift.swiftpm
+            apps/apple/Packages/*/.build
+          key: spm-${{ runner.os }}-${{ hashFiles('apps/apple/Packages/*/Package.swift', 'apps/apple/Packages/*/Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: ServerKit tests on an iOS simulator
+        run: apps/apple/scripts/test-serverkit-ios.sh
+      - name: Keep test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: serverkit-ios-xcresult
+          path: |
+            ${{ runner.temp }}/serverkit-ios.xcresult
+            ${{ runner.temp }}/serverkit-ios-hosted.xcresult
+
+  # ServerKit against the real Go server (Postgres and a mail sink on the runner).
+  e2e:
+    needs: changes
+    if: needs.changes.outputs.e2e == 'true'
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+          cache-dependency-path: server/go.sum
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm
+            ~/Library/org.swift.swiftpm
+            apps/apple/Packages/*/.build
+          key: spm-${{ runner.os }}-${{ hashFiles('apps/apple/Packages/*/Package.swift', 'apps/apple/Packages/*/Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+      - name: End-to-end tests against the Go server
+        run: apps/apple/scripts/e2e-server.sh
+      - name: Keep server logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs
+          path: |
+            ${{ runner.temp }}/e2e/*.log
+            ${{ runner.temp }}/e2e/mail
+
+  # Full app builds and UI tests: when app code (or a package it uses) changed,
+  # and only on main, pull requests and manual runs.
+  ios:
+    needs: changes
+    if: needs.changes.outputs.app == 'true' && (github.ref == 'refs/heads/main' || github.event_name != 'push')
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: No test-only libraries in the app
+        run: apps/apple/scripts/check-test-only-libs.sh
+      - name: Release config check (reports only)
+        continue-on-error: true
+        run: python3 scripts/check-release-config.py --allow-missing --placeholder-brand-ok --filtering-pending
+      - name: iPhone UI tests
+        run: apps/apple/scripts/test-ios.sh
+      - name: Keep test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-ui-xcresult
+          path: ${{ runner.temp }}/ios-ui.xcresult
+
+  macos:
+    needs: changes
+    if: needs.changes.outputs.app == 'true' && (github.ref == 'refs/heads/main' || github.event_name != 'push')
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: No test-only libraries in the app
+        run: apps/apple/scripts/check-test-only-libs.sh
+      - name: Mac UI tests
+        run: apps/apple/scripts/test-macos.sh
+      - name: Keep test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-ui-xcresult
+          path: ${{ runner.temp }}/mac-ui.xcresult

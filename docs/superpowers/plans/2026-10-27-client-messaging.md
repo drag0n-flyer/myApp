@@ -37,11 +37,11 @@
    - Digest: SHA-256 over the whole ciphertext, carried in the envelope.
    - This is the STREAM construction and it allows Range-resumed downloads. Owner review: cryptography.
 8. **Call history is local per device** (plan 8): `recordCall` writes a `calls` row and a `.call(summary)` message on this device only. No `call` envelope kind exists.
-9. **Photo data saving:** photos are re-encoded to JPEG with a maximum side of 1 600 px and quality 0.7. The envelope carries an inline thumbnail (32 px maximum side, JPEG quality 0.4, at most 1 536 bytes) that is shown blurred until download. Voice messages are recorded as Opus in CAF, 16 kHz mono, at 16 kbps.
+9. **Photo data saving:** photos are re-encoded to JPEG with a maximum side of 1 600 px and quality 0.7. The envelope carries an inline thumbnail (32 px maximum side, JPEG quality 0.4, at most 1 536 bytes) that is shown blurred until download. Voice messages are recorded as Opus, 16 kHz mono, at 16 kbps. The Apple recorder writes CAF and the app converts it to Ogg Opus (RFC 7845) before sending (owner decision, 2026-10-28).
 10. **Escrow copies** (server-readable conversations only) are sealed by `Escrow.seal(_:serverKey:)` in `Messaging` (plan 9 needs a single Swift owner of escrow sealing). It lives here, not in `SecureMessaging`, which only wraps the MLS binary; escrow is plain CryptoKit HPKE used only by the outbox. Sealing uses CryptoKit HPKE: Curve25519 / HKDF-SHA256 / ChaCha20-Poly1305, `info = "escrow-v1"`.
    - The output is `encapsulatedKey (32) ‖ ciphertext`, the framing Go's `hpke.Open` expects.
    - The plaintext is `{"conversationID","senderAccountID","sentAt","body":<ContentEnvelope object>}`.
-   - A conversation's mode is taken **only from the server** (`GET /v1/conversations/{id}`, see cross-plan item 1), never from message content.
+   - Whether to add an escrow copy follows Design 18: the mode written inside the conversation by its creator decides, and the server's mode can only make the client refuse to send, never make it add escrow to an end-to-end chat.
    - Attachment keys travel inside the envelope, so in server-readable chats the operator can read attachments too. The chat info text already says the admin can read the chat.
 11. **Inbox pipeline: store raw first, then process.**
     - Fetched items go into `inbox_raw` and are acknowledged on the server only after that write is durable.
@@ -67,6 +67,23 @@
     - Otherwise it passes the item to `mls.process`, which merges the pending commit. This covers a crash between the server's 200 and `commitAccepted`.
     - iOS: the database files (`.sqlite`, `-wal`, `-shm`) and the `ProcessLock` file use `.completeUntilFirstUnlock`, and the media directory uses `.complete`.
     - macOS: no file protection API; FileVault applies.
+18. **The chat's mode is bound inside the conversation** (threat model OPEN-18). Plan 4's API has no group-context extensions, so the mode travels as a `mode` envelope (content table).
+    - The creator takes the mode from the create response and sends `{"k":"mode","m":<mode>}` as the conversation's first application message, before anything else. Whoever commits an add later (A3 reconcile) sends it again right after, so devices that join later learn it.
+    - A receiver pins `conversations.inner_mode` from the first `mode` envelope it sees. A later envelope with a different value is ignored and sets `mode_mismatch = 1`. The pin never changes.
+    - The server's mode (`conversations.mode`, from the create response and `GET /v1/conversations/{id}`) is kept, but only compared. Escrow is added **only when both** say `server_readable`. When `inner_mode` is `e2ee`, the client never sends an escrow copy, whatever the server says.
+    - Any disagreement sets `mode_mismatch = 1` and logs `mode_mismatch conversation=<id>` (IDs only). If the server demands escrow for an `e2ee` chat, sending stops: the message fails, the chat gets one system line (`SystemEvent.messagesPaused`) "Messages in this chat are paused. Open chat info for details.", and chat info shows the error (B3). The line names no encryption type; only chat info does.
+    - `Chat.encryption` comes from `inner_mode`. Until a `mode` envelope arrives, a conversation the server calls `server_readable` holds its outbox (it never guesses); one the server calls `e2ee` sends without escrow.
+19. **Device changes are visible** (OPEN-7). After every processed commit, every `commitAccepted` and every Welcome, `Membership` compares `mls.memberKeys(of:)` with the stored `members` rows:
+    - an added or removed identity of another account → a system line in that chat: "Ana added a new device" / "Ana removed a device"; for my own account: "You added a new device" / "You removed a device"
+    - no lines for the commit or Welcome that creates the conversation (no stored members yet)
+    - a new device of **my own** account (not this device) → one local notification per device ID, on every own device: title "New device added", body "\(name) can now read your new messages. If this wasn't you, remove it in Settings > Linked devices." The name comes from `GET /v1/devices` after the lock is released, or "A new device" if unknown. The app posts it through `DeviceNotifier`; the NSE shows it as its outcome (D2). Plan 6 does not notify; this is the single owner.
+    - System lines are `messages` rows with `sender_account = 'system'`, ID `"sys-<conversation>-<epoch>-<identity or event>"` (idempotent), and `envelope` = the JSON of AppCore `SystemEvent`; they are never sent. Display names are resolved when shown, never stored in the row.
+20. **Safety numbers** (OPEN-6) are computed from the preferred conversation's members and their MLS signature public keys (`mls.memberKeys(of:)`, a plan 4 request):
+    - `side(acct) = SHA-256( UTF8("safety-v1") ‖ 0x00 ‖ UTF8(acct) ‖ 0x00 ‖ Σ over acct's member devices, sorted by identity UTF-8 bytes: u16be(len id) ‖ id ‖ u16be(len key) ‖ key )`, where a device belongs to `acct` when its identity's part before `/` equals `acct`.
+    - The two sides are ordered by account ID (UTF-8 bytes ascending). Each side gives 6 groups: for `i` in 0..<6, the big-endian integer of bytes `5i..<5i+5` mod 100 000, zero-padded to 5 digits. The number is the lower side's 6 groups, then the higher side's: **12 groups of 5 digits**, the same on both phones, shown 3 per row in the existing Verify sheet.
+    - It changes whenever either account adds, removes or re-keys a device. A change from a previously stored value adds the system line "Safety number changed".
+    - "Verified" is local only: the `safety` row stores the number the user marked verified, and the chat counts as verified only while that equals the current number. Nothing is sent to the server.
+    - SHA-256 is `PortableSHA256` (F2) on every platform, so Linux tests and devices run the same code; `TestSafetyNumberVector` pins it.
 
 ### Content envelope (exact JSON)
 
@@ -83,6 +100,7 @@ Every message is `{"v":1,"id":"<uuid>","at":<sent time, ms since 1970>,"k":"<kin
 | `react` | `target`, `e` (one emoji; `""` removes) | one reaction per account per message |
 | `receipt` | `s` (`"delivered"` or `"read"`), `ids` | updates the status of my messages; never shown |
 | `callsig` | `p`: a `CallSignalPayload` JSON object (AppCore; plan 8 defines its fields) | **never stored**; returned to plan 8 through `CallSignalSealer.open` |
+| `mode` | `m` (`"e2ee"` or `"server_readable"`) | **never shown**; pins `conversations.inner_mode` (Design 18) |
 
 `Att = {"id":"<server attachment id>","key":"<base64 32 B>","dg":"<base64 SHA-256 of ciphertext>","sz":<plaintext bytes>,"csz":<ciphertext bytes>}`. Binary fields inside the envelope use standard base64, because the envelope is client-internal.
 
@@ -98,6 +116,9 @@ Every message is `{"v":1,"id":"<uuid>","at":<sent time, ms since 1970>,"k":"<kin
 8. Reports include the last 10 messages of the chat, after the user confirms in a dialog.
 9. Call payload types (`CallSignalPayload`, `IceCandidate`, `CallSealError`) live in AppCore and call signals are sealed in the 1:1 conversation (Design 16); call history stays on each device (Design 8).
 10. `Escrow.seal(_:serverKey:)` lives in `Messaging`, not `SecureMessaging` (Design 10).
+11. The chat's mode is written inside the conversation by its creator and pinned by every member; an end-to-end chat never sends escrow copies, and a mismatch pauses sending and is logged (Design 18, OPEN-18). **Approved by owner 2026-10-27.**
+12. Device additions and removals show as chat lines from the MLS commit, and a new own device triggers a notification on the account's other devices; plan 7 owns that notification (Design 19, OPEN-7). **Approved by owner 2026-10-27.**
+13. Real safety numbers from MLS signature keys, with local verified state and a "Safety number changed" line (Design 20, OPEN-6). **Approved by owner 2026-10-27.** Owner review: cryptography (`Sync/SafetyNumber.swift`).
 
 ### Cross-plan changes this plan needs (also recorded in the roadmap at merge time)
 
@@ -106,6 +127,7 @@ Every message is `{"v":1,"id":"<uuid>","at":<sent time, ms since 1970>,"k":"<kin
 3. **SecureMessaging (plan 4):**
    - Split out a product `SecureMessagingCore` (`MLSEngine`, the types, `FakeMLSEngine`) with no binary target, so `Messaging` builds and tests on Linux.
    - Add `func members(of group: GroupID) async throws -> [String]`.
+   - Add `func memberKeys(of group: GroupID) async throws -> [MemberKey]` with `public struct MemberKey: Sendable, Equatable { public let identity: String; public let signatureKey: Data }`, read from the ratchet tree's leaf nodes (each leaf's `signing_identity.signature_key`), sorted by identity, including this device. `FakeMLSEngine` returns `signatureKey = Data("fake-sig:\(identity)".utf8)`. Needed for Design 19 and 20 (OPEN-6, OPEN-7). Until it lands, A4 uses `members(of:)` with fake keys behind a `// TODO(plan 4 memberKeys)` and records a `Ruling:`; the safety-number UI stays hidden.
    - The engine reads group state from storage on each call, or offers `func reload() async throws`, because the NSE changes that state from another process.
 4. **ServerKit (plan 6):** must build on Linux, with Apple-only parts behind `#if canImport(AuthenticationServices)`. It must expose the server info document's `encryption.escrowKey`, and `LinkSnapshot` bytes in the linking flow.
 5. **Calling (plan 8):**
@@ -141,7 +163,9 @@ Every message is `{"v":1,"id":"<uuid>","at":<sent time, ms since 1970>,"k":"<kin
 2. **The app is suspended in the middle of a sync.** No lock may be held across `await` on the network. Pinned by A2 `TestLockNotHeldAcrossNetwork`, which uses a transport that blocks while the test asserts the lock is free.
 3. **The app crashes after MLS processed a message but before the database write.** The raw row survives, reprocessing fails, and the user sees one "This message couldn't be decrypted" placeholder rather than nothing or a loop. Pinned by A2 `TestUndecryptablePlaceholder`.
 4. **Both people start the chat at the same moment.** One chat results, both sides send through the same conversation, and messages from either group appear. Pinned by A1 `TestSimultaneousCreate`.
-5. **A server-readable chat must include the escrow copy, and an end-to-end chat must never include one.** This holds whoever created the chat and even when the peer's content claims otherwise. Pinned by B1 `TestEscrowFollowsServerMode`.
+5. **A server-readable chat must include the escrow copy, and an end-to-end chat must never include one,** even when the server later claims it is server-readable or answers `escrow_required`. The mode pinned from the creator's `mode` envelope wins; a later envelope can't change it. Pinned by B1 `TestEscrowFollowsServerMode`, `TestE2EEChatIgnoresServerReadableClaim`, and A2 `TestModeChangeIgnoredAndFlagged`.
+6. **No device joins a chat silently.** Every add or remove of a member device after creation leaves exactly one chat line, and a new own device notifies the other own devices once, also when the NSE processed the commit. Pinned by A4 `TestDeviceAddedLine`, `TestOwnDeviceAddedNotifiesOnce` and D2 `TestOwnDeviceAddedShows`.
+7. **Safety numbers.** Both sides compute the same 12 groups, any device or key change alters them, and "verified" lapses when they change. Pinned by A4 `TestSafetyNumberSymmetric`, `TestSafetyNumberChangesWhenDeviceAdded`, `TestSafetyNumberVector` and B2 `TestVerifiedLapsesOnChange`.
 
 ---
 
@@ -149,7 +173,7 @@ Every message is `{"v":1,"id":"<uuid>","at":<sent time, ms since 1970>,"k":"<kin
 
 ```
 Foundation (1 agent)   F1 → F2                         branch feat/client-messaging
-Lanes (4 agents)       A1–A3 | B1–B3 | C1–C3 | D1–D3   worktrees: ../myApp-msg-<x>, branches msg/lane-<x>
+Lanes (4 agents)       A1–A4 | B1–B3 | C1–C3 | D1–D3   worktrees: ../myApp-msg-<x>, branches msg/lane-<x>
 Integration (1)        I1
 ```
 
@@ -186,7 +210,10 @@ Lanes B and D both edit `project.yml`: B adds the app group entitlement and D ad
 ```sql
 contacts(account_id TEXT PRIMARY KEY, username TEXT NOT NULL, display_name TEXT NOT NULL, is_contact INTEGER NOT NULL, added_at INTEGER NOT NULL)
 chats(id TEXT PRIMARY KEY, is_request INTEGER NOT NULL, unread INTEGER NOT NULL DEFAULT 0, muted INTEGER NOT NULL DEFAULT 0, last_activity INTEGER NOT NULL)
-conversations(server_id TEXT PRIMARY KEY, chat_id TEXT NOT NULL REFERENCES chats ON DELETE CASCADE, group_id BLOB NOT NULL UNIQUE, mode TEXT NOT NULL CHECK(mode IN ('e2ee','server_readable')), epoch INTEGER NOT NULL, active INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL)
+conversations(server_id TEXT PRIMARY KEY, chat_id TEXT NOT NULL REFERENCES chats ON DELETE CASCADE, group_id BLOB NOT NULL UNIQUE, mode TEXT NOT NULL CHECK(mode IN ('e2ee','server_readable')), inner_mode TEXT CHECK(inner_mode IN ('e2ee','server_readable')), mode_mismatch INTEGER NOT NULL DEFAULT 0, epoch INTEGER NOT NULL, active INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL)
+  -- mode = the server's claim; inner_mode = pinned from the creator's `mode` envelope (Design 18)
+members(conversation_id TEXT NOT NULL REFERENCES conversations(server_id) ON DELETE CASCADE, identity TEXT NOT NULL, signature_key BLOB NOT NULL, PRIMARY KEY(conversation_id, identity))
+safety(chat_id TEXT PRIMARY KEY REFERENCES chats ON DELETE CASCADE, current TEXT NOT NULL, verified TEXT)   -- 60 digits each (Design 20)
 messages(id TEXT PRIMARY KEY, chat_id TEXT NOT NULL REFERENCES chats ON DELETE CASCADE, conversation_id TEXT, sender_account TEXT NOT NULL, sender_device TEXT, sent_at INTEGER NOT NULL, received_at INTEGER NOT NULL, envelope BLOB NOT NULL, status TEXT NOT NULL, reply_to TEXT, edited_at INTEGER, deleted INTEGER NOT NULL DEFAULT 0, undecryptable INTEGER NOT NULL DEFAULT 0, folded TEXT NOT NULL DEFAULT '')
   -- index messages(chat_id, sent_at)
 reactions(message_id TEXT NOT NULL REFERENCES messages ON DELETE CASCADE, account_id TEXT NOT NULL, emoji TEXT NOT NULL, PRIMARY KEY(message_id, account_id))
@@ -214,7 +241,9 @@ kv(key TEXT PRIMARY KEY, value BLOB NOT NULL)
 - `public final class Repository: @unchecked Sendable`, `init(db: Database, now: @escaping @Sendable () -> Date)`, with typed methods on `Records.swift` structs (`ContactRecord`, `ChatRecord`, `ConversationRecord`, `MessageRecord`, `AttachmentRecord`, `OutboxRecord`, `RawInboxRecord`, `FolderRecord`, `CallRecord`), one-to-one with the tables:
   - contacts: `upsertContact`, `contact(id:)`, `contacts()`
   - chats: `upsertChat`, `chat(id:)`, `chats()` (ordered by `last_activity` desc), `setUnread`, `setRequest`, `deleteChat`
-  - conversations: `upsertConversation`, `conversations(chatID:)`, `conversation(serverID:)`, `conversation(groupID:)`, `preferredConversation(chatID:)` (Design 1), `setEpoch`
+  - conversations: `upsertConversation`, `conversations(chatID:)`, `conversation(serverID:)`, `conversation(groupID:)`, `preferredConversation(chatID:)` (Design 1), `setEpoch`, `pinInnerMode(serverID:mode:) -> Bool` (sets it only when `NULL`; returns `false` and sets `mode_mismatch` when a different value is already pinned), `setServerMode`, `flagModeMismatch`
+  - members: `members(conversationID:) -> [(identity: String, signatureKey: Data)]`, `replaceMembers(conversationID:_:)`
+  - safety: `safety(chatID:) -> (current: String, verified: String?)?`, `setSafetyCurrent(chatID:_:)`, `setVerified(chatID:_: String?)`
   - messages: `insertMessage` (`INSERT OR IGNORE`; returns `Bool` inserted), `message(id:)`, `messages(chatID:before:limit:)` (newest page, returned oldest first), `updateStatus(ids:to:)` (never lowers a status: sending < sent < delivered < read), `applyEdit`, `markDeleted`, `setReaction`
   - search: `search(_ folded: String, limit: Int) -> [(chatID: String, messageID: String)]`
   - attachments: `upsertAttachment`, `attachment(id:)`, `attachment(messageID:)`, `setAttachmentState`
@@ -237,7 +266,8 @@ kv(key TEXT PRIMARY KEY, value BLOB NOT NULL)
   - `TestStatusNeverLowers`: `read` followed by `delivered` stays `read`.
   - `TestMessagesPage`: of 120 messages, page 1 is the newest 50 in ascending order; `before:` the 71st gives the 50 before it.
   - `TestPreferredConversation`: active `"b…"` and `"a…"` → `"a…"`; an inactive `"0…"` is ignored.
-  - `TestCascadeDeleteChat`: deleting a chat removes its messages, attachments, reactions, conversations and calls.
+  - `TestCascadeDeleteChat`: deleting a chat removes its messages, attachments, reactions, conversations, members, its `safety` row and calls.
+  - `TestInnerModePinsOnce`: `pinInnerMode("e2ee")` → `true`; then `pinInnerMode("server_readable")` → `false`, `inner_mode` stays `e2ee`, and `mode_mismatch == 1`.
   - `TestSearchFoldsDiacritics`: `"Crème brûlée"` is found by `"creme"`; `"ＡＢＣ"` (full width) by `"abc"`; `"नमस्ते दोस्त"` by `"नमस्ते"`; `"東京タワー"` by `"京タ"`; `"שלום עולם"` by `"עולם"`; the 2-character `"çé"` is found through `LIKE`.
   - `TestSearchSkipsDeleted`: a deleted message no longer matches.
   - `TestProcessLockExclusive`: two `ProcessLock`s on the same file, where the second's `withLock(timeout: .milliseconds(100))` throws `LockTimeout` while the first holds the lock and succeeds after release.
@@ -254,15 +284,15 @@ kv(key TEXT PRIMARY KEY, value BLOB NOT NULL)
   - products: `Messaging`, `MessagingTestKit`
   - dependencies, by path: `../AppCore`, `../LocalStore`, `../ServerKit`, `../SecureMessaging` (product `SecureMessagingCore`)
   - test resources: `Tests/MessagingTests/Resources`
-- Create: `Sources/Messaging/Content/ContentEnvelope.swift`, `Sources/Messaging/Ports.swift`, `Sources/Messaging/Padding.swift`, `Sources/MessagingTestKit/FakeServer.swift`, `Sources/MessagingTestKit/FakeCiphers.swift`, `Sources/MessagingTestKit/TestDevice.swift`
+- Create: `Sources/Messaging/Content/ContentEnvelope.swift`, `Sources/Messaging/Ports.swift`, `Sources/Messaging/Padding.swift`, `Sources/Messaging/Crypto/SHA256Portable.swift`, `Sources/MessagingTestKit/FakeServer.swift`, `Sources/MessagingTestKit/FakeCiphers.swift`, `Sources/MessagingTestKit/TestDevice.swift`
 - Create: `Tests/MessagingTests/Resources/content-v1.json` (test vectors)
 - Modify (AppCore):
-  - `Chats/Models.swift`: add `MessageContent.deleted` and `.unsupported`; add `Message.editedAt: Date?`, `Message.media: MediaState?` and `Message.undecryptable: Bool`, with defaults in `init`
+  - `Chats/Models.swift`: add `MessageContent.deleted`, `.unsupported` and `.system(SystemEvent)`; add `Message.editedAt: Date?`, `Message.media: MediaState?` and `Message.undecryptable: Bool`, and `Chat.modeMismatch: Bool`, with defaults in `init`
   - `Chats/ChatStore.swift`: the protocol changes below, including `recordCall` (plan 8 F2's requirement; add it only if absent)
   - `Calls/CallSignalPayload.swift`: `CallSignalPayload`, `IceCandidate` and `CallSealError`, copied verbatim from plan 8 ([client-calling](2026-10-27-client-calling.md) "Call payload sealing" and F1). If plan 8 has already added them, import those and record a `Ruling:`
   - `Chats/SampleChatStore.swift`: implement the additions in memory
   - `Tests/AppCoreTests/*`: mark them `@MainActor` where they use the store
-- Modify (UI): update the exhaustive switches in `App/Features/ChatList/ChatRowView.swift`, `App/Features/Chat/MessageBubbleView.swift` and `Message.previewText` for `.deleted` ("This message was deleted", shown in italic secondary style) and `.unsupported` ("Update [App] to see this message"). Add the new strings to `Localizable.xcstrings`.
+- Modify (UI): update the exhaustive switches in `App/Features/ChatList/ChatRowView.swift`, `App/Features/Chat/MessageBubbleView.swift` and `Message.previewText` for `.deleted` ("This message was deleted", shown in italic secondary style), `.unsupported` ("Update [App] to see this message") and `.system` (a centered `.footnote` secondary line, no bubble, with the Design 19 and 20 texts: "\(name) added a new device", "\(name) removed a device", "You added a new device", "You removed a device", "Safety number changed", "Messages in this chat are paused. Open chat info for details."). Add the new strings to `Localizable.xcstrings`.
 
 **Interfaces — Produces:**
 ```swift
@@ -270,6 +300,9 @@ kv(key TEXT PRIMARY KEY, value BLOB NOT NULL)
 public struct MediaState: Hashable, Codable, Sendable { public var attachmentID: String; public var phase: Phase
     public enum Phase: Hashable, Codable, Sendable { case remote, downloading(Double), local(URL), failed } }
 public struct MessageHit: Hashable, Sendable { public var chatID: String; public var messageID: String; public var preview: String }
+public enum SystemEvent: Hashable, Codable, Sendable {           // Design 19, 20; name nil = "You"
+    case deviceAdded(name: String?), deviceRemoved(name: String?), safetyNumberChanged, messagesPaused }
+public struct SafetyNumber: Hashable, Sendable { public var groups: [String] /* 12 × 5 digits */; public var isVerified: Bool }
 @MainActor public protocol ChatStore: AnyObject {
     // …existing requirements unchanged, except:
     func addContact(username: String) async -> Contact?          // was synchronous
@@ -283,6 +316,8 @@ public struct MessageHit: Hashable, Sendable { public var chatID: String; public
     func delete(messageID: String, in chatID: String)
     func download(messageID: String, in chatID: String)
     func recordCall(_ summary: CallSummary, contactID: String, outgoing: Bool, at date: Date)   // plan 8 F2
+    func safetyNumber(for chatID: String) -> SafetyNumber?        // nil until the chat has a conversation
+    func setVerified(_ verified: Bool, chatID: String)            // local only
 }
 
 // Messaging
@@ -290,7 +325,7 @@ public struct ContentEnvelope: Codable, Sendable, Equatable { public var v: Int;
     public enum Body: Sendable, Equatable { case text(String, replyTo: String?), photo(Att, w: Int, h: Int, thumb: Data?, replyTo: String?),
         voice(Att, duration: Double, replyTo: String?), file(Att, name: String, mime: String, replyTo: String?),
         edit(target: String, text: String), delete(target: String), react(target: String, emoji: String),
-        receipt(ReceiptKind, ids: [String]), callSignal(CallSignalPayload), unsupported(kind: String) }
+        receipt(ReceiptKind, ids: [String]), callSignal(CallSignalPayload), mode(String), unsupported(kind: String) }
     public static func decode(_ data: Data) -> ContentEnvelope   // never throws: bad JSON → .unsupported("invalid")
     public func encoded() -> Data                                  // sorted keys, no whitespace
 }
@@ -313,8 +348,10 @@ public struct MessagingDeps: Sendable {
     public var me: (accountID: String, deviceID: String)
     public var server: ServerClient; public var mls: MLSEngine; public var repo: Repository
     public var lock: ProcessLock; public var escrow: EscrowSealer; public var attachments: AttachmentCipher
+    public var notifier: DeviceNotifier                           // Design 19
     public var mediaDirectory: URL; public var now: @Sendable () -> Date
 }
+public protocol DeviceNotifier: Sendable { func ownDeviceAdded(deviceID: String, name: String) async }   // app: UNUserNotificationCenter; NSE: no-op (D2 shows it)
 
 // MessagingTestKit
 public actor FakeServer   // implements server §7.2 + users, blocks, reports, attachments (with Range) + GET /v1/conversations/{id}
@@ -323,7 +360,8 @@ public func events(for deviceID: String) -> AsyncStream<ServerEvent>
 public struct TestDevice { public let accountID, deviceID: String; public let deps: MessagingDeps }   // FakeMLSEngine, in-memory DB, temp dirs
 public func makeDevice(_ server: FakeServer, account: String, username: String) async -> TestDevice
 public struct FakeEscrowSealer: EscrowSealer   // returns "ESCROW:" + plaintext
-public struct FakeAttachmentCipher: AttachmentCipher   // XOR with key[0]; digest = SHA-256 via a tiny pure-Swift SHA-256 in the test kit
+public struct FakeAttachmentCipher: AttachmentCipher   // XOR with key[0]; digest = SHA-256 via the portable SHA-256 (Design 20)
+public actor RecordingDeviceNotifier: DeviceNotifier { public var added: [(deviceID: String, name: String)] }
 ```
 
 - [ ] **Step 1: Write the failing tests.**
@@ -338,7 +376,8 @@ public struct FakeAttachmentCipher: AttachmentCipher   // XOR with key[0]; diges
   - In AppCore, `SampleChatStoreTests` gets new tests: `searchMessages("lunch")` finds the sample message; `delete` → the content is `.deleted`; `react` toggles.
   - `TestCallSignalEnvelope`: a `callsig` envelope whose `p` has every `CallSignalPayload` field set round-trips byte for byte; the vector is in `content-v1.json`.
 - [ ] **Step 2:** `swift test` in Messaging and AppCore → FAIL.
-- [ ] **Step 3: Implement.** Write `content-v1.json` by hand from the envelope table above. The test kit's SHA-256 exists only because CryptoKit is unavailable on Linux.
+  - `TestModeEnvelope`: `{"at":1,"id":"x","k":"mode","m":"e2ee","v":1}` ↔ `.mode("e2ee")` byte for byte; an unknown `m` value decodes to `.unsupported("mode")`. The vector is in `content-v1.json`.
+- [ ] **Step 3: Implement.** Write `content-v1.json` by hand from the envelope table above. Create `Sources/Messaging/Crypto/SHA256Portable.swift` with `public enum PortableSHA256 { public static func hash(_ data: Data) -> Data }` (CryptoKit is unavailable on Linux); `FakeAttachmentCipher` and A4 use it. Test `TestPortableSHA256`: `"abc"` → `ba7816bf…f20015ad`, and `""` → `e3b0c442…7852b855`.
 - [ ] **Step 4:** Both packages' `swift test` → PASS. Push and check that the macOS UI tests (`-sampleData`) stay green: `gh run watch`.
 - [ ] **Step 5: Commit** `feat(messaging): content envelope v1, ChatStore changes, ports, test kit`. The lanes can start now.
 
@@ -357,13 +396,16 @@ Owner review: all of it. Test command: `swift test --filter Sync` in Messaging.
   1. claim KeyPackages for the peer and for my own account, dropping my current device
   2. `POST /v1/conversations`, then `mls.createGroup()` and `mls.add`
   3. commit at epoch 0 with a welcome and `addDevices` = all claimed devices
-  4. `commitAccepted`, then store the conversation with its mode from the create response
-- `func joined(group: GroupID, serverConversationID: String) async throws`: called by the inbox processor; reads the mode with `GET /v1/conversations/{id}`, creates the chat as a request when the peer is not a contact, and stores the conversation
+  4. `commitAccepted`, then store the conversation with `mode` and `inner_mode` both from the create response
+  5. send the `mode` envelope (Design 18) as the first application message, before returning, so no other message precedes it
+- `func joined(group: GroupID, serverConversationID: String) async throws`: called by the inbox processor; reads the server's mode with `GET /v1/conversations/{id}` into `mode` only (`inner_mode` stays `NULL` until the `mode` envelope), creates the chat as a request when the peer is not a contact, and stores the conversation
+- `func announceMode(_ conversation: ConversationRecord) async throws`: sends `.mode(inner_mode)` in that conversation; called after any add commit (A3, A4). Throws `SyncError.modeUnknown` when `inner_mode` is `NULL`.
 - `handleStaleEpoch`: `commitRejected`, then `InboxSync.syncOnce()` through an injected closure, then retry, at most 3 times, then throw `SyncError.epochConflict`
 
 - [ ] **Step 1: Failing tests** (using `FakeServer` with devices ana1, ana2, bob1 and bob2).
   - `TestCreateAddsAllDevices`: ana1 creates with bob → the server shows 4 member devices; bob1, bob2 and ana2 each have a welcome item.
-  - `TestCreateUsesServerMode`: the FakeServer policy is `server_readable` → the stored `mode` is `server_readable`.
+  - `TestCreateUsesServerMode`: the FakeServer policy is `server_readable` → the stored `mode` and `inner_mode` are `server_readable`.
+  - `TestCreateSendsModeEnvelope`: ana1 creates with bob (policy `e2ee`) → the first application message the FakeServer stores for the conversation decodes to `.mode("e2ee")`; after bob1 syncs, bob1's `inner_mode == "e2ee"`.
   - `TestStaleEpochRetries`: the FakeServer rejects ana1's commit once with `stale_epoch` → ana1 syncs, retries, and succeeds at the next epoch.
   - `TestStaleEpochGivesUp`: rejected 4 times → `SyncError.epochConflict`.
   - `TestSimultaneousCreate`: ana1 and bob1 create at the same moment → 2 server conversations; both devices' `preferredConversation(with:)` returns the same server ID (the smaller one), and the chat count on each device is 1.
@@ -392,8 +434,7 @@ Owner review: all of it. Test command: `swift test --filter Sync` in Messaging.
   - `.joined` → `conversations.joined`
   - `.commit(removedMe: true)` → mark the conversation inactive; any other `.commit` → store the epoch
   - an echoed own commit follows Design 17
-  - `.application` → decode the envelope and apply it per the content table: edit and delete check the sender; receipts update statuses; a `callsig` returns `.callSignal`; everything else returns `.stored(MessageRecord)` or `.ignored`
-- Receipts: after each drain, send one `delivered` receipt per conversation listing the new message IDs, through lane B's `Outbox.sendControl` (a protocol from F2: `ControlSender`).
+  - `.application` → decode the envelope and apply it per the content table: edit and delete check the sender; receipts update statuses; a `callsig` returns `.callSignal`; a `mode` calls `repo.pinInnerMode` (a `false` result logs `mode_mismatch conversation=<id>` and adds the `messagesPaused` line once) and returns `.ignored`; everything else returns `.stored(MessageRecord)` or `.ignored`- Receipts: after each drain, send one `delivered` receipt per conversation listing the new message IDs, through lane B's `Outbox.sendControl` (a protocol from F2: `ControlSender`).
 
 - [ ] **Step 1: Failing tests.**
   - `TestSyncStoresAndAcks`: bob1 receives 3 messages → they are stored in order, the server inbox for bob1 is empty, and `kv inbox.cursor` equals the last cursor.
@@ -406,6 +447,8 @@ Owner review: all of it. Test command: `swift test --filter Sync` in Messaging.
   - `TestCallSignalNotStored`: a `callsig` envelope in the inbox → `AppliedResult.callSignal(payload, sender)`, no message row, and the processed hash marked. Call signals normally arrive over `call.*` frames; an inbox copy is ignored.
   - `TestOwnCommitEchoSkipped`: the FakeServer echoes ana1's accepted commit back to ana1 → no `mls.process` call, and the raw row is deleted.
   - `TestOwnCommitEchoAfterCrash`: the stored epoch is still at the pre-commit value → the echo goes to `mls.process`, and the stored epoch advances.
+  - `TestModePinnedFromFirstEnvelope`: bob1 joins (server says `e2ee`), then receives `.mode("e2ee")` → `inner_mode == "e2ee"`, no message row, `mode_mismatch == 0`.
+  - `TestModeChangeIgnoredAndFlagged`: after `.mode("e2ee")`, a second envelope `.mode("server_readable")` from ana1 → `inner_mode` stays `e2ee`, `mode_mismatch == 1`, one `messagesPaused` system line, and the log line has no envelope content.
 - [ ] **Step 2:** Run → FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4:** Run → PASS.
@@ -416,7 +459,7 @@ Owner review: all of it. Test command: `swift test --filter Sync` in Messaging.
 **Files:** Create `Sync/DeviceSync.swift`. Test: `DeviceSyncTests.swift`.
 
 **Interfaces — Produces:** `public actor DeviceSync`, `init(deps:conversations:)`, with:
-- `func reconcileOwnDevices() async throws`: `GET /v1/devices`; for each active conversation, add any own device not in `mls.members(of:)` (claiming my own account's KeyPackages), and commit using the stale-epoch path
+- `func reconcileOwnDevices() async throws`: `GET /v1/devices`; for each active conversation, add any own device not in `mls.members(of:)` (claiming my own account's KeyPackages), commit using the stale-epoch path, then `conversations.announceMode` (Design 18)
 - `func handleRevoked(deviceID: String) async throws`: remove `"<me>/<deviceID>"` from every group containing it; if `deviceID` is mine, call `wipeLocalData()`
 - `func replenishKeyPackages() async throws`: runs at most every 6 h (kv `kp.checkedAt`); when the count is below 10, upload 50
 - `func wipeLocalData() async throws`: `repo.wipe()`, delete the media directory and the MLS storage
@@ -428,10 +471,39 @@ Owner review: all of it. Test command: `swift test --filter Sync` in Messaging.
   - `TestRevokedSelfWipes`: `handleRevoked(<own deviceID>)` → `repo.chats()` is empty and the media directory is gone.
   - `TestReplenish`: count 4 → 50 uploaded; a second call within 6 h makes no request; at count 12 nothing is uploaded.
   - `TestSnapshotRoundTrip`: export from ana1 and import into a fresh device → contacts, chats, folders and blocks are equal, and there are no messages.
+  - `TestAdderResendsMode`: after ana1 adds ana3, ana3 syncs → ana3's `inner_mode` for each conversation equals ana1's.
 - [ ] **Step 2:** Run → FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4:** Run → PASS.
 - [ ] **Step 5: Commit** `feat(messaging): own-device reconciliation, revocation, key package refill, link snapshot`.
+
+### Task A4: Device-change lines, own-device notice, safety numbers
+
+Owner review: cryptography (`SafetyNumber.swift`). Needs plan 4's `memberKeys(of:)` (cross-plan item 3).
+
+**Files:** Create `Sync/Membership.swift`, `Sync/SafetyNumber.swift`, `Tests/MessagingTests/Resources/safety-v1.json`, `tools/vectors/safety/main.go` (standard library only; writes the vector). Modify `Sync/IncomingHandler.swift`, `Sync/ConversationManager.swift`, `Sync/DeviceSync.swift`. Test: `MembershipTests.swift`, `SafetyNumberTests.swift`.
+
+**Interfaces — Produces:**
+- `public enum SafetyNumberCalc { public static func compute(accountA: String, accountB: String, members: [MemberKey]) -> [String] }`: Design 20, exactly; returns 12 strings of 5 digits; symmetric in A and B; ignores members of any third account.
+- `struct Membership`, `func update(conversation: ConversationRecord, db: Repository) async throws -> MembershipChange` with `MembershipChange { added: [String]; removed: [String]; ownDevicesAdded: [String] }`:
+  1. `mls.memberKeys(of:)` vs `repo.members(conversationID:)`; when no rows are stored yet (creation, or my own Welcome), store and return an empty change
+  2. otherwise write the Design 19 system lines, `replaceMembers`, recompute the chat's safety number if this is its preferred conversation, and when the stored `current` differs, `setSafetyCurrent` and add one `safetyNumberChanged` line
+- Wiring: `IncomingHandler` calls `update` after `.commit` and `.joined` in the same transaction, and `AppliedResult` gains `.ownDeviceAdded(deviceIDs: [String])`. `ConversationManager` and `DeviceSync` call it after each `commitAccepted`. After the lock is released, `InboxProcessor` resolves names with `GET /v1/devices` and calls `deps.notifier.ownDeviceAdded` once per device ID (kv `notified.device.<id>`).
+
+- [ ] **Step 1: Failing tests.**
+  - `TestDeviceAddedLine`: ana1 reconciles ana3 into the ana–bob conversation → bob1's chat ends with `.system(.deviceAdded(name: "Ana"))`; ana2's chat ends with `.system(.deviceAdded(name: nil))` ("You added a new device").
+  - `TestDeviceRemovedLine`: bob1 revokes bob2 → ana1 gets `.deviceRemoved(name: "Bob")`.
+  - `TestNoLinesForChatCreation`: a fresh chat between ana1 and bob1 → no system lines on any of the 4 devices.
+  - `TestOwnDeviceAddedNotifiesOnce`: ana2 syncs the commits adding ana3 to 2 conversations → `RecordingDeviceNotifier.added == [("ana3", "Ana's iPad")]`; bob1's notifier is empty; syncing again adds nothing.
+  - `TestSafetyNumberFormat`: 12 groups, each matching `^[0-9]{5}$`.
+  - `TestSafetyNumberSymmetric`: `compute(accountA: ana, accountB: bob, …) == compute(accountA: bob, accountB: ana, …)`, and member order doesn't matter.
+  - `TestSafetyNumberChangesWhenDeviceAdded`: ana1 and bob1 have equal stored numbers; ana3 is added → both numbers change and stay equal; bob1's chat has exactly one `.safetyNumberChanged` line.
+  - `TestSafetyNumberChangesWhenKeyDiffers`: the same identities with bob2's `signatureKey` changed by one byte → a different number (a swapped device key).
+  - `TestSafetyNumberVector`: each case in `safety-v1.json` (Go-made, `crypto/sha256`) gives the expected 12 groups.
+- [ ] **Step 2:** Run → FAIL.
+- [ ] **Step 3: Implement.** Generate the vector with `go run ./tools/vectors/safety > apps/apple/Packages/Messaging/Tests/MessagingTests/Resources/safety-v1.json` (two accounts, 3 devices, fixed 32-byte keys).
+- [ ] **Step 4:** Run → PASS.
+- [ ] **Step 5: Commit** `feat(messaging): device-change lines, own-device notice, safety numbers`.
 
 ---
 
@@ -449,11 +521,20 @@ Test command: `swift test --filter Store` in Messaging, plus macOS CI for `Escro
 - `func flush() async`: for each due item:
   1. `preferredConversation`
   2. `mls.encrypt`
-  3. if the mode is `server_readable`, `escrow.seal(plaintext JSON per Design 10, to: serverInfo.escrowKey)`
+  3. decide escrow by Design 18 (`inner_mode` × server `mode`):
+
+     | `inner_mode` | server `mode` | Action |
+     |---|---|---|
+     | `server_readable` | `server_readable` | `escrow.seal(plaintext JSON per Design 10, to: serverInfo.escrowKey)` |
+     | `e2ee` | `e2ee` | no escrow |
+     | `e2ee` | `server_readable` | `flagModeMismatch`; status `failed`; no POST |
+     | `server_readable` | `e2ee` | `flagModeMismatch`; send without escrow |
+     | `NULL` | `e2ee` | no escrow |
+     | `NULL` | `server_readable` | keep the item queued (not an attempt) until the `mode` envelope arrives |
   4. `POST /v1/conversations/{id}/messages {epoch, ciphertext, escrow?, clientMsgID: envelope.id}`
   5. 200 → status `sent` and remove the row; `stale_epoch` → `handleStaleEpoch`, then retry immediately once
   6. a network error → back off 2^attempts s (capped at 300 s)
-  7. `escrow_required` or `escrow_forbidden` → refresh the mode with `GET /v1/conversations/{id}` and retry once
+  7. `escrow_required` or `escrow_forbidden` → refresh the **server** mode with `GET /v1/conversations/{id}` (`setServerMode`), then decide again by the table above and retry once. `inner_mode` is never changed by this, so an `e2ee` chat answered with `escrow_required` ends `failed` with `mode_mismatch = 1`, and the outbox logs `mode_mismatch conversation=<id>`.
 - `func sendControl(_ body: ContentEnvelope.Body, chatID: String) async`: not stored, sent immediately
 - `public enum Escrow`, with `static func seal(_ plaintext: Data, serverKey: Data) throws -> Data`, in `Crypto/Escrow.swift` (Design 10)
 - `public struct CryptoKitEscrowSealer: EscrowSealer`, which calls `Escrow.seal`
@@ -465,7 +546,9 @@ Test command: `swift test --filter Store` in Messaging, plus macOS CI for `Escro
   - `TestEscrowFollowsServerMode`:
     - a server-readable conversation → the request carries `escrow` beginning with `ESCROW:`, and its JSON `body` equals the envelope
     - an e2ee conversation → no `escrow` key
-    - a peer envelope can't change this, because the mode comes only from the stored conversation, which the server sets
+    - both `mode` and `inner_mode` are set per case in the escrow table; every row of the table is one sub-case
+  - `TestE2EEChatIgnoresServerReadableClaim`: an `e2ee` chat (`inner_mode` pinned); the FakeServer then reports `server_readable` and answers every POST with `409 escrow_required` → across 3 `flush` calls no request body contains an `escrow` key, the message is `failed`, `mode_mismatch == 1`, `inner_mode` is still `e2ee`, and `EscrowSealer` was never called.
+  - `TestOutboxWaitsForModeEnvelope`: a joined conversation with `inner_mode` `NULL` and server `server_readable` → `flush` posts nothing and `attempts` stays 0; after the `mode` envelope arrives, the next `flush` posts with escrow.
   - `TestEscrowSwiftOpensGoVector` (macOS): open the vector with CryptoKit `HPKE.Recipient` → the plaintext matches.
   - `TestEscrowRoundTrip` (macOS): seal, then open with a test recipient → equal; the output length is 32 + plaintext + 16.
 - [ ] **Step 2:** Run → FAIL.
@@ -492,8 +575,10 @@ Test command: `swift test --filter Store` in Messaging, plus macOS CI for `Escro
 | folders | through `Repository` |
 | `react`, `edit`, `delete` | send a control envelope and apply it locally at once (edit and delete only for my own messages) |
 | `sendAttachment` and `download` | forwarded to `AttachmentService` (lane C) |
+| `safetyNumber(for:)` | the `safety` row of the chat: `current` split into 12 groups; `isVerified` = `verified == current` |
+| `setVerified` | `true` stores `current` as `verified`, `false` clears it; no network call |
 
-`ChatMapping`: `MessageRecord` + `AttachmentRecord` → AppCore `Message`. `Message.status` comes from the record. `Chat.encryption` is `.serverReadable` when the preferred conversation's mode is `server_readable`.
+`ChatMapping`: `MessageRecord` + `AttachmentRecord` → AppCore `Message`. `Message.status` comes from the record. System rows (`sender_account = 'system'`) map to `.system(SystemEvent)`, with the contact's display name resolved at mapping time. `Chat.encryption` is `.serverReadable` only when the preferred conversation's **`inner_mode`** is `server_readable`; `.endToEnd` otherwise, whatever the server's `mode` says. `Chat.modeMismatch` is true when any of the chat's conversations has `mode_mismatch = 1`.
 
 - [ ] **Step 1: Failing tests.**
   - `TestChatsListedByActivity`.
@@ -503,7 +588,10 @@ Test command: `swift test --filter Store` in Messaging, plus macOS CI for `Escro
   - `TestReportSendsLastTen`: of 12 messages, the request has 10.
   - `TestEditOnlyOwn`: editing the peer's message is a no-op.
   - `TestOnChangeCalledAfterInbox`.
-  - `TestEncryptionFlagFromMode`: a server-readable conversation → `chat.encryption == .serverReadable`.
+  - `TestEncryptionFlagFromMode`: `inner_mode` and `mode` both `server_readable` → `chat.encryption == .serverReadable`.
+  - `TestEncryptionFlagIgnoresServerClaim`: `inner_mode` `e2ee`, server `mode` `server_readable` → `chat.encryption == .endToEnd` and `chat.modeMismatch == true`.
+  - `TestVerifiedLapsesOnChange`: `setVerified(true)` → `safetyNumber(for:)?.isVerified == true`; A4 stores a new `current` → `false`; the FakeServer received no request.
+  - `TestSystemLineMapping`: a stored `deviceAdded` row for ana's account maps to `.system(.deviceAdded(name: "Ana"))`.
 - [ ] **Step 2:** Run → FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4:** Run → PASS.
@@ -518,6 +606,11 @@ Test command: `swift test --filter Store` in Messaging, plus macOS CI for `Escro
   - `apps/apple/App/AppModel.swift`: `chatStore: any ChatStore`; `-sampleData` → `SampleChatStore`; otherwise build the `LiveChatStore` graph from plan 6's session (`SessionStore`, `ServerClient`, `LiveConnection`) and plan 4's `makeMLSEngine(identity:storage:)`
   - `AppModel`: `chats(in:matching:)` uses `searchMessages` for message matches
   - `ChatView`: the report confirmation dialog
+  - `App/Features/ChatInfo/ChatInfoView.swift` (the only screen that shows encryption, per AGENTS.md):
+    - `VerifyView` takes `model.safetyNumber(for:)` instead of its constant `code` (same 3-column grid); `nil` → "Send a message first to see the safety number." It adds a `Toggle("Marked as verified", …)` calling `setVerified` (`verify.toggle`), and the text "If the numbers change, someone added or changed a device. Compare them again."
+    - the encryption line gets a "Verified" checkmark (`checkmark.seal`) when `isVerified`
+    - when `chat.modeMismatch`, the encryption line shows instead, in red: "The server's settings for this chat don't match the ones it started with. Sending is paused to keep your messages private." (`chatinfo.mismatch`)
+  - `App/Notifications/LocalDeviceNotifier.swift`: `DeviceNotifier` via `UNUserNotificationCenter`, with the Design 19 title and body
   - `project.yml`: add the app group entitlement to both apps
   - `App/Resources/Localizable.xcstrings`
 - Test: `CallSignalSealingTests.swift`
@@ -543,8 +636,9 @@ The report dialog's copy: title "Report this chat?" and message "The last 10 mes
   - `TestRecordCallLocalOnly`: `recordCall(.audio(duration: 125), contactID: bob, outgoing: true, at: d)` → ana's chat ends with `.call(.audio(duration: 125))` sent by `me` at `d`, plus one `calls` row; the FakeServer received no message.
 - [ ] **Step 2:** Run → FAIL.
 - [ ] **Step 3: Implement.**
+  - `testVerifyShowsSafetyNumber` (UI, `-sampleData`): Chat info → Verify → 12 groups; toggling `verify.toggle` and reopening keeps it on. `SampleChatStore` returns the old constant groups.
 - [ ] **Step 4:** Run → PASS. Push, and check that the iOS and macOS UI tests are green with `-sampleData`.
-- [ ] **Step 5: Commit** `feat(messaging): call signal sealing, local call history, live store wiring`.
+- [ ] **Step 5: Commit** `feat(messaging): call signal sealing, local call history, live store wiring, verify screen`.
 
 ---
 
@@ -594,7 +688,7 @@ Owner review: `Crypto/AttachmentCipher.swift`. Test commands: `swift test --filt
 
 **Interfaces — Produces:**
 - `public enum MediaPreparation { static func preparePhoto(_ url: URL, to: URL) throws -> (w: Int, h: Int, thumb: Data) }` (Design 9)
-- `public final class VoiceRecorder` with `start()`, `stop() -> (URL, Double)` and `cancel()`. It records Opus in CAF (`kAudioFormatOpus`, 16 000 Hz, 1 channel, `AVEncoderBitRateKey 16000`).
+- `public final class VoiceRecorder` with `start()`, `stop() -> (URL, Double)` and `cancel()`. It records Opus in CAF (`kAudioFormatOpus`, 16 000 Hz, 1 channel, `AVEncoderBitRateKey 16000`); `stop()` converts the CAF to Ogg Opus and returns the `.ogg` file.
 
 - [ ] **Step 1: Failing tests.**
   - `TestPhotoResized`: a 4 000×3 000 PNG → a JPEG of 1 600×1 200.
@@ -656,6 +750,8 @@ The algorithm:
    - a receipt, edit or delete → `drop`
    - a reaction → `show(displayName, "Reacted \(emoji)", chatID)`
    - a `callsig` → `incomingCall(payload, from: <contact or a stranger placeholder>)`
+   - `.ownDeviceAdded` (A4) → `show("New device added", <Design 19 body, name "A new device">, "devices")`, and kv `notified.device.<id>` is set so the app doesn't notify again
+   - a `mode` envelope or any other commit → `drop`
 5. Past the `deadline`, or on any error → `fallback`.
 
 All of these strings go in the String Catalog of the NSE targets, using a shared `.xcstrings` file in `NotificationService/`.
@@ -669,6 +765,7 @@ All of these strings go in the String Catalog of the NSE targets, using a shared
   - `TestEmptyPayloadSyncs`: an empty padded payload → the inbox is fetched and `show` uses the newest message.
   - `TestDeadlinePassed`: `deadline` is in the past → `fallback`.
   - `TestCallSignalOutcome`: a `callsig` payload → `.incomingCall`.
+  - `TestOwnDeviceAddedShows`: ana2's processor runs on the commit adding ana3 → `show("New device added", …, "devices")`; ana2's app `InboxProcessor` then calls the notifier 0 times for ana3.
 - [ ] **Step 2:** Run → FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4:** Run → PASS.

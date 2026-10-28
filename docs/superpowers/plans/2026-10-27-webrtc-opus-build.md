@@ -127,7 +127,7 @@
   - `120` normally
   - `60` if `rtc_opus_support_120ms_ptime` is missing at the pin, in which case Task 3 records a `Ruling:` and plans 5 and 8 fall back to 60 ms for Ultra-low
 
-**Exported symbols.** Plan 4's MLS CryptoKit bridge exports generic C symbols (`sign`, `signature_key_generate`), and both are linked into one app. `check-symbols.sh` (Task 5) fails the build if:
+**Exported symbols.** Plan 4's MLS crypto no longer uses a CryptoKit bridge (RustCrypto on all targets, owner decision 2026-10-28), so the old `sign` / `signature_key_generate` clash is gone; the check stays as a guard, and both libraries are linked into one app. `check-symbols.sh` (Task 5) fails the build if:
 - the framework exports any name listed in `tools/webrtc/reserved-symbols.txt`, which is seeded with `_sign` and `_signature_key_generate` and extended by plan 4
 - or it exports an unprefixed plain C symbol outside the allow-list `_RTC* _OBJC_* _kRTC* __Z* _WebRTC*`
 
@@ -394,7 +394,7 @@ The patches are written against the pinned commit. Fetch the touched files from 
     let local = Context.environment["WEBRTC_LOCAL_XCFRAMEWORK"]
     let webrtc: Target = local.map { .binaryTarget(name: "WebRTC", path: $0) }
         ?? .binaryTarget(name: "WebRTC",
-                         url: "https://github.com/velixio/myapp/releases/download/webrtc-m157.1/WebRTC.xcframework.zip",
+                         url: "https://github.com/drag0n-flyer/myApp/releases/download/webrtc-m157.1/WebRTC.xcframework.zip",
                          checksum: "0000000000000000000000000000000000000000000000000000000000000000")
     ```
     The URL and checksum are replaced in Task 6. The repo path is the same guess as the server plan's module path; fix it if the repo name differs.

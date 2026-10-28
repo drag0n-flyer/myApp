@@ -15,6 +15,8 @@ All plans needed to reach the GOAL.md Phase 1 exit: an invite-only private beta.
 | 7 | [Client messaging](2026-10-27-client-messaging.md) | 1 | 4, 6 | up to 4 lanes | MLS use, NSE, escrow |
 | 8 | [Client calling](2026-10-27-client-calling.md) | 1 | 3, 4, 6 | up to 4 lanes | CallKit/PushKit, media keys |
 | 9 | [Security, docs, release](2026-10-27-security-docs-release.md) | 1 (beta gate) | 2, 7, 8 for final checks | 1 + owner | all |
+| 10 | [Android client](2026-10-28-android-client.md) ([design](../specs/2026-10-28-android-client-design.md)) | 1 (in parallel, owner decision 2026-10-28) | 2 (spec; lanes B1, F1, F2 change it), 3 (pin and scripts), 4 (`mlsffi`), 7 (vectors, envelope) | 7 lanes + 1 integration (about 7 at once) | auth, keys, MLS use, push and gateway, WebRTC build, Telecom |
+| 11 | [Admin dashboard](2026-10-28-admin-dashboard.md) ([design](../specs/2026-10-28-admin-dashboard-design.md)) | 1 (owner request 2026-10-28) | 2 | 1 foundation → 3 lanes → 1 | authentication (admin login, sessions, CSRF), identity revoke and delete |
 
 ## Running order (at most 5 coding agents at once)
 
@@ -43,7 +45,7 @@ apps/apple/Packages/AppCore      plan 1; domain models + service protocols
 apps/apple/Packages/WebRTCBinary plan 3 (product and binary target `WebRTC`)
 tools/webrtc/                    plan 3 (pin, patches, build scripts, reserved-symbols.txt)
 apps/apple/Packages/SecureMessaging  plan 4
-apps/apple/Packages/SecureMessaging/rust  plan 4 (our thin `mlsffi` crate over mls-rs)
+apps/apple/Packages/SecureMessaging/mlsffi plan 4 (our thin `mlsffi` crate over mls-rs)
 apps/apple/Packages/ServerKit    plan 6 (products ServerKit, ServerKitTesting)
 apps/apple/Packages/LocalStore   plan 7
 apps/apple/Packages/Messaging    plan 7 (content envelope, outbox, inbox, LiveChatStore, Escrow)
@@ -54,6 +56,7 @@ tools/call-lab/                  plan 5 (app, CallLabKit, RNNoiseLab, rig and sc
 docs/protocol/                   plan 9 (protocol spec, test vectors)
 docs/security/ docs/legal/ docs/release/ docs/ops/   plan 9
 docs/measurements/               plan 5
+apps/android/                    plan 10 (Gradle modules: contracts, core, app, net, auth, mls, messaging, store, calls, calls-android, webrtc, push)
 ```
 
 ### Identifiers
@@ -68,6 +71,7 @@ docs/measurements/               plan 5
 - Encryption mode strings are the server's: `e2ee` and `server_readable`.
 - Contact IDs in AppCore are server account IDs.
 - Device-linking QR: `https://<host>/link/<linkID>#<secret>.<X25519 public key, b64url>`; the approver seals the link snapshot to that key (server design §7.1).
+  - Before approving, the approver fetches `POST /v1/link/{linkID}/info {secret}` → `{deviceName, platform, createdAt}` (plan 2 lane A adds it; plan 6 shows it, then requires Face ID / Touch ID).
 - Passkeys work only for hosts in the app's associated domains (the project's servers). On other servers, sign-up skips the passkey and sign-in uses an email code.
 
 ### `SecureMessaging` (plan 4 owns it; plans 7 and 8 consume it)
@@ -92,7 +96,9 @@ public protocol MLSEngine: Sendable {
     func epoch(of group: GroupID) async throws -> UInt64
     func exportSecret(group: GroupID, label: String, length: Int) async throws -> Data
     func members(of group: GroupID) async throws -> [String]   // added by plan 7's request
+    func memberKeys(of group: GroupID) async throws -> [MemberKey]   // requested by plan 7 (safety numbers, device lines; OPEN-6/7): sorted by identity, includes this device
 }
+public struct MemberKey: Sendable, Equatable { public let identity: String; public let signatureKey: Data }   // the leaf's MLS signature public key; FakeMLSEngine: Data("fake-sig:\(identity)".utf8)
 public enum MLSError: Error   // plan 4 defines the cases
 // The engine re-reads group state from storage on every call: the NSE changes it from another process.
 // Product `SecureMessagingCore` (no binary target, builds on Linux) holds the protocol, the types,
@@ -114,7 +120,7 @@ public enum ServerEvent: Sendable, Equatable {
     case inbox(InboxItem), deviceRevoked(String)
     case callRing(callID: String, fromAccountID: String, fromDeviceID: String, video: Bool, payload: Data)
     case callAnswered(callID: String, deviceID: String, payload: Data)
-    case callSignal(callID: String, payload: Data)
+    case callSignal(callID: String, fromDeviceID: String, payload: Data)
     case callEnded(callID: String, reason: String)
 }
 public actor LiveConnection {         // the /v1/ws socket, with reconnects
@@ -153,11 +159,12 @@ The sample services stay. The launch argument `-sampleData` selects them, so the
 |---|---|---|---|
 | pgx v5, coder/websocket, go-webauthn | MIT, ISC, BSD-3 | 2 | asked in plan 2 |
 | WebRTC (Google, M-branch) + libopus 1.6 | BSD-3 | 3 | named in GOAL.md; plan 3 pins the branch |
-| mls-rs, mls-rs-crypto-cryptokit, mls-rs-crypto-rustcrypto (git pin), uniffi | Apache-2.0 OR MIT / MPL-2.0 (uniffi) | 4 | mls-rs named in GOAL.md; plan 4 asks for the rest |
+| mls-rs, mls-rs-crypto-rustcrypto (git pin; all targets, CryptoKit crate dropped 2026-10-28), uniffi | Apache-2.0 OR MIT / MPL-2.0 (uniffi) | 4 | mls-rs named in GOAL.md; plan 4 asks for the rest |
 | RNNoise | BSD-3 | 5 (lab), 8 | named in GOAL.md |
 | Lab-only scoring: numpy, onnxruntime, ViSQOL/speequal, DNSMOS models; LibriSpeech + MUSAN/DNS noise corpora | various, to check | 5 | asked in plan 5; never shipped |
 | CI tools: markdownlint-cli2, lychee, gitleaks, go-licenses, gremlins | various | 9 | asked in plan 9 |
 | SQLite | public domain, ships with Apple OSes | 7 | system library: no new dependency |
+| Android libraries and tools (AndroidX, Compose, Room, SQLCipher, OkHttp, kotlinx, JNA, WorkManager, Credential Manager, Firebase Messaging, UnifiedPush connector, CameraX, ZXing, Robolectric, cargo-ndk) | see plan 10 | 10 | asked in plan 10, "Dependencies needing owner approval" |
 
 ## Cross-plan changes outside the owning plan
 
@@ -167,8 +174,11 @@ The sample services stay. The launch argument `-sampleData` selects them, so the
 
 - Plan 5 adds `appserver lab session` and `APP_LAB_MODE` to the server's identity package after plan 2 merges (owner review: auth).
 - Plan 8 needs plan 3's WebRTC build to add a capture post-processing hook for RNNoise and H.264 hardware factories.
-- Plan 8's first app build checks that plan 4's CryptoKit bridge symbols and WebRTC's symbols don't collide.
-- Plan 9's test vectors (push padding, signatures, sealed handles, TURN credentials, escrow, link sealing) are checked by both the Go and Swift tests.
+- Symbol collision between plan 4 and WebRTC: no longer a risk. Plan 4 uses RustCrypto on all targets (owner decision 2026-10-28), so there is no CryptoKit bridge.
+- Plan 9's test vectors (push padding, signatures, sealed handles, TURN credentials, escrow, link sealing, safety numbers) are checked by both the Go and Swift tests.
+- **Plan 2 lane A (A5) adds `POST /v1/link/{linkID}/info`** (authed; `{secret}` → `{deviceName, platform, createdAt}`; `403 forbidden`, `410 expired`) for plan 6's link approval screen (OPEN-24). Owner review: auth.
+- **Plan 4 adds `MLSEngine.memberKeys(of:)` and `MemberKey`** (contract above) for plan 7 A4. Owner review: cryptography.
+- **Plan 7's content envelope gains kind `mode`** (`{"k":"mode","m":"e2ee"|"server_readable"}`), sent first by a conversation's creator and after every add; clients pin it and never add escrow to a chat pinned `e2ee` (OPEN-18). Plan 9's protocol spec documents it and the safety-number derivation (plan 7 Design 20).
 
 ## Owner decisions log
 
@@ -178,3 +188,36 @@ The sample services stay. The launch argument `-sampleData` selects them, so the
 | 2026-10-27 | Plan 3 carries our own WebRTC patch for the capture post-processing hook (RNNoise). **Approved.** |
 | 2026-10-27 | Keep server-readable mode in Phase 1 (escrow copy, off by default, admin export is audit-logged). **Approved.** |
 | 2026-10-27 | Use mls-rs through our own thin Rust binding layer (`mlsffi`, plan 4) instead of `mls-rs-uniffi`; GOAL.md §3 and §5 updated. **Approved.** |
+| 2026-10-27 | Threat-model fixes (OPEN-18, OPEN-7, OPEN-24, OPEN-6): (1) chat mode bound inside the encrypted chat by its creator, clients never switch E2EE → server-readable; (2) adding a device to a chat shows "X added a new device" to the other members and notifies own devices; (3) link approval shows device name/type, requires Face ID/Touch ID, warns plainly; (4) real safety numbers derived from MLS keys. **Approved.** Added to plans 6 and 7. |
+| 2026-10-27 | Owner review of CODEOWNERS paths (identity, delivery, calls, push, pushgw, auth middleware, crypto) is deferred until the end of Phase 1; completed, reviewed work may merge to `main` before that. **Owner decision.** |
+| 2026-10-28 | MLS crypto provider is `mls-rs-crypto-rustcrypto` on all targets (iPhone, Mac, Linux); `mls-rs-crypto-cryptokit` is dropped. Its Swift bridge needs macOS 26 (the Mac app supports macOS 14) and its build script fails on Xcode 26.1+; one provider also means one crypto path to review and no symbol clash with WebRTC. Supersedes plan 4 decision 2. **Owner decision.** |
+| 2026-10-28 | No branch protection or code-owner enforcement for now (docs Task 13 deferred). Voice notes may be up to 30 minutes (minimum 0.5 s stays). The GitHub token in the local remote URL is a throwaway account's and stays. **Owner decisions.** |
+| 2026-10-28 | Device measurements (call lab L10) are replaced for now by automated test calls on GitHub Mac runners: the server runs on the runner; the Mac app and an iOS Simulator call each other with recorded speech as the microphone, under emulated bad networks; data use, connect time and network-switch survival are measured. Battery, real cellular, Bluetooth and real microphones are left for a later, optional device run. **Owner decision.** |
+| 2026-10-28 | Approved: call-lab scoring dependencies `numpy`, `onnxruntime`, `speequal` (plan 5 decision 4); noise set MUSAN "noise" subset if its license allows, else the DNS Challenge noise set (decision 5, controller call). Approved: docs tools `markdownlint-cli2`, `lychee` (docs Task 1) and `gitleaks`, `go-licenses` plus the Swift license check (docs Task 6). **Owner decision.** |
+| 2026-10-28 | Code owner is `@drag0n-flyer` (the repo owner). The end-of-Phase-1 owner review of sensitive code and the independent security review submission are set aside for now; agent reviews of each task continue. **Owner decision.** |
+| 2026-10-28 | Approved licenses: Unicode-3.0 (`unicode-ident`, Rust) and MPL-2.0 for the eight `uniffi*` crates, used unmodified and listed on the app's open-source licenses page. **Owner decision.** |
+| 2026-10-28 | Android starts now, in parallel with Phase 1 (moved up from Phase 3). Kotlin + Jetpack Compose (GOAL.md). Encryption reuses the Rust MLS layer (`mlsffi`) through its UniFFI Kotlin bindings; UI, storage, networking and calls stay native Kotlin. Minimum Android 10 (API 29); the owner's OnePlus 5 (Android 10) is a reference device. Push: FCM data messages through the project gateway, plus UnifiedPush (GOAL.md). **Owner decision.** |
+| 2026-10-28 | Call-lab noise clips come from MUSAN (license checked: public domain or attribution-only): wind, city ambiance, truck idle, pen clicking, and babble mixed from MUSAN speech; no fan or keyboard category exists in MUSAN. **Owner decision.** |
+| 2026-10-28 | Per-IP rate limits key IPv6 clients by their /64 prefix (IPv4 by full address): one subscriber usually holds a whole /64, so per-address keys were trivially bypassed. The spec only says "per IP". Controller ruling; owner may revisit. |
+| 2026-10-28 | Privacy manifest and policy also declare: phone number (optional, linked), device ID (server-assigned, linked) and crash data (not linked), all for app functionality, none for tracking. IP addresses have no Apple manifest category; the privacy policy covers them (seen transiently, never logged). Crash reporting is not built yet; its transport and retention are TO BE FILLED IN. **Owner decision.** |
+| 2026-10-28 | Android: voice messages use Ogg Opus (RFC 7845) on every platform, so the iPhone/Mac app moves from CAF to Ogg; full sign-up on Android (same invite + email-code flow); HPKE for push handles, escrow and linking comes from new functions in the Rust `mlsffi` layer (no Tink). Android dependency list: pending the owner's questions on UnifiedPush and FCM. **Owner decision.** |
+| 2026-10-28 | Android dependency list approved as listed in the Android plan's "Dependencies needing owner approval", with Firebase Cloud Messaging for push (free; no paid Firebase services) and every other library on that list, including the UnifiedPush connector. **Owner decision.** |
+| 2026-10-28 | The app ID is read from one file per platform so it can be changed easily: Android `apps/android/app-id.properties` (`applicationId`; Kotlin package names stay `org.example.app`); iPhone/Mac `apps/apple/AppID.xcconfig` (bundle IDs, app group, keychain group; Swift code reads it from Info.plist). A check fails if the ID is hard-coded elsewhere. Placeholder `org.example.app` until the owner picks the final ID. **Owner decision.** |
+| 2026-10-28 | Android: support 32-bit phones (`armeabi-v7a`) alongside arm64-v8a and x86_64. Passkeys work on any server that lists the Android app in its `assetlinks.json` (operators opt in with `APP_ANDROID_APPS`). Battery-optimised from day one: the app never asks for the battery-optimisation exemption and has no always-connected mode; it relies on push. The call payload's `ceiling` follows the protocol spec (fix the iPhone side). App icons: generated by the agents as placeholders until the owner provides final art. **Owner decision.** |
+| 2026-10-28 | Admin dashboard: emails always masked (never sent in full to the browser); report text not shown in Phase 1; policy page read-only; audit log kept 365 days (privacy policy to mention it); no email to a user deleted by the operator in Phase 1. Controller rulings on the planner's recommendations; owner may override. |
+| 2026-10-28 | Text and edit messages are limited to 4096 grapheme clusters on every platform, truncated when composing (iPhone already does); receivers are lenient up to a 64 KiB UTF-8 backstop. Controller ruling. |
+| 2026-10-28 | MLS profile "Commits" step 5 gains one exception: after an unknown outcome, the first commit of a new conversation (epoch 0, when the creating device is the only member device) MAY be resent byte for byte with the same Welcome and `addDevices`; a `stale_epoch` reply to that resend means it was applied, a `404` means the conversation is gone. No other commit is ever resent. Lets Android recover a create whose reply was lost without making a second group. Cost if wrong: iOS would need to adopt the same rule. Controller ruling; owner to confirm. |
+| 2026-10-28 | Android: `androidx.biometric` approved for fingerprint/face unlock (`BiometricGate`, lane B). **Owner decision.** |
+| 2026-10-28 | Admin dashboard accounts: admins sign in with username and password (argon2id; username 3-32 of `[a-z0-9._-]`, password 12-128). First visit with no admin shows "Create the first admin", with no setup code and no extra check (the guide warns that until then anyone who can reach the admin port can create it). An Admins page adds, disables/enables, resets the password of, and removes admins; disabling, removing or a password change ends that admin's sessions; the last enabled admin and yourself cannot be disabled or removed. The service binary gets `admin user list/add/reset-password/disable/enable` (the CLI may disable the last admin, with a warning). The one-time token sign-in stays as recovery. **Owner decision.** |
+| 2026-10-28 | Admin first-visit setup needs nothing beyond an empty admin_users table, on fresh and existing installs; the operator keeps the admin port private. **Owner decision.** |
+| 2026-10-28 | Admin dashboard may be used over plain HTTP on hosts in APP_ADMIN_HOSTS when APP_ADMIN_ALLOW_HTTP=true (default off). **Owner decision.** |
+| 2026-10-28 | Admin sign-in is username + password only; token sign-in removed. **Owner decision.** |
+| 2026-10-28 | Optional TOTP 2FA per admin, QR via skip2/go-qrcode, recovery by CLI reset-2fa only. **Owner decision.** |
+| 2026-10-28 | Ruling: sign-up display name sent via PATCH /v1/me/settings after signupFinish on both platforms until signup/start takes it — iPhone must match — cost if wrong: one extra request |
+| 2026-10-28 | Ruling: a link `sealed` that is missing or does not open means the new device signs in, imports nothing, and tells the user "Your contacts weren't copied" on both platforms (matches docs/protocol/device-linking.md; the iPhone's fail-closed must change, and the app reports it through `LinkedResult.contactsCopied` on Android) — cost if wrong: a hostile or buggy relay can drop the contact list, so the user re-adds contacts; failing closed instead spends the one-shot claim and leaves an orphan device |
+| 2026-10-28 | Ruling: a link snapshot over 64 KiB is approved without it and the approver is told "the new device starts without its contacts" on both platforms (Android reports it through `LinkApproval.snapshotSent`; the iPhone has no size guard today and gets `too_large`, so it must change; plan 7 keeps `LinkSnapshot` small) — cost if wrong: the new device has an empty contact list until contacts are re-added; refusing to approve instead means the user cannot link at all |
+| 2026-10-28 | Own-device reconcile (mls-profile.md:94) removes a device only when missing from two lists ≥10 min apart and the list contains this device; Android now, iPhone to port. Ruling — cost if wrong: a stale device lingers up to one more reconcile. |
+| 2026-10-29 | Read receipts switch works on both platforms: off stops sending read receipts (delivered still sent) and hides others' read ticks; not retroactive. iPhone to match. **Owner decision.** |
+| 2026-10-29 | Android biometric gate on API 29: the screen-lock fallback (`setDeviceCredentialAllowed`) also accepts weak biometrics. Accepted: the gate is a presence check tied to no key, and the phone's own lock screen accepts the same biometric; if the gate is ever tied to a key, API 29 becomes strong-only. Ruling — cost if wrong: a weak face unlock opens the app on some Android 10 phones. |
+| 2026-10-29 | Ruling: call.status check for late ring pushes (design:226) moves to E6/I1; D7 keeps the network out of the ring gate. Cost if wrong: a very late ring push can ring for a call that already ended. |
+| 2026-10-29 | Android voice notes: when the phone has no Opus encoder (e.g. some Android 10 builds), use a bundled libopus from our WebRTC build through a small JNI bridge (task E5b, after E2). **Owner decision.** |

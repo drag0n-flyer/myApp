@@ -12,7 +12,7 @@
 
 **Tech Stack:**
 - Rust 1.82+
-- `mls-rs`, `mls-rs-core`, `mls-rs-crypto-cryptokit` (Apple targets) and `mls-rs-crypto-rustcrypto` (Linux tests and interop), pinned to git rev `323bd84f52e410c9ecb0b1ccd84a5a9f7f191b5a`
+- `mls-rs`, `mls-rs-core` and `mls-rs-crypto-rustcrypto` (the crypto provider on every target; `mls-rs-crypto-cryptokit` was dropped by the owner decision of 2026-10-28), pinned to git rev `323bd84f52e410c9ecb0b1ccd84a5a9f7f191b5a`
 - UniFFI 0.31
 - Swift 6 and SwiftPM, XcodeGen, GitHub Actions `macos-26`
 
@@ -46,9 +46,9 @@
   - Its messages are opaque objects with no byte serialization.
   - It keeps KeyPackage secrets in memory.
 
-  Source: `mls-rs-uniffi/src/lib.rs` at the pinned rev, where `Client::new` uses `OpensslCryptoProvider` and the `Group` methods are `write_to_storage`, `export_tree`, `commit`, `add_members`, `remove_members`, `encrypt_application_message` and `process_incoming_message`. On crates.io, `mls-rs-uniffi` is 0.1.0 and `mls-rs-crypto-cryptokit` is not published. That is why we pin git rev `323bd84…`.
+  Source: `mls-rs-uniffi/src/lib.rs` at the pinned rev, where `Client::new` uses `OpensslCryptoProvider` and the `Group` methods are `write_to_storage`, `export_tree`, `commit`, `add_members`, `remove_members`, `encrypt_application_message` and `process_incoming_message`. On crates.io, `mls-rs-uniffi` is 0.1.0 and the git-only crates are not published. That is why we pin git rev `323bd84…`.
 - **`mlsffi`** is a thin UniFFI crate of a few hundred lines that calls `mls-rs` directly. It has no protocol logic of its own. Where it can, it mirrors `mls-rs-uniffi`, so the additions can be offered upstream.
-- **Crypto provider.** `mls-rs-crypto-cryptokit` on Apple targets. It uses Apple CryptoKit through a Swift bridge, has a minimum iOS of 17.0 in its `build.rs`, and supports `CURVE25519_AES128`. `mls-rs-crypto-rustcrypto` is used on Linux, and as the second side of a cross-provider interop test on macOS. The choice is made with `cfg(target_vendor = "apple")`.
+- **Crypto provider.** `mls-rs-crypto-rustcrypto` on all targets (iPhone, Mac, Linux), cipher suite `CURVE25519_AES128`. Owner decision 2026-10-28: the CryptoKit crate's Swift bridge needs macOS 26 (the plan supports macOS 14), its `build.rs` breaks on Xcode 26.1 and later, one crypto path is easier to review, and it avoids a possible duplicate-symbol clash with WebRTC. There is no `cfg(target_vendor)` provider choice.
 - **Storage.** Files under the directory passed to `makeMLSEngine(identity:storage:)`:
   - `groups/<hex group id>/state`
   - `groups/<hex group id>/epoch-<n>`
@@ -68,7 +68,8 @@
   | `Malformed` | `.malformed` | decode errors |
   | `UnknownGroup` | `.unknownGroup` | `GroupNotFound` |
   | `NotMember` | `.notMember` | |
-  | `Duplicate` | `.duplicate` | `CantProcessMessageFromSelf`, `KeyMissing`, `InvalidEpoch` on an already-seen generation |
+  | `Duplicate` | `.duplicate` | `CantProcessMessageFromSelf`, `KeyMissing`; an older-epoch message mls-rs rejects |
+  | `EpochGap` | `.epochGap` | message epoch newer than the stored group (a commit was missed; resync) |
   | `PendingCommit` | `.pendingCommit` | `ExistingPendingCommit` |
   | `Storage(String)` | `.storage` | |
   | `Crypto(String)` | `.crypto` | |
@@ -80,8 +81,8 @@
 ### Decisions I made — owner to confirm
 
 1. **Our own thin FFI crate (`mlsffi`) instead of `mls-rs-uniffi`.** GOAL.md §3 says libraries should be consumed through their official bindings and "no shared core". The official binding lacks the functions we need and forces OpenSSL. The crate holds no protocol logic, and its additions go upstream.
-2. **CryptoKit as the crypto provider on Apple platforms.** It uses Apple's crypto, needs no OpenSSL build, and makes a smaller binary. RustCrypto is used for Linux tests and cross-provider interop.
-3. **Pinning to git rev `323bd84…`** (mls-rs 0.57.0, unreleased) instead of crates.io. `mls-rs-crypto-cryptokit` is not on crates.io. Re-pin to a release tag when one includes it.
+2. **CryptoKit as the crypto provider on Apple platforms.** Superseded by the owner decision of 2026-10-28: RustCrypto on all targets. (The original reasoning, Apple's crypto and a smaller binary, lost to the macOS 26 requirement, the Xcode 26.1 build break and the single review path.)
+3. **Pinning to git rev `323bd84…`** (mls-rs 0.57.0, unreleased) instead of crates.io. the pinned crates are not all on crates.io. Re-pin to a release tag when one includes it.
 4. **Three epochs of past keys are kept.** A message more than two epochs late cannot be decrypted. This trades forward secrecy for tolerance of late messages.
 5. **The NSE may process every message kind**: application messages, commits and Welcomes. The lock makes this safe. The alternative is to have the NSE show "New message" for anything that isn't an application message.
 6. **A Keychain signing key per device, never synced** (`ThisDeviceOnly`). Losing the device means a new identity, and the other side must re-verify. This matches GOAL.md's no-escrow stance.
@@ -89,7 +90,7 @@
 ### Contract notes (for the roadmap and plan 2)
 
 - **Server change recommended:** deliver each accepted commit to its **sender** device too (server spec §7.2 currently says "except the sender"). If the `200` is lost, the sender processes its own commit from the inbox. mls-rs applies a pending commit when it sees its own commit message (`group/mod.rs`, a commit-hash match leads to `apply_pending_commit`). That makes recovery automatic. Without the change, a client that lost the `200` cannot tell "accepted" from "lost the race" without a new endpoint. Until then, plan 7 must treat a `stale_epoch` that follows a timeout as "unknown" and resync. This plan's engine supports both paths.
-- The roadmap's dependency table lists `mls-rs-uniffi`. That should read: `mls-rs` + `mls-rs-crypto-cryptokit` + `mls-rs-crypto-rustcrypto` + `uniffi` (Decision 1).
+- The roadmap's dependency table lists `mls-rs-uniffi`. That should read: `mls-rs` + `mls-rs-crypto-rustcrypto` + `uniffi` (Decision 1).
 - `MLSError` is new public API. The roadmap does not list it; this is an addition, not a rename.
 
 ## Lanes
@@ -148,12 +149,12 @@ apps/apple/Prototypes/NSEPrototype/    M6 XcodeGen project: host app + NSE
   - `impl mls_rs_core::key_package::KeyPackageStorage`
   - `Clone` (the same root)
 - `const EPOCH_RETENTION: u64 = 3`
-- `pub enum FfiError { Malformed, UnknownGroup, NotMember, Duplicate, PendingCommit, Storage(String), Crypto(String), Internal(String) }`, as a `#[derive(uniffi::Error)]`, with a hand-written `Display` and `std::error::Error`
+- `pub enum FfiError { Malformed, UnknownGroup, NotMember, Duplicate, EpochGap, PendingCommit, Storage(String), Crypto(String), Internal(String) }`, as a `#[derive(uniffi::Error)]`, with a hand-written `Display` and `std::error::Error`
 
 `Cargo.toml` contents:
 - `[lib] crate-type = ["lib", "staticlib", "cdylib"]`, `name = "mlsffi"`
 - `mls-rs`, `mls-rs-core` and `mls-rs-crypto-rustcrypto` as `{ git = "https://github.com/awslabs/mls-rs", rev = "323bd84f52e410c9ecb0b1ccd84a5a9f7f191b5a" }`
-- `mls-rs-crypto-cryptokit` the same way, under `[target.'cfg(target_vendor = "apple")'.dependencies]`
+- No CryptoKit crate (owner decision 2026-10-28); `mls-rs-crypto-rustcrypto` is unconditional
 - `uniffi = { version = "0.31", features = ["cli"] }`
 - `[[bin]] name = "uniffi-bindgen"`
 
@@ -195,7 +196,7 @@ apps/apple/Prototypes/NSEPrototype/    M6 XcodeGen project: host app + NSE
     pub fn create_group(&self) -> Result<Vec<u8>, FfiError>;          // 32 random bytes; epoch 0
     pub fn add(&self, group_id: Vec<u8>, key_packages: Vec<Vec<u8>>) -> Result<CommitBundle, FfiError>;
     pub fn remove(&self, group_id: Vec<u8>, identities: Vec<String>) -> Result<CommitBundle, FfiError>;
-    pub fn commit_accepted(&self, group_id: Vec<u8>) -> Result<(), FfiError>;  // apply_pending_commit
+    pub fn commit_accepted(&self, group_id: Vec<u8>) -> Result<(), FfiError>;  // apply_pending_commit; no-op if none
     pub fn commit_rejected(&self, group_id: Vec<u8>) -> Result<(), FfiError>;  // clear_pending_commit; no-op if none
     pub fn has_pending_commit(&self, group_id: Vec<u8>) -> Result<bool, FfiError>;
     pub fn encrypt(&self, group_id: Vec<u8>, plaintext: Vec<u8>) -> Result<Encrypted, FfiError>;
@@ -215,7 +216,7 @@ The client is built with these settings:
 
 `process`:
 - A Welcome goes through `join_group(None, msg)` and returns `Joined`.
-- A private or public message goes through `load_group(msg.group_id())`. If the message is a commit and `has_pending_commit()` is true, the engine calls `clear_pending_commit()` first, then `process_incoming_message` and `write_to_storage`.
+- A private or public message goes through `load_group(msg.group_id())`. The engine does not clear a pending commit itself: mls-rs applies it when the message is our own commit echoed back, and drops it when another member's commit is processed (clearing first would break the echo). It compares `message.epoch()` with the group's current epoch first: newer gives `EpochGap`; an older message that mls-rs rejects as `InvalidEpoch`/`EpochNotFound` gives `Duplicate`. Then `process_incoming_message` and `write_to_storage`; `Application.epoch` is the epoch the message was sent in. After every load and after `join_group`, a repair step deletes epoch records with id >= the current epoch, deletes all of them if the newest left is not current-1, and on a Welcome deletes all existing epoch records for the group first.
 - Anything else is `Malformed`.
 
 Every mutating method ends with `write_to_storage()`.
@@ -254,7 +255,6 @@ Every mutating method ends with `write_to_storage()`.
 **Files:**
 - Create: `apps/apple/Packages/SecureMessaging/scripts/build-mlsffi.sh`
 - Create: `mlsffi/src/bin/uniffi-bindgen.rs`, containing `fn main() { uniffi::uniffi_bindgen_main() }`
-- Create: `mlsffi/tests/interop_cryptokit.rs` (`#![cfg(target_vendor = "apple")]`)
 - Create: `.github/workflows/mls.yml`
 - Generated and committed: `Sources/MLSFFIBindings/mlsffi.swift`
 
@@ -277,22 +277,22 @@ Every mutating method ends with `write_to_storage()`.
 | Job | Runs on | Steps |
 |---|---|---|
 | `rust-linux` | `ubuntu-latest` | `cargo test` in `mlsffi` |
-| `apple` | `macos-26` | `build-mlsffi.sh`, `cargo test` (CryptoKit provider), the upstream provider suite, the binding-drift check, and upload of the XCFramework as artifact `MLSFFI-xcframework` |
+| `apple` | `macos-26` | `build-mlsffi.sh`, `cargo test` (RustCrypto provider), a minimum-OS check (`vtool`: iOS 17.0, macOS 14.0), the binding-drift check, and upload of the XCFramework as artifact `MLSFFI-xcframework` |
 | `swift-linux` | `swift:6.0` container | added in M4 |
 
 The upstream provider suite is `git clone https://github.com/awslabs/mls-rs && git -C mls-rs checkout 323bd84f… && cargo test --manifest-path mls-rs/mls-rs-crypto-cryptokit/Cargo.toml`. It runs `mls-rs-core`'s crypto-provider test suite against CryptoKit on that runner, which covers the RFC 9420 crypto test vectors through `mls-rs-core`'s `test_suite` feature. The binding-drift check is `git diff --exit-code Sources/MLSFFIBindings`.
 
-- [ ] **Step 1: Write the failing interop test** `cryptokit_rustcrypto_interop`. It builds two clients inside the test with different providers: alice uses CryptoKit, bob uses RustCrypto. Use an internal `engine::with_provider` constructor marked `#[doc(hidden)] pub`. Alice adds bob → bob joins → messages work both ways at epochs 1 and 2.
+- [ ] **Step 1: (superseded 2026-10-28) no interop test.** With one provider on all targets there is no cross-provider test; the scenario suite covers the engine.
 - [ ] **Step 2: Push, then check with `gh run watch`.** Expected: the `apple` job FAILS, because `build-mlsffi.sh` and the interop constructor don't exist yet. The workflow file is committed in this step so CI runs.
 - [ ] **Step 3: Implement.**
   - Write `build-mlsffi.sh`.
   - Add `engine::with_provider<P: CryptoProvider>`.
   - Write `mls.yml`.
-  - Add to the script a check `nm -g Artifacts/MLSFFI.xcframework/ios-arm64/libmlsffi.a | grep -q _signature_key_generate`, which proves the CryptoKit Swift bridge is inside the static library.
+  - Add to the script an assertion that the XCFramework has exactly 3 slices.
 - [ ] **Step 4: Push and check.** Expected: `rust-linux` and `apple` are green; the upload holds `MLSFFI.xcframework` with exactly the 3 slices (`plutil -p Info.plist` in the script prints `AvailableLibraries` identifiers); the drift check passes.
-- [ ] **Step 5: Commit.** `git commit -m "build(mls): MLSFFI XCFramework, Swift bindings, CryptoKit interop, CI"`
+- [ ] **Step 5: Commit.** `git commit -m "build(mls): MLSFFI XCFramework, Swift bindings, CI"`
 
-**Risk to note in the ledger:** the CryptoKit bridge exports plain C symbols (`sign`, `signature_key_generate`, …, from `@_cdecl` in `cryptokit-bridge`). If plan 3's WebRTC also exports any of those names, the app link fails with duplicate symbols. Plan 8's first app build must check this. The fix, if needed, is a `-Wl,-unexported_symbol` list or a prefix patch in the bridge. That is an owner decision.
+**Note:** the former duplicate-symbol risk (CryptoKit bridge C symbols vs WebRTC) is gone with the RustCrypto switch (owner decision 2026-10-28).
 
 ---
 
@@ -429,7 +429,7 @@ The upstream provider suite is `git clone https://github.com/awslabs/mls-rs && g
 
 - `cargo test` passes on Linux.
 - `swift test` passes on Linux.
-- The `apple` job is green: the XCFramework is built, the CryptoKit provider suite passes, the cross-provider interop test passes, the macOS and iOS-simulator package tests pass, and the NSE prototype step has run or is ruled.
+- The `apple` job is green: the XCFramework is built, the minimum-OS check passes, the macOS and iOS-simulator package tests pass, and the NSE prototype step has run or is ruled.
 - The owner has reviewed every file and ticked `DEVICE-CHECKLIST.md`.
 - The ledger lists every `Ruling:`.
 - After this, the "Exit criteria" item "a working NSE + MLS push prototype" in GOAL.md Phase 0 is met for the client side. The real push path needs plan 2's lane D gateway.

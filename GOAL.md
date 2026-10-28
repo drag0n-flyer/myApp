@@ -423,7 +423,6 @@ Build a native, private, self-hostable communication platform that makes clear v
 
 The product should earn adoption through measurable efficiency, excellent voice quality, trustworthy privacy, and operational control—not by copying every feature of an existing messenger.
 
-
 ## 15. Protocol and Architecture Decision Summary
 
 The initial preferred direction is:
