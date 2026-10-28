@@ -35,6 +35,7 @@ enum class SettingsPage(val route: String, @StringRes val title: Int, @DrawableR
     Notifications("settings/notifications", R.string.settings_notifications, R.drawable.ic_bell),
     ChatFolders("settings/folders", R.string.settings_folders, R.drawable.ic_inbox),
     CallsAudio("settings/audio", R.string.settings_calls_audio, R.drawable.ic_mic),
+    Licenses("settings/licenses", R.string.settings_licenses, R.drawable.ic_key),
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

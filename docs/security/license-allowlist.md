@@ -33,3 +33,15 @@ Checked by `scripts/check-swift-licenses.py` against every `Package.resolved` un
 | webrtc | pending | BSD-3-Clause | pending |
 | mls-rs | pending | Apache-2.0 | pending |
 | rnnoise | pending | BSD-3-Clause | pending |
+
+## gradle-libraries
+
+Checked by `scripts/generate-oss-notices.py --check-android` against the Gradle runtime dependencies of the release build (`./gradlew :app:exportRuntimeDependencies`). A library whose POM license is on the allowed list above passes. Any other library must have a row here, by `group:name` or `group:*`. Copyleft (GPL, LGPL, AGPL) always fails; JNA is dual-licensed (LGPL-2.1-or-later or Apache-2.0) and is counted as Apache-2.0. A `pending` row fails the check until the owner approves it.
+
+| library | SPDX | approved-by |
+|---|---|---|
+| com.google.android.gms:* | LicenseRef-Android-SDK | owner 2026-10-28 (plan table: credentials-play-services-auth, firebase-messaging; Google Play services, closed source) |
+| com.google.firebase:* | LicenseRef-Android-SDK | owner 2026-10-28 (plan table: firebase-messaging; closed source) |
+| com.google.android.datatransport:* | LicenseRef-Android-SDK | owner 2026-10-28 (transitive of firebase-messaging; closed source) |
+| com.google.android.libraries.identity.googleid:googleid | LicenseRef-Android-SDK | owner 2026-10-28 (transitive of credentials-play-services-auth; closed source) |
+| net.zetetic:sqlcipher-android | LicenseRef-SQLCipher-Community | owner 2026-10-28 (plan table; BSD-style Community Edition license; full text to be added) |
