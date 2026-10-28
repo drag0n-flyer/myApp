@@ -113,8 +113,7 @@ struct LiveMessaging {
         let store = LiveChatStore(
             deps: deps, outbox: outbox, inbox: inbox, conversations: conversations, attachments: attachments)
         let reconciler = ReconcileScheduler(
-            deviceID: session.deviceID, reconcile: { try await sync.reconcileOwnDevices() },
-            devices: { try await client.devices().map(\.id) })
+            deviceID: session.deviceID, reconcile: { try await sync.reconcileOwnDevices() })
         return LiveMessaging(
             store: store, inbox: inbox, sync: sync, reconciler: reconciler,
             network: networkBox, autoDownload: settingsBox)

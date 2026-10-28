@@ -34,6 +34,9 @@ public struct LinkSnapshot: Codable, Equatable, Sendable {
 public enum DeviceSyncError: Error, Equatable, Sendable {
     /// `importSnapshot` got bytes that are not a `LinkSnapshot` of version 1.
     case invalidSnapshot
+    /// A wipe failed every try: this device stops all further work (no reconcile, revocation or KeyPackage
+    /// call) until the app starts again and finishes the wipe.
+    case halted
 }
 
 /// Own-device changes (Design 5, 18, 19): adds new own devices to every conversation, removes revoked ones,
@@ -51,6 +54,8 @@ public actor DeviceSync {
     private let wipeMLS: @Sendable () async throws -> Void
     private let deleteSigningKey: @Sendable () async throws -> Void
     private let lockTimeout: Duration
+    /// Set when `wipeLocalData` failed every try.
+    private var halted = false
 
     /// - Parameter wipeMLS: deletes the MLS engine's storage. `MLSEngine` has no such call, so the app
     ///   passes one that removes the engine's database. Required: a revoked device must not keep key material.
@@ -89,6 +94,7 @@ public actor DeviceSync {
     ///   A bad list or a device linked during the run cannot remove anyone.
     /// Each conversation is tried even when another fails; the first error is thrown at the end.
     public func reconcileOwnDevices() async throws {
+        guard !halted else { throw DeviceSyncError.halted }
         let records = try await deps.server.devices()
         let listed = Set(records.map(\.id))
         let others = listed.subtracting([deps.me.deviceID])
@@ -206,6 +212,7 @@ public actor DeviceSync {
     /// revocation reaches this device as a 401 or close code 4003, and the app signs out and wipes then).
     /// The app goes through `ReconcileScheduler.deviceRevoked`, which also keeps it from overlapping a reconcile.
     public func handleRevoked(deviceID: String) async throws {
+        guard !halted else { throw DeviceSyncError.halted }
         guard deviceID != deps.me.deviceID else { return }
         try await reconcileOwnDevices()
     }
@@ -230,6 +237,7 @@ public actor DeviceSync {
 
     /// Checks the server's KeyPackage count at most every 6 hours and uploads 50 when it is below 10.
     public func replenishKeyPackages() async throws {
+        guard !halted else { throw DeviceSyncError.halted }
         let now = deps.now()
         if let data = try deps.repo.get(Self.checkedAtKey), let text = String(data: data, encoding: .utf8),
            let ms = Int64(text), now.timeIntervalSince(Date(timeIntervalSince1970: Double(ms) / 1000)) < Self.checkInterval {
@@ -251,11 +259,22 @@ public actor DeviceSync {
 
     /// Deletes the database rows, the media directory and the MLS storage. Every step runs; the first
     /// error is thrown at the end.
+    /// A failed wipe is tried again (`wipeAttempts` in all); if it still fails, this device stops all further
+    /// work (`DeviceSyncError.halted`) and the error is thrown.
     public func wipeLocalData() async throws {
-        try await Self.wipe(
-            repo: deps.repo, mediaDirectory: deps.mediaDirectory, lock: deps.lock, wipeMLS: wipeMLS,
-            deleteSigningKey: deleteSigningKey, lockTimeout: lockTimeout)
+        do {
+            try await Self.wipe(
+                repo: deps.repo, mediaDirectory: deps.mediaDirectory, lock: deps.lock, wipeMLS: wipeMLS,
+                deleteSigningKey: deleteSigningKey, lockTimeout: lockTimeout)
+        } catch {
+            halted = true
+            throw error
+        }
     }
+
+    /// How many times a wipe is tried before it gives up, and the pause between tries.
+    public static let wipeAttempts = 3
+    static let wipeRetryDelay: Duration = .milliseconds(200)
 
     /// The wipe without a running graph (the app calls it at launch to finish a wipe that was cut short). Rows,
     /// media, MLS storage, then the signing key.
@@ -263,6 +282,28 @@ public actor DeviceSync {
         repo: Repository, mediaDirectory: URL, lock: ProcessLock,
         wipeMLS: @Sendable () async throws -> Void, deleteSigningKey: @Sendable () async throws -> Void = {},
         lockTimeout: Duration = .seconds(5)
+    ) async throws {
+        // A wiped device's data cannot come back, and leftover data must not stay: a failed wipe is tried again,
+        // `wipeAttempts` times in all. Every try runs every step; the last try's first error is thrown.
+        var attempt = 1
+        while true {
+            do {
+                try await wipeOnce(
+                    repo: repo, mediaDirectory: mediaDirectory, lock: lock, wipeMLS: wipeMLS,
+                    deleteSigningKey: deleteSigningKey, lockTimeout: lockTimeout)
+                return
+            } catch {
+                guard attempt < wipeAttempts else { throw error }
+                attempt += 1
+                try? await Task.sleep(for: wipeRetryDelay)
+            }
+        }
+    }
+
+    private static func wipeOnce(
+        repo: Repository, mediaDirectory: URL, lock: ProcessLock,
+        wipeMLS: @Sendable () async throws -> Void, deleteSigningKey: @Sendable () async throws -> Void,
+        lockTimeout: Duration
     ) async throws {
         // No network inside: the whole wipe is one locked step, so the notification extension cannot
         // process an item into a half-deleted store.

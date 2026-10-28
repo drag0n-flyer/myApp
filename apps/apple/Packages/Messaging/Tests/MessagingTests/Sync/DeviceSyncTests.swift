@@ -12,6 +12,12 @@ import MessagingTestKit
 
 private let escrowKey = Data(repeating: 7, count: 32)
 
+private actor Counter {
+    private(set) var value = 0
+    /// Counts one call and returns the count.
+    func next() -> Int { value += 1; return value }
+}
+
 private actor Flag {
     private(set) var value = false
     func set() { value = true }
@@ -221,6 +227,37 @@ private final class CountingTransport: HTTPTransport, @unchecked Sendable {
         #expect(try rig.ana1.device.deps.repo.conversation(serverID: rig.conversationIDs[0])?.epoch == 2)
     }
 
+    @Test func failedWipeIsRetriedThenSucceeds() async throws {
+        let rig = try await Rig.make()
+        let calls = Counter()
+        let device = rig.ana1.device
+        let sync = DeviceSync(deps: device.deps, conversations: rig.ana1.conversations, wipeMLS: {
+            if await calls.next() < DeviceSync.wipeAttempts { throw CocoaError(.fileWriteUnknown) }
+        })
+        try await sync.wipeLocalData()
+        #expect(await calls.value == DeviceSync.wipeAttempts)
+        #expect(try device.deps.repo.chats().isEmpty)
+    }
+
+    @Test func wipeThatKeepsFailingStopsAllFurtherWork() async throws {
+        let rig = try await Rig.make()
+        let calls = Counter()
+        let device = rig.ana1.device
+        let sync = DeviceSync(deps: device.deps, conversations: rig.ana1.conversations, wipeMLS: {
+            _ = await calls.next()
+            throw CocoaError(.fileWriteUnknown)
+        })
+        await #expect(throws: CocoaError.self) { try await sync.wipeLocalData() }
+        #expect(DeviceSync.wipeAttempts == 3)
+        #expect(await calls.value == DeviceSync.wipeAttempts, "a capped number of tries")
+        // Nothing runs afterwards: no request reaches the server.
+        let requests = await rig.server.requests().count
+        await #expect(throws: DeviceSyncError.halted) { try await sync.reconcileOwnDevices() }
+        await #expect(throws: DeviceSyncError.halted) { try await sync.handleRevoked(deviceID: rig.ana2.device.deviceID) }
+        await #expect(throws: DeviceSyncError.halted) { try await sync.replenishKeyPackages() }
+        #expect(await rig.server.requests().count == requests)
+    }
+
     @Test func revokedEventNamingThisDeviceIsIgnored() async throws {
         let rig = try await Rig.make()
         let deps = rig.ana1.device.deps
@@ -357,10 +394,11 @@ private final class CountingTransport: HTTPTransport, @unchecked Sendable {
         let sync = DeviceSync(deps: device.deps, conversations: manager, wipeMLS: {}, lockTimeout: .milliseconds(100))
         let record = try #require(try device.deps.repo.conversation(serverID: rig.conversationIDs[0]))
         try await device.deps.lock.withAsyncLock(timeout: .seconds(2)) {
-            await #expect(throws: LockTimeout.self) { try await sync.wipeLocalData() }
             await #expect(throws: LockTimeout.self) { try await sync.replenishKeyPackages() }
             await #expect(throws: LockTimeout.self) { try await manager.handleStaleEpoch(record) }
             await #expect(throws: LockTimeout.self) { _ = try await manager.create(with: "acc-bob") }
+            // Last: a wipe that fails every try halts the DeviceSync.
+            await #expect(throws: LockTimeout.self) { try await sync.wipeLocalData() }
         }
         #expect(try !device.deps.repo.chats().isEmpty)
     }

@@ -11,16 +11,8 @@ public actor ReconcileScheduler {
     /// Longer than `DeviceSync.missingFor` (10 minutes), so the second run can remove what the first one marked.
     public static let rerunDelay: Duration = .seconds(11 * 60)
 
-    /// What the app does after a `device.revoked` event.
-    public enum RevokedAction: Sendable, Equatable {
-        case none
-        /// The server proved this device was removed: sign out and wipe.
-        case signOut
-    }
-
     private let deviceID: String
     private let reconcile: @Sendable () async throws -> Void
-    private let devices: @Sendable () async throws -> [String]
     private let sleep: @Sendable (Duration) async throws -> Void
     private var rerun: Task<Void, Never>?
     private var generation = 0
@@ -29,17 +21,14 @@ public actor ReconcileScheduler {
 
     /// - Parameter deviceID: this device.
     /// - Parameter reconcile: `DeviceSync.reconcileOwnDevices` in the app.
-    /// - Parameter devices: the IDs `GET /v1/devices` lists for this account.
     /// - Parameter sleep: waits the given time; throws when cancelled. Tests pass their own.
     public init(
         deviceID: String,
         reconcile: @escaping @Sendable () async throws -> Void,
-        devices: @escaping @Sendable () async throws -> [String],
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
         self.deviceID = deviceID
         self.reconcile = reconcile
-        self.devices = devices
         self.sleep = sleep
     }
 
@@ -67,18 +56,11 @@ public actor ReconcileScheduler {
     /// `device.revoked` is unsigned, and the server never sends it to the revoked device (that socket closes with
     /// 4003). So an event never removes or wipes by itself:
     /// - another device of this account: reconcile runs, and its two-lists-ten-minutes rule decides;
-    /// - this device: `.signOut` only when `GET /v1/devices` answers with other devices and without this one. A
-    ///   401 is handled by the client's own sign-out path; any other answer or error changes nothing.
-    public func deviceRevoked(_ id: String) async -> RevokedAction {
-        guard id == deviceID else {
-            await runReconcile()
-            return .none
-        }
-        let devices = self.devices, me = deviceID
-        return await serially {
-            guard let ids = try? await devices() else { return .none }
-            return ids.contains(where: { $0 != me }) && !ids.contains(me) ? .signOut : .none
-        }
+    /// - this device: ignored. Only a 401 or 4003 (revoked session) may wipe this device; the client's sign-out
+    ///   path handles those. A device list never does: a wrong, partial or lagging list must not wipe.
+    public func deviceRevoked(_ id: String) async {
+        guard id != deviceID else { return }
+        await runReconcile()
     }
 
     /// Waits for the scheduled run, if any (tests).

@@ -21,16 +21,6 @@ private actor Runs {
     func setSlow(_ value: Bool) { slow = value }
 }
 
-/// What `GET /v1/devices` answers in the test.
-private final class DeviceList: @unchecked Sendable {
-    private let lock = NSLock()
-    private var ids: [String] = ["me", "other"]
-    private var error: Error?
-    func set(_ ids: [String]) { lock.withLock { self.ids = ids; error = nil } }
-    func fail(_ error: Error) { lock.withLock { self.error = error } }
-    func get() throws -> [String] { try lock.withLock { if let error { throw error }; return ids } }
-}
-
 /// A sleep the test ends: `fire()` lets every pending sleep return. Cancellation ends a sleep with an error.
 private actor Sleeper {
     private(set) var requested: [Duration] = []
@@ -47,40 +37,26 @@ private actor Sleeper {
 }
 
 @Suite("TestReconcileScheduler") struct TestReconcileScheduler {
-    private func make(list: DeviceList = DeviceList()) -> (ReconcileScheduler, Runs, Sleeper) {
+    private func make() -> (ReconcileScheduler, Runs, Sleeper) {
         let runs = Runs(), sleeper = Sleeper()
         let scheduler = ReconcileScheduler(
-            deviceID: "me", reconcile: { try await runs.run() }, devices: { try list.get() },
-            sleep: { try await sleeper.sleep($0) })
+            deviceID: "me", reconcile: { try await runs.run() }, sleep: { try await sleeper.sleep($0) })
         return (scheduler, runs, sleeper)
     }
 
     // device.revoked is unsigned and the server never sends it to the revoked device (its socket closes with 4003).
+    // Only a 401 or 4003 may wipe this device; that is the client's sign-out path, not this one.
 
-    @Test func forgedEventNamingThisDeviceIsIgnored() async throws {
-        let list = DeviceList()
-        let (scheduler, runs, _) = make(list: list)
-        #expect(await scheduler.deviceRevoked("me") == .none, "the server still lists this device")
-        list.set([])
-        #expect(await scheduler.deviceRevoked("me") == .none, "an empty list proves nothing")
-        list.fail(URLError(.timedOut))
-        #expect(await scheduler.deviceRevoked("me") == .none, "no answer proves nothing")
-        // A 401 is handled by the client's own sign-out path, not here (no second sign-out).
-        list.fail(ServerErrorStub())
-        #expect(await scheduler.deviceRevoked("me") == .none)
+    @Test func eventNamingThisDeviceNeverSignsOut() async throws {
+        let (scheduler, runs, sleeper) = make()
+        await scheduler.deviceRevoked("me")
         #expect(await runs.count == 0)
-    }
-
-    @Test func eventNamingThisDeviceSignsOutOnlyWithProof() async throws {
-        let list = DeviceList()
-        let (scheduler, _, _) = make(list: list)
-        list.set(["other"])   // the server lists other devices of this account, but not this one
-        #expect(await scheduler.deviceRevoked("me") == .signOut)
+        #expect(await sleeper.requested.isEmpty)
     }
 
     @Test func siblingEventOnlyRunsReconcile() async throws {
         let (scheduler, runs, sleeper) = make()
-        #expect(await scheduler.deviceRevoked("other") == .none)
+        await scheduler.deviceRevoked("other")
         #expect(await runs.count == 1)
         #expect(await sleeper.requested.isEmpty, "the event schedules no re-run of its own")
     }
@@ -90,13 +66,12 @@ private actor Sleeper {
         await runs.setSlow(true)
         await withTaskGroup(of: Void.self) { group in
             group.addTask { await scheduler.connected() }
-            for _ in 0..<3 { group.addTask { _ = await scheduler.deviceRevoked("other") } }
-            group.addTask { _ = await scheduler.deviceRevoked("me") }
+            for _ in 0..<4 { group.addTask { await scheduler.deviceRevoked("other") } }
         }
         await scheduler.waitForSleep(sleeper)
         await sleeper.fire()
         await scheduler.settle()
-        #expect(await runs.count == 5)
+        #expect(await runs.count == 6)   // connect, four events, the re-run
         #expect(await runs.maxInFlight == 1)
     }
 
@@ -158,5 +133,3 @@ extension ReconcileScheduler {
         while await sleeper.requested.count < count { try? await Task.sleep(for: .milliseconds(1)) }
     }
 }
-
-private struct ServerErrorStub: Error {}
