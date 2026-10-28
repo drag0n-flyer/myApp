@@ -42,7 +42,7 @@ func keysetDecode(cursor string, n int) ([]string, error) {
 // logAction audits a dashboard action by s after the owning module's function
 // returned. A failed write is logged (IDs only) and answered as 500.
 func (m *Module) logAction(ctx context.Context, s Session, action, target string, detail map[string]any) error {
-	err := m.audit(ctx, m.d.DB, Entry{Actor: "dashboard", TokenID: s.TokenID, Action: action, Target: target, Detail: detail})
+	err := m.audit(ctx, m.d.DB, s.entry(action, target, detail))
 	if err != nil {
 		m.d.Log.Error("admin audit write failed", "action", action, "target", target)
 		return httpx.Err("internal", "internal error")
@@ -189,7 +189,7 @@ func (m *Module) createInvite(w http.ResponseWriter, r *http.Request, s Session)
 	if err != nil {
 		return err
 	}
-	if err := m.audit(ctx, tx, Entry{Actor: "dashboard", TokenID: s.TokenID, Action: "invite.create", Target: id, Detail: map[string]any{"uses": uses, "days": days}}); err != nil {
+	if err := m.audit(ctx, tx, s.entry("invite.create", id, map[string]any{"uses": uses, "days": days})); err != nil {
 		m.d.Log.Error("admin audit write failed", "action", "invite.create", "target", id)
 		return httpx.Err("internal", "internal error")
 	}
