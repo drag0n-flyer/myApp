@@ -5,8 +5,9 @@ import SwiftUI
 /// In-app call screen: audio or video, network and data pills, banners, controls.
 struct CallView: View {
     @Bindable var model: AppModel
-    @State private var showingDataSheet = false
-    @State private var showingInfoSheet = false
+    /// One `.sheet(item:)` for both sheets. With two `.sheet` modifiers on this view, the call info sheet never
+    /// appeared in the iPhone UI test while the data sheet did.
+    @State private var sheet: CallSheet?
     @State private var voiceIsolationOn = CallView.isVoiceIsolationOn
 
     var body: some View {
@@ -33,7 +34,7 @@ struct CallView: View {
                     if model.isSampleData { SimulateMenu(model: model).padding(.bottom, 8) }
                     #endif
                     if showsVoiceIsolationHint { VoiceIsolationHint().padding(.bottom, 8) }
-                    CallControlsView(call: call, model: model, showData: { showingDataSheet = true })
+                    CallControlsView(call: call, model: model, showData: { sheet = .data })
                 }
                 .padding(.horizontal, 14)
                 .padding(.bottom, 12)
@@ -43,7 +44,7 @@ struct CallView: View {
                 VStack {
                     HStack {
                         Spacer()
-                        Button { showingInfoSheet = true } label: {
+                        Button { sheet = .info } label: {
                             Image(systemName: "info.circle")
                                 .font(.title3)
                                 .padding(10)
@@ -75,13 +76,15 @@ struct CallView: View {
             try? await Task.sleep(for: .seconds(2))
             model.dismissEndedCall()
         }
-        .sheet(isPresented: $showingDataSheet) {
-            DataModeSheet(model: model)
-                .presentationDetents([.medium, .large])
-        }
-        .sheet(isPresented: $showingInfoSheet) {
-            CallInfoSheet(model: model)
-                .presentationDetents([.medium])
+        .sheet(item: $sheet) { which in
+            switch which {
+            case .data:
+                DataModeSheet(model: model)
+                    .presentationDetents([.medium, .large])
+            case .info:
+                CallInfoSheet(model: model)
+                    .presentationDetents([.medium])
+            }
         }
     }
 
@@ -288,3 +291,9 @@ struct MacCallWindow: View {
     }
 }
 #endif
+
+/// The sheets the call screen can show.
+private enum CallSheet: String, Identifiable {
+    case data, info
+    var id: String { rawValue }
+}

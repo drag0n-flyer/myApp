@@ -11,6 +11,7 @@ final class CallInfoSheetUITests: XCTestCase {
         XCTAssertTrue(app.element("call.mode").waitToExist())
 
         app.buttons["Call info"].tap()
+        XCTAssertTrue(app.buttons["Done"].waitToExist(), "the call info sheet opens")
         let labels = ["Connection", "Delay", "Sound lost", "Quality", "Data used"]
         for (index, label) in labels.enumerated() {
             let row = app.element("callinfo.row.\(index)")
