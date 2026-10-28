@@ -5,7 +5,7 @@ Last updated: 2026-10-28, 15:30 UTC.
 | Track | Done | % |
 |---|---|---|
 | iPhone/Mac Phase 1 | 125 / 128 | 98% |
-| Android | 40 / 44 | 91% |
+| Android | 42 / 44 | 95% |
 | Admin dashboard | done, with admin accounts and 2FA, on `main` | 100% |
 
 Up to 15 agents work in parallel (on Opus until 2 Nov, when Sonnet's weekly limit resets). CI is the bottleneck: about 5 Mac jobs at once, and GitHub throttles status checks when many agents watch runs. Mac CI runs only the jobs a change needs. Android CI uses Linux runners only.
@@ -78,7 +78,7 @@ Green: Apple apps (every job, after the Swift 6.2 / Xcode 26 fix), MLS client co
 | B, networking and accounts | 7 | 7 | done, with B7's review follow-ups merged (the http/https choice is saved with a session, a link code is claimed only on the server that issued it, changing server clears the invite code) |
 | C, MLS bindings | 4 | 4 | done |
 | D, storage and messaging | 7 | 7 | done. D7 took M7's `decryptApplication` from the iPhone side; checking `call.status` for late ring pushes moved to E6/I1. A ring is accepted only from the 1:1 chat with its sender (merged) |
-| E, WebRTC and calls | 6 (+E5b) | 3 | E3, E4, E5 part 1 and E6 (Android phone-call integration: Telecom, LiveCallEngine, sign-out ends calls) on `main`. E2 (WebRTC build): all three ABIs build and the app now installs on the emulator; the smoke test found the generated JNI classes missing from the jar, fix on CI (run 40691878653). Then E1, E5 part 2 (real media session, loopback and bitrate tests), E5b | E2 1–2 h, lane 1.5–2 days |
+| E, WebRTC and calls | 6 (+E5b) | 5 | E1 and E2 merged: Android WebRTC + Opus builds in CI, release `webrtc-android-m156.1` published (smoke test green), and the `:webrtc` module downloads it with a SHA-256 check. E3, E4, E5 part 1 and E6 on `main`. E5 part 2 (real call media, approved; emulator tests 9/9 on API 29 and 36) merges next. Then E5b | E5 part 2 ~1 h, E5b ~0.5 day |
 | F, push | 4 | 4 | done |
 | G, CI | 4 | 4 | done; G4: release bundle, license notices, Play documents. A `v*` tag release fails until the SQLCipher, WebRTC and Opus notice texts are filled in |
 | I, integration and iPhone↔Android test | 2 | 1 | I1 merged: the app runs on the live server (accounts, messaging, push, device cleanup; crash-safe wipe). Calls switch on with E6. I2 (iPhone↔Android test) waits for calls |
