@@ -51,6 +51,7 @@ public actor FakeServer {
     private var responseLost = false
     private var messageFailures: [Int] = []   // statuses for the next message posts
     private var counter = 0
+    private var deviceListFilter: (@Sendable ([String]) -> [String])?
     private let now: @Sendable () -> Date
 
     public init(now: @escaping @Sendable () -> Date = { Date(timeIntervalSince1970: 1_700_000_000) }) {
@@ -94,6 +95,19 @@ public actor FakeServer {
     public var escrowKey = Data((0..<32).map { UInt8(0x40 + $0) })
 
     // MARK: - Test hooks
+
+    /// Revokes a device as the server does: its row goes, and with it its conversation memberships, KeyPackages
+    /// and session. It stays a leaf in every MLS group until another device commits a Remove.
+    public func revokeDevice(account: String, deviceID: String) {
+        accounts[account]?.devices.removeAll { $0 == deviceID }
+        deviceAccount[deviceID] = nil
+        keyPackages[deviceID] = nil
+        for id in conversations.keys { conversations[id]?.members.remove(deviceID) }
+    }
+
+    /// Changes what `GET /v1/devices` answers (a wrong, empty or partial list); nil gives the true list again.
+    /// The filter gets the account's device IDs in order and returns the ones to list.
+    public func setDeviceListFilter(_ filter: (@Sendable ([String]) -> [String])?) { deviceListFilter = filter }
 
     /// Adds a device to `account`, creating the account (with `username`) on first use.
     public func registerDevice(account: String, username: String) -> String {
@@ -405,7 +419,8 @@ public actor FakeServer {
         struct Out: Encodable {
             let id: String, name: String, platform: String, createdAt: Date, lastSeenAt: Date, current: Bool
         }
-        let list = (accounts[me.account]?.devices ?? []).map {
+        let all = accounts[me.account]?.devices ?? []
+        let list = (deviceListFilter?(all) ?? all).map {
             Out(id: $0, name: "Test device \($0)", platform: "ios", createdAt: now(), lastSeenAt: now(), current: $0 == me.device)
         }
         struct Reply: Encodable { let devices: [Out] }

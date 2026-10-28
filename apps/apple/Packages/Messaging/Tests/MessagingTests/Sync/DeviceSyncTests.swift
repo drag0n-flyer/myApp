@@ -119,10 +119,12 @@ private struct Rig {
     let conversationIDs: [String]
 
     /// ana1 has one conversation with bob and one with carol; ana2 has joined both.
-    static func make(mode: String = "e2ee", probe: LockProbe? = nil) async throws -> Rig {
+    /// - Parameter clock: ana1's clock (the default is the fixed test time).
+    static func make(mode: String = "e2ee", probe: LockProbe? = nil, clock: MutableClock? = nil) async throws -> Rig {
         let server = FakeServer()
         await server.setDefaultMode(mode)
-        var a1 = await makeDevice(server, account: "acc-ana", username: "ana")
+        let now: @Sendable () -> Date = if let clock { { clock.now } } else { { testEpochDate } }
+        var a1 = await makeDevice(server, account: "acc-ana", username: "ana", now: now)
         if let probe { a1 = await probe.wrap(a1, server: server) }
         let a2 = await makeDevice(server, account: "acc-ana", username: "ana")
         let b1 = await makeDevice(server, account: "acc-bob", username: "bob")
@@ -147,6 +149,7 @@ private final class MutableClock: @unchecked Sendable {
     private var date = testEpochDate
     var now: Date { lock.withLock { date } }
     func advance(_ seconds: TimeInterval) { lock.withLock { date = date.addingTimeInterval(seconds) } }
+    func set(_ new: Date) { lock.withLock { date = new } }
 }
 
 private final class CountingTransport: HTTPTransport, @unchecked Sendable {
@@ -351,5 +354,199 @@ private final class CountingTransport: HTTPTransport, @unchecked Sendable {
             await #expect(throws: LockTimeout.self) { _ = try await manager.create(with: "acc-bob") }
         }
         #expect(try !device.deps.repo.chats().isEmpty)
+    }
+}
+
+/// Own-device reconcile safety (mls-profile.md "Removing a device"; decision log 2026-10-28): a device is removed
+/// only when missing from two lists at least ten minutes apart, and only when the list contains this device.
+/// Port of Android's `DeviceSyncTest` safety tests.
+@Suite("TestOwnDeviceReconcile") struct TestOwnDeviceReconcile {
+    private let tenMinutes: TimeInterval = 10 * 60
+
+    private func members(_ node: Node, _ serverID: String) async throws -> [String] {
+        let record = try #require(try node.device.deps.repo.conversation(serverID: serverID))
+        return try await node.device.deps.mls.members(of: GroupID(raw: record.groupID))
+    }
+
+    /// True when every conversation of ana1 has `"acc-ana/<deviceID>"`.
+    private func inAll(_ rig: Rig, _ deviceID: String) async throws -> Bool {
+        for id in rig.conversationIDs where !(try await members(rig.ana1, id)).contains("acc-ana/\(deviceID)") { return false }
+        return true
+    }
+
+    /// True when no conversation of ana1 has `"acc-ana/<deviceID>"`.
+    private func inNone(_ rig: Rig, _ deviceID: String) async throws -> Bool {
+        for id in rig.conversationIDs where (try await members(rig.ana1, id)).contains("acc-ana/\(deviceID)") { return false }
+        return true
+    }
+
+    private func commitPosts(_ rig: Rig) async -> Int {
+        await rig.server.requests().filter { $0.hasPrefix("POST /v1/conversations/") && $0.hasSuffix("/commits") }.count
+    }
+
+    private static func without(_ id: String) -> @Sendable ([String]) -> [String] { { $0.filter { $0 != id } } }
+    private static func only(_ id: String) -> @Sendable ([String]) -> [String] { { $0.filter { $0 == id } } }
+
+    @Test func deviceThatMissedTheRevocationCatchesUpWhenItComesOnline() async throws {
+        let clock = MutableClock()
+        let rig = try await Rig.make(clock: clock)
+        let ana2 = rig.ana2.device.deviceID
+        // ana1 was offline for the event; now it compares the group's leaves with GET /v1/devices.
+        await rig.server.revokeDevice(account: "acc-ana", deviceID: ana2)
+        try await rig.ana1.sync.reconcileOwnDevices()
+        clock.advance(tenMinutes)
+        try await rig.ana1.sync.reconcileOwnDevices()
+        #expect(try await inNone(rig, ana2))
+        #expect(try await inAll(rig, rig.ana1.device.deviceID))
+        // Nothing left to do: another pass posts no commit.
+        let commits = await commitPosts(rig)
+        try await rig.ana1.sync.reconcileOwnDevices()
+        #expect(await commitPosts(rig) == commits)
+    }
+
+    @Test func removalNeedsTwoListsTenMinutesApart() async throws {
+        let clock = MutableClock()
+        let rig = try await Rig.make(clock: clock)
+        let ana2 = rig.ana2.device.deviceID
+        await rig.server.revokeDevice(account: "acc-ana", deviceID: ana2)
+        try await rig.ana1.sync.reconcileOwnDevices()
+        #expect(try await inAll(rig, ana2), "the first sighting only records the time")
+        clock.advance(tenMinutes - 0.001)
+        try await rig.ana1.sync.reconcileOwnDevices()
+        #expect(try await inAll(rig, ana2), "not yet ten minutes")
+        clock.advance(0.001)
+        try await rig.ana1.sync.reconcileOwnDevices()
+        #expect(try await inNone(rig, ana2))
+    }
+
+    @Test func missingTimeSurvivesARestart() async throws {
+        let clock = MutableClock()
+        let rig = try await Rig.make(clock: clock)
+        let ana2 = rig.ana2.device.deviceID
+        await rig.server.revokeDevice(account: "acc-ana", deviceID: ana2)
+        try await rig.ana1.sync.reconcileOwnDevices()
+        let restarted = Node.make(rig.ana1.device)
+        clock.advance(tenMinutes)
+        try await restarted.sync.reconcileOwnDevices()
+        #expect(try await inNone(rig, ana2))
+    }
+
+    @Test func deviceThatReappearsInTheListStartsOverAfterwards() async throws {
+        let clock = MutableClock()
+        let rig = try await Rig.make(clock: clock)
+        let ana2 = rig.ana2.device.deviceID
+        await rig.server.setDeviceListFilter(Self.without(ana2))
+        try await rig.ana1.sync.reconcileOwnDevices()
+        await rig.server.setDeviceListFilter(nil)
+        clock.advance(tenMinutes)
+        try await rig.ana1.sync.reconcileOwnDevices()
+        await rig.server.setDeviceListFilter(Self.without(ana2))
+        try await rig.ana1.sync.reconcileOwnDevices()
+        #expect(try await inAll(rig, ana2), "the earlier sighting was cleared")
+    }
+
+    @Test func emptyListRemovesNothing() async throws {
+        let clock = MutableClock()
+        let rig = try await Rig.make(clock: clock)
+        await rig.server.setDeviceListFilter { _ in [] }
+        let commits = await commitPosts(rig)
+        try await rig.ana1.sync.reconcileOwnDevices()
+        clock.advance(2 * tenMinutes)
+        try await rig.ana1.sync.reconcileOwnDevices()
+        #expect(await commitPosts(rig) == commits)
+        #expect(try await inAll(rig, rig.ana2.device.deviceID))
+    }
+
+    @Test func listWithoutThisDeviceRemovesNothing() async throws {
+        let clock = MutableClock()
+        let rig = try await Rig.make(clock: clock)
+        await rig.server.setDeviceListFilter(Self.only(rig.ana2.device.deviceID))
+        let commits = await commitPosts(rig)
+        try await rig.ana1.sync.reconcileOwnDevices()
+        clock.advance(2 * tenMinutes)
+        try await rig.ana1.sync.reconcileOwnDevices()
+        #expect(await commitPosts(rig) == commits)
+        #expect(try await inAll(rig, rig.ana2.device.deviceID))
+        #expect(try await inAll(rig, rig.ana1.device.deviceID))
+    }
+
+    @Test func listWithoutThisDeviceButWithAForeignOneRemovesNothing() async throws {
+        let clock = MutableClock()
+        let rig = try await Rig.make(clock: clock)
+        // Not empty, but neither ana1 (this device) nor ana2: the answer cannot be trusted. ana3 has KeyPackages, so
+        // adding it works and the removal step is reached.
+        let ana3 = try await rig.addAna3().device.deviceID
+        await rig.server.setDeviceListFilter(Self.only(ana3))
+        try? await rig.ana1.sync.reconcileOwnDevices()
+        clock.advance(2 * tenMinutes)
+        try? await rig.ana1.sync.reconcileOwnDevices()
+        clock.advance(2 * tenMinutes)
+        try? await rig.ana1.sync.reconcileOwnDevices()
+        #expect(try await inAll(rig, ana3), "the add path ran, so the removal step was reached")
+        #expect(try await inAll(rig, rig.ana2.device.deviceID))
+        #expect(try await inAll(rig, rig.ana1.device.deviceID))
+    }
+
+    @Test func partialListRemovesOnlyTheDevicesMissingFromTwoLists() async throws {
+        let clock = MutableClock()
+        let rig = try await Rig.make(clock: clock)
+        let ana1 = rig.ana1.device.deviceID, ana2 = rig.ana2.device.deviceID
+        let ana3 = try await rig.addAna3().device.deviceID
+        try await rig.ana1.sync.reconcileOwnDevices()
+        #expect(try await inAll(rig, ana3))
+        // A partial answer lacks ana2 and ana3; ana3 shows up again in the second list, ana2 does not.
+        await rig.server.setDeviceListFilter(Self.only(ana1))
+        try await rig.ana1.sync.reconcileOwnDevices()
+        await rig.server.setDeviceListFilter(Self.without(ana2))
+        clock.advance(tenMinutes)
+        try await rig.ana1.sync.reconcileOwnDevices()
+        #expect(try await inNone(rig, ana2))
+        #expect(try await inAll(rig, ana3))
+        #expect(try await inAll(rig, ana1))
+    }
+
+    @Test func deviceLinkedDuringTheReconcileIsNeverRemoved() async throws {
+        let clock = MutableClock()
+        let rig = try await Rig.make(clock: clock)
+        let ana2 = rig.ana2.device.deviceID
+        // The list was fetched before ana2 was linked far enough to appear; another device already added it.
+        let first = clock.now
+        await rig.server.setDeviceListFilter(Self.without(ana2))
+        try await rig.ana1.sync.reconcileOwnDevices()
+        clock.set(first.addingTimeInterval(tenMinutes - 0.001))
+        try await rig.ana1.sync.reconcileOwnDevices()
+        #expect(try await inAll(rig, ana2))
+    }
+
+    @Test func deviceListedAfterTheMissingMarkWithTheClockBehindIsNotRemoved() async throws {
+        let clock = MutableClock()
+        let rig = try await Rig.make(clock: clock)
+        let ana2 = rig.ana2.device.deviceID
+        let base = clock.now
+        // ana2 is listed at base + 30 min ...
+        clock.set(base.addingTimeInterval(3 * tenMinutes))
+        try await rig.ana1.sync.reconcileOwnDevices()
+        // ... then the wall clock is back at base: the missing mark (base) is ten minutes old at base + 10 min, but
+        // ana2 was seen "in the future", so the seen check keeps it.
+        clock.set(base)
+        await rig.server.setDeviceListFilter(Self.without(ana2))
+        try await rig.ana1.sync.reconcileOwnDevices()
+        clock.set(base.addingTimeInterval(tenMinutes))
+        try await rig.ana1.sync.reconcileOwnDevices()
+        #expect(try await inAll(rig, ana2))
+    }
+
+    @Test func removalKeepsTheLockOffTheNetwork() async throws {
+        let probe = LockProbe()
+        let clock = MutableClock()
+        let rig = try await Rig.make(probe: probe, clock: clock)
+        let ana2 = rig.ana2.device.deviceID
+        await rig.server.revokeDevice(account: "acc-ana", deviceID: ana2)
+        probe.arm()
+        try await rig.ana1.sync.reconcileOwnDevices()
+        clock.advance(tenMinutes)
+        try await rig.ana1.sync.reconcileOwnDevices()
+        #expect(try await inNone(rig, ana2))
+        #expect(probe.problems == [], "\(probe.problems)")
     }
 }

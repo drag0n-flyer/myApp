@@ -79,17 +79,80 @@ public actor DeviceSync {
 
     // MARK: Own devices
 
-    /// Adds every own device that is not in a group yet, in every active conversation, then sends the
-    /// `mode` envelope again so the new devices learn it (Design 18). Each conversation is tried even when
-    /// another fails; the first error is thrown at the end.
+    /// Brings every active conversation in line with `GET /v1/devices` (mls-profile "Removing a device"):
+    /// - an own device that is listed and not in the group is added, then the `mode` envelope is sent again so
+    ///   the new device learns it (Design 18);
+    /// - an own device that is in the group and no longer listed is removed (a device that missed
+    ///   `device.revoked` catches up here; the profile allows 24 hours from coming online), but only when the list
+    ///   is non-empty and contains this device, and only when the device was missing from two lists at least ten
+    ///   minutes apart (the first time is stored; `deps.now` is used) and was not listed within those ten minutes.
+    ///   A bad list or a device linked during the run cannot remove anyone.
+    /// Each conversation is tried even when another fails; the first error is thrown at the end.
     public func reconcileOwnDevices() async throws {
-        let ids = try await deps.server.devices().map(\.id).filter { $0 != deps.me.deviceID }
-        guard !ids.isEmpty else { return }
+        let records = try await deps.server.devices()
+        let listed = Set(records.map(\.id))
+        let others = listed.subtracting([deps.me.deviceID])
+        // A wrong, empty or partial answer must never remove anything: the list has to contain this device.
+        let trustworthy = listed.contains(deps.me.deviceID)
+        let now = Self.milliseconds(deps.now())
+        if trustworthy {
+            for record in records {
+                try deps.repo.set(Self.seenPrefix + record.id, Data(String(now).utf8))
+                try deps.repo.set(Self.missingPrefix + record.id, Data())
+            }
+        }
+        var stillStale: Set<String> = []
         var failure: Error?
         for conversation in try activeConversations() {
-            do { try await addMissing(Set(ids), to: conversation) } catch { failure = failure ?? error }
+            do {
+                if !others.isEmpty { try await addMissing(others, to: conversation) }
+                if trustworthy { try await removeUnlisted(listed, from: conversation, now: now, stillStale: &stillStale) }
+            } catch {
+                failure = failure ?? error
+            }
+        }
+        if trustworthy, failure == nil {
+            // A device that is no longer in any group needs no mark.
+            for (key, value) in try deps.repo.entries(prefix: Self.missingPrefix)
+            where !value.isEmpty && !stillStale.contains(String(key.dropFirst(Self.missingPrefix.count))) {
+                try deps.repo.set(key, Data())
+            }
         }
         if let failure { throw failure }
+    }
+
+    /// When an own device was first missing from a trusted list (milliseconds; empty when it was listed since).
+    static let missingPrefix = "ownDevice.missingSince."
+    /// When an own device was last listed (milliseconds).
+    static let seenPrefix = "ownDevice.seenAt."
+    /// How long a device must be missing, and unlisted, before reconcile removes it (decision log 2026-10-28).
+    static let missingFor: Int64 = 10 * 60_000
+
+    private static func milliseconds(_ date: Date) -> Int64 { Int64((date.timeIntervalSince1970 * 1000).rounded()) }
+
+    private func stamp(_ key: String) throws -> Int64? {
+        guard let data = try deps.repo.get(key), !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return nil }
+        return Int64(text)
+    }
+
+    private func removeUnlisted(
+        _ listed: Set<String>, from conversation: ConversationRecord, now: Int64, stillStale: inout Set<String>
+    ) async throws {
+        let prefix = "\(deps.me.accountID)/"
+        let stale = try await deps.mls.members(of: GroupID(raw: conversation.groupID))
+            .filter { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) }
+            .filter { $0 != deps.me.deviceID && !listed.contains($0) }.sorted()
+        for deviceID in stale {
+            stillStale.insert(deviceID)
+            // Only a device missing from two lists at least ten minutes apart, and not seen or linked in that time.
+            guard let firstMissing = try stamp(Self.missingPrefix + deviceID) else {
+                try deps.repo.set(Self.missingPrefix + deviceID, Data(String(now).utf8))
+                continue
+            }
+            let lastSeen = try stamp(Self.seenPrefix + deviceID)
+            if now - firstMissing < Self.missingFor || (lastSeen.map { now - $0 < Self.missingFor } ?? false) { continue }
+            try await remove("\(deps.me.accountID)/\(deviceID)", deviceID: deviceID, from: conversation)
+        }
     }
 
     private func addMissing(_ own: Set<String>, to conversation: ConversationRecord) async throws {
