@@ -1,11 +1,11 @@
 # Progress
 
-Last updated: 2026-10-29, 00:10 UTC.
+Last updated: 2026-10-29, 03:20 IST (21:50 UTC Oct 28).
 
 | Track | Done | % |
 |---|---|---|
 | iPhone/Mac Phase 1 | 125 / 128 | 98% |
-| Android | 43 / 44 | 98% |
+| Android | 44 / 44 | 100% |
 | Admin dashboard | done, with admin accounts and 2FA, on `main` | 100% |
 
 Up to 15 agents work in parallel (on Opus until 2 Nov, when Sonnet's weekly limit resets). CI is the bottleneck: about 5 Mac jobs at once, and GitHub throttles status checks when many agents watch runs. Mac CI runs only the jobs a change needs. Android CI uses Linux runners only.
@@ -60,6 +60,8 @@ Extra work beyond the plans, in progress (each is reviewed before it merges; ETA
 | Android I2: Android and iPhone peers talk through one server (texts, photos, calls' signalling, linking, safety numbers); first Mac run green (18 steps passed, 1 honest skip: the iPhone app does not import the link snapshot yet, plan 7). Device checklist for you in `docs/release/android-device-checklist.md` | `android/i2` | merged | done |
 | Android: a call ring arriving while the app wiped the old device's data after a device switch was silently dropped (the cause of the "flaky" `concurrentOpensAfterDeviceSwitchLeaveOneSession`); it now waits for the session. Follow-up merged (`fix/android-open-revoke-window`): no session opens across a revocation wipe. Open, very low: if the wipe's local sign-out itself fails in one narrow window, an open could proceed on part-wiped data (re-check `local.pending` after the snapshot, AppGraph.kt:279-281) | `fix/android-flaky-device-switch` | merged (reviewed, CI green) | done |
 | **Data use under packet loss (found by the call lab):** on a 5% loss network the lowest data mode used 3–11 MB per 10 min instead of ~2, with the Opus audio unchanged. The extra is WebRTC's bandwidth-estimator padding probes (empty ~76-byte packets) plus extra RTCP. Needs a fix on both platforms (cap or turn off probing and padding in the low-data modes), measured by the call lab | not started | next | ~0.5–1 day |
+| Android emulator CI: started up to four emulators at once and the 16 GB runner was shut down; now one at a time | main | fixed | done |
+| Android store: `foreignKeysAreOn` failed once on API 36 (database link enforcement may be off on some connections) | `fix/android-store-fk` | investigating | 1–2 h |
 | App ID in one file (`apps/apple/AppID.xcconfig`) and a stronger photo-privacy test | `chore/appid-xcconfig` | merged (CI green). Open, low: `check-app-id.sh` also scans git-ignored build output, so it fails on a local checkout that has built the MLS Kotlin bindings; CI is clean | done |
 
 Android has the same inbox fixes (merged): a crafted invite can't stall the inbox, a new chat is abandoned only when really gone, and a failure after a chat starts never creates a second one.
@@ -79,7 +81,7 @@ Green: Apple apps (every job, after the Swift 6.2 / Xcode 26 fix), MLS client co
 | B, networking and accounts | 7 | 7 | done, with B7's review follow-ups merged (the http/https choice is saved with a session, a link code is claimed only on the server that issued it, changing server clears the invite code) |
 | C, MLS bindings | 4 | 4 | done |
 | D, storage and messaging | 7 | 7 | done. D7 took M7's `decryptApplication` from the iPhone side; checking `call.status` for late ring pushes moved to E6/I1. A ring is accepted only from the 1:1 chat with its sender (merged) |
-| E, WebRTC and calls | 6 (+E5b) | 6 | All six on `main`: Android WebRTC + Opus build and release `webrtc-android-m156.1`, the `:webrtc` module (SHA-256 checked), call policy and session machine, Telecom, and E5's real call media (WebRTC session, stats, RNNoise; emulator tests 9/9 on API 29 and 36, CI green). Yours: measure Standard vs Enhanced noise reduction CPU on the OnePlus 5. Next: E5b | E5b ~0.5 day |
+| E, WebRTC and calls | 6 (+E5b) | 7 | All done on `main`, E5b included: voice notes use the phone's Opus encoder, else the bundled one from WebRTC patch 0008 (release `webrtc-android-m156.2`, +5 KB). Yours: Standard vs Enhanced noise CPU on the OnePlus 5; check that a voice note's first moment isn't cut off on a real phone. Open, low: the bundled encoder aborts the app on out-of-memory instead of reporting it (fix in the next WebRTC rebuild); a phone encoder that fails to start falls back without logging why | done |
 | F, push | 4 | 4 | done |
 | G, CI | 4 | 4 | done; G4: release bundle, license notices, Play documents. A `v*` tag release fails until the SQLCipher, WebRTC and Opus notice texts are filled in |
 | I, integration and iPhone↔Android test | 2 | 1 | I1 merged: the app runs on the live server (accounts, messaging, push, device cleanup; crash-safe wipe). Calls switch on with E6. I2 (iPhone↔Android test) waits for calls |
