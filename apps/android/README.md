@@ -2,6 +2,8 @@
 
 Build settings live in the root `build.gradle.kts`, versions only in `gradle/libs.versions.toml`, and the application ID only in `app-id.properties` (`./gradlew checkAppId` fails if it is copied anywhere else; package names and namespaces stay `org.example.app...`).
 
+Before building the app (`assembleDebug`, `bundleRelease`), run `scripts/android-fetch-rnnoise-model.sh` once per checkout: it fetches the RNNoise model weights, which are not committed (see `calls-android/src/main/cpp/rnnoise/VENDORED.md`). The native build needs the Android SDK's CMake 3.22.1; without it, set `cmake.dir` in `local.properties`.
+
 ## Push setup
 
 - Push is battery-optimised: no foreground service for push, and the app never asks for the battery-optimisation exemption.

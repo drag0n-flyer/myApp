@@ -14,9 +14,20 @@ private final class StoreClock: @unchecked Sendable {
     func advance(_ seconds: TimeInterval = 1) { lock.withLock { current = current.addingTimeInterval(seconds) } }
 }
 
+/// The Read receipts switch, as the app's settings hold it.
+private final class ReceiptSwitch: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = true
+    var on: Bool {
+        get { lock.withLock { value } }
+        set { lock.withLock { value = newValue } }
+    }
+}
+
 @MainActor
 private struct Side {
     let device: TestDevice
+    let readReceipts = ReceiptSwitch()
     let outbox: Outbox
     let inbox: InboxProcessor
     let store: LiveChatStore
@@ -26,7 +37,8 @@ private struct Side {
         self.device = device
         let deps = device.deps
         let conversations = ConversationManager(deps: deps, escrowKey: { Data(repeating: 7, count: 32) })
-        outbox = Outbox(deps: deps, conversations: conversations)
+        let readReceipts = readReceipts
+        outbox = Outbox(deps: deps, conversations: conversations, readReceiptsEnabled: { readReceipts.on })
         inbox = InboxProcessor(
             deps: deps, conversations: conversations, handler: IncomingHandler(me: deps.me, now: deps.now, log: { _ in }),
             controls: outbox)
@@ -394,6 +406,100 @@ private func text(_ message: Message?) -> String? {
         #expect(rig.ana.store.chat(id: "acc-bob")?.messages.last?.status == .read)
     }
 
+    /// Ana sends "hello"; Bob syncs (delivered receipt), accepts the request, and Ana syncs.
+    private func helloDeliveredAndAccepted(_ rig: Rig) async throws {
+        try await rig.anaChatsWithBob()
+        rig.ana.store.send(.text("hello"), in: "acc-bob")
+        await rig.ana.store.settle()
+        await rig.bob.store.syncInbox()
+        await rig.bob.store.settle()
+        rig.bob.store.accept(requestID: "acc-ana")
+        await rig.bob.store.settle()
+        await rig.ana.store.syncInbox()
+        #expect(rig.ana.store.chat(id: "acc-bob")?.messages.last?.status == .delivered)
+    }
+
+    @Test func readReceiptsOffSendsNoReadReceiptAndIsNotRetroactive() async throws {
+        let rig = try await Rig.make()
+        try await helloDeliveredAndAccepted(rig)
+        let bob = rig.bob.store
+        rig.bob.readReceipts.on = false
+        bob.markRead(chatID: "acc-ana")
+        await bob.settle()
+        #expect(bob.chat(id: "acc-ana")?.unreadCount == 0)
+        await rig.ana.store.syncInbox()
+        #expect(rig.ana.store.chat(id: "acc-bob")?.messages.last?.status == .delivered)
+
+        // Turning it back on sends nothing for messages read while it was off.
+        rig.bob.readReceipts.on = true
+        bob.markRead(chatID: "acc-ana")
+        await bob.flushOutbox()
+        await bob.settle()
+        await rig.ana.store.syncInbox()
+        #expect(rig.ana.store.chat(id: "acc-bob")?.messages.last?.status == .delivered)
+    }
+
+    @Test func acceptWithReadReceiptsOffSendsNoReadReceipt() async throws {
+        let rig = try await Rig.make()
+        try await rig.anaChatsWithBob()
+        rig.ana.store.send(.text("hello"), in: "acc-bob")
+        await rig.ana.store.settle()
+        await rig.bob.store.syncInbox()
+        await rig.bob.store.settle()
+        let bob = rig.bob.store
+        rig.bob.readReceipts.on = false
+        bob.markRead(chatID: "acc-ana")
+        bob.accept(requestID: "acc-ana")
+        await bob.settle()
+        await rig.ana.store.syncInbox()
+        #expect(rig.ana.store.chat(id: "acc-bob")?.messages.last?.status == .delivered)
+    }
+
+    @Test func queuedReadReceiptIsDroppedWhenSwitchedOff() async throws {
+        let rig = try await Rig.make()
+        try await helloDeliveredAndAccepted(rig)
+        let id = try #require(rig.bob.store.chat(id: "acc-ana")?.messages.last?.id)
+        // Queued while on (or on another device), found by the outbox after the switch went off.
+        try rig.bob.outbox.enqueueControl(.receipt(.read, ids: [id]), chatID: "acc-ana")
+        rig.bob.readReceipts.on = false
+        await rig.bob.store.flushOutbox()
+        #expect(try rig.bob.repo.dueOutbox(at: .distantFuture).isEmpty)
+        // Not held: nothing is sent when it goes back on.
+        rig.bob.readReceipts.on = true
+        await rig.bob.store.flushOutbox()
+        await rig.ana.store.syncInbox()
+        #expect(rig.ana.store.chat(id: "acc-bob")?.messages.last?.status == .delivered)
+    }
+
+    @Test func othersReadTicksHiddenWhileSwitchOff() async throws {
+        let rig = try await Rig.make()
+        try await helloDeliveredAndAccepted(rig)
+        rig.bob.store.markRead(chatID: "acc-ana")
+        await rig.bob.store.settle()
+        await rig.ana.store.syncInbox()
+        #expect(rig.ana.store.chat(id: "acc-bob")?.messages.last?.status == .read)
+
+        rig.ana.readReceipts.on = false
+        rig.ana.store.refresh()
+        #expect(rig.ana.store.chat(id: "acc-bob")?.messages.last?.status == .delivered)
+        // Bob's own view of the message he read is unchanged by Ana's switch.
+        #expect(rig.bob.store.chat(id: "acc-ana")?.messages.last?.status == .read)
+
+        // Stored as read, so it shows again when the switch goes back on.
+        rig.ana.readReceipts.on = true
+        rig.ana.store.refresh()
+        #expect(rig.ana.store.chat(id: "acc-bob")?.messages.last?.status == .read)
+    }
+
+    @Test func ownViewOfReadIncomingMessagesUnchangedWhenSwitchOff() async throws {
+        let rig = try await Rig.make()
+        try await helloDeliveredAndAccepted(rig)
+        rig.bob.readReceipts.on = false
+        rig.bob.store.markRead(chatID: "acc-ana")
+        await rig.bob.store.settle()
+        #expect(rig.bob.store.chat(id: "acc-ana")?.messages.last?.status == .read)
+    }
+
     @Test func controlsQueueBehindTheirMessageAndRetry() async throws {
         let rig = try await Rig.make()
         try await rig.anaChatsWithBob()
@@ -439,5 +545,25 @@ private func text(_ message: Message?) -> String? {
         await store.syncInbox()
         #expect(await rig.server.requests().filter { $0 == "PUT /v1/blocks/acc-bob" }.count == 1)
         #expect(await rig.server.submittedReports().count == 1)
+    }
+}
+
+@MainActor
+@Suite("TestLiveChatStorePendingCreate") struct TestLiveChatStorePendingCreate {
+    /// A create whose commit never reached the server is finished by the next inbox sync (the app's launch sync).
+    @Test func syncInboxFinishesAPendingCreate() async throws {
+        let rig = try await Rig.make()
+        await rig.server.failNextRequests("POST /v1/conversations/", count: 1)
+        await #expect(throws: (any Error).self) {
+            try await ConversationManager(deps: rig.ana.device.deps, escrowKey: { Data(repeating: 7, count: 32) })
+                .preferredConversation(with: "acc-bob")
+        }
+        let serverID = try #require(await rig.server.conversationIDs().first)
+        #expect(try rig.ana.repo.conversation(serverID: serverID)?.active == false)
+
+        await rig.ana.store.syncInbox()
+        #expect(try rig.ana.repo.conversation(serverID: serverID)?.active == true)
+        #expect(await rig.server.epoch(of: serverID) == 1)
+        #expect(await rig.server.conversationIDs() == [serverID])
     }
 }

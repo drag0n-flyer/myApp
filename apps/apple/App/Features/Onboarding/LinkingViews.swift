@@ -11,6 +11,8 @@ struct LinkDeviceView: View {
     @State private var attempt = 0
     @State private var askingServer = false
     @State private var newHost = ""
+    /// Signed in, but the contact list was not imported; the person is told before moving on.
+    @State private var contactsNotCopied = false
 
     var body: some View {
         OnboardingPage(title: "Link this device", message: "Open \(AppBrand.name) on your iPhone → Settings → Linked devices → Link a device, and scan this code.") {
@@ -60,6 +62,11 @@ struct LinkDeviceView: View {
             }
         }
         .task(id: attempt) { await run() }
+        .alert("Your contacts weren't copied", isPresented: $contactsNotCopied) {
+            Button("OK", role: .cancel) { model.onboarding.linked() }
+        } message: {
+            Text("This device is linked, but it starts without your contacts.")
+        }
         .alert("Server address", isPresented: $askingServer) {
             TextField("chat.example.org", text: $newHost)
             Button("Continue") { changeServer() }
@@ -75,9 +82,13 @@ struct LinkDeviceView: View {
         do throws(AccountError) {
             qrText = try await model.account.makeLinkCode().qrText
             if model.isSampleData { return }
-            try await model.account.waitForLinkApproval()
+            let result = try await model.account.waitForLinkApproval()
             await model.didSignIn()
-            model.onboarding.linked()
+            if result.contactsCopied {
+                model.onboarding.linked()
+            } else {
+                contactsNotCopied = true
+            }
         } catch { self.error = error }
     }
 

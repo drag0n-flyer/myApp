@@ -76,6 +76,20 @@ class LinkedDevicesScreenTest {
         rule.onNodeWithText("Couldn't load your devices").assertDoesNotExist()
     }
 
+    /** `device.revoked` reaches the screen as a refresh: the list is read again. */
+    @Test
+    fun aRefreshSignalReloadsTheList() {
+        var loads = 0
+        val account = object : org.example.app.core.account.AccountService by SampleAccountService() {
+            override suspend fun devices() = SampleAccountService().devices().also { loads++ }
+        }
+        val refreshes = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+        rule.setContent { AppTheme { LinkedDevicesScreen(account, onBack = {}, refreshes = refreshes) } }
+        rule.waitUntil(5_000) { loads == 1 }
+        refreshes.tryEmit(Unit)
+        rule.waitUntil(5_000) { loads == 2 }
+    }
+
     @Test
     fun failedRemovalShowsAnError() {
         val account = Failing(failRemove = true)

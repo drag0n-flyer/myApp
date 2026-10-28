@@ -5,3 +5,6 @@ local.properties
 .kotlin/
 *.iml
 .idea/
+.cxx/
+# RNNoise model weights (78 MB), fetched by scripts/android-fetch-rnnoise-model.sh
+calls-android/src/main/cpp/rnnoise/rnnoise_data.c
