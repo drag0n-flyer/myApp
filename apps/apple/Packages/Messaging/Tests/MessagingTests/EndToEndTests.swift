@@ -1,10 +1,35 @@
 import AppCore
 import Foundation
+#if canImport(ImageIO)
+import ImageIO
+import UniformTypeIdentifiers
+#endif
 import LocalStore
 import ServerKit
 import Testing
 @testable import Messaging
 import MessagingTestKit
+
+/// Writes a photo for `sendAttachment`. Where ImageIO exists the photo is re-encoded before sending, so it must be a
+/// real image; elsewhere the bytes are sent as they are.
+private func writeTestPhoto(to url: URL) throws {
+    #if canImport(ImageIO)
+    let (w, h) = (400, 300)
+    let ctx = try #require(CGContext(
+        data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+        space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+    for i in 0..<40 {
+        ctx.setFillColor(red: CGFloat(i % 7) / 7, green: CGFloat(i % 5) / 5, blue: CGFloat(i % 3) / 3, alpha: 1)
+        ctx.fill(CGRect(x: (i * 97) % w, y: (i * 53) % h, width: w / 6, height: h / 6))
+    }
+    let image = try #require(ctx.makeImage())
+    let dest = try #require(CGImageDestinationCreateWithURL(url as CFURL, UTType.jpeg.identifier as CFString, 1, nil))
+    CGImageDestinationAddImage(dest, image, nil)
+    #expect(CGImageDestinationFinalize(dest))
+    #else
+    try Data(repeating: 0xAB, count: 70_000).write(to: url)
+    #endif
+}
 
 /// A clock that moves one second on every reading, so messages sort in the order they were made.
 private final class TickingClock: @unchecked Sendable {
@@ -99,7 +124,7 @@ private struct World {
 
         // bob2 answers with a photo; ana1 downloads it on its own because it is on Wi-Fi.
         let photo = w.bob2.device.directory.appendingPathComponent("beach.jpg")
-        try Data(repeating: 0xAB, count: 70_000).write(to: photo)
+        try writeTestPhoto(to: photo)
         w.bob2.store.sendAttachment(photo, kind: .photo, in: "acc-ana")
         await w.bob2.store.settle()
         await w.ana1.catchUp()
