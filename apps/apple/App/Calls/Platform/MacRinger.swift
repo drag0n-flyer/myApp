@@ -182,8 +182,6 @@ final class MacRinger: NSObject, UNUserNotificationCenterDelegate {
         await MainActor.run { self.act(action, callID: callID, ringedAt: ringedAt, video: video) }
     }
 }
-#endif
-
 /// Resumes a continuation exactly once, from whichever of two tasks finishes first.
 private final class ResumeOnce: @unchecked Sendable {
     private let lock = NSLock()
@@ -197,3 +195,4 @@ private final class ResumeOnce: @unchecked Sendable {
         taken?.resume(returning: value)
     }
 }
+#endif
