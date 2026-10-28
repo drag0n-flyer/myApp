@@ -6,10 +6,21 @@ import org.example.app.contracts.SecretNames
 import org.example.app.contracts.SecretStore
 import org.example.app.contracts.SecretStoreUnavailable
 
+/**
+ * [scheme] is `https` or `http`: the scheme of the client the session was made over. It matters only for a
+ * loopback host (a development server); any other host is always https. Null for a session saved before it
+ * was recorded.
+ */
 @Serializable
-data class Session(val host: String, val accountId: String, val deviceId: String, val token: String) {
+data class Session(
+    val host: String,
+    val accountId: String,
+    val deviceId: String,
+    val token: String,
+    val scheme: String? = null,
+) {
     /** The token is never printed. */
-    override fun toString() = "Session(host=$host, accountId=$accountId, deviceId=$deviceId)"
+    override fun toString() = "Session(host=$host, accountId=$accountId, deviceId=$deviceId, scheme=$scheme)"
 }
 
 /**
