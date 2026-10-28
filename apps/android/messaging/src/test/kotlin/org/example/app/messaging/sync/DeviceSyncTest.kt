@@ -244,6 +244,24 @@ class DeviceSyncTest {
     }
 
     @Test
+    fun listWithoutThisDeviceButWithAForeignOneRemovesNothing() = runTest {
+        val (rig, record) = joined()
+        // Not empty, but neither ana1 (this device) nor ana2: the answer cannot be trusted. ana3 has KeyPackages, so
+        // adding it works and the removal step is reached.
+        val ana3 = TestDevice(rig.server, "acc-ana", "ana3", rig.escrowKeys.publicKey)
+        ana3.api.uploadKeyPackages(ana3.mls.makeKeyPackages(3))
+        rig.server.deviceListOverride = { l -> l.filter { it.id == "ana3" } }
+        runCatching { rig.ana1.reconcile() }
+        rig.ana1.nowMs += 2 * tenMinutes
+        runCatching { rig.ana1.reconcile() }
+        rig.ana1.nowMs += 2 * tenMinutes
+        runCatching { rig.ana1.reconcile() }
+        assertTrue("acc-ana/ana3" in rig.membersOn(rig.ana1, record), "the add path ran, so the removal step was reached")
+        assertTrue("acc-ana/ana2" in rig.membersOn(rig.ana1, record))
+        assertTrue("acc-ana/ana1" in rig.membersOn(rig.ana1, record))
+    }
+
+    @Test
     fun partialListRemovesOnlyTheDevicesMissingFromTwoLists() = runTest {
         val (rig, record) = joined()
         val ana3 = TestDevice(rig.server, "acc-ana", "ana3", rig.escrowKeys.publicKey)
@@ -273,13 +291,21 @@ class DeviceSyncTest {
         rig.ana1.nowMs = first + tenMinutes - 1
         rig.ana1.reconcile()
         assertTrue("acc-ana/ana2" in rig.membersOn(rig.ana1, record))
-        // A device listed as linked or seen in the last ten minutes is never a removal candidate, whatever else is true.
-        rig.server.deviceListOverride = { l ->
-            l.filter { it.id != "ana2" } + org.example.app.contracts.DeviceRecord(
-                "ana2", "ana2", "android", java.time.Instant.ofEpochMilli(rig.ana1.nowMs - 1000), null, false,
-            )
-        }
-        rig.ana1.nowMs += 5 * tenMinutes
+    }
+
+    @Test
+    fun deviceListedAfterTheMissingMarkWithTheClockBehindIsNotRemoved() = runTest {
+        val (rig, record) = joined()
+        val base = rig.ana1.nowMs
+        // ana2 is listed at base + 30 min ...
+        rig.ana1.nowMs = base + 3 * tenMinutes
+        rig.ana1.reconcile()
+        // ... then the wall clock is back at base: the missing mark (base) is 10 minutes old at base + 10 min, but ana2
+        // was seen "in the future", so the seen check keeps it.
+        rig.ana1.nowMs = base
+        rig.server.deviceListOverride = { l -> l.filter { it.id != "ana2" } }
+        rig.ana1.reconcile()
+        rig.ana1.nowMs = base + tenMinutes
         rig.ana1.reconcile()
         assertTrue("acc-ana/ana2" in rig.membersOn(rig.ana1, record))
     }

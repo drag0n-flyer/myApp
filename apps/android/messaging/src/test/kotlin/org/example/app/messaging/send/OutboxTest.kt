@@ -219,7 +219,7 @@ class OutboxTest {
                 throw ServerException(400, "escrow_required", null, null)
             }
         }
-        val outbox = Outbox(rig.ana1.me, rig.ana1.mls, refusing, rig.ana1.repo, rig.ana1.lock, rig.ana1.clock, rig.ana1.manager, rig.ana1.escrow, syncOnce = {})
+        val outbox = Outbox(rig.ana1.me, rig.ana1.mls, refusing, rig.ana1.repo, rig.ana1.lock, rig.ana1.clock, rig.ana1.manager, rig.ana1.escrow, syncOnce = {}, readReceiptsEnabled = { true })
         val lookupsBefore = rig.server.calls.count { it == "acc-ana/ana1 conversation" }
         val failure = assertFailsWith<OutboxError.Rejected> { outbox.send(text("m-1"), rig.ana1.repo.conversation(record.serverId)!!) }
         assertEquals("escrow_required", failure.code)

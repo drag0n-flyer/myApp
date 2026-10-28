@@ -20,8 +20,8 @@ import org.example.app.messaging.sync.InboxProcessor
  */
 class Receipts(
     private val outbox: Outbox,
-    /** The Read receipts switch (`SettingsStore` in `:app`), asked at each call. Default: on. */
-    private val readReceiptsEnabled: () -> Boolean = { true },
+    /** The Read receipts switch (`SettingsStore` in `:app`), asked at each call. Required: no default. */
+    private val readReceiptsEnabled: () -> Boolean,
 ) {
     /** Registers the delivered receipts on [processor]'s drains. */
     fun attach(processor: InboxProcessor) {

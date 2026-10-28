@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlinx.coroutines.test.runTest
 import org.example.app.messaging.content.ContentEnvelope
+import org.example.app.messaging.content.LinkSnapshot
 import org.example.app.messaging.content.ReceiptKind
 import org.example.app.messaging.sync.NOW
 import org.example.app.messaging.sync.Rig
@@ -108,6 +109,63 @@ class ReceiptsTest {
         receipts.read("acc-ana", listOf("m-2"))
         rig.bob1.outbox.flush()
         assertEquals(2, rig.bobPosts().size)
+    }
+
+    @Test
+    fun queuedReadReceiptIsDroppedWhenTheSwitchIsOffAtSendTime() = runTest {
+        val rig = joined()
+        rig.ana1.outbox.enqueue(ContentEnvelope.Text("m-1", NOW, "one"), "acc-bob")
+        rig.ana1.outbox.flush()
+        rig.bob1.processor.sync()
+        rig.bob1.receipts.read("acc-ana", listOf("m-1"))
+        assertEquals(1, rig.bob1.repo.dueOutbox(Long.MAX_VALUE).size)
+
+        rig.bob1.readReceiptsSwitch = { false }
+        rig.bob1.outbox.flush()
+        assertEquals(0, rig.bobPosts().size)
+        assertEquals(0, rig.bob1.repo.dueOutbox(Long.MAX_VALUE).size, "dropped, not held")
+
+        // Back on: still nothing goes out for it.
+        rig.bob1.readReceiptsSwitch = { true }
+        rig.bob1.outbox.flush()
+        assertEquals(0, rig.bobPosts().size)
+    }
+
+    @Test
+    fun droppedReadReceiptDoesNotBlockTheChatQueueAndDeliveredAndMessagesStillGo() = runTest {
+        val rig = joined()
+        rig.ana1.outbox.enqueue(ContentEnvelope.Text("m-1", NOW, "one"), "acc-bob")
+        rig.ana1.outbox.flush()
+        rig.bob1.processor.sync()
+        rig.bob1.receipts.read("acc-ana", listOf("m-1"))
+        rig.bob1.outbox.enqueue(ContentEnvelope.Text("b-1", NOW, "reply"), "acc-ana")
+        rig.bob1.outbox.enqueueControl("acc-ana") { id, at -> ContentEnvelope.Receipt(id, at, ReceiptKind.Delivered, listOf("m-1")) }
+
+        rig.bob1.readReceiptsSwitch = { false }
+        rig.bob1.outbox.flush()
+        assertEquals(2, rig.bobPosts().size, "the reply and the delivered receipt are sent")
+        assertEquals(0, rig.bob1.repo.dueOutbox(Long.MAX_VALUE).size)
+        rig.ana1.processor.sync()
+        assertEquals("delivered", rig.ana1.repo.message("m-1")?.status)
+    }
+
+    @Test
+    fun anotherDeviceSwitchingItOffThroughSyncStopsQueuedReadReceipts() = runTest {
+        val rig = joined()
+        val bob = rig.bob1
+        bob.readReceiptsSwitch = { bob.repo.get("setting.readReceipts")?.decodeToString() != "false" }
+        rig.ana1.outbox.enqueue(ContentEnvelope.Text("m-1", NOW, "one"), "acc-bob")
+        rig.ana1.outbox.flush()
+        bob.processor.sync()
+        bob.receipts.read("acc-ana", listOf("m-1"))
+        assertEquals(1, bob.repo.dueOutbox(Long.MAX_VALUE).size)
+
+        // bob2 turned the switch off; its snapshot arrives here.
+        val snapshot = LinkSnapshot(1, emptyList(), emptyList(), emptyList(), emptyList(), mapOf("setting.readReceipts" to "false".encodeToByteArray()))
+        bob.deviceSync.import(snapshot.encode())
+        bob.outbox.flush()
+        assertEquals(0, rig.bobPosts().size)
+        assertEquals(0, bob.repo.dueOutbox(Long.MAX_VALUE).size)
     }
 
     @Test

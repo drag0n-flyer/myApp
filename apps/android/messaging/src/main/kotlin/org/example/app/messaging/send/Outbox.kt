@@ -12,6 +12,7 @@ import org.example.app.contracts.MlsEngine
 import org.example.app.contracts.ServerException
 import org.example.app.messaging.content.ContentCodec
 import org.example.app.messaging.content.ContentEnvelope
+import org.example.app.messaging.content.ReceiptKind
 import org.example.app.messaging.content.TextLimit
 import org.example.app.messaging.crypto.EscrowException
 import org.example.app.messaging.ports.Clock
@@ -62,6 +63,8 @@ interface ControlSender {
  * @param escrow seals the escrow copy of a server-readable chat; null makes such a send fail with
  *   [OutboxError.EscrowFailed] before anything is encrypted.
  * @param syncOnce `InboxProcessor.sync`, run after a `stale_epoch` so the next try starts from the current epoch.
+ * @param readReceiptsEnabled the Read receipts switch, asked when a queued read receipt is about to be sent; a read
+ *   receipt found with the switch off is dropped (not held). Required so that wiring cannot forget it.
  * @param onEscrowRejected drops the cached escrow key when the server refuses a copy.
  */
 class Outbox(
@@ -74,6 +77,7 @@ class Outbox(
     private val conversations: ConversationManager,
     private val escrow: EscrowSealer?,
     private val syncOnce: suspend () -> Unit,
+    private val readReceiptsEnabled: () -> Boolean,
     private val fold: (String) -> String = { it.lowercase(Locale.ROOT) },
     private val onEscrowRejected: () -> Unit = {},
     private val log: (String) -> Unit = { System.err.println(it) },
@@ -152,13 +156,13 @@ class Outbox(
 
     /** Returns true when the head left the queue (sent or failed). */
     private suspend fun process(item: OutboxRecord): Boolean {
-        val envelope = try {
-            ContentCodec.decode(item.envelope)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            // A row that cannot be read never will be: drop it so it does not block its chat on every flush.
-            repo.completeSend(item.messageId, "failed")
+        // ContentCodec.decode never throws: undecodable bytes give ContentEnvelope.Unknown (at = 0), which the age check
+        // below drops.
+        val envelope = ContentCodec.decode(item.envelope)
+        // A read receipt found with the switch off (also when another device turned it off through sync) is dropped,
+        // not held: holding it would send it later and block the chat's queue.
+        if (envelope is ContentEnvelope.Receipt && envelope.s == ReceiptKind.Read && !readReceiptsEnabled()) {
+            repo.removeOutbox(item.messageId)
             return true
         }
         // A control message has no message row; its envelope time is when it was queued.

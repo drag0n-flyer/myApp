@@ -28,6 +28,8 @@ class TestDevice(val server: FakeDeliveryServer, account: String, device: String
     val repo = InMemoryRepository()
     var nowMs = NOW
     val clock = Clock { nowMs }
+    /** The Read receipts switch both the outbox and the receipts see; a test replaces it. */
+    var readReceiptsSwitch: () -> Boolean = { true }
     val membership = Membership(me, mls, realMemberKeys = false, clock = clock)
     val logs = mutableListOf<String>()
     val handler = IncomingHandler(me, clock, log = { logs += it })
@@ -42,7 +44,7 @@ class TestDevice(val server: FakeDeliveryServer, account: String, device: String
         private set
     var outbox: Outbox = makeOutbox()
         private set
-    var receipts: Receipts = Receipts(outbox)
+    var receipts: Receipts = Receipts(outbox) { readReceiptsSwitch() }
         private set
     var deviceSync: DeviceSync = makeDeviceSync()
         private set
@@ -50,7 +52,7 @@ class TestDevice(val server: FakeDeliveryServer, account: String, device: String
 
     private fun makeManager() = ConversationManager(me, mls, api, repo, lock, clock, membership, escrow, syncOnce = { syncs += 1; processor.sync() })
     private fun makeProcessor() = InboxProcessor(mls, api, repo, lock, clock, manager, handler, membership, OwnDeviceNotices(repo, api, notifier))
-    private fun makeOutbox() = Outbox(me, mls, api, repo, lock, clock, manager, escrow, syncOnce = { processor.sync() })
+    private fun makeOutbox() = Outbox(me, mls, api, repo, lock, clock, manager, escrow, syncOnce = { processor.sync() }, readReceiptsEnabled = { readReceiptsSwitch() })
     private fun makeDeviceSync() = DeviceSync(
         me, mls, api, repo, lock, clock, manager, KeyPackagePool(mls, api, repo, lock, clock),
         wipeMls = { wipes += "mls" }, deleteSigningKey = { wipes += "signingKey" },
@@ -61,7 +63,7 @@ class TestDevice(val server: FakeDeliveryServer, account: String, device: String
         manager = makeManager()
         processor = makeProcessor()
         outbox = makeOutbox()
-        receipts = Receipts(outbox)
+        receipts = Receipts(outbox) { readReceiptsSwitch() }
         deviceSync = makeDeviceSync()
     }
 
