@@ -22,6 +22,8 @@ add_library(rnnoise_jni SHARED
 )
 
 target_include_directories(rnnoise_jni PRIVATE ${RNNOISE_DIR} ${RNNOISE_DIR}/include)
-target_compile_definitions(rnnoise_jni PRIVATE NDEBUG RNNOISE_EXPORT=)
+# DISABLE_DEBUG_FLOAT: upstream's default (configure.ac, unless --enable-dnn-debug-float). It leaves
+# the float debug copy of the weights out of rnnoise_data.c, so the model runs on its int8 weights.
+target_compile_definitions(rnnoise_jni PRIVATE NDEBUG RNNOISE_EXPORT= DISABLE_DEBUG_FLOAT)
 target_compile_options(rnnoise_jni PRIVATE -O2 -fvisibility=hidden)
 target_link_libraries(rnnoise_jni PRIVATE m)

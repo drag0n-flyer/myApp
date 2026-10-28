@@ -1,4 +1,4 @@
-// JNI bridge for org.example.app.calls.android.media.Rnnoise.
+// JNI bridge for org.example.app.calls.android.media.RnnoiseJni.
 #include <jni.h>
 #include <stdint.h>
 
@@ -7,7 +7,7 @@
 #define FRAME_SAMPLES 480
 
 JNIEXPORT jlong JNICALL
-Java_org_example_app_calls_android_media_Rnnoise_nativeCreate(JNIEnv *env, jclass cls) {
+Java_org_example_app_calls_android_media_RnnoiseJni_nativeCreate(JNIEnv *env, jclass cls) {
     (void)env;
     (void)cls;
     if (rnnoise_get_frame_size() != FRAME_SAMPLES) return 0;
@@ -15,7 +15,7 @@ Java_org_example_app_calls_android_media_Rnnoise_nativeCreate(JNIEnv *env, jclas
 }
 
 JNIEXPORT jfloat JNICALL
-Java_org_example_app_calls_android_media_Rnnoise_nativeProcess(JNIEnv *env, jclass cls, jlong handle, jfloatArray frame) {
+Java_org_example_app_calls_android_media_RnnoiseJni_nativeProcess(JNIEnv *env, jclass cls, jlong handle, jfloatArray frame) {
     (void)cls;
     DenoiseState *st = (DenoiseState *)(intptr_t)handle;
     if (st == NULL || (*env)->GetArrayLength(env, frame) != FRAME_SAMPLES) return -1.0f;
@@ -27,7 +27,7 @@ Java_org_example_app_calls_android_media_Rnnoise_nativeProcess(JNIEnv *env, jcla
 }
 
 JNIEXPORT void JNICALL
-Java_org_example_app_calls_android_media_Rnnoise_nativeDestroy(JNIEnv *env, jclass cls, jlong handle) {
+Java_org_example_app_calls_android_media_RnnoiseJni_nativeDestroy(JNIEnv *env, jclass cls, jlong handle) {
     (void)env;
     (void)cls;
     DenoiseState *st = (DenoiseState *)(intptr_t)handle;

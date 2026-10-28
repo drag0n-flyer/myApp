@@ -10,5 +10,9 @@ TAR=$(mktemp -d)/rnnoise_data-$HASH.tar.gz
 curl -fsSL -o "$TAR" "https://media.xiph.org/rnnoise/models/rnnoise_data-$HASH.tar.gz"
 if command -v sha256sum >/dev/null; then GOT=$(sha256sum "$TAR" | awk '{print $1}'); else GOT=$(shasum -a 256 "$TAR" | awk '{print $1}'); fi
 [ "$GOT" = "$HASH" ] || { echo "checksum mismatch: $GOT" >&2; exit 1; }
-tar -xzOf "$TAR" src/rnnoise_data.c > "$OUT"
+# Extract next to the target, then move into place only when the extraction succeeded.
+TMP="$OUT.tmp.$$"
+trap 'rm -f "$TMP"' EXIT
+tar -xzOf "$TAR" src/rnnoise_data.c > "$TMP"
+mv "$TMP" "$OUT"
 echo "ok: $OUT"

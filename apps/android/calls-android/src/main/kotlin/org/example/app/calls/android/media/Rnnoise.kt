@@ -31,35 +31,64 @@ class CaptureProcessor(private val denoiser: FrameDenoiser) {
     }
 }
 
-/**
- * The vendored RNNoise (src/main/cpp/rnnoise, BSD-3-Clause) through JNI. Not thread-safe:
- * use one instance per capture stream, and [close] it when the call ends.
- */
-class Rnnoise : FrameDenoiser, AutoCloseable {
-    private var handle: Long = nativeCreate().also { check(it != 0L) { "rnnoise_create failed" } }
+/** The native calls behind [Rnnoise]; a seam so tests can run without the native library. */
+internal interface RnnoiseNative {
+    /** A new denoiser state, or 0 on failure. */
+    fun create(): Long
 
+    /** Denoises [frame] in place and returns the voice probability. */
+    fun process(handle: Long, frame: FloatArray): Float
+
+    fun destroy(handle: Long)
+}
+
+/** The JNI functions in `librnnoise_jni.so` (src/main/cpp/rnnoise_jni.c). */
+internal object RnnoiseJni : RnnoiseNative {
+    init {
+        System.loadLibrary("rnnoise_jni")
+    }
+
+    override fun create(): Long = nativeCreate()
+
+    override fun process(handle: Long, frame: FloatArray): Float = nativeProcess(handle, frame)
+
+    override fun destroy(handle: Long) = nativeDestroy(handle)
+
+    @JvmStatic private external fun nativeCreate(): Long
+
+    @JvmStatic private external fun nativeProcess(handle: Long, frame: FloatArray): Float
+
+    @JvmStatic private external fun nativeDestroy(handle: Long)
+}
+
+/**
+ * The vendored RNNoise (src/main/cpp/rnnoise, BSD-3-Clause) through JNI. Use one instance per
+ * capture stream and [close] it when the call ends. [denoise] and [close] are synchronized, so
+ * [close] never frees the state while a frame is being processed. An instance that is never
+ * closed frees its state when it is finalized (java.lang.ref.Cleaner needs API 33; minSdk is 29).
+ */
+class Rnnoise internal constructor(private val native: RnnoiseNative) : FrameDenoiser, AutoCloseable {
+    constructor() : this(RnnoiseJni)
+
+    private var handle: Long = native.create().also { check(it != 0L) { "rnnoise_create failed" } }
+
+    @Synchronized
     override fun denoise(frame: FloatArray) {
         require(frame.size == RNNOISE_FRAME_SAMPLES) { "RNNoise needs $RNNOISE_FRAME_SAMPLES-sample frames, got ${frame.size}" }
         check(handle != 0L) { "RNNoise is closed" }
-        nativeProcess(handle, frame)
+        native.process(handle, frame)
     }
 
+    @Synchronized
     override fun close() {
         if (handle != 0L) {
-            nativeDestroy(handle)
+            native.destroy(handle)
             handle = 0L
         }
     }
 
-    private companion object {
-        init {
-            System.loadLibrary("rnnoise_jni")
-        }
-
-        @JvmStatic external fun nativeCreate(): Long
-
-        @JvmStatic external fun nativeProcess(handle: Long, frame: FloatArray): Float
-
-        @JvmStatic external fun nativeDestroy(handle: Long)
+    @Suppress("ProtectedInFinal", "Unused")
+    protected fun finalize() {
+        close()
     }
 }
