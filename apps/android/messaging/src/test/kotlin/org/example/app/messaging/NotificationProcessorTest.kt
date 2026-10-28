@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import org.example.app.contracts.CallSignalPayload
@@ -13,6 +14,7 @@ import org.example.app.messaging.content.ContentEnvelope
 import org.example.app.messaging.content.ReceiptKind
 import org.example.app.messaging.ports.ContactRecord
 import org.example.app.messaging.ports.ConversationRecord
+import org.example.app.messaging.ports.RawInboxRecord
 import org.example.app.messaging.sync.NOW
 import org.example.app.messaging.sync.Rig
 import org.example.app.messaging.sync.TestDevice
@@ -167,6 +169,21 @@ class NotificationProcessorTest {
         val s = setup(contact = true)
         s.rig.server.failNextInboxReads = 1
         assertFailsWith<Exception> { s.np.fetchOutcomes() }
+    }
+
+    @Test
+    fun fetchFailureThrowsEvenWhenLeftoverRowsFillTheResults() = runTest {
+        val s = setup(contact = true)
+        s.rig.ana1.send(s.conv, ContentEnvelope.Text("m-left", NOW, "left over"))
+        val item = s.rig.server.pending("acc-bob/bob1").last()
+        // A raw row an earlier run stored but did not drain: this run's drain reports it.
+        s.rig.bob1.repo.insertRaw(listOf(RawInboxRecord(
+            cursor = 9_000, kind = "message", conversationId = s.conv.serverId, seq = null, epoch = 0,
+            senderAccount = "acc-ana", senderDevice = "ana1", payload = item.payload, sentAt = NOW,
+        )))
+        s.rig.server.failNextInboxReads = 1
+        assertFailsWith<Exception> { s.np.fetchOutcomes() }
+        assertNotNull(s.rig.bob1.repo.message("m-left"), "the leftover row was still drained")
     }
 
     @Test

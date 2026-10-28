@@ -183,12 +183,12 @@ class IncomingHandler(
             }
             is ContentEnvelope.Delete -> {
                 val message = repo.message(envelope.target)
-                if (message != null && message.chatId == chatId) repo.markDeleted(envelope.target, account)
+                if (message != null && message.chatId == chatId && !ChatMapping.isReservedId(envelope.target)) repo.markDeleted(envelope.target, account)
                 AppliedResult.Ignored
             }
             is ContentEnvelope.React -> {
                 val message = repo.message(envelope.target)
-                if (message != null && message.chatId == chatId && !message.deleted) repo.setReaction(message.id, account, envelope.e)
+                if (message != null && message.chatId == chatId && !message.deleted && !ChatMapping.isReservedId(envelope.target)) repo.setReaction(message.id, account, envelope.e)
                 AppliedResult.Ignored
             }
             is ContentEnvelope.Receipt -> {

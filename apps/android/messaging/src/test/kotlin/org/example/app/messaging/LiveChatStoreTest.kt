@@ -217,6 +217,23 @@ class LiveChatStoreTest {
     }
 
     @Test
+    fun peerDeleteAndReactOnReservedIdsChangeNothing() = runTest {
+        val (rig, s, conv) = joined()
+        val bob = rig.bob1
+        val env = org.example.app.messaging.content.ContentCodec.encode(ContentEnvelope.Text("x", NOW, "x"))
+        for (id in listOf("call-mine", "join-failed-3")) {
+            bob.repo.insertMessage(MessageRecord(id, "acc-ana", conv.serverId, "acc-ana", null, NOW, NOW, env, "delivered"))
+            rig.ana1.send(conv, ContentEnvelope.Delete("d-$id", NOW, id))
+            rig.ana1.send(conv, ContentEnvelope.React("r-$id", NOW, id, "+"))
+        }
+        s.syncInbox()
+        for (id in listOf("call-mine", "join-failed-3")) {
+            assertFalse(bob.repo.message(id)!!.deleted, "$id not deleted by a peer")
+            assertTrue(bob.repo.reactions(id).isEmpty(), "$id has no peer reaction")
+        }
+    }
+
+    @Test
     fun peerMessageIdsWithReservedPrefixesAreRejected() = runTest {
         val (rig, s, conv) = joined()
         rig.ana1.send(conv, ContentEnvelope.Text("call-x", NOW, "fake call line"))

@@ -195,9 +195,10 @@ class NotificationProcessor(
      */
     suspend fun fetchOutcomes(maxItems: Int = 20): List<NotificationOutcome> {
         val outcome = inbox.syncCollecting(maxItems)
-        // A fetch that failed before anything was stored must reach the fetch runner, so it retries. When some items
-        // were stored first, they are shown; the next push or app start fetches the rest.
-        outcome.failure?.let { if (outcome.results.isEmpty()) throw it }
+        // A fetch that failed before it stored anything must reach the fetch runner, so it retries, whatever the drain
+        // found left over from an earlier run. When this run stored some items first, they are shown; the next push or
+        // app start fetches the rest.
+        if (outcome.failedOutright) throw outcome.failure!!
         return outcome.results.mapNotNull { result ->
             (result as? AppliedResult.Stored)?.let { outcomeFor(it.message) }?.takeIf { it !== NotificationOutcome.Nothing }
         }
