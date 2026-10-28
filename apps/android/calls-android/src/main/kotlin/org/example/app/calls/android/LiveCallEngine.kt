@@ -95,9 +95,14 @@ class LiveCallEngine(
     private var shownPhase: CallPhase? = null
     /** The call the phone shows (Telecom, ringtone, notification, service) until it is reported ended. Any thread. */
     @Volatile private var shownCall: String? = null
-    private var session: MediaSession? = null
-    private var mediaJob: Job? = null
-    private var ticker: Job? = null
+    /**
+     * Set from the queue; also taken by [shutdown]'s timeout branch while the queue may be closing them too, so
+     * [session], [mediaJob] and [ticker] are set, and taken and cleared together, under [sessionLock].
+     */
+    @Volatile private var session: MediaSession? = null
+    private val sessionLock = Any()
+    @Volatile private var mediaJob: Job? = null
+    @Volatile private var ticker: Job? = null
     /** Calls whose history (or missed notice) is written: each is written once. */
     private val recorded = LinkedHashSet<String>()
 
@@ -171,6 +176,8 @@ class LiveCallEngine(
                 shownCall = null
                 safely { controller.reportEnded(id, CallEndReason.HungUp) }
             }
+            // The queue is stuck behind the hang-up: close the peer connection and the microphone from here.
+            closeMedia()
         }
     }
 
@@ -318,8 +325,10 @@ class LiveCallEngine(
         closeMedia()
         return try {
             val s = media.create()
-            session = s
-            mediaJob = scope.launch { s.events.collect { submit(CallEvent.Media(it)) } }
+            synchronized(sessionLock) {
+                session = s
+                mediaJob = scope.launch { s.events.collect { submit(CallEvent.Media(it)) } }
+            }
             s.configure(signaling.iceServers(), effect.policy, effect.video)
             null
         } catch (e: CancellationException) {
@@ -353,10 +362,16 @@ class LiveCallEngine(
     }
 
     private suspend fun closeMedia() {
-        ticker?.cancel(); ticker = null
-        mediaJob?.cancel(); mediaJob = null
-        val s = session ?: return
-        session = null
+        val (t, m, s) = synchronized(sessionLock) {
+            Triple(ticker, mediaJob, session).also {
+                ticker = null
+                mediaJob = null
+                session = null
+            }
+        }
+        t?.cancel()
+        m?.cancel()
+        s ?: return
         try {
             s.close()
         } catch (e: CancellationException) {
@@ -395,7 +410,8 @@ class LiveCallEngine(
         }
     }
 
-    private fun startTicker() {
+    private fun startTicker() = synchronized(sessionLock) {
+        if (ticker != null) return@synchronized
         ticker = scope.launch {
             var n = 0
             while (true) {

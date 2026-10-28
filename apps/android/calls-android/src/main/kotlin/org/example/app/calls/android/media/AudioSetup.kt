@@ -13,10 +13,10 @@ data class AudioProcessing(
 )
 
 /**
- * Audio settings shared by the media session. WebRtcMediaSession applies them in E5 part 2:
- * `TODO(E5 part 2)`: pass [FIELD_TRIALS] to `PeerConnectionFactory.InitializationOptions`, build the
- * `JavaAudioDeviceModule` with the hardware flags below, and install [captureProcessor] as the
- * capture hook.
+ * Audio settings shared by the media session. [WebRtcFactory] passes [FIELD_TRIALS] to
+ * `PeerConnectionFactory.InitializationOptions` and builds the `JavaAudioDeviceModule` with the hardware flags
+ * below; [WebRtcMediaSession] maps the noise setting with [processing]. In a call RNNoise runs natively in
+ * WebRTC's capture hook ([CaptureHook]); [captureProcessor] is the same framing on 16-bit samples in Kotlin.
  */
 object AudioSetup {
     const val FIELD_TRIALS = "WebRTC-Audio-OpusGeneratePlc/Enabled/"

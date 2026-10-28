@@ -2,6 +2,7 @@ package org.example.app.calls.android
 
 import android.content.Context
 import android.os.Bundle
+import org.example.app.calls.android.media.WebRtcMediaSession
 import org.example.app.calls.android.telecom.FallbackCallController
 import org.example.app.calls.session.MediaSessionFactory
 import org.example.app.core.calls.CallEngine
@@ -20,15 +21,9 @@ object CallsRuntime {
 
 /** Where the peer connection plugs into [LiveCallEngine]. */
 object CallMedia {
-    /**
-     * [settings] is read when each call starts (the noise setting). Until E5 lands every call fails at setup,
-     * cleanly: the engine turns the exception into a local failure.
-     */
-    // TODO(E5): return MediaSessionFactory { WebRtcMediaSession(context, settings()) } here; nothing else changes.
-    // TODO(E5 part 2): WebRtcMediaSession.stats() maps E5's TransportStats (StatsMapper) into MediaStats.
-    @Suppress("UNUSED_PARAMETER")
+    /** [settings] is read when each call starts (the noise setting). */
     fun factory(context: Context, settings: () -> UserSettings): MediaSessionFactory =
-        MediaSessionFactory { throw UnsupportedOperationException("media session not available") }
+        MediaSessionFactory { WebRtcMediaSession(context, settings()) }
 }
 
 /** [CallInfo] in intent and Telecom extras. IDs and names only. */

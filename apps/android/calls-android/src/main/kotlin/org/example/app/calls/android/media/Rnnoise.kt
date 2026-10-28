@@ -1,5 +1,7 @@
 package org.example.app.calls.android.media
 
+import org.example.app.calls.android.BuildConfig
+
 /** RNNoise works on 10 ms mono frames at 48 kHz. */
 const val RNNOISE_FRAME_SAMPLES = 480
 
@@ -91,4 +93,64 @@ class Rnnoise internal constructor(private val native: RnnoiseNative) : FrameDen
     protected fun finalize() {
         close()
     }
+}
+
+/** The native WebRTC capture hook in `librnnoise_jni.so` (rnnoise_jni.c). */
+internal object CaptureHookJni {
+    init {
+        System.loadLibrary("rnnoise_jni")
+    }
+
+    @JvmStatic external fun nativeProcessor(): Long
+
+    @JvmStatic external fun nativeSetEnabled(on: Boolean)
+
+    @JvmStatic external fun nativeDenoisedFrames(): Long
+
+    @JvmStatic external fun nativeLastFrameSize(): Int
+
+    @JvmStatic external fun nativeResetForCall()
+
+    @JvmStatic external fun nativeSetTone(on: Boolean)
+
+    @JvmStatic external fun nativeToneFrames(): Long
+}
+
+/**
+ * RNNoise in WebRTC's capture path (patch 0007's `AudioCapturePostProcessing`): native code, so audio frames
+ * never cross JNI. One hook per process, as the peer connection factory is one per process; [enabled] turns
+ * RNNoise on for Enhanced. It denoises 480-sample frames (10 ms at 48 kHz) and passes other rates through.
+ */
+object CaptureHook {
+    /** The address of the hook's `AppAudioCaptureProcessor`, for `AudioCapturePostProcessing`. */
+    internal fun processor(): Long = CaptureHookJni.nativeProcessor()
+
+    var enabled: Boolean = false
+        set(value) {
+            field = value
+            CaptureHookJni.nativeSetEnabled(value)
+        }
+
+    /** Frames RNNoise has denoised since the process started. */
+    val denoisedFrames: Long get() = CaptureHookJni.nativeDenoisedFrames()
+
+    /** The size of the last frame the hook saw (480 at 48 kHz), or 0 before any. */
+    val lastFrameSize: Int get() = CaptureHookJni.nativeLastFrameSize()
+
+    /** Drops RNNoise's history before the next frame, so a call does not start from the last call's state. */
+    fun resetForCall() = CaptureHookJni.nativeResetForCall()
+
+    /**
+     * Test stimulus: replaces the captured audio with a 440 Hz tone, so loopback tests send real audio. Debug
+     * builds only: the native code is not in release builds, so the setter does nothing there.
+     */
+    internal var tone: Boolean = false
+        set(value) {
+            if (!BuildConfig.DEBUG) return
+            field = value
+            CaptureHookJni.nativeSetTone(value)
+        }
+
+    /** Frames the tone has been written into; 0 in release builds. */
+    internal val toneFrames: Long get() = if (BuildConfig.DEBUG) CaptureHookJni.nativeToneFrames() else 0L
 }

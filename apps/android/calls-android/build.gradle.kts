@@ -4,6 +4,8 @@ plugins {
 
 android {
     namespace = "org.example.app.calls.android"
+    // BuildConfig.DEBUG keeps the test tone (CaptureHook.tone) out of release builds.
+    buildFeatures { buildConfig = true }
     // RNNoise (src/main/cpp). Same NDK as the mlsffi build; CMake from the Android SDK.
     ndkVersion = "28.2.13676358"
 
