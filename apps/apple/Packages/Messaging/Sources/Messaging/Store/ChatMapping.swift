@@ -16,8 +16,7 @@ enum ChatMapping {
         case "delivered": .delivered
         case "read": showRead ? .read : .delivered
         case "sent": .sent
-        // `failed` has no AppCore case yet: it shows as not yet sent. `LiveChatStore.failedMessageIDs` and
-        // `retrySend` let the UI offer a retry.
+        case "failed": .failed
         default: .sending
         }
     }

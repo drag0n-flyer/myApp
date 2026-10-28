@@ -125,12 +125,10 @@ final class MacRinger: NSObject, UNUserNotificationCenterDelegate {
 
     /// `call.status` within 5 s; nil on timeout (the call is treated as still ringing).
     private static func status(of callID: String, via handler: MacRingHandling) async -> CallStatus? {
-        await withTaskGroup(of: CallStatus?.self) { group in
-            group.addTask { await handler.macRingStatus(callID: callID) }
-            group.addTask { try? await Task.sleep(for: .seconds(5)); return nil }
-            let first = await group.next() ?? nil
-            group.cancelAll()
-            return first
+        await withCheckedContinuation { (continuation: CheckedContinuation<CallStatus?, Never>) in
+            let once = ResumeOnce(continuation)
+            Task { @MainActor in once.resume(await handler.macRingStatus(callID: callID)) }
+            Task { try? await Task.sleep(for: .seconds(5)); once.resume(nil) }
         }
     }
 
@@ -182,6 +180,19 @@ final class MacRinger: NSObject, UNUserNotificationCenterDelegate {
         }
         guard let action, let callID else { return }
         await MainActor.run { self.act(action, callID: callID, ringedAt: ringedAt, video: video) }
+    }
+}
+/// Resumes a continuation exactly once, from whichever of two tasks finishes first.
+private final class ResumeOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<CallStatus?, Never>?
+    init(_ continuation: CheckedContinuation<CallStatus?, Never>) { self.continuation = continuation }
+    func resume(_ value: CallStatus?) {
+        let taken = lock.withLock { () -> CheckedContinuation<CallStatus?, Never>? in
+            defer { continuation = nil }
+            return continuation
+        }
+        taken?.resume(returning: value)
     }
 }
 #endif

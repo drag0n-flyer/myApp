@@ -127,6 +127,8 @@ struct LiveMessaging {
     /// MERGE(M5): the real engine, `makeMLSEngine(identity:storage:)` (plan 4), keeping its group state in the
     /// shared container so the notification extension can open the same state. Until it exists this returns
     /// nil and the app keeps the sample store. It never returns `FakeMLSEngine`: that has no cryptography.
+    static var isAvailable: Bool { makeEngineAvailable() }
+
     private static func makeEngineAvailable() -> Bool {
         #if canImport(MLSFFIBindings)
         return true

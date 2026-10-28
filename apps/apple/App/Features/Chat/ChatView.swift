@@ -62,7 +62,8 @@ struct ChatView: View {
                         reply: message.replyToID.flatMap { id in chat.messages.first { $0.id == id } },
                         replySenderName: { id in id == model.chatStore.me.id ? String(localized: "You") : model.contact(id: id)?.displayName ?? "" },
                         showsMedia: downloaded.contains(message.id) || autoDownloads(message),
-                        download: { downloaded.insert(message.id) }
+                        download: { downloaded.insert(message.id) },
+                        retry: { model.retrySend(messageID: message.id) }
                     )
                     .id(message.id)
                 }

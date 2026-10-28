@@ -3,15 +3,8 @@ import LocalStore
 import Messaging
 import SecureMessaging
 
-/// MERGE POINT (I1). The pieces below belong to other lanes and are not on this branch yet. When
-/// they merge, replace the bodies marked `MERGE(I1)` and nothing else in the extension:
-///
-/// - `makeEngine`: lane M5's real MLS engine, reading group state from the shared container on each
-///   call (the app and the extension change it from two processes). Until it exists this returns
-///   nil, so every push shows the generic fallback.
-/// - `make(deps:)`: lane A's `IncomingHandler` as `IncomingApplying`, its `InboxProcessor` as
-///   `InboxSyncing`, and its `ConversationManager` as `ConversationManaging`. The notification
-///   processor only needs the narrow ports from `Notifications/NotificationProcessor.swift`.
+/// What the notification extension builds on top of `MessagingDeps`: the same `IncomingHandler`,
+/// `InboxProcessor` and `ConversationManager` the app uses, so a push is processed exactly like an inbox item.
 enum NSEAdapters {
     struct Adapters {
         let handler: any IncomingApplying
@@ -19,13 +12,24 @@ enum NSEAdapters {
         let conversations: ConversationManaging
     }
 
-    /// MERGE(I1): return the real engine (`makeMLSEngine(...)`, SecureMessaging).
+    /// The real MLS engine, reading its group state from the shared container on each call (the app and the
+    /// extension change it from two processes). nil when this build has no engine: every push then shows the
+    /// generic notice. It never falls back to `FakeMLSEngine`: that has no cryptography.
     static func makeEngine(container: URL, accountID: String, deviceID: String) -> MLSEngine? {
-        nil
+        #if canImport(MLSFFIBindings)
+        return try? makeMLSEngine(identity: "\(accountID)/\(deviceID)", storage: MessagingLocations.mlsURL(in: container))
+        #else
+        return nil
+        #endif
     }
 
-    /// MERGE(I1): build the three ports from lane A's types using `deps`.
+    /// The extension never sends: the inbox processor has no control sender (it leaves receipt markers for the
+    /// app) and the conversation manager is only needed as a port.
     static func make(deps: MessagingDeps) -> Adapters? {
-        nil
+        let keys = EscrowKeyProvider(server: deps.server)
+        let conversations = ConversationManager(deps: deps, escrowKey: keys.closure)
+        let handler = IncomingHandler(me: deps.me, now: deps.now)
+        let inbox = InboxProcessor(deps: deps, conversations: conversations, handler: handler, controls: nil)
+        return Adapters(handler: handler, inbox: inbox, conversations: conversations)
     }
 }

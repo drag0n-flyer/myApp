@@ -3,6 +3,9 @@ import Foundation
 import SecureMessagingCore
 import LocalStore
 import ServerKit
+#if canImport(UniformTypeIdentifiers)
+import UniformTypeIdentifiers
+#endif
 
 /// The real `ChatStore` (Design 14): a main-actor cache of the chats and their latest messages, so the
 /// synchronous reads stay synchronous. Every write goes to the database first; then the cache is reloaded
@@ -66,11 +69,23 @@ public final class LiveChatStore: ChatStore {
     /// The push-driven `InboxProcessor.run(events:)` has no change callback: call `refresh()` after it reports.
     public func syncInbox() async {
         guard !closed else { return }
+        await installAutoDownload()
         _ = try? await inbox.syncOnce()
         // A chat whose first commit's reply was lost is finished here, never started again (MLS profile, step 5).
         await conversations.resumePendingCreates()
         await PendingActions.run(repo: repo, server: deps.server, gate: pendingGate)
         refresh()
+    }
+
+    /// New messages from others start their attachment download when the policy allows it (Wi-Fi, voice).
+    /// The download runs as a store task, so the inbox drain never waits for it.
+    private func installAutoDownload() async {
+        guard let attachments else { return }
+        await inbox.setOnStored { [weak self] message in
+            await MainActor.run {
+                self?.background { await attachments.autoDownload(for: message) }
+            }
+        }
     }
 
     /// Sends what is queued, then refreshes.
@@ -246,13 +261,6 @@ public final class LiveChatStore: ChatStore {
         background { try? await outbox.flush() }
     }
 
-    /// Messages that gave up sending (10 attempts or 24 hours). AppCore has no `failed` delivery status yet, so
-    /// they show as `sending`; the UI can use this to offer a retry.
-    public func failedMessageIDs(in chatID: String) -> Set<String> {
-        let rows = (try? repo.messages(chatID: chatID, before: nil, limit: 200)) ?? []
-        return Set(rows.filter { $0.status == "failed" && $0.senderAccount == deps.me.accountID }.map(\.id))
-    }
-
     /// Puts a failed message at the end of its chat's queue and sends it.
     public func retrySend(messageID: String) {
         guard (try? outbox.retry(messageID: messageID)) != nil else { return }
@@ -262,13 +270,49 @@ public final class LiveChatStore: ChatStore {
     }
 
     public func sendAttachment(_ fileURL: URL, kind: MediaKind, in chatID: String) {
+        sendMedia(fileURL, kind: kind, duration: 0, chatID: chatID)
+    }
+
+    public func sendVoice(_ fileURL: URL, duration: Double, in chatID: String) {
+        sendMedia(fileURL, kind: .voice, duration: duration, chatID: chatID)
+    }
+
+    /// Photos are re-encoded first (Design 9: at most 1 600 px, JPEG 0.7, no metadata) and carry a small
+    /// blurred-until-downloaded thumbnail; everything else is sent as it is.
+    private func sendMedia(_ fileURL: URL, kind: MediaKind, duration: Double, chatID: String) {
         guard let attachments, ensureChatRow(chatID) != nil else { return }
         let outbox = outbox
+        let scratch = deps.mediaDirectory.appendingPathComponent("prepare-\(UUID().uuidString.lowercased()).jpg")
         background {
+            var file = fileURL, width = 0, height = 0
+            var thumbnail: Data?
+            #if canImport(ImageIO)
+            if kind == .photo {
+                guard let prepared = try? MediaPreparation.preparePhoto(fileURL, to: scratch) else { return }   // not an image
+                file = scratch
+                (width, height, thumbnail) = (prepared.w, prepared.h, prepared.thumb)
+            }
+            #endif
+            defer { try? FileManager.default.removeItem(at: scratch) }
             do {
-                try await attachments.send(file: fileURL, kind: kind, chatID: chatID, replyTo: nil)
+                try await attachments.send(
+                    file: file, kind: kind, chatID: chatID, replyTo: nil, width: width, height: height,
+                    thumbnail: thumbnail, duration: duration, name: fileURL.lastPathComponent,
+                    mime: Self.mimeType(of: fileURL, kind: kind))
                 try await outbox.flush()
             } catch {}
+        }
+    }
+
+    static func mimeType(of url: URL, kind: MediaKind) -> String {
+        switch kind {
+        case .photo: return "image/jpeg"
+        case .voice: return "audio/x-caf"
+        case .video, .file:
+            #if canImport(UniformTypeIdentifiers)
+            if let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType { return mime }
+            #endif
+            return "application/octet-stream"
         }
     }
 

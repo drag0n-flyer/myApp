@@ -527,7 +527,8 @@ private func text(_ message: Message?) -> String? {
         store.edit(messageID: id, in: "acc-bob", text: "edited")   // queued before the message has left
         await store.settle()
         // The message failed once (503) and backs off; the edit must not have overtaken it.
-        let conversation = try #require(await rig.server.conversationIDs().first)
+        let allIDs = await rig.server.conversationIDs()
+        let conversation = try #require(allIDs.first)
         #expect(await rig.server.storedMessages(in: conversation).isEmpty)
         rig.clock.advance(5)
         await store.flushOutbox()

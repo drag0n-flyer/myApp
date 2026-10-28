@@ -1,4 +1,5 @@
 import AppCore
+import CallCore
 import Foundation
 import Messaging
 import Observation
@@ -20,10 +21,23 @@ enum AppTab: Hashable {
 @MainActor
 @Observable
 final class AppModel {
-    /// `SampleChatStore` with `-sampleData` (and until the real messaging stack is available); `LiveChatStore`
-    /// once this device is signed in and the stack could be built (`installLiveStore`).
+    /// `SampleChatStore` with `-sampleData`. A live account: `EmptyChatStore` until `LiveChatStore` is built
+    /// (`installLiveStore`); a live account never sees sample chats (`AppStores`).
     private(set) var chatStore: any ChatStore
-    let calls: SimulatedCallEngine
+    /// The simulated engine, `-sampleData` only.
+    let sampleCalls: SimulatedCallEngine?
+    /// `calls` while there is no live engine: the simulated engine with sample data, an inert one for a live account.
+    private let idleCalls: any CallEngine
+    /// The real engine, once signed in (it needs the live connection and the live store). `nil` in `-sampleData` mode.
+    private(set) var liveCalls: LiveCallEngine?
+    var calls: any CallEngine {
+        if let liveCalls { return liveCalls }
+        return idleCalls
+    }
+    /// The live store could not be built after sign-in: an error is shown, with a retry. No sample data stands in.
+    var liveStoreUnavailable = false
+    /// Open while the live store and call engine are in place; a VoIP push that woke the app waits on it.
+    private let callReady = ReadinessGate()
     let account: any AccountService
     /// `nil` in `-sampleData` mode.
     private let live: LiveAccountService?
@@ -31,9 +45,10 @@ final class AppModel {
     let isSampleData: Bool
     /// Shown after the server ends this device's session.
     var deviceRemovedAlert = false
-    /// Shown when this build lacks the shared app group or keychain group: live sign-in is refused
-    /// (the session would be stranded where the notification extension cannot read it) and the app stays on sample data.
-    var setupProblemAlert = false
+    /// This build lacks the shared app group or keychain group (`AppLaunchMode.brokenSetup`): live sign-in is refused
+    /// (the session would be stranded where the notification extension cannot read it) and a blocking error is shown.
+    /// Never sample data.
+    let hasBrokenSetup: Bool
     private var connection: LiveConnection?
     private let sessions: SessionStore?
     private var messaging: LiveMessaging?
@@ -45,13 +60,25 @@ final class AppModel {
     private var liveTasks: [Task<Void, Never>] = []
     private var apnsToken: Data?
     private var registrar: PushRegistrar?
+    /// Seals call signals through the live chat store once it is installed; fails closed before that.
+    private let callSealer = SwitchableCallSealer()
+    private var pathMonitor: PathMonitor?
+    private var isBackground = false
+    private var connectionState: ConnectionState = .idle
+    /// Newest stats of the running call, for the call info sheet.
+    private(set) var callStats: MediaStats?
+    #if os(iOS)
+    @ObservationIgnored private var callKit: CallKitController?
+    @ObservationIgnored private var voipCenter: VoIPPushCenter?
+    private var voipToken: Data?
+    #endif
 
     var server: ServerPolicy {
-        didSet { calls.server = server }
+        didSet { syncCalls() }
     }
     var settings: UserSettings {
         didSet {
-            calls.settings = settings.call
+            syncCalls()
             messaging?.autoDownload.value = settings.autoDownload
             if settings.readReceipts != oldValue.readReceipts, let messaging {
                 messaging.readReceipts.value = settings.readReceipts
@@ -62,9 +89,15 @@ final class AppModel {
     }
     var network: NetworkType {
         didSet {
-            calls.setNetwork(network)
+            sampleCalls?.setNetwork(network); liveCalls?.setNetwork(network)
             messaging?.network.value = network
         }
+    }
+
+    private func syncCalls() {
+        sampleCalls?.server = server
+        sampleCalls?.settings = settings.call
+        liveCalls?.update(server: server, settings: settings)
     }
     var onboarding: OnboardingFlow
     var selectedTab: AppTab = .chats
@@ -101,8 +134,10 @@ final class AppModel {
         var sessionStore: SessionStore?
         // Fails closed like `makeMLSEngine`: no live account without both shared groups.
         let setupProblems = launch.sampleData ? [] : MessagingLocations.liveSetupProblems(in: Bundle.main.infoDictionary ?? [:])
-        let sampleData = launch.sampleData || !setupProblems.isEmpty
-        if sampleData {
+        let mode = AppLaunchMode.resolve(sampleData: launch.sampleData, setupProblems: setupProblems)
+        let sampleData = mode.showsSampleData
+        if !mode.isLive {
+            // Sample mode; or a broken setup, whose blocking error screen never lets anyone reach this service.
             account = SampleAccountService(platform: platform)
         } else {
             let sessions = SessionStore(storage: KeychainSessionStorage(accessGroup: config.keychainAccessGroup))
@@ -122,14 +157,16 @@ final class AppModel {
         self.live = live
         self.sessions = sessionStore
         self.isSampleData = sampleData
-        self.setupProblemAlert = !setupProblems.isEmpty
+        self.hasBrokenSetup = !setupProblems.isEmpty
         self.server = server
         self.settings = settings
         self.network = launch.network
         self.isUITesting = launch.isUITesting
-        let chatStore = SampleChatStore()
+        let stores = AppStores(sampleData: sampleData, server: server, settings: settings.call, network: launch.network)
+        let chatStore = stores.chatStore
         self.chatStore = chatStore
-        self.calls = SimulatedCallEngine(server: server, settings: settings.call, network: launch.network)
+        self.sampleCalls = stores.sampleCalls
+        self.idleCalls = stores.idleCalls
         #if os(macOS)
         var flow = OnboardingFlow(platform: .mac)
         #else
@@ -146,7 +183,7 @@ final class AppModel {
         self.onboarding = flow
         live?.onSignedOut = { [weak self] in self?.deviceWasRemoved() }
         // A sign-out wipe that was cut short (kill, failure) is finished first; the sign-in below waits for it.
-        if !sampleData {
+        if mode.isLive {
             wipeTask = Task { [weak self] in
                 do { try await LiveMessaging.finishPendingWipe() } catch { self?.wipeFailed = true }
             }
@@ -154,13 +191,23 @@ final class AppModel {
         if live?.isSignedIn == true { Task { await didSignIn() } }
         if let url = launch.openURL { handle(url: url) }
         chatStore.onChange = { [weak self] in self?.revision += 1 }
-        calls.onChange = { [weak self] state in
-            self?.activeCall = state
-        }
+        sampleCalls?.onChange = { [weak self] state in self?.callStateChanged(state) }
         Task { await refreshDevices() }
         #if os(macOS)
         macRinger = MacRinger(handler: self, systemUI: !launch.isUITesting)
         #endif
+        if mode.isLive {
+            #if os(iOS)
+            setUpVoIP()
+            #endif
+            startPathMonitor()
+        }
+    }
+
+    private func callStateChanged(_ state: CallState?) {
+        activeCall = state
+        // The socket was kept open for the call while the app was in the background; close it now.
+        if isBackground, state?.isEnded ?? true { Task { await stopLive() } }
     }
 
     // MARK: - Chats (every read touches `revision` so SwiftUI tracks store changes)
@@ -194,6 +241,7 @@ final class AppModel {
     func isContact(_ id: String) -> Bool { contacts.contains { $0.id == id } }
 
     func send(_ content: MessageContent, in chatID: String) { chatStore.send(content, in: chatID); revision += 1 }
+    func retrySend(messageID: String) { chatStore.retrySend(messageID: messageID); revision += 1 }
     func markRead(chatID: String) { chatStore.markRead(chatID: chatID); revision += 1 }
     func accept(requestID: String) { chatStore.accept(requestID: requestID); revision += 1 }
     func block(contactID: String) { chatStore.block(contactID: contactID); revision += 1 }
@@ -260,6 +308,8 @@ final class AppModel {
     func removeDevice(id: String) async {
         try? await account.removeDevice(id: id)
         await refreshDevices()
+        // The server tells the other devices; this one runs reconcile itself (the scheduler skips this device's id).
+        if !linkedDevices.contains(where: { $0.id == id }) { await messaging?.reconciler.deviceRevoked(id) }
     }
 
     /// Deletes the account on the server, then returns to the welcome screen.
@@ -277,7 +327,7 @@ final class AppModel {
     }
 
     private func resetToWelcome() {
-        // The live store belongs to the signed-out account. The sample store stands in until the next sign-in.
+        // The live store belongs to the signed-out account. An empty store stands in until the next sign-in.
         if !isSampleData, let container = LiveMessaging.container {
             // Durable first: if the app is killed or a step fails, the next launch (or the next sign-in) wipes.
             try? LocalAccountData.markWipePending(in: container)
@@ -300,9 +350,10 @@ final class AppModel {
         }
         if messaging != nil {
             messaging = nil
-            let sample = SampleChatStore()
-            sample.onChange = { [weak self] in self?.revision += 1 }
-            chatStore = sample
+            callSealer.clear()
+            let empty = AppStores.signedOutStore(sampleData: isSampleData)
+            empty.onChange = { [weak self] in self?.revision += 1 }
+            chatStore = empty
             revision += 1
         }
         #if os(macOS)
@@ -331,6 +382,7 @@ final class AppModel {
         await installLiveStore()
         await startLive()
         await syncInbox()
+        await replenishKeyPackages()
         await registerForPushIfAllowed()
     }
 
@@ -338,8 +390,18 @@ final class AppModel {
     func scenePhaseChanged(_ phase: ScenePhase) {
         #if os(iOS)
         switch phase {
-        case .active: Task { await startLive() }
-        case .background: Task { await stopLive() }
+        case .active:
+            isBackground = false
+            Task {
+                await startLive()
+                await syncInbox()
+                await replenishKeyPackages()
+            }
+        case .background:
+            isBackground = true
+            // A running call keeps its signaling; `callStateChanged` closes the socket when the call ends.
+            if activeCall?.isEnded == false { return }
+            Task { await stopLive() }
         default: break
         }
         #endif
@@ -350,11 +412,18 @@ final class AppModel {
     private func installLiveStore() async {
         await wipeTask?.value
         wipeTask = nil
-        guard !wipeFailed, !isSampleData, messaging == nil, let session = sessions?.current, let client = live?.client,
-              let built = await LiveMessaging.make(
-                session: session, client: client, network: network, settings: settings.autoDownload,
-                readReceipts: settings.readReceipts) else { return }
+        guard !wipeFailed, !isSampleData, messaging == nil, let session = sessions?.current, let client = live?.client
+        else { return }
+        guard let built = await LiveMessaging.make(
+            session: session, client: client, network: network, settings: settings.autoDownload,
+            readReceipts: settings.readReceipts) else {
+            // Never fall back to sample chats: the chat list stays empty and the error offers a retry.
+            liveStoreUnavailable = true
+            return
+        }
+        liveStoreUnavailable = false
         messaging = built
+        callSealer.use(built.store)
         built.store.onChange = { [weak self] in self?.revision += 1 }
         chatStore = built.store
         revision += 1
@@ -365,35 +434,106 @@ final class AppModel {
         await messaging?.store.syncInbox()
     }
 
+    /// Tops up this device's KeyPackages once the inbox is in step; retried at the next start or foreground, so a
+    /// failure is not reported. (Adding and removing my own devices in my groups is the reconciler's, on connect.)
+    private func replenishKeyPackages() async {
+        guard let sync = messaging?.sync else { return }
+        try? await sync.replenishKeyPackages()
+    }
+
     private func startLive() async {
-        guard !wipeFailed, let live, live.isSignedIn, let client = live.client else { return }
-        if connection == nil {
-            let c = LiveConnection(client: client, transport: URLSessionWebSocketTransport())
-            connection = c
-            liveTasks = [
-                Task { [weak self] in
-                    for await event in c.events {
-                        switch event {
-                        case .deviceRevoked(let id): await self?.deviceRevoked(id)
-                        case .inbox: await self?.syncInbox()
-                        default: break
-                        }
-                    }
-                },
-                Task { [weak self] in
-                    // `.revoked` also reaches the client's 401 path, which calls `deviceWasRemoved`.
-                    for await state in c.states {
-                        switch state {
-                        case .revoked: await self?.stopLive()
-                        case .connected: await self?.didConnect()
-                        default: break
-                        }
-                    }
-                },
-            ]
-        }
+        ensureConnection()
         await connection?.start()
     }
+
+    /// Creates the live connection and the call engine on top of it, once per sign-in.
+    private func ensureConnection() {
+        guard !wipeFailed, connection == nil, let live, live.isSignedIn, let client = live.client else { return }
+        // The call engine reads chats from the live store and seals through it: no live store, no engine (never on
+        // the sample or empty store).
+        guard messaging != nil else { return }
+        let c = LiveConnection(client: client, transport: URLSessionWebSocketTransport())
+        connection = c
+        let signaling = LiveCallSignaling(connection: c, client: client)
+        // A VoIP push can wake a suspended iPhone whose socket was stopped: every call request first starts it.
+        let gated = GatedCallSignaling(base: signaling, connection: AppCallConnection(
+            isConnected: { [weak self] in await self?.connectionState == .connected },
+            connect: { [weak self] in if let self { await self.startLive() } }))
+        let engine = LiveCallEngine(chat: chatStore, signaling: gated, sealer: callSealer,
+                                    server: server, settings: settings, network: network)
+        engine.onChange = { [weak self] state in self?.callStateChanged(state) }
+        engine.onStats = { [weak self] stats in self?.callStats = stats }
+        engine.onHistory = { [weak self] in self?.revision += 1 }
+        #if os(iOS)
+        engine.callKit = callKit
+        engine.voip = voipCenter
+        voipCenter?.handler = engine
+        voipCenter?.engine = engine
+        #else
+        engine.ringer = macRinger
+        #endif
+        liveCalls = engine
+        // Pushes that woke the app before this point can now be opened and handed to the engine.
+        Task { await callReady.open() }
+        liveTasks = [
+            Task { [weak self] in
+                for await event in c.events {
+                    signaling.ingest(event)   // call events go to the engine; the rest are handled here
+                    switch event {
+                    case .deviceRevoked(let id): await self?.deviceRevoked(id)
+                    case .inbox: await self?.syncInbox()
+                    default: break
+                    }
+                }
+            },
+            Task { [weak self] in
+                // `.revoked` also reaches the client's 401 path, which calls `deviceWasRemoved`.
+                for await state in c.states {
+                    await self?.setConnectionState(state)
+                    switch state {
+                    case .revoked: await self?.stopLive()
+                    case .connected: await self?.didConnect()
+                    default: break
+                    }
+                }
+            },
+        ]
+    }
+
+    private func setConnectionState(_ state: ConnectionState) { connectionState = state }
+
+    private func startPathMonitor() {
+        let monitor = PathMonitor()
+        monitor.onChange = { [weak self] network, meaningful in
+            guard let self else { return }
+            if self.network != network { self.network = network }
+            if meaningful { self.liveCalls?.pathChanged() }
+        }
+        monitor.start()
+        pathMonitor = monitor
+    }
+
+    #if os(iOS)
+    /// One PushKit registry and one CallKit provider for the app's lifetime (iPhone, signed-in builds only).
+    private func setUpVoIP() {
+        let callKit = CallKitController()
+        let resolver = VoIPPushResolver(
+            sealer: callSealer,
+            contact: { [weak self] id in await self?.contact(id: id) },
+            status: { [weak self] id in await self?.callStatus(id) },
+            ready: callReady)   // a push that woke the app waits (bounded) for sign-in to finish
+        let center = VoIPPushCenter(callKit: callKit, resolver: resolver,
+                                    onToken: { [weak self] token in Task { @MainActor in await self?.didReceiveVoIPToken(token) } })
+        self.callKit = callKit
+        voipCenter = center
+        center.start()
+    }
+
+    private func didReceiveVoIPToken(_ token: Data) async {
+        voipToken = token
+        if let registrar { await registrar.didRegister(voipToken: token) }
+    }
+    #endif
 
     /// Every live connect: catch up on the inbox, then bring this account's devices in every chat in line with
     /// the device list (mls-profile "Removing a device"); the scheduler runs it once more 11 minutes later.
@@ -409,16 +549,35 @@ final class AppModel {
         await messaging?.reconciler.deviceRevoked(id)
     }
 
+    func callStatus(_ callID: String) async -> CallStatus? {
+        guard let signaling = liveCalls?.signaling else { return nil }
+        return try? await signaling.status(callID: callID)
+    }
+
     private func stopLive(force: Bool = false) async {
+        let signedOut = force || live?.isSignedIn != true
+        if signedOut {
+            await callReady.close()
+            // While the connection is still up: hang up a running call, close its media, let every effect run.
+            await liveCalls?.shutdown()
+        }
         await messaging?.reconciler.disconnected()
         await connection?.stop()
-        if force || live?.isSignedIn != true {   // signed out: drop the connection and its listeners
+        connectionState = .idle
+        if signedOut {   // drop the connection and its listeners
             let tasks = liveTasks
             tasks.forEach { $0.cancel() }
             for task in tasks { await task.value }   // none can touch the store afterwards
             liveTasks = []
             connection = nil
+            liveCalls = nil
         }
+    }
+
+    /// The "Try Again" of the live store error.
+    func retryLiveStore() async {
+        liveStoreUnavailable = false
+        await didSignIn()
     }
 
     /// Asks for a push token when notifications are already allowed (the Permissions step asks first).
@@ -442,6 +601,9 @@ final class AppModel {
                                       bundleID: Bundle.main.bundleIdentifier ?? "")
         self.registrar = registrar
         await registrar.didRegister(alertToken: token)
+        #if os(iOS)
+        if let voipToken { await registrar.didRegister(voipToken: voipToken) }
+        #endif
     }
 
     // MARK: - Calls
@@ -451,6 +613,12 @@ final class AppModel {
     func startCall(contactID: String, video: Bool) {
         guard let contact = chatStore.contact(id: contactID) else { return }
         calls.start(with: contact, video: video)
+    }
+
+    /// What the call info sheet shows: live numbers, or steady sample numbers in `-sampleData` mode.
+    var callInfoStats: MediaStats {
+        if let callStats { return callStats }
+        return isSampleData ? MediaStats(roundTripTime: 0.062, inboundLossFraction: 0.004, usingRelay: false) : MediaStats()
     }
 
     func dismissEndedCall() {

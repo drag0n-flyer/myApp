@@ -8,6 +8,7 @@ public final class SpyMLSEngine: MLSEngine, @unchecked Sendable {
     private var _processed: [Data] = []
     private var failing: Set<Data> = []
     private var membersFail = false
+    private var _rejected = 0
     private var membersFailures: (count: Int, error: MLSError) = (0, .busy)
     private var _addCount = 0
     private var holds: [Data: (entered: AsyncStream<Void>.Continuation, release: AsyncStream<Void>)] = [:]
@@ -18,6 +19,9 @@ public final class SpyMLSEngine: MLSEngine, @unchecked Sendable {
     public var processed: [Data] { lock.withLock { _processed } }
     /// `process` throws `MLSError.crypto` for this payload (without reaching the wrapped engine).
     public func fail(_ payload: Data) { lock.withLock { _ = failing.insert(payload) } }
+
+    /// How many times `commitRejected` was called.
+    public var commitRejectedCount: Int { lock.withLock { _rejected } }
 
     /// `members(of:)` throws `MLSError.storage` while set.
     public func failMembers(_ on: Bool) { lock.withLock { membersFail = on } }
@@ -61,7 +65,10 @@ public final class SpyMLSEngine: MLSEngine, @unchecked Sendable {
     }
     public func remove(members: [String], from group: GroupID) async throws -> CommitBundle { try await inner.remove(members: members, from: group) }
     public func commitAccepted(_ group: GroupID) async throws { try await inner.commitAccepted(group) }
-    public func commitRejected(_ group: GroupID) async throws { try await inner.commitRejected(group) }
+    public func commitRejected(_ group: GroupID) async throws {
+        lock.withLock { _rejected += 1 }
+        try await inner.commitRejected(group)
+    }
     public func encrypt(_ plaintext: Data, in group: GroupID) async throws -> (ciphertext: Data, epoch: UInt64) { try await inner.encrypt(plaintext, in: group) }
     public func epoch(of group: GroupID) async throws -> UInt64 { try await inner.epoch(of: group) }
     public func exportSecret(group: GroupID, label: String, length: Int) async throws -> Data { try await inner.exportSecret(group: group, label: label, length: length) }

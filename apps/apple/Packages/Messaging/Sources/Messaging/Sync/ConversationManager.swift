@@ -407,6 +407,17 @@ public actor ConversationManager: ConversationManaging {
 
     // MARK: Commit with epoch-conflict retry
 
+    /// Drops my pending commit after a definite rejection. A busy lock (the other process is working) is
+    /// retried; if it stays busy the failure is thrown instead of the rejection, so the caller knows the pending
+    /// commit is still there and not silently left behind.
+    private func discardPendingCommit(_ group: GroupID) async throws {
+        var failure: Error?
+        for _ in 0..<3 {
+            do { try await locked { try await deps.mls.commitRejected(group) }; return } catch { failure = error }
+        }
+        if let failure { throw failure }
+    }
+
     /// Builds a commit with `build`, posts it at the group's current epoch and merges it on success.
     /// On `stale_epoch`: `commitRejected`, `syncOnce`, rebuild and retry, at most 3 times, then
     /// `SyncError.epochConflict`. Returns the new epoch. A3 and A4 use this for their commits.
@@ -438,7 +449,7 @@ public actor ConversationManager: ConversationManaging {
                     // commit. Anything else (transport error, 5xx, lost reply) may have been applied by the
                     // server: keep it, so the echo of my own commit merges it (Design 17).
                     if (400..<500).contains(error.status), error.status != 408, error.status != 429 {
-                        try? await locked { try await deps.mls.commitRejected(group) }
+                        try await discardPendingCommit(group)
                     }
                     throw error
                 }

@@ -356,7 +356,8 @@ func makePair(serverMode: String, inner: String?, clock: TestClock = TestClock()
         let p = try await makePair(serverMode: "server_readable", inner: "server_readable")
         let provider = EscrowKeyProvider(server: p.ana.deps.server)
         let key = try await provider.key()
-        #expect(key == (await p.server.escrowKey))
+        let serverKey = await p.server.escrowKey
+        #expect(key == serverKey)
         #expect(try await provider.key() == key)
     }
 

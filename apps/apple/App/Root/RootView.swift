@@ -10,7 +10,15 @@ struct RootView: View {
 
     var body: some View {
         Group {
-            if model.onboarding.step == .done {
+            if model.hasBrokenSetup {
+                // Blocking: a build without its shared groups can neither sign in nor show sample chats.
+                ContentUnavailableView {
+                    Label("This copy of the app is set up incorrectly", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text("It can't sign in or show chats. Install the app again to fix it.")
+                }
+                .accessibilityIdentifier("setup.broken")
+            } else if model.onboarding.step == .done {
                 #if os(macOS)
                 MacRootView(model: model)
                 #else
@@ -24,9 +32,10 @@ struct RootView: View {
         .alert("This device was removed from your account.", isPresented: $model.deviceRemovedAlert) {
             Button("OK", role: .cancel) {}
         }
-        .alert("This copy of the app is set up incorrectly, so it can't sign in. You can look around with sample chats.",
-               isPresented: $model.setupProblemAlert) {
-            Button("OK", role: .cancel) {}
+        .alert("Your chats couldn't be opened", isPresented: $model.liveStoreUnavailable) {
+            Button("Try again") { Task { await model.retryLiveStore() } }
+        } message: {
+            Text("Check your connection, then try again.")
         }
         #if os(iOS)
         .fullScreenCover(isPresented: isCallPresented) {

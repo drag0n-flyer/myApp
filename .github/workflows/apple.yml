@@ -324,6 +324,15 @@ jobs:
         run: apps/apple/scripts/check-test-only-libs.sh
       - name: Mac UI tests
         run: apps/apple/scripts/test-macos.sh
+      - name: Mac launch diagnostics
+        if: failure()
+        continue-on-error: true
+        run: |
+          ls -la ~/Library/Logs/DiagnosticReports 2>/dev/null | tail -20
+          for f in ~/Library/Logs/DiagnosticReports/App*; do echo "== $f"; head -c 3000 "$f"; done 2>/dev/null
+          APP=$(find ~/Library/Developer/Xcode/DerivedData -path '*Debug/App.app' -maxdepth 6 | head -1)
+          echo "APP=$APP"; codesign -dvv --entitlements - "$APP" 2>&1 | head -60
+          log show --last 5m --style compact --predicate 'process == "runningboardd" OR process == "amfid" OR process == "taskgated-helper" OR (process == "App" )' 2>/dev/null | grep -iE "org.example|App\b|AMFI|entitle|deny|reject|kill" | tail -40
       - name: Keep test results
         if: failure()
         uses: actions/upload-artifact@v4

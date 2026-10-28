@@ -72,8 +72,11 @@ public struct VoIPPushResolution: Sendable {
     public var payload: PushPayloadState
     public var isStranger: Bool
     public var status: CallStatus?
-    public init(payload: PushPayloadState, isStranger: Bool, status: CallStatus?) {
-        self.payload = payload; self.isStranger = isStranger; self.status = status
+    /// The caller's device from the ring's MLS credential (`<accountID>/<deviceID>`); set for `.ring`. The push-woken
+    /// call is bound to it, so answers from any other device are dropped.
+    public var senderDeviceID: String?
+    public init(payload: PushPayloadState, isStranger: Bool, status: CallStatus?, senderDeviceID: String? = nil) {
+        self.payload = payload; self.isStranger = isStranger; self.status = status; self.senderDeviceID = senderDeviceID
     }
 }
 
@@ -114,31 +117,44 @@ public struct VoIPPushResolver: Sendable {
     private let sealer: any SenderRecoveringSealer
     private let contact: @Sendable (String) async -> Contact?
     private let status: @Sendable (String) async -> CallStatus?
+    private let ready: ReadinessGate?
+    private let readyTimeout: Duration
+
+    /// How long a push waits for the signed-in session (cold launch) before it ends as failed.
+    public static let defaultReadyTimeout: Duration = .seconds(10)
 
     /// - contact: the saved contact for an account ID, or nil for a stranger.
     /// - status: `call.status` for a call ID; nil when it cannot be fetched in time.
+    /// - ready: opened by the app once the live store and call engine exist. A push that woke a killed app waits
+    ///   for it (at most `readyTimeout`) before opening the payload; nil means always ready.
     public init(sealer: any SenderRecoveringSealer,
                 contact: @escaping @Sendable (String) async -> Contact?,
-                status: @escaping @Sendable (String) async -> CallStatus?) {
+                status: @escaping @Sendable (String) async -> CallStatus?,
+                ready: ReadinessGate? = nil, readyTimeout: Duration = Self.defaultReadyTimeout) {
         self.sealer = sealer; self.contact = contact; self.status = status
+        self.ready = ready; self.readyTimeout = readyTimeout
     }
 
     /// Local work only (decrypt, sender, contact lookup): the caller's name can be shown as soon as this returns.
+    /// Waits first for the session (`ready`); when it does not come in time the result is `.undecryptable`, which
+    /// ends the already reported call as failed.
     public func open(sealed: Data?) async -> VoIPPushResolution {
         guard let sealed, !sealed.isEmpty else {
             return VoIPPushResolution(payload: .empty, isStranger: false, status: nil)
         }
-        // TODO(K4): the ring's device is `opened.senderDeviceID` (from the MLS credential). Before LiveCallEngine
-        // feeds `.incoming(fromDeviceID:)` for a push-woken call, it must check that device against the
-        // `call.ring` it later receives (or pass it as `fromDeviceID`), so the call is bound to the credential device.
+        if let ready, await !ready.wait(timeout: readyTimeout) {
+            return VoIPPushResolution(payload: .undecryptable, isStranger: false, status: nil)
+        }
         guard let opened = try? await sealer.openRecoveringSender(sealed), opened.payload.kind == .ring else {
             return VoIPPushResolution(payload: .undecryptable, isStranger: false, status: nil)
         }
         if let known = await contact(opened.senderAccountID) {
-            return VoIPPushResolution(payload: .ring(opened.payload, contact: known), isStranger: false, status: nil)
+            return VoIPPushResolution(payload: .ring(opened.payload, contact: known), isStranger: false, status: nil,
+                                      senderDeviceID: opened.senderDeviceID)
         }
         let stranger = Contact(id: opened.senderAccountID, displayName: VoIPPushDecision.unknownCallerName, username: "")
-        return VoIPPushResolution(payload: .ring(opened.payload, contact: stranger), isStranger: true, status: nil)
+        return VoIPPushResolution(payload: .ring(opened.payload, contact: stranger), isStranger: true, status: nil,
+                                  senderDeviceID: opened.senderDeviceID)
     }
 
     public static let defaultStatusTimeout: Duration = .seconds(5)

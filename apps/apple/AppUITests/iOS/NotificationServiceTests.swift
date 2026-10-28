@@ -13,7 +13,13 @@ final class NotificationServiceTests: XCTestCase {
     override func setUp() { continueAfterFailure = false }
 
     func testPushShowsDecryptedPreview() async throws {
-        throw XCTSkip("Needs I1: shared -fakeMLS engine state and a CI step that sends the push with xcrun simctl push")
+        // Kept skipped by I1, on purpose: the extension can only decrypt this push with the group state the app holds.
+        // `FakeMLSEngine` keeps its state in memory, per process, so a `-fakeMLS` app and the extension cannot share
+        // it, and a fake engine in a signed-in build is not allowed. The real engine (M5, feat/mls-swift) shares its
+        // state through the app group, so re-enable this with it, plus a CI step running `xcrun simctl push` with
+        // the file from `NSE_PUSH_FILE`. The extension's decrypt path is covered on Linux by
+        // `NotificationProcessorTests` and `EndToEndTests`.
+        throw XCTSkip("Needs the real MLS engine (M5) for shared app/extension state and a simctl push CI step")
         let app = XCUIApplication.launched(extra: ["-fakeMLS"])
         XCTAssertTrue(app.tab("Chats").waitToExist())
 
