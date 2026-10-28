@@ -175,6 +175,7 @@ while read -r preset path profile snr; do
     if [ "$profile" != clean ]; then
         shaped=$(sudo sh "$lab/netem/dummynet.sh" packets </dev/null)
         echo "packets through the $profile pipe: $shaped"
+        sudo dnctl pipe show 1 </dev/null 2>&1 | head -6 | sed 's/^/  dnctl: /'   # raw, to check the parse
         if [ "${shaped:-0}" -eq 0 ]; then
             echo "FAIL $name: dummynet pipe for $profile saw 0 packets (shaping not applied)" >&2
             status=1
