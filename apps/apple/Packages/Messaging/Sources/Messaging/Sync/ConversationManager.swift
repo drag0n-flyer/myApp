@@ -14,6 +14,11 @@ public enum SyncError: Error, Equatable, Sendable {
     case noPeer
     /// The server's escrow key is not known, so an escrow copy cannot be sealed.
     case escrowKeyUnavailable
+    /// A Welcome labelled with a conversation ID that is already bound to another group.
+    case conversationRebound
+    /// My earlier add commit for a new conversation is still pending and its outcome is not known yet. It is kept
+    /// (never discarded, never rebuilt); try again later.
+    case commitInFlight
 }
 
 /// Creates and joins 1:1 conversations (Design 1, 18). Lane A's other tasks (inbox processor,
@@ -93,7 +98,21 @@ public actor ConversationManager: ConversationManaging {
 
     // MARK: Create
 
+    /// Claim, create, add; store the conversation (inactive, bound to its group) with the exact commit; post it;
+    /// activate; then the `mode` envelope, before anything else can be sent.
+    ///
+    /// A pending create for `peer` (an earlier lost reply, timeout or kill) is finished instead: never a second
+    /// group for the same peer. See `finishCreate`.
     public func create(with peer: String) async throws -> ConversationRecord {
+        if let serverID = try pendingCreate(for: peer) {
+            do {
+                return try await finishCreate(serverID: serverID, resumed: true)
+            } catch let error as ServerError {
+                // The server refused that conversation for good: it was abandoned, so start a new one below.
+                if try PendingCreate.isPending(serverID: serverID, db: deps.repo) { throw error }
+            }
+        }
+
         // 1. Claim KeyPackages for the peer and for my other devices.
         let theirs = try await deps.server.claimKeyPackages(accountID: peer)
         guard !theirs.isEmpty else { throw SyncError.noKeyPackages }
@@ -101,38 +120,160 @@ public actor ConversationManager: ConversationManaging {
             .filter { $0.deviceID != deps.me.deviceID }
         let claimed = theirs + mine
 
-        // 2. Server conversation, then the group.
+        // 2. The server conversation.
         let created = try await deps.server.createConversation(with: peer)
-        let group = try await locked { try await deps.mls.createGroup() }
 
-        // 3. Commit at epoch 0 with the welcome.
-        let epoch = try await postCommitWithRetry(
-            serverID: created.conversationID, group: group, addDevices: claimed.map(\.deviceID), removeDevices: []
-        ) { try await self.deps.mls.add(keyPackages: claimed.map(\.keyPackage), to: group) }
-
-        // 4. Store. Both modes come from the create response; the first one wins for `inner_mode`.
-        // I started this chat, so it is never a request.
-        if try deps.repo.chat(id: peer) == nil {
-            try deps.repo.upsertChat(ChatRecord(id: peer, isRequest: false, unread: 0, muted: false, lastActivity: deps.now()))
-        }
-        let record = ConversationRecord(
-            serverID: created.conversationID, chatID: peer, groupID: group.raw, mode: created.mode, innerMode: created.mode,
-            modeMismatch: false, epoch: Int64(epoch), active: true, createdAt: deps.now())
-        // The members and the first safety number are stored with the conversation (no lines: it is new).
-        try await locked {
-            let keys = try await membership.keys(of: group)
-            try deps.repo.transaction {
-                try deps.repo.set(pendingKey(record.serverID), Data([1]))
-                try deps.repo.upsertConversation(record)
-                _ = try membership.apply(keys: keys, conversation: record, db: deps.repo)
+        // 3. The group and its add commit at epoch 0, then, before anything is posted, the conversation row
+        //    (inactive) and the commit itself. Both modes come from the create response; the first one wins for
+        //    `inner_mode`. I started this chat, so it is never a request.
+        let repo = deps.repo, mls = deps.mls, now = deps.now()
+        let record = try await locked { () async throws -> ConversationRecord in
+            let group = try await mls.createGroup()
+            let bundle = try await mls.add(keyPackages: claimed.map(\.keyPackage), to: group)
+            let record = ConversationRecord(
+                serverID: created.conversationID, chatID: peer, groupID: group.raw, mode: created.mode,
+                innerMode: created.mode, modeMismatch: false, epoch: 0, active: false, createdAt: now)
+            try repo.transaction {
+                if try repo.chat(id: peer) == nil {
+                    try repo.upsertChat(ChatRecord(id: peer, isRequest: false, unread: 0, muted: false, lastActivity: now))
+                }
+                try repo.set(pendingKey(record.serverID), Data([1]))
+                try repo.upsertConversation(record)
+                try PendingCreate(commit: bundle.commit, welcome: bundle.welcome, addDevices: claimed.map(\.deviceID))
+                    .save(serverID: record.serverID, db: repo)
             }
+            return record
         }
 
-        // 5. The mode envelope goes first, before anything else can be sent. If this post fails the
-        // pending marker stays and `preferredConversation` retries it before returning the conversation.
-        try await announceMode(record)
+        // 4. Post, activate, announce.
+        return try await finishCreate(serverID: record.serverID, resumed: false)
+    }
+
+    /// Finishes every pending create (run at start-up, after the first inbox sync). Failures stay pending; a
+    /// conversation the server no longer has is abandoned, and no new one is started here.
+    public func resumePendingCreates() async {
+        guard let serverIDs = try? PendingCreate.all(db: deps.repo) else { return }
+        for serverID in serverIDs {
+            guard let peer = try? deps.repo.conversation(serverID: serverID)?.chatID else { continue }
+            // Shares the per-peer slot with `preferredConversation`, so a send to this peer waits for it.
+            if let running = creating[peer] { _ = try? await running.value; continue }
+            let task = Task { try await self.finishCreate(serverID: serverID, resumed: true) }
+            creating[peer] = task
+            _ = try? await task.value
+            creating[peer] = nil
+        }
+    }
+
+    /// The oldest of `peer`'s conversations whose create is still pending.
+    private func pendingCreate(for peer: String) throws -> String? {
+        try deps.repo.conversations(chatID: peer).map(\.serverID).sorted()
+            .first { try PendingCreate.isPending(serverID: $0, db: deps.repo) }
+    }
+
+    /// Settles the add commit of a pending create (MLS profile, "Commits" step 5, exception). At epoch 0 this
+    /// device is the conversation's only member, so it is the only one that can move the server's epoch: an epoch
+    /// past 0 means the server applied this very commit (the engine never builds another while it is pending), and
+    /// an epoch of 0 means it did not, so posting the same commit again, byte for byte, cannot apply it twice.
+    ///
+    /// - `resumed`: read the inbox first (the echo activates the row), then ask the server's epoch.
+    /// - `200`, or the server past epoch 0: merge and activate.
+    /// - A `stale_epoch`: read the inbox and the server's epoch; past 0 means applied, else it stays pending.
+    /// - A definite rejection: `commitRejected`; the row stays inactive and is never used.
+    /// - An unknown outcome: read the inbox; still pending means the error is thrown and the create stays pending.
+    private func finishCreate(serverID: String, resumed: Bool) async throws -> ConversationRecord {
+        if resumed {
+            await readInboxAfterUnknownOutcome()
+            if let active = try activeOrNil(serverID) { return try await announced(active) }
+            if try await serverEpoch(serverID) > 0 { return try await announced(try await acceptCreate(serverID)) }
+        }
+        guard let pending = try PendingCreate.load(serverID: serverID, db: deps.repo) else {
+            guard let active = try activeOrNil(serverID) else { throw SyncError.commitInFlight }
+            return try await announced(active)
+        }
+        do {
+            _ = try await deps.server.postCommit(
+                conversationID: serverID, epoch: 0, commit: pending.commit, welcome: pending.welcome,
+                addDevices: pending.addDevices, removeDevices: [])
+        } catch {
+            if error.status == 409, error.code == "stale_epoch" {
+                await readInboxAfterUnknownOutcome()
+                if let active = try activeOrNil(serverID) { return try await announced(active) }
+                if try await serverEpoch(serverID) > 0 { return try await announced(try await acceptCreate(serverID)) }
+                throw error
+            }
+            if Self.isDefiniteRejection(error.status) {
+                try await abandonCreate(serverID)
+                throw error
+            }
+            await readInboxAfterUnknownOutcome()
+            if let active = try activeOrNil(serverID) { return try await announced(active) }
+            throw error
+        }
+        return try await announced(try await acceptCreate(serverID))
+    }
+
+    /// The server's epoch; a definite rejection (the conversation is gone) abandons the create.
+    private func serverEpoch(_ serverID: String) async throws -> UInt64 {
+        do {
+            return try await deps.server.conversation(id: serverID).epoch
+        } catch {
+            if Self.isDefiniteRejection(error.status) { try await abandonCreate(serverID) }
+            throw error
+        }
+    }
+
+    /// The server refused the create for good: drop the pending commit; the row stays inactive and is never used.
+    private func abandonCreate(_ serverID: String) async throws {
+        let repo = deps.repo, mls = deps.mls
+        let record = try repo.conversation(serverID: serverID)
+        try await locked {
+            if let record { try? await mls.commitRejected(GroupID(raw: record.groupID)) }
+            try PendingCreate.clear(serverID: serverID, db: repo)
+        }
+    }
+
+    private func activeOrNil(_ serverID: String) throws -> ConversationRecord? {
+        guard let record = try deps.repo.conversation(serverID: serverID), record.active,
+              try !PendingCreate.isPending(serverID: serverID, db: deps.repo) else { return nil }
         return record
     }
+
+    /// The server applied the add commit: merge it (a no-op when the echo already did) and activate the row,
+    /// with the members and the first safety number (no lines: it is new).
+    private func acceptCreate(_ serverID: String) async throws -> ConversationRecord {
+        let repo = deps.repo, mls = deps.mls, membership = membership
+        return try await locked { () async throws -> ConversationRecord in
+            guard var record = try repo.conversation(serverID: serverID) else { throw SyncError.commitInFlight }
+            let group = GroupID(raw: record.groupID)
+            try await mls.commitAccepted(group)
+            let epoch = try await mls.epoch(of: group)
+            let keys = try await membership.keys(of: group)
+            return try repo.transaction {
+                record = try repo.conversation(serverID: serverID) ?? record
+                record.active = true
+                record.epoch = Int64(epoch)
+                try repo.upsertConversation(record)
+                try PendingCreate.clear(serverID: serverID, db: repo)
+                _ = try membership.apply(keys: keys, conversation: record, db: repo)
+                return record
+            }
+        }
+    }
+
+    /// The `mode` envelope goes first, before anything else can be sent. If this post fails the pending marker
+    /// stays and `preferredConversation` retries it before returning the conversation.
+    private func announced(_ record: ConversationRecord) async throws -> ConversationRecord {
+        try await ensureModeAnnounced(record)
+        return record
+    }
+
+    /// `syncOnce` after an unknown outcome or a `stale_epoch`. A failure is ignored: the next attempt reads again.
+    private func readInboxAfterUnknownOutcome() async {
+        _ = try? await syncOnce()
+    }
+
+    /// A 4xx other than a timeout or a rate limit: the server will never accept this request.
+    static func isDefiniteRejection(_ status: Int) -> Bool { (400..<500).contains(status) && status != 408 && status != 429 }
 
     // MARK: Join
 
@@ -168,6 +309,10 @@ public actor ConversationManager: ConversationManaging {
     }
 
     func planJoin(group: GroupID, serverConversationID: String, serverMode: String) async throws -> JoinPlan {
+        // A server ID already bound to another group is never rebound (it would move that chat's messages).
+        if let existing = try deps.repo.conversation(serverID: serverConversationID), existing.groupID != group.raw {
+            throw SyncError.conversationRebound
+        }
         let keys = try await membership.keys(of: group)
         let identities = keys.map(\.identity)
         let accounts = Set(identities.map { String($0.split(separator: "/", maxSplits: 1)[0]) })

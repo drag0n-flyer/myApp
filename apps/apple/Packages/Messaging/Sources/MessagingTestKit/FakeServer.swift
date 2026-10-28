@@ -59,6 +59,15 @@ public actor FakeServer {
 
     public func setDefaultMode(_ mode: String) { defaultMode = mode }
 
+    /// Changes the mode the server reports for one conversation (a value a newer server might send).
+    public func setMode(_ mode: String, of conversationID: String) { conversations[conversationID]?.mode = mode }
+
+    /// Forgets a conversation: every later request about it gets `404 not_found`.
+    public func removeConversation(_ conversationID: String) { conversations[conversationID] = nil }
+
+    /// The epoch the server holds for a conversation (`nil` when it does not exist).
+    public func epoch(of conversationID: String) -> UInt64? { conversations[conversationID]?.epoch }
+
     /// A message as the server stores it (what the sender posted).
     public struct StoredMessage: Sendable, Equatable {
         public let seq: Int64

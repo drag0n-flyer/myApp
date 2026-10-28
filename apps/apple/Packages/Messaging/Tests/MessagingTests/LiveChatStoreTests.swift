@@ -441,3 +441,23 @@ private func text(_ message: Message?) -> String? {
         #expect(await rig.server.submittedReports().count == 1)
     }
 }
+
+@MainActor
+@Suite("TestLiveChatStorePendingCreate") struct TestLiveChatStorePendingCreate {
+    /// A create whose commit never reached the server is finished by the next inbox sync (the app's launch sync).
+    @Test func syncInboxFinishesAPendingCreate() async throws {
+        let rig = try await Rig.make()
+        await rig.server.failNextRequests("POST /v1/conversations/", count: 1)
+        await #expect(throws: (any Error).self) {
+            try await ConversationManager(deps: rig.ana.device.deps, escrowKey: { Data(repeating: 7, count: 32) })
+                .preferredConversation(with: "acc-bob")
+        }
+        let serverID = try #require(await rig.server.conversationIDs().first)
+        #expect(try rig.ana.repo.conversation(serverID: serverID)?.active == false)
+
+        await rig.ana.store.syncInbox()
+        #expect(try rig.ana.repo.conversation(serverID: serverID)?.active == true)
+        #expect(await rig.server.epoch(of: serverID) == 1)
+        #expect(await rig.server.conversationIDs() == [serverID])
+    }
+}

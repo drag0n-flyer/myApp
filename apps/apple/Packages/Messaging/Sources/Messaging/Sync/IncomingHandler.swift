@@ -74,6 +74,14 @@ public struct IncomingHandler: Sendable {
                 return .removedMe(conversationID: conversation.serverID)
             }
             try db.setEpoch(serverID: conversation.serverID, Int64(newEpoch))
+            // The echo of my own add commit for a conversation I created: it is settled, so it becomes usable
+            // (before the members, so the safety number follows it as the preferred conversation).
+            if try PendingCreate.isPending(serverID: conversation.serverID, db: db) {
+                conversation.epoch = Int64(newEpoch)
+                conversation.active = true
+                try db.upsertConversation(conversation)
+                try PendingCreate.clear(serverID: conversation.serverID, db: db)
+            }
             if let own = try updateMembership(memberKeys, raw: raw, db: db) { return own }
             return .commit(conversationID: conversation.serverID, newEpoch: newEpoch)
         case .application(_, let sender, let plaintext, _):
@@ -95,14 +103,43 @@ public struct IncomingHandler: Sendable {
         return change.ownDevicesAdded.isEmpty ? nil : .ownDeviceAdded(deviceIDs: change.ownDevicesAdded)
     }
 
-    /// An MLS failure: one placeholder row (`undecryptable = 1`, ID `undecryptable-<cursor>`) in the chat,
-    /// or nothing when the conversation is not known yet (a failed Welcome).
-    public func storePlaceholder(for raw: RawInboxRecord, db: Repository) throws {
-        guard let conversation = try db.conversation(serverID: raw.conversationID) else { return }
-        let id = "undecryptable-\(raw.cursor)"
-        let envelope = ContentEnvelope(id: id, at: Self.ms(raw.sentAt), body: .unsupported(kind: "undecryptable"))
+    /// An MLS failure: one placeholder row (`undecryptable = 1`, ID `undecryptable-<cursor>`) in the chat the
+    /// server named. Returns `false` when that conversation is not known; the caller then `park`s the item.
+    @discardableResult
+    public func storePlaceholder(for raw: RawInboxRecord, db: Repository) throws -> Bool {
+        guard let conversation = try db.conversation(serverID: raw.conversationID) else { return false }
+        try insertPlaceholder(
+            id: "undecryptable-\(raw.cursor)", kind: "undecryptable", chatID: conversation.chatID,
+            conversationID: conversation.serverID, raw: raw, db: db)
+        return true
+    }
+
+    /// A Welcome whose chat could not be set up (a permanent failure): one placeholder row (`joinFailed`, ID
+    /// `join-failed-<cursor>`, `undecryptable = 1`) in the chat of the account the server names as the sender,
+    /// created as a request when it is not a contact. Nothing for a Welcome the server says I sent. The item
+    /// itself is `park`ed by the caller.
+    public func storeJoinFailed(for raw: RawInboxRecord, db: Repository) throws {
+        let chatID = raw.senderAccount
+        guard chatID != me.accountID, !chatID.isEmpty else { return }
+        if try db.chat(id: chatID) == nil {
+            let isContact = try db.contact(id: chatID)?.isContact ?? false
+            try db.upsertChat(ChatRecord(id: chatID, isRequest: !isContact, unread: 0, muted: false, lastActivity: now()))
+        }
+        try insertPlaceholder(id: "join-failed-\(raw.cursor)", kind: "joinFailed", chatID: chatID, conversationID: nil, raw: raw, db: db)
+    }
+
+    /// Keeps an item that cannot be applied (`ParkedItem`) and logs its IDs, never its content.
+    public func park(_ raw: RawInboxRecord, reason: String, db: Repository) throws {
+        try ParkedItem.save(raw, reason: reason, db: db)
+        log("\(raw.kind == "welcome" ? "join_parked" : "item_parked") reason=\(reason) conversation=\(raw.conversationID) cursor=\(raw.cursor)")
+    }
+
+    private func insertPlaceholder(
+        id: String, kind: String, chatID: String, conversationID: String?, raw: RawInboxRecord, db: Repository
+    ) throws {
+        let envelope = ContentEnvelope(id: id, at: Self.ms(raw.sentAt), body: .unsupported(kind: kind))
         let record = MessageRecord(
-            id: id, chatID: conversation.chatID, conversationID: conversation.serverID, senderAccount: raw.senderAccount,
+            id: id, chatID: chatID, conversationID: conversationID, senderAccount: raw.senderAccount,
             senderDevice: raw.senderDevice, sentAt: raw.sentAt, receivedAt: now(), envelope: envelope.encoded(),
             status: "delivered", replyTo: nil, editedAt: nil, deleted: false, undecryptable: true, folded: "")
         if try db.insertMessage(record) { try bumpChat(record, db: db) }

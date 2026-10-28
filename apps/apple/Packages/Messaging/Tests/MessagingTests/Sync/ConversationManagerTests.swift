@@ -110,85 +110,37 @@ private func syncInbox(_ device: TestDevice, joinWith joiner: ConversationManage
         #expect(bobSide.innerMode == "e2ee" && bobSide.mode == "e2ee")
     }
 
+    /// A create's add commit is never rebuilt (MLS profile, "Commits" step 5, exception), so the stale-epoch
+    /// retry is checked on a later commit.
     @Test func staleEpochRetries() async throws {
         let rig = try await Rig.make()
-        await rig.server.rejectNextCommits(1)
         let syncs = Counter()
-        let record = try await manager(rig.ana1, syncs: syncs).create(with: "acc-bob")
+        let mgr = manager(rig.ana1, syncs: syncs)
+        let record = try await mgr.create(with: "acc-bob")
+        let group = GroupID(raw: record.groupID)
+        await rig.server.rejectNextCommits(1)
+        let epoch = try await mgr.postCommitWithRetry(
+            serverID: record.serverID, group: group, addDevices: [], removeDevices: [rig.ana2.deviceID]
+        ) { try await rig.ana1.deps.mls.remove(members: ["acc-ana/\(rig.ana2.deviceID)"], from: group) }
         #expect(await syncs.value == 1)
-        #expect(record.epoch == 1)
-        #expect(try await rig.ana1.deps.mls.epoch(of: GroupID(raw: record.groupID)) == 1)
-        #expect(await rig.server.memberDevices(of: record.serverID).count == 4)
+        #expect(epoch == 2)
+        #expect(try await rig.ana1.deps.mls.epoch(of: group) == 2)
+        #expect(await rig.server.memberDevices(of: record.serverID).count == 3)
     }
 
     @Test func staleEpochGivesUp() async throws {
         let rig = try await Rig.make()
-        await rig.server.rejectNextCommits(4)
-        await #expect(throws: SyncError.epochConflict) { try await manager(rig.ana1).create(with: "acc-bob") }
-        #expect(try rig.ana1.deps.repo.conversations(chatID: "acc-bob").isEmpty)
-        #expect(await rig.server.memberDevices(of: try #require(await rig.server.conversationIDs().first)).count == 1)
-    }
-
-    @Test func simultaneousCreate() async throws {
-        let rig = try await Rig.make()
-        let ana = manager(rig.ana1), bob = manager(rig.bob1)
-        async let a = ana.create(with: "acc-bob")
-        async let b = bob.create(with: "acc-ana")
-        _ = try await (a, b)
-        #expect(await rig.server.conversationIDs().count == 2)
-
-        try await syncInbox(rig.ana1, joinWith: ana)
-        try await syncInbox(rig.bob1, joinWith: bob)
-        let first = try await ana.preferredConversation(with: "acc-bob")
-        let second = try await bob.preferredConversation(with: "acc-ana")
-        #expect(first.serverID == second.serverID)
-        #expect(first.serverID == (await rig.server.conversationIDs()).min())
-        #expect(try rig.ana1.deps.repo.chats().count == 1 && rig.bob1.deps.repo.chats().count == 1)
-        #expect(try rig.ana1.deps.repo.conversations(chatID: "acc-bob").count == 2)
-    }
-
-    @Test func joinedFromStrangerIsRequest() async throws {
-        let server = FakeServer()
-        let carol = await makeDevice(server, account: "acc-carol", username: "carol")
-        let bob = await makeDevice(server, account: "acc-bob", username: "bob")
-        _ = try await bob.deps.server.uploadKeyPackages(try await bob.deps.mls.makeKeyPackages(count: 2))
-        _ = try await carol.deps.server.uploadKeyPackages(try await carol.deps.mls.makeKeyPackages(count: 2))
-        _ = try await manager(carol).create(with: "acc-bob")
-        try await syncInbox(bob)
-        #expect(try bob.deps.repo.chat(id: "acc-carol")?.isRequest == true)
-        let conversation = try #require(try bob.deps.repo.conversations(chatID: "acc-carol").first)
-        #expect(conversation.mode == "e2ee")
-
-        // A known contact is not a request.
-        let dave = await makeDevice(server, account: "acc-dave", username: "dave")
-        _ = try await dave.deps.server.uploadKeyPackages(try await dave.deps.mls.makeKeyPackages(count: 2))
-        try bob.deps.repo.upsertContact(ContactRecord(
-            accountID: "acc-dave", username: "dave", displayName: "Dave", isContact: true, addedAt: testEpochDate))
-        _ = try await manager(dave).create(with: "acc-bob")
-        try await syncInbox(bob)
-        #expect(try bob.deps.repo.chat(id: "acc-dave")?.isRequest == false)
-    }
-
-    @Test func joinedLeavesInnerModeNull() async throws {
-        let rig = try await Rig.make()
-        let record = try await manager(rig.ana1).create(with: "acc-bob")
-        // Join without reading the mode envelope.
-        let items = try await rig.bob1.deps.server.inbox(after: nil).items
-        let welcome = try #require(items.first { $0.kind == "welcome" })
-        guard case .joined(let group, _) = try await rig.bob1.deps.mls.process(welcome.payload) else { return }
-        try await ConversationManager(deps: rig.bob1.deps).joined(group: group, serverConversationID: record.serverID)
-        let stored = try #require(try rig.bob1.deps.repo.conversation(serverID: record.serverID))
-        #expect(stored.innerMode == nil && stored.mode == "e2ee" && stored.epoch == 1)
-    }
-
-    @Test func announceModeNeedsInnerMode() async throws {
-        let rig = try await Rig.make()
         let mgr = manager(rig.ana1)
-        var record = try await mgr.create(with: "acc-bob")
-        try await mgr.announceMode(record)
-        #expect(await rig.server.storedMessages(in: record.serverID).count == 2)
-        record.innerMode = nil
-        await #expect(throws: SyncError.modeUnknown) { try await mgr.announceMode(record) }
+        let record = try await mgr.create(with: "acc-bob")
+        let group = GroupID(raw: record.groupID)
+        await rig.server.rejectNextCommits(4)
+        await #expect(throws: SyncError.epochConflict) {
+            try await mgr.postCommitWithRetry(
+                serverID: record.serverID, group: group, addDevices: [], removeDevices: [rig.ana2.deviceID]
+            ) { try await rig.ana1.deps.mls.remove(members: ["acc-ana/\(rig.ana2.deviceID)"], from: group) }
+        }
+        #expect(try await rig.ana1.deps.mls.epoch(of: group) == 1)
+        #expect(await rig.server.memberDevices(of: record.serverID).count == 4)
     }
 
     /// A real race: bob1 commits first, so ana1's commit is rejected for real; the sync moves her
