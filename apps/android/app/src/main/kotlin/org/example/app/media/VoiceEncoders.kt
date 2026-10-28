@@ -16,6 +16,12 @@ internal enum class VoiceEncoderChoice { PlatformFirst, BundledOnly }
 internal interface VoiceEncoder {
     val kind: VoiceEncoderKind
 
+    /**
+     * The pre-skip to write in the Ogg header, in 48 kHz samples: the phone encoder's own once it reported one (read
+     * after [finish]), else [VoiceNoteFinisher.DEFAULT_PRE_SKIP]; always that 312 for the bundled encoder.
+     */
+    val preSkip: Int
+
     /** Encodes [size] bytes of PCM; [ptsUs] is the first sample's time. Appends finished packets to [out]. */
     fun encode(pcm: ByteArray, size: Int, ptsUs: Long, out: MutableList<ByteArray>)
 
@@ -61,6 +67,8 @@ internal class PcmFramer(private val frameBytes: Int) {
 internal class PlatformVoiceEncoder private constructor(private val codec: MediaCodec) : VoiceEncoder {
     override val kind = VoiceEncoderKind.Platform
     private val info = MediaCodec.BufferInfo()
+    @Volatile private var reportedPreSkip: Int? = null
+    override val preSkip: Int get() = reportedPreSkip ?: VoiceNoteFinisher.DEFAULT_PRE_SKIP
 
     override fun encode(pcm: ByteArray, size: Int, ptsUs: Long, out: MutableList<ByteArray>) =
         feed(pcm, size, ptsUs, eos = false, out)
@@ -93,6 +101,11 @@ internal class PlatformVoiceEncoder private constructor(private val codec: Media
         while (true) {
             val o = codec.dequeueOutputBuffer(info, if (endOfStream) 10_000 else 0)
             when {
+                o == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                    val head = runCatching { codec.outputFormat.getByteBuffer("csd-0") }.getOrNull()
+                    head?.let { b -> OpusHeadPreSkip.parse(ByteArray(b.remaining()).also { b.duplicate().get(it) }) }
+                        ?.let { reportedPreSkip = it }
+                }
                 o == MediaCodec.INFO_TRY_AGAIN_LATER -> {
                     if (!endOfStream) return
                     if (++idle > 500) throw IllegalStateException("encoder did not finish")
@@ -102,7 +115,8 @@ internal class PlatformVoiceEncoder private constructor(private val codec: Media
                     val buffer = codec.getOutputBuffer(o)!!
                     val bytes = ByteArray(info.size).also { buffer.position(info.offset); buffer.get(it) }
                     val config = info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0
-                    if (!config && bytes.isNotEmpty()) out += bytes
+                    if (config) OpusHeadPreSkip.parse(bytes)?.let { reportedPreSkip = it }
+                    else if (bytes.isNotEmpty()) out += bytes
                     codec.releaseOutputBuffer(o, false)
                     if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) return
                 }
@@ -155,6 +169,7 @@ internal class PlatformVoiceEncoder private constructor(private val codec: Media
  */
 internal class BundledVoiceEncoder private constructor(private val encoder: OpusVoiceEncoder) : VoiceEncoder {
     override val kind = VoiceEncoderKind.Bundled
+    override val preSkip = VoiceNoteFinisher.DEFAULT_PRE_SKIP
     private val framer = PcmFramer(OpusVoiceEncoder.FRAME_BYTES)
 
     override fun encode(pcm: ByteArray, size: Int, ptsUs: Long, out: MutableList<ByteArray>) =
@@ -182,5 +197,23 @@ internal class BundledVoiceEncoder private constructor(private val encoder: Opus
             if (encoder.preSkip() != VoiceNoteFinisher.DEFAULT_PRE_SKIP) { encoder.close(); return null }
             return BundledVoiceEncoder(encoder)
         }
+    }
+}
+
+/**
+ * Reads the pre-skip from an encoder's header: a plain RFC 7845 `OpusHead`, or Android's codec config, which wraps it
+ * as `AOPUSHDR` + length + `OpusHead` (then `AOPUSDLY` and `AOPUSPRL`). Null when there is no whole `OpusHead`.
+ */
+internal object OpusHeadPreSkip {
+    private val MAGIC = "OpusHead".toByteArray()
+    private const val HEAD_SIZE = 19
+
+    fun parse(bytes: ByteArray): Int? {
+        for (at in 0..bytes.size - HEAD_SIZE) {
+            if ((MAGIC.indices).all { bytes[at + it] == MAGIC[it] }) {
+                return (bytes[at + 10].toInt() and 0xFF) or ((bytes[at + 11].toInt() and 0xFF) shl 8)
+            }
+        }
+        return null
     }
 }

@@ -81,7 +81,9 @@ class VoiceRecorderInstrumentedTest {
         assertEquals(1, stream.channels)
         assertTrue(stream.packets.isNotEmpty())
         assertEquals(16_000L, stream.inputSampleRate)
-        assertEquals(312, stream.preSkip, "standard Opus pre-skip in 48 kHz units")
+        // The bundled encoder writes the standard 312; a phone encoder writes the pre-skip its own header reported.
+        if (recorder.lastEncoder == VoiceEncoderKind.Bundled) assertEquals(312, stream.preSkip, "standard Opus pre-skip in 48 kHz units")
+        assertEquals(recorder.lastPreSkip, stream.preSkip, "the encoder's pre-skip, in 48 kHz units")
         assertEquals(listOf(ok.recording.file.name), dir.list()!!.toList())
     }
 

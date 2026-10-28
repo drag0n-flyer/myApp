@@ -89,12 +89,22 @@ class VoiceNoteFinisherTest {
         } finally { d.deleteRecursively() }
     }
 
-    @Test fun preSkipIsAlwaysTheStandard312In48kHzUnits() {
+    /** The bundled encoder's notes carry the standard 312 (48 kHz units) in their Ogg header. */
+    @Test fun bundledEncoderNoteHasTheStandard312PreSkip() {
         val d = dir()
         try {
-            val ok = assertIs<StopResult.Success>(VoiceNoteFinisher.finish(frames(100), d))
+            val ok = assertIs<StopResult.Success>(VoiceNoteFinisher.finish(frames(100), d, VoiceNoteFinisher.DEFAULT_PRE_SKIP))
             assertEquals(312, VoiceNoteValidator.validate(ok.recording.file.readBytes()).preSkip)
             assertEquals(312, VoiceNoteFinisher.DEFAULT_PRE_SKIP)
+        } finally { d.deleteRecursively() }
+    }
+
+    /** A phone encoder that reported its own pre-skip gets that value in the Ogg header, not 312. */
+    @Test fun phoneEncoderNoteHasTheEncodersOwnPreSkip() {
+        val d = dir()
+        try {
+            val ok = assertIs<StopResult.Success>(VoiceNoteFinisher.finish(frames(100), d, preSkip = 3_840))
+            assertEquals(3_840, VoiceNoteValidator.validate(ok.recording.file.readBytes()).preSkip)
         } finally { d.deleteRecursively() }
     }
 
