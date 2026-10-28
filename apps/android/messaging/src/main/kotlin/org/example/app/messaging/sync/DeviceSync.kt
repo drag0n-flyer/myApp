@@ -137,6 +137,13 @@ class DeviceSync(
         val claimed = server.claimKeyPackages(me.accountId, todo).filterKeys { it in todo }
         if (claimed.isEmpty()) throw SyncException.NoKeyPackages
 
+        // The committer sends the mode again (Design 18). The marker is set before the commit, so a write that fails
+        // after the commit merged cannot lose the send: the next reconcile sees the device added and would not send.
+        // The marker also makes a failed send retry on the next send.
+        val modeKnown = repo.conversation(conversation.serverId)?.innerMode != null
+        val wasPending = ModePin.isPending(repo, conversation.serverId)
+        if (modeKnown) ModePin.setPending(repo, conversation.serverId, true)
+        var failure: Exception? = null
         try {
             conversations.postCommitWithRetry(conversation.serverId, group, claimed.keys.toList(), emptyList()) {
                 // Under the lock. After a stale epoch the inbox has been read: another own device may have added them.
@@ -145,14 +152,25 @@ class DeviceSync(
                 mls.add(use.values.toList(), group)
             }
         } catch (_: AlreadyDone) {
+            // The device that added them sends the mode.
+            if (modeKnown && !wasPending) ModePin.setPending(repo, conversation.serverId, false)
             return
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            failure = e // the commit may have merged (a write after it failed): the mode is still sent below
         }
-        // postCommitWithRetry merged the commit and stored the epoch in one locked step.
-
-        // The committer sends the mode again (Design 18). The marker makes a failed send retry on the next send.
-        val fresh = repo.conversation(conversation.serverId)?.takeIf { it.innerMode != null } ?: return
-        ModePin.setPending(repo, fresh.serverId, true)
-        conversations.announceMode(fresh)
+        val fresh = repo.conversation(conversation.serverId)?.takeIf { it.innerMode != null }
+        if (fresh != null) {
+            try {
+                conversations.announceMode(fresh)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                failure?.addSuppressed(e) ?: throw e
+            }
+        }
+        failure?.let { throw it }
     }
 
     private suspend fun removeUnlisted(listed: Set<String>, conversation: ConversationRecord, now: Long, stillStale: MutableSet<String>) {

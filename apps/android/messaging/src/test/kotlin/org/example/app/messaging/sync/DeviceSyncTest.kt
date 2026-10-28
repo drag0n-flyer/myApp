@@ -374,4 +374,41 @@ class DeviceSyncTest {
         runCatching { rig.ana1.reconcile() }
         assertTrue(Membership.isUnreadable(record.serverId, rig.ana1.repo))
     }
+
+    /**
+     * The add's commit merged but a write after it failed (the members flag here): the new device still gets the mode
+     * envelope. Without that, the next reconcile sees it already added and never sends the mode.
+     */
+    @Test
+    fun failedWriteAfterTheAddStillAnnouncesTheMode() = runTest {
+        val (rig, record) = joined()
+        val ana3 = TestDevice(rig.server, "acc-ana", "ana3", rig.escrowKeys.publicKey)
+        ana3.api.uploadKeyPackages(ana3.mls.makeKeyPackages(3))
+        rig.ana1.failNthMembersRead(record, 3) // 1: before claiming; 2: inside the commit; 3: after it
+        rig.ana1.repo.failSet = { key -> if (key.startsWith(Membership.UNREADABLE_PREFIX)) IllegalStateException("disk full") else null }
+        assertFailsWith<IllegalStateException> { rig.ana1.deviceSync.reconcileOwnDevices() }
+        rig.ana1.repo.failSet = null
+        assertTrue("acc-ana/ana3" in rig.membersOn(rig.ana1, record), "the commit took effect")
+        assertFalse(ModePin.isPending(rig.ana1.repo, record.serverId), "the mode was sent")
+        ana3.processor.sync()
+        assertEquals("e2ee", ana3.repo.preferredConversation("acc-bob")?.innerMode)
+    }
+
+    /** Same, and the mode send fails too: it stays pending, so the next send retries it. */
+    @Test
+    fun failedWriteAndFailedModeSendAfterTheAddLeaveTheModePending() = runTest {
+        val (rig, record) = joined()
+        val ana3 = TestDevice(rig.server, "acc-ana", "ana3", rig.escrowKeys.publicKey)
+        ana3.api.uploadKeyPackages(ana3.mls.makeKeyPackages(3))
+        rig.ana1.failNthMembersRead(record, 3)
+        rig.ana1.repo.failSet = { key -> if (key.startsWith(Membership.UNREADABLE_PREFIX)) IllegalStateException("disk full") else null }
+        rig.server.failNextMessages = 1
+        assertFailsWith<IllegalStateException> { rig.ana1.deviceSync.reconcileOwnDevices() }
+        rig.ana1.repo.failSet = null
+        assertTrue(ModePin.isPending(rig.ana1.repo, record.serverId))
+        rig.ana1.manager.ensureModeAnnounced(rig.ana1.repo.conversation(record.serverId)!!)
+        assertFalse(ModePin.isPending(rig.ana1.repo, record.serverId))
+        ana3.processor.sync()
+        assertEquals("e2ee", ana3.repo.preferredConversation("acc-bob")?.innerMode)
+    }
 }
