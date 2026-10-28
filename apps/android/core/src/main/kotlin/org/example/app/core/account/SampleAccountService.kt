@@ -23,6 +23,12 @@ class SampleAccountService(
     private val takenNames = setOf("riya", "admin")
     var lastEmailSentTo: String? = null
         private set
+    /** The name given to the last [startSignUp]. */
+    var displayName: String? = null
+        private set
+    /** True once [finishSignUp] registered a passkey; [finishSignUpWithEmailCode] leaves it false. */
+    var passkeyRegistered = false
+        private set
     private val deviceList: MutableList<DeviceInfo>
 
     override val defaultServer = ServerPolicy(ModePreference.Auto, DataMode.High, IPHiding.NonContacts, true, "home.example.org")
@@ -67,10 +73,11 @@ class SampleAccountService(
         return true
     }
 
-    override suspend fun startSignUp(username: String, email: String) {
+    override suspend fun startSignUp(displayName: String, username: String, email: String) {
         if (!UsernameCheck.isValid(username)) throw AccountError.InvalidUsername
         if (username in takenNames) throw AccountError.UsernameTaken
         if (!email.contains("@") || !email.contains(".")) throw AccountError.InvalidEmail
+        this.displayName = displayName
         lastEmailSentTo = email
     }
 
@@ -78,7 +85,12 @@ class SampleAccountService(
         if (code != SAMPLE_EMAIL_CODE) throw AccountError.CodeInvalid
     }
 
-    override suspend fun finishSignUp() { isSignedIn = true }
+    override suspend fun finishSignUp() {
+        passkeyRegistered = true
+        isSignedIn = true
+    }
+
+    override suspend fun finishSignUpWithEmailCode() { isSignedIn = true }
 
     override suspend fun signInWithPasskey() { isSignedIn = true }
 

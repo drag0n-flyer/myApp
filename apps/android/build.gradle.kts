@@ -31,6 +31,7 @@ subprojects {
                 targetCompatibility = JavaVersion.VERSION_17
             }
             testOptions { unitTests.isIncludeAndroidResources = true }
+            lint { error += listOf("HardcodedText", "SetTextI18n") }
         }
         extensions.configure<KotlinBaseExtension> { jvmToolchain(jdkVersion) }
     }
@@ -56,6 +57,7 @@ subprojects {
                 }
             }
             testOptions { unitTests.isIncludeAndroidResources = true }
+            lint { error += listOf("HardcodedText", "SetTextI18n") }
         }
         extensions.configure<KotlinBaseExtension> { jvmToolchain(jdkVersion) }
     }
