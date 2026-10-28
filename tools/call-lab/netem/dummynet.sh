@@ -9,12 +9,17 @@
 # Mode `direct` (default) shapes every UDP send. Mode `relay` shapes only the clients' sends to
 # coturn (port 3478): the relay hop and coturn's sends to the clients are not shaped again.
 # dummynet has no jitter: a profile's jitter_ms is "not simulated" (noted on stderr).
-# The rules live in the pf anchor com.apple/call-lab, which the default macOS pf.conf loads
-# through its `dummynet-anchor "com.apple/*"` line.
+# The rules live in the pf anchor com.apple/call-lab. pf only evaluates it through the
+# `dummynet-anchor "com.apple/*"` line of /etc/pf.conf, so apply loads that main ruleset first.
+# apply enables pf with `pfctl -E` and keeps the reference token in $DUMMYNET_TOKEN_FILE;
+# clear releases it with `pfctl -X <token>`.
+# `packets` prints how many packets went through pipe 1 (summed over its per-socket queues).
 # Usage: dummynet.sh [--dry-run] apply <iface> <profile> [direct|relay]
 #        dummynet.sh [--dry-run] clear
+#        dummynet.sh packets
 dir=$(cd "$(dirname "$0")" && pwd)
 anchor=com.apple/call-lab
+token_file=${DUMMYNET_TOKEN_FILE:-/var/run/call-lab-pf.token}
 dry=0
 if [ "$1" = "--dry-run" ]; then dry=1; shift; fi
 
@@ -23,7 +28,7 @@ run() {
     "$@" || { echo "failed: $*" >&2; exit 1; }
 }
 
-usage() { echo "usage: dummynet.sh [--dry-run] apply <iface> <profile> [direct|relay] | clear" >&2; exit 64; }
+usage() { echo "usage: dummynet.sh [--dry-run] apply <iface> <profile> [direct|relay] | clear | packets" >&2; exit 64; }
 
 check_iface() {
     if ! printf '%s\n' "$1" | grep -Eq '^[A-Za-z0-9_.:-]{1,15}$'; then
@@ -59,6 +64,15 @@ apply)
     if [ "$jitter" != "0" ]; then
         echo "note: jitter not simulated (dummynet has no jitter); profile $name jitter $jitter ms is not applied" >&2
     fi
+    # Take a reference on pf and keep its token, then load the main ruleset with the anchor hook.
+    if [ "$dry" -eq 1 ]; then
+        echo "pfctl -E"
+    else
+        en=$(pfctl -E 2>&1) || { echo "failed: pfctl -E: $en" >&2; exit 1; }
+        tok=$(printf '%s\n' "$en" | sed -n 's/.*Token : *\([0-9][0-9]*\).*/\1/p' | head -1)
+        [ -n "$tok" ] && printf '%s\n' "$tok" > "$token_file"
+    fi
+    run pfctl -f /etc/pf.conf
     pipe 1 "$delay" "$loss" "$rate"
     rules="dummynet out quick on $iface proto udp $match pipe 1"
     if [ "$dry" -eq 1 ]; then
@@ -67,13 +81,21 @@ apply)
     else
         printf '%s\n' "$rules" | pfctl -q -a "$anchor" -f - || { echo "failed: pfctl -a $anchor -f -" >&2; exit 1; }
     fi
-    # -E takes a reference on pf (prints a token); clear flushes the anchor and the pipes.
-    run pfctl -E
     ;;
 clear)
     [ $# -eq 1 ] || usage
     run dnctl -q flush
     run pfctl -a "$anchor" -F all
+    if [ -s "$token_file" ]; then
+        tok=$(head -1 "$token_file")
+        run pfctl -X "$tok"
+        [ "$dry" -eq 1 ] || rm -f "$token_file"
+    fi
+    ;;
+packets)
+    [ $# -eq 1 ] || usage
+    # Queue rows: BKT Prot Source/port Dest/port Tot_pkt Tot_bytes ...
+    dnctl pipe show 1 | awk '$1 ~ /^[0-9]+$/ && $3 ~ /\// && $4 ~ /\// { s += $5 } END { print s + 0 }'
     ;;
 *) usage ;;
 esac

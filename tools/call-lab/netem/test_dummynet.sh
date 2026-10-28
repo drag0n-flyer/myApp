@@ -3,6 +3,9 @@
 dir=$(cd "$(dirname "$0")" && pwd)
 S="$dir/dummynet.sh"
 fail=0; total=0
+tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+# The pf reference token from `pfctl -E` is kept here between apply and clear.
+DUMMYNET_TOKEN_FILE="$tmp/token"; export DUMMYNET_TOKEN_FILE
 
 check() { # name expected actual
     total=$((total + 1))
@@ -15,10 +18,11 @@ check() { # name expected actual
 # pass is shaped, so each packet goes through exactly one pipe. The mask gives every sending socket
 # its own dynamic pipe, so each call direction has its own delay, loss and rate.
 test_apply_loss5_one_pipe_per_packet() {
-    exp='dnctl pipe 1 config delay 40 plr 0.05 mask src-ip 0xffffffff src-port 0xffff
+    exp='pfctl -E
+pfctl -f /etc/pf.conf
+dnctl pipe 1 config delay 40 plr 0.05 mask src-ip 0xffffffff src-port 0xffff
 pfctl -a com.apple/call-lab -f -
-  dummynet out quick on lo0 proto udp all pipe 1
-pfctl -E'
+  dummynet out quick on lo0 proto udp all pipe 1'
     check apply_loss5_one_pipe_per_packet "$exp" "$(sh "$S" --dry-run apply lo0 loss5 2>/dev/null)"
 }
 
@@ -70,9 +74,55 @@ test_jitter_is_noted_not_applied() {
 }
 
 test_clear() {
+    rm -f "$DUMMYNET_TOKEN_FILE"
     exp='dnctl -q flush
 pfctl -a com.apple/call-lab -F all'
     check clear "$exp" "$(sh "$S" --dry-run clear 2>&1)"
+}
+
+# The main ruleset (/etc/pf.conf, with its dummynet-anchor "com.apple/*" line) must be loaded
+# before the anchor rules, or the anchor is never evaluated and nothing is shaped.
+test_main_ruleset_loaded_before_anchor() {
+    out=$(sh "$S" --dry-run apply lo0 loss5 2>/dev/null)
+    main=$(echo "$out" | grep -n '^pfctl -f /etc/pf.conf$' | cut -d: -f1)
+    anc=$(echo "$out" | grep -n '^pfctl -a com.apple/call-lab -f -$' | cut -d: -f1)
+    [ -n "$main" ] && [ -n "$anc" ] && [ "$main" -lt "$anc" ] && r=yes || r=no
+    check main_ruleset_loaded_before_anchor yes "$r"
+}
+
+# apply keeps the token `pfctl -E` prints; clear releases exactly that reference.
+test_token_kept_and_released() {
+    mkdir -p "$tmp/bin"
+    printf '#!/bin/sh\ncase "$1" in -E) echo "pf enabled" >&2; echo "Token : 4242" >&2;; esac\nexit 0\n' > "$tmp/bin/pfctl"
+    printf '#!/bin/sh\nexit 0\n' > "$tmp/bin/dnctl"
+    printf '#!/bin/sh\nexit 0\n' > "$tmp/bin/ifconfig"
+    chmod +x "$tmp/bin/"*
+    rm -f "$DUMMYNET_TOKEN_FILE"
+    PATH="$tmp/bin:$PATH" sh "$S" apply lo0 loss5 >/dev/null 2>&1
+    check token_kept "4242" "$(cat "$DUMMYNET_TOKEN_FILE" 2>/dev/null)"
+    out=$(sh "$S" --dry-run clear 2>&1)
+    check token_released 'dnctl -q flush
+pfctl -a com.apple/call-lab -F all
+pfctl -X 4242' "$out"
+}
+
+# `packets` sums Tot_pkt over pipe 1's dynamic queues (run_calls.sh fails a shaped call at 0).
+test_packets_counts_pipe_traffic() {
+    mkdir -p "$tmp/bin"
+    cat > "$tmp/bin/dnctl" <<'EOS'
+#!/bin/sh
+cat <<'OUT'
+00001:  32.000 Kbit/s   40 ms   50 sl.plr 0.050000 2 queues (64 buckets) droptail
+    mask: 0x00 0xffffffff/0xffff -> 0x00000000/0x0000
+BKT Prot ___Source IP/port____ ____Dest. IP/port____ Tot_pkt/bytes Pkt/Byte Drp
+ 12 udp      127.0.0.1/53000       127.0.0.1/3478      1500   120000  0    0  75
+ 40 udp      127.0.0.1/53002       127.0.0.1/3478       700    56000  0    0  35
+OUT
+EOS
+    chmod +x "$tmp/bin/dnctl"
+    check packets_counts_pipe_traffic 2200 "$(PATH="$tmp/bin:$PATH" sh "$S" packets 2>&1)"
+    printf '#!/bin/sh\necho "00001:  unlimited    0 ms   50 sl.plr 0.000000 0 queues (64 buckets) droptail"\n' > "$tmp/bin/dnctl"
+    check packets_zero_when_idle 0 "$(PATH="$tmp/bin:$PATH" sh "$S" packets 2>&1)"
 }
 
 test_unknown_profile() {
@@ -104,6 +154,9 @@ test_rate_only_when_capped
 test_clean_profile_has_no_loss
 test_jitter_is_noted_not_applied
 test_clear
+test_main_ruleset_loaded_before_anchor
+test_token_kept_and_released
+test_packets_counts_pipe_traffic
 test_unknown_profile
 test_bad_interface_name
 test_usage

@@ -59,12 +59,16 @@ fi
 tmp=$(mktemp -d)
 mkdir -p "$out"
 pids=
+# pids: coturn, the server, and each call's caller and callee.
 cleanup() {
+    trap - EXIT INT TERM
     for p in $pids; do kill "$p" 2>/dev/null; done
     sudo sh "$lab/netem/dummynet.sh" clear >/dev/null 2>&1
     sudo pkill -f "tcpdump -i lo0" 2>/dev/null
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM
 
 ip=$(ipconfig getifaddr en0 2>/dev/null || true)
 locals=127.0.0.1${ip:+,$ip}
@@ -145,18 +149,29 @@ while read -r preset path profile snr; do
     LAB_HOST=http://127.0.0.1:8080 LAB_TOKEN=$tok_b LAB_SECONDS=$seconds \
         "$bin" --headless --role callee --preset "$preset" --path "$path" --out "$run/callee" </dev/null >"$run/callee.log" 2>&1 &
     callee=$!
+    pids="$pids $callee"
     sleep 3
     LAB_HOST=http://127.0.0.1:8080 LAB_TOKEN=$tok_a LAB_PEER=$acct_b LAB_SECONDS=$seconds \
         "$bin" --headless --role caller --preset "$preset" --path "$path" --stimulus "$stim" --out "$run/caller" </dev/null >"$run/caller.log" 2>&1 &
     caller=$!
+    pids="$pids $caller"
     # Each client's UDP ports, read once the call is up, pick out its own leg to coturn.
-    sleep 45
+    sleep 45 & wait $!   # interruptible, so INT/TERM clean up at once
     ports_a=$(udp_ports "$caller"); ports_b=$(udp_ports "$callee")
     wait_for "$caller" $((seconds + 135)); rc_a=$?
     wait_for "$callee" 60; rc_b=$?
     echo "caller exit $rc_a, callee exit $rc_b"
 
     sudo pkill -INT -f "tcpdump -i lo0" </dev/null 2>/dev/null; sleep 2
+    # A shaped call with no packets through the pipe means the shaping never applied: fail the job.
+    if [ "$profile" != clean ]; then
+        shaped=$(sudo sh "$lab/netem/dummynet.sh" packets </dev/null)
+        echo "packets through the $profile pipe: $shaped"
+        if [ "${shaped:-0}" -eq 0 ]; then
+            echo "FAIL $name: dummynet pipe for $profile saw 0 packets (shaping not applied)" >&2
+            status=1
+        fi
+    fi
     sudo sh "$lab/netem/dummynet.sh" clear </dev/null >/dev/null
 
     for f in stats.csv events.csv; do [ -f "$run/caller/$f" ] && cp "$run/caller/$f" "$run/$f"; done
