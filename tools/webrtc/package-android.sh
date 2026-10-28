@@ -15,17 +15,22 @@
 #                         Java classes do not depend on the ABI), and
 #                         jni/arm64-v8a/, jni/armeabi-v7a/ and jni/x86_64/ with the .so files
 #   libwebrtc.aar.sha256  "<sha256>  libwebrtc.aar"
+#   VERSION, ANDROID_RELEASE  copies of tools/webrtc/VERSION and tools/webrtc/ANDROID_RELEASE, so the
+#                         release says what it is (its tag is webrtc-android-m<milestone>.<ANDROID_RELEASE>)
 # The AAR is reproducible: fixed file order and timestamps.
 #
 # Checks first, before writing anything: exactly the ABIs arm64-v8a, armeabi-v7a and x86_64
 # (no missing and no extra ABI directory); LICENSE.md names no GPL, LGPL or AGPL
-# license; the jar holds org/webrtc/OpusInfo.class and
-# org/webrtc/AudioCapturePostProcessing.class (our patches 0006 and 0007) and the generated
+# license; the jar holds org/webrtc/OpusInfo.class,
+# org/webrtc/AudioCapturePostProcessing.class and org/webrtc/OpusVoiceEncoder.class with its
+# OpusVoiceEncoderJni.class (our patches 0006, 0007 and 0008) and the generated
 # org/webrtc/PeerConnectionFactoryJni.class (jni_zero proxy) and org/jni_zero/GEN_JNI.class (its natives);
 # without them the AAR fails at runtime.
 #
 # Exit codes: 0 ok, 1 failure or bad usage, 4 LICENSE.md names a GNU license.
 set -eu
+
+here=$(cd "$(dirname "$0")" && pwd)
 
 abis="arm64-v8a armeabi-v7a x86_64"
 
@@ -67,7 +72,11 @@ for f in $found; do
   case " $abis " in *" $f "*) ;; *) die "unexpected ABI '$f' in $dir; the AAR holds only: $abis" ;; esac
 done
 
-# 2. Inputs.
+# 2. Inputs. ANDROID_RELEASE must be one positive integer (PACKAGE_ANDROID_RELEASE_FILE: tests only).
+release_file=${PACKAGE_ANDROID_RELEASE_FILE:-$here/ANDROID_RELEASE}
+[ -f "$release_file" ] || die "$release_file missing"
+[ "$(grep -v '^#' "$release_file")" = "ANDROID_RELEASE=$(sed -n 's/^ANDROID_RELEASE=\([1-9][0-9]*\)$/\1/p' "$release_file")" ] ||
+  die "$release_file must hold one line ANDROID_RELEASE=<positive integer> besides # comments"
 jar="$dir/arm64-v8a/libwebrtc.jar"
 [ -f "$jar" ] || die "$jar missing"
 [ -f "$dir/AndroidManifest.xml" ] || die "$dir/AndroidManifest.xml missing"
@@ -102,9 +111,9 @@ fi
 python3 -I - "$jar" <<'PY' || exit 1
 import sys, zipfile
 names = set(zipfile.ZipFile(sys.argv[1]).namelist())
-missing = [c for c in ("org/webrtc/OpusInfo.class", "org/webrtc/AudioCapturePostProcessing.class", "org/webrtc/PeerConnectionFactoryJni.class", "org/jni_zero/GEN_JNI.class") if c not in names]
+missing = [c for c in ("org/webrtc/OpusInfo.class", "org/webrtc/AudioCapturePostProcessing.class", "org/webrtc/OpusVoiceEncoder.class", "org/webrtc/OpusVoiceEncoderJni.class", "org/webrtc/PeerConnectionFactoryJni.class", "org/jni_zero/GEN_JNI.class") if c not in names]
 if missing:
-    sys.exit("error: %s lacks %s; are patches 0006 and 0007 applied (they add the generated Jni classes and GEN_JNI to libwebrtc)?" % (sys.argv[1], ", ".join(missing)))
+    sys.exit("error: %s lacks %s; are patches 0006, 0007 and 0008 applied (they add the generated Jni classes and GEN_JNI to libwebrtc)?" % (sys.argv[1], ", ".join(missing)))
 PY
 
 # 4. The AAR.
@@ -194,5 +203,7 @@ with zipfile.ZipFile(aar + ".part", "w", zipfile.ZIP_DEFLATED) as z:
 os.replace(aar + ".part", aar)
 PY
 printf '%s  libwebrtc.aar\n' "$(sha256_of "$aar")" >"$aar.sha256"
+cp "$here/VERSION" "$dir/VERSION"
+cp "$release_file" "$dir/ANDROID_RELEASE"
 echo "wrote $aar"
 cat "$aar.sha256"

@@ -116,7 +116,7 @@ import sys, zipfile
 exec(open(sys.argv[2]).read())
 with zipfile.ZipFile(sys.argv[1], "w") as z:
     z.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\n")
-    for c in ("org/webrtc/PeerConnectionFactory", "org/webrtc/PeerConnectionFactoryJni", "org/jni_zero/GEN_JNI", "org/webrtc/OpusInfo", "org/webrtc/AudioCapturePostProcessing"):
+    for c in ("org/webrtc/PeerConnectionFactory", "org/webrtc/PeerConnectionFactoryJni", "org/jni_zero/GEN_JNI", "org/webrtc/OpusInfo", "org/webrtc/AudioCapturePostProcessing", "org/webrtc/OpusVoiceEncoder", "org/webrtc/OpusVoiceEncoderJni"):
         z.writestr(c + ".class", cls(["java/lang/Object", "java/lang/runtime/ObjectMethods", c]))
 PY
   printf '<manifest package="org.webrtc"/>\n' >"$d/AndroidManifest.xml"
@@ -130,6 +130,12 @@ expect_exit "package-android: missing directory" 1 sh "$here/package-android.sh"
 make_layout "$work/ok" arm64-v8a armeabi-v7a x86_64
 expect_exit "package-android: three ABIs" 0 sh "$here/package-android.sh" "$work/ok"
 check "package-android: AAR written" test -s "$work/ok/libwebrtc.aar"
+check "package-android: VERSION copied for the release" cmp -s "$here/VERSION" "$work/ok/VERSION"
+check "package-android: ANDROID_RELEASE copied for the release" cmp -s "$here/ANDROID_RELEASE" "$work/ok/ANDROID_RELEASE"
+make_layout "$work/badrel" arm64-v8a armeabi-v7a x86_64
+printf 'ANDROID_RELEASE=two\n' >"$work/badrel.txt"
+expect_exit "package-android: a non-numeric ANDROID_RELEASE fails" 1 env PACKAGE_ANDROID_RELEASE_FILE="$work/badrel.txt" sh "$here/package-android.sh" "$work/badrel"
+check "package-android: a bad ANDROID_RELEASE writes no AAR" test ! -e "$work/badrel/libwebrtc.aar"
 zip_names "$work/ok/libwebrtc.aar" >"$work/names.txt"
 check "package-android: jni/ holds exactly the three ABIs" test "$(grep '^jni/' "$work/names.txt")" = "$(printf 'jni/arm64-v8a/libjingle_peerconnection_so.so\njni/armeabi-v7a/libjingle_peerconnection_so.so\njni/x86_64/libjingle_peerconnection_so.so')"
 check "package-android: AndroidManifest.xml" has '^AndroidManifest.xml$' "$work/names.txt"
@@ -190,11 +196,21 @@ with zipfile.ZipFile(sys.argv[1], "w") as z:
 PY
 expect_exit "package-android: a jar without our classes fails" 1 sh "$here/package-android.sh" "$work/nocls"
 check "package-android: names OpusInfo" out_has "org/webrtc/OpusInfo.class"
+make_layout "$work/noenc" arm64-v8a armeabi-v7a x86_64
+python3 -I - "$work/noenc/arm64-v8a/libwebrtc.jar" <<'PY'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w") as z:
+    for c in ("PeerConnectionFactory", "PeerConnectionFactoryJni", "OpusInfo", "AudioCapturePostProcessing"):
+        z.writestr("org/webrtc/%s.class" % c, "x")
+    z.writestr("org/jni_zero/GEN_JNI.class", "x")
+PY
+expect_exit "package-android: a jar without OpusVoiceEncoder (patch 0008) fails" 1 sh "$here/package-android.sh" "$work/noenc"
+check "package-android: names OpusVoiceEncoder" out_has "org/webrtc/OpusVoiceEncoder.class"
 make_layout "$work/nojni" arm64-v8a armeabi-v7a x86_64
 python3 -I - "$work/nojni/arm64-v8a/libwebrtc.jar" <<'PY'
 import sys, zipfile
 with zipfile.ZipFile(sys.argv[1], "w") as z:
-    for c in ("PeerConnectionFactory", "OpusInfo", "AudioCapturePostProcessing"):
+    for c in ("PeerConnectionFactory", "OpusInfo", "AudioCapturePostProcessing", "OpusVoiceEncoder", "OpusVoiceEncoderJni"):
         z.writestr("org/webrtc/%s.class" % c, "x")
 PY
 expect_exit "package-android: a jar without the generated Jni classes fails" 1 sh "$here/package-android.sh" "$work/nojni"
@@ -203,7 +219,7 @@ make_layout "$work/nogen" arm64-v8a armeabi-v7a x86_64
 python3 -I - "$work/nogen/arm64-v8a/libwebrtc.jar" <<'PY'
 import sys, zipfile
 with zipfile.ZipFile(sys.argv[1], "w") as z:
-    for c in ("PeerConnectionFactory", "PeerConnectionFactoryJni", "OpusInfo", "AudioCapturePostProcessing"):
+    for c in ("PeerConnectionFactory", "PeerConnectionFactoryJni", "OpusInfo", "AudioCapturePostProcessing", "OpusVoiceEncoder", "OpusVoiceEncoderJni"):
         z.writestr("org/webrtc/%s.class" % c, "x")
 PY
 expect_exit "package-android: a jar without org.jni_zero.GEN_JNI fails" 1 sh "$here/package-android.sh" "$work/nogen"
@@ -228,6 +244,13 @@ check "package-android: ObjectMethods (records) is accepted" test -s "$work/ok/l
 
 # --- workflow and patch text ---
 wf="$here/../../.github/workflows/webrtc-android.yml"
+# Android releases count separately; VERSION stays byte-identical to the Apple release's.
+check "ANDROID_RELEASE is one positive integer" sh -c '[ "$(grep -v "^#" "$1")" = "ANDROID_RELEASE=$(sed -n "s/^ANDROID_RELEASE=\([1-9][0-9]*\)$/\1/p" "$1")" ]' _ "$here/ANDROID_RELEASE"
+check "VERSION has no Android counter" sh -c '! grep -q ANDROID "$1"' _ "$here/VERSION"
+check "workflow: tag uses ANDROID_RELEASE" has 'tag="webrtc-android-m${WEBRTC_MILESTONE}.${ANDROID_RELEASE}"' "$wf"
+check "workflow: tag does not use the Apple RELEASE" sh -c '! grep -qF "m\${WEBRTC_MILESTONE}.\${RELEASE}" "$1"' _ "$wf"
+check "workflow: release ships VERSION and ANDROID_RELEASE" sh -c 'grep -q "gh release create.* VERSION ANDROID_RELEASE" "$1"' _ "$wf"
+check "workflow: path filter names ANDROID_RELEASE" has '"tools/webrtc/ANDROID_RELEASE"' "$wf"
 check "workflow: gh release create pins the target commit" grep -qF -- '--target "${{ github.sha }}"' "$wf"
 check "workflow: release only from main or feat/webrtc-android" has "github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/webrtc-android'" "$wf"
 check "workflow: per-ABI licenses are collected" grep -qF 'LICENSE.md" "collected/${{ matrix.abi }}/"' "$wf"
@@ -295,7 +318,7 @@ expect_list() { # expect_list <platform> <expected names, space separated>
   check "apply $1 applies exactly: $2" test "$(tr '\n' ' ' <"$work/list.txt" | sed 's/ $//')" = "$2"
 }
 expect_list apple "0001-third-party-opus-1.6.patch 0002-opus-decoder-complexity.patch 0003-objc-opus-info.patch 0004-objc-capture-post-processing.patch 0005-mac-framework-headers.patch"
-expect_list android "0001-third-party-opus-1.6.patch 0002-opus-decoder-complexity.patch 0006-android-opus-info.patch 0007-android-capture-post-processing.patch"
+expect_list android "0001-third-party-opus-1.6.patch 0002-opus-decoder-complexity.patch 0006-android-opus-info.patch 0007-android-capture-post-processing.patch 0008-android-opus-encoder.patch"
 
 tb="$work/badplat"
 new_tree "$tb"
@@ -322,8 +345,9 @@ fetch() { # fetch <path-in-webrtc-src> <dest>: cached
 }
 patch_06=$(ls "$here"/patches/0006-*.patch 2>/dev/null | head -1)
 patch_07=$(ls "$here"/patches/0007-*.patch 2>/dev/null | head -1)
-if [ ! -f "$patch_06" ] || [ ! -f "$patch_07" ]; then
-  fail "patches 0006 and 0007 exist"
+patch_08=$(ls "$here"/patches/0008-*.patch 2>/dev/null | head -1)
+if [ ! -f "$patch_06" ] || [ ! -f "$patch_07" ] || [ ! -f "$patch_08" ]; then
+  fail "patches 0006, 0007 and 0008 exist"
   echo
   echo "$failures check(s) failed"
   exit 1
@@ -345,7 +369,12 @@ g -C "$repo" add -A
 g -C "$repo" commit -q -m 0006
 check "0007: git apply --check --3way (after 0006)" g -C "$repo" apply --check --3way "$patch_07"
 g -C "$repo" apply --3way "$patch_07" >/dev/null 2>&1
-check "0006 and 0007 leave no conflict markers" sh -c '! grep -rn "^<<<<<<<" "$1" --exclude-dir=.git' _ "$repo"
+g -C "$repo" add -A
+g -C "$repo" commit -q -m 0007
+# 0008 extends 0006's targets (app_opus_java, app_opus_jni, generated_app_opus_jni), so it follows 0006 and 0007.
+check "0008: git apply --check --3way (after 0006 and 0007)" g -C "$repo" apply --check --3way "$patch_08"
+g -C "$repo" apply --3way "$patch_08" >/dev/null 2>&1
+check "0006, 0007 and 0008 leave no conflict markers" sh -c '! grep -rn "^<<<<<<<" "$1" --exclude-dir=.git' _ "$repo"
 # Applying in the other order must work too (apply.sh runs them in name order,
 # but a rebase of one patch must not need the other).
 repo2="$work/src2"
@@ -376,9 +405,15 @@ check "0007: Java library is in libwebrtc.jar" has '":capture_post_processing_ja
 check "0007: JNI library is linked into the .so" has '":capture_post_processing_jni",' "$a/BUILD.gn"
 check "0007: factory takes ownership of the processor reference" has 'TakeOwnershipOfRefPtr<AudioProcessing>(native_audio_processor)' "$a/src/jni/pc/peer_connection_factory.cc"
 check "0007: the leaking conversion is gone" sh -c '! grep -q "reinterpret_cast<AudioProcessing\*>(native_audio_processor)" "$1"' _ "$a/src/jni/pc/peer_connection_factory.cc"
+check "0008: OpusVoiceEncoder is AutoCloseable" has 'public final class OpusVoiceEncoder implements AutoCloseable' "$a/api/org/webrtc/OpusVoiceEncoder.java"
+check "0008: voice note format 16 kHz mono 16 kbps, 20 ms" sh -c 'grep -q "SAMPLE_RATE = 16000;" "$1" && grep -q "CHANNELS = 1;" "$1" && grep -q "BIT_RATE = 16000;" "$1" && grep -q "FRAME_SAMPLES = 320;" "$1"' _ "$a/api/org/webrtc/OpusVoiceEncoder.java"
+check "0008: JNI functions" sh -c 'for m in Create PreSkip Encode Free; do grep -q "JNI_OpusVoiceEncoder_$m" "$1" || exit 1; done' _ "$a/src/jni/app/opus_voice_encoder.cc"
+check "0008: VOIP application" has 'OPUS_APPLICATION_VOIP' "$a/src/jni/app/opus_voice_encoder.cc"
+check "0008: pre-skip from OPUS_GET_LOOKAHEAD" has 'OPUS_GET_LOOKAHEAD' "$a/src/jni/app/opus_voice_encoder.cc"
+check "0008: JNI file ends with DEFINE_JNI" has '^DEFINE_JNI(OpusVoiceEncoder)' "$a/src/jni/app/opus_voice_encoder.cc"
 # Every .cc, .h and .java a patch adds must be listed in a BUILD.gn source list.
-for f in api/org/webrtc/OpusInfo.java api/org/webrtc/AudioCapturePostProcessing.java \
-  src/jni/app/opus_info.cc src/jni/app/audio_capture_post_processing.cc src/jni/app/audio_capture_processor.h; do
+for f in api/org/webrtc/OpusInfo.java api/org/webrtc/AudioCapturePostProcessing.java api/org/webrtc/OpusVoiceEncoder.java \
+  src/jni/app/opus_voice_encoder.cc src/jni/app/opus_info.cc src/jni/app/audio_capture_post_processing.cc src/jni/app/audio_capture_processor.h; do
   check "BUILD.gn lists $f" has "\"$f\"" "$a/BUILD.gn"
 done
 

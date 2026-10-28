@@ -1,0 +1,4 @@
+# Android WebRTC release counter: the tag is webrtc-android-m<WEBRTC_MILESTONE>.<ANDROID_RELEASE>.
+# Android releases count separately from Apple ones, so VERSION (with Apple's RELEASE) stays
+# byte-identical to the Apple release. Add 1 for each Android release; reset to 1 with a new milestone.
+ANDROID_RELEASE=2

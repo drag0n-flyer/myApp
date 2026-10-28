@@ -633,7 +633,7 @@ If plan 4's `member_keys` export is still missing, add `Engine::member_keys(grou
 
 **Files:** a JNI bridge in `:webrtc` or `:app` over the libopus already inside our Android WebRTC build (BSD, approved); `apps/android/app/src/main/kotlin/org/example/app/media/VoiceRecorder.kt` picks the platform encoder first, then the bundled one; instrumented `VoiceRecorderInstrumentedTest` loses its no-encoder branch.
 
-**Interfaces — Produces:** the same Ogg Opus voice notes (16 kHz mono, 16 kbps, pre-skip 312) on every Android 10+ phone, whichever encoder made them. **Size budget:** expected AAR size increase: to be measured.
+**Interfaces — Produces:** the same Ogg Opus voice notes (16 kHz mono, 16 kbps, pre-skip 312) on every Android 10+ phone, whichever encoder made them. **Size budget:** measured AAR size increase, webrtc-android-m156.1 → m156.2 (patch 0008): **+5,035 bytes** (57,428,471 → 57,433,506). By entry, uncompressed: `classes.jar` +3,358; `libjingle_peerconnection_so.so` arm64-v8a +1,680, armeabi-v7a +832, x86_64 +1,328. The APK stores the `.so` files uncompressed, so each ABI's APK grows by about 1.7 KB of native code plus the few hundred bytes of shrunk classes (estimated from the AAR entries; a main release APK from the same build was not available). libopus was already in the library; nothing new is exported.
 
 - [ ] **Step 1: Failing test:** remove the no-encoder branch in `VoiceRecorderInstrumentedTest` so the full test runs on every device; it fails on API 29 AOSP (no Opus encoder).
 - [ ] **Step 2:** FAIL. **Step 3: Implement** the JNI bridge and the encoder choice. **Step 4:** PASS on API 29 AOSP and API 36 in `android-emulator-ci`; record the measured AAR size increase here.
