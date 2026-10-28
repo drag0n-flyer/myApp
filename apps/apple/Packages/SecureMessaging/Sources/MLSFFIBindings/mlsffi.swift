@@ -566,11 +566,6 @@ public protocol EngineProtocol: AnyObject, Sendable {
     
     func process(message: Data) throws  -> Processed
     
-    /**
-     * Application messages only; a commit, proposal or Welcome is refused with `Malformed` and changes nothing.
-     */
-    func processApplication(message: Data) throws  -> Processed
-    
     func remove(groupId: Data, identities: [String]) throws  -> CommitBundle
     
 }
@@ -734,18 +729,6 @@ open func members(groupId: Data)throws  -> [String]  {
 open func process(message: Data)throws  -> Processed  {
     return try  FfiConverterTypeProcessed_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
     uniffi_mlsffi_fn_method_engine_process(
-            self.uniffiCloneHandle(),
-        FfiConverterData.lower(message),$0
-    )
-})
-}
-    
-    /**
-     * Application messages only; a commit, proposal or Welcome is refused with `Malformed` and changes nothing.
-     */
-open func processApplication(message: Data)throws  -> Processed  {
-    return try  FfiConverterTypeProcessed_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
-    uniffi_mlsffi_fn_method_engine_process_application(
             self.uniffiCloneHandle(),
         FfiConverterData.lower(message),$0
     )
@@ -1341,8 +1324,7 @@ public func hpkeGenerateKeypair()throws  -> HpkeKeyPair  {
 })
 }
 /**
- * `sealed` is `enc ‖ ct`. `public_key` must be the public half of `private_key`.
- * Ciphertext of 16 bytes or fewer (empty plaintext) is refused by mls-rs. Input shorter than the encapsulated key is `Malformed`.
+ * `sealed` is `enc ‖ ct`. Input shorter than the encapsulated key is `Malformed`.
  */
 public func hpkeOpen(privateKey: Data, publicKey: Data, info: Data, sealed: Data)throws  -> Data  {
     return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
@@ -1355,8 +1337,7 @@ public func hpkeOpen(privateKey: Data, publicKey: Data, info: Data, sealed: Data
 })
 }
 /**
- * Returns `enc ‖ ct`. The plaintext must not be empty (mls-rs refuses it). A
- * recipient key of small order is `Malformed`.
+ * Returns `enc ‖ ct`.
  */
 public func hpkeSeal(recipientPublicKey: Data, info: Data, plaintext: Data)throws  -> Data  {
     return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
@@ -1389,10 +1370,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_mlsffi_checksum_func_hpke_generate_keypair() != 5294) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_mlsffi_checksum_func_hpke_open() != 15123) {
+    if (uniffi_mlsffi_checksum_func_hpke_open() != 35405) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_mlsffi_checksum_func_hpke_seal() != 12160) {
+    if (uniffi_mlsffi_checksum_func_hpke_seal() != 15243) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_mlsffi_checksum_method_engine_add() != 64762) {
@@ -1426,9 +1407,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_mlsffi_checksum_method_engine_process() != 14999) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_mlsffi_checksum_method_engine_process_application() != 12238) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_mlsffi_checksum_method_engine_remove() != 57957) {

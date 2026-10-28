@@ -666,8 +666,6 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_mlsffi_checksum_method_engine_process(
     ): Int
-    external fun uniffi_mlsffi_checksum_method_engine_process_application(
-    ): Int
     external fun uniffi_mlsffi_checksum_method_engine_remove(
     ): Int
     external fun uniffi_mlsffi_checksum_constructor_engine_new(
@@ -717,8 +715,6 @@ internal object UniffiLib {
     external fun uniffi_mlsffi_fn_method_engine_members(`ptr`: Long,`groupId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_mlsffi_fn_method_engine_process(`ptr`: Long,`message`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun uniffi_mlsffi_fn_method_engine_process_application(`ptr`: Long,`message`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_mlsffi_fn_method_engine_remove(`ptr`: Long,`groupId`: RustBuffer.ByValue,`identities`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -892,9 +888,6 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_mlsffi_checksum_method_engine_process() != 14999) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if (lib.uniffi_mlsffi_checksum_method_engine_process_application() != 12238) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_mlsffi_checksum_method_engine_remove() != 57957) {
@@ -1328,11 +1321,6 @@ public interface EngineInterface {
     
     fun `process`(`message`: kotlin.ByteArray): Processed
     
-    /**
-     * Application messages only; a commit, proposal or Welcome is refused with `Malformed` and changes nothing.
-     */
-    fun `processApplication`(`message`: kotlin.ByteArray): Processed
-    
     fun `remove`(`groupId`: kotlin.ByteArray, `identities`: List<kotlin.String>): CommitBundle
     
     companion object
@@ -1589,23 +1577,6 @@ open class Engine: Disposable, AutoCloseable, EngineInterface
     callWithHandle {
     uniffiRustCallWithError(FfiException) { _status ->
     UniffiLib.uniffi_mlsffi_fn_method_engine_process(
-        it,
-        FfiConverterByteArray.lower(`message`),_status)
-}
-    }
-    )
-    }
-    
-
-    
-    /**
-     * Application messages only; a commit, proposal or Welcome is refused with `Malformed` and changes nothing.
-     */
-    @Throws(FfiException::class)override fun `processApplication`(`message`: kotlin.ByteArray): Processed {
-            return FfiConverterTypeProcessed.lift(
-    callWithHandle {
-    uniffiRustCallWithError(FfiException) { _status ->
-    UniffiLib.uniffi_mlsffi_fn_method_engine_process_application(
         it,
         FfiConverterByteArray.lower(`message`),_status)
 }
