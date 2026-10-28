@@ -20,7 +20,8 @@
 # Checks first, before writing anything: exactly the ABIs arm64-v8a, armeabi-v7a and x86_64
 # (no missing and no extra ABI directory); LICENSE.md names no GPL, LGPL or AGPL
 # license; the jar holds org/webrtc/OpusInfo.class and
-# org/webrtc/AudioCapturePostProcessing.class (our patches 0005 and 0006).
+# org/webrtc/AudioCapturePostProcessing.class (our patches 0005 and 0006) and the generated
+# org/webrtc/PeerConnectionFactoryJni.class (jni_zero proxy; without it the AAR fails at runtime).
 #
 # Exit codes: 0 ok, 1 failure or bad usage, 4 LICENSE.md names a GNU license.
 set -eu
@@ -80,9 +81,9 @@ fi
 python3 -I - "$jar" <<'PY' || exit 1
 import sys, zipfile
 names = set(zipfile.ZipFile(sys.argv[1]).namelist())
-missing = [c for c in ("org/webrtc/OpusInfo.class", "org/webrtc/AudioCapturePostProcessing.class") if c not in names]
+missing = [c for c in ("org/webrtc/OpusInfo.class", "org/webrtc/AudioCapturePostProcessing.class", "org/webrtc/PeerConnectionFactoryJni.class") if c not in names]
 if missing:
-    sys.exit("error: %s lacks %s; are patches 0005 and 0006 applied?" % (sys.argv[1], ", ".join(missing)))
+    sys.exit("error: %s lacks %s; are patches 0005 and 0006 applied (they add the generated Jni classes to libwebrtc)?" % (sys.argv[1], ", ".join(missing)))
 PY
 
 # 4. The AAR.

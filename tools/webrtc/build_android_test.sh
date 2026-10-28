@@ -107,7 +107,7 @@ make_layout() { # make_layout <dir> <abi...>: a fake build output
 import sys, zipfile
 with zipfile.ZipFile(sys.argv[1], "w") as z:
     z.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\n")
-    for c in ("org/webrtc/PeerConnectionFactory", "org/webrtc/OpusInfo", "org/webrtc/AudioCapturePostProcessing"):
+    for c in ("org/webrtc/PeerConnectionFactory", "org/webrtc/PeerConnectionFactoryJni", "org/webrtc/OpusInfo", "org/webrtc/AudioCapturePostProcessing"):
         z.writestr(c + ".class", b"\xca\xfe\xba\xbe\x00\x00\x00\x45x")
 PY
   printf '<manifest package="org.webrtc"/>\n' >"$d/AndroidManifest.xml"
@@ -167,6 +167,15 @@ with zipfile.ZipFile(sys.argv[1], "w") as z:
 PY
 expect_exit "package-android: a jar without our classes fails" 1 sh "$here/package-android.sh" "$work/nocls"
 check "package-android: names OpusInfo" out_has "org/webrtc/OpusInfo.class"
+make_layout "$work/nojni" arm64-v8a armeabi-v7a x86_64
+python3 -I - "$work/nojni/arm64-v8a/libwebrtc.jar" <<'PY'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w") as z:
+    for c in ("PeerConnectionFactory", "OpusInfo", "AudioCapturePostProcessing"):
+        z.writestr("org/webrtc/%s.class" % c, "x")
+PY
+expect_exit "package-android: a jar without the generated Jni classes fails" 1 sh "$here/package-android.sh" "$work/nojni"
+check "package-android: names PeerConnectionFactoryJni" out_has "org/webrtc/PeerConnectionFactoryJni.class"
 
 # --- apply.sh platform switch ---
 new_tree() { # new_tree <dir>: fixture WebRTC tree
