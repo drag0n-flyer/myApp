@@ -62,6 +62,32 @@ private final class Rig {
         #expect(r.runner.state?.phase == .active)
     }
 
+    /// Sign-out or wipe during a call: the hangup goes out while signaling is still up, and the media is closed,
+    /// before `shutdown` returns.
+    @Test func shutdownDuringAnActiveCallSendsHangupAndClosesMedia() async {
+        let r = Rig()
+        r.runner.handle(.start(contact: bob, video: false, callID: "c1"))
+        await r.runner.settled()
+        let offer = CallSignalPayload(kind: .offer, callID: "c1", sdp: sdp(calleeFP), dtlsFingerprint: calleeFP, ceiling: .high)
+        await r.runner.ingest(.answered(callID: "c1", deviceID: "d1", payload: r.sealed(offer)))
+        await r.runner.settled()
+        r.media.emit(.iceState(.connected))
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(r.runner.state?.phase == .active)
+
+        await r.runner.shutdown()
+        #expect(r.frames().last == "call.hangup")
+        #expect(r.media.calls.contains("close"))
+        #expect(r.runner.isFinished)
+    }
+
+    @Test func shutdownWithoutACallDoesNothing() async {
+        let r = Rig()
+        await r.runner.shutdown()
+        #expect(r.frames().isEmpty)
+        #expect(!r.media.calls.contains("close"))
+    }
+
     @Test func payloadFromWrongSenderIsRejected() async {
         let r = Rig()
         r.runner.handle(.start(contact: bob, video: false, callID: "c1"))

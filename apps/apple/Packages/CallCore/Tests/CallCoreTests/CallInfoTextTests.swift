@@ -14,12 +14,12 @@ private func state(mode: DataMode, bytes: Int64) -> CallState {
         let stats = MediaStats(roundTripTime: 0.123, inboundLossFraction: 0.031, usingRelay: true)
         let rows = CallInfoText.rows(stats: stats, state: state(mode: .dataSaver, bytes: 1_500_000))
         #expect(rows.map(\.label) == ["Connection", "Delay", "Sound lost", "Quality", "Data used"])
-        #expect(rows.map(\.value) == ["Through your server", "123 ms", "3%", "Data saver", "1.5 MB"])
+        #expect(rows.map(\.value) == ["Through your server", "123 ms", "3%", "Data saver", "≈ 1.5 MB used"])
     }
 
     @Test func directConnectionAndMissingDelay() {
         let rows = CallInfoText.rows(stats: MediaStats(), state: state(mode: .high, bytes: 0))
-        #expect(rows.map(\.value) == ["Direct", "—", "0%", "High quality", "0 KB"])
+        #expect(rows.map(\.value) == ["Direct", "—", "0%", "High quality", "≈ 0 KB used"])
     }
 
     @Test func infoRowsPlainWords() {

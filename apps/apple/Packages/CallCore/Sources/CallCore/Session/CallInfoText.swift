@@ -11,7 +11,7 @@ public enum CallInfoText {
             ("Delay", delay),
             ("Sound lost", lost),
             ("Quality", state.effectiveMode.title),
-            ("Data used", DataFormat.size(bytes: state.bytesUsed)),
+            ("Data used", DataFormat.used(bytes: state.bytesUsed)),
         ]
     }
 }

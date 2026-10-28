@@ -95,6 +95,13 @@ public final class CallRunner {
         }
     }
 
+    /// Sign-out or wipe: hangs up a live call (the hangup goes out while signaling is still up), closes the media,
+    /// and returns once every effect has run. Call it before the connection is stopped.
+    public func shutdown() async {
+        if !isFinished { handle(.hangup) }
+        await settled()
+    }
+
     private func sameCall(_ id: String) -> Bool { id == callID }
 
     private func open(_ sealed: Data, from device: String) async {

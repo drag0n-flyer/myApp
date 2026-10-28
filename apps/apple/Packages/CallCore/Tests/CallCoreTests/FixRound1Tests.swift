@@ -51,7 +51,7 @@ private final class FakeConnection: CallConnection, @unchecked Sendable {
                                 signaling: GatedCallSignaling(base: base, connection: conn, timeout: .milliseconds(200)),
                                 sealer: PlainCallSignalSealer(), clock: ManualClock(), makeMedia: { media },
                                 publish: { _ in }, record: { _, _, _, _ in })
-        runner.handle(.incoming(callID: "c1", contact: bob, fromDeviceID: "",
+        runner.handle(.incoming(callID: "c1", contact: bob, fromDeviceID: "d1",
                                 ring: CallSignalPayload(kind: .ring, callID: "c1", video: false)))
         runner.handle(.answer(video: false))
         await runner.settled()

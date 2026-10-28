@@ -239,10 +239,10 @@ public struct CallSessionMachine: Sendable {
             fx.append(.publish(state))
             return fx
         case .answer:
-            // A push-woken callee never saw the WebSocket ring, so it has no caller device yet (empty): it binds to the
-            // device whose answer arrives. The payload was opened as sent by the caller's account.
-            guard !outgoing, answerSent, !remoteDescriptionSet, let bound = answeringDevice,
-                  device == bound || bound.isEmpty else { return [] }
+            // Bound to the caller's device from the ring (WebSocket frame, or the push's MLS credential). An empty
+            // device binds to nothing.
+            guard !outgoing, answerSent, !remoteDescriptionSet, let bound = answeringDevice, !bound.isEmpty,
+                  device == bound else { return [] }
             guard let sdp = p.sdp, let claimed = p.dtlsFingerprint, FingerprintCheck.isValid(sdp: sdp, claimed: claimed) else {
                 return end(.failed, notifyServer: true)
             }
