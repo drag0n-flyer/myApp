@@ -21,8 +21,9 @@ enum NSEWiring {
         return await processor.process(pushData: pushData, deadline: deadline)
     }
 
-    /// nil when there is no session yet (signed out), the container is unavailable, the MLS
-    /// engine cannot be made, or the stored database cannot be opened or is newer than this build.
+    /// nil when there is no session yet (signed out), the container is unavailable, the local data
+    /// does not belong to the signed-in account and device, the MLS engine cannot be made, or the
+    /// stored database cannot be opened or is newer than this build.
     private static func makeDeps() -> MessagingDeps? {
         let info = Bundle.main.infoDictionary ?? [:]
         let accessGroup = MessagingLocations.requiredInfoValue("KeychainAccessGroup", in: info)
@@ -34,15 +35,21 @@ enum NSEWiring {
         do {
             let db = try Database(url: MessagingLocations.databaseURL(in: container))
             try NotificationBudget.configure(db)
-            try migrate(db)
             let now: @Sendable () -> Date = { Date() }
+            let repo = Repository(db: db, now: now)
+            // Only the app wipes (`LocalAccountData.prepare`): data of another account or device, or with a wipe
+            // pending, is left unmigrated and its MLS storage unopened, and the push shows the generic notification.
+            guard LocalAccountData.isOwned(
+                accountID: session.accountID, deviceID: session.deviceID, container: container, repo: repo)
+            else { return nil }
+            try migrate(db)
             guard let mls = NSEAdapters.makeEngine(container: container, accountID: session.accountID, deviceID: session.deviceID)
             else { return nil }
             return MessagingDeps(
                 me: (session.accountID, session.deviceID),
                 server: ServerClient(host: session.host, session: sessions),
                 mls: mls,
-                repo: Repository(db: db, now: now),
+                repo: repo,
                 lock: ProcessLock(url: MessagingLocations.lockURL(in: container)),
                 escrow: NSEUnavailable(), attachments: NSEUnavailable(), notifier: NSEDeviceNotice(),
                 mediaDirectory: MessagingLocations.mediaURL(in: container),
