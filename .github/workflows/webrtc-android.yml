@@ -59,7 +59,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/webrtc-cache
-          key: opus-b7637334527201fdfd6dd6a02e67aceffb0e5e60155bbd89175647a80301c92c
+          key: opus-${{ hashFiles('tools/webrtc/VERSION') }}
       - name: Build ${{ matrix.abi }}
         env:
           APPLY_CACHE_DIR: ${{ runner.temp }}/webrtc-cache
