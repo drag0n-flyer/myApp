@@ -54,7 +54,7 @@ Extra work beyond the plans, in progress (each is reviewed before it merges; ETA
 | Port: linking skips an unreadable or too-large contact list; link-code check compares the port | `feat/ios-port-linking` | written, on CI, review next | 2–3 h |
 | App ID in one file (`apps/apple/AppID.xcconfig`) and a stronger photo-privacy test | `chore/appid-xcconfig` | written, waiting for Mac CI | 1–2 h |
 
-Still to port to Android after the iPhone inbox review: a crafted invite reusing another chat's group must be set aside, not stall the inbox; a new chat is abandoned only on a definite refusal.
+Android has the same inbox fixes (merged): a crafted invite can't stall the inbox, a new chat is abandoned only when really gone, and a failure after a chat starts never creates a second one.
 
 ## Main CI
 
