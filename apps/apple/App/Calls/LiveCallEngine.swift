@@ -19,7 +19,7 @@ final class LiveCallEngine {
     private let sealer: any CallSignalSealer
     private let clock: CallCore.Clock
     private let makeMedia: @MainActor () -> MediaSession
-    private let log = Logger(subsystem: "org.example.app", category: "calls")
+    private let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "app", category: "calls")
 
     private var server: ServerPolicy
     private var settings: UserSettings
