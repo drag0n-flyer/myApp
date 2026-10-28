@@ -80,15 +80,20 @@ trap 'cleanup; exit 143' TERM
 ip=$(ipconfig getifaddr en0 2>/dev/null || true)
 locals=127.0.0.1${ip:+,$ip}
 
+# coturn listens and relays on the runner's en0 address, not 127.0.0.1: with 127.0.0.1 the relay
+# calls got no audio (suspected cause: WebRTC leaves loopback networks out of ICE). Traffic between
+# local addresses still crosses lo0, where the capture and the shaping are. Loopback peers stay
+# allowed for runners without an en0 address.
+turn_ip=${ip:-127.0.0.1}
 # The TURN secret is made fresh for this run and never leaves the runner.
 secret=$(openssl rand -hex 24)
-turnserver -n --listening-ip=127.0.0.1 --relay-ip=127.0.0.1 --listening-port=3478 \
+turnserver -n --listening-ip="$turn_ip" --relay-ip="$turn_ip" --listening-port=3478 \
     --use-auth-secret --static-auth-secret="$secret" --realm=lab.invalid \
-    --no-tls --no-dtls --no-cli --allow-loopback-peers --simple-log --log-file="$tmp/turn.log" >/dev/null 2>&1 &
+    --no-tls --no-dtls --no-cli --allow-loopback-peers --verbose --simple-log --log-file="$tmp/turn.log" >/dev/null 2>&1 &
 pids="$pids $!"
 
 export APP_HOST=localhost APP_LISTEN=127.0.0.1:8080 APP_ADMIN_LISTEN=127.0.0.1:9090
-export APP_DATA_DIR="$tmp/data" APP_TURN_SECRET="$secret" APP_RELAYS=127.0.0.1 APP_LAB_MODE=1
+export APP_DATA_DIR="$tmp/data" APP_TURN_SECRET="$secret" APP_RELAYS=$turn_ip APP_LAB_MODE=1
 mkdir -p "$APP_DATA_DIR"
 "$server" migrate || { echo "migrate failed" >&2; exit 1; }
 "$server" serve >"$tmp/server.log" 2>&1 &
@@ -175,7 +180,8 @@ while read -r preset path profile snr; do
     if [ "$profile" != clean ]; then
         shaped=$(sudo sh "$lab/netem/dummynet.sh" packets </dev/null)
         echo "packets through the $profile pipe: $shaped"
-        sudo dnctl pipe show 1 </dev/null 2>&1 | head -6 | sed 's/^/  dnctl: /'   # raw, to check the parse
+        sudo dnctl pipe show 1 </dev/null 2>&1 | head -40 | sed 's/^/  dnctl: /'   # raw, to check the parse
+        sudo pfctl -a com.apple/call-lab -vsr </dev/null 2>&1 | grep -v ALTQ | sed 's/^/  pf: /'
         if [ "${shaped:-0}" -eq 0 ]; then
             echo "FAIL $name: dummynet pipe for $profile saw 0 packets (shaping not applied)" >&2
             status=1
@@ -184,6 +190,23 @@ while read -r preset path profile snr; do
     sudo sh "$lab/netem/dummynet.sh" clear </dev/null >/dev/null
 
     for f in stats.csv events.csv; do [ -f "$run/caller/$f" ] && cp "$run/caller/$f" "$run/$f"; done
+    # Diagnostics for the job log: the caller's events and a few stats rows (selected columns).
+    [ -f "$run/events.csv" ] && sed 's/^/  events: /' "$run/events.csv"
+    [ -f "$run/stats.csv" ] && python3 -I - "$run/stats.csv" <<'PY'
+import csv, sys
+rows = list(csv.DictReader(open(sys.argv[1])))
+cols = ["t_ms", "opus_bps", "ptime", "dtx", "fec", "local_cand", "remote_cand", "rtt_ms", "a_bytes_sent",
+        "a_hdr_bytes_sent", "a_pkts_sent", "a_bytes_recv", "a_pkts_recv", "a_pkts_lost", "concealed_samples",
+        "v_bytes_sent", "v_bytes_recv", "pair_bytes_sent", "pair_bytes_recv", "avail_out_bps"]
+print("  stats: " + ",".join(cols))
+for i in sorted({0, len(rows) // 4, len(rows) // 2, len(rows) - 1}):
+    if 0 <= i < len(rows):
+        print("  stats: " + ",".join(rows[i].get(c, "") for c in cols))
+PY
+    if [ "$path" = relay ]; then
+        grep -iE "error|denied|forbidden|401|403|438|peer|allocat|permission" "$tmp/turn.log" 2>/dev/null \
+            | grep -vi secret | tail -15 | sed 's/^/  turn: /'
+    fi
     if [ -f "$tmp/$name.pcap" ]; then
         sudo chown "$(id -u)" "$tmp/$name.pcap"
         if [ "$path" = relay ]; then
