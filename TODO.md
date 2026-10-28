@@ -5,7 +5,7 @@ Last updated: 2026-10-29 (morning).
 | Track | Done | % |
 |---|---|---|
 | iPhone/Mac Phase 1 | 119 / 128 | 93% |
-| Android | 36 / 44 | 82% |
+| Android | 37 / 44 | 84% |
 | Admin dashboard | done, with admin accounts and 2FA, on `main` | 100% |
 
 About 10–12 agents work in parallel. Mac CI runs only the jobs a change needs. Android CI uses Linux runners only.
@@ -52,7 +52,10 @@ Queued for the iPhone/Mac after the current work:
 
 ## Main CI
 
-The Apple apps workflow on `main` is red. The fix on `fix/swift62-ci` has Linux packages, CallMedia and ServerKit-on-iPhone green; the iPhone and Mac app builds and the Mac package tests are on their last runs, including a lock test that never ran on Apple platforms before and is being investigated. Android CI and the security check on `main` are green.
+The Apple apps workflow fix (Swift 6.2 / Xcode 26) is merged; every Apple job was green on its branch. Follow-ups from its review:
+- the photo test checks only three metadata keys and starts from a picture with no metadata; it should start from a photo carrying GPS, camera and date data and allow only size and colour keys
+- the Mac UI tests run without the app's sandbox, app-group and keychain permissions (a test build can't launch with them unsigned); a signed check of those is needed before release
+- CallKit calls now report from CallKit's own queue; check calls once on a real iPhone
 
 ## Android, by lane ([plan](docs/superpowers/plans/2026-10-28-android-client.md))
 
@@ -61,7 +64,7 @@ The Apple apps workflow on `main` is red. The fix on `fix/swift62-ci` has Linux 
 | A, scaffold and UI | 9 | 9 | done |
 | B, networking and accounts | 7 | 7 | done. Small follow-ups from B7's last review: save the http/https choice with a local dev session, check the linking server before claiming, clear the invite code when the server is changed during sign-up |
 | C, MLS bindings | 4 | 4 | done |
-| D, storage and messaging | 7 | 6 | D1–D6 on `main`; D7 (live chat store, notification processor, call signal sealer) next |
+| D, storage and messaging | 7 | 7 | done. D7 took M7's `decryptApplication` from the iPhone side; checking `call.status` for late ring pushes moved to E6/I1 |
 | E, WebRTC and calls | 6 (+E5b) | 2 | E3, E4 on `main`; E2 (WebRTC build) on CI, last 32-bit link fix; E1 after E2; then E5, E5b (bundled Opus for phones without an encoder), E6 |
 | F, push | 4 | 4 | done |
 | G, CI | 4 | 4 | done; G4: release bundle, license notices, Play documents. A `v*` tag release fails until the SQLCipher, WebRTC and Opus notice texts are filled in |

@@ -1,17 +1,5 @@
 import Foundation
-
-/// One member device of an MLS group and its signature public key (from the ratchet tree).
-///
-/// TODO(plan 4 memberKeys): this type belongs to `SecureMessagingCore` (cross-plan item 3). When
-/// `MLSEngine.memberKeys(of:)` lands, delete this declaration and import the engine's.
-public struct MemberKey: Sendable, Equatable {
-    public let identity: String
-    public let signatureKey: Data
-    public init(identity: String, signatureKey: Data) {
-        self.identity = identity
-        self.signatureKey = signatureKey
-    }
-}
+import SecureMessagingCore
 
 /// Safety numbers (Design 20, OPEN-6). Owner review: cryptography.
 ///

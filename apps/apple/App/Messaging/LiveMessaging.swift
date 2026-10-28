@@ -75,7 +75,7 @@ struct LiveMessaging {
         let repo = Repository(db: database, now: now)
         guard (try? await LocalAccountData.prepare(
             accountID: session.accountID, container: container, repo: repo,
-            wipe: { try await DeviceSync.wipe(
+            wipe: { @Sendable in try await DeviceSync.wipe(
                 repo: repo, mediaDirectory: media, lock: lock,
                 wipeMLS: { try MessagingLocations.removeMLSStorage(in: container) }, deleteSigningKey: deleteSigningKey) }
         )) != nil,

@@ -53,10 +53,10 @@ public enum VoicePlaybackLoader {
         guard let inputFormat = AVAudioFormat(streamDescription: &description),
               let outputFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000, channels: channels, interleaved: false),
               let converter = AVAudioConverter(from: inputFormat, to: outputFormat),
-              let compressed = AVAudioCompressedBuffer(
-                format: inputFormat, packetCapacity: AVAudioPacketCount(stream.packets.count), maximumPacketSize: maxPacket),
               let pcm = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: AVAudioFrameCount(totalFrames))
         else { throw VoicePlaybackError.decoderUnavailable }
+        let compressed = AVAudioCompressedBuffer(
+            format: inputFormat, packetCapacity: AVAudioPacketCount(stream.packets.count), maximumPacketSize: maxPacket)
 
         var offset = 0
         for (i, packet) in stream.packets.enumerated() {
