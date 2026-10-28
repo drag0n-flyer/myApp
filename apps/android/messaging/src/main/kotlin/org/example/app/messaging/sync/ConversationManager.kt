@@ -344,7 +344,8 @@ class ConversationManager(
             critical {
                 mls.commitAccepted(group)
                 repo.setEpoch(serverId, newEpoch)
-                // Best effort: the next update compares the whole stored state.
+                // Best effort: the next update compares the whole stored state. A failed read is not silent: `update`
+                // flags the conversation, which hides the safety number until a read works.
                 repo.conversation(serverId)?.let { c -> runCatching { membership.update(c, repo) } }
             }
             return newEpoch

@@ -1,0 +1,74 @@
+name: interop
+
+# Android plan Task I2: the Android peer (JVM) and the iPhone/Mac peer (Swift) through one Go server
+# (scripts/interop.sh). Mac runners are scarce: it runs on main only when the peers, the client code they use,
+# the server or the MLS crate change, and on demand.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/interop.sh'
+      - '.github/workflows/interop.yml'
+      - 'apps/android/interop/**'
+      - 'apps/android/*.gradle.kts'
+      - 'apps/android/gradle/**'
+      - 'apps/android/contracts/**'
+      - 'apps/android/core/**'
+      - 'apps/android/net/**'
+      - 'apps/android/mls/src/main/**'
+      - 'apps/android/messaging/**'
+      - 'apps/android/calls/src/main/**'
+      - 'apps/apple/Interop/**'
+      - 'apps/apple/Packages/AppCore/Sources/**'
+      - 'apps/apple/Packages/LocalStore/Sources/**'
+      - 'apps/apple/Packages/ServerKit/Sources/**'
+      - 'apps/apple/Packages/Messaging/Sources/**'
+      - 'apps/apple/Packages/SecureMessaging/Sources/**'
+      - 'apps/apple/Packages/*/Package.swift'
+      - 'apps/apple/Packages/SecureMessaging/scripts/build-mlsffi.sh'
+      - 'apps/apple/Packages/SecureMessaging/mlsffi/src/**'
+      - 'apps/apple/Packages/SecureMessaging/mlsffi/Cargo.toml'
+      - 'apps/apple/Packages/SecureMessaging/mlsffi/Cargo.lock'
+      - 'apps/apple/Packages/CallCore/Sources/**'
+      - 'server/**'
+      - 'tools/smtp-sink/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: interop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  interop:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          check-latest: true
+          cache-dependency-path: server/go.sum
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Android SDK platform (Gradle configures the Android modules too)
+        run: |
+          set -euo pipefail
+          test -n "${ANDROID_HOME:-}" || { echo "ANDROID_HOME is not set on this runner" >&2; exit 1; }
+          sdk="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ -x "$sdk" ]; then
+            yes | "$sdk" --licenses >/dev/null || true
+            "$sdk" "platforms;android-36" >/dev/null
+          else
+            echo "no sdkmanager at $sdk; Gradle uses what the image has"
+          fi
+      - name: Android peer and iPhone/Mac peer through one server
+        run: scripts/interop.sh

@@ -502,15 +502,20 @@ class LiveChatStore(
     /** Tied to the engine: shown only when the member keys are real (otherwise the number would cover no key). */
     override val supportsSafetyNumbers: Boolean get() = membership.realMemberKeys
 
+    /** The members of one of the chat's groups could not be read. A database error counts as unreadable. */
+    override fun membersUnreadable(chatId: String): Boolean =
+        runCatching { Membership.membersUnreadable(chatId, repo) }.getOrDefault(true)
+
+    /** Hidden, and not verifiable, while the chat's members cannot be read. */
     override fun safetyNumber(chatId: String): SafetyNumber? {
-        if (!supportsSafetyNumbers) return null
+        if (!supportsSafetyNumbers || membersUnreadable(chatId)) return null
         val row = repo.safety(chatId) ?: return null
         return SafetyNumber(ChatMapping.groups(row.current), row.verified == row.current)
     }
 
     /** Local only: nothing is sent. */
     override fun setVerified(verified: Boolean, chatId: String) {
-        if (!supportsSafetyNumbers) return
+        if (!supportsSafetyNumbers || membersUnreadable(chatId)) return
         val row = repo.safety(chatId) ?: return
         repo.setVerified(chatId, if (verified) row.current else null)
         reload()

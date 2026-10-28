@@ -143,7 +143,7 @@ private func checkMemberKeysSortedAndIncludeSelf(creator: any MLSEngine, joiners
         // Creator is not first alphabetically on purpose.
         let keys = try await checkMemberKeysSortedAndIncludeSelf(creator: c, joiners: [b, a])
         #expect(keys == [alice, bob, carol].map { MemberKey(identity: $0, signatureKey: Data("fake-sig:\($0)".utf8)) })
-        #expect(c.providesRealMemberKeys)
+        #expect(!c.providesRealMemberKeys)   // placeholder keys
     }
 }
 

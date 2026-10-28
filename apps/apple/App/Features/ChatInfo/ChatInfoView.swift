@@ -55,7 +55,11 @@ struct ChatInfoView: View {
                                 .accessibilityIdentifier("chatinfo.verified")
                         }
                     }
-                    if model.supportsSafetyNumbers {
+                    if model.supportsSafetyNumbers, model.membersUnreadable(for: chatID) {
+                        Label("Can't check the devices in this chat right now, so the safety number is hidden.",
+                              systemImage: "exclamationmark.triangle")
+                            .accessibilityIdentifier("chatinfo.membersUnreadable")
+                    } else if model.supportsSafetyNumbers {
                         Button("Verify", systemImage: "checkmark.shield") { showingVerify = true }
                     }
                 }

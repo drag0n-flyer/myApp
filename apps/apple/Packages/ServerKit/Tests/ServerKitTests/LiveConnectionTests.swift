@@ -3,7 +3,11 @@ import Testing
 @_spi(Testing) @testable import ServerKit
 import ServerKitTesting
 
-private actor Flag { var set = false; func raise() { set = true } }
+private actor Flag {
+    var set = false
+    var reason: SignOutReason?
+    func raise(_ r: SignOutReason) { set = true; reason = r }
+}
 
 private final class Rig: @unchecked Sendable {
     let clock = ManualClock()
@@ -13,12 +17,16 @@ private final class Rig: @unchecked Sendable {
     let conn: LiveConnection
     var iterator: AsyncStream<ConnectionState>.Iterator
 
-    init(extra: [FakeWebSocket] = []) async {
+    /// Answers the confirming `GET /v1/me` of a 401 (ruling 2026-10-28).
+    let http = StubTransport()
+
+    init(extra: [FakeWebSocket] = [], meStatus: Int = 401) async {
         let store = SessionStore(storage: MemorySessionStorage())
         try? store.save(Session(host: "chat.test", accountID: "a", deviceID: "d", token: "tok"))
-        let client = ServerClient(baseURL: URL(string: "https://chat.test")!, session: store, transport: StubTransport())
+        await http.respond("GET", "/v1/me", status: meStatus, json: #"{"error":{"code":"unauthorized","message":"x"}}"#)
+        let client = ServerClient(baseURL: URL(string: "https://chat.test")!, session: store, transport: http)
         let flag = unauthorized
-        await client.setOnUnauthorized { await flag.raise() }
+        await client.setOnUnauthorized { await flag.raise($0) }
         await transport.enqueue(socket)
         for s in extra { await transport.enqueue(s) }
         conn = LiveConnection(client: client, transport: transport, clock: clock, random: { $0.upperBound })
@@ -202,6 +210,9 @@ private func waitFor(_ cond: @Sendable () async -> Bool) async -> Bool {
         await rig.socket.serverCloses(code: 4003)
         #expect(await rig.next(1) == [.revoked])
         #expect(await waitFor { await rig.unauthorized.set })
+        // A 4003 is the server's proof by itself: it wipes, with no second call.
+        #expect(await rig.unauthorized.reason == .revoked)
+        #expect(await rig.http.requests.isEmpty)
         #expect(await rig.clock.waitForSleepers(0))
         #expect(await rig.transport.sockets.count == 1)
     }
@@ -236,6 +247,20 @@ private func waitFor(_ cond: @Sendable () async -> Bool) async -> Bool {
         await rig.conn.start()
         #expect(await rig.next(2) == [.connecting, .revoked])
         #expect(await waitFor { await rig.unauthorized.set })
+        #expect(await rig.clock.waitForSleepers(0))
+        #expect(await rig.transport.sockets.isEmpty)
+        // The upgrade's body is not read: the confirming GET /v1/me decides, and here it is also a 401.
+        #expect(await rig.unauthorized.reason == .revoked)
+        #expect(await rig.http.requests.map { $0.url?.path } == ["/v1/me"])
+    }
+
+    @Test func handshake401UnconfirmedOnlySignsOut() async {
+        let rig = await Rig(meStatus: 200)
+        await rig.transport.failConnects(with: [ServerError(status: 401, code: "unknown")])
+        await rig.conn.start()
+        #expect(await rig.next(2) == [.connecting, .idle])
+        #expect(await waitFor { await rig.unauthorized.set })
+        #expect(await rig.unauthorized.reason == .sessionEnded)
         #expect(await rig.clock.waitForSleepers(0))
         #expect(await rig.transport.sockets.isEmpty)
     }

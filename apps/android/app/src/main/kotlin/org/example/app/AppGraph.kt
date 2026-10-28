@@ -244,6 +244,9 @@ class AppGraph(
 
     @Volatile private var wipeRunning = false
 
+    /** Counts revocation wipes (guarded by `this`): an open that saw a stored session aborts if one started since. */
+    private var revocations = 0
+
     /**
      * Opens the signed-in services off the main thread if the account is signed in; null otherwise, and always null
      * while a wipe runs or is pending (a pending wipe is finished first). Data of another account is wiped first.
@@ -255,20 +258,27 @@ class AppGraph(
     }
 
     suspend fun openSession(): LiveSession? = withContext(Dispatchers.IO) {
-        if (sampleData || wipeRunning) return@withContext null
-        liveSession?.let { return@withContext it }
+        if (sampleData) return@withContext null
+        if (!wipeRunning) liveSession?.let { return@withContext it }
         // One open at a time (UI and push may race): ownership is checked, and another device's data wiped, only here,
-        // so a second caller never wipes the session the first one just opened.
+        // so a second caller never wipes the session the first one just opened. `wipeRunning` is read under the lock
+        // only: the open's own wipe of another device's data sets it, and a caller arriving then waits for that open
+        // and gets its session instead of null.
         opening.withLock { openLocked() }
     }
 
     private val opening = Mutex()
 
+    /** Test seam only: runs after an open read the stored session and before it takes the lock. */
+    internal var beforeOpenLock: suspend () -> Unit = {}
+
     private suspend fun openLocked(): LiveSession? {
         if (wipeRunning) return null
         liveSession?.let { return it }
         if (local.pending != null) quietly("pending wipe") { finishPendingWipe() }
-        if (local.pending != null || wipeRunning) return null
+        if (local.pending != null) return null
+        // Taken with the running check: a revocation wipe that starts and ends before the lock below is still seen.
+        val revoked = synchronized(this@AppGraph) { if (wipeRunning) return null; revocations }
         val stored = sessions.current ?: return null
         val device = LocalDevice(stored.accountId, stored.deviceId)
         if (!local.ownedBy(device.identity)) {
@@ -276,8 +286,9 @@ class AppGraph(
             if (local.pending != null) return null
         }
         val client = liveAccount.sessionClient ?: return null
+        beforeOpenLock()
         return synchronized(this@AppGraph) {
-            if (wipeRunning) return null
+            if (wipeRunning || revocations != revoked) return null
             liveSession?.let { return it }
             local.recordOwner(device.identity)
             val sessionScope = CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]))
@@ -377,7 +388,10 @@ class AppGraph(
 
     private suspend fun wipe(kind: String) = withContext(NonCancellable + Dispatchers.IO) {
         wiping.withLock {
-            synchronized(this@AppGraph) { wipeRunning = true }
+            synchronized(this@AppGraph) {
+                wipeRunning = true
+                if (kind == LocalData.FULL) revocations++ // the open's own wipe of another device's data is not one
+            }
             var failure: Exception? = null
             val step: suspend (suspend () -> Unit) -> Unit = { body ->
                 try { body() } catch (e: Exception) { failure = failure ?: e; Log.w(TAG, "wipe step failed: ${e.javaClass.simpleName}") }

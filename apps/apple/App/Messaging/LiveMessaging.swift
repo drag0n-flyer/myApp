@@ -55,13 +55,27 @@ struct LiveMessaging {
         try LocalAccountData.clearWipePending(in: container)
     }
 
+    /// Whether the data in the container records its owning device (`LocalAccountData.hasRecordedDevice`); false
+    /// when it cannot be read.
+    static func hasRecordedDevice() -> Bool {
+        guard let container, let database = try? Database(url: MessagingLocations.databaseURL(in: container)) else {
+            return false
+        }
+        return LocalAccountData.hasRecordedDevice(repo: Repository(db: database, now: { Date() }))
+    }
+
     /// Sign-out: stop this graph (no task can write afterwards), then wipe its data. Throws when the wipe fails;
     /// the pending marker (written by the caller before it started) stays, so the next launch retries.
     func wipeAfterSignOut() async throws {
-        await reconciler.disconnected()
-        await store.shutdown()
+        await stop()
         try await sync.wipeLocalData()
         if let container = Self.container { try LocalAccountData.clearWipePending(in: container) }
+    }
+
+    /// Stops this graph: no task can write afterwards. A sign-out without a wipe keeps the data.
+    func stop() async {
+        await reconciler.disconnected()
+        await store.shutdown()
     }
 
     /// `nil` when the real MLS engine is not available in this build (see `makeEngine`) or when the shared
@@ -77,11 +91,11 @@ struct LiveMessaging {
         let now: @Sendable () -> Date = { Date() }
         let lock = ProcessLock(url: MessagingLocations.lockURL(in: container))
         let media = MessagingLocations.mediaURL(in: container)
-        // Data left by another account (or by a sign-out wipe that never finished) is wiped before anything opens
+        // Data left by another account or device (or by a sign-out wipe that never finished) is wiped before anything opens
         // it, and before the engine opens its storage. If the wipe fails, no live store is installed.
         let repo = Repository(db: database, now: now)
         guard (try? await LocalAccountData.prepare(
-            accountID: session.accountID, container: container, repo: repo,
+            accountID: session.accountID, deviceID: session.deviceID, container: container, repo: repo,
             wipe: { @Sendable in try await DeviceSync.wipe(
                 repo: repo, mediaDirectory: media, lock: lock,
                 wipeMLS: { try MessagingLocations.removeMLSStorage(in: container) }, deleteSigningKey: deleteSigningKey) }

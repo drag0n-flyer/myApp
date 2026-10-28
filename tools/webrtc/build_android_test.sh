@@ -95,6 +95,14 @@ for a in 'rtc_use_h264=false' 'rtc_include_dav1d_in_internal_decoder_factory=fal
 done
 
 # --- package-android.sh ---
+cat >"$work/clsgen.py" <<'PY'
+def cls(strings, major=69):
+    cp = b""
+    for s in strings:
+        b = s.encode()
+        cp += b"\x01" + len(b).to_bytes(2, "big") + b
+    return b"\xca\xfe\xba\xbe\x00\x00" + major.to_bytes(2, "big") + (len(strings) + 1).to_bytes(2, "big") + cp
+PY
 make_layout() { # make_layout <dir> <abi...>: a fake build output
   d=$1
   shift
@@ -103,12 +111,13 @@ make_layout() { # make_layout <dir> <abi...>: a fake build output
     mkdir -p "$d/$abi"
     printf 'ELF-%s\n' "$abi" >"$d/$abi/libjingle_peerconnection_so.so"
   done
-  python3 -I - "$d/arm64-v8a/libwebrtc.jar" <<'PY'
+  python3 -I - "$d/arm64-v8a/libwebrtc.jar" "$work/clsgen.py" <<'PY'
 import sys, zipfile
+exec(open(sys.argv[2]).read())
 with zipfile.ZipFile(sys.argv[1], "w") as z:
     z.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\n")
     for c in ("org/webrtc/PeerConnectionFactory", "org/webrtc/PeerConnectionFactoryJni", "org/jni_zero/GEN_JNI", "org/webrtc/OpusInfo", "org/webrtc/AudioCapturePostProcessing"):
-        z.writestr(c + ".class", b"\xca\xfe\xba\xbe\x00\x00\x00\x45x")
+        z.writestr(c + ".class", cls(["java/lang/Object", "java/lang/runtime/ObjectMethods", c]))
 PY
   printf '<manifest package="org.webrtc"/>\n' >"$d/AndroidManifest.xml"
   printf 'WebRTC\nBSD 3-clause\n' >"$d/LICENSE.md"
@@ -153,6 +162,20 @@ make_layout "$work/gpl" arm64-v8a armeabi-v7a x86_64
 printf 'dep\nGNU General Public License v3\n' >"$work/gpl/LICENSE.md"
 expect_exit "package-android: a GNU license fails" 4 sh "$here/package-android.sh" "$work/gpl"
 check "package-android: no AAR for a GNU license" test ! -e "$work/gpl/libwebrtc.aar"
+# Per-ABI licenses are merged (paragraphs, deduplicated, in ABI order); a GNU license in any one fails.
+make_layout "$work/lic3" arm64-v8a armeabi-v7a x86_64
+rm "$work/lic3/LICENSE.md"
+printf 'WebRTC\n\nlib-common\n\nlib-arm64\n' >"$work/lic3/arm64-v8a/LICENSE.md"
+printf 'WebRTC\n\nlib-common\n\nlib-arm32\n' >"$work/lic3/armeabi-v7a/LICENSE.md"
+printf 'WebRTC\n\nlib-common\n\nlib-x64\n' >"$work/lic3/x86_64/LICENSE.md"
+expect_exit "package-android: per-ABI licenses" 0 sh "$here/package-android.sh" "$work/lic3"
+check "package-android: merged license has every ABI's library" sh -c 'for l in lib-arm64 lib-arm32 lib-x64; do grep -q "^$l$" "$1" || exit 1; done' _ "$work/lic3/LICENSE.md"
+check "package-android: merged license has shared text once" test "$(grep -c '^lib-common$' "$work/lic3/LICENSE.md")" -eq 1
+make_layout "$work/lic3gpl" arm64-v8a armeabi-v7a x86_64
+rm "$work/lic3gpl/LICENSE.md"
+for a in arm64-v8a armeabi-v7a x86_64; do printf 'WebRTC\n' >"$work/lic3gpl/$a/LICENSE.md"; done
+printf 'x\n\nGNU Lesser General Public License\n' >"$work/lic3gpl/armeabi-v7a/LICENSE.md"
+expect_exit "package-android: a GNU license in one ABI's file fails" 4 sh "$here/package-android.sh" "$work/lic3gpl"
 make_layout "$work/nolic" arm64-v8a armeabi-v7a x86_64
 rm "$work/nolic/LICENSE.md"
 expect_exit "package-android: a missing license fails" 1 sh "$here/package-android.sh" "$work/nolic"
@@ -185,6 +208,30 @@ with zipfile.ZipFile(sys.argv[1], "w") as z:
 PY
 expect_exit "package-android: a jar without org.jni_zero.GEN_JNI fails" 1 sh "$here/package-android.sh" "$work/nogen"
 check "package-android: names GEN_JNI" out_has "org/jni_zero/GEN_JNI.class"
+# Class files newer than Java 17: relabelling is only safe without newer runtime bootstraps.
+bad_runtime() { # bad_runtime <dir> <runtime class>: a layout whose jar has a class using it
+  make_layout "$1" arm64-v8a armeabi-v7a x86_64
+  python3 -I - "$1/arm64-v8a/libwebrtc.jar" "$work/clsgen.py" "$2" <<'PY'
+import sys, zipfile
+exec(open(sys.argv[2]).read())
+with zipfile.ZipFile(sys.argv[1], "a") as z:
+    z.writestr("org/webrtc/UsesNewer.class", cls(["java/lang/Object", sys.argv[3], "org/webrtc/UsesNewer"]))
+PY
+}
+bad_runtime "$work/sw" java/lang/runtime/SwitchBootstraps
+expect_exit "package-android: SwitchBootstraps in a class fails" 1 sh "$here/package-android.sh" "$work/sw"
+check "package-android: names the class and the bootstrap" out_has "org/webrtc/UsesNewer.class.*java/lang/runtime/SwitchBootstraps"
+bad_runtime "$work/car" java/lang/runtime/Carriers
+expect_exit "package-android: another java/lang/runtime class fails" 1 sh "$here/package-android.sh" "$work/car"
+check "package-android: a failed guard writes no AAR" test ! -e "$work/sw/libwebrtc.aar"
+check "package-android: ObjectMethods (records) is accepted" test -s "$work/ok/libwebrtc.aar"
+
+# --- workflow and patch text ---
+wf="$here/../../.github/workflows/webrtc-android.yml"
+check "workflow: gh release create pins the target commit" grep -qF -- '--target "${{ github.sha }}"' "$wf"
+check "workflow: release only from main or feat/webrtc-android" has "github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/webrtc-android'" "$wf"
+check "workflow: per-ABI licenses are collected" grep -qF 'LICENSE.md" "collected/${{ matrix.abi }}/"' "$wf"
+check "patch 0006 says it depends on patch 0007's targets" has "depends on patch 0007" "$here"/patches/0006-android-opus-info.patch
 
 # --- apply.sh platform switch ---
 new_tree() { # new_tree <dir>: fixture WebRTC tree

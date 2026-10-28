@@ -299,6 +299,20 @@ class AppGraphTest {
         assertEquals(AccountState.SignedOut, state)
     }
 
+    /**
+     * A revocation wipe that starts and finishes after an open read the stored session but before it took the lock
+     * leaves nothing to open: no session on the wiped data, none with the revoked token.
+     */
+    @Test
+    fun wipeBetweenTheReadAndTheLockOpensNothing() = runBlocking {
+        val graph = signedIn()
+        graph.beforeOpenLock = { graph.beforeOpenLock = {}; graph.wipeAfterRevocation() }
+        assertNull(graph.openSession())
+        assertNull(graph.liveSession)
+        assertFalse(db.exists(), "database")
+        assertEquals(AccountState.SignedOut, graph.accountState)
+    }
+
     /** Between a session's end and onboarding the screens still read a store: it is empty, never a crash. */
     @Test
     fun chatStoreIsSafeAfterTheSessionEnds() = runBlocking {
@@ -389,6 +403,28 @@ class AppGraphTest {
         assertTrue(db.exists(), "database kept")
         session.chatStore.settle()
         assertEquals(AccountState.SignedIn, graph.accountState)
+    }
+
+    /**
+     * A second open (a push ring) that arrives while the first one wipes another device's data waits for that open
+     * and gets its session: the open's own wipe is not a revocation, so it never answers "not signed in".
+     */
+    @Test
+    fun openDuringTheSwitchWipeWaitsForTheSession() = runBlocking {
+        val (_, old) = opened()
+        old.database.close()
+        saveSession(device = "dev-2")
+        val graph = AppGraph(context, sampleData = false, scope = scope, platform = platform())
+        var second: kotlinx.coroutines.Deferred<org.example.app.live.LiveSession?>? = null
+        onCancelNotifications = {
+            onCancelNotifications = {}
+            val during = scope.async(Dispatchers.IO) { graph.openSession() }
+            second = during
+            // Bounded: before the fix the second open returned null at once; after it, it waits for this open.
+            runBlocking { kotlinx.coroutines.withTimeoutOrNull(1_000) { during.join() } }
+        }
+        val first = assertNotNull(graph.openSession())
+        assertSame(first, assertNotNull(second, "the wipe ran inside the open").await())
     }
 
     @Test

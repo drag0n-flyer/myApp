@@ -12,9 +12,31 @@ private final class ErrorBox: @unchecked Sendable {
     func set(_ e: Error) { lock.withLock { stored = e } }
 }
 
+/// The headless `--out` folder, behind a lock (set once at launch, read when a run starts).
+private final class OutputDirBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: URL?
+    var value: URL? {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
+    }
+}
+
 enum RunExport {
-    /// `runs/<run_id>/` inside Documents (the sandbox container on the Mac).
+    private static let output = OutputDirBox()
+
+    /// Headless runs (`--out <dir>`, L10a) write straight into this folder instead of Documents/runs/<run_id>/.
+    static var outputDir: URL? {
+        get { output.value }
+        set { output.value = newValue }
+    }
+
+    /// `runs/<run_id>/` inside Documents (the sandbox container on the Mac), or `outputDir` when set.
     static func makeRunDir(runID: String) throws -> URL {
+        if let out = outputDir {
+            try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+            return out
+        }
         let docs = try FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
         let dir = docs.appendingPathComponent("runs", isDirectory: true).appendingPathComponent(runID, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

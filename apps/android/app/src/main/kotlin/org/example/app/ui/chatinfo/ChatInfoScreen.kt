@@ -84,7 +84,9 @@ fun ChatInfoScreen(
         },
     ) { padding ->
         if (chat == null || contact == null) return@Scaffold
-        val verified = store.supportsSafetyNumbers && store.safetyNumber(chatId)?.isVerified == true
+        // Members that cannot be read: no number, no verified state, no Verify; chat info says why.
+        val unreadable = store.supportsSafetyNumbers && store.membersUnreadable(chatId)
+        val verified = store.supportsSafetyNumbers && !unreadable && store.safetyNumber(chatId)?.isVerified == true
         Column(Modifier.padding(padding).verticalScroll(rememberScrollState())) {
             Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Avatar(contact.displayName, size = 84.dp)
@@ -123,7 +125,12 @@ fun ChatInfoScreen(
                     )
                 }
             }
-            if (store.supportsSafetyNumbers) {
+            if (unreadable) {
+                ListItem(
+                    leadingContent = { Icon(painterResource(R.drawable.ic_warning), contentDescription = null) },
+                    headlineContent = { Text(stringResource(R.string.info_members_unreadable)) },
+                )
+            } else if (store.supportsSafetyNumbers) {
                 ListItem(
                     modifier = Modifier.clickable(role = Role.Button) { showVerify = true },
                     leadingContent = { Icon(painterResource(R.drawable.ic_verified), contentDescription = null) },
@@ -146,7 +153,7 @@ fun ChatInfoScreen(
             )
         }
 
-        if (showVerify && store.supportsSafetyNumbers) {
+        if (showVerify && store.supportsSafetyNumbers && !unreadable) {
             val number = store.safetyNumber(chatId)
             if (number != null) {
                 ModalBottomSheet(onDismissRequest = { showVerify = false }) {

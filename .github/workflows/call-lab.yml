@@ -30,6 +30,13 @@ jobs:
     needs: kit
     steps:
       - uses: actions/checkout@v4
+      # rnnoise_data.c (78 MB) is not committed. Same pinned, checksummed fetch as apple.yml uses for
+      # CallMedia; RNNoiseLab vendors the same model (see Packages/RNNoiseLab/VENDOR.md).
+      - name: Fetch the pinned RNNoise model
+        run: |
+          apps/apple/Packages/CallMedia/scripts/fetch-rnnoise-model.sh
+          cp apps/apple/Packages/CallMedia/Sources/RNNoise/rnnoise_data.c \
+            tools/call-lab/Packages/RNNoiseLab/Sources/CRNNoise/rnnoise_data.c
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Generate project

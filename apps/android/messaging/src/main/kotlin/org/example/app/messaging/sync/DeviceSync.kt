@@ -54,7 +54,17 @@ class DeviceSync(
     private fun activeConversations(): List<ConversationRecord> =
         repo.chats().flatMap { repo.conversations(it.id) }.filter { it.active }
 
-    private suspend fun membersOf(group: GroupId): Set<String> = lock.withLock { mls.members(group).toSet() }
+    /** A failed read flags the group's conversation (`Membership.markUnreadable`) and still throws. */
+    private suspend fun membersOf(group: GroupId): Set<String> = lock.withLock {
+        try {
+            mls.members(group).toSet()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            repo.conversationByGroup(group.raw)?.let { Membership.markUnreadable(it.serverId, repo) }
+            throw e
+        }
+    }
 
     // Own devices
 

@@ -51,6 +51,8 @@ interface ChatStore {
     val supportsSafetyNumbers: Boolean
     /** Null until the chat exists. */
     fun safetyNumber(chatId: String): SafetyNumber?
+    /** True when one of the chat's groups could not be read; chat info then says so and hides Verify. */
+    fun membersUnreadable(chatId: String): Boolean = false
     /** Local only. */
     fun setVerified(verified: Boolean, chatId: String)
 
