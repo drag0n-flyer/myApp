@@ -153,7 +153,9 @@ final class LoopbackTests: XCTestCase {
         try XCTSkipIf(!toneRan, "no audio capture on this runner, so the tone never played")
         XCTAssertGreaterThan(codecBps, 2_000, "the tone must be sent")
         XCTAssertLessThanOrEqual(codecBps, 14_000)
-        if let target { XCTAssertLessThanOrEqual(target, 10_000) }
+        // The macOS runner reports the encoder target (10000 in CI), so a missing one is a failure, not a skip.
+        let reported = try XCTUnwrap(target, "outbound-rtp audio must report targetBitrate")
+        XCTAssertLessThanOrEqual(reported, 10_000)
         XCTAssertLessThanOrEqual(wireBps, Double(AudioProfile.for(.ultraLow).wireBudget))
     }
 
