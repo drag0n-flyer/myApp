@@ -101,6 +101,8 @@ How a run works (`tools/call-lab/ci/run_calls.sh`):
 - Client A and client B are two `CallLabMac` processes started with `--headless` (client B with `--role callee`). The iOS Simulator is not used; each result says `client_b: mac-headless`.
 - Client A's microphone samples are replaced with the L8 stimulus (LibriSpeech test-clean, 50% active) through the WebRTC capture hook (patch 0004).
 - `tools/call-lab/netem/dummynet.sh` applies the `profiles.tsv` profile on `lo0` with `dnctl` and `pfctl`. Each UDP packet passes exactly one pipe: only the outbound pass on `lo0` is shaped, and a mask gives each sending socket (each call direction) its own pipe. On relay, only the clients' sends to coturn are shaped, so each direction is shaped once. Signaling (TCP) is not shaped.
+- After every shaped call (not `clean`), pf's counter on the anchor's dummynet rule must be above 0, or the job fails. `dnctl pipe show` is not used for this: its per-queue rows are garbage on macOS 26.
+- Data use: `mb_per_10min` counts client A's sent plus received bytes; `kbps_per_direction` is per direction, the figure to compare with GOAL.md's per-direction wire budget. Relay runs must have selected a relay candidate pair.
 - Jitter: **not simulated**. dummynet has no jitter, so the profiles' `jitter_ms` is not applied, and the summary's `jitter` column says "not simulated".
 - `tcpdump` on `lo0` feeds `pcapbytes.py`. Data use is client A's own traffic. On direct, that is the whole A ↔ B capture (each packet once). On relay, it is A's own leg to coturn, picked out by A's UDP ports; B's leg is reported separately (`callee_mb_per_10min`).
 - `tools/call-lab/ci/summarize.py` writes `summary.md` and `summary.csv` (the workflow artifact).

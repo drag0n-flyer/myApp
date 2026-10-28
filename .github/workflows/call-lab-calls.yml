@@ -31,6 +31,7 @@ jobs:
       - name: Tests for the CI tools
         run: |
           sh tools/call-lab/netem/test_dummynet.sh
+          sh tools/call-lab/ci/test_run_calls.sh
           (cd tools/call-lab/ci && python3 -m unittest -q)
 
       - name: Install tools (XcodeGen, PostgreSQL, coturn)
@@ -97,6 +98,7 @@ jobs:
           for f in "$RUNNER_TEMP"/runs/*/caller.log "$RUNNER_TEMP"/runs/*/callee.log; do
             [ -f "$f" ] && { echo "== $f"; tail -5 "$f"; }
           done
+          [ -f "$RUNNER_TEMP/runs/server.log" ] && { echo "== server.log"; grep -viE 'token|secret' "$RUNNER_TEMP/runs/server.log" | tail -15; }
           exit $rc
 
       # Summary Markdown and CSV only (under 1 MB); recordings, pcaps and logs are not uploaded.

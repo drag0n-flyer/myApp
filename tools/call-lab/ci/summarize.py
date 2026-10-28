@@ -38,7 +38,7 @@ STATSROW = os.path.join(HERE, "..", "Packages", "CallLabKit", "Sources", "CallLa
 
 COLUMNS = ["run_id", "label", "preset", "path", "profile", "noise_snr_db", "client_b",
            "connect_ms", "first_audio", "disconnected", "header_ok",
-           "bytes_per_min", "mb_per_10min", "callee_mb_per_10min", "jitter", "loss_pct", "concealed_pct", "rtt_ms_median",
+           "bytes_per_min", "mb_per_10min", "kbps_per_direction", "callee_mb_per_10min", "pair", "jitter", "loss_pct", "concealed_pct", "rtt_ms_median",
            "visqol_moslqo", "dnsmos_sig", "dnsmos_bak", "dnsmos_ovrl", "result", "reasons"]
 
 
@@ -151,11 +151,21 @@ def summarize_run(d, header):
             if n.get(k) is not None:
                 r["dnsmos_" + k] = n[k]
 
+    if r["mb_per_10min"] is not None:
+        # mb_per_10min is client A's sent plus received bytes; per direction is half, in kbps on the wire.
+        r["kbps_per_direction"] = round(r["mb_per_10min"] * 1e6 * 8 / 600 / 2 / 1000, 1)
+    local = next((x.get("local_cand") for x in reversed(rows) if x.get("local_cand")), None)
+    remote = next((x.get("remote_cand") for x in reversed(rows) if x.get("remote_cand")), None)
+    r["pair"] = f"{local or 'none'}/{remote or 'none'}"
+
     # Pass rules.
     if not r["first_audio"]:
         reasons.append("no first_audio_packet")
     if not r["header_ok"]:
         reasons.append("stats.csv header differs from StatsRow.csvHeader")
+    if r["path"] == "relay" and local != "relay":
+        # Smoke check: a relay run that did not use a relay pair measured the wrong path.
+        reasons.append(f"selected candidate pair is not relay (local {local or 'none'})")
     if r["profile"] == GATED_PROFILE:
         if r["disconnected"]:
             reasons.append("disconnected on clean")
@@ -193,13 +203,15 @@ def write(rows, out):
           "These are not device results: they never go into the L10 tables, GOAL.md's mode table or "
           "`DataMode.estimatedMBPer10Minutes` without the owner's approval.", "",
           f"Shaping: dummynet on lo0, each packet through one pipe; jitter: {JITTER} (dummynet has no jitter, "
-          "so the profiles' jitter_ms is not applied). Data use is client A's own traffic: on relay, its leg to coturn.", "",
+          "so the profiles' jitter_ms is not applied). Data use is client A's own traffic: on relay, its leg to coturn. "
+          "`mb_per_10min` counts both directions (sent plus received); `kbps_per_direction` is per direction, "
+          "the figure to compare with GOAL.md's per-direction wire budget. Relay runs must use a relay pair.", "",
           "Gates: first audio on every run, stats.csv header, and on profile `clean` no disconnect and "
           f"connect time (answer_received to first_audio_packet) at or below {CONNECT_LIMIT_MS} ms. "
           "Every other column is report only.", "",
           f"Runs: {len(rows)}, failed: {len(failed)}.", ""]
     cols = ["run_id", "preset", "path", "profile", "noise_snr_db", "client_b", "connect_ms", "disconnected",
-            "mb_per_10min", "jitter", "loss_pct", "concealed_pct", "rtt_ms_median", "visqol_moslqo", "dnsmos_ovrl", "result"]
+            "mb_per_10min", "kbps_per_direction", "pair", "jitter", "loss_pct", "concealed_pct", "rtt_ms_median", "visqol_moslqo", "dnsmos_ovrl", "result"]
     md.append("| " + " | ".join(cols) + " |")
     md.append("|" + "---|" * len(cols))
     for r in rows:
