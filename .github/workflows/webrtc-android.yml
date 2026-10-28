@@ -72,6 +72,8 @@ jobs:
           mkdir -p collected
           cp -r "$WEBRTC_WORKDIR/out/android/${{ matrix.abi }}" "collected/${{ matrix.abi }}"
           cp "$WEBRTC_WORKDIR/out/android/AndroidManifest.xml" "$WEBRTC_WORKDIR/out/android/LICENSE.md" collected/
+          # This ABI's license (generate_licenses.py over this job's build); package merges the three.
+          cp "$WEBRTC_WORKDIR/out/android/LICENSE.md" "collected/${{ matrix.abi }}/"
           ls -lR collected
       - uses: actions/upload-artifact@v4
         with:
@@ -92,9 +94,9 @@ jobs:
         run: |
           mkdir -p out
           for abi in arm64-v8a armeabi-v7a x86_64; do cp -r "downloaded/build-$abi/$abi" "out/$abi"; done
-          # The license file and manifest are the same in both builds except for the ABI list
-          # in the license scan; take the arm64-v8a ones.
-          cp downloaded/build-arm64-v8a/AndroidManifest.xml downloaded/build-arm64-v8a/LICENSE.md out/
+          # The manifest is the same in every build. Each ABI dir carries its own LICENSE.md,
+          # which package-android.sh merges.
+          cp downloaded/build-arm64-v8a/AndroidManifest.xml out/
           sh tools/webrtc/package-android.sh out
           ls -l out
       - name: License check (explicit)
@@ -161,7 +163,7 @@ jobs:
 
   release:
     needs: smoke
-    if: github.event_name == 'workflow_dispatch' && inputs.release
+    if: github.event_name == 'workflow_dispatch' && inputs.release && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/webrtc-android')
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -188,5 +190,5 @@ jobs:
           Device check: pending
           NOTES
           cd release
-          gh release create "$tag" libwebrtc.aar libwebrtc.aar.sha256 LICENSE.md VERSION \
+          gh release create "$tag" --target "${{ github.sha }}" libwebrtc.aar libwebrtc.aar.sha256 LICENSE.md VERSION \
             --title "WebRTC M${WEBRTC_MILESTONE} Android + Opus ${OPUS_VERSION} (${RELEASE})" --notes-file ../notes.md

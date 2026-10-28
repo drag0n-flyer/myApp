@@ -33,10 +33,46 @@ android {
 
 // The project's own WebRTC build (tools/webrtc, task E2): url, sha256 and version of the release AAR are in
 // webrtc.properties. The AAR is downloaded once into build/ and its SHA-256 is checked; a mismatch deletes the file
-// and fails the build. `-PwebrtcAar=/path/to/libwebrtc.aar` uses a local AAR instead (no download, no hash check).
+// and fails the build. `-PwebrtcAar=/path/to/libwebrtc.aar` uses a local AAR instead (no download); that skips the
+// hash check, so it logs a warning, and it is refused when the CI environment variable is set and for release
+// builds unless `-PwebrtcAarSha256=<hash>` is given and matches the file.
 val webrtcProps = Properties().apply { file("webrtc.properties").inputStream().use { load(it) } }
 val webrtcAarOverride: String? = providers.gradleProperty("webrtcAar").orNull
 val downloadedAar = layout.buildDirectory.file("webrtc-download/libwebrtc.aar")
+val webrtcAarSha256: String? = providers.gradleProperty("webrtcAarSha256").orNull?.lowercase()
+val inCi: Boolean = providers.environmentVariable("CI").isPresent
+val releaseBuild: Boolean = gradle.startParameter.taskNames.any { it.contains("release", ignoreCase = true) }
+
+val validateWebrtcAarOverride by tasks.registering {
+    val override = webrtcAarOverride
+    val sha = webrtcAarSha256
+    val ci = inCi
+    val release = releaseBuild
+    inputs.property("override", override ?: "")
+    inputs.property("sha", sha ?: "")
+    inputs.property("ci", ci)
+    inputs.property("release", release)
+    onlyIf { override != null }
+    doLast {
+        val file = File(override!!)
+        logger.warn("WARNING: using the local WebRTC AAR $file (-PwebrtcAar); its SHA-256 is not checked against webrtc.properties.")
+        val actual = if (file.isFile) {
+            val md = MessageDigest.getInstance("SHA-256")
+            md.digest(file.readBytes()).joinToString("") { "%02x".format(it) }
+        } else {
+            null
+        }
+        if (sha != null && sha != actual) {
+            throw GradleException("WebRTC AAR hash mismatch for $file: -PwebrtcAarSha256 is $sha, the file is $actual")
+        }
+        if (ci && sha == null) {
+            throw GradleException("-PwebrtcAar is refused when CI is set unless -PwebrtcAarSha256=<hash> is given and matches")
+        }
+        if (release && sha == null) {
+            throw GradleException("-PwebrtcAar is refused for a release build unless -PwebrtcAarSha256=<hash> is given and matches")
+        }
+    }
+}
 
 val downloadWebrtcAar by tasks.registering {
     val url = webrtcProps.getProperty("url")
@@ -64,13 +100,19 @@ val downloadWebrtcAar by tasks.registering {
         file.parentFile.mkdirs()
         if (!file.exists() || sha256(file) != expected) {
             val part = File(file.path + ".part")
-            URI(url).toURL().openStream().use { input -> part.outputStream().use { input.copyTo(it) } }
+            val connection = URI(url).toURL().openConnection().apply {
+                connectTimeout = 30_000
+                readTimeout = 60_000
+            }
+            connection.getInputStream().use { input -> part.outputStream().use { input.copyTo(it) } }
             val actual = sha256(part)
             if (actual != expected) {
                 part.delete()
                 throw GradleException("WebRTC AAR hash mismatch for $url: expected $expected, got $actual")
             }
-            part.renameTo(file)
+            if (!part.renameTo(file)) {
+                throw GradleException("could not move $part to $file")
+            }
         }
     }
 }
@@ -80,7 +122,7 @@ val webrtcAar: Provider<File> =
 val unpackedAar = layout.buildDirectory.dir("webrtc-aar")
 // A library module cannot depend on a local .aar file directly, so its classes.jar and jni/ are unpacked here.
 val unpackWebrtcAar by tasks.registering(Sync::class) {
-    dependsOn(downloadWebrtcAar)
+    dependsOn(downloadWebrtcAar, validateWebrtcAarOverride)
     inputs.file(webrtcAar)
     from(webrtcAar.map { zipTree(it) }) { include("classes.jar", "jni/**") }
     into(unpackedAar)
