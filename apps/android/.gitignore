@@ -8,5 +8,5 @@ local.properties
 .cxx/
 # RNNoise model weights (78 MB), fetched by scripts/android-fetch-rnnoise-model.sh
 calls-android/src/main/cpp/rnnoise/rnnoise_data.c
-# libwebrtc.aar for local builds until the :webrtc module downloads it (task E2)
+# A local libwebrtc.aar for -PwebrtcAar builds; never committed
 webrtc/libs/
