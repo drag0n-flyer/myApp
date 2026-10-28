@@ -35,7 +35,7 @@ class SettingsReachConsumersTest {
     @Test
     fun settingsChangeReachesTheCallEngine() {
         val graph = AppGraph(context, sampleData = true, scope = kotlinx.coroutines.CoroutineScope(Dispatchers.Unconfined))
-        val engine = graph.callEngine
+        val engine = graph.callEngine as org.example.app.core.calls.SimulatedCallEngine
         assertEquals(true, engine.settings.videoOffOnMobile)
         graph.settingsStore.update { it.copy(call = it.call.copy(videoOffOnMobile = false, callDataMode = ModePreference.Auto)) }
         assertEquals(false, engine.settings.videoOffOnMobile)

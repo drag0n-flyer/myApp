@@ -1,5 +1,10 @@
 package org.example.app
 
+import org.example.app.calls.android.CallsRuntime
+import org.example.app.calls.android.LiveCallEngine
+import org.example.app.core.calls.SimulatedCallEngine
+import org.example.app.live.SessionCallEngine
+import org.example.app.ui.calls.CallHistoryViewModel
 import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
@@ -185,10 +190,22 @@ class AppGraphTest {
         assertEquals("chat.example.org", graph.serverPolicy.host)
         assertFalse(graph.serverPolicy.host == "home.example.org")
         assertNull(graph.inviteUrl)
-        assertFalse(graph.callsAvailable)
         assertEquals(NetworkType.Mobile, graph.network)
         assertEquals(org.example.app.core.settings.UserSettings.initial(graph.serverPolicy), graph.settingsStore.settings.value)
         assertIs<LiveChatStore>(graph.chatStore)
+    }
+
+    /** Live calls run on `LiveCallEngine` through the open session; the Calls tab shows only real calls (none yet). */
+    @Test
+    fun liveModeUsesLiveCallEngine() {
+        val (graph, session) = opened()
+        assertTrue(graph.callsAvailable)
+        assertFalse(graph.callEngine is SimulatedCallEngine)
+        assertIs<LiveCallEngine>(session.calls)
+        assertSame(session.calls, assertIs<SessionCallEngine>(graph.callEngine).current)
+        assertSame(graph.callEngine, CallsRuntime.engine)
+        assertNull(graph.callEngine.state.value)
+        assertTrue(CallHistoryViewModel(graph.chatStore).records.value.isEmpty())
     }
 
     @Test
