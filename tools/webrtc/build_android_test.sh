@@ -108,7 +108,7 @@ import sys, zipfile
 with zipfile.ZipFile(sys.argv[1], "w") as z:
     z.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\n")
     for c in ("org/webrtc/PeerConnectionFactory", "org/webrtc/OpusInfo", "org/webrtc/AudioCapturePostProcessing"):
-        z.writestr(c + ".class", "x")
+        z.writestr(c + ".class", b"\xca\xfe\xba\xbe\x00\x00\x00\x45x")
 PY
   printf '<manifest package="org.webrtc"/>\n' >"$d/AndroidManifest.xml"
   printf 'WebRTC\nBSD 3-clause\n' >"$d/LICENSE.md"
@@ -130,6 +130,12 @@ import io, sys, zipfile
 z = zipfile.ZipFile(sys.argv[1])
 j = zipfile.ZipFile(io.BytesIO(z.read(\"classes.jar\")))
 sys.exit(0 if \"org/webrtc/OpusInfo.class\" in j.namelist() else 1)" "$1"' _ "$work/ok/libwebrtc.aar"
+check "package-android: class files relabelled to version 61" sh -c 'python3 -I -c "
+import io, sys, zipfile
+z = zipfile.ZipFile(sys.argv[1])
+j = zipfile.ZipFile(io.BytesIO(z.read(\"classes.jar\")))
+bad = [n for n in j.namelist() if n.endswith(\".class\") and int.from_bytes(j.read(n)[6:8], \"big\") != 61]
+sys.exit(1 if bad or not any(n.endswith(\".class\") for n in j.namelist()) else 0)" "$1"' _ "$work/ok/libwebrtc.aar"
 check "package-android: .sha256 matches" sh -c 'cd "$1" && sha256sum -c libwebrtc.aar.sha256 >/dev/null' _ "$work/ok"
 check "package-android: .sha256 is 'hash  name'" sh -c 'grep -q "^[0-9a-f]\{64\}  libwebrtc.aar$" "$1"' _ "$work/ok/libwebrtc.aar.sha256"
 check "package-android: LICENSE.md kept" test -s "$work/ok/LICENSE.md"

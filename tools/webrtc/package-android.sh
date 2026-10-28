@@ -89,10 +89,31 @@ PY
 aar="$dir/libwebrtc.aar"
 rm -f "$aar" "$aar.sha256"
 python3 -I - "$aar" "$dir" <<'PY'
-import os, sys, zipfile
+import io, os, sys, zipfile
 aar, d = sys.argv[1], sys.argv[2]
+
+# Ruling: the WebRTC build compiles Java with its bundled JDK (class file version 69,
+# Java 25), which JDK 17 consumers (javac, AGP 8) cannot read. The Java is plain
+# (no records, sealed types or pattern switches), so the class files are relabelled
+# as version 61 (Java 17). Only the version field changes.
+def downgrade(jar_path):
+    out = io.BytesIO()
+    with zipfile.ZipFile(jar_path) as zin, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout:
+        for n in sorted(zin.namelist()):
+            data = zin.read(n)
+            if n.endswith(".class") and len(data) > 8 and data[:4] == b"\xca\xfe\xba\xbe":
+                major = int.from_bytes(data[6:8], "big")
+                if major > 61:
+                    data = data[:6] + (61).to_bytes(2, "big") + data[8:]
+            info = zipfile.ZipInfo(n, date_time=(2020, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = 0o644 << 16
+            zout.writestr(info, data)
+    return out.getvalue()
+
+classes_jar = downgrade(os.path.join(d, "arm64-v8a", "libwebrtc.jar"))
 entries = [("AndroidManifest.xml", os.path.join(d, "AndroidManifest.xml")),
-           ("classes.jar", os.path.join(d, "arm64-v8a", "libwebrtc.jar"))]
+           ("classes.jar", None)]
 for abi in ("arm64-v8a", "armeabi-v7a", "x86_64"):
     entries.append(("jni/%s/libjingle_peerconnection_so.so" % abi,
                     os.path.join(d, abi, "libjingle_peerconnection_so.so")))
@@ -101,8 +122,11 @@ with zipfile.ZipFile(aar + ".part", "w", zipfile.ZIP_DEFLATED) as z:
         info = zipfile.ZipInfo(name, date_time=(2020, 1, 1, 0, 0, 0))
         info.compress_type = zipfile.ZIP_DEFLATED
         info.external_attr = 0o644 << 16
-        with open(path, "rb") as f:
-            z.writestr(info, f.read())
+        if path is None:
+            z.writestr(info, classes_jar)
+        else:
+            with open(path, "rb") as f:
+                z.writestr(info, f.read())
 os.replace(aar + ".part", aar)
 PY
 printf '%s  libwebrtc.aar\n' "$(sha256_of "$aar")" >"$aar.sha256"
