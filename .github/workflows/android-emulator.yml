@@ -24,7 +24,7 @@ concurrency:
 jobs:
   emulator:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 120
     env:
       NDK_VERSION: 28.2.13676358
     steps:
