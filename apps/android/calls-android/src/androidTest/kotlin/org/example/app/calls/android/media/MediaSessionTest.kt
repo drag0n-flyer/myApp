@@ -1,0 +1,260 @@
+package org.example.app.calls.android.media
+
+import android.Manifest
+import android.content.Context
+import androidx.test.core.app.ApplicationProvider
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertNotEquals
+import kotlin.test.assertTrue
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import org.example.app.calls.policy.AudioProfile
+import org.example.app.calls.policy.IceState
+import org.example.app.calls.policy.IceTransportPolicy
+import org.example.app.calls.session.MediaEvent
+import org.example.app.contracts.DataMode
+import org.example.app.contracts.IceCandidate
+import org.example.app.core.settings.NoiseSuppression
+import org.example.app.core.settings.UserSettings
+import org.junit.After
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+
+/**
+ * Two [WebRtcMediaSession]s in one process, connected over host candidates. Runs on the API 29 and API 36
+ * emulators: `./gradlew :calls-android:pixel6Api29DebugAndroidTest`. The iPhone's LoopbackTests (CallMedia).
+ */
+@RunWith(AndroidJUnit4::class)
+class MediaSessionTest {
+    private val context: Context = ApplicationProvider.getApplicationContext()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val iceStates = ConcurrentHashMap<String, MutableList<IceState>>()
+    private val candidates = ConcurrentHashMap<String, MutableList<IceCandidate>>()
+    private val relay = CandidateRelay()
+
+    @Before
+    fun grantMicrophone() {
+        InstrumentationRegistry.getInstrumentation().uiAutomation
+            .grantRuntimePermission(context.packageName, Manifest.permission.RECORD_AUDIO)
+    }
+
+    @After
+    fun tearDown() {
+        scope.cancel()
+        CaptureHook.enabled = false
+    }
+
+    private fun session(noise: NoiseSuppression = NoiseSuppression.Standard) =
+        WebRtcMediaSession(context, UserSettings(noiseSuppression = noise))
+
+    /** Records every event of [s] under [name] and forwards its candidates to [peer]. */
+    private fun pump(name: String, s: WebRtcMediaSession, peer: String?) {
+        scope.launch {
+            s.events.collect { e ->
+                when (e) {
+                    is MediaEvent.IceStateChanged -> iceStates.getOrPut(name) { CopyOnWriteArrayList() } += e.state
+                    is MediaEvent.LocalCandidate -> {
+                        candidates.getOrPut(name) { CopyOnWriteArrayList() } += e.candidate
+                        if (peer != null) relay.deliver(peer, e.candidate)
+                    }
+                    is MediaEvent.RemoteVideo -> Unit
+                }
+            }
+        }
+    }
+
+    private fun has(name: String, state: IceState) = iceStates[name]?.contains(state) == true
+
+    private suspend fun waitFor(ms: Long, cond: () -> Boolean): Boolean {
+        val end = System.currentTimeMillis() + ms
+        while (System.currentTimeMillis() < end) {
+            if (cond()) return true
+            delay(50)
+        }
+        return cond()
+    }
+
+    /** A offers, B answers. [send] is what A may send; B asks to receive [peerReceive]. */
+    private suspend fun connected(
+        send: DataMode = DataMode.Balanced,
+        peerReceive: DataMode = send,
+        noise: NoiseSuppression = NoiseSuppression.Standard,
+    ): Pair<WebRtcMediaSession, WebRtcMediaSession> {
+        val a = session(noise)
+        val b = session(noise)
+        a.configure(emptyList(), IceTransportPolicy.All, video = false)
+        b.configure(emptyList(), IceTransportPolicy.All, video = false)
+        relay.register("A", a)
+        relay.register("B", b)
+        pump("A", a, peer = "B")
+        pump("B", b, peer = "A")
+        val p = AudioProfile.forMode(send)
+        val offer = a.makeOffer(p, iceRestart = false)
+        val answer = b.acceptOffer(offer, send = p, receive = AudioProfile.forMode(peerReceive))
+        relay.remoteDescriptionSet("B")
+        a.acceptAnswer(answer, send = p)
+        relay.remoteDescriptionSet("A")
+        return a to b
+    }
+
+    @Test
+    fun loopbackAudioConnects() = runBlocking {
+        val start = System.currentTimeMillis()
+        val (a, b) = connected()
+        val ok = waitFor(5_000 - (System.currentTimeMillis() - start)) {
+            (has("A", IceState.Connected) || has("A", IceState.Completed)) &&
+                (has("B", IceState.Connected) || has("B", IceState.Completed))
+        }
+        a.close()
+        b.close()
+        assertTrue(ok, "both sides must connect within 5 s; A=${iceStates["A"]} B=${iceStates["B"]}")
+    }
+
+    @Test
+    fun localOfferIsMunged() = runBlocking {
+        val a = session()
+        a.configure(emptyList(), IceTransportPolicy.All, video = false)
+        val offer = a.makeOffer(AudioProfile.forMode(DataMode.UltraLow), iceRestart = false)
+        a.close()
+        assertTrue("a=ptime:60" in offer)
+        assertTrue("maxaveragebitrate=10000" in offer)
+        assertTrue("a=fingerprint:sha-256" in offer)
+        assertTrue("UDP/TLS/RTP/SAVPF" in offer)
+    }
+
+    @Test
+    fun relayPolicyGathersOnlyRelay() = runBlocking {
+        val a = session()
+        a.configure(emptyList(), IceTransportPolicy.Relay, video = false)
+        pump("A", a, peer = null)
+        a.makeOffer(AudioProfile.forMode(DataMode.Balanced), iceRestart = false)
+        delay(3_000)
+        a.close()
+        val types = candidates["A"].orEmpty().map { typ(it.sdp) }
+        assertTrue("host" !in types && "srflx" !in types, "RELAY emitted $types")
+        // Positive control: the same flow with All gathers host candidates, so silence above means the filter works.
+        val c = session()
+        c.configure(emptyList(), IceTransportPolicy.All, video = false)
+        pump("C", c, peer = null)
+        c.makeOffer(AudioProfile.forMode(DataMode.Balanced), iceRestart = false)
+        val gathered = waitFor(3_000) { candidates["C"].orEmpty().any { typ(it.sdp) == "host" } }
+        c.close()
+        assertTrue(gathered, "ALL must gather host candidates")
+    }
+
+    @Test
+    fun enhancedRunsRnnoise() = runBlocking {
+        val before = CaptureHook.denoisedFrames
+        val (a, b) = connected(noise = NoiseSuppression.Enhanced)
+        assertTrue(CaptureHook.enabled)
+        val ran = waitFor(10_000) { CaptureHook.denoisedFrames - before >= 50 }
+        val frameSize = CaptureHook.lastFrameSize
+        a.close()
+        b.close()
+        assertTrue(ran, "RNNoise denoised ${CaptureHook.denoisedFrames - before} frames; last frame $frameSize samples")
+        assertEquals(RNNOISE_FRAME_SAMPLES, frameSize)
+    }
+
+    @Test
+    fun standardDoesNotRunRnnoise() = runBlocking {
+        val (a, b) = connected(noise = NoiseSuppression.Standard)
+        // Let capture start, then check that the hook sees frames but RNNoise stays off.
+        waitFor(10_000) { CaptureHook.lastFrameSize != 0 }
+        val before = CaptureHook.denoisedFrames
+        delay(1_000)
+        val after = CaptureHook.denoisedFrames
+        a.close()
+        b.close()
+        assertEquals(before, after)
+    }
+
+    /**
+     * The encoder rate is the `outbound-rtp` payload (`bytesSent` there has no RTP headers), checked against the
+     * UltraLow profile's 10 kbps with headroom; the transport counter also holds headers, RTCP and feedback.
+     * B asks to receive High, so the cap on A can only come from the munge of the remote answer (`send`).
+     */
+    @Test
+    fun sendBitrateStaysWithinTheProfile() = runBlocking {
+        val (a, b) = connected(send = DataMode.UltraLow, peerReceive = DataMode.High)
+        assertTrue(waitFor(5_000) { has("A", IceState.Connected) || has("A", IceState.Completed) }, "the call must connect")
+        a.setAudioMaxBitrate(50_000)
+        val capped = a.audioMaxBitrateForTesting
+        val r0 = a.rawStatsForTesting()
+        delay(5_000)
+        val r1 = a.rawStatsForTesting()
+        a.close()
+        b.close()
+        val codecBps = (audioOut(r1, "bytesSent") - audioOut(r0, "bytesSent")) * 8 / 5
+        val target = r1.firstOrNull { it.type == "outbound-rtp" && it.strings["kind"] == "audio" }?.numbers?.get("targetBitrate")
+        assertEquals(AudioProfile.forMode(DataMode.UltraLow).maxAverageBitrate, capped)
+        assertTrue(codecBps <= 14_000, "codec payload $codecBps bit/s")
+        if (target != null) assertTrue(target <= 10_000, "target $target bit/s")
+    }
+
+    @Test
+    fun rollbackRefusesTheAbandonedAnswer() = runBlocking {
+        val a = session()
+        val b = session()
+        a.configure(emptyList(), IceTransportPolicy.All, video = false)
+        b.configure(emptyList(), IceTransportPolicy.All, video = false)
+        val p = AudioProfile.forMode(DataMode.Balanced)
+        val first = a.makeOffer(p, iceRestart = false)
+        val answer = b.acceptOffer(first, send = p, receive = p)
+        a.rollback()
+        assertFailsWith<MediaSessionException> { a.acceptAnswer(answer, send = p) }
+        val restart = a.makeOffer(p, iceRestart = true)
+        a.close()
+        b.close()
+        assertNotEquals(ufrag(first), ufrag(restart))
+    }
+
+    private fun audioOut(stats: List<RawStat>, key: String): Double =
+        stats.filter { it.type == "outbound-rtp" && it.strings["kind"] == "audio" }.sumOf { it.numbers[key] ?: 0.0 }
+
+    private fun typ(sdp: String): String? = sdp.split(" ").let { parts -> parts.indexOf("typ").takeIf { it >= 0 }?.let { parts.getOrNull(it + 1) } }
+
+    private fun ufrag(sdp: String): String? = sdp.lines().firstOrNull { it.startsWith("a=ice-ufrag:") }
+
+    /** Holds each side's candidates until it has its remote description (adding one before that fails). */
+    private class CandidateRelay {
+        private val mutex = Mutex()
+        private val ready = HashSet<String>()
+        private val pending = HashMap<String, MutableList<IceCandidate>>()
+        private val sessions = ConcurrentHashMap<String, WebRtcMediaSession>()
+
+        fun register(name: String, s: WebRtcMediaSession) {
+            sessions[name] = s
+        }
+
+        suspend fun deliver(target: String, c: IceCandidate) {
+            val now = mutex.withLock {
+                if (target in ready) true else {
+                    pending.getOrPut(target) { mutableListOf() } += c
+                    false
+                }
+            }
+            if (now) runCatching { sessions[target]?.add(c) }
+        }
+
+        suspend fun remoteDescriptionSet(target: String) {
+            val queued = mutex.withLock {
+                ready += target
+                pending.remove(target).orEmpty()
+            }
+            for (c in queued) runCatching { sessions[target]?.add(c) }
+        }
+    }
+}
