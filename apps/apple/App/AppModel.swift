@@ -36,6 +36,9 @@ final class AppModel {
     private var messaging: LiveMessaging?
     /// The wipe of the last signed-out account; the next sign-in waits for it, so it never opens half-deleted data.
     private var wipeTask: Task<Void, Never>?
+    /// A wipe failed every try (`DeviceSync.wipeAttempts`): no live store, connection or sign-in work runs until
+    /// the app starts again, which finishes the wipe first.
+    private var wipeFailed = false
     private var liveTasks: [Task<Void, Never>] = []
     private var apnsToken: Data?
     private var registrar: PushRegistrar?
@@ -47,6 +50,11 @@ final class AppModel {
         didSet {
             calls.settings = settings.call
             messaging?.autoDownload.value = settings.autoDownload
+            if settings.readReceipts != oldValue.readReceipts, let messaging {
+                messaging.readReceipts.value = settings.readReceipts
+                // Others' read ticks show or hide with the switch.
+                messaging.store.refresh()
+            }
         }
     }
     var network: NetworkType {
@@ -132,7 +140,9 @@ final class AppModel {
         live?.onSignedOut = { [weak self] in self?.deviceWasRemoved() }
         // A sign-out wipe that was cut short (kill, failure) is finished first; the sign-in below waits for it.
         if !launch.sampleData {
-            wipeTask = Task { try? await LiveMessaging.finishPendingWipe() }
+            wipeTask = Task { [weak self] in
+                do { try await LiveMessaging.finishPendingWipe() } catch { self?.wipeFailed = true }
+            }
         }
         if live?.isSignedIn == true { Task { await didSignIn() } }
         if let url = launch.openURL { handle(url: url) }
@@ -274,8 +284,10 @@ final class AppModel {
                 do {
                     if let old { try await old.wipeAfterSignOut() } else { try await LiveMessaging.finishPendingWipe() }
                 } catch {
-                    // The pending marker stays; the next launch or sign-in retries before any data is opened.
+                    // Tried `DeviceSync.wipeAttempts` times. Stop all further work; the pending marker stays and the
+                    // next launch retries before any data is opened.
                     print("wipe_failed")
+                    self.wipeFailed = true
                 }
             }
         }
@@ -306,6 +318,8 @@ final class AppModel {
 
     /// Call after any sign-in succeeds: loads devices, starts the live connection and registers for push.
     func didSignIn() async {
+        await wipeTask?.value
+        guard !wipeFailed else { return }
         await refreshDevices()
         await installLiveStore()
         await startLive()
@@ -329,9 +343,10 @@ final class AppModel {
     private func installLiveStore() async {
         await wipeTask?.value
         wipeTask = nil
-        guard !isSampleData, messaging == nil, let session = sessions?.current, let client = live?.client,
+        guard !wipeFailed, !isSampleData, messaging == nil, let session = sessions?.current, let client = live?.client,
               let built = await LiveMessaging.make(
-                session: session, client: client, network: network, settings: settings.autoDownload) else { return }
+                session: session, client: client, network: network, settings: settings.autoDownload,
+                readReceipts: settings.readReceipts) else { return }
         messaging = built
         built.store.onChange = { [weak self] in self?.revision += 1 }
         chatStore = built.store
@@ -344,7 +359,7 @@ final class AppModel {
     }
 
     private func startLive() async {
-        guard let live, live.isSignedIn, let client = live.client else { return }
+        guard !wipeFailed, let live, live.isSignedIn, let client = live.client else { return }
         if connection == nil {
             let c = LiveConnection(client: client, transport: URLSessionWebSocketTransport())
             connection = c
@@ -352,7 +367,7 @@ final class AppModel {
                 Task { [weak self] in
                     for await event in c.events {
                         switch event {
-                        case .deviceRevoked: await self?.refreshDevices()
+                        case .deviceRevoked(let id): await self?.deviceRevoked(id)
                         case .inbox: await self?.syncInbox()
                         default: break
                         }
@@ -360,14 +375,35 @@ final class AppModel {
                 },
                 Task { [weak self] in
                     // `.revoked` also reaches the client's 401 path, which calls `deviceWasRemoved`.
-                    for await state in c.states where state == .revoked { await self?.stopLive() }
+                    for await state in c.states {
+                        switch state {
+                        case .revoked: await self?.stopLive()
+                        case .connected: await self?.didConnect()
+                        default: break
+                        }
+                    }
                 },
             ]
         }
         await connection?.start()
     }
 
+    /// Every live connect: catch up on the inbox, then bring this account's devices in every chat in line with
+    /// the device list (mls-profile "Removing a device"); the scheduler runs it once more 11 minutes later.
+    private func didConnect() async {
+        await syncInbox()
+        await messaging?.reconciler.connected()
+    }
+
+    /// A `device.revoked` event (unsigned). For another device it only runs reconcile; one naming this device is
+    /// ignored. Only a 401 or 4003 (revoked session) signs this device out and wipes it, through `onSignedOut`.
+    private func deviceRevoked(_ id: String) async {
+        await refreshDevices()
+        await messaging?.reconciler.deviceRevoked(id)
+    }
+
     private func stopLive(force: Bool = false) async {
+        await messaging?.reconciler.disconnected()
         await connection?.stop()
         if force || live?.isSignedIn != true {   // signed out: drop the connection and its listeners
             let tasks = liveTasks

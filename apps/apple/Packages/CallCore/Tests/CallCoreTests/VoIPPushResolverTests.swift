@@ -8,7 +8,7 @@ import AppCore
 
     func sealed(_ p: CallSignalPayload, sender: String, _ s: PlainCallSignalSealer) async throws -> Data {
         let d = try await s.seal(p, to: sender)
-        s.setSender(sender, of: d)
+        s.setSender("\(sender)/d1", of: d)
         return d
     }
     func resolver(_ s: PlainCallSignalSealer, contacts: [String: Contact] = ["bob": bob],

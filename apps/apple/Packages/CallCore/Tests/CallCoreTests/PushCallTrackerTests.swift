@@ -76,7 +76,7 @@ import AppCore
     @Test func openIsLocalOnly() async throws {
         let s = PlainCallSignalSealer()
         let d = try await s.seal(CallSignalPayload(kind: .ring, callID: "c1"), to: "bob")
-        s.setSender("bob", of: d)
+        s.setSender("bob/d1", of: d)
         let bob = Contact(id: "bob", displayName: "Bob", username: "bob")
         let r = VoIPPushResolver(sealer: s, contact: { $0 == "bob" ? bob : nil },
                                  status: { _ in try? await Task.sleep(for: .seconds(60)); return .ringing })
