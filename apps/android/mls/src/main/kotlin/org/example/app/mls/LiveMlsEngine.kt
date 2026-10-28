@@ -98,6 +98,14 @@ class LiveMlsEngine(identity: String, storageDir: File, secrets: SecretStore) : 
         is Processed.Joined -> Incoming.Joined(GroupId(result.groupId), result.epoch.toLong())
     }
 
+    override suspend fun processApplication(message: ByteArray): Incoming.Application =
+        when (val result = call { it.processApplication(message) }) {
+            is Processed.Application ->
+                Incoming.Application(GroupId(result.groupId), result.sender, result.plaintext, result.epoch.toLong())
+            // The Rust side returns only an application message here; anything else is a refusal.
+            else -> throw MlsException.Malformed
+        }
+
     override suspend fun epoch(group: GroupId): Long = call { it.epoch(group.raw) }.toLong()
 
     override suspend fun exportSecret(group: GroupId, label: String, length: Int): ByteArray {

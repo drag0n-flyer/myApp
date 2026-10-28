@@ -431,9 +431,23 @@ impl<P: CryptoProvider + Clone> EngineCore<P> {
     }
 
     pub fn process(&self, message: Vec<u8>) -> Result<Processed, FfiError> {
+        self.process_inner(message, false)
+    }
+
+    /// Like `process`, but only an application message is accepted. A Welcome is refused before it is
+    /// joined; a commit or proposal is refused after it was read in memory and before anything is
+    /// written, so the stored group state stays exactly as it was. For channels that carry only
+    /// application messages (call signals): a commit arriving there is a protocol violation, never a
+    /// state change. The refusal is `Malformed`.
+    pub fn process_application(&self, message: Vec<u8>) -> Result<Processed, FfiError> {
+        self.process_inner(message, true)
+    }
+
+    fn process_inner(&self, message: Vec<u8>, application_only: bool) -> Result<Processed, FfiError> {
         let _g = self.lock();
         let message = MlsMessage::from_bytes(&message).map_err(|_| FfiError::Malformed)?;
         match message.wire_format() {
+            WireFormat::Welcome if application_only => Err(FfiError::Malformed),
             WireFormat::Welcome => {
                 let (mut group, _info) = self
                     .client
@@ -487,6 +501,10 @@ impl<P: CryptoProvider + Clone> EngineCore<P> {
                             // The epoch it was sent in, not ours.
                             epoch: message_epoch,
                         }
+                    }
+                    ReceivedMessage::Commit(_) if application_only => {
+                        // Nothing was written: the group was loaded from disk for this call only.
+                        return Err(FfiError::Malformed);
                     }
                     ReceivedMessage::Commit(description) => Processed::Commit {
                         group_id: group_id.clone(),
@@ -604,6 +622,11 @@ impl Engine {
 
     pub fn process(&self, message: Vec<u8>) -> Result<Processed, FfiError> {
         self.core.process(message)
+    }
+
+    /// Application messages only; a commit, proposal or Welcome is refused with `Malformed` and changes nothing.
+    pub fn process_application(&self, message: Vec<u8>) -> Result<Processed, FfiError> {
+        self.core.process_application(message)
     }
 
     pub fn epoch(&self, group_id: Vec<u8>) -> Result<u64, FfiError> {

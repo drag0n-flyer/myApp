@@ -43,6 +43,13 @@ interface MlsEngine {
     suspend fun commitRejected(group: GroupId)
     suspend fun encrypt(plaintext: ByteArray, group: GroupId): Encrypted
     suspend fun process(message: ByteArray): Incoming
+
+    /**
+     * Like [process], but only an application message is accepted. A commit, a proposal or a Welcome is refused
+     * with [MlsException.Malformed] before any stored group state changes. For channels that carry application
+     * messages only (call signals).
+     */
+    suspend fun processApplication(message: ByteArray): Incoming.Application
     suspend fun epoch(group: GroupId): Long
     suspend fun exportSecret(group: GroupId, label: String, length: Int): ByteArray
     suspend fun members(group: GroupId): List<String>

@@ -61,6 +61,28 @@ class LiveMlsEngineTest {
     }
 
     @Test
+    fun processApplicationRefusesCommitAndWelcomeAndChangesNothing() = runBlocking {
+        val a = engine("a1/d1")
+        val b = engine("b1/d1")
+        val c = engine("c1/d1")
+        val group = a.createGroup()
+        val first = a.add(b.makeKeyPackages(1), group)
+        a.commitAccepted(group)
+        assertFailsWith<MlsException.Malformed> { b.processApplication(assertNotNull(first.welcome)) }
+        assertFailsWith<MlsException.UnknownGroup> { b.epoch(group) }
+        assertIs<Incoming.Joined>(b.process(assertNotNull(first.welcome)))
+        val commit = a.add(c.makeKeyPackages(1), group)
+        a.commitAccepted(group)
+        assertFailsWith<MlsException.Malformed> { b.processApplication(commit.commit) }
+        assertEquals(1L, b.epoch(group))
+        assertIs<Incoming.Commit>(b.process(commit.commit))
+        assertEquals(2L, b.epoch(group))
+        val app = b.processApplication(a.encrypt("call".toByteArray(), group).ciphertext)
+        assertContentEquals("call".toByteArray(), app.plaintext)
+        assertEquals("a1/d1", app.sender)
+    }
+
+    @Test
     fun encryptProcessRoundTrip() = runBlocking {
         val a = engine("a1/d1")
         val b = engine("b1/d1")

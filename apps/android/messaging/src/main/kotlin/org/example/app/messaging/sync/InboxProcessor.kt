@@ -67,6 +67,19 @@ class InboxProcessor(
      * fetched. [maxItems] stops fetching after exactly that many. Items stored before a failure are still drained.
      */
     suspend fun sync(maxItems: Int = Int.MAX_VALUE): Int {
+        val outcome = syncCollecting(maxItems)
+        outcome.failure?.let { throw it }
+        return outcome.fetched
+    }
+
+    /** What one [syncCollecting] did: the items fetched, the results of the drain, and the fetch failure if there was one. */
+    class SyncOutcome(val fetched: Int, val results: List<AppliedResult>, val failure: Exception?)
+
+    /**
+     * [sync] that returns the drain's results (for the notification fetch, which shows what is new) instead of
+     * throwing a fetch failure: items stored before the failure are still drained and reported.
+     */
+    suspend fun syncCollecting(maxItems: Int = Int.MAX_VALUE): SyncOutcome {
         var fetched = 0
         var failure: Exception? = null
         fetchSection.withLock {
@@ -78,9 +91,8 @@ class InboxProcessor(
                 failure = e
             }
         }
-        drain()
-        failure?.let { throw it }
-        return fetched
+        val results = drain()
+        return SyncOutcome(fetched, results, failure)
     }
 
     private suspend fun fetch(maxItems: Int): Int {
