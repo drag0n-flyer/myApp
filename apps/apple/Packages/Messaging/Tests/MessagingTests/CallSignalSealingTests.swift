@@ -20,7 +20,7 @@ private struct Peer {
         if let mls { deps.mls = mls }
         let conversations = ConversationManager(deps: deps, escrowKey: { Data(repeating: 7, count: 32) })
         manager = conversations
-        let outbox = Outbox(deps: deps, conversations: conversations)
+        let outbox = Outbox(deps: deps, conversations: conversations, readReceiptsEnabled: { true })
         inbox = InboxProcessor(
             deps: deps, conversations: conversations, handler: IncomingHandler(me: deps.me, now: deps.now, log: { _ in }),
             controls: outbox)

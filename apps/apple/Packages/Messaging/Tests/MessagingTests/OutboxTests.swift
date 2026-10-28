@@ -167,7 +167,7 @@ func makePair(serverMode: String, inner: String?, clock: TestClock = TestClock()
     try ana.deps.repo.upsertConversation(record)
     let conversations = RepoConversations(repo: ana.deps.repo)
     return Pair(server: server, ana: ana, bob: bob, conversation: record, probe: probe, sealer: sealer, clock: clock,
-                outbox: Outbox(deps: ana.deps, conversations: conversations), conversations: conversations)
+                outbox: Outbox(deps: ana.deps, conversations: conversations, readReceiptsEnabled: { true }), conversations: conversations)
 }
 
 // MARK: - Tests

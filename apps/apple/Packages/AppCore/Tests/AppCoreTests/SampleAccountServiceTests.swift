@@ -13,6 +13,23 @@ import Testing
         try await SampleAccountService().verifyEmail(code: SampleAccountService.sampleEmailCode)
     }
 
+    @Test func signUpKeepsDisplayName() async throws {
+        let s = SampleAccountService()
+        try await s.startSignUp(displayName: "Ana", username: "ana", email: "ana@example.org")
+        #expect(s.displayName == "Ana")
+        try await s.finishSignUp()
+        #expect(s.passkeyRegistered)
+        #expect(s.isSignedIn)
+    }
+
+    @Test func emailCodeSignUpRegistersNoPasskey() async throws {
+        let s = SampleAccountService()
+        try await s.startSignUp(displayName: "Ana", username: "ana", email: "ana@example.org")
+        try await s.finishSignUpWithEmailCode()
+        #expect(!s.passkeyRegistered)
+        #expect(s.isSignedIn)
+    }
+
     @Test func inviteRedeem() async throws {
         let s = SampleAccountService()
         #expect(try await s.redeemInvite(code: "BETA-2026") == true)
@@ -32,8 +49,16 @@ import Testing
     @Test func approveSplitAddsDevice() async throws {
         let s = SampleAccountService()
         let req = try await s.linkRequest(qrText: SampleAccountService.sampleLinkText)
-        try await s.approveLink(req)
+        let approval = try await s.approveLink(req)
+        #expect(approval == LinkApproval(snapshotSent: true))
         #expect(try await s.devices().count == 3)
+    }
+
+    @Test func sampleLinkCopiesContacts() async throws {
+        let s = SampleAccountService()
+        let result = try await s.waitForLinkApproval()
+        #expect(result == LinkedResult(contactsCopied: true))
+        #expect(s.isSignedIn)
     }
 
     @Test func linkRequestRejectsOtherServer() async {
