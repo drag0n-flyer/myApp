@@ -35,7 +35,8 @@ import org.example.app.ui.Avatar
 @Composable
 fun ContactsScreen(
     store: ChatStore,
-    inviteUrl: String,
+    /** Null hides the invite row (no invite link yet). */
+    inviteUrl: String?,
     onOpenChat: (chatId: String) -> Unit,
     onAddContact: () -> Unit,
     onInvite: (url: String) -> Unit,
@@ -54,7 +55,7 @@ fun ContactsScreen(
         topBar = { LargeTopAppBar(title = { Text(stringResource(R.string.tab_contacts)) }, scrollBehavior = scroll) },
     ) { padding ->
         LazyColumn(Modifier.padding(padding)) {
-            item {
+            if (inviteUrl != null) item {
                 ListItem(
                     modifier = Modifier.clickable(onClickLabel = stringResource(R.string.contacts_invite), role = Role.Button) { onInvite(inviteUrl) },
                     leadingContent = { Icon(painterResource(R.drawable.ic_contacts), contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
