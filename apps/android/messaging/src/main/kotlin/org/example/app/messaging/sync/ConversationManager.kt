@@ -141,7 +141,9 @@ class ConversationManager(
      *
      * - [resumed]: read the inbox first (the echo activates the row), then ask the server's epoch.
      * - `200`, or the server past epoch 0: merge and activate.
-     * - A definite rejection: `commitRejected`; the row stays inactive and is never used.
+     * - A definite rejection of the post (4xx other than 408, 429, `stale_epoch`): not applied, so no Welcome went
+     *   out; abandoned (`commitRejected`; the row stays inactive and is never used). On the epoch check only a `404`
+     *   abandons.
      * - An unknown outcome: read the inbox; still pending means the error is thrown and the create stays pending.
      */
     private suspend fun finishCreate(serverId: String, resumed: Boolean): ConversationRecord {
@@ -177,11 +179,14 @@ class ConversationManager(
         return announced(acceptCreate(serverId))
     }
 
-    /** The server's epoch; a definite rejection (the conversation is gone) abandons the create. */
+    /**
+     * The server's epoch. Only a `404` (the conversation is gone) abandons the create: the commit may already be
+     * applied, so any other refusal (a `403` included) keeps it pending.
+     */
     private suspend fun serverEpoch(serverId: String): Long = try {
         server.conversation(serverId).epoch
     } catch (e: ServerException) {
-        if (isDefiniteRejection(e.status)) abandonCreate(serverId)
+        if (isGone(e.status)) abandonCreate(serverId)
         throw e
     }
 
@@ -365,5 +370,8 @@ class ConversationManager(
 
         /** A 4xx that means the server did not apply the request. 408 and 429 may have been applied or retried. */
         fun isDefiniteRejection(status: Int) = status in 400..499 && status != 408 && status != 429
+
+        /** The conversation no longer exists on the server. */
+        fun isGone(status: Int) = status == 404
     }
 }

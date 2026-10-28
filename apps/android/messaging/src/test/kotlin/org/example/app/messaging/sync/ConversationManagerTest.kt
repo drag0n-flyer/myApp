@@ -331,8 +331,68 @@ class ConversationManagerTest {
         assertTrue(record.serverId != first)
         assertTrue(record.active)
         assertEquals(false, rig.ana1.repo.conversation(first)?.active)
+        assertFalse(record.groupId.contentEquals(rig.ana1.repo.conversation(first)!!.groupId), "a fresh group")
         assertEquals(record.serverId, rig.ana1.repo.preferredConversation("acc-bob")?.serverId)
         rig.assertLockDiscipline()
+    }
+
+    /** The epoch check is refused with a 403: the commit may already be applied, so the create stays pending. */
+    @Test
+    fun forbiddenEpochCheckKeepsTheCreatePending() = runTest {
+        val rig = Rig().start()
+        rig.server.holdNextCommitRequests = 1
+        assertFailsWith<ServerException> { rig.ana1.manager.create("acc-bob") }
+        val first = assertNotNull(rig.ana1.repo.conversation(rig.server.conversationIds().single()))
+        rig.server.failConversationLookup = ServerException(403, "forbidden", null, null)
+        val refused = assertFailsWith<ServerException> { rig.ana1.manager.preferredConversation("acc-bob") }
+        assertEquals(403, refused.status)
+        assertTrue(PendingCreate.isPending(rig.ana1.repo, first.serverId), "kept, not abandoned")
+        assertEquals(listOf(first.serverId), rig.server.conversationIds(), "no second conversation")
+
+        rig.server.failConversationLookup = null
+        val record = rig.ana1.manager.preferredConversation("acc-bob")
+        assertEquals(first.serverId, record.serverId)
+        assertTrue(record.groupId.contentEquals(first.groupId), "the same group")
+        assertTrue(record.active)
+        rig.assertLockDiscipline()
+    }
+
+    /** The epoch-0 post is refused for good (here 403): nothing was applied and no Welcome went out, so it is abandoned. */
+    @Test
+    fun createWhoseCommitPostIsRefusedIsAbandoned() = runTest {
+        val rig = Rig().start()
+        rig.server.failNextCommitPost = ServerException(403, "forbidden", null, null)
+        assertEquals(403, assertFailsWith<ServerException> { rig.ana1.manager.create("acc-bob") }.status)
+        val first = assertNotNull(rig.ana1.repo.conversation(rig.server.conversationIds().single()))
+        assertFalse(first.active)
+        assertFalse(PendingCreate.isPending(rig.ana1.repo, first.serverId), "abandoned")
+
+        val record = rig.ana1.manager.create("acc-bob")
+        assertTrue(record.serverId != first.serverId)
+        assertFalse(record.groupId.contentEquals(first.groupId), "a fresh group")
+        assertTrue(record.active)
+        assertEquals(1L, rig.ana1.mls.epoch(GroupId(record.groupId)))
+        rig.bob1.processor.sync()
+        assertNotNull(rig.bob1.repo.conversation(record.serverId))
+        rig.assertLockDiscipline()
+    }
+
+    /** A 408 or 429 on the epoch-0 post may have been applied: the create stays pending and the same commit is resent. */
+    @Test
+    fun createWhoseCommitPostTimesOutOrIsThrottledStaysPending() = runTest {
+        for (status in listOf(408, 429)) {
+            val rig = Rig().start()
+            rig.server.failNextCommitPost = ServerException(status, "busy", null, null)
+            assertFailsWith<ServerException> { rig.ana1.manager.create("acc-bob") }
+            val first = assertNotNull(rig.ana1.repo.conversation(rig.server.conversationIds().single()))
+            assertTrue(PendingCreate.isPending(rig.ana1.repo, first.serverId), "$status: kept")
+
+            val record = rig.ana1.manager.create("acc-bob")
+            assertEquals(first.serverId, record.serverId, "$status")
+            assertTrue(record.groupId.contentEquals(first.groupId), "$status: the same group")
+            assertEquals(listOf(first.serverId), rig.server.conversationIds())
+            rig.assertLockDiscipline()
+        }
     }
 
     /** Killed after the server applied the commit and before anything was written: recovery finishes the same conversation. */
