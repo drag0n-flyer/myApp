@@ -295,11 +295,14 @@ private func syncInbox(_ device: TestDevice, joinWith joiner: ConversationManage
     }
 }
 
-/// Holds the process lock for a while after the commit POST is answered, as the notification extension would.
+/// Holds the process lock after the commit POST is answered, as the notification extension would: for `hold`, or,
+/// when `hold` is nil, until `release` is signalled. The second keeps the lock busy for the whole call however slowly
+/// a loaded machine runs the retries (on CI the retries can take longer than any fixed hold).
 private struct BusyLockAfterCommit: HTTPTransport {
     let inner: HTTPTransport
     let lockURL: URL
-    let hold: Duration
+    let hold: Duration?
+    let release: DispatchSemaphore
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let reply = try await inner.send(request)
         guard request.httpMethod == "POST", request.url?.path.hasSuffix("/commits") == true else { return reply }
@@ -310,11 +313,15 @@ private struct BusyLockAfterCommit: HTTPTransport {
     /// Returns once the other thread holds the lock. Synchronous: Darwin forbids a semaphore wait in async code.
     private func holdLockOnAnotherThread() {
         let ready = DispatchSemaphore(value: 0)
-        let seconds = Double(hold.components.seconds) + Double(hold.components.attoseconds) / 1e18
+        let hold = self.hold, release = self.release
         Thread {
             try? ProcessLock(url: lockURL).withLock(timeout: .seconds(1)) {
                 ready.signal()
-                Thread.sleep(forTimeInterval: seconds)
+                if let hold {
+                    Thread.sleep(forTimeInterval: Double(hold.components.seconds) + Double(hold.components.attoseconds) / 1e18)
+                } else {
+                    release.wait()
+                }
             }
         }.start()
         ready.wait()
@@ -322,9 +329,12 @@ private struct BusyLockAfterCommit: HTTPTransport {
 }
 
 @Suite("TestRejectedCommit") struct TestRejectedCommit {
-    private func post(hold: Duration) async throws -> (spy: SpyMLSEngine, result: Result<UInt64, Error>) {
+    /// `hold` nil: the lock stays busy until the post has returned.
+    private func post(hold: Duration?) async throws -> (spy: SpyMLSEngine, result: Result<UInt64, Error>) {
         let rig = try await Rig.make()
         let device = rig.ana1
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }   // a `hold: nil` holder lets go once the post has returned
         let spy = SpyMLSEngine(device.deps.mls)
         var deps = device.deps
         deps.mls = spy
@@ -335,7 +345,7 @@ private struct BusyLockAfterCommit: HTTPTransport {
                 token: "test.\(device.accountID).\(device.deviceID)"))),
             transport: BusyLockAfterCommit(
                 inner: await rig.server.transport(for: device),
-                lockURL: device.directory.appendingPathComponent("messaging.lock"), hold: hold))
+                lockURL: device.directory.appendingPathComponent("messaging.lock"), hold: hold, release: release))
         let created = try await deps.server.createConversation(with: "acc-bob")
         let group = try await deps.mls.createGroup()
         let packages = try await rig.bob1.deps.mls.makeKeyPackages(count: 1)
@@ -362,7 +372,7 @@ private struct BusyLockAfterCommit: HTTPTransport {
     }
 
     @Test func discardThatNeverGetsTheLockIsNotSwallowed() async throws {
-        let (spy, result) = try await post(hold: .seconds(2))
+        let (spy, result) = try await post(hold: nil)
         #expect(spy.commitRejectedCount == 0)
         guard case .failure(let error) = result else { Issue.record("expected a failure"); return }
         #expect(error is LockTimeout)   // the pending commit is still there: the caller must know
