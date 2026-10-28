@@ -1,7 +1,7 @@
 package org.example.app.ui.settings
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -15,7 +15,7 @@ import org.example.app.ui.keyString
 
 @Composable
 fun DataStorageScreen(settings: SettingsStore, server: ServerPolicy, onBack: () -> Unit, modifier: Modifier = Modifier) {
-    val current by settings.settings.collectAsState()
+    val current by settings.settings.collectAsStateWithLifecycle()
     val modeChoices = listOf(Choice<ModePreference>(ModePreference.Auto, keyString(ModePreference.Auto.titleKey))) +
         DataMode.entries.map { Choice<ModePreference>(ModePreference.Fixed(it), keyString(DataModeInfo.titleKey(it))) }
     val limitChoices = DataMode.entries.map { Choice(it, keyString(DataModeInfo.titleKey(it))) }

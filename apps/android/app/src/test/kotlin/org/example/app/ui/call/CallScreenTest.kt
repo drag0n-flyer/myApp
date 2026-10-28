@@ -263,6 +263,6 @@ internal class ManualClock : CallClock {
 }
 
 internal class TestLifecycleOwner : androidx.lifecycle.LifecycleOwner {
-    val registry = androidx.lifecycle.LifecycleRegistry.createUnsafe(this)
+    val registry = androidx.lifecycle.LifecycleRegistry.createUnsafe(this).also { it.currentState = Lifecycle.State.RESUMED }
     override val lifecycle: Lifecycle get() = registry
 }

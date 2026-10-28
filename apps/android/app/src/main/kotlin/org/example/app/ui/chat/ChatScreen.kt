@@ -1,5 +1,7 @@
 package org.example.app.ui.chat
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -16,7 +18,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -45,7 +46,7 @@ fun ChatScreen(
     onAttach: (MediaKind) -> Unit = {},
     onRecordVoice: () -> Unit = {},
 ) {
-    val state by viewModel.state.collectAsState()
+    val state by viewModel.state.collectAsStateWithLifecycle()
     val list = rememberLazyListState()
     // Newest at the bottom: the list is reversed, so index 0 is the newest message.
     val newestFirst = state.messages.asReversed()
@@ -70,7 +71,7 @@ fun ChatScreen(
                     IconButton(onClick = onBack) { Icon(painterResource(R.drawable.ic_back), contentDescription = stringResource(R.string.back)) }
                 },
                 title = {
-                    Row(Modifier.clickable(onClick = onOpenInfo), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(Modifier.clickable(role = Role.Button, onClick = onOpenInfo), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Avatar(state.contactName, size = 36.dp)
                         Text(state.contactName, maxLines = 1)
                     }

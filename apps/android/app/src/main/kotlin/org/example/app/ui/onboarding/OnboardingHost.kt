@@ -1,5 +1,6 @@
 package org.example.app.ui.onboarding
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,7 +12,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.ui.Modifier
@@ -24,7 +24,7 @@ import org.example.app.ui.qr.PermissionedQrScanner
 /** Shows the screen for the view model's current step; [onFinished] runs once the account is ready. */
 @Composable
 fun OnboardingHost(vm: OnboardingViewModel, onFinished: () -> Unit) {
-    val state by vm.state.collectAsState()
+    val state by vm.state.collectAsStateWithLifecycle()
     LaunchedEffect(state.step) { if (state.step == OnboardingStep.Done) onFinished() }
     BackHandler(enabled = state.step != OnboardingStep.Welcome && state.step != OnboardingStep.Done) { vm.back() }
     // The link code is shown from the moment the screen opens, and only while it is the current step.
@@ -69,7 +69,7 @@ fun LinkApprovalFlow(
     scanner: @Composable (onResult: (String) -> Unit) -> Unit = { PermissionedQrScanner(it) },
     confirm: (suspend () -> BiometricResult)? = null,
 ) {
-    val state by vm.state.collectAsState()
+    val state by vm.state.collectAsStateWithLifecycle()
     val platformConfirm = rememberBiometricConfirm()
     val runConfirm = confirm ?: platformConfirm
     LaunchedEffect(state.approved) { if (state.approved) onDone() }

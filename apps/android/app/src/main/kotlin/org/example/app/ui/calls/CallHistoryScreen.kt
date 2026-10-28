@@ -1,5 +1,6 @@
 package org.example.app.ui.calls
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -20,7 +21,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -85,8 +85,8 @@ fun CallHistoryScreen(
     onCall: (contactId: String, video: Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val records by viewModel.records.collectAsState()
-    val missedOnly by viewModel.missedOnly.collectAsState()
+    val records by viewModel.records.collectAsStateWithLifecycle()
+    val missedOnly by viewModel.missedOnly.collectAsStateWithLifecycle()
     val shown = if (missedOnly) records.filter { it.isMissed } else records
     Scaffold(modifier, topBar = { TopAppBar(title = { Text(stringResource(R.string.tab_calls)) }) }) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(bottom = 16.dp)) {

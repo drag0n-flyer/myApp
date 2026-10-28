@@ -74,4 +74,11 @@ class ContactsScreensTest {
         rule.setContent { AppTheme { MessageRequestsScreen(empty, onOpenChat = {}, onBack = {}) } }
         rule.onNodeWithText("No message requests").assertIsDisplayed()
     }
+
+    @Test
+    fun usernameIsShownWithAnAtSignThroughTheStringResource() {
+        rule.setContent { AppTheme { ContactsScreen(store(), inviteUrl = "x", onOpenChat = {}, onAddContact = {}, onInvite = {}) } }
+        val labels = rule.allLabels()
+        assertTrue(labels.any { it.contains("@") && it.contains("riya") }, labels.toString())
+    }
 }

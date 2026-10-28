@@ -55,9 +55,11 @@ func (p *pendingLogins) add(now time.Time, cookie string, l *pendingLogin) {
 	p.m[string(hashString(cookie))] = l
 }
 
-// try counts one code attempt and returns the pending login, or nil when
-// there is none, it expired, or it used up its attempts.
-func (p *pendingLogins) try(now time.Time, cookie string) *pendingLogin {
+// take consumes the pending login for one code attempt: it is removed under
+// the lock, so two requests with the same cookie can never both verify. It
+// returns nil when there is none, it expired, or it used up its attempts.
+// The caller hands it back with giveBack after a wrong code.
+func (p *pendingLogins) take(now time.Time, cookie string) *pendingLogin {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	k := string(hashString(cookie))
@@ -65,29 +67,26 @@ func (p *pendingLogins) try(now time.Time, cookie string) *pendingLogin {
 	if l == nil {
 		return nil
 	}
+	delete(p.m, k)
 	if !now.Before(l.expires) || l.tries >= pendingLoginMax {
-		delete(p.m, k)
 		return nil
 	}
 	l.tries++
-	cp := *l
-	return &cp
+	return l
 }
 
-func (p *pendingLogins) drop(cookie string) {
-	p.mu.Lock()
-	delete(p.m, string(hashString(cookie)))
-	p.mu.Unlock()
-}
-
-// afterWrong ends the pending login once its attempts are used up.
-func (p *pendingLogins) afterWrong(cookie string) {
+// giveBack keeps the pending login for another try after a wrong code, unless
+// its attempts are used up.
+func (p *pendingLogins) giveBack(cookie string, l *pendingLogin) {
+	if l.tries >= pendingLoginMax {
+		return
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	k := string(hashString(cookie))
-	if l := p.m[k]; l != nil && l.tries >= pendingLoginMax {
-		delete(p.m, k)
+	if p.m == nil {
+		p.m = map[string]*pendingLogin{}
 	}
+	p.m[string(hashString(cookie))] = l
 }
 
 func (m *Module) setPendingCookie(w http.ResponseWriter, r *http.Request, value string, maxAge int) {
@@ -132,7 +131,7 @@ func (m *Module) loginCode(w http.ResponseWriter, r *http.Request, _ Session) er
 		return unauthorized()
 	}
 	ctx := r.Context()
-	p := l.pending.try(m.d.Now(), c.Value)
+	p := l.pending.take(m.d.Now(), c.Value)
 	if p == nil {
 		return unauthorized()
 	}
@@ -177,13 +176,12 @@ func (m *Module) loginCode(w http.ResponseWriter, r *http.Request, _ Session) er
 	})
 	switch {
 	case err == nil:
-		l.pending.drop(c.Value)
 		m.setPendingCookie(w, r, "", -1)
 		m.setCookie(w, r, sid, 0)
 		w.WriteHeader(http.StatusNoContent)
 		return nil
 	case errors.Is(err, errWrong):
-		l.pending.afterWrong(c.Value)
+		l.pending.giveBack(c.Value, p)
 		if aerr := m.audit(ctx, m.d.DB, Entry{Actor: "dashboard", AdminUserID: p.adminID, Action: "login.code_failed",
 			Target: p.adminID, Detail: map[string]any{"username": p.username}}); aerr != nil {
 			m.d.Log.Error("admin audit write failed", "action", "login.code_failed")
@@ -191,9 +189,10 @@ func (m *Module) loginCode(w http.ResponseWriter, r *http.Request, _ Session) er
 		}
 		return unauthorized()
 	case errors.Is(err, core.ErrNotFound):
-		l.pending.drop(c.Value)
 		return unauthorized()
 	}
+	// Another failure (the database, say): the admin may try again.
+	l.pending.giveBack(c.Value, p)
 	return err
 }
 
@@ -206,8 +205,25 @@ func (m *Module) totpTryAllowed(w http.ResponseWriter, id string) error {
 	return nil
 }
 
-// totpStart makes a new pending secret for the signed-in admin.
+// totpStart makes a new pending secret for the signed-in admin. It needs the
+// current password, like turning two-step sign-in off.
 func (m *Module) totpStart(w http.ResponseWriter, r *http.Request, s Session) error {
+	var in struct {
+		Password string `json:"password"`
+	}
+	if err := httpx.Decode(r, &in); err != nil {
+		return err
+	}
+	if err := m.totpTryAllowed(w, s.AdminUserID); err != nil {
+		return err
+	}
+	var hash string
+	if err := m.d.DB.QueryRow(r.Context(), `select password_hash from admin_users where id = $1`, s.AdminUserID).Scan(&hash); err != nil {
+		return err
+	}
+	if !verifyPassword(hash, in.Password) {
+		return adminAPIErr(inputError("the password is not right"))
+	}
 	secret := make([]byte, totpSecretLen)
 	if _, err := rand.Read(secret); err != nil {
 		return err
@@ -286,6 +302,15 @@ func (m *Module) totpEnable(w http.ResponseWriter, r *http.Request, s Session) e
 		if _, err := tx.Exec(ctx,
 			`update admin_users set totp_enabled_at = $2, totp_last_step = $3, totp_pending_at = null where id = $1`,
 			s.AdminUserID, m.d.Now(), step); err != nil {
+			return err
+		}
+		// The admin's other sessions end; the one that turned it on stays.
+		keep := []byte{}
+		if c, cerr := r.Cookie(cookieName); cerr == nil && c.Value != "" && len(c.Value) <= 256 {
+			keep = hashString(c.Value)
+		}
+		if _, err := tx.Exec(ctx, `delete from admin_sessions where admin_user_id = $1 and id_hash <> $2`,
+			s.AdminUserID, keep); err != nil {
 			return err
 		}
 		return m.audit(ctx, tx, s.entry("admin.totp.enable", s.AdminUserID, map[string]any{"username": s.Username}))
