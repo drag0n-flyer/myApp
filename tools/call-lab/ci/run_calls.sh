@@ -5,7 +5,7 @@
 # the stimulus), counts bytes with pcapbytes.py, runs the score step, and clears the profile.
 #
 # Usage: run_calls.sh --app <CallLabMac.app> --server <appserver> --stimulus <wav> --out <runs-dir>
-#                     [--noise <wav>] [--dry-run]
+#                     [--noise <wav>] [--matrix weekly|estimates] [--dry-run]
 # Env:   APP_DATABASE_URL (required unless --dry-run), LAB_SECONDS (call length, default 300).
 # Needs passwordless sudo for dnctl, pfctl and tcpdump (GitHub's macOS runners have it).
 #
@@ -17,17 +17,27 @@
 # profiles + 3 noise runs = 19 calls of 5 minutes) does not fit timeout-minutes 60, so runs are
 # cut, never the cap: 7 calls (~37 minutes) plus build and setup. The noise runs are cut as well;
 # they need the 11 GB MUSAN archive on the runner.
-MATRIX='ultraLow direct clean -
+WEEKLY='ultraLow direct clean -
 balanced direct clean -
 ultraLow relay clean -
 balanced relay clean -
 ultraLow direct loss5 -
 balanced direct cap32 -
 balanced direct 3g -'
+# Estimates (L11, owner decision 2026-10-29): every preset, direct, clean, 3 runs each, for
+# DataMode.estimatedMBPer10Minutes. Run round by round, so a drift on the runner falls on every
+# preset alike. 12 calls (~63 minutes): the workflow gives this matrix a longer timeout.
+ROUND='ultraLow direct clean -
+dataSaver direct clean -
+balanced direct clean -
+high direct clean -'
+ESTIMATES="$ROUND
+$ROUND
+$ROUND"
 
 here=$(cd "$(dirname "$0")" && pwd)
 lab=$(cd "$here/.." && pwd)
-dry=0; app=; server=; stimulus=; out=; noise=
+dry=0; app=; server=; stimulus=; out=; noise=; matrix=weekly
 while [ $# -gt 0 ]; do
     case "$1" in
     --app) app=$2; shift 2 ;;
@@ -35,6 +45,7 @@ while [ $# -gt 0 ]; do
     --stimulus) stimulus=$2; shift 2 ;;
     --out) out=$2; shift 2 ;;
     --noise) noise=$2; shift 2 ;;
+    --matrix) matrix=$2; shift 2 ;;
     --dry-run) dry=1; shift ;;
     *) echo "unknown argument: $1" >&2; exit 64 ;;
     esac
@@ -43,6 +54,11 @@ done
     echo "usage: run_calls.sh --app <CallLabMac.app> --server <appserver> --stimulus <wav> --out <dir> [--noise <wav>] [--dry-run]" >&2
     exit 64
 }
+case "$matrix" in
+weekly) MATRIX=$WEEKLY ;;
+estimates) MATRIX=$ESTIMATES ;;
+*) echo "unknown matrix: $matrix (weekly or estimates)" >&2; exit 64 ;;
+esac
 seconds=${LAB_SECONDS:-300}
 # The executable name comes from the app's Info.plist (CFBundleExecutable; the target's PRODUCT_NAME),
 # never hard-coded. plistlib reads XML and binary plists, on macOS and Linux.

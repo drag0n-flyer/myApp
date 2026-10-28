@@ -6,11 +6,19 @@ name: call-lab-calls
 # Only the L10a pass rules gate (tools/call-lab/ci/summarize.py); every other metric is report only.
 # Exactly one Mac job; weekly and by hand only (no push or pull_request trigger), so it never
 # competes with per-push runs for the shared Mac runners.
+# By hand, `-f matrix=estimates` runs L11's matrix instead (4 presets, direct, clean, 3 runs each;
+# see run_calls.sh). The owner allowed L11 to use these "CI, simulated" numbers (2026-10-29).
 
 on:
   schedule:
     - cron: '0 3 * * 1'
   workflow_dispatch:
+    inputs:
+      matrix:
+        description: 'weekly (7 calls, L10a) or estimates (12 calls, L11)'
+        type: choice
+        options: [weekly, estimates]
+        default: weekly
 
 permissions:
   contents: read
@@ -22,7 +30,9 @@ concurrency:
 jobs:
   calls:
     runs-on: macos-26
-    timeout-minutes: 60
+    # estimates: 12 calls of LAB_SECONDS (~5.2 minutes each with connect and teardown, ~63 minutes)
+    # plus ~10 minutes of build and setup do not fit 60; the call length is kept, the timeout raised.
+    timeout-minutes: ${{ inputs.matrix == 'estimates' && 90 || 60 }}
     env:
       LAB_SECONDS: '300'
     steps:
@@ -85,8 +95,9 @@ jobs:
       - name: Test calls
         env:
           APP_DATABASE_URL: postgres://postgres@127.0.0.1:5432/lab?sslmode=disable
+          LAB_MATRIX: ${{ inputs.matrix || 'weekly' }}
         run: |
-          sh tools/call-lab/ci/run_calls.sh --app "$LAB_APP" --server "$RUNNER_TEMP/appserver" \
+          sh tools/call-lab/ci/run_calls.sh --matrix "$LAB_MATRIX" --app "$LAB_APP" --server "$RUNNER_TEMP/appserver" \
             --stimulus "$RUNNER_TEMP/stimulus.wav" --out "$RUNNER_TEMP/runs"
 
       - name: Summary and pass rules
