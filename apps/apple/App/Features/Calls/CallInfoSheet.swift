@@ -22,7 +22,7 @@ struct CallInfoSheet: View {
                     } label: {
                         Text(LocalizedStringKey(row.label))
                     }
-                    .accessibilityElement(children: .combine)
+                    .accessibilityElement(children: .ignore)
                     .accessibilityLabel(Text("\(String(localized: String.LocalizationValue(row.label))), \(String(localized: String.LocalizationValue(row.value)))"))
                     .accessibilityIdentifier("callinfo.row.\(index)")
                 }
