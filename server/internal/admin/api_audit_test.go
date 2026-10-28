@@ -136,12 +136,15 @@ func TestAuditFilter(t *testing.T) {
 func TestAuditLabel(t *testing.T) {
 	m, _ := newTestModule(t)
 	ctx := context.Background()
-	id, _, err := m.createToken(ctx, "laptop", time.Hour)
-	if err != nil {
+	// A row written by the removed token sign-in still shows its label.
+	id := "33333333-3333-3333-3333-333333333333"
+	if _, err := m.d.DB.Exec(ctx, `insert into admin_tokens (id, token_hash, label, created_at, expires_at) values ($1, '\x01', 'laptop', now(), now())`, id); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.audit(ctx, m.d.DB, Entry{Actor: "dashboard", TokenID: id, Action: "invite.create", Target: "i1",
-		Detail: map[string]any{"uses": 1, "days": 7}}); err != nil {
+	if _, err := m.d.DB.Exec(ctx, `insert into admin_audit (at, actor, token_id, action, target, detail) values (now(), 'dashboard', $1, 'invite.create', 'i1', '{"uses": 1, "days": 7}')`, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.audit(ctx, m.d.DB, Entry{Actor: "cli", Action: "token.create", Target: id}); err != nil {
 		t.Fatal(err)
 	}
 	_, p, _ := getAudit(t, m, "?action=invite.create")

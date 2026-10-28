@@ -13,13 +13,13 @@ import (
 )
 
 // pages lists every HTML page the dashboard ships (without ".html").
-var pages = []string{"index", "login", "invites", "server", "audit", "accounts", "account", "reports", "report"}
+var pages = []string{"index", "login", "invites", "server", "audit", "accounts", "account", "reports", "report", "admins"}
 
 // designPages are the pages of the design's section 7.
 var designPages = map[string]bool{
 	"index.html": true, "login.html": true, "invites.html": true, "accounts.html": true,
 	"account.html": true, "reports.html": true, "report.html": true, "server.html": true,
-	"audit.html": true,
+	"audit.html": true, "admins.html": true,
 }
 
 func embeddedFiles(t *testing.T) map[string]string {

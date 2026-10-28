@@ -219,7 +219,6 @@
     <string name="link_scan_title">Scan the code on your new device</string>
     <string name="link_confirm_title">Confirm it\'s you</string>
     <string name="link_confirm_subtitle">Approving a device needs your fingerprint or face.</string>
-    <string name="link_confirm_use_lock">Use screen lock</string>
     <string name="platform_iphone">iPhone</string>
     <string name="platform_mac">Mac</string>
     <string name="platform_android">Android</string>
@@ -247,6 +246,7 @@
     <string name="err_invalid_address">That isn\'t a valid server address. Use a name like chat.example.org, with an optional port.</string>
     <string name="err_wrong_server">This code is for a different server.</string>
     <string name="err_passkey_unavailable">Passkeys aren\'t available on this server. Use an email code instead.</string>
+    <string name="err_passkey_temporary">Something went wrong with your passkey. Please try again.</string>
     <string name="err_biometrics">Couldn\'t confirm it\'s you. Check your fingerprint or face and try again.</string>
     <string name="err_network">Can\'t reach the server. Check your connection and try again.</string>
     <string name="err_server">Something went wrong on the server. Try again later.</string>

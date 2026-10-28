@@ -28,7 +28,10 @@ sealed class AccountError : Exception() {
     data object WrongServer : AccountError()
     /** The typed server address breaks the rules in [ServerAddress]. */
     data object InvalidServerAddress : AccountError()
+    /** This phone (or its passkey provider) cannot make or use passkeys: offering the email code is right. */
     data object PasskeyUnavailable : AccountError()
+    /** A passkey call failed for a passing reason. Say so and let the person try again; never switch to the email code on its own. */
+    data object PasskeyTemporary : AccountError()
     /** The approving device could not confirm with the fingerprint, face or screen lock. */
     data object BiometricsUnavailable : AccountError()
     data object Cancelled : AccountError()

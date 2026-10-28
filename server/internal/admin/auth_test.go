@@ -44,14 +44,35 @@ func cookieOf(t *testing.T, w *httptest.ResponseRecorder) *http.Cookie {
 	return nil
 }
 
-// login exchanges a fresh token for a session and returns the cookie.
-func login(t *testing.T, m *Module, h http.Handler) *http.Cookie {
+const testUser = "tester"
+
+// ensureTestAdmin makes the admin "tester" (password goodPassword) if it does
+// not exist yet, and returns its id.
+func ensureTestAdmin(t *testing.T, m *Module) string {
 	t.Helper()
-	_, token, err := m.createToken(context.Background(), "laptop", 15*time.Minute)
+	var id string
+	err := m.d.DB.QueryRow(context.Background(), `select id::text from admin_users where username = $1`, testUser).Scan(&id)
+	if err == nil {
+		return id
+	}
+	id, err = m.createAdmin(context.Background(), testUser, goodPassword, cliBy)
 	if err != nil {
 		t.Fatal(err)
 	}
-	w := serveReq(h, req("POST", "/admin/api/login", `{"token":"`+token+`"}`, nil))
+	return id
+}
+
+// pwBody is the sign-in request body for a username and password.
+func pwBody(user, pw string) string {
+	b, _ := json.Marshal(map[string]string{"username": user, "password": pw})
+	return string(b)
+}
+
+// login signs the test admin in with a password and returns the cookie.
+func login(t *testing.T, m *Module, h http.Handler) *http.Cookie {
+	t.Helper()
+	ensureTestAdmin(t, m)
+	w := serveReq(h, req("POST", "/admin/api/login", pwBody(testUser, goodPassword), nil))
 	if w.Code != 204 {
 		t.Fatalf("login = %d %s", w.Code, w.Body)
 	}
@@ -59,8 +80,7 @@ func login(t *testing.T, m *Module, h http.Handler) *http.Cookie {
 }
 
 type sessionBody struct {
-	TokenID            string    `json:"tokenID"`
-	Label              string    `json:"label"`
+	Username           *string   `json:"username"`
 	CSRF               string    `json:"csrf"`
 	IdleTimeoutSeconds int       `json:"idleTimeoutSeconds"`
 	ExpiresAt          time.Time `json:"expiresAt"`
@@ -91,8 +111,8 @@ func count(t *testing.T, m *Module, q string, args ...any) int {
 func TestLoginSetsCookie(t *testing.T) {
 	m, f := newTestModule(t)
 	h := m.Handler()
-	id, token, _ := m.createToken(context.Background(), "laptop", 15*time.Minute)
-	w := serveReq(h, req("POST", "/admin/api/login", `{"token":"`+token+`"}`, nil))
+	id := ensureTestAdmin(t, m)
+	w := serveReq(h, req("POST", "/admin/api/login", pwBody(testUser, goodPassword), nil))
 	if w.Code != 204 {
 		t.Fatalf("login = %d %s", w.Code, w.Body)
 	}
@@ -108,7 +128,7 @@ func TestLoginSetsCookie(t *testing.T) {
 		}
 	}
 	s := getSession(t, h, cookieOf(t, w))
-	if s.TokenID != id || s.Label != "laptop" || s.CSRF == "" || s.IdleTimeoutSeconds != 900 ||
+	if s.Username == nil || *s.Username != testUser || s.CSRF == "" || s.IdleTimeoutSeconds != 900 ||
 		!s.ExpiresAt.Equal(f.Clock.Now().Add(8*time.Hour)) {
 		t.Errorf("session = %+v", s)
 	}
@@ -122,7 +142,7 @@ func TestLoginSetsCookie(t *testing.T) {
 	if n := count(t, m, `select count(*) from admin_sessions where csrf_hash = $1`, hashString(s.CSRF)); n != 1 {
 		t.Errorf("csrf row by hash = %d", n)
 	}
-	if n := count(t, m, `select count(*) from admin_audit where action = 'login' and actor = 'dashboard' and target = $1 and token_id::text = $1`, id); n != 1 {
+	if n := count(t, m, `select count(*) from admin_audit where action = 'login' and actor = 'dashboard' and target = $1 and admin_user_id::text = $1`, id); n != 1 {
 		t.Errorf("login audit rows = %d", n)
 	}
 }
@@ -130,8 +150,8 @@ func TestLoginSetsCookie(t *testing.T) {
 func TestCookieSecureWhenRemote(t *testing.T) {
 	m, _ := newTestModule(t, func(d *core.Deps) { d.Config.AdminHosts = []string{"admin.example.org"} })
 	h := m.Handler()
-	_, token, _ := m.createToken(context.Background(), "", 15*time.Minute)
-	r := req("POST", "/admin/api/login", `{"token":"`+token+`"}`, nil)
+	ensureTestAdmin(t, m)
+	r := req("POST", "/admin/api/login", pwBody(testUser, goodPassword), nil)
 	r.Host = "admin.example.org"
 	r.Header.Set("Origin", "https://admin.example.org")
 	w := serveReq(h, r)
@@ -154,48 +174,15 @@ func TestCookieSecure(t *testing.T) {
 	}
 }
 
-func TestTokenWorksOnce(t *testing.T) {
+// Token sign-in is gone: a token in the body is an ordinary failed sign-in.
+func TestTokenLoginRemoved(t *testing.T) {
 	m, _ := newTestModule(t)
 	h := m.Handler()
-	_, token, _ := m.createToken(context.Background(), "", 15*time.Minute)
-	body := `{"token":"` + token + `"}`
-	if w := serveReq(h, req("POST", "/admin/api/login", body, nil)); w.Code != 204 {
-		t.Fatalf("first = %d", w.Code)
-	}
-	if w := serveReq(h, req("POST", "/admin/api/login", body, nil)); w.Code != 401 {
-		t.Errorf("second = %d", w.Code)
-	}
-}
-
-func TestLoginFailuresLookAlike(t *testing.T) {
-	m, f := newTestModule(t)
-	h := m.Handler()
-	ctx := context.Background()
-	_, used, _ := m.createToken(ctx, "", 15*time.Minute)
-	serveReq(h, req("POST", "/admin/api/login", `{"token":"`+used+`"}`, nil))
-	_, expired, _ := m.createToken(ctx, "", time.Minute)
-	f.Clock.Advance(2 * time.Minute)
-	var bodies []string
-	for _, tok := range []string{"adm_unknown", used, expired, ""} {
-		w := serveReq(h, req("POST", "/admin/api/login", `{"token":"`+tok+`"}`, nil))
-		if w.Code != 401 {
-			t.Fatalf("%q = %d", tok, w.Code)
+	for _, body := range []string{`{"token":"adm_whatever"}`, `{"token":"adm_x","username":"","password":""}`} {
+		w := serveReq(h, req("POST", "/admin/api/login", body, nil))
+		if w.Code != 401 || w.Header().Get("Set-Cookie") != "" {
+			t.Errorf("%s = %d", body, w.Code)
 		}
-		bodies = append(bodies, w.Body.String())
-		if w.Header().Get("Set-Cookie") != "" {
-			t.Error("cookie set on failure")
-		}
-	}
-	for _, b := range bodies[1:] {
-		if b != bodies[0] {
-			t.Errorf("bodies differ: %q vs %q", b, bodies[0])
-		}
-	}
-	if n := count(t, m, `select count(*) from admin_audit where action = 'login.failed' and actor = 'dashboard' and token_id is null and target = '' and detail = '{}'`); n != 4 {
-		t.Errorf("login.failed rows = %d", n)
-	}
-	if n := count(t, m, `select count(*) from admin_audit where detail::text like '%adm_%' or target like '%adm_%'`); n != 0 {
-		t.Error("token text in audit")
 	}
 }
 
@@ -211,16 +198,16 @@ func TestLoginRateLimited(t *testing.T) {
 		m, f := newTestModule(t)
 		h := m.Handler()
 		for i := 1; i <= 5; i++ {
-			if w := serveReq(h, req("POST", "/admin/api/login", `{"token":"x"}`, nil)); w.Code != 401 {
+			if w := serveReq(h, req("POST", "/admin/api/login", pwBody("nobody", "x"), nil)); w.Code != 401 {
 				t.Fatalf("try %d = %d", i, w.Code)
 			}
 		}
-		w := serveReq(h, req("POST", "/admin/api/login", `{"token":"x"}`, nil))
+		w := serveReq(h, req("POST", "/admin/api/login", pwBody("nobody", "x"), nil))
 		if w.Code != 429 || w.Header().Get("Retry-After") == "" {
 			t.Errorf("6th = %d retry-after %q", w.Code, w.Header().Get("Retry-After"))
 		}
 		f.Clock.Advance(time.Minute)
-		if w := serveReq(h, req("POST", "/admin/api/login", `{"token":"x"}`, nil)); w.Code != 401 {
+		if w := serveReq(h, req("POST", "/admin/api/login", pwBody("nobody", "x"), nil)); w.Code != 401 {
 			t.Errorf("after a minute = %d", w.Code)
 		}
 	})
@@ -228,7 +215,7 @@ func TestLoginRateLimited(t *testing.T) {
 		m, _ := newTestModule(t)
 		h := m.Handler()
 		for i := 1; i <= 31; i++ {
-			r := req("POST", "/admin/api/login", `{"token":"x"}`, nil)
+			r := req("POST", "/admin/api/login", pwBody(fmt.Sprintf("user%d", i), "x"), nil)
 			r.RemoteAddr = fmt.Sprintf("10.0.0.%d:5000", i)
 			w := serveReq(h, r)
 			want := 401
@@ -327,11 +314,11 @@ func TestCleanup(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	const tok = `insert into admin_tokens (id, token_hash, label, created_at, expires_at, used_at) values ($1, $2, '', $3, $4, $5)`
-	exec(tok, "00000000-0000-0000-0000-000000000001", []byte("used"), now.Add(-time.Hour), now.Add(-30*time.Minute), now.Add(-45*time.Minute))
-	exec(tok, "00000000-0000-0000-0000-000000000002", []byte("expired"), now.Add(-time.Hour), now.Add(-30*time.Minute), nil)
-	exec(tok, "00000000-0000-0000-0000-000000000003", []byte("fresh"), now, now.Add(10*time.Minute), nil)
-	const ses = `insert into admin_sessions (id_hash, token_id, csrf_hash, created_at, last_seen_at, expires_at) values ($1, '00000000-0000-0000-0000-000000000001', $1, $2, $3, $4)`
+	admin, err := m.createAdmin(ctx, "alice", goodPassword, cliBy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ses := `insert into admin_sessions (id_hash, admin_user_id, csrf_hash, created_at, last_seen_at, expires_at) values ($1, '` + admin + `', $1, $2, $3, $4)`
 	exec(ses, []byte("idle"), now.Add(-time.Hour), now.Add(-16*time.Minute), now.Add(time.Hour))
 	exec(ses, []byte("old"), now.Add(-9*time.Hour), now.Add(-time.Minute), now.Add(-time.Hour))
 	exec(ses, []byte("live"), now.Add(-time.Hour), now.Add(-time.Minute), now.Add(time.Hour))
@@ -347,15 +334,6 @@ func TestCleanup(t *testing.T) {
 	}
 	if n := count(t, m, `select count(*) from admin_sessions`); n != 1 {
 		t.Errorf("sessions = %d, want only the live one", n)
-	}
-	if n := count(t, m, `select count(*) from admin_tokens where id = '00000000-0000-0000-0000-000000000001'`); n != 1 {
-		t.Error("used token deleted")
-	}
-	if n := count(t, m, `select count(*) from admin_tokens where id = '00000000-0000-0000-0000-000000000002'`); n != 0 {
-		t.Error("expired unused token kept")
-	}
-	if n := count(t, m, `select count(*) from admin_tokens where id = '00000000-0000-0000-0000-000000000003'`); n != 1 {
-		t.Error("fresh token deleted")
 	}
 	if n := count(t, m, `select count(*) from admin_audit where action = 'old'`); n != 0 {
 		t.Error("366-day audit row kept")
@@ -421,11 +399,7 @@ func TestLoginEndsPreviousSessionOfBrowser(t *testing.T) {
 	h := m.Handler()
 	old := login(t, m, h)
 	other := login(t, m, h) // another browser keeps its session
-	_, token, err := m.createToken(context.Background(), "again", 15*time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	w := serveReq(h, req("POST", "/admin/api/login", `{"token":"`+token+`"}`, old))
+	w := serveReq(h, req("POST", "/admin/api/login", pwBody(testUser, goodPassword), old))
 	if w.Code != 204 {
 		t.Fatalf("re-login = %d %s", w.Code, w.Body)
 	}
@@ -439,7 +413,7 @@ func TestLoginEndsPreviousSessionOfBrowser(t *testing.T) {
 		}
 	}
 	// A failed re-login leaves the old session alone.
-	w = serveReq(h, req("POST", "/admin/api/login", `{"token":"adm_bad"}`, fresh))
+	w = serveReq(h, req("POST", "/admin/api/login", pwBody(testUser, "wrong password here"), fresh))
 	if w.Code != 401 {
 		t.Fatalf("bad re-login = %d", w.Code)
 	}
