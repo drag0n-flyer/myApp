@@ -91,6 +91,35 @@ If you cannot buy this, the fallback is a speaker and a microphone in a quiet ro
 
 Capture note: the phone's single port is taken by the headset adapter, so the Mac captures the phone's traffic through Internet Sharing (the Mac becomes the Wi-Fi network the phones join, and `tcpdump -i bridge100` records it) instead of `rvictl`. The `rvictl` method (USB, Mac-side virtual interface) is only an alternative for runs without the adapter. Setup is in [protocol-data-use.md](protocol-data-use.md).
 
+## CI, simulated
+
+Workflow `.github/workflows/call-lab-calls.yml` (job `calls`, one `macos-26` runner, weekly on Monday 03:00 UTC and by hand, never on push) places test calls between two simulated clients. Its results are labelled **CI, simulated**. They are not device results: they never go into the L10 tables, GOAL.md's mode table or `DataMode.estimatedMBPer10Minutes` unless the owner says so. L10 stays the release gate.
+
+How a run works (`tools/call-lab/ci/run_calls.sh`):
+
+- The lab server runs on the runner with `APP_LAB_MODE=1`, with a local coturn. Tokens come from `appserver lab session`.
+- Client A and client B are two `CallLabMac` processes started with `--headless` (client B with `--role callee`). The iOS Simulator is not used; each result says `client_b: mac-headless`.
+- Client A's microphone samples are replaced with the L8 stimulus (LibriSpeech test-clean, 50% active) through the WebRTC capture hook (patch 0004).
+- `tools/call-lab/netem/dummynet.sh` applies the `profiles.tsv` profile on `lo0` with `dnctl` and `pfctl`. dummynet has no jitter, so the profile's jitter is not applied.
+- `tcpdump` on `lo0` feeds `pcapbytes.py`. A relay capture holds both clients' legs to coturn, so the per-device bytes are half of it (`capture_legs` in `meta.json`).
+- `tools/call-lab/ci/summarize.py` writes `summary.md` and `summary.csv` (the workflow artifact).
+
+Matrix: 7 calls of 5 minutes. The full matrix (2 presets × 2 paths × 4 profiles plus 3 noise runs, 19 calls) does not fit the 60-minute job, so it was cut, not the cap:
+
+| Preset | Path | Profile |
+|---|---|---|
+| ultraLow | direct | clean |
+| balanced | direct | clean |
+| ultraLow | relay | clean |
+| balanced | relay | clean |
+| ultraLow | direct | loss5 |
+| balanced | direct | cap32 |
+| balanced | direct | 3g |
+
+Pass rules (the only gates): every call has `first_audio_packet`; `stats.csv` has exactly `StatsRow.csvHeader`; on profile `clean`, no `disconnected` event and `answer_received` → `first_audio_packet` at or below 3 seconds (GOAL.md §9). Speech quality, noise quality, bitrate and data use, packet loss and latency are report only.
+
+Not measured here (compare with real devices): battery, thermal state and CPU on an A-series chip; real radio (cellular, Wi-Fi roaming, handover, carrier NAT, Bluetooth); CallKit and PushKit, the lock screen, audio-session interruptions, real microphone and speaker acoustics, echo; VPIO and the RNNoise device cost. dummynet on `lo0` is symmetric loopback shaping, not a real network. ViSQOL and DNSMOS stay empty until client B's output can be recorded on the runner (a virtual audio device needs the owner's approval).
+
 ## Phase 0 exit checklist
 
 Tick each box only when the result file is committed. (The push-notification prototype is a separate plan.)
