@@ -37,7 +37,7 @@ public let testEpochDate = Date(timeIntervalSince1970: 1_700_000_000)
 /// `username` is registered for the account on first use.
 public func makeDevice(
     _ server: FakeServer, account: String, username: String,
-    now: @escaping @Sendable () -> Date = { testEpochDate }, realMemberKeys: Bool = true
+    now: @escaping @Sendable () -> Date = { testEpochDate }, realMemberKeys: Bool = false
 ) async -> TestDevice {
     let deviceID = await server.registerDevice(account: account, username: username)
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("messaging-test-\(UUID().uuidString)")

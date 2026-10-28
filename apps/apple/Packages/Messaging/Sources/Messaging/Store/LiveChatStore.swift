@@ -37,6 +37,7 @@ public final class LiveChatStore: ChatStore {
     private var tasks: [UUID: Task<Void, Never>] = [:]
     private let pendingGate = PendingActions.Gate()
     private var closed = false
+    private var rebaselined: Set<String> = []
 
     public init(
         deps: MessagingDeps, outbox: Outbox, inbox: InboxProcessor, conversations: ConversationManaging,
@@ -411,17 +412,45 @@ public final class LiveChatStore: ChatStore {
     public var supportsSafetyNumbers: Bool { deps.mls.providesRealMemberKeys }
 
     public func safetyNumber(for chatID: String) -> SafetyNumber? {
-        guard supportsSafetyNumbers else { return nil }
-        guard let row = (try? repo.safety(chatID: chatID)) ?? nil else { return nil }
+        guard supportsSafetyNumbers, let row = coveredSafety(chatID) else { return nil }
         return SafetyNumber(groups: ChatMapping.groups(row.current), isVerified: row.verified == row.current)
     }
 
     /// Local only: nothing is sent.
     public func setVerified(_ verified: Bool, chatID: String) {
-        guard supportsSafetyNumbers else { return }
-        guard let row = (try? repo.safety(chatID: chatID)) ?? nil else { return }
+        guard supportsSafetyNumbers, let row = coveredSafety(chatID) else { return }
         try? repo.setVerified(chatID: chatID, verified ? row.current : nil)
         refresh()
+    }
+
+    /// The stored number, only when it is the number the preferred conversation's stored members give now, with no
+    /// placeholder key among them. Anything else (placeholder rows from before the real keys, a number written for
+    /// another conversation, members that cannot be framed) is hidden and cannot be verified, and the preferred
+    /// conversation is re-baselined from the engine.
+    private func coveredSafety(_ chatID: String) -> (current: String, verified: String?)? {
+        guard let row = (try? repo.safety(chatID: chatID)) ?? nil,
+              let conversation = (try? repo.preferredConversation(chatID: chatID)) ?? nil else { return nil }
+        let keys = ((try? repo.members(conversationID: conversation.serverID)) ?? [])
+            .map { MemberKey(identity: $0.identity, signatureKey: $0.signatureKey) }
+        let number = try? SafetyNumberCalc.compute(accountA: deps.me.accountID, accountB: chatID, members: keys).joined()
+        guard number == row.current, !keys.contains(where: { Membership.isPlaceholder($0.identity, $0.signatureKey) }) else {
+            rebaseline(conversation)
+            return nil
+        }
+        return row
+    }
+
+    /// Reads the conversation's keys from the engine again (`Membership.update`), once per conversation per launch;
+    /// a failure leaves the number hidden (retrying on every refresh would loop). Placeholder rows are re-baselined
+    /// silently (ruling in plans/README.md); any other change is flagged.
+    private func rebaseline(_ conversation: ConversationRecord) {
+        guard rebaselined.insert(conversation.serverID).inserted else { return }
+        let deps = deps
+        background {
+            _ = try? await deps.lock.withAsyncLock(timeout: InboxProcessor.lockTimeout) {
+                try await Membership(deps: deps).update(conversation: conversation, db: deps.repo)
+            }
+        }
     }
 
     // MARK: - Requests, contacts, blocking, reports
