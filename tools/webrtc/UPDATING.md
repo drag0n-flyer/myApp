@@ -35,6 +35,14 @@ Watch [opus-codec.org](https://opus-codec.org/).
 4. Plan 5's device check must pass.
 5. The owner reviews and merges.
 
+## Android release
+
+Android releases count in `tools/webrtc/ANDROID_RELEASE`, not in `VERSION`'s `RELEASE` (Apple's), so `VERSION` stays byte-identical to the Apple release. The tag is `webrtc-android-m<WEBRTC_MILESTONE>.<ANDROID_RELEASE>`.
+
+1. Add 1 to `ANDROID_RELEASE` (reset it to 1 with a new milestone).
+2. `gh workflow run webrtc-android.yml -f release=true` from `main`. The release carries `VERSION` and `ANDROID_RELEASE`.
+3. Update `url` and `sha256` in `apps/android/webrtc/webrtc.properties` from the release's `libwebrtc.aar.sha256`.
+
 ## Security response
 
 If a WebRTC or Opus CVE affects a shipped build, publish a new release within 7 days and an app update after it.

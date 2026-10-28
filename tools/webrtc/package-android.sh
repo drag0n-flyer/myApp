@@ -15,6 +15,8 @@
 #                         Java classes do not depend on the ABI), and
 #                         jni/arm64-v8a/, jni/armeabi-v7a/ and jni/x86_64/ with the .so files
 #   libwebrtc.aar.sha256  "<sha256>  libwebrtc.aar"
+#   VERSION, ANDROID_RELEASE  copies of tools/webrtc/VERSION and tools/webrtc/ANDROID_RELEASE, so the
+#                         release says what it is (its tag is webrtc-android-m<milestone>.<ANDROID_RELEASE>)
 # The AAR is reproducible: fixed file order and timestamps.
 #
 # Checks first, before writing anything: exactly the ABIs arm64-v8a, armeabi-v7a and x86_64
@@ -27,6 +29,8 @@
 #
 # Exit codes: 0 ok, 1 failure or bad usage, 4 LICENSE.md names a GNU license.
 set -eu
+
+here=$(cd "$(dirname "$0")" && pwd)
 
 abis="arm64-v8a armeabi-v7a x86_64"
 
@@ -68,7 +72,11 @@ for f in $found; do
   case " $abis " in *" $f "*) ;; *) die "unexpected ABI '$f' in $dir; the AAR holds only: $abis" ;; esac
 done
 
-# 2. Inputs.
+# 2. Inputs. ANDROID_RELEASE must be one positive integer (PACKAGE_ANDROID_RELEASE_FILE: tests only).
+release_file=${PACKAGE_ANDROID_RELEASE_FILE:-$here/ANDROID_RELEASE}
+[ -f "$release_file" ] || die "$release_file missing"
+[ "$(grep -v '^#' "$release_file")" = "ANDROID_RELEASE=$(sed -n 's/^ANDROID_RELEASE=\([1-9][0-9]*\)$/\1/p' "$release_file")" ] ||
+  die "$release_file must hold one line ANDROID_RELEASE=<positive integer> besides # comments"
 jar="$dir/arm64-v8a/libwebrtc.jar"
 [ -f "$jar" ] || die "$jar missing"
 [ -f "$dir/AndroidManifest.xml" ] || die "$dir/AndroidManifest.xml missing"
@@ -195,5 +203,7 @@ with zipfile.ZipFile(aar + ".part", "w", zipfile.ZIP_DEFLATED) as z:
 os.replace(aar + ".part", aar)
 PY
 printf '%s  libwebrtc.aar\n' "$(sha256_of "$aar")" >"$aar.sha256"
+cp "$here/VERSION" "$dir/VERSION"
+cp "$release_file" "$dir/ANDROID_RELEASE"
 echo "wrote $aar"
 cat "$aar.sha256"

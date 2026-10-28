@@ -15,6 +15,7 @@ on:
     branches: [feat/webrtc-android]
     paths:
       - "tools/webrtc/**"
+      - "tools/webrtc/ANDROID_RELEASE" # the Android release counter (also under tools/webrtc/**)
       - ".github/workflows/webrtc-android.yml"
 
 permissions:
@@ -115,7 +116,8 @@ jobs:
         run: |
           mkdir release
           cp out/libwebrtc.aar out/libwebrtc.aar.sha256 out/LICENSE.md release/
-          cp tools/webrtc/VERSION release/VERSION
+          # package-android.sh copied VERSION and ANDROID_RELEASE next to the AAR.
+          cp out/VERSION out/ANDROID_RELEASE release/
       - uses: actions/upload-artifact@v4
         with:
           name: release
@@ -178,8 +180,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          . tools/webrtc/VERSION
-          tag="webrtc-android-m${WEBRTC_MILESTONE}.${RELEASE}"
+          # VERSION carries the Apple RELEASE; Android releases count in ANDROID_RELEASE.
+          . release/VERSION
+          . release/ANDROID_RELEASE
+          tag="webrtc-android-m${WEBRTC_MILESTONE}.${ANDROID_RELEASE}"
           cat > notes.md <<NOTES
           WebRTC M${WEBRTC_MILESTONE} (${WEBRTC_BRANCH}, commit ${WEBRTC_COMMIT}) for Android with libopus ${OPUS_VERSION}.
 
@@ -190,5 +194,5 @@ jobs:
           Device check: pending
           NOTES
           cd release
-          gh release create "$tag" --target "${{ github.sha }}" libwebrtc.aar libwebrtc.aar.sha256 LICENSE.md VERSION \
-            --title "WebRTC M${WEBRTC_MILESTONE} Android + Opus ${OPUS_VERSION} (${RELEASE})" --notes-file ../notes.md
+          gh release create "$tag" --target "${{ github.sha }}" libwebrtc.aar libwebrtc.aar.sha256 LICENSE.md VERSION ANDROID_RELEASE \
+            --title "WebRTC M${WEBRTC_MILESTONE} Android + Opus ${OPUS_VERSION} (${ANDROID_RELEASE})" --notes-file ../notes.md

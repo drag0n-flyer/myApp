@@ -130,6 +130,12 @@ expect_exit "package-android: missing directory" 1 sh "$here/package-android.sh"
 make_layout "$work/ok" arm64-v8a armeabi-v7a x86_64
 expect_exit "package-android: three ABIs" 0 sh "$here/package-android.sh" "$work/ok"
 check "package-android: AAR written" test -s "$work/ok/libwebrtc.aar"
+check "package-android: VERSION copied for the release" cmp -s "$here/VERSION" "$work/ok/VERSION"
+check "package-android: ANDROID_RELEASE copied for the release" cmp -s "$here/ANDROID_RELEASE" "$work/ok/ANDROID_RELEASE"
+make_layout "$work/badrel" arm64-v8a armeabi-v7a x86_64
+printf 'ANDROID_RELEASE=two\n' >"$work/badrel.txt"
+expect_exit "package-android: a non-numeric ANDROID_RELEASE fails" 1 env PACKAGE_ANDROID_RELEASE_FILE="$work/badrel.txt" sh "$here/package-android.sh" "$work/badrel"
+check "package-android: a bad ANDROID_RELEASE writes no AAR" test ! -e "$work/badrel/libwebrtc.aar"
 zip_names "$work/ok/libwebrtc.aar" >"$work/names.txt"
 check "package-android: jni/ holds exactly the three ABIs" test "$(grep '^jni/' "$work/names.txt")" = "$(printf 'jni/arm64-v8a/libjingle_peerconnection_so.so\njni/armeabi-v7a/libjingle_peerconnection_so.so\njni/x86_64/libjingle_peerconnection_so.so')"
 check "package-android: AndroidManifest.xml" has '^AndroidManifest.xml$' "$work/names.txt"
@@ -238,6 +244,13 @@ check "package-android: ObjectMethods (records) is accepted" test -s "$work/ok/l
 
 # --- workflow and patch text ---
 wf="$here/../../.github/workflows/webrtc-android.yml"
+# Android releases count separately; VERSION stays byte-identical to the Apple release's.
+check "ANDROID_RELEASE is one positive integer" sh -c '[ "$(grep -v "^#" "$1")" = "ANDROID_RELEASE=$(sed -n "s/^ANDROID_RELEASE=\([1-9][0-9]*\)$/\1/p" "$1")" ]' _ "$here/ANDROID_RELEASE"
+check "VERSION has no Android counter" sh -c '! grep -q ANDROID "$1"' _ "$here/VERSION"
+check "workflow: tag uses ANDROID_RELEASE" has 'tag="webrtc-android-m${WEBRTC_MILESTONE}.${ANDROID_RELEASE}"' "$wf"
+check "workflow: tag does not use the Apple RELEASE" sh -c '! grep -qF "m\${WEBRTC_MILESTONE}.\${RELEASE}" "$1"' _ "$wf"
+check "workflow: release ships VERSION and ANDROID_RELEASE" sh -c 'grep -q "gh release create.* VERSION ANDROID_RELEASE" "$1"' _ "$wf"
+check "workflow: path filter names ANDROID_RELEASE" has '"tools/webrtc/ANDROID_RELEASE"' "$wf"
 check "workflow: gh release create pins the target commit" grep -qF -- '--target "${{ github.sha }}"' "$wf"
 check "workflow: release only from main or feat/webrtc-android" has "github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/webrtc-android'" "$wf"
 check "workflow: per-ABI licenses are collected" grep -qF 'LICENSE.md" "collected/${{ matrix.abi }}/"' "$wf"

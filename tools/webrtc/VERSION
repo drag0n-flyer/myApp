@@ -5,4 +5,4 @@ OPUS_VERSION=1.6
 OPUS_URL=https://downloads.xiph.org/releases/opus/opus-1.6.tar.gz
 OPUS_SHA256=b7637334527201fdfd6dd6a02e67aceffb0e5e60155bbd89175647a80301c92c
 FIELD_TRIAL_OPUS_PLC=WebRTC-Audio-OpusGeneratePlc
-RELEASE=2
+RELEASE=1
