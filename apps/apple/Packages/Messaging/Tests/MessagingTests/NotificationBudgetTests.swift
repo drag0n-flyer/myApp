@@ -92,9 +92,23 @@ private final class Counter: @unchecked Sendable {
 
     /// The app group comes from Info.plist (project.yml writes `group.$(APP_ID)` from AppID.xcconfig).
     @Test func appGroupFromInfoPlist() {
+        var missing: [String] = []
+        let note: (String) -> Void = { missing.append($0) }
         #expect(MessagingLocations.appGroupInfoKey == "AppGroupID")
-        #expect(MessagingLocations.appGroup(in: ["AppGroupID": "group.com.example.chat"]) == "group.com.example.chat")
-        #expect(MessagingLocations.appGroup(in: ["AppGroupID": " "]) == nil)
-        #expect(MessagingLocations.appGroup(in: [:]) == nil)
+        #expect(MessagingLocations.appGroup(in: ["AppGroupID": "group.com.example.chat"], onMissing: note) == "group.com.example.chat")
+        #expect(missing.isEmpty)
+        #expect(MessagingLocations.appGroup(in: ["AppGroupID": " "], onMissing: note) == nil)
+        #expect(MessagingLocations.appGroup(in: [:], onMissing: note) == nil)
+        #expect(missing == ["AppGroupID", "AppGroupID"])
+    }
+
+    /// A required Info.plist string: present is returned trimmed; missing or empty is reported, never silently ignored.
+    @Test func requiredInfoValueReportsMissing() {
+        var missing: [String] = []
+        let note: (String) -> Void = { missing.append($0) }
+        #expect(MessagingLocations.requiredInfoValue("KeychainAccessGroup", in: ["KeychainAccessGroup": " T.g "], onMissing: note) == "T.g")
+        #expect(MessagingLocations.requiredInfoValue("KeychainAccessGroup", in: ["KeychainAccessGroup": ""], onMissing: note) == nil)
+        #expect(MessagingLocations.requiredInfoValue("KeychainAccessGroup", in: ["KeychainAccessGroup": 3], onMissing: note) == nil)
+        #expect(missing == ["KeychainAccessGroup", "KeychainAccessGroup"])
     }
 }

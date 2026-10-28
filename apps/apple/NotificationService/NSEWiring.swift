@@ -24,7 +24,7 @@ enum NSEWiring {
     /// engine cannot be made, or the stored database cannot be opened or is newer than this build.
     private static func makeDeps() -> MessagingDeps? {
         let info = Bundle.main.infoDictionary ?? [:]
-        let accessGroup = (info["KeychainAccessGroup"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        let accessGroup = MessagingLocations.requiredInfoValue("KeychainAccessGroup", in: info)
         let sessions = SessionStore(storage: KeychainSessionStorage(accessGroup: accessGroup))
         guard let session = sessions.current,
               let group = MessagingLocations.appGroupID,

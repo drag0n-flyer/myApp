@@ -1,4 +1,5 @@
 import Foundation
+import Messaging
 import ServerKit
 
 /// Build settings the project writes into Info.plist (`project.yml`).
@@ -15,7 +16,8 @@ struct AppConfig {
         let info = Bundle.main.infoDictionary ?? [:]
         func string(_ key: String) -> String { (info[key] as? String)?.trimmingCharacters(in: .whitespaces) ?? "" }
         let domains = string("PasskeyDomains").split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-        let group = string("KeychainAccessGroup")
+        // Required: without it the app would use its private keychain group, which the extension cannot read.
+        let group = MessagingLocations.requiredInfoValue("KeychainAccessGroup", in: info) ?? ""
         return AppConfig(
             defaultServerHost: string("DefaultServerHost").isEmpty ? "home.example.org" : string("DefaultServerHost"),
             passkeyDomains: domains,

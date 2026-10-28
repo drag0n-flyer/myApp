@@ -21,18 +21,26 @@ check_nse() {
   echo "NSE extension point OK"
 }
 
-# The built app's IDs come from APP_ID in AppID.xcconfig.
-# Usage: check_app_ids <scheme> <destination> <app Info.plist inside App.app> <bundle ID suffix after APP_ID>
+# The built app's and its notification extension's IDs come from APP_ID in AppID.xcconfig, and both
+# name the same app group.
+# Usage: check_app_ids <scheme> <destination> <app Info.plist inside App.app> <app bundle ID suffix after APP_ID>
+#                      <appex Info.plist glob inside App.app> <appex bundle ID suffix after APP_ID>
 check_app_ids() {
-  local dir plist app_id got
+  local dir plist appex app_id got
   dir=$(built_products_dir "$1" "$2") || return 1
   plist="$dir/App.app/$3"
   [ -f "$plist" ] || { echo "app Info.plist not found at $plist" >&2; return 1; }
+  appex=$(ls "$dir"/App.app/$5 2>/dev/null | head -1) || true
+  [ -n "$appex" ] || { echo "appex Info.plist not found under $dir/App.app/$5" >&2; return 1; }
   app_id=$(sed -nE 's/^[[:space:]]*APP_ID[[:space:]]*=[[:space:]]*([^[:space:]/]+).*/\1/p' "${APP_ID_XCCONFIG:-AppID.xcconfig}" | head -n 1)
   [ -n "$app_id" ] || { echo "APP_ID not found in AppID.xcconfig" >&2; return 1; }
   got=$(plutil -extract CFBundleIdentifier raw "$plist")
-  [ "$got" = "$app_id$4" ] || { echo "bundle ID is '$got', want '$app_id$4'" >&2; return 1; }
+  [ "$got" = "$app_id$4" ] || { echo "app bundle ID is '$got', want '$app_id$4'" >&2; return 1; }
   got=$(plutil -extract AppGroupID raw "$plist")
-  [ "$got" = "group.$app_id" ] || { echo "AppGroupID is '$got', want 'group.$app_id'" >&2; return 1; }
-  echo "App ID OK: $app_id$4"
+  [ "$got" = "group.$app_id" ] || { echo "app AppGroupID is '$got', want 'group.$app_id'" >&2; return 1; }
+  got=$(plutil -extract CFBundleIdentifier raw "$appex")
+  [ "$got" = "$app_id$6" ] || { echo "appex bundle ID is '$got', want '$app_id$6'" >&2; return 1; }
+  got=$(plutil -extract AppGroupID raw "$appex")
+  [ "$got" = "group.$app_id" ] || { echo "appex AppGroupID is '$got', want the app's 'group.$app_id'" >&2; return 1; }
+  echo "App ID OK: $app_id$4 and $app_id$6, group.$app_id"
 }

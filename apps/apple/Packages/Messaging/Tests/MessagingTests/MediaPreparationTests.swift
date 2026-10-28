@@ -51,7 +51,8 @@ final class MediaPreparationTests: XCTestCase {
         XCTAssertEqual(max(tw, th), 32)
     }
 
-    /// A camera-style JPEG: GPS, camera make and model, dates, lens, a comment and an Apple MakerNote.
+    /// A camera-style JPEG: GPS, camera make and model, software, artist, dates, lens, a comment,
+    /// an IPTC caption and an Apple MakerNote.
     private func makeCameraJPEG(w: Int, h: Int) throws -> URL {
         let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
                             space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
@@ -67,7 +68,9 @@ final class MediaPreparationTests: XCTestCase {
             kCGImagePropertyTIFFDictionary: [
                 kCGImagePropertyTIFFMake: "Apple", kCGImagePropertyTIFFModel: "iPhone 17 Pro",
                 kCGImagePropertyTIFFDateTime: "2026:10:28 09:15:00",
+                kCGImagePropertyTIFFSoftware: "26.0", kCGImagePropertyTIFFArtist: "Jane Doe",
             ],
+            kCGImagePropertyIPTCDictionary: [kCGImagePropertyIPTCCaptionAbstract: "Jane at home"],
             kCGImagePropertyExifDictionary: [
                 kCGImagePropertyExifDateTimeOriginal: "2026:10:28 09:15:00",
                 kCGImagePropertyExifDateTimeDigitized: "2026:10:28 09:15:00",
@@ -87,6 +90,25 @@ final class MediaPreparationTests: XCTestCase {
         CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any] ?? [:]
     }
 
+    /// Top-level keys a metadata-free JPEG may carry: only how to decode and show the pixels.
+    /// Anything else (IPTC, GPS, MakerNote, any other dictionary) fails.
+    private static let allowedTopLevelKeys: Set<String> = [
+        // Size, channel layout and bit depth of the pixels.
+        kCGImagePropertyPixelWidth as String, kCGImagePropertyPixelHeight as String,
+        kCGImagePropertyColorModel as String, kCGImagePropertyDepth as String,
+        kCGImagePropertyHasAlpha as String, kCGImagePropertyIsFloat as String, kCGImagePropertyIsIndexed as String,
+        // The colour profile name (sRGB / Display P3): how to show the pixels.
+        kCGImagePropertyProfileName as String,
+        // Which way up (always 1, orientation is baked into the pixels) and the nominal print density.
+        kCGImagePropertyOrientation as String,
+        kCGImagePropertyDPIWidth as String, kCGImagePropertyDPIHeight as String,
+        // Byte count of the file.
+        kCGImagePropertyFileSize as String,
+        // Format dictionaries, each checked against its own allowlist below (JFIF holds only version and density).
+        kCGImagePropertyExifDictionary as String, kCGImagePropertyTIFFDictionary as String,
+        kCGImagePropertyJFIFDictionary as String,
+    ]
+
     /// Exif keys a metadata-free JPEG may still carry. None identifies a person, a place, a time or a device.
     private static let allowedExifKeys: Set<String> = [
         // The pixel size of the picture, which the receiver gets anyway.
@@ -101,17 +123,47 @@ final class MediaPreparationTests: XCTestCase {
         kCGImagePropertyExifComponentsConfiguration as String,
     ]
 
+    /// TIFF keys a metadata-free JPEG may carry; Make, Model, DateTime, Software, Artist and the rest fail.
+    private static let allowedTIFFKeys: Set<String> = [
+        // Which way up (1) and the nominal print density: how to show the pixels.
+        kCGImagePropertyTIFFOrientation as String,
+        kCGImagePropertyTIFFResolutionUnit as String,
+        kCGImagePropertyTIFFXResolution as String, kCGImagePropertyTIFFYResolution as String,
+        // The tile size ImageIO decodes in: format only.
+        kCGImagePropertyTIFFTileWidth as String, kCGImagePropertyTIFFTileLength as String,
+    ]
+
+    /// XMP namespaces ImageIO uses to mirror the allowed Exif and TIFF keys. Any other (dc, xmp, photoshop, Iptc4xmpCore…) fails.
+    private static let allowedXMPPrefixes: Set<String> = ["exif", "exifEX", "tiff"]
+
     private func assertNoPersonalMetadata(_ src: CGImageSource, _ what: String, line: UInt = #line) {
         let props = properties(src)
+        let top = Set(props.keys.map { $0 as String }).subtracting(Self.allowedTopLevelKeys)
+        XCTAssertTrue(top.isEmpty, "\(what) has top-level keys \(top.sorted()): \(props)", line: line)
         XCTAssertNil(props[kCGImagePropertyGPSDictionary], "\(what) has GPS: \(props)", line: line)
         XCTAssertNil(props[kCGImagePropertyMakerAppleDictionary], "\(what) has a MakerNote: \(props)", line: line)
+        XCTAssertNil(props[kCGImagePropertyIPTCDictionary], "\(what) has IPTC: \(props)", line: line)
         let exif = props[kCGImagePropertyExifDictionary] as? [String: Any] ?? [:]
-        let extra = Set(exif.keys).subtracting(Self.allowedExifKeys)
-        XCTAssertTrue(extra.isEmpty, "\(what) has Exif keys \(extra.sorted()): \(exif)", line: line)
-        let tiff = props[kCGImagePropertyTIFFDictionary] as? [CFString: Any] ?? [:]
-        for key in [kCGImagePropertyTIFFMake, kCGImagePropertyTIFFModel, kCGImagePropertyTIFFDateTime] {
-            XCTAssertNil(tiff[key], "\(what) has TIFF \(key): \(tiff)", line: line)
+        let extraExif = Set(exif.keys).subtracting(Self.allowedExifKeys)
+        XCTAssertTrue(extraExif.isEmpty, "\(what) has Exif keys \(extraExif.sorted()): \(exif)", line: line)
+        let tiff = props[kCGImagePropertyTIFFDictionary] as? [String: Any] ?? [:]
+        let extraTIFF = Set(tiff.keys).subtracting(Self.allowedTIFFKeys)
+        XCTAssertTrue(extraTIFF.isEmpty, "\(what) has TIFF keys \(extraTIFF.sorted()): \(tiff)", line: line)
+        let jfif = props[kCGImagePropertyJFIFDictionary] as? [String: Any] ?? [:]
+        let extraJFIF = Set(jfif.keys).subtracting([
+            kCGImagePropertyJFIFVersion as String, kCGImagePropertyJFIFIsProgressive as String,
+            kCGImagePropertyJFIFDensityUnit as String,
+            kCGImagePropertyJFIFXDensity as String, kCGImagePropertyJFIFYDensity as String,
+        ])
+        XCTAssertTrue(extraJFIF.isEmpty, "\(what) has JFIF keys \(extraJFIF.sorted()): \(jfif)", line: line)
+        // XMP is not in the property dictionaries; read it through the metadata API.
+        let tags = CGImageSourceCopyMetadataAtIndex(src, 0, nil).flatMap { CGImageMetadataCopyTags($0) as? [CGImageMetadataTag] } ?? []
+        let xmp = tags.compactMap { tag -> String? in
+            let prefix = CGImageMetadataTagCopyPrefix(tag) as String? ?? ""
+            guard !Self.allowedXMPPrefixes.contains(prefix) else { return nil }
+            return "\(prefix):\(CGImageMetadataTagCopyName(tag) as String? ?? "?")"
         }
+        XCTAssertTrue(xmp.isEmpty, "\(what) has XMP tags \(xmp.sorted())", line: line)
     }
 
     func testExifStripped() throws {
@@ -122,6 +174,7 @@ final class MediaPreparationTests: XCTestCase {
         let inTIFF = inProps[kCGImagePropertyTIFFDictionary] as? [CFString: Any]
         XCTAssertEqual(inTIFF?[kCGImagePropertyTIFFMake] as? String, "Apple")
         XCTAssertEqual(inTIFF?[kCGImagePropertyTIFFModel] as? String, "iPhone 17 Pro")
+        XCTAssertEqual(inTIFF?[kCGImagePropertyTIFFSoftware] as? String, "26.0")
         let inExif = inProps[kCGImagePropertyExifDictionary] as? [CFString: Any]
         XCTAssertEqual(inExif?[kCGImagePropertyExifDateTimeOriginal] as? String, "2026:10:28 09:15:00")
         XCTAssertNotNil(inProps[kCGImagePropertyMakerAppleDictionary], "input: \(inProps)")
