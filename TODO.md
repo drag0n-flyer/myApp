@@ -52,7 +52,10 @@ Queued for the iPhone/Mac after the current work:
 
 ## Main CI
 
-The Apple apps workflow on `main` is red. The fix on `fix/swift62-ci` has Linux packages, CallMedia and ServerKit-on-iPhone green; the iPhone and Mac app builds and the Mac package tests are on their last runs, including a lock test that never ran on Apple platforms before and is being investigated. Android CI and the security check on `main` are green.
+The Apple apps workflow fix (Swift 6.2 / Xcode 26) is merged; every Apple job was green on its branch. Follow-ups from its review:
+- the photo test checks only three metadata keys and starts from a picture with no metadata; it should start from a photo carrying GPS, camera and date data and allow only size and colour keys
+- the Mac UI tests run without the app's sandbox, app-group and keychain permissions (a test build can't launch with them unsigned); a signed check of those is needed before release
+- CallKit calls now report from CallKit's own queue; check calls once on a real iPhone
 
 ## Android, by lane ([plan](docs/superpowers/plans/2026-10-28-android-client.md))
 
