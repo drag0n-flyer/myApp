@@ -18,12 +18,14 @@ type Relay struct{ Host, Region string }
 type Config struct {
 	Host, Listen, AdminListen, DatabaseURL, DataDir, SMTPURL, MailFrom, TURNSecret string
 	Relays                                                                         []Relay
-	PushGatewayURL, PushKeyFile, PushServerID, EscrowKeyFile                       string
+	PushGatewayURL, PushKeyFile, PushServerID, VapidKeyFile, EscrowKeyFile         string
 	AppleAppIDs                                                                    []string
 	AndroidApps                                                                    []AndroidApp // APP_ANDROID_APPS; empty accepts no Android passkey origins
 	DocsDir                                                                        string       // APP_DOCS_DIR: operator security.txt and legal pages; empty serves none
 	TrustProxy                                                                     bool
-	LabMode                                                                        bool // APP_LAB_MODE=1: lab-only session command; never on a real server
+	AdminHosts                                                                     []string // APP_ADMIN_HOSTS: extra Host names the admin listener accepts (lowercase)
+	AdminAllowHTTP                                                                 bool     // APP_ADMIN_ALLOW_HTTP: cookies for APP_ADMIN_HOSTS are not Secure (plain HTTP)
+	LabMode                                                                        bool     // APP_LAB_MODE=1: lab-only session command; never on a real server
 }
 
 // AndroidApp is an Android app the operator trusts for passkeys: its package
@@ -126,6 +128,7 @@ func Load(getenv func(string) string, readFile func(string) ([]byte, error)) (Co
 	c.PushGatewayURL = getenv("APP_PUSH_GATEWAY_URL")
 	c.PushKeyFile = getenv("APP_PUSH_KEY_FILE")
 	c.PushServerID = getenv("APP_PUSH_SERVER_ID")
+	c.VapidKeyFile = getenv("APP_VAPID_KEY_FILE")
 	c.EscrowKeyFile = getenv("APP_ESCROW_KEY_FILE")
 	c.AppleAppIDs = splitList(getenv("APP_APPLE_APP_IDS"))
 	apps, err := parseAndroidApps(getenv("APP_ANDROID_APPS"))
@@ -140,6 +143,18 @@ func Load(getenv func(string) string, readFile func(string) ([]byte, error)) (Co
 			return Config{}, Policy{}, fmt.Errorf("config: APP_TRUST_PROXY must be true or false")
 		}
 		c.TrustProxy = b
+	}
+
+	if v := getenv("APP_ADMIN_ALLOW_HTTP"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return Config{}, Policy{}, fmt.Errorf("config: APP_ADMIN_ALLOW_HTTP must be true or false")
+		}
+		c.AdminAllowHTTP = b
+	}
+
+	for _, h := range splitList(getenv("APP_ADMIN_HOSTS")) {
+		c.AdminHosts = append(c.AdminHosts, strings.ToLower(h))
 	}
 
 	c.LabMode = getenv("APP_LAB_MODE") == "1"

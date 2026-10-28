@@ -21,6 +21,7 @@ var statuses = map[string]int{
 	"invite_invalid":   http.StatusForbidden,
 	"not_found":        http.StatusNotFound,
 	"username_taken":   http.StatusConflict,
+	"conflict":         http.StatusConflict,
 	"stale_epoch":      http.StatusConflict,
 	"expired":          http.StatusGone,
 	"too_large":        http.StatusRequestEntityTooLarge,

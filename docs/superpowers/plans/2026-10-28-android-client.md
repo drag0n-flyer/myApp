@@ -65,6 +65,7 @@ None of these may be added before the owner approves this list. Versions are pin
 | SQLCipher for Android | `net.zetetic:sqlcipher-android` | BSD-3-Clause style (SQLCipher Community) | `:store` | Encrypted database |
 | WorkManager | `androidx.work:work-runtime-ktx` | Apache-2.0 | `:messaging` wiring, `:push` | Deferred and expedited work |
 | Credential Manager | `androidx.credentials:credentials`, `androidx.credentials:credentials-play-services-auth` | Apache-2.0 (the Play services part is Google's proprietary SDK) | `:auth` | Passkeys |
+| Biometric | `androidx.biometric:biometric` | Apache-2.0 | `:auth` | Fingerprint/face unlock (`BiometricGate`); approved 2026-10-28 |
 | OkHttp, MockWebServer | `com.squareup.okhttp3:okhttp`, `com.squareup.okhttp3:mockwebserver` (tests) | Apache-2.0 | `:net` | HTTP and WebSocket |
 | JNA | `net.java.dev.jna:jna` (`@aar` on Android, jar for JVM tests) | Apache-2.0 (dual with LGPL-2.1; we use Apache-2.0) | `:mls` | UniFFI Kotlin loads `libmlsffi.so` through it |
 | Firebase Cloud Messaging | `com.google.firebase:firebase-messaging` | Google proprietary SDK (Firebase terms) | `:push` | FCM data messages |
@@ -556,9 +557,9 @@ If plan 4's `member_keys` export is still missing, add `Engine::member_keys(grou
 
 ### Task D6: Attachments (owner review: cryptography)
 
-**Files:** `.../messaging/crypto/AttachmentCipher.kt`, `.../messaging/media/{Uploader,Downloader,AutoDownload,PhotoPrep,VoiceRecorder}.kt`; tests `AttachmentCipherTest`, `AutoDownloadTest`, Robolectric `PhotoPrepTest`.
+**Files:** `:messaging` (pure JVM): `org/example/app/messaging/crypto/AttachmentCipher.kt`, `.../messaging/media/{Uploader,Downloader,AutoDownload,MediaPlan}.kt`, `.../messaging/media/ogg/{OggOpus,VoiceNoteValidator}.kt`. `:app` (needs Android APIs): `org/example/app/media/{PhotoPrep,VoiceRecorder,VoiceNoteFinisher,MediaCache}.kt`. Tests: `AttachmentCipherTest`, `TransferTest`, `AutoDownloadTest`, `OggOpusTest`, Robolectric `PhotoPrepTest`, `VoiceNoteFinisherTest`, `VoiceRecorderTest`, instrumented `VoiceRecorderInstrumentedTest` (androidTest).
 
-**Interfaces — Produces:** `AttachmentCipher.encrypt(input, key): EncryptedBlob` and `decrypt(input, key, digest)` (chunk 65 536, nonce `0^4 ‖ u64be(i)`, AAD last-flag); `PhotoPrep.prepare(uri): Prepared` (JPEG, max side 1600, quality 70; thumbnail max side 32, quality 40, at most 1536 bytes); `VoiceRecorder` (`MediaRecorder`, `AudioEncoder.OPUS`, `OutputFormat.OGG`, 16 kHz mono, 16 kbps; see the voice-format question in design §17).
+**Interfaces — Produces:** `AttachmentCipher.encrypt(input, output): EncryptedBlob` (generates the key; the key-taking variant is internal, for vectors) and `decrypt(input, to, key, digest)` (chunk 65 536, nonce `0^4 ‖ u64be(i)`, AAD last-flag); `PhotoPrep.prepare(uri): Prepared` (JPEG, max side 1600, quality 70; thumbnail max side 32, quality 40, at most 1536 bytes); `VoiceRecorder` (`AudioRecord` 16 kHz mono + `MediaCodec` `audio/opus` at 16 kbps, packets written by `OggOpusWriter`; `start(): StartResult`, `stop(): StopResult` = Success / TooShort / Failed(reason)).
 
 - [ ] **Step 1: Failing tests:** `matchesAttachmentVector` (every `attachment-stream.json` case); `truncatedFileFails`; `resumesFromRange` (decrypt from chunk 1 after a range fetch); `autoDownloadRules` (Wi-Fi all, mobile none, voice always); `thumbnailUnder1536Bytes`.
 - [ ] **Step 2:** FAIL. **Step 3: Implement.** **Step 4:** PASS.
@@ -627,6 +628,16 @@ If plan 4's `member_keys` export is still missing, add `Engine::member_keys(grou
 - [ ] **Step 1: Failing tests:** `bytesUsedAddsHeaders`; `codecOrderPrefersH264Baseline`; instrumented `loopbackAudioConnects` (two sessions in one process connect over host candidates within 5 s on the emulator); `relayPolicyGathersOnlyRelay` (no `host` or `srflx` candidate emitted with `RELAY`); `enhancedRunsRnnoise` (the hook is called with 480-sample frames).
 - [ ] **Step 2:** FAIL. **Step 3: Implement.** **Step 4:** PASS. The owner records CPU use of Standard and Enhanced in a 5-minute call on the OnePlus 5 (`docs/measurements/android-noise-cpu.md`).
 - [ ] **Step 5: Commit** `feat(android-calls): WebRTC media session, stats, RNNoise`.
+
+### Task E5b: bundled Opus fallback encoder (after E2)
+
+**Files:** a JNI bridge in `:webrtc` or `:app` over the libopus already inside our Android WebRTC build (BSD, approved); `apps/android/app/src/main/kotlin/org/example/app/media/VoiceRecorder.kt` picks the platform encoder first, then the bundled one; instrumented `VoiceRecorderInstrumentedTest` loses its no-encoder branch.
+
+**Interfaces — Produces:** the same Ogg Opus voice notes (16 kHz mono, 16 kbps, pre-skip 312) on every Android 10+ phone, whichever encoder made them. **Size budget:** expected AAR size increase: to be measured.
+
+- [ ] **Step 1: Failing test:** remove the no-encoder branch in `VoiceRecorderInstrumentedTest` so the full test runs on every device; it fails on API 29 AOSP (no Opus encoder).
+- [ ] **Step 2:** FAIL. **Step 3: Implement** the JNI bridge and the encoder choice. **Step 4:** PASS on API 29 AOSP and API 36 in `android-emulator-ci`; record the measured AAR size increase here.
+- [ ] **Step 5: Commit** `feat(android-media): bundled Opus fallback encoder`.
 
 ### Task E6: Telecom, call notifications, `LiveCallEngine` (owner review)
 

@@ -1,0 +1,435 @@
+package push
+
+import (
+	"bytes"
+	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/ecdh"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/hkdf"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/asn1"
+	"encoding/base64"
+	"encoding/binary"
+	"encoding/json"
+	"encoding/pem"
+	"errors"
+	"fmt"
+	"io"
+	"math/big"
+	"net/http"
+	"net/netip"
+	"net/url"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/drag0n-flyer/myApp/server/internal/core"
+	"github.com/drag0n-flyer/myApp/server/internal/httpx"
+	"github.com/drag0n-flyer/myApp/server/internal/pushproto"
+)
+
+const (
+	maxEndpointChars = 1024
+	recordSize       = 4096 // RFC 8030 push services accept at least 4096 bytes
+	vapidLifetime    = 12 * time.Hour
+)
+
+// originOf returns the RFC 6454 origin of u: lower-case scheme and host, and
+// no port when it is the default 443.
+func originOf(u *url.URL) string {
+	o := "https://" + strings.ToLower(u.Hostname())
+	if p := u.Port(); p != "" && p != "443" {
+		o += ":" + p
+	}
+	return o
+}
+
+// upRegistration is what the server stores for a UnifiedPush device: the
+// distributor endpoint and the receiver's Web Push keys. It is stored as JSON
+// in push_tokens.sealed (it is not sealed: the server must read it). The
+// endpoint is a capability URL: never log it or return it from any API.
+type upRegistration struct {
+	Endpoint string      `json:"endpoint"`
+	P256dh   httpx.Bytes `json:"p256dh"`
+	Auth     httpx.Bytes `json:"auth"`
+}
+
+// validateEndpoint checks an endpoint URL at upload time.
+func validateEndpoint(s string) (*url.URL, error) {
+	if len(s) == 0 || len(s) > maxEndpointChars {
+		return nil, errors.New("endpoint must be 1 to 1024 characters")
+	}
+	u, err := url.Parse(s)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
+		return nil, errors.New("endpoint must be an https URL")
+	}
+	return u, nil
+}
+
+// validateUploadEndpoint adds the port rule. At send time the dialer enforces
+// the port on the connection itself.
+func validateUploadEndpoint(s string) (*url.URL, error) {
+	u, err := validateEndpoint(s)
+	if err != nil {
+		return nil, err
+	}
+	if p := u.Port(); p != "" && p != "443" {
+		return nil, errors.New("endpoint must use port 443")
+	}
+	if _, err := netip.ParseAddr(u.Hostname()); err == nil {
+		return nil, errors.New("endpoint must use a host name, not an IP address")
+	}
+	return u, nil
+}
+
+func validateKeys(p256dh, auth []byte) error {
+	if _, err := ecdh.P256().NewPublicKey(p256dh); err != nil {
+		return errors.New("p256dh must be an uncompressed P-256 public key")
+	}
+	if len(auth) != 16 {
+		return errors.New("auth must be 16 bytes")
+	}
+	return nil
+}
+
+// encryptAES128GCM encrypts data for a Web Push receiver (RFC 8291, with the
+// RFC 8188 aes128gcm content coding) in a single record.
+func encryptAES128GCM(uaPub, auth, data []byte, asPriv *ecdh.PrivateKey, salt []byte) ([]byte, error) {
+	if len(data)+1+16 > recordSize-86 {
+		return nil, errors.New("push: payload too large")
+	}
+	ua, err := ecdh.P256().NewPublicKey(uaPub)
+	if err != nil {
+		return nil, err
+	}
+	secret, err := asPriv.ECDH(ua)
+	if err != nil {
+		return nil, err
+	}
+	asPub := asPriv.PublicKey().Bytes()
+	prkKey, err := hkdf.Extract(sha256.New, secret, auth)
+	if err != nil {
+		return nil, err
+	}
+	info := append(append([]byte("WebPush: info\x00"), uaPub...), asPub...)
+	ikm, err := hkdf.Expand(sha256.New, prkKey, string(info), 32)
+	if err != nil {
+		return nil, err
+	}
+	prk, err := hkdf.Extract(sha256.New, ikm, salt)
+	if err != nil {
+		return nil, err
+	}
+	cek, err := hkdf.Expand(sha256.New, prk, "Content-Encoding: aes128gcm\x00", 16)
+	if err != nil {
+		return nil, err
+	}
+	nonce, err := hkdf.Expand(sha256.New, prk, "Content-Encoding: nonce\x00", 12)
+	if err != nil {
+		return nil, err
+	}
+	blk, err := aes.NewCipher(cek)
+	if err != nil {
+		return nil, err
+	}
+	g, err := cipher.NewGCM(blk)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]byte, 0, 86+len(data)+1+16)
+	out = append(out, salt...)
+	out = binary.BigEndian.AppendUint32(out, recordSize)
+	out = append(out, byte(len(asPub)))
+	out = append(out, asPub...)
+	plain := append(append([]byte(nil), data...), 0x02) // last-record delimiter, no padding
+	return g.Seal(out, nonce, plain, nil), nil
+}
+
+func encrypt(uaPub, auth, data []byte) ([]byte, error) {
+	asPriv, err := ecdh.P256().GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	salt := make([]byte, 16)
+	if _, err := rand.Read(salt); err != nil {
+		return nil, err
+	}
+	return encryptAES128GCM(uaPub, auth, data, asPriv, salt)
+}
+
+// ---- VAPID (RFC 8292) ----
+
+// WriteVAPIDKey writes a P-256 private key as PKCS#8 PEM.
+func WriteVAPIDKey(w io.Writer, k *ecdsa.PrivateKey) error {
+	der, err := x509.MarshalPKCS8PrivateKey(k)
+	if err != nil {
+		return err
+	}
+	return pem.Encode(w, &pem.Block{Type: "PRIVATE KEY", Bytes: der})
+}
+
+func readVAPIDKey(path string) (*ecdsa.PrivateKey, error) {
+	if path == "" {
+		return nil, errors.New("push: no VAPID key file configured")
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("push: read VAPID key: %w", err)
+	}
+	blk, _ := pem.Decode(b)
+	if blk == nil {
+		return nil, errors.New("push: VAPID key is not PEM")
+	}
+	k, err := x509.ParsePKCS8PrivateKey(blk.Bytes)
+	if err != nil {
+		return nil, errors.New("push: VAPID key is not PKCS#8")
+	}
+	ek, ok := k.(*ecdsa.PrivateKey)
+	if !ok || ek.Curve != elliptic.P256() {
+		return nil, errors.New("push: VAPID key is not P-256")
+	}
+	return ek, nil
+}
+
+func vapidPublic(k *ecdsa.PrivateKey) ([]byte, error) {
+	pub, err := k.PublicKey.ECDH()
+	if err != nil {
+		return nil, err
+	}
+	return pub.Bytes(), nil
+}
+
+// VAPIDPublicKey returns the base64url (unpadded) uncompressed public key of
+// the VAPID key file, for the server info document.
+func VAPIDPublicKey(path string) (string, error) {
+	k, err := readVAPIDKey(path)
+	if err != nil {
+		return "", err
+	}
+	pub, err := vapidPublic(k)
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(pub), nil
+}
+
+func (m *Module) loadVAPID() (*ecdsa.PrivateKey, error) {
+	m.keyMu.Lock()
+	defer m.keyMu.Unlock()
+	if m.vapid != nil {
+		return m.vapid, nil
+	}
+	k, err := readVAPIDKey(m.d.Config.VapidKeyFile)
+	if err != nil {
+		return nil, err
+	}
+	m.vapid = k
+	return k, nil
+}
+
+// vapidHeader returns the Authorization header value for an endpoint.
+func (m *Module) vapidHeader(endpoint *url.URL) (string, error) {
+	k, err := m.loadVAPID()
+	if err != nil {
+		return "", err
+	}
+	pub, err := vapidPublic(k)
+	if err != nil {
+		return "", err
+	}
+	enc := base64.RawURLEncoding
+	hdr := enc.EncodeToString([]byte(`{"typ":"JWT","alg":"ES256"}`))
+	sub := "https://" + m.d.Config.Host
+	if m.d.Config.Host == "" {
+		sub = "mailto:admin@invalid"
+	}
+	claims, err := json.Marshal(map[string]any{
+		"aud": originOf(endpoint),
+		"exp": m.d.Now().Add(vapidLifetime).Unix(),
+		"sub": sub,
+	})
+	if err != nil {
+		return "", err
+	}
+	signing := hdr + "." + enc.EncodeToString(claims)
+	h := sha256.Sum256([]byte(signing))
+	der, err := ecdsa.SignASN1(rand.Reader, k, h[:])
+	if err != nil {
+		return "", err
+	}
+	var rs struct{ R, S *big.Int }
+	if _, err := asn1.Unmarshal(der, &rs); err != nil {
+		return "", err
+	}
+	sig := make([]byte, 64)
+	rs.R.FillBytes(sig[:32])
+	rs.S.FillBytes(sig[32:])
+	return "vapid t=" + signing + "." + enc.EncodeToString(sig) + ", k=" + enc.EncodeToString(pub), nil
+}
+
+const (
+	upMaxInFlight = 64 // all UnifiedPush sends together, separate from gateway pushes
+	upPerHost     = 8  // message sends in flight to one endpoint host
+	upTimeout     = 8 * time.Second
+)
+
+// upQueued is a message push waiting behind the send in flight for a device.
+type upQueued struct{ stored, payload []byte }
+
+// upDevice is the state of a device with a message send in flight.
+type upDevice struct{ pending *upQueued }
+
+var errUPDropped = errors.New("push: unifiedpush send dropped, too many in flight")
+
+// WaitBackground waits for in-flight UnifiedPush sends. Call it at shutdown.
+func (m *Module) WaitBackground() { m.upWG.Wait() }
+
+// enqueueUnifiedPush hands a send to the UnifiedPush pool and returns at once,
+// so a stalled client-supplied endpoint never holds a caller's push slot.
+//
+//   - A message push has one send in flight per device. Later ones are
+//     coalesced: only the latest payload is kept, and it goes out when the
+//     current send finishes. The device cap never drops a message.
+//   - A call push skips that queue and goes out at once in its own slot.
+//   - The global limit (and, for messages, the per-host limit) drops a send
+//     that would exceed it; the device fetches its inbox later.
+func (m *Module) enqueueUnifiedPush(_ context.Context, deviceID string, kind core.PushKind, stored, payload []byte) error {
+	var reg upRegistration
+	if err := json.Unmarshal(stored, &reg); err != nil {
+		return errors.New("push: bad unifiedpush registration")
+	}
+	ep, err := validateEndpoint(reg.Endpoint)
+	if err != nil {
+		return errors.New("push: bad unifiedpush registration")
+	}
+	host := strings.ToLower(ep.Hostname())
+	payload = append([]byte(nil), payload...)
+
+	m.upMu.Lock()
+	if kind == core.PushMessage {
+		if dv, busy := m.upDevices[deviceID]; busy {
+			dv.pending = &upQueued{stored, payload} // keep only the latest
+			m.upMu.Unlock()
+			return nil
+		}
+		if m.upActive >= upMaxInFlight || m.upHosts[host] >= upPerHost {
+			m.upMu.Unlock()
+			return errUPDropped
+		}
+		m.upHosts[host]++
+		m.upDevices[deviceID] = &upDevice{}
+	} else if m.upActive >= upMaxInFlight {
+		m.upMu.Unlock()
+		return errUPDropped
+	}
+	m.upActive++
+	m.upMu.Unlock()
+
+	m.upWG.Add(1)
+	go m.runUnifiedPush(deviceID, kind, host, stored, payload)
+	return nil
+}
+
+func (m *Module) runUnifiedPush(deviceID string, kind core.PushKind, host string, stored, payload []byte) {
+	defer m.upWG.Done()
+	for {
+		sctx, cancel := context.WithTimeout(context.Background(), upTimeout)
+		if err := m.sendUnifiedPush(sctx, deviceID, kind, stored, payload); err != nil {
+			m.d.Log.Warn("unifiedpush failed") // never the error text or endpoint
+		}
+		cancel()
+		m.upMu.Lock()
+		if kind != core.PushMessage {
+			m.upActive--
+			m.upMu.Unlock()
+			return
+		}
+		dv := m.upDevices[deviceID]
+		next := dv.pending
+		dv.pending = nil
+		m.upHosts[host]--
+		if m.upHosts[host] <= 0 {
+			delete(m.upHosts, host)
+		}
+		if next == nil {
+			delete(m.upDevices, deviceID)
+			m.upActive--
+			m.upMu.Unlock()
+			return
+		}
+		// The queued push may name a new endpoint: take that host's slot,
+		// or drop it if the host is full.
+		var reg upRegistration
+		nh := host
+		if json.Unmarshal(next.stored, &reg) == nil {
+			if u, err := validateEndpoint(reg.Endpoint); err == nil {
+				nh = strings.ToLower(u.Hostname())
+			}
+		}
+		if m.upHosts[nh] >= upPerHost {
+			delete(m.upDevices, deviceID)
+			m.upActive--
+			m.upMu.Unlock()
+			return
+		}
+		m.upHosts[nh]++
+		m.upMu.Unlock()
+		host, stored, payload = nh, next.stored, next.payload
+	}
+}
+
+// sendUnifiedPush delivers one push to a UnifiedPush distributor endpoint.
+// Errors never contain the endpoint, keys or payload.
+func (m *Module) sendUnifiedPush(ctx context.Context, deviceID string, kind core.PushKind, stored []byte, payload []byte) error {
+	var reg upRegistration
+	if err := json.Unmarshal(stored, &reg); err != nil {
+		return errors.New("push: bad unifiedpush registration")
+	}
+	ep, err := validateEndpoint(reg.Endpoint)
+	if err != nil {
+		return errors.New("push: bad unifiedpush registration")
+	}
+	kindByte, ttl := byte(0x01), 86400
+	if kind == core.PushCall {
+		kindByte, ttl = 0x02, 45
+	}
+	plain := append([]byte{kindByte}, pushproto.Pad(payload)...)
+	body, err := encrypt(reg.P256dh, reg.Auth, plain)
+	if err != nil {
+		return errors.New("push: unifiedpush encryption failed")
+	}
+	auth, err := m.vapidHeader(ep)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ep.String(), bytes.NewReader(body))
+	if err != nil {
+		return errors.New("push: bad unifiedpush registration")
+	}
+	req.Header.Set("Content-Encoding", "aes128gcm")
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("TTL", strconv.Itoa(ttl))
+	req.Header.Set("Urgency", "high")
+	req.Header.Set("Authorization", auth)
+	resp, err := m.up.Do(req)
+	if err != nil {
+		return errors.New("push: unifiedpush request failed") // the error text would carry the URL
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<14))
+	switch {
+	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone:
+		_, err := m.d.DB.Exec(ctx,
+			`delete from push_tokens where device_id = $1 and kind = 'unifiedpush' and sealed = $2`, deviceID, stored)
+		return err
+	case resp.StatusCode/100 != 2:
+		return fmt.Errorf("push: unifiedpush endpoint answered %d", resp.StatusCode)
+	}
+	return nil
+}

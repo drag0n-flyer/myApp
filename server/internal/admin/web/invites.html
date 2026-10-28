@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Invites - Server admin</title>
+<link rel="stylesheet" href="static/admin.css">
+</head>
+<body data-page="invites">
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site">
+    <p class="brand">Server admin</p>
+    <p class="who" id="who"></p>
+    <nav id="nav" aria-label="Admin sections"></nav>
+</header>
+<main id="main">
+<h1>Invites</h1>
+<div id="notice"></div>
+<h2>Create an invite</h2>
+<form id="invite-form" class="inline">
+<div class="field">
+<label for="uses">Uses</label>
+<input type="number" id="uses" name="uses" min="1" max="100" value="1" required>
+</div>
+<div class="field">
+<label for="days">Days</label>
+<input type="number" id="days" name="days" min="1" max="90" value="14" required>
+</div>
+<button type="submit">Create invite</button>
+</form>
+<div id="created" hidden>
+<h3>New invite</h3>
+<p>Shown once. Copy it now.</p>
+<div class="copy-row">
+<label for="invite-link" class="visually-hidden">Invite link</label>
+<input type="text" id="invite-link" readonly>
+<button type="button" id="copy-link">Copy link</button>
+</div>
+</div>
+<h2>Invites</h2>
+<p><input type="checkbox" id="show-all"> <label for="show-all" class="inline-label">Show all</label></p>
+<div id="invite-list" aria-live="off"></div>
+<p><button type="button" id="more" class="secondary" hidden>Load more</button></p>
+</main>
+<noscript>This page needs JavaScript.</noscript>
+<script type="module" src="static/common.js"></script>
+<script type="module" src="static/invites.js"></script>
+</body>
+</html>

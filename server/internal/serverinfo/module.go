@@ -22,6 +22,7 @@ type Module struct {
 
 	mu        sync.Mutex
 	escrowKey string // base64url public key, cached after the first good read
+	vapidKey  string // same for the VAPID public key
 }
 
 // New returns the serverinfo module.
@@ -61,39 +62,14 @@ func (m *Module) doc(name, contentType string) httpx.HandlerFunc {
 	}
 }
 
-func (m *Module) info(w http.ResponseWriter, _ *http.Request) error {
-	p, c := m.d.Policy, m.d.Config
-	var escrow, gateway *string
-	if c.EscrowKeyFile != "" {
-		k, err := m.escrowPublicKey()
-		if err != nil {
-			return err
-		}
-		escrow = &k
+func (m *Module) info(w http.ResponseWriter, r *http.Request) error {
+	b, err := m.Document(r.Context())
+	if err != nil {
+		return err
 	}
-	if c.PushGatewayURL != "" {
-		gateway = &c.PushGatewayURL
-	}
-	features := []string{"linking"}
-	if c.TURNSecret != "" {
-		features = []string{"calls", "video", "linking"}
-	}
-	type obj = map[string]any
-	httpx.JSON(w, http.StatusOK, obj{
-		"protocol":       1,
-		"host":           c.Host,
-		"requiresInvite": p.RequiresInvite,
-		"policy": obj{
-			"defaultMode":     p.DefaultMode,
-			"maxMode":         p.MaxMode,
-			"defaultIPHiding": p.DefaultIPHiding,
-		},
-		"encryption": obj{"newConversations": p.Encryption.NewConversations, "escrowKey": escrow},
-		"push":       obj{"gateway": gateway},
-		"features":   features,
-		"federation": false,
-		"limits":     obj{"attachmentBytes": p.Limits.AttachmentBytes},
-	})
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(b)
 	return nil
 }
 

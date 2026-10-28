@@ -1,6 +1,7 @@
 knowledge/
 .superpowers/
 .vscode
+.playwright-mcp/
 
 # Apple apps
 apps/apple/*.xcodeproj
@@ -18,6 +19,9 @@ target/
 
 # Go server
 server/bin/
+/bin/
+/data/
+server/run/
 *.test
 *.out
 coverage.*
@@ -52,3 +56,7 @@ deploy/relay/certs/
 
 # Call Lab generated Info.plist and entitlements
 tools/call-lab/Generated/
+
+# Android: Firebase credentials are an owner credential (see apps/android/README.md, "Push setup")
+google-services.json
+apps/android/firebase.properties

@@ -1,2 +1,9 @@
 # Reviewed false positive: public test-vector secret literal compared in a Go test.
 f8132294f5c2f63ccb6caaf2ce01cc2e73f3dd8d:server/internal/vectors/vectors_test.go:generic-api-key:418
+# Reviewed false positive: fixed test literal (bytes 1..32 as base64url) for the Android passkey origin format.
+33d7eedb73b0b016043e3b20ae44807ed549e8a0:server/internal/identity/android_test.go:generic-api-key:71
+# Reviewed false positives: admin dashboard plan names placeholder secrets (PASSWORD, TURNSECRET) for its leak-check test.
+13d474b6bfb3957447d5df29c36ebb3b11f94b46:docs/superpowers/plans/2026-10-28-admin-dashboard.md:app-smtp-url-credentials:313
+13d474b6bfb3957447d5df29c36ebb3b11f94b46:docs/superpowers/plans/2026-10-28-admin-dashboard.md:app-turn-secret:313
+# Reviewed false positive: the .env parser test uses a made-up SMTP URL (user:p%40ss@mail.test).
+b8edb85c20e2bc25e905a8dac8b7b744d01251a0:server/internal/config/envfile_test.go:app-smtp-url-credentials:16

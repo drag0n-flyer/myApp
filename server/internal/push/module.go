@@ -5,7 +5,9 @@ package push
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
@@ -19,6 +21,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/drag0n-flyer/myApp/server/internal/config"
@@ -41,6 +44,16 @@ type Module struct {
 
 	keyMu sync.Mutex
 	key   ed25519.PrivateKey // cached after the first good read; failures are retried
+	vapid *ecdsa.PrivateKey  // the UnifiedPush VAPID key, cached the same way
+	up    *http.Client       // UnifiedPush endpoints: SSRF-guarded, no redirects
+
+	upMu      sync.Mutex
+	upActive  int
+	upDevices map[string]*upDevice
+	upHosts   map[string]int
+	upWG      sync.WaitGroup
+
+	sent, failed atomic.Uint64 // gateway outcomes since start
 }
 
 var _ core.Pusher = (*Module)(nil)
@@ -53,10 +66,14 @@ func New(d core.Deps) *Module {
 		Timeout:       httpTimeout,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	return &Module{d: d, hc: hc}
+	return &Module{d: d, hc: hc, up: newUPClient(false, nil), upDevices: map[string]*upDevice{}, upHosts: map[string]int{}}
 }
 
-func validKind(k string) bool { return k == "alert" || k == "voip" }
+func validKind(k string) bool {
+	return k == "alert" || k == "voip" || k == "fcm" || k == "unifiedpush"
+}
+
+const badKindMsg = "kind must be alert, voip, fcm or unifiedpush"
 
 // Routes registers the push endpoints.
 func (m *Module) Routes(r *httpx.Router) {
@@ -67,23 +84,68 @@ func (m *Module) Routes(r *httpx.Router) {
 func (m *Module) putToken(w http.ResponseWriter, r *http.Request) error {
 	kind := r.PathValue("kind")
 	if !validKind(kind) {
-		return httpx.Err("bad_request", "kind must be alert or voip")
-	}
-	var body struct {
-		Sealed httpx.Bytes `json:"sealed"`
-	}
-	if err := httpx.Decode(r, &body); err != nil {
-		return err
-	}
-	if len(body.Sealed) == 0 || len(body.Sealed) > maxSealedBytes {
-		return httpx.Err("bad_request", "sealed must be between 1 byte and 2 KiB")
+		return httpx.Err("bad_request", badKindMsg)
 	}
 	p := httpx.PrincipalFrom(r.Context())
-	_, err := m.d.DB.Exec(r.Context(),
+	var stored []byte
+	if kind == "unifiedpush" {
+		var body struct {
+			Endpoint string      `json:"endpoint"`
+			P256dh   httpx.Bytes `json:"p256dh"`
+			Auth     httpx.Bytes `json:"auth"`
+		}
+		if err := httpx.Decode(r, &body); err != nil {
+			return err
+		}
+		if m.d.Config.VapidKeyFile == "" {
+			return httpx.Err("bad_request", "this server does not support UnifiedPush")
+		}
+		if _, err := validateUploadEndpoint(body.Endpoint); err != nil {
+			return httpx.Err("bad_request", err.Error())
+		}
+		if err := validateKeys(body.P256dh, body.Auth); err != nil {
+			return httpx.Err("bad_request", err.Error())
+		}
+		var err error
+		if stored, err = json.Marshal(upRegistration{Endpoint: body.Endpoint, P256dh: body.P256dh, Auth: body.Auth}); err != nil {
+			return err
+		}
+	} else {
+		var body struct {
+			Sealed httpx.Bytes `json:"sealed"`
+		}
+		if err := httpx.Decode(r, &body); err != nil {
+			return err
+		}
+		if len(body.Sealed) == 0 || len(body.Sealed) > maxSealedBytes {
+			return httpx.Err("bad_request", "sealed must be between 1 byte and 2 KiB")
+		}
+		stored = body.Sealed
+	}
+	// One transport per device: fcm and unifiedpush replace each other.
+	other := map[string]string{"fcm": "unifiedpush", "unifiedpush": "fcm"}[kind]
+	tx, err := m.d.DB.Begin(r.Context())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	// Serialise concurrent uploads for one device, so both transports can't survive.
+	if _, err := tx.Exec(r.Context(), `select 1 from devices where id = $1 for update`, p.DeviceID); err != nil {
+		return err
+	}
+	if other != "" {
+		if _, err := tx.Exec(r.Context(),
+			`delete from push_tokens where device_id = $1 and kind = $2`, p.DeviceID, other); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(r.Context(),
 		`insert into push_tokens (device_id, kind, sealed, updated_at) values ($1, $2, $3, $4)
 		 on conflict (device_id, kind) do update set sealed = excluded.sealed, updated_at = excluded.updated_at`,
-		p.DeviceID, kind, body.Sealed, m.d.Now())
-	if err != nil {
+		p.DeviceID, kind, stored, m.d.Now()); err != nil {
+		return err
+	}
+	if err := tx.Commit(r.Context()); err != nil {
 		return err
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -93,7 +155,7 @@ func (m *Module) putToken(w http.ResponseWriter, r *http.Request) error {
 func (m *Module) deleteToken(w http.ResponseWriter, r *http.Request) error {
 	kind := r.PathValue("kind")
 	if !validKind(kind) {
-		return httpx.Err("bad_request", "kind must be alert or voip")
+		return httpx.Err("bad_request", badKindMsg)
 	}
 	p := httpx.PrincipalFrom(r.Context())
 	if _, err := m.d.DB.Exec(r.Context(),
@@ -121,6 +183,9 @@ func (m *Module) loadKey() (ed25519.PrivateKey, error) {
 // Validate checks the push configuration at startup. With a gateway URL set,
 // the server ID and a parseable Ed25519 signing key are required.
 func Validate(cfg config.Config) error {
+	if err := validateVAPID(cfg); err != nil {
+		return err
+	}
 	if cfg.PushGatewayURL == "" {
 		return nil
 	}
@@ -128,6 +193,15 @@ func Validate(cfg config.Config) error {
 		return errors.New("push: APP_PUSH_GATEWAY_URL requires APP_PUSH_SERVER_ID")
 	}
 	_, err := readKey(cfg.PushKeyFile)
+	return err
+}
+
+// ValidateVAPID checks the UnifiedPush VAPID key, when one is configured.
+func validateVAPID(cfg config.Config) error {
+	if cfg.VapidKeyFile == "" {
+		return nil
+	}
+	_, err := readVAPIDKey(cfg.VapidKeyFile)
 	return err
 }
 
@@ -156,9 +230,9 @@ func readKey(path string) (ed25519.PrivateKey, error) {
 
 // handleFor returns the device's sealed handle for the push, and its kind.
 func (m *Module) handleFor(ctx context.Context, deviceID string, kind core.PushKind) (string, []byte, error) {
-	order := []string{"alert"}
+	order := []string{"alert", "fcm", "unifiedpush"}
 	if kind == core.PushCall {
-		order = []string{"voip", "alert"}
+		order = []string{"voip", "alert", "fcm", "unifiedpush"}
 	}
 	for _, k := range order {
 		var sealed []byte
@@ -178,12 +252,18 @@ func (m *Module) handleFor(ctx context.Context, deviceID string, kind core.PushK
 // Push sends a push notification to a device through the gateway. A device
 // with no handle, or a disabled gateway, is not an error.
 func (m *Module) Push(ctx context.Context, deviceID string, kind core.PushKind, payload []byte) error {
-	if m.d.Config.PushGatewayURL == "" || (kind != core.PushMessage && kind != core.PushCall) {
+	if kind != core.PushMessage && kind != core.PushCall {
 		return nil
 	}
 	handleKind, sealed, err := m.handleFor(ctx, deviceID, kind)
 	if err != nil || sealed == nil {
 		return err
+	}
+	if handleKind == "unifiedpush" { // direct, no gateway
+		return m.enqueueUnifiedPush(ctx, deviceID, kind, sealed, payload)
+	}
+	if m.d.Config.PushGatewayURL == "" {
+		return nil
 	}
 	key, err := m.loadKey()
 	if err != nil {
@@ -213,10 +293,16 @@ func (m *Module) Push(ctx context.Context, deviceID string, kind core.PushKind, 
 	pushproto.Sign(key, req, body, m.d.Config.PushServerID, m.d.Now())
 	resp, err := m.hc.Do(req)
 	if err != nil {
+		m.failed.Add(1)
 		return errors.New("push: gateway request failed")
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
+	if resp.StatusCode/100 == 2 {
+		m.sent.Add(1)
+	} else {
+		m.failed.Add(1)
+	}
 	switch {
 	case resp.StatusCode == http.StatusGone:
 		_, err := m.d.DB.Exec(ctx,
@@ -233,6 +319,7 @@ func (m *Module) Push(ctx context.Context, deviceID string, kind core.PushKind, 
 func (m *Module) Commands() map[string]core.Command {
 	return map[string]core.Command{
 		"keygen push":   m.keygen,
+		"keygen vapid":  m.keygenVAPID,
 		"push register": m.register,
 	}
 }
@@ -247,6 +334,14 @@ func (m *Module) keygen(_ context.Context, _ []string, out io.Writer) error {
 		return err
 	}
 	return pem.Encode(out, &pem.Block{Type: "PRIVATE KEY", Bytes: der})
+}
+
+func (m *Module) keygenVAPID(_ context.Context, _ []string, out io.Writer) error {
+	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return err
+	}
+	return WriteVAPIDKey(out, k)
 }
 
 func (m *Module) register(ctx context.Context, args []string, out io.Writer) error {

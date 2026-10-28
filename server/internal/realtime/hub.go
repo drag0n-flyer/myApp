@@ -56,6 +56,12 @@ func (h *hub) add(c *conn) bool {
 	return true
 }
 
+func (h *hub) count() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.conns)
+}
+
 func (h *hub) get(dev string) *conn {
 	h.mu.Lock()
 	defer h.mu.Unlock()
