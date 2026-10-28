@@ -27,6 +27,9 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
     private var videoSender: RTCRtpSender?
     private var capturer: RTCCameraVideoCapturer?
     private var sendProfile: AudioProfile?
+    private var bweAudioBitrate: Int?   // the Opus cap the estimator ceiling is derived from; nil until known
+    private var bweVideoBitrate = 0     // the video sender's cap while video is on
+    private var bweMax: Int?            // the ceiling last applied
     private var statsSampler: StatsSampler?
     private var videoController: VideoController?
     private var closed = false
@@ -42,6 +45,9 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
 
     /// Test hook: `maxBitrateBps` of the audio sender's first encoding.
     var audioMaxBitrateForTesting: Int? { lock.withLock { audioSender }?.parameters.encodings.first?.maxBitrateBps?.intValue }
+
+    /// Test hook: the bandwidth estimator ceiling last applied with `setBweMinBitrateBps`.
+    var bweMaxForTesting: Int? { lock.withLock { bweMax } }
 
     /// Test hook: the flattened stats report (`outbound-rtp` payload counters and `targetBitrate` are not in `MediaStats`).
     func rawStatsForTesting() async -> [RawStat] {
@@ -123,6 +129,7 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
         // The remote offer's Opus parameters describe what we send; ours go in the answer.
         try await Self.setRemote(pc, RTCSessionDescription(type: .offer, sdp: SDPMunger.apply(send, to: sdp)))
         lock.withLock { sendProfile = send }
+        applyBweCeiling(audioBitrate: send.maxAverageBitrate)
         let answer = try await Self.answer(pc, Self.emptyConstraints)
         let munged = SDPMunger.apply(receive, to: answer)
         try await Self.setLocal(pc, RTCSessionDescription(type: .answer, sdp: munged))
@@ -133,6 +140,7 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
         let pc = try requirePC()
         try await Self.setRemote(pc, RTCSessionDescription(type: .answer, sdp: SDPMunger.apply(send, to: sdp)))
         lock.withLock { sendProfile = send }
+        applyBweCeiling(audioBitrate: send.maxAverageBitrate)
     }
 
     public func rollback() async throws {
@@ -157,11 +165,15 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
         let params = sender.parameters
         for e in params.encodings { e.maxBitrateBps = NSNumber(value: cap) }
         sender.parameters = params
+        applyBweCeiling(audioBitrate: cap)
     }
 
     public func setVideo(_ tier: VideoTier?, ceiling: DataMode) async {
         let controller = lock.withLock { videoController }
-        await controller?.setVideo(tier, ceiling: ceiling)
+        guard let controller else { return }
+        await controller.setVideo(tier, ceiling: ceiling)
+        let video = MediaLogic.effectiveTier(tier, ceiling: ceiling).map { MediaLogic.videoParameters($0).maxBitrate } ?? 0
+        applyBweCeiling(videoBitrate: video)
     }
 
     public func setMuted(_ on: Bool) async {
@@ -200,6 +212,22 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
 
     private static var emptyConstraints: RTCMediaConstraints {
         RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
+    }
+
+    /// Caps WebRTC's bandwidth estimate (and with it the pacer's padding and the probes) at the mode's wire budget,
+    /// plus the video cap while video is on. Applied whenever the send profile, the Opus cap or the video tier changes.
+    private func applyBweCeiling(audioBitrate: Int? = nil, videoBitrate: Int? = nil) {
+        let target: (RTCPeerConnection, Int)? = lock.withLock {
+            if let audioBitrate { bweAudioBitrate = audioBitrate }
+            if let videoBitrate { bweVideoBitrate = videoBitrate }
+            guard let audio = bweAudioBitrate else { return nil }
+            let ceiling = MediaLogic.bweMaxBitrate(audioBitrate: audio, videoBitrate: bweVideoBitrate)
+            guard ceiling != bweMax else { return nil }
+            bweMax = ceiling
+            return self.pc.map { ($0, ceiling) }
+        }
+        guard let target else { return }
+        _ = target.0.setBweMinBitrateBps(nil, currentBitrateBps: nil, maxBitrateBps: NSNumber(value: target.1))
     }
 
     private func requirePC() throws -> RTCPeerConnection {

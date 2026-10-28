@@ -45,6 +45,22 @@ final class MediaLogicTests: XCTestCase {
         XCTAssertEqual(MediaLogic.senderBitrateCap(requested: 5_000, profile: p), 5_000)
     }
 
+    /// The bandwidth estimator's ceiling is the mode's wire budget, so loss-driven padding and probes cannot exceed it.
+    func testBweCapIsTheModeWireBudget() {
+        XCTAssertEqual(MediaLogic.bweMaxBitrate(audioBitrate: 10_000), 21_000)
+        XCTAssertEqual(MediaLogic.bweMaxBitrate(audioBitrate: 16_000), 30_000)
+        XCTAssertEqual(MediaLogic.bweMaxBitrate(audioBitrate: 24_000), 51_000)
+        XCTAssertEqual(MediaLogic.bweMaxBitrate(audioBitrate: 40_000), 75_000)
+        for mode in DataMode.allCases {
+            let p = AudioProfile.for(mode)
+            XCTAssertEqual(MediaLogic.bweMaxBitrate(audioBitrate: p.maxAverageBitrate), p.wireBudget, "\(mode)")
+        }
+        XCTAssertEqual(MediaLogic.bweMaxBitrate(audioBitrate: 6_000), 21_000)    // below the lowest mode
+        XCTAssertEqual(MediaLogic.bweMaxBitrate(audioBitrate: 12_000), 30_000)   // the lowest mode that covers it
+        XCTAssertEqual(MediaLogic.bweMaxBitrate(audioBitrate: 64_000), 75_000)   // above the highest mode
+        XCTAssertEqual(MediaLogic.bweMaxBitrate(audioBitrate: 10_000, videoBitrate: 150_000), 171_000)
+    }
+
     func testStatsAggregation() {
         var agg = MediaStatsAggregator()
         let base: [RawStat] = [

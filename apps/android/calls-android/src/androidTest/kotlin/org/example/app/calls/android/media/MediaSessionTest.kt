@@ -219,6 +219,47 @@ class MediaSessionTest {
         assertTrue(wireBps <= profile.wireBudget, "transport $wireBps bit/s over the wire budget ${profile.wireBudget}")
     }
 
+    /**
+     * The bandwidth estimate is capped at the mode's wire budget from the start of the call and after every mode change,
+     * so WebRTC's padding and probes cannot grow past it under loss. Without the cap the estimate starts at 300 kbps and
+     * may grow to 1 Gbps. This loopback cannot drop packets, so the loss case is measured by the call lab.
+     * WebRTC never lowers the estimate below the negotiated Opus rate plus headers (the audio stream's allocation floor),
+     * so a mode change without renegotiation (High to Balanced) is checked on the ceiling it applies, not the estimate.
+     */
+    @Test
+    fun bweCeilingFollowsTheMode() = runBlocking {
+        val (a, b) = connected(send = DataMode.UltraLow)
+        assertTrue(waitFor(5_000) { has("A", IceState.Connected) || has("A", IceState.Completed) }, "the call must connect")
+        val seen = mutableListOf<String>()
+        suspend fun estimateWithin(mode: DataMode) {
+            val budget = AudioProfile.forMode(mode).wireBudget
+            assertEquals(budget, a.bweMaxForTesting, "$mode")
+            assertEquals(budget, b.bweMaxForTesting, "$mode")
+            delay(2_000)
+            val est = a.stats().availableOutgoingBitrate
+            seen += "$mode: estimate $est, budget $budget"
+            assertNotNull(est, "audio must use send-side bandwidth estimation")
+            assertTrue(est <= budget, "$mode: estimate $est bit/s over the wire budget $budget; $seen")
+        }
+        estimateWithin(DataMode.UltraLow)
+        // A lower Opus cap within the mode (network step-down) keeps the mode's ceiling.
+        a.setAudioMaxBitrate(6_000)
+        assertEquals(AudioProfile.forMode(DataMode.UltraLow).wireBudget, a.bweMaxForTesting)
+        // Renegotiated mode changes apply the new send profile's budget on both sides.
+        for (mode in listOf(DataMode.DataSaver, DataMode.High)) {
+            val p = AudioProfile.forMode(mode)
+            val offer = a.makeOffer(p, iceRestart = false)
+            val answer = b.acceptOffer(offer, send = p, receive = p)
+            a.acceptAnswer(answer, send = p)
+            estimateWithin(mode)
+        }
+        // High to Balanced is not renegotiated: the Opus cap carries the mode, and the ceiling follows it.
+        a.setAudioMaxBitrate(AudioProfile.forMode(DataMode.Balanced).maxAverageBitrate)
+        assertEquals(AudioProfile.forMode(DataMode.Balanced).wireBudget, a.bweMaxForTesting)
+        a.close()
+        b.close()
+    }
+
     /** A configure that fails after the audio source is made disposes it (and the peer connection). */
     @Test
     fun failedConfigureDisposesTheAudioSource() = runBlocking {

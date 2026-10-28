@@ -163,6 +163,18 @@ object MediaLogic {
     /** Opus bitrate cap for the RTP sender: at most the send profile's `maxAverageBitrate`, once it is known. */
     fun senderBitrateCap(requested: Int, profile: AudioProfile?): Int =
         maxOf(0, profile?.let { minOf(requested, it.maxAverageBitrate) } ?: requested)
+
+    /**
+     * Bandwidth estimator ceiling (`PeerConnection.setBitrate(null, null, max)`): the wire budget of the lowest mode
+     * whose Opus target covers [audioBitrate] (the highest mode's budget above that), plus the video sender's cap when
+     * video is on. Without it WebRTC's estimator may grow to 1 Gbps; under loss its loss-based stage pads up to that
+     * estimate and probes after each drop, so an audio call sends payload-less padding far past its budget.
+     */
+    fun bweMaxBitrate(audioBitrate: Int, videoBitrate: Int = 0): Int {
+        val modes = AudioProfile.table.values.sortedBy { it.maxAverageBitrate }
+        val audio = modes.firstOrNull { it.maxAverageBitrate >= audioBitrate } ?: modes.last()
+        return audio.wireBudget + maxOf(0, videoBitrate)
+    }
 }
 
 /**

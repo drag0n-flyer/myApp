@@ -116,6 +116,9 @@ class WebRtcMediaSession(context: Context, private val settings: UserSettings) :
     private var textureHelper: SurfaceTextureHelper? = null
     private var capturing: VideoTier? = null
     private var sendProfile: AudioProfile? = null
+    private var bweAudioBitrate: Int? = null // the Opus cap the estimator ceiling is derived from; null until known
+    private var bweVideoBitrate = 0 // the video sender's cap while video is on
+    private var bweMax: Int? = null // the ceiling last applied
     private var closed = false
     private val aggregator = MediaStatsAggregator()
 
@@ -126,6 +129,10 @@ class WebRtcMediaSession(context: Context, private val settings: UserSettings) :
     /** Test hook: `maxBitrateBps` of the audio sender's first encoding. */
     internal val audioMaxBitrateForTesting: Int?
         get() = synchronized(lock) { audioSender }?.parameters?.encodings?.firstOrNull()?.maxBitrateBps
+
+    /** Test hook: the bandwidth estimator ceiling last applied with `setBitrate`. */
+    internal val bweMaxForTesting: Int?
+        get() = synchronized(lock) { bweMax }
 
     /** Test hook: the flattened stats report (the `outbound-rtp` payload counters are not in [MediaStats]). */
     internal suspend fun rawStatsForTesting(): List<RawStat> = rawStats()
@@ -217,6 +224,7 @@ class WebRtcMediaSession(context: Context, private val settings: UserSettings) :
         // The remote offer's Opus parameters describe what we send; ours go in the answer.
         setRemote(peer, SessionDescription(SessionDescription.Type.OFFER, SdpMunger.apply(send, sdp)))
         synchronized(lock) { sendProfile = send }
+        applyBweCeiling(audioBitrate = send.maxAverageBitrate)
         val answer = create(peer, offer = false, MediaConstraints())
         val munged = SdpMunger.apply(receive, answer)
         setLocal(peer, SessionDescription(SessionDescription.Type.ANSWER, munged))
@@ -227,6 +235,7 @@ class WebRtcMediaSession(context: Context, private val settings: UserSettings) :
         val peer = requirePc()
         setRemote(peer, SessionDescription(SessionDescription.Type.ANSWER, SdpMunger.apply(send, sdp)))
         synchronized(lock) { sendProfile = send }
+        applyBweCeiling(audioBitrate = send.maxAverageBitrate)
     }
 
     override suspend fun rollback() {
@@ -251,6 +260,7 @@ class WebRtcMediaSession(context: Context, private val settings: UserSettings) :
         val params = sender.parameters
         params.encodings.forEach { it.maxBitrateBps = cap }
         sender.setParameters(params)
+        applyBweCeiling(audioBitrate = cap)
     }
 
     override suspend fun setVideo(tier: VideoTier?, ceiling: DataMode) {
@@ -261,7 +271,8 @@ class WebRtcMediaSession(context: Context, private val settings: UserSettings) :
             if (effective == null) {
                 track.setEnabled(false)
                 stopCapture()
-                return
+                bweVideoBitrate = 0
+                return@synchronized
             }
             val spec = VideoLadder.spec(effective)
             val params = sender.parameters
@@ -272,7 +283,9 @@ class WebRtcMediaSession(context: Context, private val settings: UserSettings) :
             sender.setParameters(params)
             if (capturing != effective) startCapture(effective)
             track.setEnabled(true)
+            bweVideoBitrate = spec.maxBps
         }
+        applyBweCeiling()
     }
 
     override suspend fun setMuted(on: Boolean) {
@@ -311,6 +324,22 @@ class WebRtcMediaSession(context: Context, private val settings: UserSettings) :
     }
 
     // Internals
+
+    /**
+     * Caps WebRTC's bandwidth estimate (and with it the pacer's padding and the probes) at the mode's wire budget, plus
+     * the video cap while video is on. Applied whenever the send profile, the Opus cap or the video tier changes.
+     */
+    private fun applyBweCeiling(audioBitrate: Int? = null) {
+        val (peer, max) = synchronized(lock) {
+            if (audioBitrate != null) bweAudioBitrate = audioBitrate
+            val audio = bweAudioBitrate ?: return
+            val max = MediaLogic.bweMaxBitrate(audio, bweVideoBitrate)
+            if (max == bweMax) return
+            bweMax = max
+            pc to max
+        }
+        peer?.setBitrate(null, null, max)
+    }
 
     private fun requirePc(): PeerConnection = synchronized(lock) { pc } ?: throw MediaSessionException("not configured")
 

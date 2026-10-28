@@ -157,6 +157,44 @@ final class LoopbackTests: XCTestCase {
         XCTAssertLessThanOrEqual(wireBps, Double(AudioProfile.for(.ultraLow).wireBudget))
     }
 
+    /// The bandwidth estimate is capped at the mode's wire budget from the start of the call and after every mode
+    /// change, so WebRTC's padding and probes cannot grow past it under loss. Without the cap the estimate starts at
+    /// 300 kbps and may grow to 1 Gbps. This loopback cannot drop packets, so the loss case is measured by the call lab.
+    /// WebRTC never lowers the estimate below the negotiated Opus rate plus headers (the audio stream's allocation
+    /// floor), so a mode change without renegotiation (High to Balanced) is checked on the ceiling it applies.
+    func testBweCeilingFollowsTheMode() async throws {
+        let (a, b) = try await connected(send: .ultraLow)
+        let up = await wait(10) { self.has("A", .connected) }
+        XCTAssertTrue(up, "the call must connect")
+        try await assertEstimateWithin(.ultraLow, a, b)
+        // A lower Opus cap within the mode (network step-down) keeps the mode's ceiling.
+        await a.setAudioMaxBitrate(6_000)
+        XCTAssertEqual(a.bweMaxForTesting, AudioProfile.for(.ultraLow).wireBudget)
+        // Renegotiated mode changes apply the new send profile's budget on both sides.
+        for mode in [DataMode.dataSaver, .high] {
+            let p = AudioProfile.for(mode)
+            let offer = try await a.makeOffer(receive: p, iceRestart: false)
+            let answer = try await b.acceptOffer(offer, send: p, receive: p)
+            try await a.acceptAnswer(answer, send: p)
+            try await assertEstimateWithin(mode, a, b)
+        }
+        // High to Balanced is not renegotiated: the Opus cap carries the mode, and the ceiling follows it.
+        await a.setAudioMaxBitrate(AudioProfile.for(.balanced).maxAverageBitrate)
+        XCTAssertEqual(a.bweMaxForTesting, AudioProfile.for(.balanced).wireBudget)
+        await a.close(); await b.close()
+    }
+
+    private func assertEstimateWithin(_ mode: DataMode, _ a: WebRTCMediaSession, _ b: WebRTCMediaSession) async throws {
+        let budget = AudioProfile.for(mode).wireBudget
+        XCTAssertEqual(a.bweMaxForTesting, budget, "\(mode)")
+        XCTAssertEqual(b.bweMaxForTesting, budget, "\(mode)")
+        try await Task.sleep(nanoseconds: 2_000_000_000)
+        let est = await a.stats().availableOutgoingBitrate
+        print("bwe ceiling \(mode): estimate \(est.map { "\($0)" } ?? "none") bit/s, budget \(budget)")
+        XCTAssertNotNil(est, "audio must use send-side bandwidth estimation")
+        if let est { XCTAssertLessThanOrEqual(est, Double(budget), "\(mode)") }
+    }
+
     /// Sum of one counter over the audio `outbound-rtp` entries.
     static func audioOut(_ stats: [RawStat], _ key: String) -> Double {
         stats.filter { $0.type == "outbound-rtp" && $0.strings["kind"] == "audio" }.reduce(0) { $0 + ($1.numbers[key] ?? 0) }
