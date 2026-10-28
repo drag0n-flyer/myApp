@@ -11,37 +11,62 @@ check() { # name expected actual
     fi
 }
 
-test_apply_loss5_pipes_and_both_directions() {
-    exp='dnctl pipe 1 config delay 40 plr 0.05
-dnctl pipe 2 config delay 40 plr 0.05
+# On lo0 a packet between two local processes leaves once (out) and arrives once (in). Only the out
+# pass is shaped, so each packet goes through exactly one pipe. The mask gives every sending socket
+# its own dynamic pipe, so each call direction has its own delay, loss and rate.
+test_apply_loss5_one_pipe_per_packet() {
+    exp='dnctl pipe 1 config delay 40 plr 0.05 mask src-ip 0xffffffff src-port 0xffff
 pfctl -a com.apple/call-lab -f -
-  dummynet out quick on lo0 all pipe 1
-  dummynet in quick on lo0 all pipe 2
+  dummynet out quick on lo0 proto udp all pipe 1
 pfctl -E'
-    check apply_loss5_pipes_and_both_directions "$exp" "$(sh "$S" --dry-run apply lo0 loss5 2>/dev/null)"
+    check apply_loss5_one_pipe_per_packet "$exp" "$(sh "$S" --dry-run apply lo0 loss5 2>/dev/null)"
+}
+
+test_each_packet_exactly_one_pipe() {
+    for mode in "" relay; do
+        out=$(sh "$S" --dry-run apply lo0 loss5 $mode 2>/dev/null)
+        rules=$(echo "$out" | grep -c 'dummynet ')
+        outs=$(echo "$out" | grep -c 'dummynet out ')
+        ins=$(echo "$out" | grep -c 'dummynet in ')
+        pipes=$(echo "$out" | grep -c '^dnctl pipe ')
+        masked=$(echo "$out" | grep '^dnctl pipe ' | grep -c 'mask src-ip 0xffffffff src-port 0xffff$')
+        check "each_packet_exactly_one_pipe(${mode:-direct})" "1 1 0 1 1" "$rules $outs $ins $pipes $masked"
+    done
+}
+
+# Relay: media goes A -> coturn -> B, three lo0 packets (client to 3478, coturn relay to relay,
+# 3478 to client). Only the clients' sends to 3478 are shaped, so each direction is shaped once.
+test_relay_shapes_only_client_sends_to_turn() {
+    r=$(sh "$S" --dry-run apply lo0 loss5 relay 2>/dev/null | grep 'dummynet ')
+    check relay_shapes_only_client_sends_to_turn "  dummynet out quick on lo0 proto udp to any port 3478 pipe 1" "$r"
+}
+
+test_bad_mode() {
+    out=$(sh "$S" --dry-run apply lo0 loss5 sideways 2>&1); rc=$?
+    check bad_mode "2 unknown mode: sideways (direct or relay)" "$rc $out"
 }
 
 test_apply_has_plr_and_delay() {
     out=$(sh "$S" --dry-run apply lo0 loss5 2>/dev/null)
     n=$(echo "$out" | grep '^dnctl pipe' | grep -c 'plr 0.05' )
     d=$(echo "$out" | grep '^dnctl pipe' | grep -c 'delay 40 ')
-    check apply_has_plr_and_delay "2 2" "$n $d"
+    check apply_has_plr_and_delay "1 1" "$n $d"
 }
 
 test_rate_only_when_capped() {
     a=$(sh "$S" --dry-run apply lo0 cap32 2>/dev/null | grep -c 'bw 32Kbit/s')
     b=$(sh "$S" --dry-run apply lo0 loss5 2>/dev/null | grep -c ' bw ')
-    check rate_only_when_capped "2 0" "$a $b"
+    check rate_only_when_capped "1 0" "$a $b"
 }
 
 test_clean_profile_has_no_loss() {
     out=$(sh "$S" --dry-run apply lo0 clean 2>/dev/null | grep '^dnctl pipe 1')
-    check clean_profile_has_no_loss "dnctl pipe 1 config delay 0 plr 0" "$out"
+    check clean_profile_has_no_loss "dnctl pipe 1 config delay 0 plr 0 mask src-ip 0xffffffff src-port 0xffff" "$out"
 }
 
 test_jitter_is_noted_not_applied() {
     err=$(sh "$S" --dry-run apply lo0 loss5 2>&1 >/dev/null)
-    check jitter_is_noted_not_applied "note: dummynet has no jitter; profile loss5 jitter 5 ms is not applied" "$err"
+    check jitter_is_noted_not_applied "note: jitter not simulated (dummynet has no jitter); profile loss5 jitter 5 ms is not applied" "$err"
 }
 
 test_clear() {
@@ -70,7 +95,10 @@ test_executable() {
     check executable yes "$r"
 }
 
-test_apply_loss5_pipes_and_both_directions
+test_apply_loss5_one_pipe_per_packet
+test_each_packet_exactly_one_pipe
+test_relay_shapes_only_client_sends_to_turn
+test_bad_mode
 test_apply_has_plr_and_delay
 test_rate_only_when_capped
 test_clean_profile_has_no_loss

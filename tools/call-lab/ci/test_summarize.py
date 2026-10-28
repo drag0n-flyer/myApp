@@ -11,11 +11,11 @@ HEADER = summarize.stats_header()
 
 
 def make_run(root, name, profile="clean", events=None, header=None, stats_rows=None, meta=None,
-             bytes_json=None, visqol=None, dnsmos=None):
+             bytes_json=None, visqol=None, dnsmos=None, legs_json=None):
     d = os.path.join(root, name)
     os.makedirs(d)
     m = {"run_id": name, "preset": "balanced", "path": "direct", "profile": profile,
-         "noise_snr_db": None, "client_b": "mac-headless", "capture_legs": 1, "label": "CI, simulated"}
+         "noise_snr_db": None, "client_b": "mac-headless", "label": "CI, simulated"}
     m.update(meta or {})
     with open(os.path.join(d, "meta.json"), "w") as f:
         json.dump(m, f)
@@ -33,7 +33,8 @@ def make_run(root, name, profile="clean", events=None, header=None, stats_rows=N
         for r in stats_rows or [{"rtt_ms": "40", "a_pkts_recv": "990", "a_pkts_lost": "10",
                                  "concealed_samples": "480", "total_samples_recv": "48000"}]:
             w.writerow([r.get(c, "") for c in cols])
-    for fname, obj in (("bytes.json", bytes_json), ("visqol.json", visqol), ("dnsmos.json", dnsmos)):
+    for fname, obj in (("bytes.json", bytes_json), ("visqol.json", visqol), ("dnsmos.json", dnsmos),
+                      ("bytes_legs.json", legs_json)):
         if obj is not None:
             with open(os.path.join(d, fname), "w") as f:
                 json.dump(obj, f)
@@ -103,12 +104,43 @@ class SummarizeTests(unittest.TestCase):
         self.assertEqual(r["result"], "fail")
         self.assertIn("no first_audio_packet", r["reasons"])
 
-    def test_relay_bytes_divided_by_capture_legs(self):
-        make_run(self.runs, "relay", profile="clean", meta={"path": "relay", "capture_legs": 2},
-                 bytes_json={"bytes_per_min": 300000.0, "mb_per_10min": 3.0})
+    def test_relay_counts_caller_leg_once(self):
+        # Each client's leg to coturn is counted on its own; the legs differ, so halving their sum would be wrong.
+        make_run(self.runs, "relay", profile="clean", meta={"path": "relay"},
+                 bytes_json={"bytes_per_min": 400000.0, "mb_per_10min": 4.0},
+                 legs_json={"caller": {"bytes_per_min": 100000.0, "mb_per_10min": 1.0},
+                            "callee": {"bytes_per_min": 300000.0, "mb_per_10min": 3.0}})
         r = self.result("relay")
+        self.assertEqual(r["bytes_per_min"], 100000.0)
+        self.assertEqual(r["mb_per_10min"], 1.0)
+        self.assertEqual(r["callee_mb_per_10min"], 3.0)
+
+    def test_relay_without_legs_reports_no_bytes(self):
+        make_run(self.runs, "relay", profile="clean", meta={"path": "relay"},
+                 bytes_json={"bytes_per_min": 400000.0, "mb_per_10min": 4.0})
+        r = self.result("relay")
+        self.assertIsNone(r["bytes_per_min"])
+        self.assertIsNone(r["mb_per_10min"])
+
+    def test_direct_uses_whole_capture(self):
+        make_run(self.runs, "direct", profile="clean", bytes_json={"bytes_per_min": 150000.0, "mb_per_10min": 1.5})
+        r = self.result("direct")
         self.assertEqual(r["bytes_per_min"], 150000.0)
         self.assertEqual(r["mb_per_10min"], 1.5)
+
+    def test_missing_scores_are_not_measured(self):
+        make_run(self.runs, "noscore", profile="clean")
+        r = self.result("noscore")
+        for k in ("visqol_moslqo", "dnsmos_sig", "dnsmos_bak", "dnsmos_ovrl"):
+            self.assertEqual(r[k], "not measured", k)
+        self.assertEqual(r["result"], "pass")
+
+    def test_jitter_not_simulated(self):
+        make_run(self.runs, "ok", profile="loss5")
+        self.assertEqual(self.result("ok")["jitter"], "not simulated")
+        out = os.path.join(self.tmp.name, "out")
+        summarize.main([self.runs, "--out", out])
+        self.assertIn("jitter: not simulated", open(os.path.join(out, "summary.md")).read())
 
     def test_header_matches_statsrow_source(self):
         self.assertTrue(HEADER.startswith("t_ms,run_id,preset,"))

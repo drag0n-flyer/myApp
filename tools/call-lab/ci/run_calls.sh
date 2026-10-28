@@ -49,7 +49,7 @@ bin="$app/Contents/MacOS/CallLabMac"
 if [ "$dry" -eq 1 ]; then
     echo "$MATRIX" | while read -r preset path profile snr; do
         echo "call $preset $path $profile noise=$snr ${seconds}s"
-        sh "$lab/netem/dummynet.sh" --dry-run apply lo0 "$profile" 2>/dev/null | sed 's/^/  /'
+        sh "$lab/netem/dummynet.sh" --dry-run apply lo0 "$profile" "$path" 2>/dev/null | sed 's/^/  /'
     done
     exit 0
 fi
@@ -107,6 +107,19 @@ wait_for() {
     wait "$1"
 }
 
+# Local UDP ports of process $1 (lsof), one per line, mDNS left out.
+udp_ports() {
+    lsof -nP -a -p "$1" -iUDP -Fn 2>/dev/null | sed -n 's/^n[^>]*:\([0-9][0-9]*\)\(->.*\)\{0,1\}$/\1/p' | grep -v '^5353$' | sort -u
+}
+
+# pcapbytes JSON for one client's leg: the packets between its ports ($2) and coturn; null if none.
+leg_bytes() {
+    [ -n "$2" ] || { echo null; return; }
+    expr=$(echo "$2" | sed 's/^/port /' | paste -sd'|' - | sed 's/|/ or /g')
+    tcpdump -r "$1" -w "$tmp/leg.pcap" "udp port 3478 and ($expr)" 2>/dev/null \
+        && python3 "$lab/pcap/pcapbytes.py" "$tmp/leg.pcap" --local "$locals" --udp-only 2>/dev/null || echo null
+}
+
 n=0
 status=0
 echo "$MATRIX" > "$tmp/matrix"
@@ -122,10 +135,10 @@ while read -r preset path profile snr; do
     fi
     run="$out/$name"; mkdir -p "$run"
     echo "== $name"
-    if [ "$path" = relay ]; then filter='udp port 3478'; legs=2
-    else filter='udp and not port 3478 and not port 53 and not port 5353'; legs=1; fi
+    if [ "$path" = relay ]; then filter='udp port 3478'
+    else filter='udp and not port 3478 and not port 53 and not port 5353'; fi
 
-    sudo sh "$lab/netem/dummynet.sh" apply lo0 "$profile" </dev/null || { status=1; continue; }
+    sudo sh "$lab/netem/dummynet.sh" apply lo0 "$profile" "$path" </dev/null || { status=1; continue; }
     sudo tcpdump -i lo0 -U -s 128 -w "$tmp/$name.pcap" "$filter" </dev/null 2>"$tmp/tcpdump.log" &
     sleep 2
 
@@ -136,7 +149,10 @@ while read -r preset path profile snr; do
     LAB_HOST=http://127.0.0.1:8080 LAB_TOKEN=$tok_a LAB_PEER=$acct_b LAB_SECONDS=$seconds \
         "$bin" --headless --role caller --preset "$preset" --path "$path" --stimulus "$stim" --out "$run/caller" </dev/null >"$run/caller.log" 2>&1 &
     caller=$!
-    wait_for "$caller" $((seconds + 180)); rc_a=$?
+    # Each client's UDP ports, read once the call is up, pick out its own leg to coturn.
+    sleep 45
+    ports_a=$(udp_ports "$caller"); ports_b=$(udp_ports "$callee")
+    wait_for "$caller" $((seconds + 135)); rc_a=$?
     wait_for "$callee" 60; rc_b=$?
     echo "caller exit $rc_a, callee exit $rc_b"
 
@@ -146,8 +162,13 @@ while read -r preset path profile snr; do
     for f in stats.csv events.csv; do [ -f "$run/caller/$f" ] && cp "$run/caller/$f" "$run/$f"; done
     if [ -f "$tmp/$name.pcap" ]; then
         sudo chown "$(id -u)" "$tmp/$name.pcap"
-        python3 "$lab/pcap/pcapbytes.py" "$tmp/$name.pcap" --local "$locals" --udp-only >"$run/bytes.json" || rm -f "$run/bytes.json"
-        rm -f "$tmp/$name.pcap"
+        if [ "$path" = relay ]; then
+            printf '{"caller": %s, "callee": %s}\n' "$(leg_bytes "$tmp/$name.pcap" "$ports_a")" \
+                "$(leg_bytes "$tmp/$name.pcap" "$ports_b")" >"$run/bytes_legs.json"
+        else
+            python3 "$lab/pcap/pcapbytes.py" "$tmp/$name.pcap" --local "$locals" --udp-only >"$run/bytes.json" || rm -f "$run/bytes.json"
+        fi
+        rm -f "$tmp/$name.pcap" "$tmp/leg.pcap"
     fi
     # Score step: needs client B's received.wav. No virtual audio device records client B's
     # output on the runner yet, so the scores stay empty (report only) until one is approved.
@@ -158,8 +179,8 @@ while read -r preset path profile snr; do
         echo "no received.wav: speech and noise scores not measured" >"$run/score.log"
     fi
     snr_json=null; [ "$snr" != "-" ] && snr_json=$snr
-    printf '{"run_id": "%s", "preset": "%s", "path": "%s", "profile": "%s", "noise_snr_db": %s, "client_b": "mac-headless", "capture_legs": %s, "caller_exit": %s, "callee_exit": %s, "label": "CI, simulated"}\n' \
-        "$name" "$preset" "$path" "$profile" "$snr_json" "$legs" "$rc_a" "$rc_b" >"$run/meta.json"
+    printf '{"run_id": "%s", "preset": "%s", "path": "%s", "profile": "%s", "noise_snr_db": %s, "client_b": "mac-headless", "caller_exit": %s, "callee_exit": %s, "label": "CI, simulated"}\n' \
+        "$name" "$preset" "$path" "$profile" "$snr_json" "$rc_a" "$rc_b" >"$run/meta.json"
 done < "$tmp/matrix"
 cp "$tmp/server.log" "$out/server.log" 2>/dev/null
 grep -v -i secret "$tmp/turn.log" 2>/dev/null | tail -200 >"$out/turn.log"

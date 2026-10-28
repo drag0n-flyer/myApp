@@ -4,10 +4,13 @@
 Usage: summarize.py <runs-dir> --out <dir>
 
 Reads every <runs-dir>/*/ written by run_calls.sh:
-  meta.json    run_id, preset, path, profile, noise_snr_db, client_b, capture_legs, label
+  meta.json    run_id, preset, path, profile, noise_snr_db, client_b, label
   events.csv   caller's EventLog (t_ms,event,detail)
   stats.csv    caller's StatsRow rows
-  bytes.json   pcapbytes.py output (optional)
+  bytes.json   pcapbytes.py output for the whole capture (optional; used on path direct, where the
+               capture holds only the A <-> B legs, each packet once)
+  bytes_legs.json  {"caller": pcapbytes, "callee": pcapbytes}, each client's own leg to coturn
+               (optional; used on path relay, where the capture also holds the other client's leg)
   visqol.json  score.py visqol output (optional)
   dnsmos.json  score.py dnsmos output (optional)
 Writes summary.md and summary.csv, labelled "CI, simulated", and exits 1 if any run fails.
@@ -28,12 +31,14 @@ import sys
 LABEL = "CI, simulated"
 CONNECT_LIMIT_MS = 3000          # GOAL.md section 9, enforced on profile clean only (as in L9)
 GATED_PROFILE = "clean"
+NOT_MEASURED = "not measured"    # speech and noise scores without client B's recording (owner ruling)
+JITTER = "not simulated"         # dummynet has no jitter; the profile's jitter_ms is never applied
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATSROW = os.path.join(HERE, "..", "Packages", "CallLabKit", "Sources", "CallLabKit", "StatsRow.swift")
 
 COLUMNS = ["run_id", "label", "preset", "path", "profile", "noise_snr_db", "client_b",
            "connect_ms", "first_audio", "disconnected", "header_ok",
-           "bytes_per_min", "mb_per_10min", "loss_pct", "concealed_pct", "rtt_ms_median",
+           "bytes_per_min", "mb_per_10min", "callee_mb_per_10min", "jitter", "loss_pct", "concealed_pct", "rtt_ms_median",
            "visqol_moslqo", "dnsmos_sig", "dnsmos_bak", "dnsmos_ovrl", "result", "reasons"]
 
 
@@ -98,6 +103,7 @@ def summarize_run(d, header):
     r = {c: None for c in COLUMNS}
     r["run_id"] = meta.get("run_id") or os.path.basename(d.rstrip("/"))
     r["label"] = LABEL
+    r["jitter"] = JITTER
     for k in ("preset", "path", "profile", "noise_snr_db", "client_b"):
         r[k] = meta.get(k)
     reasons = []
@@ -124,20 +130,26 @@ def summarize_run(d, header):
     rtts = [v for v in (_num(x.get("rtt_ms")) for x in rows) if v is not None]
     if rtts:
         r["rtt_ms_median"] = round(statistics.median(rtts), 1)
-    b = _load_json(os.path.join(d, "bytes.json"))
-    if b:
-        # A relay capture on lo0 holds both clients' legs to the TURN server; one device's share is 1/legs.
-        legs = meta.get("capture_legs") or 1
-        for k in ("bytes_per_min", "mb_per_10min"):
-            if b.get(k) is not None:
-                r[k] = round(b[k] / legs, 2)
+    if r["path"] == "relay":
+        # The lo0 capture holds both clients' legs to coturn; count client A's own leg once.
+        legs = _load_json(os.path.join(d, "bytes_legs.json")) or {}
+        a, b = legs.get("caller") or {}, legs.get("callee") or {}
+        r["bytes_per_min"], r["mb_per_10min"] = a.get("bytes_per_min"), a.get("mb_per_10min")
+        r["callee_mb_per_10min"] = b.get("mb_per_10min")
+    else:
+        b = _load_json(os.path.join(d, "bytes.json")) or {}
+        r["bytes_per_min"], r["mb_per_10min"] = b.get("bytes_per_min"), b.get("mb_per_10min")
+    # No virtual audio device records client B's output on the runner, so scores are usually absent.
+    for k in ("visqol_moslqo", "dnsmos_sig", "dnsmos_bak", "dnsmos_ovrl"):
+        r[k] = NOT_MEASURED
     v = _load_json(os.path.join(d, "visqol.json"))
     if v and v.get("visqol_moslqo") is not None:
         r["visqol_moslqo"] = v["visqol_moslqo"]
     n = _load_json(os.path.join(d, "dnsmos.json"))
     if n:
         for k in ("sig", "bak", "ovrl"):
-            r["dnsmos_" + k] = n.get(k)
+            if n.get(k) is not None:
+                r["dnsmos_" + k] = n[k]
 
     # Pass rules.
     if not r["first_audio"]:
@@ -180,12 +192,14 @@ def write(rows, out):
           f"Label: **{LABEL}**. Two simulated clients on one macOS CI runner, dummynet shaping on lo0. "
           "These are not device results: they never go into the L10 tables, GOAL.md's mode table or "
           "`DataMode.estimatedMBPer10Minutes` without the owner's approval.", "",
+          f"Shaping: dummynet on lo0, each packet through one pipe; jitter: {JITTER} (dummynet has no jitter, "
+          "so the profiles' jitter_ms is not applied). Data use is client A's own traffic: on relay, its leg to coturn.", "",
           "Gates: first audio on every run, stats.csv header, and on profile `clean` no disconnect and "
           f"connect time (answer_received to first_audio_packet) at or below {CONNECT_LIMIT_MS} ms. "
           "Every other column is report only.", "",
           f"Runs: {len(rows)}, failed: {len(failed)}.", ""]
     cols = ["run_id", "preset", "path", "profile", "noise_snr_db", "client_b", "connect_ms", "disconnected",
-            "mb_per_10min", "loss_pct", "concealed_pct", "rtt_ms_median", "visqol_moslqo", "dnsmos_ovrl", "result"]
+            "mb_per_10min", "jitter", "loss_pct", "concealed_pct", "rtt_ms_median", "visqol_moslqo", "dnsmos_ovrl", "result"]
     md.append("| " + " | ".join(cols) + " |")
     md.append("|" + "---|" * len(cols))
     for r in rows:

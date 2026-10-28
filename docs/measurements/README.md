@@ -100,8 +100,9 @@ How a run works (`tools/call-lab/ci/run_calls.sh`):
 - The lab server runs on the runner with `APP_LAB_MODE=1`, with a local coturn. Tokens come from `appserver lab session`.
 - Client A and client B are two `CallLabMac` processes started with `--headless` (client B with `--role callee`). The iOS Simulator is not used; each result says `client_b: mac-headless`.
 - Client A's microphone samples are replaced with the L8 stimulus (LibriSpeech test-clean, 50% active) through the WebRTC capture hook (patch 0004).
-- `tools/call-lab/netem/dummynet.sh` applies the `profiles.tsv` profile on `lo0` with `dnctl` and `pfctl`. dummynet has no jitter, so the profile's jitter is not applied.
-- `tcpdump` on `lo0` feeds `pcapbytes.py`. A relay capture holds both clients' legs to coturn, so the per-device bytes are half of it (`capture_legs` in `meta.json`).
+- `tools/call-lab/netem/dummynet.sh` applies the `profiles.tsv` profile on `lo0` with `dnctl` and `pfctl`. Each UDP packet passes exactly one pipe: only the outbound pass on `lo0` is shaped, and a mask gives each sending socket (each call direction) its own pipe. On relay, only the clients' sends to coturn are shaped, so each direction is shaped once. Signaling (TCP) is not shaped.
+- Jitter: **not simulated**. dummynet has no jitter, so the profiles' `jitter_ms` is not applied, and the summary's `jitter` column says "not simulated".
+- `tcpdump` on `lo0` feeds `pcapbytes.py`. Data use is client A's own traffic. On direct, that is the whole A ↔ B capture (each packet once). On relay, it is A's own leg to coturn, picked out by A's UDP ports; B's leg is reported separately (`callee_mb_per_10min`).
 - `tools/call-lab/ci/summarize.py` writes `summary.md` and `summary.csv` (the workflow artifact).
 
 Matrix: 7 calls of 5 minutes. The full matrix (2 presets × 2 paths × 4 profiles plus 3 noise runs, 19 calls) does not fit the 60-minute job, so it was cut, not the cap:
@@ -118,7 +119,7 @@ Matrix: 7 calls of 5 minutes. The full matrix (2 presets × 2 paths × 4 profile
 
 Pass rules (the only gates): every call has `first_audio_packet`; `stats.csv` has exactly `StatsRow.csvHeader`; on profile `clean`, no `disconnected` event and `answer_received` → `first_audio_packet` at or below 3 seconds (GOAL.md §9). Speech quality, noise quality, bitrate and data use, packet loss and latency are report only.
 
-Not measured here (compare with real devices): battery, thermal state and CPU on an A-series chip; real radio (cellular, Wi-Fi roaming, handover, carrier NAT, Bluetooth); CallKit and PushKit, the lock screen, audio-session interruptions, real microphone and speaker acoustics, echo; VPIO and the RNNoise device cost. dummynet on `lo0` is symmetric loopback shaping, not a real network. ViSQOL and DNSMOS stay empty until client B's output can be recorded on the runner (a virtual audio device needs the owner's approval).
+Not measured here (compare with real devices): battery, thermal state and CPU on an A-series chip; real radio (cellular, Wi-Fi roaming, handover, carrier NAT, Bluetooth); CallKit and PushKit, the lock screen, audio-session interruptions, real microphone and speaker acoustics, echo; VPIO and the RNNoise device cost. dummynet on `lo0` is symmetric loopback shaping, not a real network. ViSQOL and DNSMOS are reported as "not measured" until client B's output can be recorded on the runner (a virtual audio device needs the owner's approval).
 
 ## Phase 0 exit checklist
 
