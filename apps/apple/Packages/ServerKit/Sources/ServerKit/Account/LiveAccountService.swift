@@ -26,8 +26,8 @@ public final class LiveAccountService: AccountService {
     public private(set) var defaultServer: ServerPolicy
     public private(set) var currentServer: ServerPolicy?
     public private(set) var isSignedIn: Bool
-    /// Called when the server ends this session (401 or the device was removed), not on a local sign-out.
-    public var onSignedOut: (@MainActor () -> Void)?
+    /// Called when the server ends this session, not on a local sign-out. Only `.revoked` may wipe local data.
+    public var onSignedOut: (@MainActor (SignOutReason) -> Void)?
     /// The client for the signed-in (or connecting) server, for plans 7 and 8.
     public var client: ServerClient? { working }
     /// Set when this device was linked and the approver sent a snapshot; plan 7 imports it.
@@ -351,7 +351,7 @@ public final class LiveAccountService: AccountService {
         working = c
         if installedFor != ObjectIdentifier(c) {
             installedFor = ObjectIdentifier(c)
-            await c.setOnUnauthorized { [weak self] in await self?.didSignOut() }
+            await c.setOnUnauthorized { [weak self] reason in await self?.didSignOut(reason) }
         }
         return c
     }
@@ -361,9 +361,9 @@ public final class LiveAccountService: AccountService {
         installedFor = nil
     }
 
-    private func didSignOut() {
+    private func didSignOut(_ reason: SignOutReason) {
         isSignedIn = false
-        onSignedOut?()
+        onSignedOut?(reason)
     }
 
     private func register(_ options: CreationOptions) async throws(ServerError) -> RegistrationCredential {

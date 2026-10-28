@@ -209,7 +209,7 @@ public actor DeviceSync {
     /// A `device.revoked` event. The event is unsigned and the server never sends it to the revoked device itself,
     /// so it never removes or wipes by itself (owner ruling): for another device of this account it runs
     /// `reconcileOwnDevices`, whose two-lists-ten-minutes rule decides; one naming this device is ignored (a real
-    /// revocation reaches this device as a 401 or close code 4003, and the app signs out and wipes then).
+    /// revocation reaches this device as close code 4003 or a confirmed 401, and the app signs out and wipes then).
     /// The app goes through `ReconcileScheduler.deviceRevoked`, which also keeps it from overlapping a reconcile.
     public func handleRevoked(deviceID: String) async throws {
         guard !halted else { throw DeviceSyncError.halted }

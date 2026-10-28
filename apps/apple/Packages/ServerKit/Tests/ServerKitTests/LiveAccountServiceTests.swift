@@ -555,10 +555,24 @@ private func err(_ code: String) -> String { #"{"error":{"code":"\#(code)","mess
     @Test func unauthorizedSignsOut() async {
         let r = Rig(signedIn: true)
         await r.t.respond("GET", "/v1/devices", status: 401, json: err("unauthorized"))
-        var called = 0
-        r.service.onSignedOut = { called += 1 }
+        await r.t.respond("GET", "/v1/me", status: 401, json: err("unauthorized"))
+        var reasons: [SignOutReason] = []
+        r.service.onSignedOut = { reasons.append($0) }
         _ = try? await r.service.devices()
-        #expect(called == 1)
+        // The server's own 401, confirmed by GET /v1/me: the app wipes (ruling 2026-10-28).
+        #expect(reasons == [.revoked])
+        #expect(!r.service.isSignedIn)
+        #expect(r.store.current == nil)
+    }
+
+    @Test func unconfirmedUnauthorizedSignsOutWithoutWipe() async {
+        let r = Rig(signedIn: true)
+        await r.t.respond("GET", "/v1/devices", status: 401, json: err("unauthorized"))
+        await r.t.respond("GET", "/v1/me", status: 200, json: "{}")
+        var reasons: [SignOutReason] = []
+        r.service.onSignedOut = { reasons.append($0) }
+        _ = try? await r.service.devices()
+        #expect(reasons == [.sessionEnded])
         #expect(!r.service.isSignedIn)
         #expect(r.store.current == nil)
     }

@@ -78,11 +78,11 @@ private struct Boom: Error {}
         let calls = Calls()
 
         // The same account keeps its data.
-        #expect(try await LocalAccountData.prepare(accountID: "acc-ana", container: container, repo: repo, wipe: wipeSteps(device, calls)) == false)
+        #expect(try await LocalAccountData.prepare(accountID: "acc-ana", deviceID: "dev-1", container: container, repo: repo, wipe: wipeSteps(device, calls)) == false)
         #expect(try repo.chat(id: "acc-x") != nil)
 
         // Another account signs in on this device: wipe first (rows, MLS storage and the signing key), then own it.
-        #expect(try await LocalAccountData.prepare(accountID: "acc-bob", container: container, repo: repo, wipe: wipeSteps(device, calls)) == true)
+        #expect(try await LocalAccountData.prepare(accountID: "acc-bob", deviceID: "dev-1", container: container, repo: repo, wipe: wipeSteps(device, calls)) == true)
         #expect(try repo.chat(id: "acc-x") == nil)
         #expect(calls.count("mls") == 1 && calls.count("key") == 1)
         #expect(try repo.get(LocalAccountData.ownerKey).flatMap { String(data: $0, encoding: .utf8) } == "acc-bob")
@@ -96,7 +96,7 @@ private struct Boom: Error {}
         try repo.upsertChat(ChatRecord(id: "acc-x", isRequest: false, unread: 0, muted: false, lastActivity: testEpochDate))
         try LocalAccountData.markWipePending(in: container)
         let calls = Calls()
-        #expect(try await LocalAccountData.prepare(accountID: "acc-ana", container: container, repo: repo, wipe: wipeSteps(device, calls)) == true)
+        #expect(try await LocalAccountData.prepare(accountID: "acc-ana", deviceID: "dev-1", container: container, repo: repo, wipe: wipeSteps(device, calls)) == true)
         #expect(try repo.chat(id: "acc-x") == nil)
         #expect(!LocalAccountData.isWipePending(in: container))
     }
@@ -108,7 +108,7 @@ private struct Boom: Error {}
         let calls = Calls()
         await #expect(throws: Boom.self) {
             try await LocalAccountData.prepare(
-                accountID: "acc-bob", container: container, repo: repo, wipe: wipeSteps(device, calls, failSigningKey: true))
+                accountID: "acc-bob", deviceID: "dev-1", container: container, repo: repo, wipe: wipeSteps(device, calls, failSigningKey: true))
         }
         // Tried `wipeAttempts` times; the other steps still ran each time, the marker stays for the next launch,
         // and bob does not own the data.
@@ -116,16 +116,46 @@ private struct Boom: Error {}
         #expect(LocalAccountData.isWipePending(in: container))
         #expect(try repo.get(LocalAccountData.ownerKey).flatMap { String(data: $0, encoding: .utf8) } != "acc-bob")
         // The next launch retries and succeeds.
-        #expect(try await LocalAccountData.prepare(accountID: "acc-bob", container: container, repo: repo, wipe: wipeSteps(device, Calls())) == true)
+        #expect(try await LocalAccountData.prepare(accountID: "acc-bob", deviceID: "dev-1", container: container, repo: repo, wipe: wipeSteps(device, Calls())) == true)
         #expect(!LocalAccountData.isWipePending(in: container))
+    }
+
+    // Ruling 2026-10-28: a sign-out that is not a confirmed revocation keeps the data, so the next sign-in, which is a
+    // new device even for the same account, wipes it before opening it.
+    @Test func otherDeviceOfTheSameAccountWipesBeforeUse() async throws {
+        let (device, container) = try await device()
+        let repo = device.deps.repo
+        let calls = Calls()
+        #expect(try await LocalAccountData.prepare(
+            accountID: "acc-ana", deviceID: "dev-1", container: container, repo: repo, wipe: wipeSteps(device, calls)) == true)
+        try repo.upsertChat(ChatRecord(id: "acc-x", isRequest: false, unread: 0, muted: false, lastActivity: testEpochDate))
+        #expect(try await LocalAccountData.prepare(
+            accountID: "acc-ana", deviceID: "dev-2", container: container, repo: repo, wipe: wipeSteps(device, calls)) == true)
+        #expect(try repo.chat(id: "acc-x") == nil)
+        #expect(!LocalAccountData.isWipePending(in: container))
+        #expect(try await LocalAccountData.prepare(
+            accountID: "acc-ana", deviceID: "dev-2", container: container, repo: repo, wipe: wipeSteps(device, calls)) == false)
+    }
+
+    // Data recorded before the device was: every server sign-out wiped then, so it is this signed-in device's.
+    @Test func ownerWithoutDeviceIsAdopted() async throws {
+        let (device, container) = try await device()
+        let repo = device.deps.repo
+        try repo.set(LocalAccountData.ownerKey, Data("acc-ana".utf8))
+        try repo.upsertChat(ChatRecord(id: "acc-x", isRequest: false, unread: 0, muted: false, lastActivity: testEpochDate))
+        #expect(try await LocalAccountData.prepare(
+            accountID: "acc-ana", deviceID: "dev-1", container: container, repo: repo, wipe: wipeSteps(device, Calls())) == false)
+        #expect(try repo.chat(id: "acc-x") != nil)
+        #expect(try await LocalAccountData.prepare(
+            accountID: "acc-ana", deviceID: "dev-2", container: container, repo: repo, wipe: wipeSteps(device, Calls())) == true)
     }
 
     @Test func freshDatabaseGetsOwnerWithoutError() async throws {
         let (device, container) = try await device()
         #expect(try await LocalAccountData.prepare(
-            accountID: "acc-ana", container: container, repo: device.deps.repo, wipe: wipeSteps(device, Calls())) == true)
+            accountID: "acc-ana", deviceID: "dev-1", container: container, repo: device.deps.repo, wipe: wipeSteps(device, Calls())) == true)
         #expect(try await LocalAccountData.prepare(
-            accountID: "acc-ana", container: container, repo: device.deps.repo, wipe: wipeSteps(device, Calls())) == false)
+            accountID: "acc-ana", deviceID: "dev-1", container: container, repo: device.deps.repo, wipe: wipeSteps(device, Calls())) == false)
     }
 
     @Test func shutdownStopsLaterWork() async throws {

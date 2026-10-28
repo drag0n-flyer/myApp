@@ -181,7 +181,7 @@ final class AppModel {
             flow.linked()
         }
         self.onboarding = flow
-        live?.onSignedOut = { [weak self] in self?.deviceWasRemoved() }
+        live?.onSignedOut = { [weak self] reason in self?.serverEndedSession(reason) }
         // A sign-out wipe that was cut short (kill, failure) is finished first; the sign-in below waits for it.
         if mode.isLive {
             wipeTask = Task { [weak self] in
@@ -326,9 +326,11 @@ final class AppModel {
         return nil
     }
 
-    private func resetToWelcome() {
+    /// `wipe: false` (a sign-out the server did not prove a revocation, ruling 2026-10-28) stops the old graph and
+    /// keeps its data; the next sign-in, always a new device, wipes it before opening it (`LocalAccountData`).
+    private func resetToWelcome(wipe: Bool = true) {
         // The live store belongs to the signed-out account. An empty store stands in until the next sign-in.
-        if !isSampleData, let container = LiveMessaging.container {
+        if wipe, !isSampleData, let container = LiveMessaging.container {
             // Durable first: if the app is killed or a step fails, the next launch (or the next sign-in) wipes.
             try? LocalAccountData.markWipePending(in: container)
         }
@@ -338,6 +340,10 @@ final class AppModel {
                 await previous?.value
                 // The old graph stops first: no event task, send or sync can write after the wipe.
                 await stopLive(force: true)
+                guard wipe else {
+                    await old?.stop()
+                    return
+                }
                 do {
                     if let old { try await old.wipeAfterSignOut() } else { try await LiveMessaging.finishPendingWipe() }
                 } catch {
@@ -365,11 +371,12 @@ final class AppModel {
         linkedDevices = []
     }
 
-    /// The server ended this session (401, or the device was removed from the account).
-    private func deviceWasRemoved() {
+    /// The server ended this session. Only a proven revocation (a 4003 close, or a 401 that `GET /v1/me`
+    /// confirms) wipes and says the device was removed; any other 401 only signs out (ruling 2026-10-28).
+    private func serverEndedSession(_ reason: SignOutReason) {
         Task { await stopLive() }
-        resetToWelcome()
-        deviceRemovedAlert = true
+        resetToWelcome(wipe: reason == .revoked)
+        if reason == .revoked { deviceRemovedAlert = true }
     }
 
     // MARK: - Signed-in services
@@ -487,7 +494,7 @@ final class AppModel {
                 }
             },
             Task { [weak self] in
-                // `.revoked` also reaches the client's 401 path, which calls `deviceWasRemoved`.
+                // `.revoked` also reaches the client's sign-out path, which calls `serverEndedSession`.
                 for await state in c.states {
                     await self?.setConnectionState(state)
                     switch state {
@@ -543,7 +550,7 @@ final class AppModel {
     }
 
     /// A `device.revoked` event (unsigned). For another device it only runs reconcile; one naming this device is
-    /// ignored. Only a 401 or 4003 (revoked session) signs this device out and wipes it, through `onSignedOut`.
+    /// ignored. Only a 4003 or a confirmed 401 (revoked session) wipes this device, through `onSignedOut`.
     private func deviceRevoked(_ id: String) async {
         await refreshDevices()
         await messaging?.reconciler.deviceRevoked(id)
