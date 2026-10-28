@@ -36,6 +36,8 @@ data class OnboardingUiState(
     val usernameCheck: UsernameCheck? = null,
     val linkCode: LinkCode? = null,
     val linkExpired: Boolean = false,
+    /** Linked, but no contact list arrived: the screen says "Contacts weren't copied". */
+    val contactsNotCopied: Boolean = false,
     val recoveryCodeSent: Boolean = false,
 )
 
@@ -182,10 +184,10 @@ class OnboardingViewModel(
 
     private suspend fun awaitLinkApproval() {
         try {
-            service.waitForLinkApproval()
+            val result = service.waitForLinkApproval()
             saveLinkCode(null)
             flow.linked()
-            publish()
+            publish { it.copy(contactsNotCopied = !result.contactsCopied) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: AccountError) {
@@ -249,17 +251,16 @@ data class LinkApprovalUiState(
     val busy: Boolean = false,
     val error: AccountError? = null,
     val approved: Boolean = false,
-    /** The screen should run the fingerprint, face or screen-lock prompt and answer with [LinkApprovalViewModel.biometricResult]. */
-    val awaitingBiometric: Boolean = false,
+    /** Approved, but the snapshot was too large to send: the screen says the new device starts without its contacts. */
+    val snapshotNotSent: Boolean = false,
     /** Counts rejected scans; the screen re-creates its scanner on each, so it reads again. */
     val rejections: Int = 0,
 )
 
 /**
- * The approving phone: read the scanned code, show who is asking, confirm with a strong
- * biometric, then approve. The view model holds no Context: [approve] raises
- * [LinkApprovalUiState.awaitingBiometric], the screen runs the prompt with its current Activity,
- * and [biometricResult] continues. Nothing is sent if the host is wrong or the check fails.
+ * The approving phone: read the scanned code, show who is asking, then approve. The service runs the one
+ * strong-biometric check inside `approveLink`; this view model has no prompt of its own, so the person is asked
+ * once. Nothing is sent if the host is wrong or the check fails.
  */
 class LinkApprovalViewModel(
     private val service: AccountService,
@@ -296,29 +297,19 @@ class LinkApprovalViewModel(
     }
 
     fun approve() {
-        if (_state.value.request == null || _state.value.busy) return
-        _state.update { it.copy(busy = true, error = null, awaitingBiometric = true) }
-    }
-
-    /** The screen's answer to [LinkApprovalUiState.awaitingBiometric]. */
-    fun biometricResult(result: BiometricResult) {
         val request = _state.value.request ?: return
-        if (!_state.value.awaitingBiometric) return
-        _state.update { it.copy(awaitingBiometric = false) }
-        when (result) {
-            BiometricResult.Success -> viewModelScope.launch {
-                try {
-                    service.approveLink(request)
-                    _state.update { it.copy(approved = true, busy = false) }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: AccountError) {
-                    _state.update { it.copy(error = e, busy = false) }
-                }
+        if (_state.value.busy) return
+        _state.update { it.copy(busy = true, error = null) }
+        viewModelScope.launch {
+            try {
+                val result = service.approveLink(request)
+                _state.update { it.copy(approved = true, busy = false, snapshotNotSent = !result.snapshotSent) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: AccountError) {
+                // A cancelled check is not an error to show.
+                _state.update { it.copy(error = if (e == AccountError.Cancelled) null else e, busy = false) }
             }
-            BiometricResult.Cancelled -> _state.update { it.copy(busy = false) }
-            BiometricResult.Unavailable -> _state.update { it.copy(error = AccountError.BiometricsUnavailable, busy = false) }
-            BiometricResult.Failed -> _state.update { it.copy(error = AccountError.Server, busy = false) }
         }
     }
 

@@ -152,6 +152,14 @@ func TestNoSecretsInResponses(t *testing.T) {
 		t.Fatalf("login = %d %s", lw.Code, lw.Body)
 	}
 	cookie := cookieOf(t, lw)
+	// Two-step sign-in is on for this admin, with a known key, so any body,
+	// log line or audit row that carries the key shows up below. The session
+	// above stays valid.
+	totpSecret := randBytes(t, 20)
+	mustExec(t, d, `update admin_users set totp_secret = $1, totp_enabled_at = $2 where username = 'leakadmin'`, totpSecret, f.Clock.Now())
+	secretNeedles := append(variants(totpSecret), totpBase32.EncodeToString(totpSecret),
+		strings.ToLower(totpBase32.EncodeToString(totpSecret)), "totp_secret", "totpSecret", "otpauth")
+	forbidden["two-step key"] = secretNeedles
 	// Password sign-ins, good and bad, and a refused setup, go through the
 	// real chain too, so their log lines and audit rows are scanned.
 	for _, body := range []string{
@@ -218,7 +226,7 @@ func TestNoSecretsInResponses(t *testing.T) {
 		t.Errorf("audit lacks the sign-in rows: %s", body)
 	}
 	// Nothing the server logged holds a password or a hash.
-	for _, n := range []string{leakPassword, "LEAKPASSWORD", leakHash, "argon2", hashBody[len(hashBody)-1]} {
+	for _, n := range append([]string{leakPassword, "LEAKPASSWORD", leakHash, "argon2", hashBody[len(hashBody)-1]}, secretNeedles...) {
 		if strings.Contains(logBuf.String(), n) {
 			t.Errorf("a log line holds %q", n)
 		}
@@ -228,7 +236,7 @@ func TestNoSecretsInResponses(t *testing.T) {
 	if err := d.DB.QueryRow(t.Context(), `select string_agg(action || target || detail::text, ' ') from admin_audit`).Scan(&auditText); err != nil {
 		t.Fatal(err)
 	}
-	for _, n := range []string{leakPassword, "LEAKPASSWORD", leakHash, "argon2"} {
+	for _, n := range append([]string{leakPassword, "LEAKPASSWORD", leakHash, "argon2"}, secretNeedles[:len(secretNeedles)-3]...) {
 		if strings.Contains(auditText, n) {
 			t.Errorf("the audit table holds %q", n)
 		}

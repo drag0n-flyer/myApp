@@ -35,12 +35,12 @@ import org.robolectric.annotation.Config
 class PasskeySupportTest {
     private val cert = ByteArray(32) { (it * 7 + 1).toByte() }
     private val hex = cert.joinToString(":") { "%02X".format(it) }
-    private fun links(relation: String = PasskeySupport.RELATION, pkg: String = "org.example.app", fp: String = hex, ns: String = "android_app") = """
+    private fun links(relation: String = PasskeySupport.RELATION, pkg: String = "com.test.passkeys", fp: String = hex, ns: String = "android_app") = """
         [{"relation":["$relation","delegate_permission/common.handle_all_urls"],
           "target":{"namespace":"$ns","package_name":"$pkg","sha256_cert_fingerprints":["$fp"]}}]
     """.trimIndent()
 
-    private fun ok(json: String?) = PasskeySupport.supported("chat.example.org", json, "org.example.app", cert)
+    private fun ok(json: String?) = PasskeySupport.supported("chat.example.org", json, "com.test.passkeys", cert)
 
     @Test fun supportedWhenAssetLinksListsUs() {
         assertTrue(ok(links()))
@@ -54,7 +54,7 @@ class PasskeySupportTest {
         assertFalse(ok(links(pkg = "org.other.app")))
         assertFalse(ok(links(relation = "delegate_permission/common.handle_all_urls")))
         assertFalse(ok(links(ns = "web")))
-        assertFalse(PasskeySupport.supported("chat.example.org", links(), "org.example.app", ByteArray(5)))
+        assertFalse(PasskeySupport.supported("chat.example.org", links(), "com.test.passkeys", ByteArray(5)))
     }
 
     @Test fun unsupportedWhenFileMissing() {
@@ -62,7 +62,7 @@ class PasskeySupportTest {
         assertFalse(ok(""))
         assertFalse(ok("not json"))
         assertFalse(ok("{}"))
-        assertFalse(PasskeySupport.supported("", links(), "org.example.app", cert))
+        assertFalse(PasskeySupport.supported("", links(), "com.test.passkeys", cert))
     }
 
     private class Fake(

@@ -35,7 +35,7 @@ import org.example.app.core.chats.ChatStore
 @Composable
 fun AddContactScreen(store: ChatStore, onBack: () -> Unit, onAdded: () -> Unit, modifier: Modifier = Modifier) {
     var username by rememberSaveable { mutableStateOf("") }
-    var notFound by remember { mutableStateOf(false) }
+    var notFound by rememberSaveable { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val clean = username.trim().trimStart('@').trim()
     fun submit() {
