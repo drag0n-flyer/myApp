@@ -8,6 +8,10 @@ public final class SampleAccountService: AccountService {
 
     private let takenNames: Set<String> = ["riya", "admin"]
     public private(set) var lastEmailSentTo: String?
+    /// The name given to `startSignUp`.
+    public private(set) var displayName: String?
+    /// True once `finishSignUp` registered a passkey; `finishSignUpWithEmailCode` leaves it false.
+    public private(set) var passkeyRegistered = false
     private var deviceList: [DeviceInfo]
 
     public let defaultServer = ServerPolicy(defaultPreference: .auto, maximum: .high, defaultIPHiding: .nonContacts,
@@ -52,18 +56,24 @@ public final class SampleAccountService: AccountService {
         return true
     }
 
-    public func startSignUp(username: String, email: String) async throws(AccountError) {
+    public func startSignUp(displayName: String, username: String, email: String) async throws(AccountError) {
         guard UsernameCheck.isValid(username) else { throw .invalidUsername }
         guard !takenNames.contains(username) else { throw .usernameTaken }
         guard email.contains("@"), email.contains(".") else { throw .invalidEmail }
         lastEmailSentTo = email
+        self.displayName = displayName
     }
 
     public func verifyEmail(code: String) async throws(AccountError) {
         guard code == Self.sampleEmailCode else { throw .codeInvalid }
     }
 
-    public func finishSignUp() async throws(AccountError) { isSignedIn = true }
+    public func finishSignUp() async throws(AccountError) {
+        passkeyRegistered = true
+        isSignedIn = true
+    }
+
+    public func finishSignUpWithEmailCode() async throws(AccountError) { isSignedIn = true }
 
     public func signInWithPasskey() async throws(AccountError) { isSignedIn = true }
 

@@ -35,6 +35,8 @@ public final class LiveAccountService: AccountService {
 
     private var inviteCode: String?
     private var signupID: String?
+    /// Sent with `PATCH /v1/me/settings` once sign-up has finished; nil when blank.
+    private var pendingDisplayName: String?
     private var ticket: LinkTicket?
     private var linkPrivateKey: Data?
 
@@ -109,9 +111,11 @@ public final class LiveAccountService: AccountService {
         }
     }
 
-    public func startSignUp(username: String, email: String) async throws(AccountError) {
+    public func startSignUp(displayName: String, username: String, email: String) async throws(AccountError) {
         do throws(ServerError) {
             signupID = try await ready().signupStart(inviteCode: inviteCode, username: username, email: email)
+            let name = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            pendingDisplayName = name.isEmpty ? nil : name
         } catch {
             throw Self.map(error)
         }
@@ -127,10 +131,19 @@ public final class LiveAccountService: AccountService {
     }
 
     public func finishSignUp() async throws(AccountError) {
+        try await finishSignUp(withPasskey: true)
+    }
+
+    /// Never registers a passkey, even on a host that supports them.
+    public func finishSignUpWithEmailCode() async throws(AccountError) {
+        try await finishSignUp(withPasskey: false)
+    }
+
+    private func finishSignUp(withPasskey: Bool) async throws(AccountError) {
         guard let signupID else { throw .server }
         let c = await ready()
         var credential: RegistrationCredential?
-        if supportsPasskeys {
+        if withPasskey && supportsPasskeys {
             do throws(ServerError) {
                 let options = try await c.signupPasskeyOptions(signupID: signupID)
                 credential = try await register(options)
@@ -147,6 +160,12 @@ public final class LiveAccountService: AccountService {
         } catch {
             throw Self.map(error)
         }
+        // The server's signup/start takes no display name yet: set it now that the session exists.
+        // A failure here does not fail the sign-up.
+        if let name = pendingDisplayName {
+            try? await c.updateSettings(displayName: name, findByEmail: nil)
+        }
+        pendingDisplayName = nil
     }
 
     // MARK: - Sign-in and recovery

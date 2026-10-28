@@ -35,12 +35,21 @@ public actor Outbox: ControlSender {
     private let deps: MessagingDeps
     private let conversations: ConversationManaging
     private let keys: EscrowKeyProvider
+    /// The Read receipts switch, asked when a read receipt is queued or about to be sent. `LiveChatStore`
+    /// reads it too, so one switch governs sending and showing.
+    public nonisolated let readReceiptsEnabled: @Sendable () -> Bool
     private var flushing = false
 
-    public init(deps: MessagingDeps, conversations: ConversationManaging, keys: EscrowKeyProvider? = nil) {
+    /// - Parameter readReceiptsEnabled: the Read receipts switch. Required (no default), so that wiring
+    ///   cannot forget it. A read receipt found in the queue while it is off is dropped, not held.
+    public init(
+        deps: MessagingDeps, conversations: ConversationManaging, keys: EscrowKeyProvider? = nil,
+        readReceiptsEnabled: @escaping @Sendable () -> Bool
+    ) {
         self.deps = deps
         self.conversations = conversations
         self.keys = keys ?? EscrowKeyProvider(server: deps.server)
+        self.readReceiptsEnabled = readReceiptsEnabled
     }
 
     // MARK: - Queue
@@ -112,12 +121,19 @@ public actor Outbox: ControlSender {
 
     /// Returns true when the head left the queue (sent or failed).
     private func process(_ item: OutboxRecord) async throws -> Bool {
+        let envelope = ContentEnvelope.decode(item.envelope)
+        // A read receipt found with the switch off is dropped, not held: holding it would send it later
+        // (the switch is not retroactive) and block the chat's queue.
+        if case .receipt(.read, _) = envelope.body, !readReceiptsEnabled() {
+            try deps.repo.removeOutbox(id: item.messageID)
+            return true
+        }
         let queuedAt = try deps.repo.message(id: item.messageID)?.receivedAt ?? deps.now()
         if deps.now().timeIntervalSince(queuedAt) > Self.maxAge {
             try deps.repo.completeSend(id: item.messageID, status: "failed")
             return true
         }
-        switch await attempt(ContentEnvelope.decode(item.envelope), chatID: item.chatID) {
+        switch await attempt(envelope, chatID: item.chatID) {
         case .sent:
             try deps.repo.completeSend(id: item.messageID, status: "sent")
             return true

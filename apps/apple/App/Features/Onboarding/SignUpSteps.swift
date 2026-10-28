@@ -111,7 +111,7 @@ struct CreateAccountView: View {
             Button("Continue") {
                 Task {
                     do throws(AccountError) {
-                        try await model.account.startSignUp(username: username, email: email)
+                        try await model.account.startSignUp(displayName: name, username: username, email: email)
                         error = nil
                         model.onboarding.accountSubmitted()
                     } catch { self.error = error }
@@ -179,6 +179,7 @@ struct VerifyEmailView: View {
 struct PasskeyView: View {
     let model: AppModel
     @State private var error: AccountError?
+    @State private var busy = false
 
     private var title: LocalizedStringKey {
         #if os(macOS)
@@ -201,18 +202,41 @@ struct PasskeyView: View {
             AccountErrorText(error: error)
         } buttons: {
             // On `.cancelled` the person stays on this screen.
-            Button(model.account.supportsPasskeys ? "Create passkey" : "Continue") {
-                Task {
-                    do throws(AccountError) {
-                        try await model.account.finishSignUp()
-                        error = nil
-                        await model.didSignIn()
-                        model.onboarding.passkeyCreated()
-                    } catch { self.error = error }
-                }
+            if model.account.supportsPasskeys {
+                Button("Create passkey") { finish(withPasskey: true) }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .disabled(busy)
+                    .accessibilityIdentifier("passkey.create")
+                // Finishes sign-up without a passkey; later sign-in uses an email code.
+                Button("Use an email code instead") { finish(withPasskey: false) }
+                    .font(.headline)
+                    .frame(minHeight: 44)
+                    .disabled(busy)
+                    .accessibilityHint(Text("Signs in with a code sent to your email instead of a passkey."))
+                    .accessibilityIdentifier("passkey.emailInstead")
+            } else {
+                Button("Continue") { finish(withPasskey: false) }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .disabled(busy)
+                    .accessibilityIdentifier("passkey.create")
             }
-                .buttonStyle(PrimaryButtonStyle())
-                .accessibilityIdentifier("passkey.create")
+        }
+    }
+
+    private func finish(withPasskey: Bool) {
+        busy = true
+        Task {
+            defer { busy = false }
+            do throws(AccountError) {
+                if withPasskey {
+                    try await model.account.finishSignUp()
+                } else {
+                    try await model.account.finishSignUpWithEmailCode()
+                }
+                error = nil
+                await model.didSignIn()
+                model.onboarding.passkeyCreated()
+            } catch { self.error = error }
         }
     }
 }

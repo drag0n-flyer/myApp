@@ -129,13 +129,17 @@ public final class LiveChatStore: ChatStore {
 
     private func map(_ records: [MessageRecord]) -> [Message] {
         let showSafety = supportsSafetyNumbers
+        // The switch is reciprocal: while it is off, others' read receipts (still stored) show as delivered.
+        let showRead = outbox.readReceiptsEnabled()
+        let me = deps.me.accountID
         return records.map { record in
             let plain = record.senderAccount != ChatMapping.systemSender && !record.id.hasPrefix(ChatMapping.callPrefix)
             return ChatMapping.message(
                 record,
                 attachment: plain ? (try? repo.attachment(messageID: record.id)) ?? nil : nil,
                 reactions: plain && !record.deleted ? (try? repo.reactions(messageID: record.id)) ?? [] : [],
-                displayName: { [contactRows] in Self.name(of: contactRows[$0]) })
+                displayName: { [contactRows] in Self.name(of: contactRows[$0]) },
+                showRead: showRead || record.senderAccount != me)
         }
         // "Safety number changed" refers to a screen that is hidden while the numbers are not real.
         .filter { showSafety || $0.content != .system(.safetyNumberChanged) }
@@ -394,7 +398,7 @@ public final class LiveChatStore: ChatStore {
         } catch { return }
         refresh()
         let read = peerMessageIDs(requestID) { $0.status == "read" }
-        if !read.isEmpty { sendControl(.receipt(.read, ids: read), chatID: requestID) }
+        if !read.isEmpty, outbox.readReceiptsEnabled() { sendControl(.receipt(.read, ids: read), chatID: requestID) }
     }
 
     public func block(contactID: String) {
@@ -440,8 +444,11 @@ public final class LiveChatStore: ChatStore {
         try? repo.setUnread(chatID: chatID, 0)
         try? repo.updateStatus(ids: ids, to: "read")
         refresh()
-        // A message request gets no receipt until it is accepted (`accept` sends it).
-        if !chat.isRequest, !ids.isEmpty { sendControl(.receipt(.read, ids: ids), chatID: chatID) }
+        // A message request gets no receipt until it is accepted (`accept` sends it). With the Read receipts
+        // switch off nothing is sent, now or later: the messages are marked read here all the same.
+        if !chat.isRequest, !ids.isEmpty, outbox.readReceiptsEnabled() {
+            sendControl(.receipt(.read, ids: ids), chatID: chatID)
+        }
     }
 
     private func unreadPeerMessageIDs(_ chatID: String) -> [String] {

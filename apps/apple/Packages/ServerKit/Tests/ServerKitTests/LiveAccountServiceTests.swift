@@ -105,7 +105,7 @@ private func err(_ code: String) -> String { #"{"error":{"code":"\#(code)","mess
         await r.t.respond("POST", "/v1/signup/finish", status: 200, json: sessionJSON)
         _ = try await r.service.connect(host: "chat.test")
         #expect(try await r.service.redeemInvite(code: "ABCDE-FGHJK"))
-        try await r.service.startSignUp(username: "ana", email: "ana@example.org")
+        try await r.service.startSignUp(displayName: "", username: "ana", email: "ana@example.org")
         try await r.service.verifyEmail(code: "123456")
         try await r.service.finishSignUp()
         #expect(await r.passkey.registered == 1)
@@ -122,7 +122,7 @@ private func err(_ code: String) -> String { #"{"error":{"code":"\#(code)","mess
         await r.t.respond("POST", "/v1/signup/start", status: 200, json: #"{"signupID":"s1"}"#)
         await r.t.respond("POST", "/v1/signup/finish", status: 200, json: sessionJSON)
         #expect(!r.service.supportsPasskeys)
-        try await r.service.startSignUp(username: "ana", email: "ana@example.org")
+        try await r.service.startSignUp(displayName: "", username: "ana", email: "ana@example.org")
         try await r.service.finishSignUp()
         #expect(await r.passkey.registered == 0)
         #expect(try jsonBody(try #require(await r.t.requests.last))["credential"] == nil)
@@ -130,12 +130,70 @@ private func err(_ code: String) -> String { #"{"error":{"code":"\#(code)","mess
         #expect(await r.passkey.asserted == 0)
     }
 
+    @Test func signUpSendsDisplayNameAfterFinish() async throws {
+        let r = Rig()
+        await r.t.respond("POST", "/v1/signup/start", status: 200, json: #"{"signupID":"s1"}"#)
+        await r.t.respond("POST", "/v1/signup/passkey/options", status: 200, json: creationJSON)
+        await r.t.respond("POST", "/v1/signup/finish", status: 200, json: sessionJSON)
+        await r.t.respond("PATCH", "/v1/me/settings", status: 204, json: "")
+        try await r.service.startSignUp(displayName: "  Ana Lima ", username: "ana", email: "ana@example.org")
+        #expect(try jsonBody(try #require(await r.t.requests.last))["displayName"] == nil)
+        try await r.service.finishSignUp()
+        let requests = await r.t.requests
+        #expect(requests.map { $0.url?.path ?? "" }.suffix(2) == ["/v1/signup/finish", "/v1/me/settings"])
+        let patch = try #require(requests.last)
+        #expect(patch.httpMethod == "PATCH")
+        #expect(patch.value(forHTTPHeaderField: "Authorization") == "Bearer t1")
+        let body = try jsonBody(patch)
+        #expect(body["displayName"] as? String == "Ana Lima")
+        #expect(body["findByEmail"] == nil)
+    }
+
+    @Test func blankDisplayNameSendsNoSettings() async throws {
+        let r = Rig()
+        await r.t.respond("POST", "/v1/signup/start", status: 200, json: #"{"signupID":"s1"}"#)
+        await r.t.respond("POST", "/v1/signup/passkey/options", status: 200, json: creationJSON)
+        await r.t.respond("POST", "/v1/signup/finish", status: 200, json: sessionJSON)
+        try await r.service.startSignUp(displayName: "   ", username: "ana", email: "ana@example.org")
+        try await r.service.finishSignUp()
+        #expect(await r.t.requests.last?.url?.path == "/v1/signup/finish")
+    }
+
+    @Test func displayNameFailureDoesNotFailSignUp() async throws {
+        let r = Rig()
+        await r.t.respond("POST", "/v1/signup/start", status: 200, json: #"{"signupID":"s1"}"#)
+        await r.t.respond("POST", "/v1/signup/passkey/options", status: 200, json: creationJSON)
+        await r.t.respond("POST", "/v1/signup/finish", status: 200, json: sessionJSON)
+        await r.t.respond("PATCH", "/v1/me/settings", status: 500, json: err("internal"))
+        try await r.service.startSignUp(displayName: "Ana", username: "ana", email: "ana@example.org")
+        try await r.service.finishSignUp()
+        #expect(r.service.isSignedIn)
+        #expect(r.store.current?.token == "t1")
+    }
+
+    @Test func emailCodeSignUpNeverRegistersPasskey() async throws {
+        let r = Rig()
+        await r.t.respond("POST", "/v1/signup/start", status: 200, json: #"{"signupID":"s1"}"#)
+        await r.t.respond("POST", "/v1/signup/finish", status: 200, json: sessionJSON)
+        await r.t.respond("PATCH", "/v1/me/settings", status: 204, json: "")
+        #expect(r.service.supportsPasskeys)
+        try await r.service.startSignUp(displayName: "Ana", username: "ana", email: "ana@example.org")
+        try await r.service.finishSignUpWithEmailCode()
+        #expect(await r.passkey.registered == 0)
+        let requests = await r.t.requests
+        #expect(!requests.contains { $0.url?.path == "/v1/signup/passkey/options" })
+        let finish = try #require(requests.first { $0.url?.path == "/v1/signup/finish" })
+        #expect(try jsonBody(finish)["credential"] == nil)
+        #expect(requests.last?.url?.path == "/v1/me/settings")
+        #expect(r.service.isSignedIn)
+    }
+
     @Test func inviteCarriedIntoSignUp() async throws {
         let r = Rig()
         await r.t.respond("POST", "/v1/invites/check", status: 200, json: #"{"valid":true}"#)
         await r.t.respond("POST", "/v1/signup/start", status: 200, json: #"{"signupID":"s1"}"#)
         _ = try await r.service.redeemInvite(code: "ABCDE-FGHJK")
-        try await r.service.startSignUp(username: "ana", email: "ana@example.org")
+        try await r.service.startSignUp(displayName: "", username: "ana", email: "ana@example.org")
         #expect(try jsonBody(try #require(await r.t.requests.last))["inviteCode"] as? String == "ABCDE-FGHJK")
     }
 
@@ -148,7 +206,7 @@ private func err(_ code: String) -> String { #"{"error":{"code":"\#(code)","mess
     @Test func codeErrorsMap() async throws {
         let r = Rig()
         await r.t.respond("POST", "/v1/signup/start", status: 200, json: #"{"signupID":"s1"}"#)
-        try await r.service.startSignUp(username: "ana", email: "ana@example.org")
+        try await r.service.startSignUp(displayName: "", username: "ana", email: "ana@example.org")
         await r.t.respond("POST", "/v1/signup/verify", status: 400, json: err("code_invalid"))
         await #expect(throws: AccountError.codeInvalid) { try await r.service.verifyEmail(code: "000000") }
         await r.t.respond("POST", "/v1/signup/verify", status: 429, json: err("rate_limited"), headers: ["Retry-After": "300"])
