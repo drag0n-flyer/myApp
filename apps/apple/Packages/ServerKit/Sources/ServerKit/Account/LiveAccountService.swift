@@ -40,8 +40,9 @@ public final class LiveAccountService: AccountService {
     private var ticket: LinkTicket?
     private var linkPrivateKey: Data?
     /// A claimed link session whose save failed, with its opened snapshot; memory only. The claim answers
-    /// once, so a later `waitForLinkApproval` retries only the save and never claims again.
-    private var unsaved: (session: NewSession, snapshot: Data?)?
+    /// once, so a later `waitForLinkApproval` retries only the save and never claims again. `host` is the
+    /// server that issued the session: it is filed under that host only, and `connect` refuses another.
+    private var unsaved: (session: NewSession, snapshot: Data?, host: String)?
 
     public init(defaultHost: String, passkeyDomains: [String], platform: DevicePlatform, deviceName: String,
                 sessions: SessionStore, makeClient: @escaping @Sendable (String) -> ServerClient,
@@ -79,7 +80,7 @@ public final class LiveAccountService: AccountService {
     /// While signed in, the session token must never reach another host, so only the session's own
     /// host can be connected to.
     public func connect(host: String) async throws(AccountError) -> ServerPolicy {
-        if let mine = sessions.current?.host, mine.lowercased() != host.lowercased() { throw .wrongServer }
+        if let mine = sessions.current?.host ?? unsaved?.host, mine.lowercased() != host.lowercased() { throw .wrongServer }
         self.host = host
         adopt(makeClient(host))
         let c = await ready()
@@ -231,7 +232,7 @@ public final class LiveAccountService: AccountService {
     /// so failing here would leave an orphaned device and make the person start again). For the same
     /// reason a failing session save is retried, and after an error the next call retries only the save.
     public func waitForLinkApproval() async throws(AccountError) -> LinkedResult {
-        if let unsaved { return try await saveLinked(unsaved.session, snapshot: unsaved.snapshot) }
+        if let unsaved { return try await saveLinked(unsaved.session, snapshot: unsaved.snapshot, host: unsaved.host) }
         guard let ticket else { throw .linkExpired }
         let key = linkPrivateKey
         defer { self.ticket = nil; linkPrivateKey = nil }
@@ -245,8 +246,8 @@ public final class LiveAccountService: AccountService {
                 if let sealed, let key {
                     snapshot = try? linkCrypto.open(sealed, privateKey: key)
                 }
-                unsaved = (s, snapshot)
-                return try await saveLinked(s, snapshot: snapshot)
+                unsaved = (s, snapshot, host)
+                return try await saveLinked(s, snapshot: snapshot, host: host)
             }
             if now() >= ticket.expiresAt { throw .linkExpired }
             do { try await sleep(.seconds(2)) } catch { throw .cancelled }
@@ -259,12 +260,12 @@ public final class LiveAccountService: AccountService {
 
     /// Saves a claimed link session, retrying a failing store with backoff. When it still fails the error
     /// is thrown and the session is kept in `unsaved`, so the next wait retries the save alone.
-    private func saveLinked(_ s: NewSession, snapshot: Data?) async throws(AccountError) -> LinkedResult {
+    private func saveLinked(_ s: NewSession, snapshot: Data?, host: String) async throws(AccountError) -> LinkedResult {
         var wait = Duration.milliseconds(250)
         var attempt = 0
         while true {
             do throws(ServerError) {
-                try store(s)
+                try store(s, host: host)
                 break
             } catch {
                 attempt += 1
@@ -373,7 +374,8 @@ public final class LiveAccountService: AccountService {
         do throws(ServerError) { try store(s) } catch { throw Self.map(error) }
     }
 
-    private func store(_ s: NewSession) throws(ServerError) {
+    private func store(_ s: NewSession, host: String? = nil) throws(ServerError) {
+        let host = host ?? self.host
         do {
             try sessions.save(Session(host: host, accountID: s.accountID, deviceID: s.deviceID, token: s.sessionToken))
         } catch {

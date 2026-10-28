@@ -25,12 +25,15 @@ struct LinkDeviceView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 Spacer()
-                Button("Change") {
-                    newHost = ""
-                    askingServer = true
+                // An approved sign-in waiting to be saved belongs to this server: it can't be moved.
+                if !model.account.linkSavePending {
+                    Button("Change") {
+                        newHost = ""
+                        askingServer = true
+                    }
+                    .font(.footnote)
+                    .accessibilityIdentifier("link.change")
                 }
-                .font(.footnote)
-                .accessibilityIdentifier("link.change")
             }
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("link.server")

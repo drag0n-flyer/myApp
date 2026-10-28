@@ -100,7 +100,7 @@ private func err(_ code: String) -> String { #"{"error":{"code":"\#(code)","mess
         service = LiveAccountService(
             defaultHost: host, passkeyDomains: ["chat.test"], platform: .iPhone, deviceName: "Ana's iPhone",
             sessions: store,
-            makeClient: { _ in ServerClient(baseURL: URL(string: "https://chat.test")!, session: store, transport: t) },
+            makeClient: { h in ServerClient(baseURL: URL(string: "https://\(h)")!, session: store, transport: t) },
             passkeys: passkey, biometrics: biometrics, approvalReason: "Approve this device", linkCrypto: crypto,
             linkSnapshot: { snapshot }, now: { clock.now() },
             sleep: { d in clock.advance(d); await sleeps.add(d); try await onSleep(await sleeps.count, t) })
@@ -422,6 +422,26 @@ private func err(_ code: String) -> String { #"{"error":{"code":"\#(code)","mess
         #expect(await Self.claims(r.t) == 1)
         #expect(!r.service.linkSavePending)
         #expect(r.store.current?.token == "t1")
+    }
+
+    /// A claimed session belongs to the server that issued it: while its save is pending another server
+    /// is refused, and the token is filed under (and sent to) the original host only.
+    @Test func pendingLinkSaveCannotMoveToAnotherServer() async throws {
+        let storage = FlakyStorage(failures: 100)
+        let r = Rig(storage: storage)
+        await r.t.respond("GET", "/v1/server", status: 200, json: serverJSON)
+        await r.t.respond("POST", "/v1/link", status: 200, json: #"{"linkID":"L1","secret":"S1","claimToken":"C1","expiresAt":"2026-11-01T12:05:00Z"}"#)
+        await r.t.respond("POST", "/v1/link/L1/claim", status: 200, json: #"{"accountID":"a1","deviceID":"d1","sessionToken":"t1"}"#)
+        await r.t.respond("GET", "/v1/devices", status: 200, json: #"{"devices":[]}"#)
+        await #expect(throws: AccountError.server) { _ = try await r.service.linkThisDevice { _ in } }
+        await #expect(throws: AccountError.wrongServer) { _ = try await r.service.connect(host: "other.test") }
+        storage.fail(0)
+        _ = try await r.service.linkThisDevice { _ in Issue.record("asked for a new code") }
+        #expect(r.store.current?.host == "chat.test")
+        _ = try? await r.service.devices()
+        let hosts = await r.t.requests.compactMap { $0.url?.host }
+        #expect(!hosts.contains("other.test"))
+        #expect(hosts.last == "chat.test")
     }
 
     /// Leaving the screen mid-backoff cancels the wait; coming back resumes the save.
