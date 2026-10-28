@@ -15,7 +15,7 @@ on:
         type: string
         default: ""
       reuse_run:
-        description: Run id whose slice-* artifacts the package job also uses (so a rerun builds only the slices that failed)
+        description: Space-separated run ids whose slice-* artifacts the package job also uses (so a rerun builds only the slices that failed)
         type: string
         default: ""
   push:
@@ -64,6 +64,7 @@ jobs:
 
   build:
     needs: probe
+    if: needs.probe.outputs.slices != '[]'
     runs-on: macos-26
     timeout-minutes: 350
     strategy:
@@ -114,31 +115,37 @@ jobs:
 
   package:
     needs: [probe, build]
-    if: needs.probe.outputs.full == 'true'
+    if: ${{ !cancelled() && needs.probe.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.build.result) && needs.probe.outputs.full == 'true' }}
     runs-on: macos-26
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - name: Download slices from earlier runs
         if: needs.probe.outputs.reuse != ''
-        with:
-          pattern: slice-*
-          path: downloaded-old
-          run-id: ${{ needs.probe.outputs.reuse }}
-          github-token: ${{ github.token }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for id in ${{ needs.probe.outputs.reuse }}; do
+            gh run download "$id" --repo "$GITHUB_REPOSITORY" --pattern 'slice-*' --pattern licenses --dir "downloaded-old/$id"
+          done
       - uses: actions/download-artifact@v4
+        continue-on-error: true # nothing to download when every slice came from earlier runs
         with:
           path: downloaded
       - name: Unpack slices
         run: |
           mkdir -p artifacts
           # Slices from an earlier run first; this run's slices replace them.
-          for t in downloaded-old/slice-*/slice-*.tar downloaded/slice-*/slice-*.tar; do
+          for t in downloaded-old/*/slice-*/slice-*.tar downloaded/slice-*/slice-*.tar; do
             [ -f "$t" ] && tar -C artifacts -xf "$t"
           done
           true
           mkdir -p artifacts/licenses
-          cp downloaded/licenses/* artifacts/licenses/
+          # This run's licenses win over an earlier run's.
+          for d in downloaded-old/*/licenses downloaded/licenses; do
+            [ -d "$d" ] && cp "$d"/* artifacts/licenses/
+          done
+          [ -f artifacts/licenses/LICENSE.md ]
           ls artifacts artifacts/licenses
       - name: Package
         run: sh tools/webrtc/package.sh artifacts release
