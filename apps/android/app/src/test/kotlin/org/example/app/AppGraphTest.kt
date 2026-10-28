@@ -299,6 +299,20 @@ class AppGraphTest {
         assertEquals(AccountState.SignedOut, state)
     }
 
+    /**
+     * A revocation wipe that starts and finishes after an open read the stored session but before it took the lock
+     * leaves nothing to open: no session on the wiped data, none with the revoked token.
+     */
+    @Test
+    fun wipeBetweenTheReadAndTheLockOpensNothing() = runBlocking {
+        val graph = signedIn()
+        graph.beforeOpenLock = { graph.beforeOpenLock = {}; graph.wipeAfterRevocation() }
+        assertNull(graph.openSession())
+        assertNull(graph.liveSession)
+        assertFalse(db.exists(), "database")
+        assertEquals(AccountState.SignedOut, graph.accountState)
+    }
+
     /** Between a session's end and onboarding the screens still read a store: it is empty, never a crash. */
     @Test
     fun chatStoreIsSafeAfterTheSessionEnds() = runBlocking {
