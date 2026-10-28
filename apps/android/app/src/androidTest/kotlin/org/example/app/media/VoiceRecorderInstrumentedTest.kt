@@ -49,7 +49,8 @@ class VoiceRecorderInstrumentedTest {
      */
     private fun assertFailsSafeWithoutEncoder(recorder: VoiceRecorder) {
         val started = recorder.start()
-        assertEquals(StartResult.Failed(VoiceFailure.Encoder), started, "start() returned $started; ${diagnostics()}")
+        val failed = assertIs<StartResult.Failed>(started, "start() returned $started; ${diagnostics()}")
+        assertEquals(VoiceFailure.Encoder, failed.reason, diagnostics())
         assertEquals(emptyList(), dir.list()?.toList() ?: emptyList())
     }
 
