@@ -41,7 +41,8 @@ fun ChatScreen(
     myId: String,
     onBack: () -> Unit,
     onOpenInfo: () -> Unit,
-    onCall: (video: Boolean) -> Unit,
+    /** Null hides the call buttons (no live calls before E6). */
+    onCall: ((video: Boolean) -> Unit)?,
     modifier: Modifier = Modifier,
     onAttach: (MediaKind) -> Unit = {},
     onRecordVoice: () -> Unit = {},
@@ -77,8 +78,8 @@ fun ChatScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { onCall(false) }) { Icon(painterResource(R.drawable.ic_call), contentDescription = stringResource(R.string.call_audio)) }
-                    IconButton(onClick = { onCall(true) }) { Icon(painterResource(R.drawable.ic_videocam), contentDescription = stringResource(R.string.call_video)) }
+                    if (onCall != null) IconButton(onClick = { onCall(false) }) { Icon(painterResource(R.drawable.ic_call), contentDescription = stringResource(R.string.call_audio)) }
+                    if (onCall != null) IconButton(onClick = { onCall(true) }) { Icon(painterResource(R.drawable.ic_videocam), contentDescription = stringResource(R.string.call_video)) }
                 },
             )
         },

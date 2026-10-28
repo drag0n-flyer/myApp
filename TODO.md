@@ -5,7 +5,7 @@ Last updated: 2026-10-28, 08:20 UTC.
 | Track | Done | % |
 |---|---|---|
 | iPhone/Mac Phase 1 | 120 / 128 | 94% |
-| Android | 37 / 44 | 84% |
+| Android | 38 / 44 | 86% |
 | Admin dashboard | done, with admin accounts and 2FA, on `main` | 100% |
 
 Up to 15 agents work in parallel (on Opus until 2 Nov, when Sonnet's weekly limit resets). CI is the bottleneck: about 5 Mac jobs at once, and GitHub throttles status checks when many agents watch runs. Mac CI runs only the jobs a change needs. Android CI uses Linux runners only.
@@ -74,7 +74,7 @@ Green: Apple apps (every job, after the Swift 6.2 / Xcode 26 fix), MLS client co
 | E, WebRTC and calls | 6 (+E5b) | 2 | E3, E4 on `main`; E2 (WebRTC build): x86_64 and packaging green, the two ARM builds re-running after Google download errors; E1 after E2; then E5, E5b (bundled Opus for phones without an encoder), E6 |
 | F, push | 4 | 4 | done |
 | G, CI | 4 | 4 | done; G4: release bundle, license notices, Play documents. A `v*` tag release fails until the SQLCipher, WebRTC and Opus notice texts are filled in |
-| I, integration and iPhone↔Android test | 2 | 0 | waits for all lanes |
+| I, integration and iPhone↔Android test | 2 | 1 | I1 merged: the app runs on the live server (accounts, messaging, push, device cleanup; crash-safe wipe). Calls switch on with E6. I2 (iPhone↔Android test) waits for calls |
 
 ETA: about 1.5 days of agent work.
 

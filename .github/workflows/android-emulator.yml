@@ -6,10 +6,12 @@ on:
     branches-ignore: [feat/server]
     paths:
       - 'apps/android/**'
+      - 'scripts/android-live-server.sh'
       - '.github/workflows/android-emulator.yml'
   pull_request:
     paths:
       - 'apps/android/**'
+      - 'scripts/android-live-server.sh'
       - '.github/workflows/android-emulator.yml'
 
 permissions:
@@ -81,11 +83,21 @@ jobs:
           set -euo pipefail
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "emulator" \
             "system-images;android-29;default;x86_64" "system-images;android-36;default;x86_64" >/dev/null
+      # LiveSmokeTest talks to the real Go server on the host (10.0.2.2 from the emulators).
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: |
+            server/go.sum
+            tools/smtp-sink/go.mod
+      - name: Start the Go server for LiveSmokeTest
+        timeout-minutes: 10
+        run: scripts/android-live-server.sh
       - name: Instrumented tests on API 29 and API 36
         working-directory: apps/android
         timeout-minutes: 45
         run: |
-          ./gradlew --no-daemon --continue \
+          ./gradlew --no-daemon --continue -PliveServer=true \
             -Pandroid.testoptions.manageddevices.emulator.gpu=swiftshader_indirect \
             -Pandroid.experimental.androidTest.numManagedDeviceShards=1 \
             :mls:pixel6Api29DebugAndroidTest :mls:pixel6Api36DebugAndroidTest \
@@ -96,7 +108,7 @@ jobs:
       # Every module must have run at least its known test count on both API levels, none skipped (no silent no-op).
       - name: Check that every instrumented test ran
         if: always()
-        run: scripts/check-emulator-results.py apps/android mls:1 store:1 auth:8 calls-android:1 app:2 | tee -a "$GITHUB_STEP_SUMMARY"
+        run: scripts/check-emulator-results.py apps/android mls:1 store:1 auth:8 calls-android:1 app:4 | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -106,6 +118,9 @@ jobs:
             apps/android/*/build/outputs/androidTest-results
           retention-days: 7
           if-no-files-found: ignore
+      - name: Go server logs
+        if: failure()
+        run: tail -n 60 "$RUNNER_TEMP/android-live/appserver.log" || true
 
   android-emulator-ci:
     # Fails closed: a failed, cancelled or skipped emulator job fails it.
