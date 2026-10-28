@@ -431,8 +431,12 @@ class ConversationManagerTest {
     @Test
     fun serverReadableModeNeedsEscrowSealer() = runTest {
         val rig = Rig("server_readable").start()
-        // No sealer wired (D5 adds it): the mode post fails and stays pending, never sent without escrow.
-        assertFailsWith<SyncException.EscrowKeyUnavailable> { rig.ana1.manager.create("acc-bob") }
+        // No sealer wired: the mode post fails and stays pending, never sent without escrow.
+        val unsealed = ConversationManager(
+            rig.ana1.me, rig.ana1.mls, rig.ana1.api, rig.ana1.repo, rig.ana1.lock, rig.ana1.clock, rig.ana1.membership,
+            syncOnce = { rig.ana1.processor.sync() },
+        )
+        assertFailsWith<SyncException.EscrowKeyUnavailable> { unsealed.create("acc-bob") }
         assertTrue(rig.server.messages.isEmpty())
 
         val sealed = mutableListOf<String>()

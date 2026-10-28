@@ -214,4 +214,6 @@ The sample services stay. The launch argument `-sampleData` selects them, so the
 | 2026-10-28 | Admin sign-in is username + password only; token sign-in removed. **Owner decision.** |
 | 2026-10-28 | Optional TOTP 2FA per admin, QR via skip2/go-qrcode, recovery by CLI reset-2fa only. **Owner decision.** |
 | 2026-10-28 | Ruling: sign-up display name sent via PATCH /v1/me/settings after signupFinish on both platforms until signup/start takes it — iPhone must match — cost if wrong: one extra request |
+| 2026-10-28 | Own-device reconcile (mls-profile.md:94) removes a device only when missing from two lists ≥10 min apart and the list contains this device; Android now, iPhone to port. Ruling — cost if wrong: a stale device lingers up to one more reconcile. |
+| 2026-10-29 | Read receipts switch works on both platforms: off stops sending read receipts (delivered still sent) and hides others' read ticks; not retroactive. iPhone to match. **Owner decision.** |
 | 2026-10-29 | Android biometric gate on API 29: the screen-lock fallback (`setDeviceCredentialAllowed`) also accepts weak biometrics. Accepted: the gate is a presence check tied to no key, and the phone's own lock screen accepts the same biometric; if the gate is ever tied to a key, API 29 becomes strong-only. Ruling — cost if wrong: a weak face unlock opens the app on some Android 10 phones. |

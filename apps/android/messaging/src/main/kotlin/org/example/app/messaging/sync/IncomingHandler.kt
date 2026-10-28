@@ -50,7 +50,7 @@ class IncomingHandler(
     fun apply(incoming: Incoming, raw: RawInboxRecord, repo: Repository, memberKeys: List<MemberKey>? = null): AppliedResult =
         when (incoming) {
             is Incoming.Joined -> {
-                repo.conversationByGroup(incoming.group.raw)?.let { c -> memberKeys?.let { Membership.write(me, it, c, repo) } }
+                repo.conversationByGroup(incoming.group.raw)?.let { c -> memberKeys?.let { noteOwnDevices(Membership.write(me, it, c, repo, clock.now()), repo) } }
                 AppliedResult.Joined(incoming.group, incoming.epoch)
             }
             is Incoming.Commit -> {
@@ -68,7 +68,7 @@ class IncomingHandler(
                             repo.upsertConversation(conversation.copy(epoch = incoming.newEpoch, active = true))
                             PendingCreate.clear(repo, conversation.serverId)
                         }
-                        memberKeys?.let { Membership.write(me, it, conversation, repo) }
+                        memberKeys?.let { noteOwnDevices(Membership.write(me, it, conversation, repo, clock.now()), repo) }
                         AppliedResult.Commit(conversation.serverId, incoming.newEpoch)
                     }
                 }
@@ -80,6 +80,15 @@ class IncomingHandler(
                 else applyApplication(incoming.sender, incoming.plaintext, raw, conversation, repo)
             }
         }
+
+    /**
+     * One pending-notice marker (`notice.pending.<deviceId>`) per new own device, written in the caller's transaction
+     * with the new members and the deleted raw item, so the notice survives a kill before it is shown.
+     * `OwnDeviceNotices` posts it and clears the marker.
+     */
+    private fun noteOwnDevices(change: MembershipChange, repo: Repository) {
+        for (id in change.ownDevicesAdded) repo.set(OwnDeviceNotices.pendingKey(id), byteArrayOf(1))
+    }
 
     /**
      * An MLS failure: one placeholder row (`undecryptable`, ID `undecryptable-<cursor>`) in the chat the server named.
