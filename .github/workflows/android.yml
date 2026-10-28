@@ -298,7 +298,7 @@ jobs:
       - name: The bundle is unsigned
         run: |
           set -euo pipefail
-          if jarsigner -verify apps/android/app/build/outputs/bundle/release/app-release.aab 2>&1 | grep -q "jar verified"; then
+          if unzip -l apps/android/app/build/outputs/bundle/release/app-release.aab | grep -E 'META-INF/.*\.(SF|RSA|DSA|EC)$'; then
             echo "bundle is signed; CI must not hold a signing key"; exit 1
           fi
       - name: Dependency licenses against the approved list, and the notices shipped in the app

@@ -260,6 +260,12 @@ def check_android(entries, exceptions):
     return problems
 
 
+def check_pending_notices(entries):
+    """Problems for every notice whose text is still a placeholder; a release must not ship one."""
+    return [f"{e['name']} {e['version']}: notice text is still a placeholder (pending); a release cannot ship it"
+            for e in entries if e.get("pending")]
+
+
 def crate_entries(metadata):
     return [crate_entry(p) for p in normal_packages(metadata)]
 
@@ -288,6 +294,7 @@ def main():
         gradle = gradle_entries(read_dependencies(args.gradle_deps), args.gradle_cache)
         if args.check_android:
             problems = check_android(gradle, read_gradle_exceptions(ALLOWLIST.read_text()))
+            problems += check_pending_notices(entries + gradle)
             for p in problems:
                 print(f"generate-oss-notices: {p}", file=sys.stderr)
             if problems:

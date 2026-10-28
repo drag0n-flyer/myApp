@@ -36,12 +36,22 @@ Checked by `scripts/check-swift-licenses.py` against every `Package.resolved` un
 
 ## gradle-libraries
 
-Checked by `scripts/generate-oss-notices.py --check-android` against the Gradle runtime dependencies of the release build (`./gradlew :app:exportRuntimeDependencies`). A library whose POM license is on the allowed list above passes. Any other library must have a row here, by `group:name` or `group:*`. Copyleft (GPL, LGPL, AGPL) always fails; JNA is dual-licensed (LGPL-2.1-or-later or Apache-2.0) and is counted as Apache-2.0. A `pending` row fails the check until the owner approves it.
+Checked by `scripts/generate-oss-notices.py --check-android` against the Gradle runtime dependencies of the release build (`./gradlew :app:exportRuntimeDependencies`). A library whose POM license is on the allowed list above passes. Any other library must have a row here, by exact `group:name` (a trailing `*` is allowed only for a named group). Copyleft (GPL, LGPL, AGPL) always fails; JNA is dual-licensed (LGPL-2.1-or-later or Apache-2.0) and is counted as Apache-2.0. A `pending` row fails the check until the owner approves it.
 
 | library | SPDX | approved-by |
 |---|---|---|
-| com.google.android.gms:* | LicenseRef-Android-SDK | owner 2026-10-28 (plan table: credentials-play-services-auth, firebase-messaging; Google Play services, closed source) |
-| com.google.firebase:* | LicenseRef-Android-SDK | owner 2026-10-28 (plan table: firebase-messaging; closed source) |
-| com.google.android.datatransport:* | LicenseRef-Android-SDK | owner 2026-10-28 (transitive of firebase-messaging; closed source) |
-| com.google.android.libraries.identity.googleid:googleid | LicenseRef-Android-SDK | owner 2026-10-28 (transitive of credentials-play-services-auth; closed source) |
-| net.zetetic:sqlcipher-android | LicenseRef-SQLCipher-Community | owner 2026-10-28 (plan table; BSD-style Community Edition license; full text to be added) |
+| com.google.android.gms:play-services-auth | LicenseRef-Android-SDK | owner, 2026-10-28, Android design dependency table (credentials-play-services-auth or firebase-messaging, or a transitive of them; closed source) |
+| com.google.android.gms:play-services-auth-api-phone | LicenseRef-Android-SDK | owner, 2026-10-28, Android design dependency table (credentials-play-services-auth or firebase-messaging, or a transitive of them; closed source) |
+| com.google.android.gms:play-services-auth-base | LicenseRef-Android-SDK | owner, 2026-10-28, Android design dependency table (credentials-play-services-auth or firebase-messaging, or a transitive of them; closed source) |
+| com.google.android.gms:play-services-auth-blockstore | LicenseRef-Android-SDK | owner, 2026-10-28, Android design dependency table (credentials-play-services-auth or firebase-messaging, or a transitive of them; closed source) |
+| com.google.android.gms:play-services-base | LicenseRef-Android-SDK | owner, 2026-10-28, Android design dependency table (credentials-play-services-auth or firebase-messaging, or a transitive of them; closed source) |
+| com.google.android.gms:play-services-basement | LicenseRef-Android-SDK | owner, 2026-10-28, Android design dependency table (credentials-play-services-auth or firebase-messaging, or a transitive of them; closed source) |
+| com.google.android.gms:play-services-cloud-messaging | LicenseRef-Android-SDK | owner, 2026-10-28, Android design dependency table (credentials-play-services-auth or firebase-messaging, or a transitive of them; closed source) |
+| com.google.android.gms:play-services-fido | LicenseRef-Android-SDK | owner, 2026-10-28, Android design dependency table (credentials-play-services-auth or firebase-messaging, or a transitive of them; closed source) |
+| com.google.android.gms:play-services-identity-credentials | LicenseRef-Android-SDK | owner, 2026-10-28, Android design dependency table (credentials-play-services-auth or firebase-messaging, or a transitive of them; closed source) |
+| com.google.android.gms:play-services-stats | LicenseRef-Android-SDK | owner, 2026-10-28, Android design dependency table (credentials-play-services-auth or firebase-messaging, or a transitive of them; closed source) |
+| com.google.android.gms:play-services-tasks | LicenseRef-Android-SDK | owner, 2026-10-28, Android design dependency table (credentials-play-services-auth or firebase-messaging, or a transitive of them; closed source) |
+| com.google.firebase:firebase-iid-interop | LicenseRef-Android-SDK | owner, 2026-10-28, Android design dependency table (transitive of firebase-messaging; closed source) |
+| com.google.firebase:firebase-measurement-connector | LicenseRef-Android-SDK | owner, 2026-10-28, Android design dependency table (transitive of firebase-messaging; closed source) |
+| com.google.android.libraries.identity.googleid:googleid | LicenseRef-Android-SDK | owner, 2026-10-28, Android design dependency table (transitive of credentials-play-services-auth; closed source) |
+| net.zetetic:sqlcipher-android | LicenseRef-SQLCipher-Community | pending (license text not in the artifact or its POM; owner to supply it) |

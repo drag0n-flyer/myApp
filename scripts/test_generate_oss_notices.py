@@ -219,6 +219,15 @@ class Gradle(unittest.TestCase):
         self.assertTrue(e["pending"])
         self.assertNotIn("unknown", e["license"])
 
+    def test_pending_notice_fails_the_release_check(self):
+        mod = load()
+        done = {"name": "a", "version": "1", "pending": False}
+        wait = {"name": "net.zetetic:sqlcipher-android", "version": "4", "pending": True}
+        self.assertEqual(mod.check_pending_notices([done]), [])
+        got = mod.check_pending_notices([done, wait])
+        self.assertEqual(len(got), 1)
+        self.assertIn("sqlcipher-android", got[0])
+
     def test_missing_pom_is_an_error(self):
         with self.assertRaises(SystemExit):
             self.entries([], [("g", "gone", "1")])

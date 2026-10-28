@@ -23,11 +23,11 @@ All items below are collected for App functionality only, and are not optional f
 | Personal info: Email address | Sign-in and recovery | Yes | Yes | App functionality, Account management | Required |
 | Personal info: Name | Display name | Yes | Yes | App functionality | Required |
 | Personal info: User IDs | Username and account ID | Yes | Yes | App functionality, Account management | Required |
-| Personal info: Phone number | Only if the person adds one | Yes | Yes | App functionality | Optional |
+| Personal info: Phone number | Only if the person adds one | Yes | Yes | App functionality | Optional. Applies only once the Android app has a way to add a phone number (it has none yet). |
 | Messages: Other in-app messages | Message content in server-readable chats only. End-to-end encrypted content cannot be read by the server (privacy policy, section 3). Maps to "user content" in the iPhone manifest. | Yes | Yes | App functionality | Required for chats. OWNER TO CONFIRM how to declare encrypted content that the server stores but cannot read, and the sizes and timing the server sees. |
 | Photos and videos / Audio files | Attachments and voice notes, encrypted on the device before upload | Yes (stored) | Yes | App functionality | Optional |
-| Device or other IDs: Device or other IDs | The device ID the server assigns to each device. It is not an advertising ID. | Yes | Yes | App functionality, Account management | Required |
-| App info and performance: Crash logs | Crash reports with no message content, contacts or other personal content | Yes | No, not linked to the account | App functionality (fixing crashes) | Required. Handling is PLACEHOLDER, OWNER TO CONFIRM (see [android-play.md](android-play.md), section 8). |
+| Device or other IDs: Device or other IDs | The device ID the server assigns to each device. It is not an advertising ID. | Yes | Yes | App functionality, Account management | Required. The FCM push token is also sent to the push gateway; OWNER TO CONFIRM whether to list it here. |
+| App info and performance: Crash logs | Crash reports with no message content, contacts or other personal content | Yes | No, not linked to the account | App functionality (fixing crashes) | Required. OWNER TO CONFIRM: the Android app has no crash reporter yet. Handling is PLACEHOLDER, OWNER TO CONFIRM (see [android-play.md](android-play.md), section 8). |
 
 Not collected: location, contacts or address book, financial info, health, web browsing, calendar, advertising ID, installed apps, files and docs outside what the person attaches.
 
