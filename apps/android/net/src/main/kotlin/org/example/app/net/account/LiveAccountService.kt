@@ -379,12 +379,16 @@ class LiveAccountService(
     private fun bindTo(session: Session) {
         val address = sessionAddress(session) ?: throw AccountError.Server
         val wanted = canonical(address)
-        if (hostPortOf(client.baseUrl).equals(wanted, ignoreCase = true) && schemeOk(client)) return
+        if (matches(client, address, wanted)) return
         val c = makeClient(address)
-        if (!hostPortOf(c.baseUrl).equals(wanted, ignoreCase = true) || !schemeOk(c)) throw AccountError.Server
+        if (!matches(c, address, wanted)) throw AccountError.Server
         client = c
         install(c)
     }
+
+    /** [c] talks to [wanted] over the scheme [address] stands for (https unless a loopback session saved http). */
+    private fun matches(c: ServerClient, address: ServerAddress, wanted: String) =
+        hostPortOf(c.baseUrl).equals(wanted, ignoreCase = true) && schemeOk(c) && c.baseUrl.isHttps == address.secure
 
     private fun requireSession(): Session {
         if (forcedOut) throw AccountError.Server

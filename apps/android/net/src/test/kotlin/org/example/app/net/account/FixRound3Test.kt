@@ -81,6 +81,20 @@ class FixRound3Test {
     }
 
     @Test
+    fun aLoopbackClientWithTheSameHostButAnotherSchemeIsReplaced() {
+        var seen: ServerAddress? = null
+        val sessions = SessionStore(MemorySecretStore()).also { it.save(Session("localhost:8443", "a1", "d1", "tok", scheme = "https")) }
+        LiveAccountService(
+            client = ServerClient("http://localhost:8443/".toHttpUrl(), sessions, OkHttpClient()),
+            sessionStore = sessions, passkeys = FakePasskeys(), hpke = ReferenceHpke(),
+            snapshots = FakeSnapshots(), deviceName = "Pixel 8", biometrics = FakeApproval(),
+            makeClient = { addr -> seen = addr; ServerClient("https://localhost:8443/".toHttpUrl(), sessions, OkHttpClient()) },
+            sleep = {},
+        )
+        assertEquals(ServerAddress("localhost", 8443, true), seen)
+    }
+
+    @Test
     fun aSavedSessionRecordsTheSchemeOfItsClient() = runBlocking<Unit> {
         val f = Fixture()
         toStop += { f.shutdown() }
