@@ -1,0 +1,111 @@
+name: call-lab-calls
+
+# Call lab Task L10a: automated test calls between two simulated clients on one macOS runner.
+# Results are labelled "CI, simulated". They are not device results: they never go into the L10
+# tables, GOAL.md's mode table or DataMode.estimatedMBPer10Minutes without the owner's approval.
+# Only the L10a pass rules gate (tools/call-lab/ci/summarize.py); every other metric is report only.
+# Exactly one Mac job; weekly and by hand only (no push or pull_request trigger), so it never
+# competes with per-push runs for the shared Mac runners.
+
+on:
+  schedule:
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: call-lab-calls
+  cancel-in-progress: false
+
+jobs:
+  calls:
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      LAB_SECONDS: '300'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tests for the CI tools
+        run: |
+          sh tools/call-lab/netem/test_dummynet.sh
+          (cd tools/call-lab/ci && python3 -m unittest -q)
+
+      - name: Install tools (XcodeGen, PostgreSQL, coturn)
+        run: brew install xcodegen postgresql@17 coturn
+
+      - name: Audio devices on this runner (diagnostic)
+        run: system_profiler SPAudioDataType | grep -E '^ {4}[^ ].*:$|Input Channels|Output Channels' || true
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: server/go.sum
+
+      - name: Start PostgreSQL
+        run: |
+          pg=$(brew --prefix postgresql@17)/bin
+          "$pg/initdb" -D "$RUNNER_TEMP/pg" -U postgres --auth=trust >/dev/null
+          "$pg/pg_ctl" -D "$RUNNER_TEMP/pg" -l "$RUNNER_TEMP/pg.log" -o "-k $RUNNER_TEMP -c listen_addresses=127.0.0.1" start
+          "$pg/createdb" -h 127.0.0.1 -U postgres lab
+
+      - name: Build the lab server
+        working-directory: server
+        run: go build -o "$RUNNER_TEMP/appserver" ./cmd/appserver
+
+      - name: Build CallLabMac
+        working-directory: tools/call-lab
+        run: |
+          xcodegen generate
+          xcodebuild build -project CallLab.xcodeproj -scheme CallLabMac -configuration Debug \
+            -destination 'platform=macOS' -derivedDataPath "$RUNNER_TEMP/dd" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" -quiet
+          app=$(find "$RUNNER_TEMP/dd/Build/Products/Debug" -maxdepth 1 -name '*.app' | head -1)
+          test -n "$app"
+          echo "LAB_APP=$app" >> "$GITHUB_ENV"
+
+      - uses: actions/cache@v4
+        with:
+          path: tools/call-lab/corpus/data/archives
+          key: call-lab-librispeech-test-clean-39fde525
+
+      - name: Build the stimulus (LibriSpeech test-clean, 50% active)
+        working-directory: tools/call-lab/corpus
+        run: |
+          python3 fetch.py --only librispeech-test-clean --extract
+          mkdir -p "$RUNNER_TEMP/speech"
+          find data/librispeech-test-clean -name '*.flac' | sort | head -60 | while read -r f; do
+            afconvert -f WAVE -d LEI16@48000 -c 1 "$f" "$RUNNER_TEMP/speech/$(basename "$f" .flac).wav"
+          done
+          python3 make_stimulus.py --speech-dir "$RUNNER_TEMP/speech" --out "$RUNNER_TEMP/stimulus.wav" --seconds 300
+
+      - name: Test calls
+        env:
+          APP_DATABASE_URL: postgres://postgres@127.0.0.1:5432/lab?sslmode=disable
+        run: |
+          sh tools/call-lab/ci/run_calls.sh --app "$LAB_APP" --server "$RUNNER_TEMP/appserver" \
+            --stimulus "$RUNNER_TEMP/stimulus.wav" --out "$RUNNER_TEMP/runs"
+
+      - name: Summary and pass rules
+        if: always()
+        run: |
+          rc=0
+          python3 tools/call-lab/ci/summarize.py "$RUNNER_TEMP/runs" --out "$RUNNER_TEMP/summary" || rc=$?
+          cat "$RUNNER_TEMP/summary/summary.md" >> "$GITHUB_STEP_SUMMARY" || true
+          for f in "$RUNNER_TEMP"/runs/*/caller.log "$RUNNER_TEMP"/runs/*/callee.log; do
+            [ -f "$f" ] && { echo "== $f"; tail -5 "$f"; }
+          done
+          exit $rc
+
+      # Summary Markdown and CSV only (under 1 MB); recordings, pcaps and logs are not uploaded.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: call-lab-calls-summary
+          path: |
+            ${{ runner.temp }}/summary/summary.md
+            ${{ runner.temp }}/summary/summary.csv
+          if-no-files-found: warn
+          retention-days: 90
