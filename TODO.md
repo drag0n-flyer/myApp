@@ -42,7 +42,6 @@ Admin dashboard: `http://localhost:9044/admin/`. `.env` also sets `APP_ADMIN_HOS
 | [Call lab](docs/superpowers/plans/2026-10-27-call-lab.md) | 9 / 12 | 75% | L10a waits for WebRTC; L10 deferred; L11 last | 1 day after WebRTC |
 
 Queued for the iPhone/Mac after the current work:
-- the app ID moves into one file, `apps/apple/AppID.xcconfig`
 - bugs the Android port found that the iPhone shares: a chat can be orphaned if the reply to its first commit is lost; one bad join can stop the whole inbox
 - the call machine should check the answering device against its encryption identity, and give up on calls that never connect (ring and setup deadlines)
 - sign-up sends the display name (`PATCH /v1/me/settings` after sign-up) and has an email-code path that never registers a passkey, matching Android
@@ -53,7 +52,6 @@ Queued for the iPhone/Mac after the current work:
 ## Main CI
 
 The Apple apps workflow fix (Swift 6.2 / Xcode 26) is merged; every Apple job was green on its branch. Follow-ups from its review:
-- the photo test checks only three metadata keys and starts from a picture with no metadata; it should start from a photo carrying GPS, camera and date data and allow only size and colour keys
 - the Mac UI tests run without the app's sandbox, app-group and keychain permissions (a test build can't launch with them unsigned); a signed check of those is needed before release
 - CallKit calls now report from CallKit's own queue; check calls once on a real iPhone
 
@@ -88,7 +86,7 @@ Small follow-ups from the last review: a rare race needing the password and two 
 
 ## Waiting on the owner
 
-1. **The final app ID.** Android reads it from `app-id.properties`; the iPhone/Mac file is coming. It can't change after the first store release. The placeholder is `org.example.app`.
+1. **The final app ID.** Android reads it from `app-id.properties`, the iPhone/Mac from `apps/apple/AppID.xcconfig`. It can't change after the first store release. The placeholder is `org.example.app`.
 2. **A domain and HTTPS for testing on phones.** The server speaks plain HTTP; the apps, passkeys and the admin dashboard from other machines need HTTPS with a real certificate. A domain pointed at this machine plus Caddy (in the Docker setup) is enough.
 3. **SMTP details in `.env`** (`APP_SMTP_URL`, `APP_MAIL_FROM`), so sign-up codes are sent.
 4. **Admin port on the LAN (your choice, noted):** `.env` has `APP_ADMIN_LISTEN=0.0.0.0:9044` and plain HTTP allowed. Create your admin now (restart the server first): until the first admin exists, anyone on the network who opens the page can create it. Then turn on two-step sign-in.

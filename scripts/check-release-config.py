@@ -68,6 +68,29 @@ def resolve(value, settings, overrides=None):
     return value
 
 
+def load_xcconfig(path):
+    """KEY = VALUE lines of an .xcconfig file; `//` comments and #include lines are skipped."""
+    settings = {}
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.split("//", 1)[0].strip()
+            if not line or line.startswith("#"):
+                continue
+            key, sep, value = line.partition("=")
+            if sep:
+                settings[key.strip()] = value.strip()
+    return settings
+
+
+def config_file_settings(project, base_dir):
+    """Settings from the project-level configFiles (Release preferred), e.g. APP_ID from AppID.xcconfig."""
+    files = project.get("configFiles") or {}
+    rel = files.get("Release") or next(iter(files.values()), None)
+    if not rel:
+        return {}
+    return load_xcconfig(os.path.join(base_dir, rel))
+
+
 class Report:
     def __init__(self):
         self.rows = []
@@ -159,7 +182,8 @@ def main(argv=None):
     ap.add_argument("--placeholder-brand-ok", action="store_true", help="accept the org.example.app bundle ID")
     ap.add_argument("--filtering-pending", action="store_true",
                     help="Apple has not granted the notification-filtering entitlement yet")
-    ap.add_argument("--app-group", default=DEFAULT_APP_GROUP)
+    ap.add_argument("--app-group", default=None,
+                    help="expected app group (default: group.$(APP_ID), else %s)" % DEFAULT_APP_GROUP)
     args = ap.parse_args(argv)
 
     try:
@@ -168,7 +192,14 @@ def main(argv=None):
         print("error: %s" % e, file=sys.stderr)
         return 2
     base_dir = os.path.dirname(os.path.abspath(args.project))
-    proj_settings = (project.get("settings") or {}).get("base") or {}
+    try:
+        proj_settings = config_file_settings(project, base_dir)
+    except OSError as e:
+        print("error: %s" % e, file=sys.stderr)
+        return 2
+    proj_settings.update((project.get("settings") or {}).get("base") or {})
+    if args.app_group is None:
+        args.app_group = "group." + proj_settings["APP_ID"] if "APP_ID" in proj_settings else DEFAULT_APP_GROUP
     targets = project.get("targets") or {}
 
     ent_cache = {}
@@ -189,7 +220,18 @@ def main(argv=None):
         rel = s.get("CODE_SIGN_ENTITLEMENTS")
         if not rel:
             return None
-        return load_entitlements(resolve(rel, s, overrides))
+        ent = load_entitlements(resolve(rel, s, overrides))
+        if ent is None:
+            return None
+        # Expand build settings such as $(APP_ID) in string values, as Xcode does when signing.
+        out = {}
+        for k, v in ent.items():
+            if isinstance(v, str):
+                v = resolve(v, s, overrides)
+            elif isinstance(v, list):
+                v = [resolve(x, s, overrides) if isinstance(x, str) else x for x in v]
+            out[k] = v
+        return out
 
     def find(platform, kind):
         for name, t in targets.items():
@@ -277,7 +319,9 @@ def main(argv=None):
     for name, t in sorted(targets.items()):
         if t.get("type") not in ("application", "app-extension"):
             continue
-        bid = ((t.get("settings") or {}).get("base") or {}).get("PRODUCT_BUNDLE_IDENTIFIER", "")
+        ts = dict(proj_settings)
+        ts.update((t.get("settings") or {}).get("base") or {})
+        bid = resolve(ts.get("PRODUCT_BUNDLE_IDENTIFIER", ""), ts)
         placeholder = (not bid) or bid == PLACEHOLDER_BUNDLE or bid.startswith(PLACEHOLDER_BUNDLE + ".")
         if placeholder and args.placeholder_brand_ok and bid:
             rep.add("PASS", name, "bundle ID %s is the placeholder (allowed by --placeholder-brand-ok)" % bid)

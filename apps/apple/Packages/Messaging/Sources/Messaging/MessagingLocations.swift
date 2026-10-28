@@ -3,7 +3,17 @@ import Foundation
 /// Names the app and the notification extension must agree on (Design 12). Both open the same
 /// files in the shared app-group container.
 public enum MessagingLocations {
-    public static let appGroupID = "group.org.example.app"
+    /// The Info.plist key holding the app group. project.yml sets it to `group.$(APP_ID)`, so the
+    /// group follows the app ID in AppID.xcconfig.
+    public static let appGroupInfoKey = "AppGroupID"
+    /// The app group the app and the notification extension share; nil when Info.plist lacks it.
+    public static var appGroupID: String? { appGroup(in: Bundle.main.infoDictionary ?? [:]) }
+    public static func appGroup(in info: [String: Any]) -> String? {
+        guard let id = (info[appGroupInfoKey] as? String)?.trimmingCharacters(in: .whitespaces), !id.isEmpty else {
+            return nil
+        }
+        return id
+    }
     public static let databaseFileName = "messaging.sqlite"
     public static let lockFileName = "messaging.lock"
     public static let mediaDirectoryName = "media"

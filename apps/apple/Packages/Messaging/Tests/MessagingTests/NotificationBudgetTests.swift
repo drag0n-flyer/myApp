@@ -86,8 +86,15 @@ private final class Counter: @unchecked Sendable {
 @Suite struct MessagingLocationsTests {
     @Test func namesMatchTheDesign() {
         let root = URL(fileURLWithPath: "/g")
-        #expect(MessagingLocations.appGroupID == "group.org.example.app")
         #expect(MessagingLocations.lockURL(in: root).path == "/g/messaging.lock")
         #expect(MessagingLocations.databaseURL(in: root).path == "/g/messaging.sqlite")
+    }
+
+    /// The app group comes from Info.plist (project.yml writes `group.$(APP_ID)` from AppID.xcconfig).
+    @Test func appGroupFromInfoPlist() {
+        #expect(MessagingLocations.appGroupInfoKey == "AppGroupID")
+        #expect(MessagingLocations.appGroup(in: ["AppGroupID": "group.com.example.chat"]) == "group.com.example.chat")
+        #expect(MessagingLocations.appGroup(in: ["AppGroupID": " "]) == nil)
+        #expect(MessagingLocations.appGroup(in: [:]) == nil)
     }
 }

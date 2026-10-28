@@ -28,3 +28,4 @@ xcodebuild -project App.xcodeproj -scheme AppiOS -destination "id=$UDID" \
 # The notification service extension must be embedded and declare the right extension point.
 . "$HERE/lib-nse.sh"
 check_nse AppiOS "id=$UDID" "PlugIns/*.appex/Info.plist"
+check_app_ids AppiOS "id=$UDID" "Info.plist" ""

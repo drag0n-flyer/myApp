@@ -27,7 +27,8 @@ enum NSEWiring {
         let accessGroup = (info["KeychainAccessGroup"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         let sessions = SessionStore(storage: KeychainSessionStorage(accessGroup: accessGroup))
         guard let session = sessions.current,
-              let container = StoreLocation.appGroup(MessagingLocations.appGroupID)
+              let group = MessagingLocations.appGroupID,
+              let container = StoreLocation.appGroup(group)
         else { return nil }
         do {
             let db = try Database(url: MessagingLocations.databaseURL(in: container))

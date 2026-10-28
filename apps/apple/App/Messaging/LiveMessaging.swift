@@ -30,7 +30,7 @@ struct LiveMessaging {
 
     /// The app-group container, or nil when the group is not available.
     static var container: URL? {
-        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: MessagingLocations.appGroupID)
+        MessagingLocations.appGroupID.flatMap { FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: $0) }
     }
 
     /// MERGE(I1): deletes this account's MLS signing key from the keychain (the wipe ruling). M5's
