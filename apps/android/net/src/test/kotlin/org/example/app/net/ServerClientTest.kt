@@ -119,10 +119,50 @@ class ServerClientTest {
         val calls = AtomicInteger(0)
         c.setOnUnauthorized { calls.incrementAndGet() }
         val results = (1..5).map { async(kotlinx.coroutines.Dispatchers.IO) { runCatching { c.get(Auth.Session) } } }.awaitAll()
-        assertEquals(5, server.requestCount)
         results.forEach { assertEquals(401, (it.exceptionOrNull() as ServerException).status) }
         assertEquals(1, calls.get())
+        // The five calls, then the one check that the 401 is real (GET /v1/me).
+        assertEquals(6, server.requestCount)
         assertNull(store.current)
+    }
+
+    /** Ruling (decision log): a 401 proves revocation only if it is the server's own error and a second call agrees. */
+    private fun answer(first: MockResponse, me: MockResponse) {
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest) = if (request.path == "/v1/me") me else first
+        }
+    }
+
+    private suspend fun reasonFor(): Pair<SignOutReason?, Int> {
+        val c = client()
+        store.save(session)
+        var reason: SignOutReason? = null
+        c.setOnUnauthorized { reason = it }
+        assertFailsWith<ServerException> { c.get(Auth.Session) }
+        assertNull(store.current)
+        return reason to server.requestCount
+    }
+
+    @Test
+    fun confirmedServer401IsRevoked() = runBlocking {
+        answer(MockResponse().setResponseCode(401).setBody(unauthorized), MockResponse().setResponseCode(401).setBody(unauthorized))
+        val (reason, count) = reasonFor()
+        assertEquals(SignOutReason.Revoked, reason)
+        assertEquals(2, count)
+        server.takeRequest()
+        assertEquals("Bearer tok", server.takeRequest().getHeader("Authorization"))
+    }
+
+    @Test
+    fun unconfirmed401OnlySignsOut() = runBlocking {
+        answer(MockResponse().setResponseCode(401).setBody(unauthorized), MockResponse().setResponseCode(200).setBody("{}"))
+        assertEquals(SignOutReason.SessionEnded to 2, reasonFor())
+    }
+
+    @Test
+    fun foreign401OnlySignsOutWithoutACheck() = runBlocking {
+        answer(MockResponse().setResponseCode(401).setBody("<html>proxy</html>"), MockResponse().setResponseCode(401).setBody(unauthorized))
+        assertEquals(SignOutReason.SessionEnded to 1, reasonFor())
     }
 
     @Test

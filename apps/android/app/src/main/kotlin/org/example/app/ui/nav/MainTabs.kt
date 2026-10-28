@@ -23,6 +23,8 @@ import androidx.navigation.compose.rememberNavController
 @Composable
 fun MainTabs(
     modifier: Modifier = Modifier,
+    /** The tabs shown; the live build hides Calls until E6. */
+    tabs: List<MainTab> = MainTab.entries,
     tabContent: @Composable (MainTab) -> Unit = { TabPlaceholder(it) },
 ) {
     val navController = rememberNavController()
@@ -33,7 +35,7 @@ fun MainTabs(
         modifier = modifier,
         bottomBar = {
             NavigationBar {
-                for (tab in MainTab.entries) {
+                for (tab in tabs) {
                     val label = stringResource(tab.label)
                     NavigationBarItem(
                         selected = tab == current,
@@ -54,7 +56,7 @@ fun MainTabs(
         },
     ) { padding ->
         NavHost(navController, startDestination = MainTab.start.route, modifier = Modifier.padding(padding)) {
-            for (tab in MainTab.entries) composable(tab.route) { tabContent(tab) }
+            for (tab in tabs) composable(tab.route) { tabContent(tab) }
         }
     }
 }
