@@ -234,11 +234,15 @@ class ConversationManager(
      * Called by the inbox processor under the lock, after `process` returned `Joined`. [serverMode] was fetched before
      * the lock. `innerMode` stays null until the creator's `mode` envelope arrives.
      * @throws SyncException.NoPeer when no member belongs to another account.
-     * @throws SyncException.ConversationRebound when [serverConversationId] is already bound to another group.
+     * @throws SyncException.ConversationRebound when [serverConversationId] is already bound to another group, or
+     *   [group] to another server conversation.
      */
     suspend fun planJoin(group: GroupId, serverConversationId: String, serverMode: String): JoinPlan {
-        // A server ID already bound to another group is never rebound (it would move that chat's messages).
+        // A server ID already bound to another group is never rebound (it would move that chat's messages), and a group
+        // already bound to another server ID is never bound twice (`group_id` is unique: the write would fail on every
+        // retry and stall the inbox). Anyone who shares a chat with me knows its group ID and can build such a Welcome.
         repo.conversation(serverConversationId)?.let { if (!it.groupId.contentEquals(group.raw)) throw SyncException.ConversationRebound }
+        repo.conversationByGroup(group.raw)?.let { if (it.serverId != serverConversationId) throw SyncException.ConversationRebound }
         val keys = membership.keys(group)
         val peer = keys.map { it.identity.substringBefore('/') }.toSet().minus(me.accountId).minOrNull()
             ?: throw SyncException.NoPeer

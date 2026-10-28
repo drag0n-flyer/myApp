@@ -443,6 +443,37 @@ class InboxProcessorTest {
         assertTrue(rig.bob1.repo.entries("parked:").isEmpty())
     }
 
+    /**
+     * Someone who shares a chat with me sends a Welcome for a new server conversation that names the group of an
+     * existing one. Binding it would break `group_id UNIQUE` on every retry: it is parked at once instead.
+     */
+    @Test
+    fun welcomeReusingAnotherConversationsGroupIsParked() = runTest {
+        val (rig, first) = joinedRig()
+        val group = GroupId(first.groupId)
+        // ana removes bob1, so bob1's engine accepts a new Welcome for the same group.
+        rig.ana1.manager.postCommitWithRetry(first.serverId, group, emptyList(), listOf("bob1")) {
+            rig.ana1.mls.remove(listOf("acc-bob/bob1"), group)
+        }
+        rig.bob1.processor.sync()
+        assertEquals(false, rig.bob1.repo.conversation(first.serverId)?.active)
+
+        // A second server conversation whose Welcome names the first one's group.
+        val second = rig.ana1.api.createConversation("acc-bob").conversationId
+        val keyPackage = rig.ana1.api.claimKeyPackages("acc-bob", listOf("bob1")).values.single()
+        val readd = rig.ana1.lock.withLock { rig.ana1.mls.add(listOf(keyPackage), group) }
+        rig.ana1.api.postCommit(second, 0, readd.commit, readd.welcome, listOf("bob1"), emptyList())
+        rig.ana1.lock.withLock { rig.ana1.mls.commitAccepted(group) }
+        val bad = rig.server.pending("acc-bob/bob1").single { it.conversationId == second && it.kind == "welcome" }
+        rig.bob1.processor.sync()
+
+        assertNotNull(rig.bob1.repo.get("parked:${bad.cursor}"), "parked at once, not retried")
+        assertTrue(rig.bob1.repo.rawItems(10).isEmpty(), "nothing blocks the queue")
+        assertEquals(null, rig.bob1.repo.conversation(second))
+        assertTrue(rig.bob1.repo.conversation(first.serverId)!!.groupId.contentEquals(first.groupId))
+        assertTrue(rig.bob1.logs.any { it.startsWith("join_parked") && "cursor=${bad.cursor}" in it })
+    }
+
     @Test
     fun callSignalNotStored() = runTest {
         val (rig, record) = joinedRig()
