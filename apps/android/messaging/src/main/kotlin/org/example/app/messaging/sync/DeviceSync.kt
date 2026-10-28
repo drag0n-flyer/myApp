@@ -21,9 +21,6 @@ import org.example.app.messaging.ports.Repository
 sealed class DeviceSyncException(message: String) : IllegalArgumentException(message) {
     /** `import` got bytes that are not a [LinkSnapshot] of version 1. */
     object InvalidSnapshot : DeviceSyncException("invalidSnapshot")
-
-    /** The server's device list proved this device was removed; local data was wiped. Stop all further work. */
-    object ThisDeviceRemoved : DeviceSyncException("thisDeviceRemoved")
 }
 
 /**
@@ -69,22 +66,15 @@ class DeviceSync(
      *   catches up here; the profile allows 24 hours from coming online), but only when the list contains this device, and only when the device was missing from two lists at least ten minutes apart (the
      *   first time is stored; the injected clock is used) and was not listed within those ten minutes. A bad list or
      *   a device linked during the run cannot remove anyone.
-     * - a list that names other devices but not this one proves this device was removed: it wipes and throws
-     *   [DeviceSyncException.ThisDeviceRemoved] without posting anything.
      * Each conversation, and each of the two steps in it, is tried even when another fails; the first error is thrown
      * at the end.
      */
     suspend fun reconcileOwnDevices() {
         val records = server.devices()
         val listed = records.map { it.id }.toSet()
-        // The server's proof that this device was removed: the list answers, names other devices, but not this one.
-        // Nothing is posted: wipe, and tell the caller to stop.
-        if (listed.isNotEmpty() && me.deviceId !in listed) {
-            wipeLocalData()
-            throw DeviceSyncException.ThisDeviceRemoved
-        }
         val others = listed - me.deviceId
-        // An empty answer must never remove anything: the list has to contain this device.
+        // A wrong, empty or partial answer must never remove anything: the list has to contain this device.
+        // It never wipes either: only a 401 or close code 4003 proves this device was revoked.
         val trustworthy = me.deviceId in listed
         val now = clock.now()
         if (trustworthy) {
@@ -174,7 +164,7 @@ class DeviceSync(
     /**
      * `device.revoked` is not signed, so it is only a hint: it starts [reconcileOwnDevices], and removal still needs
      * two lists ten minutes apart. An event naming this device is ignored: the server never sends it to the revoked
-     * device, and only the server's own answer (the device list, or a 401 on an authenticated call) can prove it.
+     * device, and only a 401 or close code 4003 on an authenticated call can prove it.
      */
     suspend fun handleRevoked(deviceId: String) {
         if (deviceId == me.deviceId) return

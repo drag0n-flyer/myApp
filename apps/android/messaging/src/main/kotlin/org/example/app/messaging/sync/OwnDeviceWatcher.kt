@@ -20,9 +20,8 @@ import org.example.app.contracts.ServerEvent
  *   [RECHECK_MS]. A disconnect cancels what is pending; the next connect starts over.
  * - on `device.revoked`: [handleRevoked] (`DeviceSync.handleRevoked`: a hint that starts a reconcile; it never wipes
  *   or removes on its own), then [refreshDevices] for the device list.
- * - on [ConnectionState.Revoked] (a 401 or close code 4003 on the authenticated socket, the server's proof): [wipe].
- *   The same follows when a reconcile throws [DeviceSyncException.ThisDeviceRemoved] (it already wiped).
- *   After either, nothing more runs.
+ * - on [ConnectionState.Revoked] (a 401 or close code 4003 on the authenticated socket, the only proof): [wipe],
+ *   retried up to [WIPE_ATTEMPTS] times. After that nothing more runs, even if the wipe never succeeded.
  *
  * All work runs one piece at a time under one lock, so a reconcile, a revoked event and a wipe never overlap.
  * Failures go to [log] as one line with IDs and the error's class only. Time comes from the coroutine clock.
@@ -41,17 +40,15 @@ class OwnDeviceWatcher(
     @Volatile private var pass: Job? = null
     @Volatile private var stopped = false
 
-    /** Signals [stop] from inside a piece of work. */
-    private class Stop : Exception()
-
-    /** Collects [states] and [events] in the scope until it is cancelled or this device is found removed. */
+    /** Collects [states] and [events] in the scope until it is cancelled or this device is revoked. */
     fun start(states: Flow<ConnectionState>, events: Flow<ServerEvent>) {
         jobs += scope.launch {
             states.distinctUntilChanged().collect { state ->
                 pass?.cancel()
                 pass = when (state) {
                     ConnectionState.Connected -> scope.launch { onConnected() }
-                    ConnectionState.Revoked -> scope.launch { serially("wipe") { wipe(); throw Stop() } }
+                    // Not the pass: a later state change must not cancel the wipe's retries.
+                    ConnectionState.Revoked -> { scope.launch { wipeThenStop() }; null }
                     else -> null
                 }
             }
@@ -94,12 +91,6 @@ class OwnDeviceWatcher(
                 true
             } catch (e: CancellationException) {
                 throw e
-            } catch (_: Stop) {
-                stopped = true
-                null
-            } catch (_: DeviceSyncException.ThisDeviceRemoved) {
-                stopped = true
-                null
             } catch (e: Exception) {
                 log("$what failed: ${e.javaClass.simpleName}")
                 false
@@ -107,6 +98,34 @@ class OwnDeviceWatcher(
         }
         if (stopped) stop()
         return outcome
+    }
+
+    /**
+     * Wipes, holding the lock across retries so nothing runs on half-wiped data: up to [WIPE_ATTEMPTS] tries with
+     * backoff from [FIRST_WIPE_RETRY_MS]. All work stops afterwards, whether the wipe succeeded or not.
+     */
+    private suspend fun wipeThenStop() {
+        work.withLock {
+            if (stopped) return@withLock
+            stopped = true
+            var wait = FIRST_WIPE_RETRY_MS
+            for (attempt in 1..WIPE_ATTEMPTS) {
+                try {
+                    wipe()
+                    return@withLock
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    log("wipe failed: ${e.javaClass.simpleName}")
+                }
+                if (attempt < WIPE_ATTEMPTS) {
+                    delay(wait)
+                    wait *= 2
+                }
+            }
+            log("wipe gave up")
+        }
+        stop()
     }
 
     private fun stop() {
@@ -119,5 +138,9 @@ class OwnDeviceWatcher(
         /** More than the ten minutes `DeviceSync` needs between two lists before it removes a device. */
         const val RECHECK_MS = 11 * 60_000L
         const val FIRST_RETRY_MS = 30_000L
+
+        /** Tries at wiping before giving up; all work stops either way. */
+        const val WIPE_ATTEMPTS = 5
+        const val FIRST_WIPE_RETRY_MS = 1_000L
     }
 }

@@ -135,18 +135,6 @@ class DeviceSyncTest {
     }
 
     @Test
-    fun aDeviceListWithOthersButNotThisDeviceWipesAndPostsNoCommit() = runTest {
-        // The server's proof: GET /v1/devices succeeds and lists other devices, but not this one.
-        val (rig, _) = joined()
-        rig.server.revokeDevice("acc-ana", "ana2")
-        val commits = rig.server.commitPosts.size
-        assertFailsWith<DeviceSyncException.ThisDeviceRemoved> { rig.ana2.deviceSync.reconcileOwnDevices() }
-        assertTrue(rig.ana2.repo.chats().isEmpty())
-        assertEquals(listOf("mls", "signingKey"), rig.ana2.wipes)
-        assertEquals(commits, rig.server.commitPosts.size)
-    }
-
-    @Test
     fun snapshotRoundTrip() = runTest {
         val (rig, _) = joined()
         val repo = rig.ana1.repo
@@ -253,29 +241,36 @@ class DeviceSyncTest {
     }
 
     @Test
-    fun listWithoutThisDeviceRemovesNothingAndWipes() = runTest {
+    fun listWithoutThisDeviceRemovesNothing() = runTest {
         val (rig, record) = joined()
         rig.server.deviceListOverride = { l -> l.filter { it.id == "ana2" } }
         val commits = rig.server.commitPosts.size
-        assertFailsWith<DeviceSyncException.ThisDeviceRemoved> { rig.ana1.reconcile() }
+        rig.ana1.reconcile()
+        rig.ana1.nowMs += 2 * tenMinutes
+        rig.ana1.reconcile()
         assertEquals(commits, rig.server.commitPosts.size)
         assertTrue("acc-ana/ana2" in rig.membersOn(rig.ana1, record))
-        assertEquals(listOf("mls", "signingKey"), rig.ana1.wipes)
+        assertTrue("acc-ana/ana1" in rig.membersOn(rig.ana1, record))
+        assertEquals(emptyList(), rig.ana1.wipes, "a wrong, partial or lagging list never wipes")
     }
 
     @Test
-    fun listWithoutThisDeviceButWithAForeignOneAddsAndRemovesNothing() = runTest {
+    fun listWithoutThisDeviceButWithAForeignOneRemovesNothing() = runTest {
         val (rig, record) = joined()
-        // Not empty, but neither ana1 (this device) nor ana2: this device wipes and posts nothing.
+        // Not empty, but neither ana1 (this device) nor ana2: the answer cannot be trusted. ana3 has KeyPackages, so
+        // adding it works and the removal step is reached.
         val ana3 = TestDevice(rig.server, "acc-ana", "ana3", rig.escrowKeys.publicKey)
         ana3.api.uploadKeyPackages(ana3.mls.makeKeyPackages(3))
         rig.server.deviceListOverride = { l -> l.filter { it.id == "ana3" } }
-        val commits = rig.server.commitPosts.size
-        assertFailsWith<DeviceSyncException.ThisDeviceRemoved> { rig.ana1.reconcile() }
-        assertEquals(commits, rig.server.commitPosts.size)
-        assertFalse("acc-ana/ana3" in rig.membersOn(rig.ana1, record))
+        runCatching { rig.ana1.reconcile() }
+        rig.ana1.nowMs += 2 * tenMinutes
+        runCatching { rig.ana1.reconcile() }
+        rig.ana1.nowMs += 2 * tenMinutes
+        runCatching { rig.ana1.reconcile() }
+        assertTrue("acc-ana/ana3" in rig.membersOn(rig.ana1, record), "the add path ran, so the removal step was reached")
         assertTrue("acc-ana/ana2" in rig.membersOn(rig.ana1, record))
-        assertEquals(listOf("mls", "signingKey"), rig.ana1.wipes)
+        assertTrue("acc-ana/ana1" in rig.membersOn(rig.ana1, record))
+        assertEquals(emptyList(), rig.ana1.wipes)
     }
 
     @Test

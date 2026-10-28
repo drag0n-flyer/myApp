@@ -24,6 +24,7 @@ class OwnDeviceWatcherTest {
         var reconcileFailures = 0
         var reconcileError: () -> Exception = { IllegalStateException("down") }
         var failRevoked = false
+        var wipeFailures = 0
         /** When set, each reconcile waits for it without being cancellable, as a commit in flight does. */
         var gate: CompletableDeferred<Unit>? = null
         var active = 0
@@ -44,7 +45,7 @@ class OwnDeviceWatcherTest {
             reconcile = { work("reconcile") { if (reconcileFailures > 0) { reconcileFailures--; throw reconcileError() } } },
             handleRevoked = { id -> work("revoked:$id") { if (failRevoked) error("down") } },
             refreshDevices = { log += "devices" },
-            wipe = { work("wipe") },
+            wipe = { work("wipe") { if (wipeFailures > 0) { wipeFailures--; error("disk") } } },
             log = { lines += it },
         ).also { it.start(states, events) }
     }
@@ -186,15 +187,37 @@ class OwnDeviceWatcherTest {
     }
 
     @Test
-    fun aReconcileThatFindsThisDeviceRemovedStopsEverything() = runTest {
+    fun aWipeThatFailsIsRetriedThenEverythingStops() = runTest {
         val s = Setup(this)
-        s.reconcileFailures = 1
-        s.reconcileError = { DeviceSyncException.ThisDeviceRemoved }
+        s.wipeFailures = 2
+        s.states.value = ConnectionState.Revoked
+        runCurrent()
+        // Nothing else runs between the attempts, and a state change does not cut the retries short.
+        s.events.emit(ServerEvent.DeviceRevoked("d9"))
+        s.states.value = ConnectionState.Disconnected
+        runCurrent()
+        advanceTimeBy(eleven); runCurrent()
+        assertEquals(listOf("wipe", "wipe", "wipe"), s.log)
+        assertEquals(2, s.lines.count { it == "wipe failed: IllegalStateException" })
         s.states.value = ConnectionState.Connected
         runCurrent()
-        advanceTimeBy(3 * eleven); runCurrent()
-        s.events.emit(ServerEvent.DeviceRevoked("d9"))
+        advanceTimeBy(eleven); runCurrent()
+        assertEquals(listOf("wipe", "wipe", "wipe"), s.log)
+    }
+
+    @Test
+    fun aWipeThatKeepsFailingGivesUpAndStopsAllWork() = runTest {
+        val s = Setup(this)
+        s.wipeFailures = 1_000
+        s.states.value = ConnectionState.Revoked
         runCurrent()
-        assertEquals(listOf("sync", "reconcile"), s.log)
+        advanceTimeBy(10 * eleven); runCurrent()
+        assertEquals(OwnDeviceWatcher.WIPE_ATTEMPTS, s.log.count { it == "wipe" })
+        assertTrue("wipe gave up" in s.lines)
+        s.states.value = ConnectionState.Connected
+        runCurrent()
+        s.events.emit(ServerEvent.DeviceRevoked("d9"))
+        advanceTimeBy(eleven); runCurrent()
+        assertTrue(s.log.all { it == "wipe" })
     }
 }
