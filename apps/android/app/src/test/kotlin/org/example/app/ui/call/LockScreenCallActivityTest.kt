@@ -16,7 +16,11 @@ import org.example.app.calls.android.CallInfo
 import org.example.app.calls.android.CallNotifications
 import org.example.app.calls.android.CallsRuntime
 import org.example.app.calls.android.IncomingCallActivity
+import androidx.lifecycle.Lifecycle
+import org.example.app.core.calls.CallEndReason
 import org.example.app.core.calls.CallEngine
+import org.example.app.core.calls.CallPhase
+import org.example.app.core.calls.DataMode
 import org.example.app.core.calls.CallState
 import org.example.app.core.calls.ModePreference
 import org.example.app.core.calls.NetworkType
@@ -32,6 +36,13 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], qualifiers = "w411dp-h891dp")
 class LockScreenCallActivityTest {
+    private companion object {
+        fun ringing() = CallState(
+            contactId = "bob", phase = CallPhase.Incoming, isVideoCall = false, isVideoOn = false,
+            effectiveMode = DataMode.High, network = NetworkType.Wifi,
+        )
+    }
+
     @get:Rule val rule = createEmptyComposeRule()
 
     private val context: Context = ApplicationProvider.getApplicationContext()
@@ -39,7 +50,7 @@ class LockScreenCallActivityTest {
 
     private class RecordingEngine : CallEngine {
         val log = mutableListOf<String>()
-        override val state = MutableStateFlow<CallState?>(null)
+        override val state = MutableStateFlow<CallState?>(ringing())
         override fun start(contactId: String, video: Boolean) = Unit
         override fun answer(video: Boolean) { log += "answer:$video" }
         override fun decline() { log += "decline" }
@@ -73,6 +84,29 @@ class LockScreenCallActivityTest {
                 assertTrue(shadowOf(it).showWhenLocked)
                 assertTrue(shadowOf(it).turnScreenOn)
             }
+        }
+    }
+
+    @Test
+    fun closesAtOnceWhenTheCallAlreadyEnded() {
+        for (state in listOf(ringing().copy(phase = CallPhase.Ended(CallEndReason.Missed)), null)) {
+            engine.state.value = state
+            launch().use { assertEquals(Lifecycle.State.DESTROYED, it.state) }
+        }
+        // No engine at all: nothing to answer either.
+        CallsRuntime.engine = null
+        launch().use { assertEquals(Lifecycle.State.DESTROYED, it.state) }
+    }
+
+    @Test
+    fun closesWhenTheCallStopsRinging() {
+        launch().use { scenario ->
+            assertEquals(Lifecycle.State.RESUMED, scenario.state)
+            engine.state.value = ringing().copy(phase = CallPhase.Ended(CallEndReason.AnsweredElsewhere))
+            org.robolectric.shadows.ShadowLooper.idleMainLooper()
+            var finishing = false
+            scenario.onActivity { finishing = it.isFinishing }
+            assertTrue(finishing)
         }
     }
 

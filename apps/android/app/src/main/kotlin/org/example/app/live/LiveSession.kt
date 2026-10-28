@@ -17,6 +17,8 @@ import org.example.app.calls.android.LiveCallEngine
 import org.example.app.calls.session.CallContext
 import org.example.app.calls.session.IceServer
 import org.example.app.calls.session.LiveCallSignaling
+import org.example.app.calls.session.MediaSessionFactory
+import org.example.app.contracts.CallSignalSealer
 import org.example.app.contracts.LiveSocket
 import org.example.app.contracts.ServerEvent
 import org.example.app.core.chats.Contact
@@ -91,6 +93,8 @@ class LiveSession(
     callContext: (isContact: Boolean) -> CallContext,
     callController: CallController,
     callSettings: () -> UserSettings,
+    callMedia: (Context, () -> UserSettings) -> MediaSessionFactory = CallMedia::factory,
+    callSealer: CallSignalSealer? = null,
 ) {
     private val clock = Clock.System
     val database = platform.openDatabase(platform.databaseName, DbKey.loadOrCreate(secrets))
@@ -145,9 +149,9 @@ class LiveSession(
                 override val events = callEvents
             },
         ) { TurnApi(client).turnCredentials().iceServers.map { IceServer(it.urls, it.username, it.credential) } },
-        sealer = sealer,
+        sealer = callSealer ?: sealer,
         // TODO(E5) is in CallMedia: until WebRtcMediaSession lands, every call fails cleanly at setup.
-        media = CallMedia.factory(context, callSettings),
+        media = callMedia(context, callSettings),
         peers = CallPeers { id ->
             repo.contact(id)?.let { CallPeer(Contact(it.accountId, it.displayName, it.username), it.isContact, repo.isBlocked(id)) }
         },

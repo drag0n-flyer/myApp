@@ -70,6 +70,8 @@ class LiveCallEngine(
         const val STATS_EVERY_TICKS = 2
         /** How long a push-woken ring waits for `call.status` before it rings anyway (the ring deadline still applies). */
         const val STATUS_TIMEOUT_MS = 5_000L
+        /** How long [shutdown] waits for the hang-up to go out before it ends the phone's call anyway. */
+        const val SHUTDOWN_MS = 3_000L
         private const val MAX_REMEMBERED_CALLS = 64
 
         /**
@@ -91,6 +93,8 @@ class LiveCallEngine(
     private var isContact = false
     private var network: NetworkType? = null
     private var shownPhase: CallPhase? = null
+    /** The call the phone shows (Telecom, ringtone, notification, service) until it is reported ended. Any thread. */
+    @Volatile private var shownCall: String? = null
     private var session: MediaSession? = null
     private var mediaJob: Job? = null
     private var ticker: Job? = null
@@ -144,6 +148,30 @@ class LiveCallEngine(
 
     override fun reset() = enqueue {
         if (_state.value?.isEnded == true) _state.value = null
+    }
+
+    /**
+     * Sign-out or wipe: ends any call before the session's scope goes, so Telecom, the ringtone, the notification
+     * and the call service do not carry over into the next account. A ringing call ends here only (declining would
+     * end it on the account's other devices); a call in progress is hung up. Media closes with the call. If the
+     * hang-up cannot go out in [SHUTDOWN_MS], the phone's call ends anyway.
+     */
+    suspend fun shutdown() {
+        val done = kotlinx.coroutines.CompletableDeferred<Unit>()
+        enqueue {
+            if (live) {
+                val ringing = !outgoing && machine.state?.phase == CallPhase.Incoming
+                run(machine.handle(if (ringing) CallEvent.LocalFailure else CallEvent.Hangup))
+            }
+            closeMedia()
+            done.complete(Unit)
+        }
+        if (withTimeoutOrNull(SHUTDOWN_MS) { done.await() } == null) {
+            shownCall?.let { id ->
+                shownCall = null
+                safely { controller.reportEnded(id, CallEndReason.HungUp) }
+            }
+        }
     }
 
     // IncomingCallSink: a ring that came by push. D7 already opened it and checked the caller.
@@ -345,6 +373,7 @@ class LiveCallEngine(
         val before = shownPhase
         if (phase == before) return null
         shownPhase = phase
+        shownCall = if (phase is CallPhase.Ended) null else id
         if (!phase.isEnded() && ticker == null) startTicker()
         val call = CallInfo(id, contact, s.isVideoCall)
         return when (phase) {

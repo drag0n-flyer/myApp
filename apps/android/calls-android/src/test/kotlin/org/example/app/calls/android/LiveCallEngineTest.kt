@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
 import org.example.app.calls.policy.AudioProfile
@@ -79,7 +81,11 @@ class LiveCallEngineTest {
         override suspend fun answer(callID: String, payload: ByteArray) { frames += CallFrame.ANSWER }
         override suspend fun signal(callID: String, payload: ByteArray) { frames += CallFrame.SIGNAL }
         override suspend fun decline(callID: String) { frames += CallFrame.DECLINE }
-        override suspend fun hangup(callID: String) { frames += CallFrame.HANGUP }
+        var hangupBlocks = false
+        override suspend fun hangup(callID: String) {
+            if (hangupBlocks) kotlinx.coroutines.awaitCancellation()
+            frames += CallFrame.HANGUP
+        }
         override suspend fun status(callID: String): CallStatus = status()
         override suspend fun iceServers(): List<IceServer> = emptyList()
     }
@@ -179,6 +185,71 @@ class LiveCallEngineTest {
         runCurrent()
         assertEquals(listOf<Pair<CallSummary, Boolean>>(CallSummary.MissedAudio to false), g.history)
         assertEquals(listOf("missed:c1"), g.controller.log)
+
+        // A call that rang and ended here as missed is not written again when its late push says "missed".
+        val m = harness()
+        m.engine.ring(ring())
+        runCurrent()
+        m.signaling.events.emit(CallServerEvent.Ended("c1", "missed"))
+        runCurrent()
+        m.signaling.status = { CallStatus.Ended("missed") }
+        m.engine.ring(ring())
+        runCurrent()
+        assertEquals(listOf<Pair<CallSummary, Boolean>>(CallSummary.MissedAudio to false), m.history)
+        assertEquals(0, m.controller.log.count { it.startsWith("missed:") })
+    }
+
+    @Test
+    fun statusTimeoutStillRings() = runTest(UnconfinedTestDispatcher()) {
+        val h = harness()
+        h.signaling.status = { kotlinx.coroutines.awaitCancellation() }
+        h.engine.ring(ring())
+        advanceTimeBy(LiveCallEngine.STATUS_TIMEOUT_MS - 100)
+        assertTrue(h.controller.log.isEmpty())
+        advanceTimeBy(200)
+        runCurrent()
+        assertEquals(listOf("incoming:c1"), h.controller.log)
+    }
+
+    @Test
+    fun shutdownEndsTheCallOnThePhone() = runTest(UnconfinedTestDispatcher()) {
+        // Ringing: ended here only (no decline for the account's other devices).
+        val h = harness()
+        h.engine.ring(ring())
+        runCurrent()
+        h.engine.shutdown()
+        assertEquals("ended:c1:Failed", h.controller.log.last())
+        assertTrue(CallFrame.DECLINE !in h.signaling.frames)
+        assertEquals(1, h.session.closed)
+        // In a call: hung up, and the peer is told.
+        val g = harness()
+        g.engine.ring(ring())
+        runCurrent()
+        g.engine.answer(video = false)
+        runCurrent()
+        g.engine.shutdown()
+        assertEquals("ended:c1:HungUp", g.controller.log.last())
+        assertEquals(CallFrame.HANGUP, g.signaling.frames.last())
+        assertEquals(1, g.session.closed)
+        // No call: nothing to do.
+        val n = harness()
+        n.engine.shutdown()
+        assertTrue(n.controller.log.isEmpty())
+    }
+
+    @Test
+    fun shutdownEndsThePhonesCallWhenTheServerHangs() = runTest(UnconfinedTestDispatcher()) {
+        val h = harness()
+        h.engine.ring(ring())
+        runCurrent()
+        h.engine.answer(video = false)
+        runCurrent()
+        h.signaling.hangupBlocks = true
+        val job = launch { h.engine.shutdown() }
+        advanceTimeBy(LiveCallEngine.SHUTDOWN_MS + 100)
+        runCurrent()
+        assertTrue(job.isCompleted)
+        assertEquals("ended:c1:HungUp", h.controller.log.last())
     }
 
     @Test

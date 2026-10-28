@@ -60,15 +60,19 @@ class LockScreenCallActivity : ComponentActivity() {
         finish()
     }
 
-    /** Once the engine's call is no longer ringing here, there is nothing to answer. */
+    /**
+     * Only a call that rings now has anything to answer: one that already ended (or none at all) closes the screen at
+     * once, and so does a ringing call once it stops ringing.
+     */
     private fun watchRinging() {
-        val engine = CallsRuntime.engine ?: return
+        val engine = CallsRuntime.engine
+        if (engine?.state?.value?.phase != CallPhase.Incoming) {
+            finish()
+            return
+        }
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                var rang = false
-                engine.state.collect { state ->
-                    if (state?.phase == CallPhase.Incoming) rang = true else if (rang) finish()
-                }
+                engine.state.collect { state -> if (state?.phase != CallPhase.Incoming) finish() }
             }
         }
     }

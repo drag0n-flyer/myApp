@@ -48,6 +48,9 @@ import org.example.app.calls.android.telecom.FallbackCallController
 import org.example.app.calls.android.telecom.PlainCallController
 import org.example.app.calls.android.telecom.TelecomCallController
 import org.example.app.calls.session.CallContext
+import org.example.app.calls.session.MediaSessionFactory
+import org.example.app.contracts.CallSignalSealer
+import org.example.app.calls.android.CallMedia
 import org.example.app.live.SessionCallEngine
 import org.example.app.core.chats.ChatStore
 import org.example.app.core.chats.SampleChatStore
@@ -92,6 +95,13 @@ class AppGraph(
     val sampleData: Boolean,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
     private val platform: LivePlatform = LivePlatform.android(context),
+    /** Telecom first, a plain notification and service where Telecom refuses. Tests swap the phone side. */
+    private val makeCallController: (Context) -> FallbackCallController =
+        { FallbackCallController(TelecomCallController(it), PlainCallController(it)) },
+    /** The peer connection for each call; `CallMedia` holds the TODO(E5) seam. */
+    private val callMedia: (Context, () -> UserSettings) -> MediaSessionFactory = CallMedia::factory,
+    /** Null: the session's MLS call sealer. Tests that run a call past the ring set a plain one. */
+    private val callSealer: CallSignalSealer? = null,
 ) {
     private val appContext = context.applicationContext
 
@@ -155,10 +165,7 @@ class AppGraph(
         engine
     }
 
-    /** Telecom first, a plain notification and service where Telecom refuses. */
-    private val callController: FallbackCallController by lazy {
-        FallbackCallController(TelecomCallController(appContext), PlainCallController(appContext))
-    }
+    private val callController: FallbackCallController by lazy { makeCallController(appContext) }
 
     private fun callContext(isContact: Boolean) =
         CallContext(serverPolicy, settingsStore.settings.value, network, isContact)
@@ -280,6 +287,8 @@ class AppGraph(
                 callContext = ::callContext,
                 callController = callController,
                 callSettings = { settingsStore.settings.value },
+                callMedia = callMedia,
+                callSealer = callSealer,
             )
             liveSession = session
             (callEngine as? SessionCallEngine)?.use(session.calls)
@@ -336,6 +345,9 @@ class AppGraph(
 
     /** Stops and closes [session] step by step; every step runs. */
     private suspend fun stop(session: LiveSession, step: suspend (suspend () -> Unit) -> Unit, wipeRows: Boolean) {
+        // First, while the socket can still carry the hang-up: no call (Telecom, ringtone, notification, service)
+        // outlives the session into the next account.
+        step { session.calls.shutdown() }
         step { session.socket.stop() }
         step { withTimeoutOrNull(SHUTDOWN_MS) { session.chatStore.shutdown() } }
         step { session.scope.cancel() }
