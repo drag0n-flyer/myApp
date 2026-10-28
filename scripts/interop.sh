@@ -294,9 +294,9 @@ call_steps A B "$ACC_A" "$ACC_B" "$FIXTURES/chrome-offer.sdp" android-to-other
 call_steps B A "$ACC_B" "$ACC_A" "$OTHER_SDP" other-to-android
 
 # Linking: Android approves a new device of the other platform (it joins A), and the other platform approves
-# a new Android device (it joins B). Android's account flow imports the snapshot (its contacts then include the
-# peer); the iPhone's does not yet (plan 7), so for a Swift device only the snapshot's arrival is checked.
-# check_link <step> <expected account> <expected contact>: reads ANSWER = "<accountID> imported|received <contacts>".
+# a new Android device (it joins B). Each platform's account flow imports the snapshot, so the new device's
+# contacts then include the peer.
+# check_link <step> <expected account> <expected contact>: reads ANSWER = "<accountID> imported <contacts>".
 check_link() {
   set -- "$1" "$2" "$3" $ANSWER
   same "$1" "linked account" "$4" "$2"
@@ -304,10 +304,6 @@ check_link() {
     imported)
       case ",${6:-}," in *",$3,"*) ;; *) fail "$1" "snapshot contacts '${6:-}' miss $3" ;; esac
       pass "$1"
-      ;;
-    received)
-      pass "$1 (linked; snapshot sealed, sent and opened)"
-      echo "SKIP $1-snapshot-import (iPhone app does not import the link snapshot yet, plan 7)"
       ;;
     *) fail "$1" "unexpected answer '$ANSWER'" ;;
   esac

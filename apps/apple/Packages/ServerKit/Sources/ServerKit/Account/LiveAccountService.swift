@@ -30,8 +30,10 @@ public final class LiveAccountService: AccountService {
     public var onSignedOut: (@MainActor (SignOutReason) -> Void)?
     /// The client for the signed-in (or connecting) server, for plans 7 and 8.
     public var client: ServerClient? { working }
-    /// Set when this device was linked and the approver sent a snapshot; plan 7 imports it.
-    public private(set) var receivedLinkSnapshot: Data?
+    /// Imports the link snapshot (contacts, chats, folders, blocks, settings) into this device's data once a
+    /// claimed link session is saved, as Android does. Throws when there is nowhere to put it or it cannot be read;
+    /// the device then signs in without its contacts. Unset: nothing is imported. The snapshot is never kept.
+    public var importLinkSnapshot: (@MainActor (Data) async throws -> Void)?
 
     private var inviteCode: String?
     private var signupID: String?
@@ -275,10 +277,15 @@ public final class LiveAccountService: AccountService {
             }
         }
         unsaved = nil
-        receivedLinkSnapshot = snapshot
-        // TODO(plan 7): import `snapshot` and report copied only when the import succeeds, as Android
-        // does. Nothing imports it yet, so the contacts were not copied.
-        return LinkedResult(contactsCopied: false)
+        // Copied only when the import succeeds. A failed import leaves the account without its contacts, as a
+        // missing snapshot would: the session is saved and the claim is spent, so it is not an error.
+        guard let snapshot, let importLinkSnapshot else { return LinkedResult(contactsCopied: false) }
+        do {
+            try await importLinkSnapshot(snapshot)
+            return LinkedResult(contactsCopied: true)
+        } catch {
+            return LinkedResult(contactsCopied: false)
+        }
     }
 
     // MARK: - Linking, approving device

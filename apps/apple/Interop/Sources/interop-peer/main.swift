@@ -165,6 +165,12 @@ final class Peer {
             passkeys: NoPasskeys(), biometrics: AlwaysConfirm(), approvalReason: "Approve this device",
             linkCrypto: crypto.link,
             linkSnapshot: { (try? await box.deviceSync?.exportSnapshot()) ?? Data() })
+        // As the app's `AppModel`: once the linked session is saved, build the graph and import the snapshot into it.
+        service.importLinkSnapshot = { [unowned self] data in
+            _ = try signedIn()
+            guard let deviceSync else { throw PeerError("no graph") }
+            try await deviceSync.importSnapshot(data)
+        }
     }
 
     func signedIn() throws -> LiveChatStore {
@@ -367,13 +373,14 @@ final class Peer {
         return try await service.makeLinkCode().qrText
     }
 
-    /// Answers `<accountID> received -` once linked and the snapshot has arrived and opened. Nothing imports it:
-    /// LiveAccountService leaves that to plan 7 and no app code does it yet, so neither does the peer.
+    /// Answers `<accountID> imported <contact IDs, comma separated>` once linked. The account flow imports the
+    /// snapshot through `importLinkSnapshot`, the same path the app takes.
     func linkWait() async throws -> String {
-        _ = try await service.waitForLinkApproval()
-        guard service.receivedLinkSnapshot != nil else { throw PeerError("no snapshot received") }
+        let result = try await service.waitForLinkApproval()
+        guard result.contactsCopied else { throw PeerError("snapshot not imported") }
         let id = try await start()
-        return "\(id) received -"
+        let contacts = try signedIn().contacts.map(\.id).joined(separator: ",")
+        return "\(id) imported \(contacts.isEmpty ? "-" : contacts)"
     }
 
     func approve(_ qrText: String) async throws {

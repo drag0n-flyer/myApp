@@ -69,6 +69,20 @@ private final class FlakyStorage: SessionStorage, @unchecked Sendable {
     func clear() throws { lock.withLock { value = nil } }
 }
 
+/// Records what the new device's importer was given, and whether it was signed in by then.
+@MainActor private final class ImportLog {
+    var snapshots: [Data] = []
+    var signedInAtImport: [Bool] = []
+    var fails = false
+    func install(on service: LiveAccountService) {
+        service.importLinkSnapshot = { [unowned self, unowned service] data in
+            snapshots.append(data)
+            signedInAtImport.append(service.isSignedIn)
+            if fails { throw CancellationError() }
+        }
+    }
+}
+
 private actor SleepLog {
     private(set) var total = Duration.zero
     private(set) var count = 0
@@ -268,16 +282,43 @@ private func err(_ code: String) -> String { #"{"error":{"code":"\#(code)","mess
         })
         await r.t.respond("POST", "/v1/link", status: 200, json: #"{"linkID":"L1","secret":"S1","claimToken":"C1","expiresAt":"2026-11-01T12:05:00Z"}"#)
         await r.t.respond("POST", "/v1/link/L1/claim", status: 202, json: "{}")
+        let imports = ImportLog()
+        imports.install(on: r.service)
         let code = try await r.service.makeLinkCode()
         #expect(code.qrText == "https://chat.test/link/L1#S1.\(qrKeyText)")
         let result = try await r.service.waitForLinkApproval()
-        // Opened, but nothing imports it yet (plan 7): not copied.
-        #expect(!result.contactsCopied)
+        // Opened and imported once the session is saved: copied.
+        #expect(result.contactsCopied)
+        #expect(imports.snapshots == [Data("opened".utf8)])
+        #expect(imports.signedInAtImport == [true])
         #expect(await r.sleeps.count == 2)
         #expect(await r.sleeps.total == .seconds(4))
         #expect(r.service.isSignedIn)
         #expect(r.store.current?.token == "t1")
-        #expect(r.service.receivedLinkSnapshot == Data("opened".utf8))
+    }
+
+    @Test func linkWithoutImporterIsNotCopied() async throws {
+        let r = Rig()
+        await r.t.respond("POST", "/v1/link", status: 200, json: #"{"linkID":"L1","secret":"S1","claimToken":"C1","expiresAt":"2026-11-01T12:05:00Z"}"#)
+        await r.t.respond("POST", "/v1/link/L1/claim", status: 200, json: #"{"accountID":"a1","deviceID":"d1","sessionToken":"t1","sealed":"AQ"}"#)
+        _ = try await r.service.makeLinkCode()
+        #expect(try await r.service.waitForLinkApproval() == LinkedResult(contactsCopied: false))
+        #expect(r.service.isSignedIn)
+    }
+
+    /// A failing import is skipped like a missing snapshot: the device signs in without its contacts, no error.
+    @Test func failedImportSignsInWithoutContacts() async throws {
+        let r = Rig()
+        let imports = ImportLog()
+        imports.fails = true
+        imports.install(on: r.service)
+        await r.t.respond("POST", "/v1/link", status: 200, json: #"{"linkID":"L1","secret":"S1","claimToken":"C1","expiresAt":"2026-11-01T12:05:00Z"}"#)
+        await r.t.respond("POST", "/v1/link/L1/claim", status: 200, json: #"{"accountID":"a1","deviceID":"d1","sessionToken":"t1","sealed":"AQ"}"#)
+        _ = try await r.service.makeLinkCode()
+        #expect(try await r.service.waitForLinkApproval() == LinkedResult(contactsCopied: false))
+        #expect(imports.snapshots.count == 1)
+        #expect(r.service.isSignedIn)
+        #expect(r.service.linkSavePending == false)
     }
 
     @Test func linkExpiresAfterFiveMinutes() async throws {
@@ -357,6 +398,8 @@ private func err(_ code: String) -> String { #"{"error":{"code":"\#(code)","mess
 
     @Test func snapshotThatWontOpenIsSkippedAndDeviceSignsIn() async throws {
         let r = Rig(crypto: FakeCrypto(openFails: true))
+        let imports = ImportLog()
+        imports.install(on: r.service)
         await r.t.respond("POST", "/v1/link", status: 200, json: #"{"linkID":"L1","secret":"S1","claimToken":"C1","expiresAt":"2026-11-01T12:05:00Z"}"#)
         await r.t.respond("POST", "/v1/link/L1/claim", status: 200, json: #"{"accountID":"a1","deviceID":"d1","sessionToken":"t1","sealed":"AQ"}"#)
         _ = try await r.service.makeLinkCode()
@@ -364,7 +407,7 @@ private func err(_ code: String) -> String { #"{"error":{"code":"\#(code)","mess
         #expect(result == LinkedResult(contactsCopied: false))
         #expect(r.store.current?.token == "t1")
         #expect(r.service.isSignedIn)
-        #expect(r.service.receivedLinkSnapshot == nil)
+        #expect(imports.snapshots.isEmpty)
         // The ticket is gone: waiting again needs a new code.
         await #expect(throws: AccountError.linkExpired) { _ = try await r.service.waitForLinkApproval() }
     }
@@ -424,6 +467,23 @@ private func err(_ code: String) -> String { #"{"error":{"code":"\#(code)","mess
         #expect(r.store.current?.token == "t1")
     }
 
+    /// The snapshot opened at the claim waits with the unsaved session and is imported once, after the save.
+    @Test func snapshotIsImportedOnceAfterARetriedSave() async throws {
+        let storage = FlakyStorage(failures: 100)
+        let r = Rig(storage: storage)
+        let imports = ImportLog()
+        imports.install(on: r.service)
+        await r.t.respond("POST", "/v1/link", status: 200, json: #"{"linkID":"L1","secret":"S1","claimToken":"C1","expiresAt":"2026-11-01T12:05:00Z"}"#)
+        await r.t.respond("POST", "/v1/link/L1/claim", status: 200, json: #"{"accountID":"a1","deviceID":"d1","sessionToken":"t1","sealed":"AQ"}"#)
+        await #expect(throws: AccountError.server) { _ = try await r.service.linkThisDevice { _ in } }
+        #expect(imports.snapshots.isEmpty)
+        storage.fail(0)
+        #expect(try await r.service.linkThisDevice { _ in } == LinkedResult(contactsCopied: true))
+        #expect(imports.snapshots == [Data("opened".utf8)])
+        #expect(imports.signedInAtImport == [true])
+        #expect(!r.service.linkSavePending)
+    }
+
     /// A claimed session belongs to the server that issued it: while its save is pending another server
     /// is refused, and the token is filed under (and sent to) the original host only.
     @Test func pendingLinkSaveCannotMoveToAnotherServer() async throws {
@@ -460,13 +520,15 @@ private func err(_ code: String) -> String { #"{"error":{"code":"\#(code)","mess
 
     @Test func approvalWithoutSnapshotSignsInWithoutContacts() async throws {
         let r = Rig()
+        let imports = ImportLog()
+        imports.install(on: r.service)
         await r.t.respond("POST", "/v1/link", status: 200, json: #"{"linkID":"L1","secret":"S1","claimToken":"C1","expiresAt":"2026-11-01T12:05:00Z"}"#)
         await r.t.respond("POST", "/v1/link/L1/claim", status: 200, json: #"{"accountID":"a1","deviceID":"d1","sessionToken":"t1"}"#)
         _ = try await r.service.makeLinkCode()
         let result = try await r.service.waitForLinkApproval()
         #expect(result == LinkedResult(contactsCopied: false))
         #expect(r.service.isSignedIn)
-        #expect(r.service.receivedLinkSnapshot == nil)
+        #expect(imports.snapshots.isEmpty)
     }
 
     /// FakeCrypto adds 7 bytes in front and the 32-byte key behind: a snapshot of 64 KiB - 39 bytes seals
