@@ -282,6 +282,9 @@ def main():
     parser.add_argument("--gradle-cache", default=os.path.join(
         os.environ.get("GRADLE_USER_HOME", os.path.expanduser("~/.gradle")), "caches/modules-2/files-2.1"))
     parser.add_argument("--android-output", help="also write the Android notices (adds the Gradle libraries)")
+    parser.add_argument("--release", action="store_true",
+                        help="with --check-android: a pending notice fails the check (tagged release); "
+                             "without it, pending notices only print a WARNING")
     parser.add_argument("--check-android", action="store_true",
                         help="fail on a Gradle library with a copyleft or unapproved license")
     args = parser.parse_args()
@@ -294,7 +297,12 @@ def main():
         gradle = gradle_entries(read_dependencies(args.gradle_deps), args.gradle_cache)
         if args.check_android:
             problems = check_android(gradle, read_gradle_exceptions(ALLOWLIST.read_text()))
-            problems += check_pending_notices(entries + gradle)
+            pending = check_pending_notices(entries + gradle)
+            if args.release:
+                problems += pending
+            else:
+                for p in pending:
+                    print(f"generate-oss-notices: WARNING: {p}", file=sys.stderr)
             for p in problems:
                 print(f"generate-oss-notices: {p}", file=sys.stderr)
             if problems:

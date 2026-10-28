@@ -43,6 +43,7 @@ It runs on `main` and by hand (workflow dispatch), and `android-ci` requires it.
 - R8 stays on. `checkR8KeepRules` and `checkNoComponentProcess` run in the `assemble` job.
 - Every Gradle runtime dependency has an allowed license, or an owner-approved row in `docs/security/license-allowlist.md` (section gradle-libraries). Copyleft licenses fail. JNA counts as Apache-2.0.
 - `apps/android/app/src/main/assets/oss-notices.json`, the list on Settings, Open-source licenses, is up to date. Regenerate it with `scripts/generate-oss-notices.py --android-output apps/android/app/src/main/assets/oss-notices.json` after `./gradlew :app:exportRuntimeDependencies`.
+- A tagged release (`v*` tag push) fails the notices check until the SQLCipher, WebRTC and Opus notice texts are filled in (`--release` makes a pending notice an error). On main and in pull requests the check only prints a WARNING listing each pending notice.
 - `gitleaks` finds no secret in `apps/android`.
 
 ## 4. Foreground service declarations

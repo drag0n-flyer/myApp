@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches-ignore: [feat/server]
+    tags: ['v*']
     paths:
       - 'apps/android/**'
       - '.github/workflows/android.yml'
@@ -273,7 +274,7 @@ jobs:
     # signs with the upload key outside CI), native ABIs and 16 KB alignment, dependency licenses
     # and the notices shipped in the app, and a secret scan.
     needs: [changes, mlsffi-android]
-    if: needs.changes.outputs.any == 'true' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+    if: (needs.changes.outputs.any == 'true' || startsWith(github.ref, 'refs/tags/')) && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -305,7 +306,10 @@ jobs:
         run: |
           set -euo pipefail
           cargo fetch --locked --manifest-path apps/apple/Packages/SecureMessaging/mlsffi/Cargo.toml
-          python3 scripts/generate-oss-notices.py --check-android --android-output apps/android/app/src/main/assets/oss-notices.json
+          # Pending notices only warn, except on a tag push, where they fail the release.
+          RELEASE=""
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then RELEASE="--release"; fi
+          python3 scripts/generate-oss-notices.py --check-android $RELEASE --android-output apps/android/app/src/main/assets/oss-notices.json
           git diff --exit-code -- apps/android/app/src/main/assets/oss-notices.json
       - name: Install gitleaks v8.28.0 (checksum verified)
         run: |

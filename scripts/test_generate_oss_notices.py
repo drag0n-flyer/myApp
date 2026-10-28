@@ -228,6 +228,24 @@ class Gradle(unittest.TestCase):
         self.assertEqual(len(got), 1)
         self.assertIn("sqlcipher-android", got[0])
 
+    def test_release_flag_controls_pending_failure(self):
+        import tempfile, subprocess, sys as _sys
+        mod = load()
+        src = Path(mod.__file__).read_text()
+        self.assertIn("--release", src)
+        for release, code in ((False, 0), (True, 1)):
+            with tempfile.TemporaryDirectory() as d:
+                deps = Path(d) / "deps.txt"
+                deps.write_text("")
+                out = subprocess.run(
+                    [_sys.executable, mod.__file__, "--check-android", "--gradle-deps", str(deps)]
+                    + (["--release"] if release else []), capture_output=True, text=True)
+            if "cargo" in out.stderr and "pending" not in out.stderr:
+                self.skipTest("cargo metadata unavailable")
+            self.assertEqual(out.returncode, code, out.stderr)
+            self.assertIn("WebRTC", out.stderr)
+            self.assertEqual("WARNING" in out.stderr, not release)
+
     def test_missing_pom_is_an_error(self):
         with self.assertRaises(SystemExit):
             self.entries([], [("g", "gone", "1")])
