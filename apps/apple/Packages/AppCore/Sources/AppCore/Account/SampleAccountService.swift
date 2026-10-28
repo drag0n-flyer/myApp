@@ -93,7 +93,10 @@ public final class SampleAccountService: AccountService {
         LinkCode(qrText: Self.sampleLinkText, expiresAt: Date().addingTimeInterval(300))
     }
 
-    public func waitForLinkApproval() async throws(AccountError) { isSignedIn = true }
+    public func waitForLinkApproval() async throws(AccountError) -> LinkedResult {
+        isSignedIn = true
+        return LinkedResult(contactsCopied: true)
+    }
 
     public func linkRequest(qrText: String) async throws(AccountError) -> LinkRequest {
         guard let url = URL(string: qrText), url.path.hasPrefix("/link/") else { throw .linkExpired }
@@ -101,9 +104,10 @@ public final class SampleAccountService: AccountService {
         return LinkRequest(qrText: qrText, deviceName: "New Mac", platform: .mac, requestedAt: Date())
     }
 
-    public func approveLink(_ request: LinkRequest) async throws(AccountError) {
+    public func approveLink(_ request: LinkRequest) async throws(AccountError) -> LinkApproval {
         deviceList.append(DeviceInfo(id: UUID().uuidString, name: request.deviceName, platform: request.platform,
                                      lastActive: Date(), isThisDevice: false))
+        return LinkApproval(snapshotSent: true)
     }
 
     public func devices() async throws(AccountError) -> [DeviceInfo] { deviceList }
