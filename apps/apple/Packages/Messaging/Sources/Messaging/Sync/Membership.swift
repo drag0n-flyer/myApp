@@ -49,6 +49,15 @@ struct Membership: Sendable {
             .sorted { Array($0.identity.utf8).lexicographicallyPrecedes(Array($1.identity.utf8)) }
     }
 
+    /// The key stored for every member before the real keys: `"fake-sig:<identity>"`.
+    static func isPlaceholder(_ identity: String, _ key: Data) -> Bool { key == Data("fake-sig:\(identity)".utf8) }
+
+    /// Stored rows that all hold the old placeholder keys: the number stored with them covers no key, so it must not
+    /// be shown or verified until it is re-baselined (`LiveChatStore.safetyNumber(for:)`).
+    static func hasOnlyPlaceholderKeys(_ rows: [(identity: String, signatureKey: Data)]) -> Bool {
+        !rows.isEmpty && rows.allSatisfy { isPlaceholder($0.identity, $0.signatureKey) }
+    }
+
     func update(conversation: ConversationRecord, db: Repository) async throws -> MembershipChange {
         let keys = try await keys(of: GroupID(raw: conversation.groupID))
         return try db.transaction { try apply(keys: keys, conversation: conversation, db: db) }
@@ -86,9 +95,11 @@ struct Membership: Sendable {
         }
         // Rows stored before the real keys (`"fake-sig:<identity>"`, the old placeholder) are re-baselined once,
         // silently: the number moves but no line is added unless the devices changed too. Ruling in plans/README.md.
-        func placeholder(_ identity: String, _ key: Data) -> Bool { key == Data("fake-sig:\(identity)".utf8) }
-        let rebaseline = !stored.isEmpty && stored.allSatisfy { placeholder($0.identity, $0.signatureKey) }
-            && !keys.contains { placeholder($0.identity, $0.signatureKey) }
+        let rebaseline = Self.hasOnlyPlaceholderKeys(stored) && !keys.contains { Self.isPlaceholder($0.identity, $0.signatureKey) }
+        // The rows are replaced even when the number below is not (another conversation is preferred, or no number
+        // can be computed). That ends the re-baseline for these rows, so when this conversation's number is next
+        // written it differs from the stored placeholder number and is flagged: one extra "changed" line, the
+        // intended fail-safe (a missed notice would be worse than a spurious one).
         if stored.map(\.identity) != keys.map(\.identity) || stored.map(\.signatureKey) != keys.map(\.signatureKey) {
             try db.replaceMembers(conversationID: conversation.serverID, keys.map { ($0.identity, $0.signatureKey) })
         }

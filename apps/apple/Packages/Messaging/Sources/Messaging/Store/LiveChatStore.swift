@@ -37,6 +37,7 @@ public final class LiveChatStore: ChatStore {
     private var tasks: [UUID: Task<Void, Never>] = [:]
     private let pendingGate = PendingActions.Gate()
     private var closed = false
+    private var rebaselined: Set<String> = []
 
     public init(
         deps: MessagingDeps, outbox: Outbox, inbox: InboxProcessor, conversations: ConversationManaging,
@@ -412,16 +413,42 @@ public final class LiveChatStore: ChatStore {
 
     public func safetyNumber(for chatID: String) -> SafetyNumber? {
         guard supportsSafetyNumbers else { return nil }
+        if let conversation = placeholderConversation(chatID) {
+            rebaseline(conversation)
+            return nil
+        }
         guard let row = (try? repo.safety(chatID: chatID)) ?? nil else { return nil }
         return SafetyNumber(groups: ChatMapping.groups(row.current), isVerified: row.verified == row.current)
     }
 
     /// Local only: nothing is sent.
     public func setVerified(_ verified: Bool, chatID: String) {
-        guard supportsSafetyNumbers else { return }
+        guard supportsSafetyNumbers, placeholderConversation(chatID) == nil else { return }
         guard let row = (try? repo.safety(chatID: chatID)) ?? nil else { return }
         try? repo.setVerified(chatID: chatID, verified ? row.current : nil)
         refresh()
+    }
+
+    /// The chat's preferred conversation while its stored members still hold the old placeholder keys (an upgraded
+    /// install whose group has not changed since): the stored number covers no key, so it is hidden.
+    private func placeholderConversation(_ chatID: String) -> ConversationRecord? {
+        guard let conversation = (try? repo.preferredConversation(chatID: chatID)) ?? nil,
+              let rows = try? repo.members(conversationID: conversation.serverID),
+              Membership.hasOnlyPlaceholderKeys(rows) else { return nil }
+        return conversation
+    }
+
+    /// Re-baselines a placeholder conversation from the engine's real keys, once per conversation per launch (a
+    /// failure leaves the number hidden; retrying on every refresh would loop). `Membership.update` stores the keys
+    /// and the number silently (ruling in plans/README.md).
+    private func rebaseline(_ conversation: ConversationRecord) {
+        guard rebaselined.insert(conversation.serverID).inserted else { return }
+        let deps = deps
+        background {
+            _ = try? await deps.lock.withAsyncLock(timeout: InboxProcessor.lockTimeout) {
+                try await Membership(deps: deps).update(conversation: conversation, db: deps.repo)
+            }
+        }
     }
 
     // MARK: - Requests, contacts, blocking, reports

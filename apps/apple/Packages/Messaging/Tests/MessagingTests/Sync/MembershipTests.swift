@@ -254,6 +254,32 @@ private struct Rig {
         #expect(try rig.ana1.lines(with: "acc-bob") == [.deviceRemoved(name: "acc-bob"), .safetyNumberChanged])
     }
 
+    /// Only rows that are all placeholders are re-baselined: one real stored key means the change is flagged.
+    @Test func partlyPlaceholderRowsAreFlagged() async throws {
+        let rig = try await Rig.make()
+        let (membership, spy, conversation) = try await realKeys(rig)
+        let real = try await spy.memberKeys(of: GroupID(raw: conversation.groupID))
+        try rig.ana1.repo.replaceMembers(conversationID: conversation.serverID, real.enumerated().map { index, key in
+            (key.identity, index == 0 ? key.signatureKey : Data("fake-sig:\(key.identity)".utf8))
+        })
+        _ = try await membership.update(conversation: conversation, db: rig.ana1.repo)
+        #expect(try rig.ana1.lines(with: "acc-bob") == [.safetyNumberChanged])
+    }
+
+    /// A placeholder key still reported by the engine is no upgrade: the change is flagged and the verification kept.
+    @Test func placeholderInNewKeysIsFlagged() async throws {
+        let rig = try await Rig.make()
+        let before = try #require(try rig.ana1.safety(with: "acc-bob"))
+        try rig.ana1.repo.setVerified(chatID: "acc-bob", before)
+        let (membership, spy, conversation) = try await realKeys(rig)
+        let bob2 = "acc-bob/\(rig.bob2.device.deviceID)"
+        spy.setSignatureKey(Data("fake-sig:\(bob2)".utf8), for: bob2)
+        _ = try await membership.update(conversation: conversation, db: rig.ana1.repo)
+        #expect(try rig.ana1.safety(with: "acc-bob") != before)
+        #expect(try rig.ana1.lines(with: "acc-bob") == [.safetyNumberChanged])
+        #expect(try rig.ana1.repo.safety(chatID: "acc-bob")?.verified == before)
+    }
+
     /// The attack case: a member's signature key changes and the identity stays. The number changes and is flagged.
     @Test func realKeyChangeChangesNumber() async throws {
         let rig = try await Rig.make()
