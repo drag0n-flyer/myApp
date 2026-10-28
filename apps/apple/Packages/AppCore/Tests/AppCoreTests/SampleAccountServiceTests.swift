@@ -61,6 +61,15 @@ import Testing
         #expect(s.isSignedIn)
     }
 
+    @Test func linkThisDeviceShowsACodeWhenNoSaveIsPending() async throws {
+        let s = SampleAccountService()
+        #expect(!s.linkSavePending)
+        var shown: [String] = []
+        let result = try await s.linkThisDevice { shown.append($0) }
+        #expect(shown == [SampleAccountService.sampleLinkText])
+        #expect(result == LinkedResult(contactsCopied: true))
+    }
+
     @Test func linkRequestRejectsOtherServer() async {
         let s = SampleAccountService()
         await #expect(throws: AccountError.wrongServer) { _ = try await s.linkRequest(qrText: "https://other.example/link/x#y") }
