@@ -31,6 +31,7 @@ jobs:
       - name: Tests for the CI tools
         run: |
           sh tools/call-lab/netem/test_dummynet.sh
+          sh tools/call-lab/ci/test_run_calls.sh
           (cd tools/call-lab/ci && python3 -m unittest -q)
 
       - name: Install tools (XcodeGen, PostgreSQL, coturn)

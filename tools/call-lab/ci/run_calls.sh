@@ -44,9 +44,16 @@ done
     exit 64
 }
 seconds=${LAB_SECONDS:-300}
-bin="$app/Contents/MacOS/CallLabMac"
+# The executable name comes from the app's Info.plist (CFBundleExecutable; the target's PRODUCT_NAME),
+# never hard-coded. plistlib reads XML and binary plists, on macOS and Linux.
+exe=$(python3 -I -c 'import plistlib, sys
+with open(sys.argv[1], "rb") as f:
+    print(plistlib.load(f)["CFBundleExecutable"])' "$app/Contents/Info.plist" 2>/dev/null)
+[ -n "$exe" ] || { echo "no CFBundleExecutable in $app/Contents/Info.plist" >&2; exit 2; }
+bin="$app/Contents/MacOS/$exe"
 
 if [ "$dry" -eq 1 ]; then
+    echo "app binary: $bin"
     echo "$MATRIX" | while read -r preset path profile snr; do
         echo "call $preset $path $profile noise=$snr ${seconds}s"
         sh "$lab/netem/dummynet.sh" --dry-run apply lo0 "$profile" "$path" 2>/dev/null | sed 's/^/  /'
