@@ -45,6 +45,24 @@ public struct LinkRequest: Equatable, Sendable {
     }
 }
 
+/// How linking ended on the new device. The account is signed in either way.
+public struct LinkedResult: Equatable, Sendable {
+    /// True only when the contact list was imported. False when none was sent, it could not be opened,
+    /// or it was not imported; the app says "Your contacts weren't copied".
+    public let contactsCopied: Bool
+
+    public init(contactsCopied: Bool) { self.contactsCopied = contactsCopied }
+}
+
+/// How approving ended on the approving device.
+public struct LinkApproval: Equatable, Sendable {
+    /// False when the contact list was too large to send: the new device was approved without it, and
+    /// the app says the new device starts without its contacts.
+    public let snapshotSent: Bool
+
+    public init(snapshotSent: Bool) { self.snapshotSent = snapshotSent }
+}
+
 public struct DeviceInfo: Identifiable, Equatable, Sendable {
     public let id: String
     public let name: String
@@ -73,23 +91,42 @@ public protocol AccountService: AnyObject {
     func connect(host: String) async throws(AccountError) -> ServerPolicy
     func checkUsername(_ name: String) async -> UsernameCheck
     func redeemInvite(code: String) async throws(AccountError) -> Bool
-    func startSignUp(username: String, email: String) async throws(AccountError)
+    /// Starts sign-up and sends the email code. `displayName` is the name shown to people the account
+    /// chats with. The live service keeps it and sends it with `PATCH /v1/me/settings` once sign-up has
+    /// finished (the server's `signup/start` takes no display name yet); a blank name is not sent.
+    func startSignUp(displayName: String, username: String, email: String) async throws(AccountError)
     func verifyEmail(code: String) async throws(AccountError)
     /// Creates the passkey when supported.
     func finishSignUp() async throws(AccountError)
+    /// Finishes sign-up without registering a passkey ("Use an email code instead"); later sign-in uses
+    /// an email code.
+    func finishSignUpWithEmailCode() async throws(AccountError)
     func signInWithPasskey() async throws(AccountError)
     func sendRecoveryCode(to email: String) async throws(AccountError)
     func recover(email: String, code: String) async throws(AccountError)
     func addPasskey() async throws(AccountError)
+    /// A link claim succeeded but saving the session failed (or was left mid-retry). Retry with
+    /// `waitForLinkApproval()`, never `makeLinkCode()`: a new code drops the claimed session for good.
+    var linkSavePending: Bool { get }
     func makeLinkCode() async throws(AccountError) -> LinkCode
-    /// Returns when this device is signed in.
-    func waitForLinkApproval() async throws(AccountError)
+    /// Returns when this device is signed in. A contact list that can't be opened is skipped, not an error.
+    func waitForLinkApproval() async throws(AccountError) -> LinkedResult
     /// Approving side, step 1: read a scanned code. Throws `.wrongServer` or `.linkExpired`.
     func linkRequest(qrText: String) async throws(AccountError) -> LinkRequest
     /// Approving side, step 2: confirm with biometrics, then approve. Throws `.biometricsUnavailable`.
-    func approveLink(_ request: LinkRequest) async throws(AccountError)
+    /// A contact list too large to send is left out; the result says so.
+    func approveLink(_ request: LinkRequest) async throws(AccountError) -> LinkApproval
     func devices() async throws(AccountError) -> [DeviceInfo]
     func removeDevice(id: String) async throws(AccountError)
     func deleteAccount() async throws(AccountError)
     func signOutLocally()
+}
+
+extension AccountService {
+    /// One linking attempt on the new device, as Android's `ensureLinking`. While a claimed session is still
+    /// waiting to be saved only the save is retried; otherwise a new code is made, shown, and waited on.
+    public func linkThisDevice(showCode: (String) -> Void) async throws(AccountError) -> LinkedResult {
+        if !linkSavePending { showCode(try await makeLinkCode().qrText) }
+        return try await waitForLinkApproval()
+    }
 }

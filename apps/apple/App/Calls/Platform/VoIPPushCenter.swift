@@ -12,9 +12,10 @@ protocol VoIPPushHandling: AnyObject {
     func engineKnows(callID: String) -> Bool
     /// A push call settled as ringing. The server call ID is `ring.callID`; the push carries no call ID, so the
     /// CallKit UUID was made at push time and the engine maps `kitCallID` to it. `answer` is true when the user
-    /// already tapped Answer while the payload was opening. Actions after this arrive through `CallKitCallHandling`
-    /// under the server call ID (as a UUID).
-    func voipPushDidResolveRing(kitCallID: UUID, contact: Contact, ring: CallSignalPayload, answer: Bool)
+    /// already tapped Answer while the payload was opening. `device` is the caller's device from the ring's MLS
+    /// credential: the call is bound to it. Actions after this arrive through `CallKitCallHandling` under the server
+    /// call ID (as a UUID).
+    func voipPushDidResolveRing(kitCallID: UUID, contact: Contact, ring: CallSignalPayload, device: String, answer: Bool)
     /// The user declined before the payload opened: send `call.decline` for `ring.callID`; the call never rings.
     func voipPushDeclined(kitCallID: UUID, contact: Contact, ring: CallSignalPayload)
     /// The call ended before the engine was ever handed it (stranger, undecryptable or empty push, ring cap before the
@@ -29,7 +30,8 @@ protocol VoIPPushHandling: AnyObject {
 /// The one `PKPushRegistry` for the app's lifetime, and the front door for CallKit's user actions.
 /// The push carries only a sealed payload, so:
 /// 1. synchronously in the push callback: report a generic "Incoming call" to CallKit, then the PushKit completion;
-/// 2. open the payload (local work only), recover the sender, show the name at once;
+/// 2. wait (bounded) until the signed-in session is ready (a push can wake a killed app before sign-in finishes),
+///    then open the payload (local work only), recover the sender, show the name at once; on timeout end as failed;
 /// 3. in parallel, fetch `call.status` with a short timeout; on timeout keep ringing;
 /// 4. `PushCallTracker` settles report result, user actions taken meanwhile, and duplicates with the WebSocket path.
 @MainActor
@@ -38,7 +40,7 @@ final class VoIPPushCenter: NSObject, PKPushRegistryDelegate, CallKitCallHandlin
     private let resolver: VoIPPushResolver
     private let onToken: @Sendable (Data) -> Void
     private var tracker = PushCallTracker()
-    private var contexts: [UUID: (contact: Contact, ring: CallSignalPayload)] = [:]
+    private var contexts: [UUID: (contact: Contact, ring: CallSignalPayload, device: String)] = [:]
     weak var handler: VoIPPushHandling?
     /// The engine; receives CallKit actions with the server call ID.
     weak var engine: CallKitCallHandling?
@@ -139,8 +141,13 @@ final class VoIPPushCenter: NSObject, PKPushRegistryDelegate, CallKitCallHandlin
         case .none:
             tracker.finish(kit: kit)
         case let .updateCaller(name, video), let .reportRing(name, video):
-            guard case let .ring(ring, contact) = r.payload else { tracker.finish(kit: kit); return }
-            contexts[kit] = (contact, ring)
+            guard case let .ring(ring, contact) = r.payload, let device = r.senderDeviceID else {
+                // A ring always names its device; without one the call cannot be bound, so it ends.
+                if reportedGeneric { callKit.reportEnded(callID: kit, reason: CXCallEndedReason(EndReason.failed)) }
+                tracker.finish(kit: kit)
+                return
+            }
+            contexts[kit] = (contact, ring, device)
             if reportedGeneric {
                 callKit.updateCaller(callID: kit, name: displayName(name), handle: contact.id, video: video)
             } else {
@@ -183,9 +190,9 @@ final class VoIPPushCenter: NSObject, PKPushRegistryDelegate, CallKitCallHandlin
         let ctx = contexts[kit]
         switch effect {
         case .ring:
-            if let ctx { handler?.voipPushDidResolveRing(kitCallID: kit, contact: ctx.contact, ring: ctx.ring, answer: false) }
+            if let ctx { handler?.voipPushDidResolveRing(kitCallID: kit, contact: ctx.contact, ring: ctx.ring, device: ctx.device, answer: false) }
         case .answerNow:
-            if let ctx { handler?.voipPushDidResolveRing(kitCallID: kit, contact: ctx.contact, ring: ctx.ring, answer: true) }
+            if let ctx { handler?.voipPushDidResolveRing(kitCallID: kit, contact: ctx.contact, ring: ctx.ring, device: ctx.device, answer: true) }
         case .decline:
             if let ctx { handler?.voipPushDeclined(kitCallID: kit, contact: ctx.contact, ring: ctx.ring) }
             contexts[kit] = nil

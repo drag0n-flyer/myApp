@@ -1,9 +1,54 @@
 import Foundation
+#if canImport(os)
+import os
+#endif
 
 /// Names the app and the notification extension must agree on (Design 12). Both open the same
 /// files in the shared app-group container.
 public enum MessagingLocations {
-    public static let appGroupID = "group.org.example.app"
+    /// The Info.plist key holding the app group. project.yml sets it to `group.$(APP_ID)`, so the
+    /// group follows the app ID in AppID.xcconfig.
+    public static let appGroupInfoKey = "AppGroupID"
+    /// The app group the app and the notification extension share; nil (reported) when Info.plist lacks it.
+    public static var appGroupID: String? { appGroup(in: Bundle.main.infoDictionary ?? [:]) }
+    public static func appGroup(in info: [String: Any], onMissing: (String) -> Void = reportMissingInfoValue) -> String? {
+        requiredInfoValue(appGroupInfoKey, in: info, onMissing: onMissing)
+    }
+
+    /// A string build setting the project writes into Info.plist and the app cannot work without
+    /// (the app group, the shared keychain group). Missing or empty is reported through `onMissing`,
+    /// never silently replaced: a fallback would split the app's and the extension's data.
+    public static func requiredInfoValue(
+        _ key: String, in info: [String: Any], onMissing: (String) -> Void = reportMissingInfoValue
+    ) -> String? {
+        guard let value = (info[key] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+            onMissing(key)
+            return nil
+        }
+        return value
+    }
+
+    /// The Info.plist key holding the Keychain access group the app and the extension share.
+    public static let keychainAccessGroupInfoKey = "KeychainAccessGroup"
+
+    /// The required keys this build lacks (each reported through `onMissing`). Live sign-in is refused
+    /// unless this is empty: without the keychain group the session would be saved where the
+    /// extension cannot read it, and without the app group the account's data has nowhere to go.
+    public static func liveSetupProblems(
+        in info: [String: Any], onMissing: (String) -> Void = reportMissingInfoValue
+    ) -> [String] {
+        [appGroupInfoKey, keychainAccessGroupInfoKey].filter { requiredInfoValue($0, in: info, onMissing: onMissing) == nil }
+    }
+
+    /// Logs the missing key and stops a debug build (a broken project), like the missing MLS keychain key.
+    public static func reportMissingInfoValue(_ key: String) {
+        #if canImport(os)
+        Logger(subsystem: Bundle.main.bundleIdentifier ?? "app", category: "config")
+            .fault("Info.plist key \(key, privacy: .public) is missing or empty")
+        #endif
+        assertionFailure("Info.plist key \(key) is missing or empty")
+    }
+
     public static let databaseFileName = "messaging.sqlite"
     public static let lockFileName = "messaging.lock"
     public static let mediaDirectoryName = "media"

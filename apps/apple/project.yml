@@ -1,6 +1,5 @@
 name: App
 options:
-  bundleIdPrefix: org.example.app
   deploymentTarget:
     iOS: '17.0'
     macOS: '14.0'
@@ -18,6 +17,10 @@ packages:
     path: Packages/LocalStore
   SecureMessaging:
     path: Packages/SecureMessaging
+# APP_ID (the bundle ID, app group and keychain group root) is set only in AppID.xcconfig.
+configFiles:
+  Debug: AppID.xcconfig
+  Release: AppID.xcconfig
 settings:
   base:
     SWIFT_VERSION: '6.0'
@@ -59,12 +62,13 @@ targets:
         PushGatewayURL: $(PUSH_GATEWAY_URL)
         PushGatewayKey: $(PUSH_GATEWAY_KEY)
         APNSEnvironment: $(APNS_ENVIRONMENT)
-        KeychainAccessGroup: $(AppIdentifierPrefix)org.example.app.shared
+        KeychainAccessGroup: $(AppIdentifierPrefix)$(APP_ID).shared
+        AppGroupID: group.$(APP_ID)
         UIBackgroundModes: [voip, audio, remote-notification]
     settings:
       base:
         PRODUCT_NAME: App
-        PRODUCT_BUNDLE_IDENTIFIER: org.example.app
+        PRODUCT_BUNDLE_IDENTIFIER: $(APP_ID)
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: 'YES'
         CODE_SIGN_ENTITLEMENTS: App/AppiOS.entitlements
@@ -102,11 +106,12 @@ targets:
         PushGatewayURL: $(PUSH_GATEWAY_URL)
         PushGatewayKey: $(PUSH_GATEWAY_KEY)
         APNSEnvironment: $(APNS_ENVIRONMENT)
-        KeychainAccessGroup: $(AppIdentifierPrefix)org.example.app.shared
+        KeychainAccessGroup: $(AppIdentifierPrefix)$(APP_ID).shared
+        AppGroupID: group.$(APP_ID)
     settings:
       base:
         PRODUCT_NAME: App
-        PRODUCT_BUNDLE_IDENTIFIER: org.example.app.mac
+        PRODUCT_BUNDLE_IDENTIFIER: $(APP_ID).mac
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: 'YES'
         CODE_SIGN_ENTITLEMENTS: App/AppMac.entitlements
@@ -139,11 +144,12 @@ targets:
         NSExtension:
           NSExtensionPointIdentifier: com.apple.usernotifications.service
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
-        KeychainAccessGroup: $(AppIdentifierPrefix)org.example.app.shared
+        KeychainAccessGroup: $(AppIdentifierPrefix)$(APP_ID).shared
+        AppGroupID: group.$(APP_ID)
     settings:
       base:
         PRODUCT_NAME: NotificationService
-        PRODUCT_BUNDLE_IDENTIFIER: org.example.app.nse
+        PRODUCT_BUNDLE_IDENTIFIER: $(APP_ID).nse
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: 'YES'
         CODE_SIGN_ENTITLEMENTS: NotificationService/NSE-iOS$(NSE_FILTERING_$(NSE_FILTERING)_SUFFIX).entitlements
         TARGETED_DEVICE_FAMILY: '1'
@@ -159,6 +165,7 @@ targets:
         product: Messaging
       - package: SecureMessaging
         product: SecureMessaging
+      - package: CallCore
   AppNSEMac:
     type: app-extension
     platform: macOS
@@ -173,11 +180,12 @@ targets:
         NSExtension:
           NSExtensionPointIdentifier: com.apple.usernotifications.service
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
-        KeychainAccessGroup: $(AppIdentifierPrefix)org.example.app.shared
+        KeychainAccessGroup: $(AppIdentifierPrefix)$(APP_ID).shared
+        AppGroupID: group.$(APP_ID)
     settings:
       base:
         PRODUCT_NAME: NotificationService
-        PRODUCT_BUNDLE_IDENTIFIER: org.example.app.mac.nse
+        PRODUCT_BUNDLE_IDENTIFIER: $(APP_ID).mac.nse
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: 'YES'
         CODE_SIGN_ENTITLEMENTS: NotificationService/NSE-Mac$(NSE_FILTERING_$(NSE_FILTERING)_SUFFIX).entitlements
         ENABLE_HARDENED_RUNTIME: 'YES'
@@ -193,6 +201,7 @@ targets:
         product: Messaging
       - package: SecureMessaging
         product: SecureMessaging
+      - package: CallCore
   AppiOSUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -201,7 +210,7 @@ targets:
       - path: AppUITests/iOS
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: org.example.app.uitests
+        PRODUCT_BUNDLE_IDENTIFIER: $(APP_ID).uitests
         TEST_TARGET_NAME: AppiOS
     dependencies:
       - target: AppiOS
@@ -215,7 +224,7 @@ targets:
       - path: AppUITests/macOS
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: org.example.app.mac.uitests
+        PRODUCT_BUNDLE_IDENTIFIER: $(APP_ID).mac.uitests
         TEST_TARGET_NAME: AppMac
     dependencies:
       - target: AppMac

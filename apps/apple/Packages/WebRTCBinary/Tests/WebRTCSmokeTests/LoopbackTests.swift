@@ -4,9 +4,12 @@ import Testing
 import WebRTC
 
 enum Loopback {
-    /// False in the simulator and on CI runners. Plan 5 runs this test on the
-    /// owner's devices.
-    static var hasMicrophone: Bool { AVCaptureDevice.default(for: .audio) != nil }
+    /// False in the simulator and when `CI` is set (GitHub macOS runners expose a
+    /// virtual microphone, but real audio timing needs a device). Plan 5 runs this
+    /// test on the owner's devices.
+    static var hasMicrophone: Bool {
+        ProcessInfo.processInfo.environment["CI"] == nil && AVCaptureDevice.default(for: .audio) != nil
+    }
 
     /// Adds `a=ptime:60` and `a=maxptime:60` to the audio section of an SDP.
     static func munge(_ sdp: String) -> String {

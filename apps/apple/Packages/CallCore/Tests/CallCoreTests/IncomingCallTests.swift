@@ -40,6 +40,35 @@ private func active(video: Bool = false) -> (CallSessionMachine, ManualClock) {
 }
 
 @Suite struct IncomingCallTests {
+    /// A push-woken device knows the caller's device from the push's MLS credential: answers from any other
+    /// device are dropped, the credential device's answer is accepted.
+    @Test func pushRingBindsToTheCredentialDevice() {
+        var m = CallSessionMachine(context: ctx(), clock: ManualClock())
+        _ = m.handle(.incoming(callID: "c1", contact: bob, fromDeviceID: "dZ", ring: ring(video: false)))
+        _ = m.handle(.localOffer(sdp(myFP)))
+        _ = m.handle(.answer(video: false))
+        #expect(!m.handle(.remote(answerPayload(), fromDeviceID: "dOther")).contains(where: isAcceptAnswer))
+        #expect(m.handle(.remote(answerPayload(), fromDeviceID: "dZ")).contains(where: isAcceptAnswer))
+        #expect(m.handle(.remote(candPayload(1), fromDeviceID: "dOther")).isEmpty)
+        #expect(m.handle(.remote(candPayload(1), fromDeviceID: "dZ")).contains(.addCandidate(cand(1))))
+    }
+
+    /// A ring without a caller device is bound to no device: no answer is ever accepted.
+    @Test func ringWithoutADeviceAcceptsNoAnswer() {
+        var m = CallSessionMachine(context: ctx(), clock: ManualClock())
+        _ = m.handle(.incoming(callID: "c1", contact: bob, fromDeviceID: "", ring: ring(video: false)))
+        _ = m.handle(.localOffer(sdp(myFP)))
+        _ = m.handle(.answer(video: false))
+        #expect(!m.handle(.remote(answerPayload(), fromDeviceID: "dZ")).contains(where: isAcceptAnswer))
+    }
+
+    @Test func knownDeviceStaysBound() {
+        var (m, _, _) = ringing()
+        _ = m.handle(.localOffer(sdp(myFP)))
+        _ = m.handle(.answer(video: false))
+        #expect(!m.handle(.remote(answerPayload(), fromDeviceID: "dOther")).contains(where: isAcceptAnswer))
+    }
+
     @Test func incomingPrewarmsAndOffersLocally() {
         let (m, _, fx) = ringing(video: true)
         let ceiling = DataModePolicy.ceiling(server: server, settings: ctx().settings.call, network: .wifi, inCall: nil)

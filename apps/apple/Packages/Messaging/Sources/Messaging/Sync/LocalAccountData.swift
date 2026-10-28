@@ -32,7 +32,7 @@ public enum LocalAccountData {
     /// - Returns: whether a wipe ran.
     @discardableResult
     public static func prepare(
-        accountID: String, container: URL, repo: Repository, wipe: () async throws -> Void
+        accountID: String, container: URL, repo: Repository, wipe: @Sendable () async throws -> Void
     ) async throws -> Bool {
         let owner = try repo.get(ownerKey).flatMap { String(data: $0, encoding: .utf8) }
         let needsWipe = isWipePending(in: container) || owner != accountID

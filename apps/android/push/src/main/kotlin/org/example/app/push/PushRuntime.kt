@@ -3,7 +3,7 @@ package org.example.app.push
 import org.example.app.contracts.NotificationOutcome
 import org.example.app.contracts.RingOutcome
 
-/** Opens a ring for a contact's call. Implemented by `:calls-android` (E6). */
+/** Opens a ring for a contact's call. Implemented by `:calls-android` (`LiveCallEngine`, E6). */
 interface IncomingCallSink {
     fun ring(outcome: RingOutcome.Ring)
 }

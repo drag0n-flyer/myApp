@@ -122,11 +122,12 @@ class LiveConnectionTest {
     private fun connection(pingMs: Long = 25_000): LiveConnection {
         if (!serverStarted) { server.start(); serverStarted = true }
         val client = ServerClient(server.url("/"), store, OkHttpClient())
-        client.setOnUnauthorized { unauthorized++ }
+        client.setOnUnauthorized { unauthorized++; reasons += it }
         return LiveConnection(client, OkHttpClient(), clock, Random(1), pingIntervalMillis = pingMs).also { live = it }
     }
 
     private var serverStarted = false
+    private val reasons = java.util.concurrent.CopyOnWriteArrayList<org.example.app.net.SignOutReason>()
 
     private fun <T> eventually(what: String, block: () -> T?): T {
         val end = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
@@ -337,19 +338,37 @@ class LiveConnectionTest {
         awaitState(c, ConnectionState.Revoked)
         eventually("signed out") { if (unauthorized == 1) 1 else null }
         assertNull(store.current)
+        assertEquals(listOf(org.example.app.net.SignOutReason.Revoked), reasons.toList())
         clock.advance(120_000)
         Thread.sleep(300)
         assertEquals(1, server.requestCount)
     }
 
     @Test
-    fun unauthorizedUpgradeReportsRevoked() = runBlocking {
+    fun confirmedUnauthorizedUpgradeReportsRevoked() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(401).setBody("""{"error":{"code":"unauthorized","message":"x"}}"""))
         server.enqueue(MockResponse().setResponseCode(401).setBody("""{"error":{"code":"unauthorized","message":"x"}}"""))
         val c = connection()
         c.start()
         awaitState(c, ConnectionState.Revoked)
         eventually("signed out") { if (unauthorized == 1) 1 else null }
         assertNull(store.current)
+        assertEquals(listOf(org.example.app.net.SignOutReason.Revoked), reasons.toList())
+    }
+
+    /** A 401 that a second call does not confirm signs out but is not a revocation: the socket never says Revoked. */
+    @Test
+    fun unconfirmedUnauthorizedUpgradeOnlySignsOut() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(401).setBody("""{"error":{"code":"unauthorized","message":"x"}}"""))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
+        val c = connection()
+        c.start()
+        eventually("signed out") { if (unauthorized == 1) 1 else null }
+        assertNull(store.current)
+        assertEquals(listOf(org.example.app.net.SignOutReason.SessionEnded), reasons.toList())
+        awaitState(c, ConnectionState.Disconnected)
+        Thread.sleep(200)
+        assertEquals(ConnectionState.Disconnected, c.states.value)
     }
 
     @Test
@@ -357,6 +376,8 @@ class LiveConnectionTest {
         store.clear()
         val c = connection()
         c.start()
+        Thread.sleep(200)
+        awaitState(c, ConnectionState.Disconnected)
         Thread.sleep(200)
         assertEquals(ConnectionState.Disconnected, c.states.value)
         assertEquals(0, server.requestCount)
@@ -369,6 +390,8 @@ class LiveConnectionTest {
         c.start()
         awaitState(c, ConnectionState.Connected)
         c.stop()
+        awaitState(c, ConnectionState.Disconnected)
+        Thread.sleep(200)
         assertEquals(ConnectionState.Disconnected, c.states.value)
         eventually("no timers left") { if (clock.sleepers() == 0) true else null }
         val before = server.requestCount
@@ -401,7 +424,9 @@ class LiveConnectionTest {
             awaitSleepers(1) // fails and backs off; the token never leaves
             assertEquals(1, server.requestCount)
             assertEquals(0, target.requestCount)
-            assertEquals(ConnectionState.Disconnected, c.states.value)
+            awaitState(c, ConnectionState.Disconnected)
+        Thread.sleep(200)
+        assertEquals(ConnectionState.Disconnected, c.states.value)
         } finally {
             target.shutdown()
         }

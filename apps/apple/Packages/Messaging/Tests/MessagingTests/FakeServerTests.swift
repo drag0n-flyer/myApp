@@ -116,7 +116,8 @@ import MessagingTestKit
         let r = try cipher.encrypt(file: plain, to: enc)
         #expect(r.size == 16 && r.cipherSize == 16 && r.key.count == 32)
         #expect(try Data(contentsOf: enc) != Data("hello attachment".utf8))
-        #expect(r.digest == PortableSHA256.hash(try Data(contentsOf: enc)))
+        let encrypted = try Data(contentsOf: enc)
+        #expect(r.digest == PortableSHA256.hash(encrypted))
         try cipher.decrypt(file: enc, to: out, key: r.key, digest: r.digest)
         #expect(try Data(contentsOf: out) == Data("hello attachment".utf8))
         #expect(throws: (any Error).self) { try cipher.decrypt(file: enc, to: out, key: r.key, digest: Data(count: 32)) }

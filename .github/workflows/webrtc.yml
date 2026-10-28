@@ -14,12 +14,17 @@ on:
         description: JSON list of slices to build (a partial list skips package, smoke and release)
         type: string
         default: ""
+      reuse_run:
+        description: Space-separated run ids whose slice-* artifacts the package job also uses (so a rerun builds only the slices that failed)
+        type: string
+        default: ""
   push:
-    # Hours per build: only its own branch builds on push; elsewhere start it by hand.
-    branches: [feat/webrtc-build]
+    # Every branch runs the pin job. Hours per build: only feat/webrtc-build
+    # builds on push (see probe); elsewhere start the build by hand.
     paths:
       - "tools/webrtc/**"
       - ".github/workflows/webrtc.yml"
+      - "apps/apple/Packages/WebRTCBinary/**"
 
 permissions:
   contents: read
@@ -29,11 +34,13 @@ env:
 
 jobs:
   probe:
+    if: github.event_name == 'workflow_dispatch' || github.ref_name == 'feat/webrtc-build'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
       slices: ${{ steps.slices.outputs.slices }}
       full: ${{ steps.slices.outputs.full }}
+      reuse: ${{ steps.slices.outputs.reuse }}
     steps:
       - uses: actions/checkout@v4
       - name: Opus probe
@@ -44,14 +51,18 @@ jobs:
         run: sh tools/webrtc/apply_test.sh
       - name: Build scripts (symbols, license scan, gn arguments)
         run: sh tools/webrtc/build_scripts_test.sh
+      - name: Package pin check (fixtures)
+        run: sh tools/webrtc/check-package-pin_test.sh
       - name: Choose slices
         id: slices
         env:
           REQUESTED: ${{ inputs.slices || vars.WEBRTC_SLICES }}
+          REUSE: ${{ inputs.reuse_run || vars.WEBRTC_REUSE_RUN }}
         run: |
           slices="${REQUESTED:-$ALL_SLICES}"
           echo "slices=$slices" >> "$GITHUB_OUTPUT"
-          if [ "$(echo "$slices" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')" = 5 ]; then
+          echo "reuse=$REUSE" >> "$GITHUB_OUTPUT"
+          if [ -n "$REUSE" ] || [ "$(echo "$slices" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')" = 5 ]; then
             echo "full=true" >> "$GITHUB_OUTPUT"
           else
             echo "full=false" >> "$GITHUB_OUTPUT"
@@ -59,6 +70,7 @@ jobs:
 
   build:
     needs: probe
+    if: needs.probe.outputs.slices != '[]'
     runs-on: macos-26
     timeout-minutes: 350
     strategy:
@@ -79,17 +91,20 @@ jobs:
           done
           sudo rm -rf ~/Library/Android /usr/local/share/dotnet
           df -h /
+      # The Opus tarball is fetched once and reused: downloads.xiph.org has failed whole builds.
+      # apply.sh checks the SHA-256 of a cached file too, so a bad cache entry stops the build.
+      - name: Opus tarball cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/webrtc-cache
+          key: opus-${{ hashFiles('tools/webrtc/VERSION') }}
       - name: Build ${{ matrix.slice }}
+        env:
+          APPLY_CACHE_DIR: ${{ runner.temp }}/webrtc-cache
         run: sh tools/webrtc/build.sh "${{ matrix.slice }}" "$WORK"
       - name: Disk after build
         if: always()
         run: df -h /
-      - name: Licenses
-        if: matrix.slice == 'ios-arm64'
-        run: |
-          cd "$WORK/src"
-          python3 tools_webrtc/libs/generate_licenses.py --target //sdk:framework_objc out/ios-arm64 "$WORK/licenses"
-          ls -l "$WORK/licenses"
       - name: Pack the slice
         run: tar -C "$WORK/artifacts" -cf "slice-${{ matrix.slice }}.tar" "${{ matrix.slice }}"
       - uses: actions/upload-artifact@v4
@@ -97,6 +112,15 @@ jobs:
           name: slice-${{ matrix.slice }}
           path: slice-${{ matrix.slice }}.tar
           if-no-files-found: error
+      - name: Licenses
+        if: matrix.slice == 'ios-arm64'
+        run: |
+          mkdir -p "$WORK/licenses"
+          cd "$WORK/src"
+          python3 tools_webrtc/libs/generate_licenses.py --target //sdk:framework_objc "$WORK/licenses" out/ios-arm64
+          ls -l "$WORK/licenses"
+          cd "$GITHUB_WORKSPACE"
+          sh tools/webrtc/package.sh --check-license "$WORK/licenses/LICENSE.md"
       - uses: actions/upload-artifact@v4
         if: matrix.slice == 'ios-arm64'
         with:
@@ -106,20 +130,37 @@ jobs:
 
   package:
     needs: [probe, build]
-    if: needs.probe.outputs.full == 'true'
+    if: ${{ !cancelled() && needs.probe.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.build.result) && needs.probe.outputs.full == 'true' }}
     runs-on: macos-26
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+      - name: Download slices from earlier runs
+        if: needs.probe.outputs.reuse != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for id in ${{ needs.probe.outputs.reuse }}; do
+            gh run download "$id" --repo "$GITHUB_REPOSITORY" --pattern 'slice-*' --pattern licenses --dir "downloaded-old/$id"
+          done
       - uses: actions/download-artifact@v4
+        continue-on-error: true # nothing to download when every slice came from earlier runs
         with:
           path: downloaded
       - name: Unpack slices
         run: |
           mkdir -p artifacts
-          for t in downloaded/slice-*/slice-*.tar; do tar -C artifacts -xf "$t"; done
+          # Slices from an earlier run first; this run's slices replace them.
+          for t in downloaded-old/*/slice-*/slice-*.tar downloaded/slice-*/slice-*.tar; do
+            [ -f "$t" ] && tar -C artifacts -xf "$t"
+          done
+          true
           mkdir -p artifacts/licenses
-          cp downloaded/licenses/* artifacts/licenses/
+          # This run's licenses win over an earlier run's.
+          for d in downloaded-old/*/licenses downloaded/licenses; do
+            [ -d "$d" ] && cp "$d"/* artifacts/licenses/
+          done
+          [ -f artifacts/licenses/LICENSE.md ]
           ls artifacts artifacts/licenses
       - name: Package
         run: sh tools/webrtc/package.sh artifacts release
@@ -131,6 +172,7 @@ jobs:
 
   smoke:
     needs: package
+    if: ${{ !cancelled() && needs.package.result == 'success' }}
     runs-on: macos-26
     timeout-minutes: 90
     steps:
@@ -154,7 +196,10 @@ jobs:
           WEBRTC_LOCAL_XCFRAMEWORK: WebRTC.xcframework
         run: |
           softwareupdate --install-rosetta --agree-to-license || true
-          swift test --arch x86_64
+          # Run SwiftPM itself under Rosetta: a native swift test launches the
+          # arm64 test helper, which cannot load the x86_64 test bundle.
+          arch -x86_64 /usr/bin/uname -m
+          arch -x86_64 swift test --arch x86_64
       - name: xcodebuild test (iOS Simulator)
         working-directory: apps/apple/Packages/WebRTCBinary
         env:
@@ -168,7 +213,7 @@ jobs:
 
   release:
     needs: [probe, smoke]
-    if: inputs.release && needs.probe.outputs.full == 'true'
+    if: ${{ !cancelled() && inputs.release && needs.smoke.result == 'success' && needs.probe.outputs.full == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -197,3 +242,26 @@ jobs:
           cd release
           gh release create "$tag" WebRTC.xcframework.zip WebRTC.dSYMs.zip LICENSE.md VERSION checksum.txt \
             --title "WebRTC M${WEBRTC_MILESTONE} + Opus ${OPUS_VERSION} (${RELEASE})" --notes-file ../notes.md
+
+  # Package.swift must name a published release whose asset matches its
+  # checksum and whose VERSION matches tools/webrtc/VERSION. Until the first
+  # release is published this job is red by design.
+  pin:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package pin check (fixtures)
+        run: sh tools/webrtc/check-package-pin_test.sh
+      - name: Package pin check (release)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if sh tools/webrtc/check-package-pin.sh; then
+            exit 0
+          fi
+          msg="Package.swift does not match a published WebRTC release. Expected until the first release (plan Task 6 Steps 2-4) is published and Package.swift is updated from its checksum.txt."
+          echo "::error title=WebRTC package pin::$msg"
+          echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+          exit 1

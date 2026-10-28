@@ -130,22 +130,36 @@ final class LoopbackTests: XCTestCase {
     /// (Opus default). B asks to receive `.high`, so its answer does not carry the 10 kbps cap itself:
     /// the cap on A can only come from the munge A applies to the remote answer (`send: .ultraLow`),
     /// and this fails if that munge is removed.
+    /// The encoder rate is the `outbound-rtp` payload (`bytesSent` there excludes RTP headers). The
+    /// transport counter (`MediaStats.bytesSent`) also holds RTP/SRTP headers, RTCP and the receive side's
+    /// feedback: about 5 kbps more at 60 ms packets, so it is checked against the wire budget instead.
     func testSendProfileReachesEncoder() async throws {
         let (a, b) = try await connected(send: .ultraLow, peerReceive: .high)
         let up = await wait(10) { self.has("A", .connected) }
         XCTAssertTrue(up, "the call must connect")
-        let s0 = await a.stats()
+        let s0 = await a.stats(), r0 = await a.rawStatsForTesting()
         let f0 = Self.tone.frames
         try await Task.sleep(nanoseconds: 5_000_000_000)
-        let s1 = await a.stats()
+        let s1 = await a.stats(), r1 = await a.rawStatsForTesting()
         // The hook runs only if the runner captures audio. Without an input device there is no source,
         // and the assertions below would not mean anything (the skip comes after closing the sessions).
         let toneRan = Self.tone.frames != f0
-        let bps = Double(s1.bytesSent - s0.bytesSent) * 8 / 5
+        let wireBps = Double(s1.bytesSent - s0.bytesSent) * 8 / 5
+        let codecBps = (Self.audioOut(r1, "bytesSent") - Self.audioOut(r0, "bytesSent")) * 8 / 5
+        let headerBps = (Self.audioOut(r1, "headerBytesSent") - Self.audioOut(r0, "headerBytesSent")) * 8 / 5
+        let target = r1.first { $0.type == "outbound-rtp" && $0.strings["kind"] == "audio" }?.numbers["targetBitrate"]
+        print("send profile: codec \(codecBps) bit/s, RTP headers \(headerBps) bit/s, transport \(wireBps) bit/s, target \(target.map { "\($0)" } ?? "none")")
         await a.close(); await b.close()   // close before a possible skip
         try XCTSkipIf(!toneRan, "no audio capture on this runner, so the tone never played")
-        XCTAssertGreaterThan(bps, 2_000, "the tone must be sent")
-        XCTAssertLessThanOrEqual(bps, 14_000)
+        XCTAssertGreaterThan(codecBps, 2_000, "the tone must be sent")
+        XCTAssertLessThanOrEqual(codecBps, 14_000)
+        if let target { XCTAssertLessThanOrEqual(target, 10_000) }
+        XCTAssertLessThanOrEqual(wireBps, Double(AudioProfile.for(.ultraLow).wireBudget))
+    }
+
+    /// Sum of one counter over the audio `outbound-rtp` entries.
+    static func audioOut(_ stats: [RawStat], _ key: String) -> Double {
+        stats.filter { $0.type == "outbound-rtp" && $0.strings["kind"] == "audio" }.reduce(0) { $0 + ($1.numbers[key] ?? 0) }
     }
 
     func testRelayOnlyGathersOnlyRelayCandidates() async throws {

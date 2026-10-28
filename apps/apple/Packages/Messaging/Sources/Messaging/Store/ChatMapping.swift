@@ -9,13 +9,14 @@ enum ChatMapping {
     /// `messages.sender_account` of device and safety lines.
     static let systemSender = "system"
 
-    static func status(_ raw: String) -> DeliveryStatus {
+    /// - Parameter showRead: false while the Read receipts switch is off, for my own messages: a stored `read`
+    ///   then shows as delivered, and shows as read again when the switch goes back on.
+    static func status(_ raw: String, showRead: Bool = true) -> DeliveryStatus {
         switch raw {
         case "delivered": .delivered
-        case "read": .read
+        case "read": showRead ? .read : .delivered
         case "sent": .sent
-        // `failed` has no AppCore case yet: it shows as not yet sent. `LiveChatStore.failedMessageIDs` and
-        // `retrySend` let the UI offer a retry.
+        case "failed": .failed
         default: .sending
         }
     }
@@ -33,13 +34,14 @@ enum ChatMapping {
 
     /// - Parameters:
     ///   - displayName: resolves an account ID to a name for system lines; `nil` gives "Someone".
+    ///   - showRead: see `status(_:showRead:)`.
     static func message(
         _ record: MessageRecord, attachment: AttachmentRecord?, reactions: [ReactionRecord],
-        displayName: (String) -> String?
+        displayName: (String) -> String?, showRead: Bool = true
     ) -> Message {
         var message = Message(
             id: record.id, senderID: record.senderAccount, sentAt: record.sentAt, content: .unsupported,
-            status: status(record.status), replyToID: record.replyTo,
+            status: status(record.status, showRead: showRead), replyToID: record.replyTo,
             reactions: reactions.map(\.emoji), editedAt: record.editedAt, media: nil, undecryptable: record.undecryptable)
 
         if record.deleted {

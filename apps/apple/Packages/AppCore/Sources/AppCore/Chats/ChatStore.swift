@@ -28,6 +28,10 @@ public protocol ChatStore: AnyObject {
     func searchMessages(_ query: String, limit: Int) -> [MessageHit]
     func send(_ content: MessageContent, in chatID: String, replyTo: String?)
     func sendAttachment(_ fileURL: URL, kind: MediaKind, in chatID: String)
+    /// A recorded voice note of `duration` seconds.
+    func sendVoice(_ fileURL: URL, duration: Double, in chatID: String)
+    /// Sends a message that gave up (`DeliveryStatus.failed`) again.
+    func retrySend(messageID: String)
     func react(_ emoji: String, to messageID: String, in chatID: String)
     func edit(messageID: String, in chatID: String, text: String)
     func delete(messageID: String, in chatID: String)
@@ -56,6 +60,13 @@ public protocol ChatStore: AnyObject {
 }
 
 extension ChatStore {
+    public func sendVoice(_ fileURL: URL, duration: Double, in chatID: String) {
+        sendAttachment(fileURL, kind: .voice, in: chatID)
+    }
+
+    /// Stores that never fail to send have nothing to retry.
+    public func retrySend(messageID: String) {}
+
     public func send(_ content: MessageContent, in chatID: String) {
         send(content, in: chatID, replyTo: nil)
     }

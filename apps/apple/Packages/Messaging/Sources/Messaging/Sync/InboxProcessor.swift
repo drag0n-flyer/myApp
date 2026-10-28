@@ -9,15 +9,15 @@ import ServerKit
 /// processed in cursor order: the MLS result and its rows are written in one transaction that also marks
 /// the payload hash processed and deletes the raw row. The process lock is held only around that step,
 /// never across a network call.
-enum InboxError: Error, Equatable {
-    /// `mls.process` returned `.joined` for an item that is not a Welcome.
-    case joinedWithoutWelcome
-}
-
 public actor InboxProcessor {
     static let cursorKey = "inbox.cursor"
     static let pageSize = 100
     static let lockTimeout: Duration = .seconds(5)
+    /// Failed drains of one Welcome (a possibly temporary error while planning its join) before it is parked.
+    static let maxJoinTries = 5
+    static let failPrefix = "inbox.fail."
+    /// The modes a conversation row accepts. A Welcome labelled with anything else is parked, never guessed.
+    static let knownModes: Set<String> = ["e2ee", "server_readable"]
 
     private let deps: MessagingDeps
     private let conversations: ConversationManager
@@ -37,6 +37,9 @@ public actor InboxProcessor {
     /// to handle, by payload hash. `process` uses them instead of calling `mls.process` a second time, which
     /// the engine would reject as a duplicate and leave the stored epoch behind.
     private var adopted: [Data: Incoming] = [:]
+    /// Called for every new message from another account, after its rows are stored and outside the lock
+    /// (the store starts the auto-download from here).
+    private var onStored: (@Sendable (MessageRecord) async -> Void)?
     private var held: Set<Section> = []
     private var waiters: [Section: [CheckedContinuation<Void, Never>]] = [:]
 
@@ -49,6 +52,8 @@ public actor InboxProcessor {
         self.handler = handler
         self.controls = controls
     }
+
+    public func setOnStored(_ hook: (@Sendable (MessageRecord) async -> Void)?) { onStored = hook }
 
     /// Test hook: runs after the cheap pre-checks and before the process lock is taken.
     func setBeforeLockHook(_ hook: (@Sendable (RawInboxRecord) async -> Void)?) { beforeLock = hook }
@@ -164,22 +169,44 @@ public actor InboxProcessor {
     public func drainRaw() async {
         await acquire(.drain)
         var newMessages: [String: [String]] = [:]
+        var storedFromOthers: [MessageRecord] = []
         scan: while let items = try? deps.repo.rawItems(limit: Self.pageSize), !items.isEmpty {
             for raw in items {
                 let (step, applied) = await process(raw)
                 if step == .stop { break scan }
                 if case .stored(let message)? = applied, message.senderAccount != deps.me.accountID, !message.undecryptable {
                     newMessages[message.chatID, default: []].append(message.id)
+                    storedFromOthers.append(message)
                 }
             }
         }
         release(.drain)
+        if let onStored { for message in storedFromOthers { await onStored(message) } }
+        // Messages the notification extension stored: it never sends, so their receipts go out now.
+        let pendingReceipts = ((try? deps.repo.entries(prefix: NotificationProcessor.receiptPendingPrefix)) ?? [:])
+            .filter { !$0.value.isEmpty }
+        var pendingByChat: [String: [String]] = [:]
+        for (key, value) in pendingReceipts.sorted(by: { $0.key < $1.key }) {
+            let id = String(key.dropFirst(NotificationProcessor.receiptPendingPrefix.count))
+            pendingByChat[String(decoding: value, as: UTF8.self), default: []].append(id)
+        }
+        for (chatID, ids) in pendingByChat { newMessages[chatID, default: []].append(contentsOf: ids) }
+        if controls == nil {
+            // No way to send from here (the notification extension): leave the receipts for the app.
+            for (chatID, ids) in newMessages { for id in ids { try? deps.repo.set(NotificationProcessor.receiptPendingPrefix + id, Data(chatID.utf8)) } }
+        }
         // Network calls (device names, receipts) go after the lock and the gate are released.
         await noticeOwnDevices()
         if let controls {
             for (chatID, ids) in newMessages.sorted(by: { $0.key < $1.key }) {
                 // Best effort: a lost delivered receipt only delays the tick.
-                try? await controls.sendControl(.receipt(.delivered, ids: ids), chatID: chatID)
+                do {
+                    try await controls.sendControl(.receipt(.delivered, ids: ids), chatID: chatID)
+                    // Sent: the extension's markers for this chat are done. A failed send keeps them for the next drain.
+                    for id in pendingByChat[chatID] ?? [] {
+                        try? deps.repo.set(NotificationProcessor.receiptPendingPrefix + id, Data())
+                    }
+                } catch {}
             }
         }
     }
@@ -240,15 +267,25 @@ public actor InboxProcessor {
                     serverMode = try await deps.server.conversation(id: raw.conversationID).mode
                 } catch {
                     if (400..<500).contains(error.status), error.status != 408, error.status != 429 {
-                        // The server will never answer for this conversation: treat the Welcome as lost.
+                        // The server will never answer for this conversation: the Welcome is recorded and skipped.
                         try repo.transaction {
-                            try handler.storePlaceholder(for: raw, db: repo)
+                            try placeholderOrPark(raw, reason: "welcome_lookup_\(error.status)")
                             try repo.markProcessed(hash: hash)
                             try repo.deleteRaw(cursor: raw.cursor)
                         }
                         return (.done, nil)
                     }
                     return (.stop, nil)
+                }
+                // A value outside the allowed set would fail the conversation write on every retry: never guess.
+                // Kept and logged, not processed (the owner decides what a newer mode should do).
+                if let mode = serverMode, !Self.knownModes.contains(mode) {
+                    try repo.transaction {
+                        try handler.park(raw, reason: "unknown_mode", db: repo)
+                        try repo.markProcessed(hash: hash)
+                        try repo.deleteRaw(cursor: raw.cursor)
+                    }
+                    return (.done, nil)
                 }
             }
 
@@ -282,7 +319,7 @@ public actor InboxProcessor {
                     } catch {
                         // Anything else the engine rejects is permanent for this payload.
                         try repo.transaction {
-                            try handler.storePlaceholder(for: raw, db: repo)
+                            try placeholderOrPark(raw, reason: "mls_error")
                             try repo.markProcessed(hash: hash)
                             try repo.deleteRaw(cursor: raw.cursor)
                         }
@@ -290,26 +327,45 @@ public actor InboxProcessor {
                     }
                 }
                 if case .joined(let group, _) = incoming {
-                    // The Welcome counts as processed only together with its conversation row.
-                    guard let serverMode else { throw InboxError.joinedWithoutWelcome }  // never guess the mode (Design 18)
+                    // The Welcome counts as processed only together with its conversation row. Never guess the mode
+                    // (Design 18): a Welcome the server labelled otherwise has no server mode.
+                    // A failure that will not go away (`isPermanentJoinFailure`) must not hold up every other chat:
+                    // the item is parked with a "couldn't open this chat" placeholder and the queue moves on.
+                    // Anything else may be temporary: the raw row stays, the accepted result is kept, and the next
+                    // drain retries, at most `maxJoinTries` times in all (the count is stored, so it survives a
+                    // restart); then it is parked like a permanent failure.
                     pendingJoins[raw.cursor] = incoming
-                    let plan: ConversationManager.JoinPlan
-                    do {
-                        plan = try await conversations.planJoin(
-                            group: group, serverConversationID: raw.conversationID, serverMode: serverMode)
-                    } catch SyncError.noPeer {
-                        // Never going to work for this Welcome: drop it, store nothing.
-                        pendingJoins[raw.cursor] = nil
-                        try repo.transaction {
-                            try repo.markProcessed(hash: hash)
-                            try repo.deleteRaw(cursor: raw.cursor)
+                    var failure: String? = serverMode == nil ? "not_welcome" : nil
+                    var plan: ConversationManager.JoinPlan?
+                    if let serverMode {
+                        do {
+                            plan = try await conversations.planJoin(
+                                group: group, serverConversationID: raw.conversationID, serverMode: serverMode)
+                        } catch {
+                            let name = Self.failureName(error)
+                            if Self.isPermanentJoinFailure(error) {
+                                failure = name
+                            } else {
+                                let tries = try failCount(raw.cursor) + 1
+                                if tries < Self.maxJoinTries {
+                                    try repo.set(failKey(raw.cursor), Data(String(tries).utf8))
+                                    throw error
+                                }
+                                failure = "retries_exhausted:\(name)"
+                            }
                         }
-                        return nil
                     }
-                    let result = try repo.transaction {
-                        try plan.store(in: repo)
+                    let failed = try failCount(raw.cursor) != 0
+                    let result = try repo.transaction { () -> AppliedResult? in
                         try repo.markProcessed(hash: hash)
                         try repo.deleteRaw(cursor: raw.cursor)
+                        if failed { try repo.set(failKey(raw.cursor), Data()) }
+                        guard let plan else {
+                            try handler.park(raw, reason: "join_failed:\(failure ?? "error")", db: repo)
+                            try handler.storeJoinFailed(for: raw, db: repo)
+                            return nil
+                        }
+                        try plan.store(in: repo)
                         return try handler.apply(incoming, raw: raw, db: repo, memberKeys: plan.keys)
                     }
                     pendingJoins[raw.cursor] = nil
@@ -331,6 +387,44 @@ public actor InboxProcessor {
         } catch {
             return (.stop, nil)
         }
+    }
+
+    /// A Welcome that cannot be joined is parked with a `joinFailed` placeholder, so the user sees the chat the peer
+    /// believes exists. Any other item gets an undecryptable placeholder in its conversation, or is parked when
+    /// that conversation is not known. Runs inside the caller's transaction.
+    private func placeholderOrPark(_ raw: RawInboxRecord, reason: String) throws {
+        if raw.kind == "welcome" {
+            try handler.park(raw, reason: reason, db: deps.repo)
+            try handler.storeJoinFailed(for: raw, db: deps.repo)
+            return
+        }
+        if try !handler.storePlaceholder(for: raw, db: deps.repo) { try handler.park(raw, reason: reason, db: deps.repo) }
+    }
+
+    private func failKey(_ cursor: Int64) -> String { Self.failPrefix + String(cursor) }
+
+    private func failCount(_ cursor: Int64) throws -> Int {
+        guard let data = try deps.repo.get(failKey(cursor)), let text = String(data: data, encoding: .utf8) else { return 0 }
+        return Int(text) ?? 0
+    }
+
+    /// The `planJoin` failures retrying cannot fix: no peer, a server ID bound to another group, and anything the
+    /// engine rejects (unreadable credentials included) except a storage error or a busy engine. Everything else
+    /// (a database error, an unknown error) is treated as temporary.
+    static func isPermanentJoinFailure(_ error: Error) -> Bool {
+        switch error {
+        case SyncError.noPeer, SyncError.conversationRebound: return true
+        case MLSError.storage, MLSError.busy: return false
+        case is MLSError: return true
+        default: return false
+        }
+    }
+
+    /// A short name for the log and the parked reason: the error's case, never its associated text.
+    static func failureName(_ error: Error) -> String {
+        let text = String(describing: error)
+        let name = text.prefix { $0.isLetter || $0.isNumber || $0 == "_" }
+        return name.isEmpty ? "error" : String(name)
     }
 
     // MARK: Mutual exclusion
@@ -355,3 +449,5 @@ public actor InboxProcessor {
         }
     }
 }
+
+extension InboxProcessor: InboxSyncing {}

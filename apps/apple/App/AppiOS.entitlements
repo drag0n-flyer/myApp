@@ -9,11 +9,11 @@
 	</array>
 	<key>com.apple.security.application-groups</key>
 	<array>
-		<string>group.org.example.app</string>
+		<string>group.$(APP_ID)</string>
 	</array>
 	<key>keychain-access-groups</key>
 	<array>
-		<string>$(AppIdentifierPrefix)org.example.app.shared</string>
+		<string>$(AppIdentifierPrefix)$(APP_ID).shared</string>
 	</array>
 	<key>aps-environment</key>
 	<string>development</string>
