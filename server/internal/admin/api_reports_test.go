@@ -178,7 +178,7 @@ func TestReportHandleAudited(t *testing.T) {
 	}
 	var by string
 	_ = e.d.DB.QueryRow(context.Background(), `select handled_by::text from reports where id = $1`, e.open).Scan(&by)
-	if by != testSession.TokenID {
+	if by != testSession.AdminUserID {
 		t.Errorf("handled_by %q", by)
 	}
 	if rec := call(t, e.m, "POST", path, nil); rec.Code != 204 {

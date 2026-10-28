@@ -9,16 +9,17 @@ import (
 
 var uuidRE = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
-// MarkReportHandled sets handled_at and handled_by on an open report. An
+// MarkReportHandled sets handled_at and handled_by (an admin user id) on an
+// open report. An
 // unknown id is core.ErrNotFound; a report that is already handled is left
 // unchanged and is not an error.
-func (m *Module) MarkReportHandled(ctx context.Context, id, tokenID string) error {
-	if !uuidRE.MatchString(id) || !uuidRE.MatchString(tokenID) {
+func (m *Module) MarkReportHandled(ctx context.Context, id, adminUserID string) error {
+	if !uuidRE.MatchString(id) || !uuidRE.MatchString(adminUserID) {
 		return core.ErrNotFound
 	}
 	tag, err := m.d.DB.Exec(ctx,
 		`update reports set handled_at = $2, handled_by = $3 where id = $1 and handled_at is null`,
-		id, m.d.Now(), tokenID)
+		id, m.d.Now(), adminUserID)
 	if err != nil {
 		return err
 	}
