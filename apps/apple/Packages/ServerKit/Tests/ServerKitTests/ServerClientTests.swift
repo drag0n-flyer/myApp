@@ -19,6 +19,47 @@ private func client(_ t: StubTransport, _ store: SessionStore) -> ServerClient {
 }
 
 private actor Counter { var n = 0; func inc() { n += 1 } }
+private actor ReasonBox { var reasons: [SignOutReason] = []; func set(_ r: SignOutReason) { reasons.append(r) } }
+
+
+/// Answers every call with the server's own 401 and holds `GET /v1/me` until `release()` (ruling 2026-10-28 tests).
+private actor GatedTransport: HTTPTransport {
+    private(set) var paths: [String] = []
+    private var waiting: CheckedContinuation<Void, Never>?
+    private var released = false
+    private let meFails: Bool
+    private let onMe: @Sendable () -> Void
+
+    init(meFails: Bool = false, onMe: @escaping @Sendable () -> Void = {}) {
+        self.meFails = meFails
+        self.onMe = onMe
+    }
+
+    func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let path = request.url?.path ?? ""
+        paths.append(path)
+        if path == "/v1/me" {
+            if !released { await withCheckedContinuation { waiting = $0 } }
+            onMe()
+            if meFails { throw URLError(.notConnectedToInternet) }
+        }
+        let r = HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!
+        return (Data(#"{"error":{"code":"unauthorized","message":"x"}}"#.utf8), r)
+    }
+
+    func release() {
+        released = true
+        waiting?.resume()
+        waiting = nil
+    }
+
+    var meCount: Int { paths.filter { $0 == "/v1/me" }.count }
+
+    /// Waits until the confirming call has started.
+    func waitForMe() async {
+        for _ in 0..<2500 where meCount == 0 { try? await Task.sleep(nanoseconds: 2_000_000) }
+    }
+}
 
 @Suite struct ServerClientTests {
     @Test func errorEnvelopeMapsToServerError() async {
@@ -68,10 +109,11 @@ private actor Counter { var n = 0; func inc() { n += 1 } }
     @Test func serverClientClearsSessionOnceOn401() async {
         let t = StubTransport()
         await t.respond("GET", "/v1/x", status: 401, json: #"{"error":{"code":"unauthorized","message":"x"}}"#)
+        await t.respond("GET", "/v1/me", status: 401, json: #"{"error":{"code":"unauthorized","message":"x"}}"#)
         let store = makeStore()
         let c = client(t, store)
         let counter = Counter()
-        await c.setOnUnauthorized { await counter.inc() }
+        await c.setOnUnauthorized { _ in await counter.inc() }
         await withTaskGroup(of: Void.self) { g in
             for _ in 0..<5 {
                 g.addTask { let _: Ping? = try? await c.request("GET", "/v1/x", auth: .session) }
@@ -79,6 +121,130 @@ private actor Counter { var n = 0; func inc() { n += 1 } }
         }
         #expect(await counter.n == 1)
         #expect(store.current == nil)
+        // One check that the 401 is real (GET /v1/me), however many calls got it.
+        #expect(await t.requests.filter { $0.url?.path == "/v1/me" }.count == 1)
+    }
+
+    // Ruling (decision log 2026-10-28): a 401 proves revocation only if it is the server's own error and a second
+    // authenticated call (GET /v1/me) agrees. Any other 401 signs out without wiping.
+    private static let unauthorized = #"{"error":{"code":"unauthorized","message":"invalid session"}}"#
+
+    private func reasonFor(_ t: StubTransport) async -> (SignOutReason?, Int) {
+        let store = makeStore()
+        let c = client(t, store)
+        let box = ReasonBox()
+        await c.setOnUnauthorized { await box.set($0) }
+        let _: Ping? = try? await c.request("GET", "/v1/x", auth: .session)
+        #expect(store.current == nil)
+        return (await box.reasons.first, await t.requests.count)
+    }
+
+    @Test func confirmedServer401IsRevoked() async {
+        let t = StubTransport()
+        await t.respond("GET", "/v1/x", status: 401, json: Self.unauthorized)
+        await t.respond("GET", "/v1/me", status: 401, json: Self.unauthorized)
+        let (reason, count) = await reasonFor(t)
+        #expect(reason == .revoked)
+        #expect(count == 2)
+        #expect(await t.requests[1].value(forHTTPHeaderField: "Authorization") == "Bearer tok")
+    }
+
+    @Test func unconfirmed401OnlySignsOut() async {
+        let t = StubTransport()
+        await t.respond("GET", "/v1/x", status: 401, json: Self.unauthorized)
+        await t.respond("GET", "/v1/me", status: 200, json: "{}")
+        let (reason, count) = await reasonFor(t)
+        #expect(reason == .sessionEnded)
+        #expect(count == 2)
+    }
+
+    @Test func foreign401OnlySignsOutWithoutACheck() async {
+        let t = StubTransport()
+        await t.respond("GET", "/v1/x", status: 401, json: "<html>proxy</html>")
+        await t.respond("GET", "/v1/me", status: 401, json: Self.unauthorized)
+        let (reason, count) = await reasonFor(t)
+        #expect(reason == .sessionEnded)
+        #expect(count == 1)
+    }
+
+    @Test func confirmNetworkErrorOnlySignsOut() async {
+        let t = StubTransport()
+        await t.respond("GET", "/v1/x", status: 401, json: Self.unauthorized)
+        await t.fail("GET", "/v1/me", with: URLError(.notConnectedToInternet))
+        let (reason, count) = await reasonFor(t)
+        #expect(reason == .sessionEnded)
+        #expect(count == 2)
+    }
+
+    @Test func confirmWithForeignBodyOnlySignsOut() async {
+        let t = StubTransport()
+        await t.respond("GET", "/v1/x", status: 401, json: Self.unauthorized)
+        await t.respond("GET", "/v1/me", status: 401, json: "<html>proxy</html>")
+        #expect(await reasonFor(t).0 == .sessionEnded)
+    }
+
+    private func gatedClient(_ t: GatedTransport, _ store: SessionStore) -> ServerClient {
+        ServerClient(baseURL: URL(string: "https://chat.test")!, session: store, transport: t)
+    }
+
+    @Test func signInDuringConfirmKeepsNewSession() async {
+        let store = makeStore()
+        let t = GatedTransport(onMe: { try? store.save(Session(host: "chat.test", accountID: "a", deviceID: "d2", token: "new")) })
+        let c = gatedClient(t, store)
+        let box = ReasonBox()
+        await c.setOnUnauthorized { await box.set($0) }
+        await t.release()
+        let _: Ping? = try? await c.request("GET", "/v1/x", auth: .session)
+        #expect(await box.reasons.isEmpty)
+        #expect(store.current?.token == "new")
+    }
+
+    @Test func concurrent401sConfirmOnce() async {
+        let store = makeStore()
+        let t = GatedTransport()
+        let c = gatedClient(t, store)
+        let box = ReasonBox()
+        await c.setOnUnauthorized { await box.set($0) }
+        let first = Task { let _: Ping? = try? await c.request("GET", "/v1/x", auth: .session) }
+        await t.waitForMe()
+        // More 401s while the confirming call is in flight: none signs out again or sends another check.
+        for _ in 0..<4 { let _: Ping? = try? await c.request("GET", "/v1/x", auth: .session) }
+        #expect(await box.reasons.isEmpty)
+        await t.release()
+        await first.value
+        #expect(await box.reasons == [.revoked])
+        #expect(await t.meCount == 1)
+        #expect(store.current == nil)
+    }
+
+    @Test func revokedDuring401ConfirmStillWipes() async {
+        let store = makeStore()
+        let t = GatedTransport(meFails: true)
+        let c = gatedClient(t, store)
+        let box = ReasonBox()
+        await c.setOnUnauthorized { await box.set($0) }
+        let first = Task { let _: Ping? = try? await c.request("GET", "/v1/x", auth: .session) }
+        await t.waitForMe()
+        // A 4003 arrives while the check runs; the check then fails on the network. The 4003 alone proves it.
+        await c.handleRevoked(generation: store.generation)
+        await t.release()
+        await first.value
+        #expect(await box.reasons == [.revoked])
+        #expect(store.current == nil)
+    }
+
+    @Test func revokedAfterUnconfirmedSignOutStillWipes() async {
+        let t = StubTransport()
+        await t.respond("GET", "/v1/x", status: 401, json: "<html>proxy</html>")
+        let store = makeStore()
+        let c = client(t, store)
+        let box = ReasonBox()
+        await c.setOnUnauthorized { await box.set($0) }
+        let generation = store.generation
+        let _: Ping? = try? await c.request("GET", "/v1/x", auth: .session)
+        await c.handleRevoked(generation: generation)
+        await c.handleRevoked(generation: generation)
+        #expect(await box.reasons == [.sessionEnded, .revoked])
     }
 
     @Test func baseURLIsHTTPS() async throws {
@@ -101,7 +267,7 @@ private actor Counter { var n = 0; func inc() { n += 1 } }
         }
         let c = ServerClient(baseURL: URL(string: "https://chat.test")!, session: store, transport: Racing(store: store))
         let counter = Counter()
-        await c.setOnUnauthorized { await counter.inc() }
+        await c.setOnUnauthorized { _ in await counter.inc() }
         let _: Ping? = try? await c.request("GET", "/v1/x", auth: .session)
         #expect(await counter.n == 0)
         #expect(store.current?.token == "new")

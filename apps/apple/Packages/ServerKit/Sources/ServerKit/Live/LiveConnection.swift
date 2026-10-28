@@ -129,9 +129,9 @@ public actor LiveConnection {
             } catch {
                 guard isCurrent(id) else { return }
                 if let e = error as? ServerError, e.status == 401 {
-                    finish(id, .revoked)
-                    await client.handleRevoked(generation: generation)
-                    return
+                    // Revoked only when a second call confirms it (SignOutReason); otherwise signed out, data kept.
+                    let reason = await client.handleUpgradeUnauthorized(generation: generation)
+                    return finish(id, reason == .revoked ? .revoked : .idle)
                 }
             }
             switch code {

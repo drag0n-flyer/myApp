@@ -4,8 +4,8 @@ Last updated: 2026-10-28, 15:30 UTC.
 
 | Track | Done | % |
 |---|---|---|
-| iPhone/Mac Phase 1 | 124 / 128 | 97% |
-| Android | 39 / 44 | 89% |
+| iPhone/Mac Phase 1 | 125 / 128 | 98% |
+| Android | 40 / 44 | 91% |
 | Admin dashboard | done, with admin accounts and 2FA, on `main` | 100% |
 
 Up to 15 agents work in parallel (on Opus until 2 Nov, when Sonnet's weekly limit resets). CI is the bottleneck: about 5 Mac jobs at once, and GitHub throttles status checks when many agents watch runs. Mac CI runs only the jobs a change needs. Android CI uses Linux runners only.
@@ -39,7 +39,7 @@ Admin dashboard: `http://localhost:9044/admin/`. `.env` also sets `APP_ADMIN_HOS
 | [Client calling](docs/superpowers/plans/2026-10-27-client-calling.md) | 16 / 16 | 100% | I1 merged. With the real WebRTC build the encoder holds 10 kbps (about 19 kbps on the wire, inside GOAL.md's 17–21); the send-bitrate test now checks the audio payload, the encoder target and the wire total | done |
 | [Client messaging](docs/superpowers/plans/2026-10-27-client-messaging.md) | 16 / 16 | 100% | I1 merged: live store, calls tied to the caller's device, CallKit hang-up, sign-out ends calls first, a setup-error screen instead of sample chats; Apple CI green | done |
 | [Security docs and release](docs/superpowers/plans/2026-10-27-security-docs-release.md) | 13 / 14 | 93% | only Task 13 left, deferred by the owner | done for now |
-| [Call lab](docs/superpowers/plans/2026-10-27-call-lab.md) | 9 / 12 | 75% | WebRTC is in: L10a can start; L10 deferred; L11 last | about 1 day |
+| [Call lab](docs/superpowers/plans/2026-10-27-call-lab.md) | 10 / 12 | 83% | L10a merged: a weekly Mac job runs 7 test calls between two Mac app processes under simulated networks (labelled "CI, simulated"); its first run is the real test of the network shaping. Four rulings for you to confirm in the decision log. L10 deferred (release gate); L11 next | about 0.5 day |
 
 Extra work beyond the plans, in progress (each is reviewed before it merges; ETAs are agent time):
 
@@ -54,6 +54,10 @@ Extra work beyond the plans, in progress (each is reviewed before it merges; ETA
 | Port: linking skips an unreadable or too-large contact list; link-code check compares the port | `feat/ios-port-linking` | merged | done |
 | Small follow-ups: a pending link save stays tied to the server that issued it (switching server is refused meanwhile); after a claimed link only the session save is retried; read-receipt outbox tests | `fix/ios-followups` | merged (CI green, all 8 jobs). Open, low: capture the server at the start of the link wait, so a "Change" tap at the instant the claim succeeds can't file the session under the new server | done |
 | Android E6: Telecom calls and LiveCallEngine; sign-out and wipe end any call first | `android/e6` | merged (CI green on re-runs). Open, low: close the media in the 3 s hang-up timeout branch too (do it in E5); flaky `concurrentOpensAfterDeviceSwitchLeaveOneSession` (from I1, capture the failing assertion); `VoiceRecorderInstrumentedTest` timing window too tight on the API 36 emulator | done |
+| **Security fix:** iPhone safety numbers now cover the real signature keys; a number is shown or can be verified only if it matches the number rebuilt from the stored members (closes an oversized-identity route and a stale number after the main conversation switches) | `fix/ios-real-member-keys` | merged (three security review rounds, CI green). Ruling to confirm: one-time silent reset of stored placeholder keys on upgraded installs | done |
+| **Security follow-up (found in review, already on main):** if any member's name in a chat can't be read, the iPhone silently stops reporting device and key changes for that whole chat (`mlsffi/src/engine.rs:394-399`, `InboxProcessor.swift:377`) | not started | next | 2–3 h |
+| Port: a 401 wipes only when the server's own error and a second check (`GET /v1/me`) both confirm it; 4003 always wipes; local data records its device, and a sign-out with no recorded device wipes | `fix/ios-401-confirm` | merged (security review approved, CI green). Open, minor: the notification extension doesn't check who owns the data before opening it | done |
+| Android I2: Android and iPhone peers talk through one server (texts, photos, calls' signalling, linking, safety numbers); first Mac run green (18 steps passed, 1 honest skip: the iPhone app does not import the link snapshot yet, plan 7). Device checklist for you in `docs/release/android-device-checklist.md` | `android/i2` | merged | done |
 | App ID in one file (`apps/apple/AppID.xcconfig`) and a stronger photo-privacy test | `chore/appid-xcconfig` | merged (CI green). Open, low: `check-app-id.sh` also scans git-ignored build output, so it fails on a local checkout that has built the MLS Kotlin bindings; CI is clean | done |
 
 Android has the same inbox fixes (merged): a crafted invite can't stall the inbox, a new chat is abandoned only when really gone, and a failure after a chat starts never creates a second one.

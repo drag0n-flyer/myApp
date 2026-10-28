@@ -45,7 +45,7 @@ private actor Sleeper {
     }
 
     // device.revoked is unsigned and the server never sends it to the revoked device (its socket closes with 4003).
-    // Only a 401 or 4003 may wipe this device; that is the client's sign-out path, not this one.
+    // Only a 4003 or a confirmed 401 may wipe this device; that is the client's sign-out path, not this one.
 
     @Test func eventNamingThisDeviceNeverSignsOut() async throws {
         let (scheduler, runs, sleeper) = make()

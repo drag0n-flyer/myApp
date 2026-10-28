@@ -42,17 +42,20 @@ struct Membership: Sendable {
         self.mls = nil
     }
 
-    /// The group's members with their signature keys, sorted by identity.
-    ///
-    /// TODO(plan 4 memberKeys): `MLSEngine.memberKeys(of:)` does not exist yet. Until it lands this uses
-    /// `members(of:)` with placeholder keys (`"fake-sig:<identity>"`, what `FakeMLSEngine` will return), so
-    /// the device lines and the safety number's *shape* work, but the number does not yet cover the real
-    /// keys. The safety-number UI must stay hidden until this is replaced.
+    /// The group's members with their MLS signature keys (`MLSEngine.memberKeys(of:)`), sorted by identity.
     func keys(of group: GroupID) async throws -> [MemberKey] {
         guard let mls else { throw MLSError.internalError("Membership without an engine") }
-        return try await mls.members(of: group)
-            .map { MemberKey(identity: $0, signatureKey: Data("fake-sig:\($0)".utf8)) }
+        return try await mls.memberKeys(of: group)
             .sorted { Array($0.identity.utf8).lexicographicallyPrecedes(Array($1.identity.utf8)) }
+    }
+
+    /// The key stored for every member before the real keys: `"fake-sig:<identity>"`.
+    static func isPlaceholder(_ identity: String, _ key: Data) -> Bool { key == Data("fake-sig:\(identity)".utf8) }
+
+    /// Stored rows that all hold the old placeholder keys: the number stored with them covers no key, so it must not
+    /// be shown or verified until it is re-baselined (`LiveChatStore.safetyNumber(for:)`).
+    static func hasOnlyPlaceholderKeys(_ rows: [(identity: String, signatureKey: Data)]) -> Bool {
+        !rows.isEmpty && rows.allSatisfy { isPlaceholder($0.identity, $0.signatureKey) }
     }
 
     func update(conversation: ConversationRecord, db: Repository) async throws -> MembershipChange {
@@ -90,6 +93,13 @@ struct Membership: Sendable {
                 lines.append(("remove-\(identity)", event(identity, added: false)))
             }
         }
+        // Rows stored before the real keys (`"fake-sig:<identity>"`, the old placeholder) are re-baselined once,
+        // silently: the number moves but no line is added unless the devices changed too. Ruling in plans/README.md.
+        let rebaseline = Self.hasOnlyPlaceholderKeys(stored) && !keys.contains { Self.isPlaceholder($0.identity, $0.signatureKey) }
+        // The rows are replaced even when the number below is not (another conversation is preferred, or no number
+        // can be computed). That ends the re-baseline for these rows, so when this conversation's number is next
+        // written it differs from the stored placeholder number and is flagged: one extra "changed" line, the
+        // intended fail-safe (a missed notice would be worse than a spurious one).
         if stored.map(\.identity) != keys.map(\.identity) || stored.map(\.signatureKey) != keys.map(\.signatureKey) {
             try db.replaceMembers(conversationID: conversation.serverID, keys.map { ($0.identity, $0.signatureKey) })
         }
@@ -101,7 +111,8 @@ struct Membership: Sendable {
             let previous = try db.safety(chatID: conversation.chatID)?.current
             if let number, previous != number {
                 try db.setSafetyCurrent(chatID: conversation.chatID, number)
-                if previous != nil { lines.append(("safety", .safetyNumberChanged)) }
+                if rebaseline { try db.setVerified(chatID: conversation.chatID, nil) }
+                if previous != nil, !rebaseline || !lines.isEmpty { lines.append(("safety", .safetyNumberChanged)) }
             }
         }
 

@@ -207,6 +207,93 @@ private struct Rig {
         #expect(change == MembershipChange(added: [], removed: [], ownDevicesAdded: []))
     }
 
+    /// ana1's membership over an engine that reports real signature keys (32 bytes each) for the chat's members.
+    private func realKeys(_ rig: Rig) async throws -> (membership: Membership, spy: SpyMLSEngine, conversation: ConversationRecord) {
+        let conversation = try #require(try rig.ana1.repo.conversation(serverID: rig.conversationIDs[0]))
+        var deps = rig.ana1.device.deps
+        let spy = SpyMLSEngine(deps.mls)
+        deps.mls = spy
+        let identities = try rig.ana1.repo.members(conversationID: conversation.serverID).map(\.identity).sorted()
+        for (index, identity) in identities.enumerated() { spy.setSignatureKey(Data(repeating: UInt8(index + 1), count: 32), for: identity) }
+        return (Membership(deps: deps), spy, conversation)
+    }
+
+    @Test func keysAreTheEnginesRealKeys() async throws {
+        let rig = try await Rig.make()
+        let (membership, spy, conversation) = try await realKeys(rig)
+        let group = GroupID(raw: conversation.groupID)
+        let keys = try await membership.keys(of: group)
+        #expect(keys == (try await spy.memberKeys(of: group)))
+        #expect(!keys.contains { $0.signatureKey.starts(with: Data("fake-sig:".utf8)) })
+    }
+
+    /// Rows stored under the old placeholder keys are replaced by the real keys once, silently: no line, and a
+    /// verification of the placeholder number is cleared.
+    @Test func placeholderKeysAreRebaselinedSilently() async throws {
+        let rig = try await Rig.make()
+        let before = try #require(try rig.ana1.safety(with: "acc-bob"))
+        try rig.ana1.repo.setVerified(chatID: "acc-bob", before)
+        let (membership, spy, conversation) = try await realKeys(rig)
+        _ = try await membership.update(conversation: conversation, db: rig.ana1.repo)
+
+        let stored = try rig.ana1.repo.members(conversationID: conversation.serverID)
+        #expect(stored.map(\.signatureKey) == (try await spy.memberKeys(of: GroupID(raw: conversation.groupID))).map(\.signatureKey))
+        let row = try #require(try rig.ana1.repo.safety(chatID: "acc-bob"))
+        #expect(row.current != before)
+        #expect(row.verified == nil)
+        #expect(try rig.ana1.lines(with: "acc-bob").isEmpty)
+    }
+
+    /// The re-baseline is silent only when the devices are unchanged: a device leaving at the same time is flagged.
+    @Test func rebaselineWithDeviceChangeIsFlagged() async throws {
+        let rig = try await Rig.make()
+        let (membership, spy, conversation) = try await realKeys(rig)
+        let bob2 = "acc-bob/\(rig.bob2.device.deviceID)"
+        let keys = try await spy.memberKeys(of: GroupID(raw: conversation.groupID)).filter { $0.identity != bob2 }
+        _ = try rig.ana1.repo.transaction { try membership.apply(keys: keys, conversation: conversation, db: rig.ana1.repo) }
+        #expect(try rig.ana1.lines(with: "acc-bob") == [.deviceRemoved(name: "acc-bob"), .safetyNumberChanged])
+    }
+
+    /// Only rows that are all placeholders are re-baselined: one real stored key means the change is flagged.
+    @Test func partlyPlaceholderRowsAreFlagged() async throws {
+        let rig = try await Rig.make()
+        let (membership, spy, conversation) = try await realKeys(rig)
+        let real = try await spy.memberKeys(of: GroupID(raw: conversation.groupID))
+        try rig.ana1.repo.replaceMembers(conversationID: conversation.serverID, real.enumerated().map { index, key in
+            (key.identity, index == 0 ? key.signatureKey : Data("fake-sig:\(key.identity)".utf8))
+        })
+        _ = try await membership.update(conversation: conversation, db: rig.ana1.repo)
+        #expect(try rig.ana1.lines(with: "acc-bob") == [.safetyNumberChanged])
+    }
+
+    /// A placeholder key still reported by the engine is no upgrade: the change is flagged and the verification kept.
+    @Test func placeholderInNewKeysIsFlagged() async throws {
+        let rig = try await Rig.make()
+        let before = try #require(try rig.ana1.safety(with: "acc-bob"))
+        try rig.ana1.repo.setVerified(chatID: "acc-bob", before)
+        let (membership, spy, conversation) = try await realKeys(rig)
+        let bob2 = "acc-bob/\(rig.bob2.device.deviceID)"
+        spy.setSignatureKey(Data("fake-sig:\(bob2)".utf8), for: bob2)
+        _ = try await membership.update(conversation: conversation, db: rig.ana1.repo)
+        #expect(try rig.ana1.safety(with: "acc-bob") != before)
+        #expect(try rig.ana1.lines(with: "acc-bob") == [.safetyNumberChanged])
+        #expect(try rig.ana1.repo.safety(chatID: "acc-bob")?.verified == before)
+    }
+
+    /// The attack case: a member's signature key changes and the identity stays. The number changes and is flagged.
+    @Test func realKeyChangeChangesNumber() async throws {
+        let rig = try await Rig.make()
+        let (membership, spy, conversation) = try await realKeys(rig)
+        _ = try await membership.update(conversation: conversation, db: rig.ana1.repo)
+        let before = try #require(try rig.ana1.safety(with: "acc-bob"))
+
+        spy.setSignatureKey(Data(repeating: 0xEE, count: 32), for: "acc-bob/\(rig.bob1.device.deviceID)")
+        let change = try await membership.update(conversation: conversation, db: rig.ana1.repo)
+        #expect(change == MembershipChange())
+        #expect(try rig.ana1.safety(with: "acc-bob") != before)
+        #expect(try rig.ana1.lines(with: "acc-bob") == [.safetyNumberChanged])
+    }
+
     /// The notice is persisted with the members. If the device list cannot be read, nothing is lost: the next
     /// run posts it, once.
     @Test func ownDeviceNoticeSurvivesFailedNameLookup() async throws {

@@ -41,4 +41,5 @@ include(
     ":calls-android",
     ":webrtc",
     ":push",
+    ":interop",
 )
