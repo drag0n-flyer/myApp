@@ -19,11 +19,12 @@ on:
         type: string
         default: ""
   push:
-    # Hours per build: only its own branch builds on push; elsewhere start it by hand.
-    branches: [feat/webrtc-build]
+    # Every branch runs the pin job. Hours per build: only feat/webrtc-build
+    # builds on push (see probe); elsewhere start the build by hand.
     paths:
       - "tools/webrtc/**"
       - ".github/workflows/webrtc.yml"
+      - "apps/apple/Packages/WebRTCBinary/**"
 
 permissions:
   contents: read
@@ -33,6 +34,7 @@ env:
 
 jobs:
   probe:
+    if: github.event_name == 'workflow_dispatch' || github.ref_name == 'feat/webrtc-build'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
@@ -49,6 +51,8 @@ jobs:
         run: sh tools/webrtc/apply_test.sh
       - name: Build scripts (symbols, license scan, gn arguments)
         run: sh tools/webrtc/build_scripts_test.sh
+      - name: Package pin check (fixtures)
+        run: sh tools/webrtc/check-package-pin_test.sh
       - name: Choose slices
         id: slices
         env:
@@ -238,3 +242,26 @@ jobs:
           cd release
           gh release create "$tag" WebRTC.xcframework.zip WebRTC.dSYMs.zip LICENSE.md VERSION checksum.txt \
             --title "WebRTC M${WEBRTC_MILESTONE} + Opus ${OPUS_VERSION} (${RELEASE})" --notes-file ../notes.md
+
+  # Package.swift must name a published release whose asset matches its
+  # checksum and whose VERSION matches tools/webrtc/VERSION. Until the first
+  # release is published this job is red by design.
+  pin:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package pin check (fixtures)
+        run: sh tools/webrtc/check-package-pin_test.sh
+      - name: Package pin check (release)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if sh tools/webrtc/check-package-pin.sh; then
+            exit 0
+          fi
+          msg="Package.swift does not match a published WebRTC release. Expected until the first release (plan Task 6 Steps 2-4) is published and Package.swift is updated from its checksum.txt."
+          echo "::error title=WebRTC package pin::$msg"
+          echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+          exit 1
