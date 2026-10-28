@@ -91,6 +91,10 @@ abstract class AppDatabase : RoomDatabase() {
          * would have them off. [SupportSQLiteDatabase.setForeignKeyConstraintsEnabled] in onConfigure puts it in the
          * pool's configuration, which every connection applies when it opens. Room exposes no onConfigure, so the
          * helper's callback is wrapped.
+         *
+         * Foreign keys are therefore on during onCreate and onUpgrade too, and `PRAGMA foreign_keys=OFF` has no effect
+         * inside the upgrade transaction. A future migration that drops and recreates a parent table (such as `chats`)
+         * would cascade-delete its children: copy rows into the new table before dropping the old one.
          */
         private class ForeignKeysOnEveryConnection(private val delegate: SupportSQLiteOpenHelper.Factory) : SupportSQLiteOpenHelper.Factory {
             override fun create(configuration: SupportSQLiteOpenHelper.Configuration): SupportSQLiteOpenHelper {
