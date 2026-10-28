@@ -1,0 +1,5 @@
+Generated/
+build/
+build.log
+*.xcodeproj/
+Local.xcconfig
