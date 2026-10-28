@@ -8,7 +8,8 @@ xcodegen generate --spec project.yml
 RESULT="${RUNNER_TEMP:-/tmp}/mac-ui.xcresult"
 rm -rf "$RESULT"
 xcodebuild -project App.xcodeproj -scheme AppMac -destination "platform=macOS" \
-  -configuration Debug -resultBundlePath "$RESULT" CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO test
+  -configuration Debug -resultBundlePath "$RESULT" CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO \
+  CODE_SIGN_ENTITLEMENTS="$PWD/scripts/ci-mac.entitlements" test
 
 # The notification service extension must be embedded and declare the right extension point.
 . "$(dirname "$0")/lib-nse.sh"
