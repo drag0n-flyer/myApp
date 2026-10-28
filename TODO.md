@@ -4,7 +4,7 @@ Last updated: 2026-10-29 (morning).
 
 | Track | Done | % |
 |---|---|---|
-| iPhone/Mac Phase 1 | 119 / 128 | 93% |
+| iPhone/Mac Phase 1 | 120 / 128 | 94% |
 | Android | 37 / 44 | 84% |
 | Admin dashboard | done, with admin accounts and 2FA, on `main` | 100% |
 
@@ -34,7 +34,7 @@ Admin dashboard: `http://localhost:9044/admin/`. `.env` also sets `APP_ADMIN_HOS
 | [Go server](docs/superpowers/plans/2026-10-27-go-server.md) | 27 / 27 | 100% | on `main`, plus Android devices, FCM/UnifiedPush, `.env` loading, the Makefile and the admin dashboard | done |
 | [App UI on sample data](docs/superpowers/plans/2026-10-27-app-ui-sample-data.md) | 16 / 16 | 100% | on `main` | done; Mac UI test confirmed on the next green run |
 | [Client networking](docs/superpowers/plans/2026-10-27-client-networking.md) | 14 / 14 | 100% | on `main`, with end-to-end tests against the real Go server in CI | done |
-| [MLS client core](docs/superpowers/plans/2026-10-27-mls-client-core.md) | 6 / 7 | 86% | M7 merged into M6's branch; M6 (notification extension prototype) reviewed, in its fix round; a real-iPhone checklist follows | 0.5 day |
+| [MLS client core](docs/superpowers/plans/2026-10-27-mls-client-core.md) | 7 / 7 | 100% | on `main`; the real-iPhone checklist for the notification extension is yours (see "Waiting on the owner") | done |
 | [WebRTC + Opus build](docs/superpowers/plans/2026-10-27-webrtc-opus-build.md) | 4 / 6 | 67% | Task 5: Mac CI build; then Task 6, the first release | 1 day |
 | [Client calling](docs/superpowers/plans/2026-10-27-client-calling.md) | 15 / 16 | 94% | I1 left | 1 day after WebRTC |
 | [Client messaging](docs/superpowers/plans/2026-10-27-client-messaging.md) | 15 / 16 | 94% | I1 (integration with calling) written, Linux tests pass; getting the iPhone and Mac app builds green on CI | 0.5 day |
