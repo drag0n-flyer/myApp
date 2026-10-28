@@ -217,18 +217,28 @@ class AppGraph(
     suspend fun openSession(): LiveSession? = withContext(Dispatchers.IO) {
         if (sampleData || wipeRunning) return@withContext null
         liveSession?.let { return@withContext it }
+        // One open at a time (UI and push may race): ownership is checked, and another device's data wiped, only here,
+        // so a second caller never wipes the session the first one just opened.
+        opening.withLock { openLocked() }
+    }
+
+    private val opening = Mutex()
+
+    private suspend fun openLocked(): LiveSession? {
+        if (wipeRunning) return null
+        liveSession?.let { return it }
         if (local.pending != null) quietly("pending wipe") { finishPendingWipe() }
-        if (local.pending != null || wipeRunning) return@withContext null
-        val stored = sessions.current ?: return@withContext null
+        if (local.pending != null || wipeRunning) return null
+        val stored = sessions.current ?: return null
         val device = LocalDevice(stored.accountId, stored.deviceId)
         if (!local.ownedBy(device.identity)) {
             quietly("other account's data") { wipe(LocalData.DATA) }
-            if (local.pending != null) return@withContext null
+            if (local.pending != null) return null
         }
-        val client = liveAccount.sessionClient ?: return@withContext null
-        synchronized(this@AppGraph) {
-            if (wipeRunning) return@withContext null
-            liveSession?.let { return@withContext it }
+        val client = liveAccount.sessionClient ?: return null
+        return synchronized(this@AppGraph) {
+            if (wipeRunning) return null
+            liveSession?.let { return it }
             local.recordOwner(device.identity)
             val sessionScope = CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]))
             val session = LiveSession(

@@ -28,6 +28,9 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.ResponseBody.Companion.toResponseBody
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlin.test.assertSame
 import kotlin.test.assertNotNull
 import org.example.app.core.calls.NetworkType
 import org.example.app.auth.VaultSecretStore
@@ -324,6 +327,24 @@ class AppGraphTest {
         val fresh = assertNotNull(graph.openSession())
         assertTrue(fresh.chatStore.chats.value.isEmpty())
         assertFalse(File(root, "media").exists(), "old media gone")
+    }
+
+    /** Two opens at once after a device switch (UI plus push): one wipe, one live session, its data intact. */
+    @Test
+    fun concurrentOpensAfterDeviceSwitchLeaveOneSession() = runBlocking {
+        val (_, old) = opened()
+        old.database.close()
+        saveSession(device = "dev-2")
+        val graph = AppGraph(context, sampleData = false, scope = scope, platform = platform())
+        val opens = List(4) { async(Dispatchers.IO) { graph.openSession() } }.awaitAll()
+        val session = assertNotNull(graph.liveSession)
+        opens.forEach { assertSame(session, it) }
+        assertTrue(session.scope.isActive, "the open session was not wiped")
+        assertFalse(marker.exists())
+        assertTrue(vault.key != null, "database key kept")
+        assertTrue(db.exists(), "database kept")
+        session.chatStore.settle()
+        assertEquals(AccountState.SignedIn, graph.accountState)
     }
 
     @Test
