@@ -10,6 +10,7 @@ import kotlinx.coroutines.delay
 import okhttp3.OkHttpClient
 import org.example.app.calls.session.Fingerprint
 import org.example.app.contracts.CallSignalPayload
+import org.example.app.contracts.GroupId
 import org.example.app.contracts.MemorySecretStore
 import org.example.app.contracts.SnapshotSource
 import org.example.app.core.account.ServerAddress
@@ -105,9 +106,9 @@ class Peer(private val config: PeerConfig) {
         val repo = InMemoryRepository()
         val mls = LiveMlsEngine(device.identity, File(config.dataDir, "mls"), MemorySecretStore())
         val api = DeliveryApiImpl(client)
-        // true only so a safety number is computed at all (the app hides it until MLS M7). LiveMlsEngine.memberKeys
-        // still returns `fake-sig:` placeholders, so the number covers the member identities, not the signature keys.
-        val membership = Membership(device, mls, realMemberKeys = true, clock = clock)
+        // As the app (LiveSession): real only when the engine says so. LiveMlsEngine.memberKeys still returns
+        // `fake-sig:` placeholders, so today there are none and no safety number is shown.
+        val membership = Membership(device, mls, realMemberKeys = mls.providesRealMemberKeys, clock = clock)
         val handler = IncomingHandler(device, clock)
         val escrowKeys = EscrowKeySource { ServerInfoApi(client).serverInfo().encryption.escrowKey }
         val escrow = Escrow.sealer(device.accountId, hpke, escrowKeys)
@@ -252,6 +253,20 @@ class Peer(private val config: PeerConfig) {
     suspend fun safety(peer: String): String {
         sync()
         return store.safetyNumber(peer)?.groups?.joinToString("") ?: throw PeerError("no safety number")
+    }
+
+    /**
+     * `real <count>` when the engine gives real member signature keys for the chat's group, `placeholder <count>`
+     * when they are `fake-sig:` placeholders, or `none` when the engine reports no real keys (as today).
+     */
+    suspend fun memberKeys(peer: String): String {
+        sync()
+        val g = signedIn()
+        if (!g.membership.realMemberKeys) return "none"
+        val record = g.repo.preferredConversation(peer) ?: throw PeerError("no conversation with $peer")
+        val keys = g.mls.memberKeys(GroupId(record.groupId))
+        val placeholder = keys.isEmpty() || keys.any { it.signatureKey.contentEquals("fake-sig:${it.identity}".toByteArray()) }
+        return "${if (placeholder) "placeholder" else "real"} ${keys.size}"
     }
 
     suspend fun seal(peer: String, kind: String, callId: String, sdpPath: String?): String {

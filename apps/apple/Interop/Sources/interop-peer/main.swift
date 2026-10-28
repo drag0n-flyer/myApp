@@ -148,6 +148,7 @@ final class Peer {
     var store: LiveChatStore?
     var deviceSync: DeviceSync?
     var repo: Repository?
+    var mls: LiveMLSEngine?
 
     init() {
         baseURL = URL(string: env("INTEROP_BASE_URL"))!
@@ -207,6 +208,7 @@ final class Peer {
         self.store = store
         self.deviceSync = sync
         self.repo = repo
+        self.mls = mls
         box.set(sync)
         return store
     }
@@ -338,6 +340,17 @@ final class Peer {
         try await sync()
         guard let number = try signedIn().safetyNumber(for: peer) else { throw PeerError("no safety number") }
         return number.groups.joined()
+    }
+
+    /// `real <count>` when the engine gives real member signature keys for the chat's group (none is a
+    /// `fake-sig:` placeholder), `placeholder <count>` otherwise, or `none` when the engine has no real keys.
+    func memberKeys(_ peer: String) async throws -> String {
+        try await sync()
+        guard let mls, mls.providesRealMemberKeys else { return "none" }
+        guard let record = try repo?.preferredConversation(chatID: peer) else { throw PeerError("no conversation with \(peer)") }
+        let keys = try await mls.memberKeys(of: GroupID(raw: record.groupID))
+        let placeholder = keys.isEmpty || keys.contains { $0.signatureKey == Data("fake-sig:\($0.identity)".utf8) }
+        return "\(placeholder ? "placeholder" : "real") \(keys.count)"
     }
 
     func seal(_ peer: String, kind: String, callID: String, sdpPath: String?) async throws -> String {
@@ -474,6 +487,7 @@ func run(_ peer: Peer, _ line: String) async throws -> String {
     case "send-photo": let a = try args(1); return try await peer.sendPhoto(a[0], path: a[1])
     case "wait-photo": let a = try args(1); return try await peer.waitPhoto(a[0], messageID: a[1])
     case "conversation": return try peer.conversation(try args(0)[0])
+    case "member-keys": return try await peer.memberKeys(try args(0)[0])
     case "safety": return try await peer.safety(try args(0)[0])
     case "seal":
         let a = rest.split(separator: " ").map(String.init)
