@@ -24,6 +24,7 @@ type Config struct {
 	DocsDir                                                                        string       // APP_DOCS_DIR: operator security.txt and legal pages; empty serves none
 	TrustProxy                                                                     bool
 	AdminHosts                                                                     []string // APP_ADMIN_HOSTS: extra Host names the admin listener accepts (lowercase)
+	AdminAllowHTTP                                                                 bool     // APP_ADMIN_ALLOW_HTTP: cookies for APP_ADMIN_HOSTS are not Secure (plain HTTP)
 	LabMode                                                                        bool     // APP_LAB_MODE=1: lab-only session command; never on a real server
 }
 
@@ -142,6 +143,14 @@ func Load(getenv func(string) string, readFile func(string) ([]byte, error)) (Co
 			return Config{}, Policy{}, fmt.Errorf("config: APP_TRUST_PROXY must be true or false")
 		}
 		c.TrustProxy = b
+	}
+
+	if v := getenv("APP_ADMIN_ALLOW_HTTP"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return Config{}, Policy{}, fmt.Errorf("config: APP_ADMIN_ALLOW_HTTP must be true or false")
+		}
+		c.AdminAllowHTTP = b
 	}
 
 	for _, h := range splitList(getenv("APP_ADMIN_HOSTS")) {
