@@ -193,7 +193,8 @@ private func err(_ code: String) -> String { #"{"error":{"code":"\#(code)","mess
         let code = try await r.service.makeLinkCode()
         #expect(code.qrText == "https://chat.test/link/L1#S1.\(qrKeyText)")
         let result = try await r.service.waitForLinkApproval()
-        #expect(result.contactsCopied)
+        // Opened, but nothing imports it yet (plan 7): not copied.
+        #expect(!result.contactsCopied)
         #expect(await r.sleeps.count == 2)
         #expect(await r.sleeps.total == .seconds(4))
         #expect(r.service.isSignedIn)
@@ -328,7 +329,8 @@ private func err(_ code: String) -> String { #"{"error":{"code":"\#(code)","mess
     @Test func linkCodeMustMatchServerPort() async {
         let r = Rig(signedIn: true)
         let others = ["https://chat.test:8443/link/L1#S1.\(qrKeyText)", "https://chat.test:443/link/L1#S1.\(qrKeyText)",
-                      "https://chat.test:/link/L1#S1.\(qrKeyText)", "https://own@chat.test/link/L1#S1.\(qrKeyText)"]
+                      "https://chat.test:/link/L1#S1.\(qrKeyText)", "https://own@chat.test/link/L1#S1.\(qrKeyText)",
+                      "https:/link/L1?x=https://chat.test#S1.\(qrKeyText)", "https:link/L1?https://chat.test#S1.\(qrKeyText)"]
         for text in others {
             await #expect(throws: AccountError.wrongServer) { _ = try await r.service.linkRequest(qrText: text) }
             await #expect(throws: AccountError.wrongServer) {
@@ -345,7 +347,7 @@ private func err(_ code: String) -> String { #"{"error":{"code":"\#(code)","mess
         await #expect(throws: AccountError.wrongServer) { _ = try await r.service.linkRequest(qrText: "https://chat.test:9443/link/L1#S1.\(qrKeyText)") }
         #expect(await r.t.requests.isEmpty)
         await r.t.respond("POST", "/v1/link/L1/info", status: 200, json: #"{"deviceName":"New Mac","platform":"mac","createdAt":"2026-11-01T12:00:00Z"}"#)
-        let req = try await r.service.linkRequest(qrText: "https://CHAT.test:8443/link/L1#S1.\(qrKeyText)")
+        let req = try await r.service.linkRequest(qrText: "  HTTPS://CHAT.test:8443/link/L1#S1.\(qrKeyText)\n")
         #expect(req.deviceName == "New Mac")
     }
 

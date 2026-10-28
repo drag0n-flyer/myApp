@@ -220,7 +220,9 @@ public final class LiveAccountService: AccountService {
                 }
                 receivedLinkSnapshot = snapshot
                 try save(s)
-                return LinkedResult(contactsCopied: snapshot != nil)
+                // TODO(plan 7): import `snapshot` and report copied only when the import succeeds, as Android
+                // does. Nothing imports it yet, so the contacts were not copied.
+                return LinkedResult(contactsCopied: false)
             }
             if now() >= ticket.expiresAt { throw .linkExpired }
             do { try await sleep(.seconds(2)) } catch { throw .cancelled }
@@ -338,10 +340,15 @@ public final class LiveAccountService: AccountService {
     /// `https://<host>/link/<linkID>#<secret>.<publicKey b64url>`. The authority (host and port) must be
     /// exactly this device's server: another port, or user info (`own@evil`), is another server and
     /// nothing is sent anywhere.
-    private func parseLink(_ text: String) throws(AccountError) -> ParsedLink {
-        guard let url = URL(string: text), let authority = Self.rawAuthority(text) else { throw .linkExpired }
-        guard let mine = sessions.current?.host, authority.lowercased() == mine.lowercased() else { throw .wrongServer }
-        guard url.scheme?.lowercased() == "https" else { throw .linkExpired }
+    private func parseLink(_ raw: String) throws(AccountError) -> ParsedLink {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        // A code with no `scheme://` authority at its very start (`https:/link?…https://own`) is another server too.
+        guard let mine = sessions.current?.host, let authority = Self.rawAuthority(text),
+              authority.lowercased() == mine.lowercased() else { throw .wrongServer }
+        // The host check above and the parsed URL below must agree: the text starts with exactly
+        // `https://<host[:port]>/` and the parsed URL has a host.
+        guard text.lowercased().hasPrefix("https://" + mine.lowercased() + "/"),
+              let url = URL(string: text), url.host != nil else { throw .linkExpired }
         let parts = url.path.split(separator: "/")
         guard parts.count == 2, parts[0] == "link", let fragment = url.fragment, !fragment.isEmpty else { throw .linkExpired }
         // The QR public key is required and must be a 32-byte X25519 key; anything else is an invalid
@@ -353,10 +360,14 @@ public final class LiveAccountService: AccountService {
         return ParsedLink(linkID: String(parts[1]), secret: bits[0], publicKey: key)
     }
 
-    /// The text between `://` and the first `/`, `?` or `#`, exactly as written (host, and port if any).
+    /// For `scheme://authority…` at the start of the text: the authority between `://` and the first `/`,
+    /// `?` or `#`, exactly as written (host, and port if any). Nil when the text does not start that way.
     private nonisolated static func rawAuthority(_ text: String) -> String? {
-        guard let start = text.range(of: "://")?.upperBound else { return nil }
-        let rest = text[start...]
+        guard let sep = text.range(of: "://") else { return nil }
+        let scheme = text[..<sep.lowerBound]
+        guard let first = scheme.first, first.isASCII, first.isLetter,
+              scheme.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "+-.".contains($0)) }) else { return nil }
+        let rest = text[sep.upperBound...]
         let authority = rest[..<(rest.firstIndex { "/?#".contains($0) } ?? rest.endIndex)]
         return authority.isEmpty ? nil : String(authority)
     }

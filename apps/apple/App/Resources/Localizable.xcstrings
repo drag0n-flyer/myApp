@@ -89,13 +89,13 @@
         }
       }
     },
-    "Contacts weren't copied" : {
+    "Your contacts weren't copied" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Contacts weren't copied"
+            "value" : "Your contacts weren't copied"
           }
         }
       }

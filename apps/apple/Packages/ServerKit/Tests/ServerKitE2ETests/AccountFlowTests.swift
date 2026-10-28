@@ -147,7 +147,8 @@ private actor StateLog {
         let approval = try await iphone.service.approveLink(request)
         #expect(approval.snapshotSent)
         let linked = try await waiting.value
-        #expect(linked.contactsCopied)
+        // Nothing imports the contact list yet (plan 7).
+        #expect(!linked.contactsCopied)
 
         // The Mac now has the same account and a live connection.
         let phoneMe = try await iphone.client.me()

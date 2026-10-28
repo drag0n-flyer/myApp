@@ -47,8 +47,8 @@ public struct LinkRequest: Equatable, Sendable {
 
 /// How linking ended on the new device. The account is signed in either way.
 public struct LinkedResult: Equatable, Sendable {
-    /// False when no contact list arrived (none was sent, or it could not be opened); the app says
-    /// "Contacts weren't copied".
+    /// True only when the contact list was imported. False when none was sent, it could not be opened,
+    /// or it was not imported; the app says "Your contacts weren't copied".
     public let contactsCopied: Bool
 
     public init(contactsCopied: Bool) { self.contactsCopied = contactsCopied }

@@ -11,7 +11,7 @@ struct LinkDeviceView: View {
     @State private var attempt = 0
     @State private var askingServer = false
     @State private var newHost = ""
-    /// Signed in, but the contact list could not be opened; the person is told before moving on.
+    /// Signed in, but the contact list was not imported; the person is told before moving on.
     @State private var contactsNotCopied = false
 
     var body: some View {
@@ -62,7 +62,7 @@ struct LinkDeviceView: View {
             }
         }
         .task(id: attempt) { await run() }
-        .alert("Contacts weren't copied", isPresented: $contactsNotCopied) {
+        .alert("Your contacts weren't copied", isPresented: $contactsNotCopied) {
             Button("OK", role: .cancel) { model.onboarding.linked() }
         } message: {
             Text("This device is linked, but it starts without your contacts.")
