@@ -41,7 +41,7 @@ public actor FakeServer {
     private var blocks: [String: Set<String>] = [:]             // account -> blocked accounts
     private var reports: [[String: String]] = []
     private var requestLog: [String] = []
-    private var requestFailures: [(prefix: String, count: Int)] = []
+    private var requestFailures: [(prefix: String, count: Int, status: Int)] = []
     private var attachments: [String: Data] = [:]
     private var messageSeqs: [String: Int64] = [:]              // "device|conv|clientMsgID" -> seq
     private var subscribers: [String: [UUID: AsyncStream<ServerEvent>.Continuation]] = [:]
@@ -136,8 +136,11 @@ public actor FakeServer {
     /// Each report's `accountID`, `reason`, `conversationID` and `messages` (the number of messages sent).
     public func submittedReports() -> [[String: String]] { reports }
 
-    /// Fails the next `count` requests whose `"METHOD /path"` starts with `prefix` with a 503. They are not logged.
-    public func failNextRequests(_ prefix: String, count: Int = 1) { requestFailures.append((prefix, count)) }
+    /// Fails the next `count` requests whose `"METHOD /path"` starts with `prefix` with `status` (a 503 by default).
+    /// They are not logged.
+    public func failNextRequests(_ prefix: String, count: Int = 1, status: Int = 503) {
+        requestFailures.append((prefix, count, status))
+    }
 
     /// Every handled authenticated request so far, as `"METHOD /path"` (for example `"PUT /v1/blocks/acc-bob"`).
     public func requests() -> [String] { requestLog }
@@ -165,8 +168,9 @@ public actor FakeServer {
         let line = "\(method) \(path)"
         if let i = requestFailures.firstIndex(where: { line.hasPrefix($0.prefix) }) {
             requestFailures[i].count -= 1
+            let status = requestFailures[i].status
             if requestFailures[i].count <= 0 { requestFailures.remove(at: i) }
-            return failure(503, "unavailable")
+            return failure(status, status == 503 ? "unavailable" : "injected")
         }
         requestLog.append(line)
         let body = request.httpBody ?? Data()

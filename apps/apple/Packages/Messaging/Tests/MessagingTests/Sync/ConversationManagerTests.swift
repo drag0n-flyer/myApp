@@ -143,6 +143,68 @@ private func syncInbox(_ device: TestDevice, joinWith joiner: ConversationManage
         #expect(await rig.server.memberDevices(of: record.serverID).count == 4)
     }
 
+    @Test func simultaneousCreate() async throws {
+        let rig = try await Rig.make()
+        let ana = manager(rig.ana1), bob = manager(rig.bob1)
+        async let a = ana.create(with: "acc-bob")
+        async let b = bob.create(with: "acc-ana")
+        _ = try await (a, b)
+        #expect(await rig.server.conversationIDs().count == 2)
+
+        try await syncInbox(rig.ana1, joinWith: ana)
+        try await syncInbox(rig.bob1, joinWith: bob)
+        let first = try await ana.preferredConversation(with: "acc-bob")
+        let second = try await bob.preferredConversation(with: "acc-ana")
+        #expect(first.serverID == second.serverID)
+        #expect(first.serverID == (await rig.server.conversationIDs()).min())
+        #expect(try rig.ana1.deps.repo.chats().count == 1 && rig.bob1.deps.repo.chats().count == 1)
+        #expect(try rig.ana1.deps.repo.conversations(chatID: "acc-bob").count == 2)
+    }
+
+    @Test func joinedFromStrangerIsRequest() async throws {
+        let server = FakeServer()
+        let carol = await makeDevice(server, account: "acc-carol", username: "carol")
+        let bob = await makeDevice(server, account: "acc-bob", username: "bob")
+        _ = try await bob.deps.server.uploadKeyPackages(try await bob.deps.mls.makeKeyPackages(count: 2))
+        _ = try await carol.deps.server.uploadKeyPackages(try await carol.deps.mls.makeKeyPackages(count: 2))
+        _ = try await manager(carol).create(with: "acc-bob")
+        try await syncInbox(bob)
+        #expect(try bob.deps.repo.chat(id: "acc-carol")?.isRequest == true)
+        let conversation = try #require(try bob.deps.repo.conversations(chatID: "acc-carol").first)
+        #expect(conversation.mode == "e2ee")
+
+        // A known contact is not a request.
+        let dave = await makeDevice(server, account: "acc-dave", username: "dave")
+        _ = try await dave.deps.server.uploadKeyPackages(try await dave.deps.mls.makeKeyPackages(count: 2))
+        try bob.deps.repo.upsertContact(ContactRecord(
+            accountID: "acc-dave", username: "dave", displayName: "Dave", isContact: true, addedAt: testEpochDate))
+        _ = try await manager(dave).create(with: "acc-bob")
+        try await syncInbox(bob)
+        #expect(try bob.deps.repo.chat(id: "acc-dave")?.isRequest == false)
+    }
+
+    @Test func joinedLeavesInnerModeNull() async throws {
+        let rig = try await Rig.make()
+        let record = try await manager(rig.ana1).create(with: "acc-bob")
+        // Join without reading the mode envelope.
+        let items = try await rig.bob1.deps.server.inbox(after: nil).items
+        let welcome = try #require(items.first { $0.kind == "welcome" })
+        guard case .joined(let group, _) = try await rig.bob1.deps.mls.process(welcome.payload) else { return }
+        try await ConversationManager(deps: rig.bob1.deps).joined(group: group, serverConversationID: record.serverID)
+        let stored = try #require(try rig.bob1.deps.repo.conversation(serverID: record.serverID))
+        #expect(stored.innerMode == nil && stored.mode == "e2ee" && stored.epoch == 1)
+    }
+
+    @Test func announceModeNeedsInnerMode() async throws {
+        let rig = try await Rig.make()
+        let mgr = manager(rig.ana1)
+        var record = try await mgr.create(with: "acc-bob")
+        try await mgr.announceMode(record)
+        #expect(await rig.server.storedMessages(in: record.serverID).count == 2)
+        record.innerMode = nil
+        await #expect(throws: SyncError.modeUnknown) { try await mgr.announceMode(record) }
+    }
+
     /// A real race: bob1 commits first, so ana1's commit is rejected for real; the sync moves her
     /// group forward and the rebuilt commit lands at the post-sync epoch.
     @Test func staleEpochRebuildsAfterSync() async throws {

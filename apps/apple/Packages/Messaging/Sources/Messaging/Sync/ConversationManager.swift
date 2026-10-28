@@ -14,7 +14,8 @@ public enum SyncError: Error, Equatable, Sendable {
     case noPeer
     /// The server's escrow key is not known, so an escrow copy cannot be sealed.
     case escrowKeyUnavailable
-    /// A Welcome labelled with a conversation ID that is already bound to another group.
+    /// A Welcome labelled with a conversation ID that is already bound to another group, or naming a group that is
+    /// already bound to another conversation ID.
     case conversationRebound
     /// My earlier add commit for a new conversation is still pending and its outcome is not known yet. It is kept
     /// (never discarded, never rebuilt); try again later.
@@ -178,7 +179,8 @@ public actor ConversationManager: ConversationManaging {
     /// - `resumed`: read the inbox first (the echo activates the row), then ask the server's epoch.
     /// - `200`, or the server past epoch 0: merge and activate.
     /// - A `stale_epoch`: read the inbox and the server's epoch; past 0 means applied, else it stays pending.
-    /// - A definite rejection: `commitRejected`; the row stays inactive and is never used.
+    /// - A `404` (the conversation is gone): `commitRejected`; the row stays inactive and is never used. Any other
+    ///   rejection keeps it pending.
     /// - An unknown outcome: read the inbox; still pending means the error is thrown and the create stays pending.
     private func finishCreate(serverID: String, resumed: Bool) async throws -> ConversationRecord {
         if resumed {
@@ -201,7 +203,7 @@ public actor ConversationManager: ConversationManaging {
                 if try await serverEpoch(serverID) > 0 { return try await announced(try await acceptCreate(serverID)) }
                 throw error
             }
-            if Self.isDefiniteRejection(error.status) {
+            if Self.isGone(error.status) {
                 try await abandonCreate(serverID)
                 throw error
             }
@@ -212,12 +214,12 @@ public actor ConversationManager: ConversationManaging {
         return try await announced(try await acceptCreate(serverID))
     }
 
-    /// The server's epoch; a definite rejection (the conversation is gone) abandons the create.
+    /// The server's epoch; a `404` (the conversation is gone) abandons the create.
     private func serverEpoch(_ serverID: String) async throws -> UInt64 {
         do {
             return try await deps.server.conversation(id: serverID).epoch
         } catch {
-            if Self.isDefiniteRejection(error.status) { try await abandonCreate(serverID) }
+            if Self.isGone(error.status) { try await abandonCreate(serverID) }
             throw error
         }
     }
@@ -247,6 +249,9 @@ public actor ConversationManager: ConversationManaging {
             let group = GroupID(raw: record.groupID)
             try await mls.commitAccepted(group)
             let epoch = try await mls.epoch(of: group)
+            // The engine must have merged the add commit; still at epoch 0 means it lost it, and the row stays
+            // inactive (never usable at epoch 0).
+            guard epoch > 0 else { throw SyncError.commitInFlight }
             let keys = try await membership.keys(of: group)
             return try repo.transaction {
                 record = try repo.conversation(serverID: serverID) ?? record
@@ -274,6 +279,10 @@ public actor ConversationManager: ConversationManaging {
 
     /// A 4xx other than a timeout or a rate limit: the server will never accept this request.
     static func isDefiniteRejection(_ status: Int) -> Bool { (400..<500).contains(status) && status != 408 && status != 429 }
+
+    /// The only answer that ends a pending create (MLS profile, step 5, exception): the conversation is gone. Any
+    /// other rejection keeps it pending, and a later call tries again.
+    static func isGone(_ status: Int) -> Bool { status == 404 }
 
     // MARK: Join
 
@@ -309,8 +318,13 @@ public actor ConversationManager: ConversationManaging {
     }
 
     func planJoin(group: GroupID, serverConversationID: String, serverMode: String) async throws -> JoinPlan {
-        // A server ID already bound to another group is never rebound (it would move that chat's messages).
+        // A server ID already bound to another group is never rebound (it would move that chat's messages), and a
+        // group already bound to another server ID is never bound twice (`group_id` is unique: the write would fail
+        // on every retry and stall the inbox).
         if let existing = try deps.repo.conversation(serverID: serverConversationID), existing.groupID != group.raw {
+            throw SyncError.conversationRebound
+        }
+        if let existing = try deps.repo.conversation(groupID: group.raw), existing.serverID != serverConversationID {
             throw SyncError.conversationRebound
         }
         let keys = try await membership.keys(of: group)

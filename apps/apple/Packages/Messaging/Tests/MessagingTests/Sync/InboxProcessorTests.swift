@@ -632,6 +632,40 @@ private final class LogBox: @unchecked Sendable {
         #expect(try bob.deps.repo.rawItems(limit: 10).isEmpty)
     }
 
+    /// Someone who shares a chat with me sends a Welcome for a new server conversation that names the group of an
+    /// existing one. Its rows would break `group_id UNIQUE` on every retry: it is parked at once instead.
+    @Test func welcomeReusingAnotherConversationsGroupIsParked() async throws {
+        let rig = try await Rig.make()
+        let first = try await startChat(rig)
+        let bob = Side(rig.bob1)
+        _ = try await bob.processor.syncOnce()
+        let group = GroupID(raw: first.groupID)
+        // ana removes bob1, so bob1's engine accepts a new Welcome for the same group.
+        let removal = try await rig.ana1.deps.mls.remove(members: ["acc-bob/\(rig.bob1.deviceID)"], from: group)
+        _ = try await rig.ana1.deps.server.postCommit(
+            conversationID: first.serverID, epoch: 1, commit: removal.commit, welcome: nil, addDevices: [],
+            removeDevices: [rig.bob1.deviceID])
+        try await rig.ana1.deps.mls.commitAccepted(group)
+        _ = try await bob.processor.syncOnce()
+        #expect(try bob.deps.repo.conversation(serverID: first.serverID)?.active == false)
+
+        // A second server conversation whose Welcome names the first one's group.
+        let second = try await rig.ana1.deps.server.createConversation(with: "acc-bob")
+        let keyPackage = try #require(try await rig.ana1.deps.server.claimKeyPackages(accountID: "acc-bob")
+            .first { $0.deviceID == rig.bob1.deviceID })
+        let readd = try await rig.ana1.deps.mls.add(keyPackages: [keyPackage.keyPackage], to: group)
+        _ = try await rig.ana1.deps.server.postCommit(
+            conversationID: second.conversationID, epoch: 0, commit: readd.commit, welcome: readd.welcome,
+            addDevices: [rig.bob1.deviceID], removeDevices: [])
+        let bad = try await welcome(rig.bob1, second.conversationID)
+        _ = try await bob.processor.syncOnce()
+
+        #expect(try isParked(bob, bad.cursor))
+        #expect(try bob.deps.repo.rawItems(limit: 10).isEmpty)
+        #expect(try bob.deps.repo.conversation(serverID: second.conversationID) == nil)
+        #expect(try bob.deps.repo.conversation(serverID: first.serverID)?.groupID == first.groupID)
+    }
+
     @Test func welcomeWithAnUnknownServerModeIsParked() async throws {
         let rig = try await Rig.make()
         let (first, second) = try await twoChats(rig)

@@ -66,7 +66,7 @@ public struct IncomingHandler: Sendable {
         case .joined(let group, let epoch):
             if let own = try updateMembership(memberKeys, raw: raw, db: db) { return own }
             return .joined(group: group, epoch: epoch)
-        case .commit(_, let newEpoch, let removedMe):
+        case .commit(let group, let newEpoch, let removedMe):
             guard var conversation = try db.conversation(serverID: raw.conversationID) else { return .ignored }
             if removedMe {
                 conversation.active = false
@@ -76,7 +76,8 @@ public struct IncomingHandler: Sendable {
             try db.setEpoch(serverID: conversation.serverID, Int64(newEpoch))
             // The echo of my own add commit for a conversation I created: it is settled, so it becomes usable
             // (before the members, so the safety number follows it as the preferred conversation).
-            if try PendingCreate.isPending(serverID: conversation.serverID, db: db) {
+            // Matched by group, not by the server's label.
+            if group.raw == conversation.groupID, try PendingCreate.isPending(serverID: conversation.serverID, db: db) {
                 conversation.epoch = Int64(newEpoch)
                 conversation.active = true
                 try db.upsertConversation(conversation)

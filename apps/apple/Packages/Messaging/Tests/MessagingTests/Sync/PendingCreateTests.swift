@@ -161,4 +161,76 @@ private struct Rig {
         #expect(await rig2.server.conversationIDs().isEmpty)
         #expect(try PendingCreate.load(serverID: gone, db: ana2.deps.repo) == nil)
     }
+
+    /// The echo activates a pending conversation only when the commit is for that conversation's group, not merely
+    /// labelled with its server ID.
+    @Test func commitForAnotherGroupLabelledWithThePendingIDDoesNotActivate() async throws {
+        let rig = try await Rig.make()
+        let ana = Creator(rig.ana1)
+        let other = try await ConversationManager(deps: rig.bob1.deps, escrowKey: { Data(repeating: 7, count: 32) })
+            .create(with: "acc-ana")
+        _ = try await ana.processor.syncOnce()
+        await rig.server.failNextRequests("POST /v1/conversations/", count: 1)
+        await #expect(throws: (any Error).self) { try await ana.manager.create(with: "acc-bob") }
+        let pendingID = try #require(await rig.server.conversationIDs().first { $0 != other.serverID })
+
+        // bob1 commits in the other conversation; ana gets that commit labelled with the pending conversation's ID.
+        let group = GroupID(raw: other.groupID)
+        let removal = try await rig.bob1.deps.mls.remove(members: ["acc-ana/\(rig.ana2.deviceID)"], from: group)
+        _ = try await rig.bob1.deps.server.postCommit(
+            conversationID: other.serverID, epoch: 1, commit: removal.commit, welcome: nil, addDevices: [],
+            removeDevices: [rig.ana2.deviceID])
+        let item = try #require(try await rig.ana1.deps.server.inbox(after: nil).items.last { $0.kind == "commit" })
+        try ana.deps.repo.insertRaw([RawInboxRecord(
+            cursor: item.cursor + 1000, kind: "commit", conversationID: pendingID, seq: nil, epoch: item.epoch,
+            senderAccount: item.senderAccountID, senderDevice: item.senderDeviceID, payload: item.payload,
+            sentAt: item.sentAt)])
+        await ana.processor.drainRaw()
+
+        #expect(try ana.deps.repo.conversation(serverID: pendingID)?.active == false)
+        #expect(try PendingCreate.load(serverID: pendingID, db: ana.deps.repo) != nil)
+    }
+
+    /// Only a `404` means the conversation is gone. Any other rejection keeps the create pending for a later try.
+    @Test func otherRejectionsKeepTheCreatePending() async throws {
+        let rig = try await Rig.make()
+        let ana = Creator(rig.ana1)
+        await rig.server.failNextRequests("POST /v1/conversations/", count: 1)
+        await #expect(throws: (any Error).self) { try await ana.manager.preferredConversation(with: "acc-bob") }
+        let serverID = try #require(await rig.server.conversationIDs().first)
+
+        // A 403 on the epoch check.
+        await rig.server.failNextRequests("GET /v1/conversations/", count: 1, status: 403)
+        await #expect(throws: (any Error).self) { try await ana.manager.preferredConversation(with: "acc-bob") }
+        #expect(try PendingCreate.load(serverID: serverID, db: ana.deps.repo) != nil)
+        #expect(await rig.server.conversationIDs() == [serverID])
+
+        // A 403 on the resend.
+        await rig.server.failNextRequests("POST /v1/conversations/", count: 1, status: 403)
+        await #expect(throws: (any Error).self) { try await ana.manager.preferredConversation(with: "acc-bob") }
+        #expect(try PendingCreate.load(serverID: serverID, db: ana.deps.repo) != nil)
+        #expect(await rig.server.conversationIDs() == [serverID])
+
+        let record = try await ana.manager.preferredConversation(with: "acc-bob")
+        #expect(record.serverID == serverID)
+        #expect(record.active)
+        #expect(ana.spy.addCount == 1)
+    }
+
+    /// The server is past epoch 0 but the engine did not merge the commit (its pending commit is gone): the
+    /// conversation is not activated at epoch 0.
+    @Test func acceptNeedsTheEngineMerged() async throws {
+        let rig = try await Rig.make()
+        let ana = Creator(rig.ana1)
+        await rig.server.loseNextCommitResponses(1)
+        await rig.server.failNextRequests("GET /v1/inbox", count: 1)
+        await #expect(throws: (any Error).self) { try await ana.manager.preferredConversation(with: "acc-bob") }
+        let serverID = try #require(await rig.server.conversationIDs().first)
+        let stored = try #require(try ana.deps.repo.conversation(serverID: serverID))
+        try await ana.deps.mls.commitRejected(GroupID(raw: stored.groupID))
+
+        await #expect(throws: (any Error).self) { try await ana.manager.preferredConversation(with: "acc-bob") }
+        #expect(try ana.deps.repo.conversation(serverID: serverID)?.active == false)
+        #expect(try ana.deps.repo.preferredConversation(chatID: "acc-bob") == nil)
+    }
 }
