@@ -32,4 +32,5 @@ data class MediaStats(
     val packetsSent: Long = 0, val packetsReceived: Long = 0,
     val usingRelay: Boolean = false,              // local candidate type == relay
     val audioCodec: String? = null,               // log only
+    val bweCeiling: Double? = null,               // bps, the estimator ceiling the session set (the estimate cannot pass it)
 )

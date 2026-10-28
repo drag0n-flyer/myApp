@@ -170,9 +170,16 @@ final class LoopbackTests: XCTestCase {
         // A lower Opus cap within the mode (network step-down) keeps the mode's ceiling.
         await a.setAudioMaxBitrate(6_000)
         XCTAssertEqual(a.bweMaxForTesting, AudioProfile.for(.ultraLow).wireBudget)
-        // Renegotiated mode changes apply the new send profile's budget on both sides.
+        // Renegotiation keeps that lower Opus cap rather than the negotiated profile's.
+        let ds = AudioProfile.for(.dataSaver)
+        let o1 = try await a.makeOffer(receive: ds, iceRestart: false)
+        let a1 = try await b.acceptOffer(o1, send: ds, receive: ds)
+        try await a.acceptAnswer(a1, send: ds)
+        XCTAssertEqual(a.bweMaxForTesting, AudioProfile.for(.ultraLow).wireBudget)
+        // Mode changes (the call machine raises the Opus cap, then renegotiates) apply the new budget on both sides.
         for mode in [DataMode.dataSaver, .high] {
             let p = AudioProfile.for(mode)
+            await a.setAudioMaxBitrate(p.maxAverageBitrate); await b.setAudioMaxBitrate(p.maxAverageBitrate)
             let offer = try await a.makeOffer(receive: p, iceRestart: false)
             let answer = try await b.acceptOffer(offer, send: p, receive: p)
             try await a.acceptAnswer(answer, send: p)
@@ -189,10 +196,13 @@ final class LoopbackTests: XCTestCase {
         XCTAssertEqual(a.bweMaxForTesting, budget, "\(mode)")
         XCTAssertEqual(b.bweMaxForTesting, budget, "\(mode)")
         try await Task.sleep(nanoseconds: 2_000_000_000)
-        let est = await a.stats().availableOutgoingBitrate
+        let stats = await a.stats(), est = stats.availableOutgoingBitrate
+        XCTAssertEqual(stats.bweCeiling, Double(budget), "the adaptor needs the ceiling in the sample")
         print("bwe ceiling \(mode): estimate \(est.map { "\($0)" } ?? "none") bit/s, budget \(budget)")
         XCTAssertNotNil(est, "audio must use send-side bandwidth estimation")
-        if let est { XCTAssertLessThanOrEqual(est, Double(budget), "\(mode)") }
+        // WebRTC keeps the estimate at or above the audio allocation floor (Opus target plus per-packet headers),
+        // which for Data saver at 40 ms packets is about 30.3k, just over its 30k budget: allow 2 %.
+        if let est { XCTAssertLessThanOrEqual(est, Double(budget) * 1.02, "\(mode)") }
     }
 
     /// Sum of one counter over the audio `outbound-rtp` entries.

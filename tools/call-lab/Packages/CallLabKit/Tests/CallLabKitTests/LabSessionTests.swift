@@ -53,6 +53,25 @@ import Foundation
         #expect(SenderLimits(k).bweMaxBitrateBps == 21_000)
     }
 
+    /// The lab's copy of the wire budgets must match the apps' table (CallCore `AudioProfile.table`), read from source
+    /// because the lab does not link CallCore.
+    @Test func wireBudgetsMatchTheAppsAudioProfileTable() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("apps/apple/Packages/CallCore/Sources/CallCore/Policy/AudioProfile+Table.swift")
+        let src = try String(contentsOf: url, encoding: .utf8)
+        func numbers(_ key: String) -> [Int] {
+            src.components(separatedBy: key + ": ").dropFirst().compactMap {
+                Int($0.prefix { $0.isNumber || $0 == "_" }.replacingOccurrences(of: "_", with: ""))
+            }
+        }
+        let app = zip(numbers("maxAverageBitrate"), numbers("wireBudget")).sorted { $0.0 < $1.0 }
+        #expect(app.count == 4)
+        #expect(app.map(\.0) == SenderLimits.wireBudgets.map(\.opus))
+        #expect(app.map(\.1) == SenderLimits.wireBudgets.map(\.wire))
+    }
+
     // MARK: signaling frames
     @Test func inviteFrameJSON() throws {
         let f = LabClientFrame.invite(callID: "c1", to: "acct", video: true, payload: "AAA")

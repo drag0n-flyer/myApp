@@ -11,6 +11,15 @@ import kotlin.test.assertTrue
 
 private fun sample(avail: Double?, loss: Double = 0.0) = MediaStats(availableOutgoingBitrate = avail, inboundLossFraction = loss)
 
+/** The session's estimator ceiling for the adaptor's current level (`MediaLogic.bweMaxBitrate`). */
+private fun cap(a: QualityAdaptor): Double =
+    (AudioProfile.forMode(a.currentMode).wireBudget + (a.currentTier?.let { VideoLadder.spec(it).maxBps } ?: 0)).toDouble()
+
+/** Feeds [n] samples of the estimate WebRTC reports while the session caps it: it sits at the cap. */
+private fun feedCapped(a: QualityAdaptor, n: Int, loss: Double = 0.0) {
+    repeat(n) { val c = cap(a); a.step(MediaStats(availableOutgoingBitrate = c, inboundLossFraction = loss, bweCeiling = c)) }
+}
+
 class QualityAdaptorTest {
     @Test fun ladderBasicsAndCaps() {
         assertEquals(VideoTier.P360, VideoLadder.allowed(DataMode.High))
@@ -157,5 +166,69 @@ class QualityAdaptorTest {
             last = o
         }
         assertTrue(changes <= 4, "changes=$changes")
+    }
+
+    // Capped estimate (the session caps the estimate at the level's wire budget)
+
+    @Test fun capSaturationStepsBackUp() {
+        val a = QualityAdaptor(DataMode.Balanced, videoWanted = false)
+        a.step(sample(30_000.0))
+        assertEquals(DataMode.UltraLow, a.currentMode)
+        feedCapped(a, QualityAdaptor.GOOD_SAMPLES_TO_STEP_UP - 1)
+        assertEquals(DataMode.UltraLow, a.currentMode)
+        feedCapped(a, 1)
+        assertEquals(DataMode.DataSaver, a.currentMode)
+        feedCapped(a, QualityAdaptor.GOOD_SAMPLES_TO_STEP_UP)
+        assertEquals(DataMode.Balanced, a.currentMode)
+    }
+
+    @Test fun capSaturationTurnsVideoBackOnAtTheLowestTier() {
+        val a = QualityAdaptor(DataMode.High, videoWanted = true)
+        a.step(sample(50_000.0))
+        assertNull(a.currentTier)
+        repeat(20) { if (a.currentTier == null) feedCapped(a, 1) }
+        assertEquals(DataMode.High, a.currentMode)
+        assertEquals(VideoTier.P180, a.currentTier)
+    }
+
+    @Test fun capSaturationWithLossDoesNotStepUp() {
+        val a = QualityAdaptor(DataMode.Balanced, videoWanted = false)
+        a.step(sample(30_000.0))
+        feedCapped(a, 30, loss = 0.05)
+        assertEquals(DataMode.UltraLow, a.currentMode)
+    }
+
+    @Test fun failedStepUpHoldsOffAndBacksOff() {
+        val a = QualityAdaptor(DataMode.Balanced, videoWanted = false)
+        val up = QualityAdaptor.GOOD_SAMPLES_TO_STEP_UP
+        val hold = QualityAdaptor.STEP_UP_HOLD_OFF_SAMPLES
+        a.step(sample(30_000.0))
+        feedCapped(a, up)
+        assertEquals(DataMode.DataSaver, a.currentMode)
+        a.step(sample(20_000.0)) // the network cannot sustain it
+        assertEquals(DataMode.UltraLow, a.currentMode)
+        feedCapped(a, hold + up - 1)
+        assertEquals(DataMode.UltraLow, a.currentMode)
+        feedCapped(a, 1)
+        assertEquals(DataMode.DataSaver, a.currentMode)
+        a.step(sample(20_000.0)) // fails again: the hold-off doubles
+        feedCapped(a, 2 * hold + up - 1)
+        assertEquals(DataMode.UltraLow, a.currentMode)
+        feedCapped(a, 1)
+        assertEquals(DataMode.DataSaver, a.currentMode)
+        // A step-up that holds clears the back-off.
+        feedCapped(a, up)
+        assertEquals(DataMode.Balanced, a.currentMode)
+        a.step(sample(40_000.0))
+        assertEquals(DataMode.DataSaver, a.currentMode)
+        feedCapped(a, hold + up)
+        assertEquals(DataMode.Balanced, a.currentMode)
+    }
+
+    @Test fun estimateBelowTheCapIsNotSaturated() {
+        val a = QualityAdaptor(DataMode.Balanced, videoWanted = false)
+        a.step(sample(30_000.0))
+        repeat(30) { a.step(MediaStats(availableOutgoingBitrate = 19_000.0, bweCeiling = 21_000.0)) }
+        assertEquals(DataMode.UltraLow, a.currentMode)
     }
 }

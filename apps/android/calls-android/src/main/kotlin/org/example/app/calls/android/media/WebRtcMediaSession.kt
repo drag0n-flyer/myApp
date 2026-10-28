@@ -117,6 +117,7 @@ class WebRtcMediaSession(context: Context, private val settings: UserSettings) :
     private var capturing: VideoTier? = null
     private var sendProfile: AudioProfile? = null
     private var bweAudioBitrate: Int? = null // the Opus cap the estimator ceiling is derived from; null until known
+    private var requestedAudioBitrate: Int? = null // the last setAudioMaxBitrate request; renegotiation keeps it
     private var bweVideoBitrate = 0 // the video sender's cap while video is on
     private var bweMax: Int? = null // the ceiling last applied
     private var closed = false
@@ -223,8 +224,7 @@ class WebRtcMediaSession(context: Context, private val settings: UserSettings) :
         val peer = requirePc()
         // The remote offer's Opus parameters describe what we send; ours go in the answer.
         setRemote(peer, SessionDescription(SessionDescription.Type.OFFER, SdpMunger.apply(send, sdp)))
-        synchronized(lock) { sendProfile = send }
-        applyBweCeiling(audioBitrate = send.maxAverageBitrate)
+        applySendProfile(send)
         val answer = create(peer, offer = false, MediaConstraints())
         val munged = SdpMunger.apply(receive, answer)
         setLocal(peer, SessionDescription(SessionDescription.Type.ANSWER, munged))
@@ -234,8 +234,7 @@ class WebRtcMediaSession(context: Context, private val settings: UserSettings) :
     override suspend fun acceptAnswer(sdp: String, send: AudioProfile) {
         val peer = requirePc()
         setRemote(peer, SessionDescription(SessionDescription.Type.ANSWER, SdpMunger.apply(send, sdp)))
-        synchronized(lock) { sendProfile = send }
-        applyBweCeiling(audioBitrate = send.maxAverageBitrate)
+        applySendProfile(send)
     }
 
     override suspend fun rollback() {
@@ -254,7 +253,10 @@ class WebRtcMediaSession(context: Context, private val settings: UserSettings) :
     }
 
     override suspend fun setAudioMaxBitrate(bps: Int) {
-        val (sender, profile) = synchronized(lock) { audioSender to sendProfile }
+        val (sender, profile) = synchronized(lock) {
+            requestedAudioBitrate = bps
+            audioSender to sendProfile
+        }
         sender ?: return
         val cap = MediaLogic.senderBitrateCap(bps, profile)
         val params = sender.parameters
@@ -299,7 +301,8 @@ class WebRtcMediaSession(context: Context, private val settings: UserSettings) :
 
     override suspend fun stats(): MediaStats {
         val raw = rawStats()
-        return synchronized(lock) { aggregator.aggregate(raw) }
+        // The adaptor reads an estimate at the ceiling as capped.
+        return synchronized(lock) { aggregator.aggregate(raw).copy(bweCeiling = bweMax?.toDouble()) }
     }
 
     override suspend fun close() {
@@ -324,6 +327,15 @@ class WebRtcMediaSession(context: Context, private val settings: UserSettings) :
     }
 
     // Internals
+
+    /** Records the negotiated send profile and re-applies the ceiling with the current Opus cap (a lower request survives renegotiation). */
+    private fun applySendProfile(send: AudioProfile) {
+        val requested = synchronized(lock) {
+            sendProfile = send
+            requestedAudioBitrate
+        }
+        applyBweCeiling(audioBitrate = MediaLogic.senderBitrateCap(requested ?: send.maxAverageBitrate, send))
+    }
 
     /**
      * Caps WebRTC's bandwidth estimate (and with it the pacer's padding and the probes) at the mode's wire budget, plus

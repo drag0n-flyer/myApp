@@ -28,6 +28,7 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
     private var capturer: RTCCameraVideoCapturer?
     private var sendProfile: AudioProfile?
     private var bweAudioBitrate: Int?   // the Opus cap the estimator ceiling is derived from; nil until known
+    private var requestedAudioBitrate: Int?   // the last `setAudioMaxBitrate` request; renegotiation keeps it
     private var bweVideoBitrate = 0     // the video sender's cap while video is on
     private var bweMax: Int?            // the ceiling last applied
     private var statsSampler: StatsSampler?
@@ -128,8 +129,7 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
         let pc = try requirePC()
         // The remote offer's Opus parameters describe what we send; ours go in the answer.
         try await Self.setRemote(pc, RTCSessionDescription(type: .offer, sdp: SDPMunger.apply(send, to: sdp)))
-        lock.withLock { sendProfile = send }
-        applyBweCeiling(audioBitrate: send.maxAverageBitrate)
+        applySendProfile(send)
         let answer = try await Self.answer(pc, Self.emptyConstraints)
         let munged = SDPMunger.apply(receive, to: answer)
         try await Self.setLocal(pc, RTCSessionDescription(type: .answer, sdp: munged))
@@ -139,8 +139,7 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
     public func acceptAnswer(_ sdp: String, send: AudioProfile) async throws {
         let pc = try requirePC()
         try await Self.setRemote(pc, RTCSessionDescription(type: .answer, sdp: SDPMunger.apply(send, to: sdp)))
-        lock.withLock { sendProfile = send }
-        applyBweCeiling(audioBitrate: send.maxAverageBitrate)
+        applySendProfile(send)
     }
 
     public func rollback() async throws {
@@ -159,7 +158,7 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
     }
 
     public func setAudioMaxBitrate(_ bps: Int) async {
-        let (sender, profile) = lock.withLock { (audioSender, sendProfile) }
+        let (sender, profile) = lock.withLock { requestedAudioBitrate = bps; return (audioSender, sendProfile) }
         guard let sender else { return }
         let cap = profile.map { MediaLogic.senderBitrateCap(requested: bps, profile: $0) } ?? bps
         let params = sender.parameters
@@ -189,7 +188,9 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
             if statsSampler == nil, let pc { statsSampler = StatsSampler(source: StatsReader(pc: pc)) }
             return statsSampler
         }
-        return await sampler?.sample() ?? MediaStats()
+        var s = await sampler?.sample() ?? MediaStats()
+        s.bweCeiling = lock.withLock { bweMax }.map { Double($0) }   // the adaptor reads an estimate at it as capped
+        return s
     }
 
     public func close() async {
@@ -212,6 +213,13 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
 
     private static var emptyConstraints: RTCMediaConstraints {
         RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
+    }
+
+    /// Records the negotiated send profile and re-applies the ceiling with the current Opus cap (a lower
+    /// `setAudioMaxBitrate` request survives renegotiation).
+    private func applySendProfile(_ send: AudioProfile) {
+        let requested: Int? = lock.withLock { sendProfile = send; return requestedAudioBitrate }
+        applyBweCeiling(audioBitrate: MediaLogic.senderBitrateCap(requested: requested ?? send.maxAverageBitrate, profile: send))
     }
 
     /// Caps WebRTC's bandwidth estimate (and with it the pacer's padding and the probes) at the mode's wire budget,

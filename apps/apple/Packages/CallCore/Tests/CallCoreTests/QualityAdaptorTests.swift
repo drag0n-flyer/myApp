@@ -7,6 +7,22 @@ private func sample(_ avail: Double?, loss: Double = 0) -> MediaStats {
     MediaStats(availableOutgoingBitrate: avail, inboundLossFraction: loss)
 }
 
+/// The estimate WebRTC reports while the session caps it at `cap` (the current level's ceiling): it sits at the cap.
+private func capped(_ cap: Int, loss: Double = 0) -> MediaStats {
+    MediaStats(availableOutgoingBitrate: Double(cap), inboundLossFraction: loss, bweCeiling: Double(cap))
+}
+
+/// The session's estimator ceiling for the adaptor's current level (`MediaLogic.bweMaxBitrate`).
+private func cap(_ a: QualityAdaptor) -> Int {
+    MediaLogic.bweMaxBitrate(audioBitrate: AudioProfile.for(a.currentMode).maxAverageBitrate,
+                             videoBitrate: a.currentTier.map { VideoLadder.spec($0).maxBps } ?? 0)
+}
+
+/// Feeds `n` samples of the capped estimate at the adaptor's current ceiling.
+private func feedCapped(_ a: inout QualityAdaptor, _ n: Int, loss: Double = 0) {
+    for _ in 0..<n { _ = a.ingest(capped(cap(a), loss: loss)) }
+}
+
 private struct SeededRNG: RandomNumberGenerator {
     var state: UInt64
     mutating func next() -> UInt64 {
@@ -174,5 +190,68 @@ private struct SeededRNG: RandomNumberGenerator {
             last = o
         }
         #expect(changes <= 4)
+    }
+
+    // MARK: capped estimate (the session caps the estimate at the level's wire budget)
+
+    @Test func capSaturationStepsBackUp() {
+        var a = QualityAdaptor(ceiling: .balanced, videoWanted: false)
+        _ = a.ingest(sample(30_000))
+        #expect(a.currentMode == .ultraLow)
+        feedCapped(&a, QualityAdaptor.goodSamplesToStepUp - 1)
+        #expect(a.currentMode == .ultraLow)
+        feedCapped(&a, 1)
+        #expect(a.currentMode == .dataSaver)
+        feedCapped(&a, QualityAdaptor.goodSamplesToStepUp)
+        #expect(a.currentMode == .balanced)
+    }
+
+    @Test func capSaturationTurnsVideoBackOnAtTheLowestTier() {
+        var a = QualityAdaptor(ceiling: .high, videoWanted: true)
+        _ = a.ingest(sample(50_000))
+        #expect(a.currentTier == nil)
+        for _ in 0..<20 where a.currentTier == nil { feedCapped(&a, 1) }
+        #expect(a.currentMode == .high)
+        #expect(a.currentTier == .p180)
+    }
+
+    @Test func capSaturationWithLossDoesNotStepUp() {
+        var a = QualityAdaptor(ceiling: .balanced, videoWanted: false)
+        _ = a.ingest(sample(30_000))
+        feedCapped(&a, 30, loss: 0.05)
+        #expect(a.currentMode == .ultraLow)
+    }
+
+    @Test func failedStepUpHoldsOffAndBacksOff() {
+        var a = QualityAdaptor(ceiling: .balanced, videoWanted: false)
+        _ = a.ingest(sample(30_000))
+        feedCapped(&a, QualityAdaptor.goodSamplesToStepUp)
+        #expect(a.currentMode == .dataSaver)
+        _ = a.ingest(sample(20_000))   // the network cannot sustain it
+        #expect(a.currentMode == .ultraLow)
+        let hold = QualityAdaptor.stepUpHoldOffSamples
+        feedCapped(&a, hold + QualityAdaptor.goodSamplesToStepUp - 1)
+        #expect(a.currentMode == .ultraLow)
+        feedCapped(&a, 1)
+        #expect(a.currentMode == .dataSaver)
+        _ = a.ingest(sample(20_000))   // fails again: the hold-off doubles
+        feedCapped(&a, 2 * hold + QualityAdaptor.goodSamplesToStepUp - 1)
+        #expect(a.currentMode == .ultraLow)
+        feedCapped(&a, 1)
+        #expect(a.currentMode == .dataSaver)
+        // A step-up that holds clears the back-off.
+        feedCapped(&a, QualityAdaptor.goodSamplesToStepUp)
+        #expect(a.currentMode == .balanced)
+        _ = a.ingest(sample(40_000))
+        #expect(a.currentMode == .dataSaver)
+        feedCapped(&a, hold + QualityAdaptor.goodSamplesToStepUp)
+        #expect(a.currentMode == .balanced)
+    }
+
+    @Test func estimateBelowTheCapIsNotSaturated() {
+        var a = QualityAdaptor(ceiling: .balanced, videoWanted: false)
+        _ = a.ingest(sample(30_000))
+        for _ in 0..<30 { _ = a.ingest(MediaStats(availableOutgoingBitrate: 19_000, bweCeiling: 21_000)) }
+        #expect(a.currentMode == .ultraLow)
     }
 }
