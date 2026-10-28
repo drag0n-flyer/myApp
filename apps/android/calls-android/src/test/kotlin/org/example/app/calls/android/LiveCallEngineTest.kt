@@ -253,6 +253,22 @@ class LiveCallEngineTest {
     }
 
     @Test
+    fun shutdownClosesTheMediaWhenTheServerHangs() = runTest(UnconfinedTestDispatcher()) {
+        // The peer connection and the microphone must not stay open behind a hang-up that never goes out.
+        val h = harness()
+        h.engine.ring(ring())
+        runCurrent()
+        h.engine.answer(video = false)
+        runCurrent()
+        h.signaling.hangupBlocks = true
+        val job = launch { h.engine.shutdown() }
+        advanceTimeBy(LiveCallEngine.SHUTDOWN_MS + 100)
+        runCurrent()
+        assertTrue(job.isCompleted)
+        assertEquals(1, h.session.closed)
+    }
+
+    @Test
     fun endedCallDoesNotRing() = runTest(UnconfinedTestDispatcher()) {
         // Only `missed` is a missed call (as on iPhone): `hangup` cannot tell whether another device answered first.
         val h = harness()

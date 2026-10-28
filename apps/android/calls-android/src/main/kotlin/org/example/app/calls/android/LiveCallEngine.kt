@@ -95,9 +95,11 @@ class LiveCallEngine(
     private var shownPhase: CallPhase? = null
     /** The call the phone shows (Telecom, ringtone, notification, service) until it is reported ended. Any thread. */
     @Volatile private var shownCall: String? = null
-    private var session: MediaSession? = null
-    private var mediaJob: Job? = null
-    private var ticker: Job? = null
+    /** Set from the queue; also taken by [shutdown]'s timeout branch, so it is read and cleared under [sessionLock]. */
+    @Volatile private var session: MediaSession? = null
+    private val sessionLock = Any()
+    @Volatile private var mediaJob: Job? = null
+    @Volatile private var ticker: Job? = null
     /** Calls whose history (or missed notice) is written: each is written once. */
     private val recorded = LinkedHashSet<String>()
 
@@ -171,6 +173,8 @@ class LiveCallEngine(
                 shownCall = null
                 safely { controller.reportEnded(id, CallEndReason.HungUp) }
             }
+            // The queue is stuck behind the hang-up: close the peer connection and the microphone from here.
+            closeMedia()
         }
     }
 
@@ -318,7 +322,7 @@ class LiveCallEngine(
         closeMedia()
         return try {
             val s = media.create()
-            session = s
+            synchronized(sessionLock) { session = s }
             mediaJob = scope.launch { s.events.collect { submit(CallEvent.Media(it)) } }
             s.configure(signaling.iceServers(), effect.policy, effect.video)
             null
@@ -355,8 +359,7 @@ class LiveCallEngine(
     private suspend fun closeMedia() {
         ticker?.cancel(); ticker = null
         mediaJob?.cancel(); mediaJob = null
-        val s = session ?: return
-        session = null
+        val s = synchronized(sessionLock) { session.also { session = null } } ?: return
         try {
             s.close()
         } catch (e: CancellationException) {
