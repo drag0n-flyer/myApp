@@ -246,7 +246,7 @@ else
   set -- $ANSWER; SENT_ID=$1; SENT_SHA=$2
   ask B photo-android-to-other wait-photo "$ACC_A" "$SENT_ID"
   same photo-android-to-other "photo SHA-256" "$ANSWER" "$SENT_SHA"
-  pass photo-android-to-other
+  pass "photo-android-to-other (the Android peer sends the file as it is: the app's PhotoPrep is not exercised)"
   ask B photo-other-to-android send-photo "$ACC_A" "$FIXTURES/photo.jpg"
   set -- $ANSWER; SENT_ID=$1; SENT_SHA=$2
   ask A photo-other-to-android wait-photo "$ACC_B" "$SENT_ID"
@@ -273,7 +273,7 @@ SAFETY_A=$ANSWER
 ask B safety-number safety "$ACC_A"
 [ -n "$SAFETY_A" ] || fail safety-number "empty"
 same safety-number "safety numbers" "$ANSWER" "$SAFETY_A"
-pass safety-number
+pass "safety-number (identities only: Android's memberKeys are fake-sig placeholders until MLS M7)"
 
 # Call signaling: each side seals a ring and an offer with a recorded SDP; the other opens it and the offer
 # passes the fingerprint check.
@@ -294,17 +294,31 @@ call_steps A B "$ACC_A" "$ACC_B" "$FIXTURES/chrome-offer.sdp" android-to-other
 call_steps B A "$ACC_B" "$ACC_A" "$OTHER_SDP" other-to-android
 
 # Linking: Android approves a new device of the other platform (it joins A), and the other platform approves
-# a new Android device (it joins B). The new device imports the snapshot: its contacts include the peer.
+# a new Android device (it joins B). Android's account flow imports the snapshot (its contacts then include the
+# peer); the iPhone's does not yet (plan 7), so for a Swift device only the snapshot's arrival is checked.
+# check_link <step> <expected account> <expected contact>: reads ANSWER = "<accountID> imported|received <contacts>".
+check_link() {
+  set -- "$1" "$2" "$3" $ANSWER
+  same "$1" "linked account" "$4" "$2"
+  case "${5:-}" in
+    imported)
+      case ",${6:-}," in *",$3,"*) ;; *) fail "$1" "snapshot contacts '${6:-}' miss $3" ;; esac
+      pass "$1"
+      ;;
+    received)
+      pass "$1 (linked; snapshot sealed, sent and opened)"
+      echo "SKIP $1-snapshot-import (iPhone app does not import the link snapshot yet, plan 7)"
+      ;;
+    *) fail "$1" "unexpected answer '$ANSWER'" ;;
+  esac
+}
 start N1 "$PEER_B" 7 8
 ask N1 link-android-approves link-code
 QR=$ANSWER
 tell N1 link-wait
 ask A link-android-approves approve "$QR"
 answer N1 link-android-approves
-set -- $ANSWER
-same link-android-approves "linked account" "$1" "$ACC_A"
-case ",${2:-}," in *",$ACC_B,"*) ;; *) fail link-android-approves "snapshot contacts '${2:-}' miss B" ;; esac
-pass link-android-approves
+check_link link-android-approves "$ACC_A" "$ACC_B"
 
 start N2 kotlin 9 10
 ask N2 link-other-approves link-code
@@ -312,10 +326,7 @@ QR=$ANSWER
 tell N2 link-wait
 ask B link-other-approves approve "$QR"
 answer N2 link-other-approves
-set -- $ANSWER
-same link-other-approves "linked account" "$1" "$ACC_B"
-case ",${2:-}," in *",$ACC_A,"*) ;; *) fail link-other-approves "snapshot contacts '${2:-}' miss A" ;; esac
-pass link-other-approves
+check_link link-other-approves "$ACC_B" "$ACC_A"
 
 for p in A B N1 N2; do tell "$p" quit; done
 echo "interop: all steps passed ($PEER_B peer for B)"

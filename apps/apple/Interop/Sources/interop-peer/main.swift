@@ -367,15 +367,13 @@ final class Peer {
         return try await service.makeLinkCode().qrText
     }
 
-    /// Answers `<accountID> <contact IDs, comma separated>` once linked and the snapshot is imported.
+    /// Answers `<accountID> received -` once linked and the snapshot has arrived and opened. Nothing imports it:
+    /// LiveAccountService leaves that to plan 7 and no app code does it yet, so neither does the peer.
     func linkWait() async throws -> String {
         _ = try await service.waitForLinkApproval()
-        guard let snapshot = service.receivedLinkSnapshot else { throw PeerError("no snapshot received") }
-        _ = try signedIn()
-        // LiveAccountService leaves the import to plan 7; the peer does what the app will: DeviceSync imports it.
-        try await deviceSync?.importSnapshot(snapshot)
+        guard service.receivedLinkSnapshot != nil else { throw PeerError("no snapshot received") }
         let id = try await start()
-        return "\(id) \(try signedIn().contacts.map(\.id).joined(separator: ","))"
+        return "\(id) received -"
     }
 
     func approve(_ qrText: String) async throws {

@@ -105,7 +105,8 @@ class Peer(private val config: PeerConfig) {
         val repo = InMemoryRepository()
         val mls = LiveMlsEngine(device.identity, File(config.dataDir, "mls"), MemorySecretStore())
         val api = DeliveryApiImpl(client)
-        // Real member keys: the safety number covers the MLS signature keys, as on the iPhone.
+        // true only so a safety number is computed at all (the app hides it until MLS M7). LiveMlsEngine.memberKeys
+        // still returns `fake-sig:` placeholders, so the number covers the member identities, not the signature keys.
         val membership = Membership(device, mls, realMemberKeys = true, clock = clock)
         val handler = IncomingHandler(device, clock)
         val escrowKeys = EscrowKeySource { ServerInfoApi(client).serverInfo().encryption.escrowKey }
@@ -125,7 +126,8 @@ class Peer(private val config: PeerConfig) {
             readReceiptsEnabled = { true }, maxAttachmentBytes = 104_857_600L,
             dirs = MediaDirs(File(media, "blobs").apply { mkdirs() }, File(media, "open").apply { mkdirs() }, File(media, "out").apply { mkdirs() }),
             social = Social(SocialApi(client)), scope = scope,
-            // The photo goes as it is: the receiver's bytes must equal the fixture's.
+            // A stub: the photo goes as it is, so the receiver's bytes must equal the fixture's. The app's PhotoPrep
+            // (scaling, thumbnail) is Android-only code and is not exercised here.
             mediaPreparer = MediaPreparer { path, kind ->
                 when (kind) {
                     MediaKind.Photo -> PreparedMedia(File(path), PHOTO_WIDTH, PHOTO_HEIGHT)
@@ -281,12 +283,15 @@ class Peer(private val config: PeerConfig) {
         return account.makeLinkCode().qrText
     }
 
-    /** Answers `<accountID> <contact IDs, comma separated>` once linked and the snapshot is imported. */
+    /**
+     * Answers `<accountID> imported <contact IDs, comma separated>` once linked. The app's own account flow
+     * ([LiveAccountService.waitForLinkApproval]) imports the snapshot through [DeviceSync].
+     */
     suspend fun linkWait(): String {
         val result = account.waitForLinkApproval()
         if (!result.contactsCopied) throw PeerError("snapshot not imported")
         val id = start()
-        return "$id ${store.contacts.value.joinToString(",") { it.id }}"
+        return "$id imported ${store.contacts.value.joinToString(",") { it.id }.ifEmpty { "-" }}"
     }
 
     suspend fun approve(qrText: String) {

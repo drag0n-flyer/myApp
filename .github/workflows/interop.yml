@@ -6,11 +6,14 @@ name: interop
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    # TEMPORARY: android/i2 runs it once before merge (dispatch needs the file on main). Removed before merge.
+    branches: [main, android/i2]
     paths:
       - 'scripts/interop.sh'
       - '.github/workflows/interop.yml'
       - 'apps/android/interop/**'
+      - 'apps/android/*.gradle.kts'
+      - 'apps/android/gradle/**'
       - 'apps/android/contracts/**'
       - 'apps/android/core/**'
       - 'apps/android/net/**'
@@ -23,13 +26,21 @@ on:
       - 'apps/apple/Packages/ServerKit/Sources/**'
       - 'apps/apple/Packages/Messaging/Sources/**'
       - 'apps/apple/Packages/SecureMessaging/Sources/**'
+      - 'apps/apple/Packages/*/Package.swift'
+      - 'apps/apple/Packages/SecureMessaging/scripts/build-mlsffi.sh'
       - 'apps/apple/Packages/SecureMessaging/mlsffi/src/**'
+      - 'apps/apple/Packages/SecureMessaging/mlsffi/Cargo.toml'
+      - 'apps/apple/Packages/SecureMessaging/mlsffi/Cargo.lock'
       - 'apps/apple/Packages/CallCore/Sources/**'
       - 'server/**'
       - 'tools/smtp-sink/**'
 
 permissions:
   contents: read
+
+concurrency:
+  group: interop-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   interop:
@@ -49,5 +60,16 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
+      - name: Android SDK platform (Gradle configures the Android modules too)
+        run: |
+          set -euo pipefail
+          test -n "${ANDROID_HOME:-}" || { echo "ANDROID_HOME is not set on this runner" >&2; exit 1; }
+          sdk="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ -x "$sdk" ]; then
+            yes | "$sdk" --licenses >/dev/null || true
+            "$sdk" "platforms;android-36" >/dev/null
+          else
+            echo "no sdkmanager at $sdk; Gradle uses what the image has"
+          fi
       - name: Android peer and iPhone/Mac peer through one server
         run: scripts/interop.sh

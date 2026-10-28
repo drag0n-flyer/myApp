@@ -29,7 +29,9 @@ import kotlinx.coroutines.runBlocking
  *   seal <peer> ring|offer <callID> [<sdp path>] -> OK <base64 sealed>
  *   open <peer> <base64 sealed>                -> OK <kind> <callID> [fingerprint-ok]
  *   link-code                                  -> OK <QR text>   (a fresh device)
- *   link-wait                                  -> OK <accountID> <contact IDs, comma separated>
+ *   link-wait                                  -> OK <accountID> imported <contact IDs, comma separated>
+ *                                                 or OK <accountID> received -  (snapshot received, not imported:
+ *                                                 the iPhone app does not import it yet, plan 7)
  *   approve <QR text>                          -> OK
  *   quit
  */

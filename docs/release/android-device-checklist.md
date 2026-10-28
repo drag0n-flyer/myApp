@@ -13,12 +13,12 @@ How to record a result: put a date and your initials in the **Result** column (`
 
 ## Calls
 
-The data modes are the four in the app: Ultra low, Data saver, Balanced and High.
+The modes are the five the app shows: Auto, Ultra-low, Data saver, Balanced and High quality.
 
 | # | Check | Result |
 |---|---|---|
-| 1 | Audio call Android → iPhone in each data mode (4 calls): rings, connects within 3 s of answering, both hear each other clearly for 1 minute | |
-| 2 | Audio call iPhone → Android in each data mode (4 calls): the same | |
+| 1 | Audio call Android → iPhone in each mode (5 calls): rings, connects within 3 s of answering, both hear each other clearly for 1 minute | |
+| 2 | Audio call iPhone → Android in each mode (5 calls): the same | |
 | 3 | Video call Android → iPhone, then iPhone → Android: both videos show, sound in sync | |
 | 4 | Mode change in the middle of a call, each direction: the other side follows within a few seconds, the call never drops | |
 | 5 | Wi-Fi → mobile data, then mobile data → Wi-Fi in the middle of a call (turn Wi-Fi off, then on): the call recovers within 5 s, both directions | |
