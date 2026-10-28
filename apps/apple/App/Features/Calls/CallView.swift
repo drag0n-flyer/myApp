@@ -38,19 +38,26 @@ struct CallView: View {
                 .padding(.horizontal, 14)
                 .padding(.bottom, 12)
                 .animation(.default, value: call.banner)
-                Button { showingInfoSheet = true } label: {
-                    Image(systemName: "info.circle")
-                        .font(.title3)
-                        .padding(10)
-                        .glassBackground(in: Circle())
+                // Labelled on the button itself: after the full-screen frame, the element would span the
+                // screen and a tap on its centre would miss the button.
+                VStack {
+                    HStack {
+                        Spacer()
+                        Button { showingInfoSheet = true } label: {
+                            Image(systemName: "info.circle")
+                                .font(.title3)
+                                .padding(10)
+                                .glassBackground(in: Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.white)
+                        .accessibilityLabel("Call info")
+                        .accessibilityIdentifier("call.info")
+                    }
+                    Spacer()
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.white)
                 .padding(.trailing, 14)
                 .padding(.top, 6)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                .accessibilityLabel("Call info")
-                .accessibilityIdentifier("call.info")
             }
         }
         .environment(\.colorScheme, .dark)
