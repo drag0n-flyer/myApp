@@ -208,27 +208,14 @@ class LinkFlowTest {
     }
 
     @Test
-    fun claimStopsAtExpiry() = runBlocking<Unit> {
-        val g = newDevice { server.json("POST /v1/link/L1/claim", "{}", 202) }
-        try {
-            g.service.makeLinkCode()
-            g.clock = Instant.parse("2026-10-28T12:05:00Z")
-            assertFailsWith<AccountError.LinkExpired> { g.service.waitForLinkApproval() }
-            assertFalse(g.service.isSignedIn)
-            // The ticket is forgotten: a second wait has nothing to claim.
-            assertFailsWith<AccountError.LinkExpired> { g.service.waitForLinkApproval() }
-            assertEquals(1, g.server.requests("POST /v1/link/L1/claim").size)
-        } finally {
-            g.shutdown()
-        }
-    }
-
-    @Test
     fun serverSaysExpired() = runBlocking<Unit> {
         val g = newDevice { server.error("POST /v1/link/L1/claim", 410, "expired") }
         try {
             g.service.makeLinkCode()
             assertFailsWith<AccountError.LinkExpired> { g.service.waitForLinkApproval() }
+            // The ticket is forgotten: a second wait has nothing to claim.
+            assertFailsWith<AccountError.LinkExpired> { g.service.waitForLinkApproval() }
+            assertEquals(1, g.server.requests("POST /v1/link/L1/claim").size)
         } finally {
             g.shutdown()
         }

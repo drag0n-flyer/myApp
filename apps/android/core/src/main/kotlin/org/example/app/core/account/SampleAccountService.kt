@@ -54,6 +54,9 @@ class SampleAccountService(
                 DeviceInfo("this", "This iPhone", DevicePlatform.IPhone, now, true),
                 DeviceInfo("mac", "MacBook", DevicePlatform.Mac, hourAgo, false),
             )
+            DevicePlatform.Other -> mutableListOf(
+                DeviceInfo("this", "This device", DevicePlatform.Other, now, true),
+            )
         }
     }
 
@@ -108,7 +111,7 @@ class SampleAccountService(
 
     override suspend fun makeLinkCode() = LinkCode(SAMPLE_LINK_TEXT, clock().plusSeconds(300))
 
-    override suspend fun waitForLinkApproval() { isSignedIn = true }
+    override suspend fun waitForLinkApproval(): LinkedResult { isSignedIn = true; return LinkedResult(contactsCopied = true) }
 
     override suspend fun linkRequest(qrText: String): LinkRequest {
         val uri = try { URI(qrText) } catch (_: Exception) { throw AccountError.LinkExpired }
@@ -117,8 +120,9 @@ class SampleAccountService(
         return LinkRequest(qrText, "New Mac", DevicePlatform.Mac, clock())
     }
 
-    override suspend fun approveLink(request: LinkRequest) {
+    override suspend fun approveLink(request: LinkRequest): LinkApproval {
         deviceList += DeviceInfo(UUID.randomUUID().toString(), request.deviceName, request.platform, clock(), false)
+        return LinkApproval(snapshotSent = true)
     }
 
     override suspend fun devices(): List<DeviceInfo> = deviceList.toList()

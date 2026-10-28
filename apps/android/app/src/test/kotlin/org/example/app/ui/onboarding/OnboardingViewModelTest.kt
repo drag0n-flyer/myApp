@@ -15,7 +15,10 @@ import androidx.lifecycle.SavedStateHandle
 import kotlinx.coroutines.CompletableDeferred
 import org.example.app.core.account.AccountError
 import org.example.app.core.account.AccountService
+import org.example.app.core.account.LinkApproval
 import org.example.app.core.account.LinkCode
+import org.example.app.core.account.LinkRequest
+import org.example.app.core.account.LinkedResult
 import org.example.app.core.account.OnboardingStep
 import org.example.app.core.account.SampleAccountService
 import org.example.app.core.account.UsernameCheck
@@ -96,7 +99,7 @@ class OnboardingViewModelTest {
         val approval = CompletableDeferred<Unit>()
         override suspend fun connect(host: String) = inner.connect(host).also { connected += host }
         override suspend fun makeLinkCode(): LinkCode { codes++; return LinkCode("https://home.example.org/link/c$codes#k", Instant.now().plusSeconds(300)) }
-        override suspend fun waitForLinkApproval() { approval.await(); inner.waitForLinkApproval() }
+        override suspend fun waitForLinkApproval(): LinkedResult { approval.await(); return inner.waitForLinkApproval() }
     }
 
     @Test
@@ -181,40 +184,81 @@ class OnboardingViewModelTest {
 
     private fun approvalVm(service: AccountService = SampleAccountService(), now: () -> Long = { 0L }) = LinkApprovalViewModel(service, now)
 
-    @Test
-    fun approvalAsksTheScreenForTheBiometricAndSendsNothingUntilItSucceeds() {
-        val service = SampleAccountService()
+    /** Approving side: the service owns the biometric check, so the view model just calls it. */
+    private class Approving(val inner: SampleAccountService = SampleAccountService()) : AccountService by inner {
+        var fail: AccountError? = null
+        var snapshotSent = true
+        var calls = 0
+        override suspend fun approveLink(request: LinkRequest): LinkApproval {
+            calls++
+            fail?.let { throw it }
+            inner.approveLink(request)
+            return LinkApproval(snapshotSent)
+        }
+    }
+
+    private fun scannedVm(service: Approving): LinkApprovalViewModel {
         val vm = approvalVm(service)
         vm.scanned("https://home.example.org/link/x#y")
         assertNotNull(vm.state.value.request)
+        return vm
+    }
+
+    @Test
+    fun approvingCallsTheServiceOnceWithNoPromptOfItsOwn() {
+        val service = Approving()
+        val vm = scannedVm(service)
         vm.approve()
-        assertTrue(vm.state.value.awaitingBiometric)
-        assertTrue(!vm.state.value.approved)
-        vm.biometricResult(BiometricResult.Unavailable)
-        assertEquals(AccountError.BiometricsUnavailable, vm.state.value.error)
-        assertTrue(!vm.state.value.awaitingBiometric && !vm.state.value.busy)
-        vm.approve()
-        vm.biometricResult(BiometricResult.Success)
+        assertEquals(1, service.calls)
         assertTrue(vm.state.value.approved)
+        assertTrue(!vm.state.value.busy)
+        assertTrue(!vm.state.value.snapshotNotSent)
     }
 
     @Test
-    fun cancellingTheBiometricShowsNoError() {
-        val vm = approvalVm()
-        vm.scanned("https://home.example.org/link/x#y")
+    fun aCancelledCheckInTheServiceShowsNoError() {
+        val service = Approving().also { it.fail = AccountError.Cancelled }
+        val vm = scannedVm(service)
         vm.approve()
-        vm.biometricResult(BiometricResult.Cancelled)
         assertNull(vm.state.value.error)
-        assertTrue(!vm.state.value.approved && !vm.state.value.busy && !vm.state.value.awaitingBiometric)
+        assertTrue(!vm.state.value.approved && !vm.state.value.busy)
     }
 
     @Test
-    fun otherBiometricFailuresAreNotCalledUnavailable() {
-        val vm = approvalVm()
-        vm.scanned("https://home.example.org/link/x#y")
+    fun noBiometricsShowsTheUnavailableMessage() {
+        val service = Approving().also { it.fail = AccountError.BiometricsUnavailable }
+        val vm = scannedVm(service)
         vm.approve()
-        vm.biometricResult(BiometricResult.Failed)
-        assertEquals(AccountError.Server, vm.state.value.error)
+        assertEquals(AccountError.BiometricsUnavailable, vm.state.value.error)
+        assertTrue(!vm.state.value.approved && !vm.state.value.busy)
+    }
+
+    @Test
+    fun theApproverIsToldWhenTheSnapshotWasTooLargeToSend() {
+        val service = Approving().also { it.snapshotSent = false }
+        val vm = scannedVm(service)
+        vm.approve()
+        assertTrue(vm.state.value.approved)
+        assertTrue(vm.state.value.snapshotNotSent)
+    }
+
+    @Test
+    fun theNewDeviceIsToldWhenContactsWereNotCopied() {
+        val service = object : AccountService by SampleAccountService() {
+            override suspend fun waitForLinkApproval() = LinkedResult(contactsCopied = false)
+        }
+        val vm = OnboardingViewModel(service)
+        vm.alreadyHaveAccount()
+        vm.startLinking()
+        assertTrue(vm.state.value.contactsNotCopied)
+    }
+
+    @Test
+    fun contactsCopiedShowsNoNotice() {
+        val vm = OnboardingViewModel(SampleAccountService())
+        vm.alreadyHaveAccount()
+        vm.startLinking()
+        assertTrue(!vm.state.value.contactsNotCopied)
     }
 
     @Test

@@ -32,6 +32,7 @@ private fun platformName(platform: DevicePlatform): Int = when (platform) {
     DevicePlatform.IPhone -> R.string.device_iphone
     DevicePlatform.Mac -> R.string.device_mac
     DevicePlatform.Android -> R.string.device_android
+    DevicePlatform.Other -> R.string.device_other
 }
 
 /** Loaded once when opened; no polling. "Link a device" opens the scan screen (task A8). */

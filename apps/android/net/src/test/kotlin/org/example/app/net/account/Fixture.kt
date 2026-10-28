@@ -7,6 +7,7 @@ import org.example.app.contracts.Hpke
 import org.example.app.contracts.MemorySecretStore
 import org.example.app.contracts.SecretNames
 import org.example.app.contracts.SecretStore
+import org.example.app.contracts.SnapshotSource
 import org.example.app.net.ServerClient
 import org.example.app.net.Session
 import org.example.app.net.SessionStore
@@ -85,7 +86,6 @@ class Fixture(
         biometrics = approval,
         passkeySupport = PasskeySupportCheck { _, _ -> passkeysSupported },
         makeClient = { addr -> if (addr.hostPort == hostPort) client else error("unexpected host ${addr.hostPort}") },
-        clock = { clock },
         sleep = { ms -> sleeps += ms },
     )
 

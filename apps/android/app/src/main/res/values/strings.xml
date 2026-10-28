@@ -223,6 +223,7 @@
     <string name="platform_iphone">iPhone</string>
     <string name="platform_mac">Mac</string>
     <string name="platform_android">Android</string>
+    <string name="platform_other">Other device</string>
 
     <string name="lost_title">Sign in on a new phone</string>
     <string name="lost_message">Your account comes back, but old messages can only be restored from a backup.</string>
@@ -363,6 +364,7 @@
     <string name="device_iphone">iPhone</string>
     <string name="device_mac">Mac</string>
     <string name="device_android">Android</string>
+    <string name="device_other">Other device</string>
     <string name="devices_remove">Remove %1$s</string>
     <string name="devices_remove_title">Remove this device?</string>
     <string name="devices_link">Link a device</string>

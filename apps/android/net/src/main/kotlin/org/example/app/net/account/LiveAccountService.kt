@@ -1,6 +1,5 @@
 package org.example.app.net.account
 
-import java.time.Instant
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
@@ -11,12 +10,15 @@ import org.example.app.contracts.Hpke
 import org.example.app.contracts.HpkeInfo
 import org.example.app.contracts.SecretStoreUnavailable
 import org.example.app.contracts.ServerException
+import org.example.app.contracts.SnapshotSource
 import org.example.app.core.account.AccountError
 import org.example.app.core.account.AccountService
 import org.example.app.core.account.DeviceInfo
 import org.example.app.core.account.DevicePlatform
+import org.example.app.core.account.LinkApproval
 import org.example.app.core.account.LinkCode
 import org.example.app.core.account.LinkRequest
+import org.example.app.core.account.LinkedResult
 import org.example.app.core.account.ServerAddress
 import org.example.app.core.account.UsernameCheck
 import org.example.app.core.calls.DataMode
@@ -26,6 +28,7 @@ import org.example.app.core.settings.ServerPolicy
 import org.example.app.net.Auth
 import org.example.app.net.ServerClient
 import org.example.app.net.Session
+import org.example.app.net.SessionState
 import org.example.app.net.SessionStore
 import org.example.app.net.api.IdentityApi
 import org.example.app.net.api.ProtocolCheck
@@ -68,6 +71,9 @@ fun interface PasskeySupportCheck {
  *   an [AccountError.Server]; it never signs anyone out and never creates anything.
  * - Nothing is logged: not tokens, not link codes.
  * - [client] is for the first host; [makeClient] builds the client for another address typed to [connect].
+ * - The session token goes only to the session's own host: [ready] rebinds to a client for the stored session's
+ *   host, and refuses (as [AccountError.Server]) if the client still does not match.
+ * - Not thread safe: call it from one coroutine at a time (the app's main scope).
  */
 class LiveAccountService(
     client: ServerClient,
@@ -84,17 +90,19 @@ class LiveAccountService(
             .apply { addr.port?.let { port(it) } }.build()
         ServerClient(url, sessionStore, OkHttpClient())
     },
-    private val clock: () -> Instant = Instant::now,
     private val sleep: suspend (Long) -> Unit = { delay(it) },
 ) : AccountService {
     private var client: ServerClient = client
-    private val link = LinkFlow(hpke, clock, sleep)
+    private val link = LinkFlow(hpke, sleep)
 
     @Volatile private var forcedOut = false
     @Volatile private var passkeysOk = false
     private var inviteCode: String? = null
     private var signupId: String? = null
     private var pendingDisplayName: String? = null
+
+    /** A claimed link session whose save failed; memory only. A retry saves it and never claims again. */
+    private var unsaved: LinkApproved? = null
 
     /** Called when the server ended this session (401, or this device was removed); not on a local sign-out. */
     var onSignedOut: (() -> Unit)? = null
@@ -112,13 +120,23 @@ class LiveAccountService(
     override val isSignedIn: Boolean get() = !forcedOut && sessionStore.current != null
     override val supportsPasskeys: Boolean get() = passkeysOk
 
+    /** Absent, present or unavailable (the secret store was busy); the UI maps `Unavailable` to a retry screen. */
+    val sessionState: SessionState get() = sessionStore.state
+
     init {
         install(client)
+        // Start on the stored session's host, as the iPhone does. Failures here are reported by ready().
+        try {
+            (sessionStore.state as? SessionState.Present)?.let { bindTo(it.session.host) }
+        } catch (_: AccountError) {
+        }
     }
 
     // ---- server
 
     override suspend fun connect(host: String): ServerPolicy = accountCall {
+        // A session that could not be read may exist: do not sign anything in over it.
+        if (sessionStore.isUnavailable) throw AccountError.Server
         val address = ServerAddress.parse(host) ?: throw AccountError.InvalidServerAddress
         val wanted = canonical(address)
         // The session token must never reach another host: while a session is stored, only its own host.
@@ -235,24 +253,30 @@ class LiveAccountService(
     // ---- linking, new device
 
     override suspend fun makeLinkCode(): LinkCode {
+        unsaved = null
         val c = ready()
         return link.start(IdentityApi(c), hostPortOf(c.baseUrl), deviceName, PLATFORM)
     }
 
-    override suspend fun waitForLinkApproval() {
+    override suspend fun waitForLinkApproval(): LinkedResult {
         val c = ready()
-        val approved = link.awaitApproval(IdentityApi(c))
-        accountCall { persist(approved.session) }
+        // The claim answers once. If saving the session failed on an earlier call, only the save is retried.
+        val approved = unsaved ?: link.awaitApproval(IdentityApi(c)).also { unsaved = it }
+        accountCall { persist(approved.session, LINK_SAVE_ATTEMPTS) }
+        unsaved = null
         // A snapshot that did not open is null here and nothing is imported. A failed import leaves the
         // account without the contact list, as an absent snapshot would.
+        var copied = false
         approved.snapshot?.let {
             try {
                 snapshots.import(it)
+                copied = true
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
             }
         }
+        return LinkedResult(contactsCopied = copied)
     }
 
     // ---- linking, approving device
@@ -261,10 +285,10 @@ class LiveAccountService(
         val session = requireSession()
         val code = LinkQr.parse(qrText, session.host)
         val info = IdentityApi(ready()).linkInfo(code.linkId, code.secret)
-        LinkRequest(qrText, info.deviceName, DevicePlatform.fromWire(info.platform) ?: DevicePlatform.Mac, info.createdAt)
+        LinkRequest(qrText, info.deviceName, DevicePlatform.fromWire(info.platform) ?: DevicePlatform.Other, info.createdAt)
     }
 
-    override suspend fun approveLink(request: LinkRequest) = accountCall(link = true) {
+    override suspend fun approveLink(request: LinkRequest): LinkApproval = accountCall(link = true) {
         val session = requireSession()
         val code = LinkQr.parse(request.qrText, session.host)
         val api = IdentityApi(ready())
@@ -275,7 +299,9 @@ class LiveAccountService(
         }
         val sealed = hpke.seal(code.publicKey, HpkeInfo.LINK, snapshots.export())
         // Over the server's limit: approve without a snapshot; the new device just starts with an empty list.
-        api.linkApprove(code.linkId, code.secret, sealed.takeIf { it.size <= MAX_SEALED_BYTES })
+        val fits = sealed.size <= MAX_SEALED_BYTES
+        api.linkApprove(code.linkId, code.secret, sealed.takeIf { fits })
+        LinkApproval(snapshotSent = fits)
     }
 
     // ---- devices and account
@@ -284,7 +310,7 @@ class LiveAccountService(
         requireSession()
         IdentityApi(ready()).devices().map {
             DeviceInfo(
-                it.id, it.name, DevicePlatform.fromWire(it.platform) ?: DevicePlatform.Mac,
+                it.id, it.name, DevicePlatform.fromWire(it.platform) ?: DevicePlatform.Other,
                 it.lastSeenAt ?: it.createdAt, it.current,
             )
         }
@@ -306,6 +332,7 @@ class LiveAccountService(
     override fun signOutLocally() {
         forcedOut = true
         link.forget()
+        unsaved = null
         // If the storage delete fails the stored session stays and the next launch restores it.
         try {
             sessionStore.clear()
@@ -322,27 +349,51 @@ class LiveAccountService(
         }
     }
 
+    /** The client for the stored session's host. Throws [AccountError.Server] when it cannot be had. */
     private fun ready(): ServerClient {
         if (updateRequired) throw AccountError.Server
+        when (val s = sessionStore.state) {
+            SessionState.Unavailable -> throw AccountError.Server
+            is SessionState.Present -> bindTo(s.session.host)
+            SessionState.Absent -> {}
+        }
         return client
+    }
+
+    /** Makes [client] the one for [host], so the session token cannot go to another host. */
+    private fun bindTo(host: String) {
+        if (hostPortOf(client.baseUrl).equals(host, ignoreCase = true)) return
+        val address = ServerAddress.parse(host) ?: throw AccountError.Server
+        val c = makeClient(address)
+        if (!hostPortOf(c.baseUrl).equals(host, ignoreCase = true)) throw AccountError.Server
+        client = c
+        install(c)
     }
 
     private fun requireSession(): Session {
         if (forcedOut) throw AccountError.Server
-        return sessionStore.current ?: throw AccountError.Server
+        ready()
+        val s = sessionStore.current ?: throw AccountError.Server
+        if (!hostPortOf(client.baseUrl).equals(s.host, ignoreCase = true)) throw AccountError.Server
+        return s
     }
 
-    /** Saves the session. A busy secret store is retried; if it stays busy nothing is signed in or out. */
-    private suspend fun persist(s: NewSession) {
+    /**
+     * Saves the session. A busy secret store is retried with backoff; if it stays busy nothing is signed in or
+     * out. Never overwrites a stored session that could not be read (the store refuses).
+     */
+    private suspend fun persist(s: NewSession, attempts: Int = SAVE_ATTEMPTS) {
         val session = Session(hostPortOf(client.baseUrl), s.accountID, s.deviceID, s.sessionToken)
         var attempt = 0
+        var wait = SAVE_RETRY_MS
         while (true) {
             try {
                 sessionStore.save(session)
                 break
             } catch (e: SecretStoreUnavailable) {
-                if (++attempt >= SAVE_ATTEMPTS) throw e
-                sleep(SAVE_RETRY_MS)
+                if (++attempt >= attempts) throw e
+                sleep(wait)
+                wait = minOf(wait * 2, SAVE_RETRY_MAX_MS)
             }
         }
         forcedOut = false
@@ -392,6 +443,9 @@ class LiveAccountService(
         const val MAX_SEALED_BYTES = 64 * 1024
         const val SAVE_ATTEMPTS = 3
         const val SAVE_RETRY_MS = 250L
+        const val SAVE_RETRY_MAX_MS = 4_000L
+        /** A claimed link session is worth waiting for: about 11 seconds of backoff before giving up for now. */
+        const val LINK_SAVE_ATTEMPTS = 8
 
         fun canonical(a: ServerAddress): String {
             val default = if (a.secure) 443 else 80
