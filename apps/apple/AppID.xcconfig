@@ -1,0 +1,6 @@
+// The app ID: the one place it is set for the iPhone and Mac apps.
+// Every bundle ID, app group and keychain group in project.yml, serverkit-tests.yml, the
+// *.entitlements files and tools/call-lab/project.yml is built from APP_ID.
+// The owner chooses the real value; it cannot change after the first App Store release.
+// scripts/check-app-id.sh fails CI if the ID is written anywhere else in apps/apple.
+APP_ID = org.example.app

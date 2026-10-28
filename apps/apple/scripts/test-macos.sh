@@ -18,3 +18,4 @@ xcodebuild -project App.xcodeproj -scheme AppMac -destination "platform=macOS" \
 # The notification service extension must be embedded and declare the right extension point.
 . "$HERE/lib-nse.sh"
 check_nse AppMac "platform=macOS" "Contents/PlugIns/*.appex/Contents/Info.plist"
+check_app_ids AppMac "platform=macOS" "Contents/Info.plist" .mac "Contents/PlugIns/*.appex/Contents/Info.plist" .mac.nse
