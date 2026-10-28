@@ -32,6 +32,12 @@ public struct CallSessionMachine: Sendable {
     /// Restarts are coalesced: one in flight at a time, and a peer's requests are honoured at most once per window.
     private static let restartWindow = ReconnectPolicy.retryEvery
     private static let staleAnswerAfter: TimeInterval = 10
+    /// The server ends an unanswered ring as `missed` after 45 s; a caller waits that long plus a grace period.
+    static let serverRingLimit: TimeInterval = 45
+    static let ringGrace: TimeInterval = 5
+    static let ringDeadline: TimeInterval = serverRingLimit + ringGrace
+    /// From `call.answered` (caller) or the user's answer (callee) until the call is active.
+    static let setupDeadline: TimeInterval = 30
     private var videoStartsOff = false
     /// The send profile the current remote description was munged with; a change of ptime, FEC or DTX needs a renegotiation.
     private var negotiatedSend: AudioProfile?
@@ -39,6 +45,8 @@ public struct CallSessionMachine: Sendable {
     /// Remote candidates received before we can use them, by sending device.
     private var earlyRemoteCandidates: [String: [IceCandidate]] = [:]
     private var activeSince: Date?
+    private var ringingSince: Date?   // when the ring went out (caller) or came in (callee)
+    private var setupSince: Date?     // caller: call.answered; callee: the user answered
     private var everActive = false
     private var lastSentMode: DataMode?
     private var lastSentTier: VideoTier?
@@ -61,7 +69,10 @@ public struct CallSessionMachine: Sendable {
         case .setMuted(let on): return live { $0.isMuted = on }.map { $0 + [.setMuted(on)] } ?? []
         case .setSpeaker(let on): return live { $0.isSpeakerOn = on } ?? []
         case .server(let e): return server(e)
-        case .remote(let p, let device): return remote(p, device)
+        case .remote(let p, let device, let credentialDevice):
+            // docs/protocol/calls.md check 2: the device in the MLS credential must be the frame's device.
+            if let credentialDevice, credentialDevice != device { return [] }
+            return remote(p, device)
         case .remoteRejected(_, let device):
             guard let answering = answeringDevice, device == answering else { return [] }
             return end(.failed, notifyServer: true)
@@ -87,6 +98,7 @@ public struct CallSessionMachine: Sendable {
     private mutating func start(_ contact: Contact, _ video: Bool, _ id: String) -> [CallEffect] {
         if let s = state, !s.isEnded { return [] }
         resetCall(id, outgoing: true)
+        ringingSince = clock.now
 
         let ceiling = ownCeiling
         let videoOn = video && !VideoLadder.startsOff(ceiling: ceiling, network: context.network, settings: context.settings.call)
@@ -113,7 +125,8 @@ public struct CallSessionMachine: Sendable {
         outstandingSince = nil; lastHonouredRequest = nil; negotiatedSend = nil
         pinnedFingerprint = nil; renegotiateOutstanding = false
         pendingLocalCandidates = []; earlyRemoteCandidates = [:]
-        activeSince = nil; everActive = false; lastSentMode = nil; lastSentTier = nil; lastSentCeiling = nil
+        activeSince = nil; ringingSince = nil; setupSince = nil
+        everActive = false; lastSentMode = nil; lastSentTier = nil; lastSentCeiling = nil
         reconnect = ReconnectPolicy(isCaller: isOutgoing)
     }
 
@@ -121,6 +134,7 @@ public struct CallSessionMachine: Sendable {
         if let s = state, !s.isEnded { return [] }
         guard ring.kind == .ring, ring.callID == id else { return [] }
         resetCall(id, outgoing: false)
+        ringingSince = clock.now
         answeringDevice = device              // the exchange is bound to the caller's device from the ring
         peerCeiling = ring.ceiling
         let video = ring.video ?? false
@@ -143,6 +157,7 @@ public struct CallSessionMachine: Sendable {
     private mutating func answer(_ video: Bool) -> [CallEffect] {
         guard isLive, !outgoing, state?.phase == .incoming, !answerRequested else { return [] }
         answerRequested = true
+        setupSince = clock.now
         let on = video && (state?.isVideoCall ?? false) && !videoStartsOff
         adaptor = QualityAdaptor(ceiling: effectiveCeiling, videoWanted: on)   // fresh start with the answer's video choice
         let tier = adaptor.currentTier
@@ -181,6 +196,7 @@ public struct CallSessionMachine: Sendable {
         case .answered(let id, let device, _):
             guard outgoing, id == callID, isLive, answeringDevice == nil else { return [] }
             answeringDevice = device
+            setupSince = clock.now
             // Keep only the answering device's buffered candidates.
             earlyRemoteCandidates = earlyRemoteCandidates.filter { $0.key == device }
             return []
@@ -392,8 +408,28 @@ public struct CallSessionMachine: Sendable {
             let e = clock.now.timeIntervalSince(since)
             if e != state?.elapsed { update { $0.elapsed = e }; fx.append(.publish(state)) }
         }
+        if let expired = deadline() { return fx + expired }
         fx += reconnectActions(reconnect.tick(at: clock.now))
         return fx
+    }
+
+    /// An unanswered ring (either side), or any call that is answered but never connects, ends here.
+    private mutating func deadline() -> [CallEffect]? {
+        let now = clock.now
+        let phase = state?.phase
+        if let setup = setupSince, phase == .ringing || phase == .connecting,
+           now.timeIntervalSince(setup) >= Self.setupDeadline {
+            return end(.failed, notifyServer: true)
+        }
+        guard let rang = ringingSince, now.timeIntervalSince(rang) >= Self.ringDeadline else { return nil }
+        if outgoing, setupSince == nil, phase == .ringing {
+            return end(.missed, notifyServer: true)   // cancels the ring
+        }
+        // A callee whose "call.ended missed" was lost gives up locally. The server owns the missed state: send nothing.
+        if !outgoing, phase == .incoming {
+            return end(.missed, notifyServer: false)
+        }
+        return nil
     }
 
     private mutating func stats(_ s: MediaStats) -> [CallEffect] {

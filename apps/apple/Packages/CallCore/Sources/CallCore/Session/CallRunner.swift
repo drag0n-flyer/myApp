@@ -98,11 +98,8 @@ public final class CallRunner {
     private func sameCall(_ id: String) -> Bool { id == callID }
 
     private func open(_ sealed: Data, from device: String) async {
-        do {
-            handle(.remote(try await sealer.open(sealed, from: contactID), fromDeviceID: device))
-        } catch {
-            handle(.remoteRejected((error as? CallSealError) ?? .undecryptable, fromDeviceID: device))
-        }
+        // The credential device goes with the payload; the machine drops it when it differs from `device`.
+        handle(await sealer.openInput(sealed, from: contactID, fromDeviceID: device))
     }
 
     // MARK: - Effects

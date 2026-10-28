@@ -6,8 +6,8 @@ import AppCore
 public struct UnavailableCallSignalSealer: SenderRecoveringSealer {
     public init() {}
     public func seal(_ payload: CallSignalPayload, to contactID: String) async throws -> Data { throw CallSealError.undecryptable }
-    public func open(_ data: Data, from contactID: String) async throws -> CallSignalPayload { throw CallSealError.undecryptable }
-    public func openRecoveringSender(_ data: Data) async throws -> (payload: CallSignalPayload, senderAccountID: String) {
+    public func open(_ data: Data, from contactID: String) async throws -> (payload: CallSignalPayload, senderDeviceID: String) { throw CallSealError.undecryptable }
+    public func openRecoveringSender(_ data: Data) async throws -> (payload: CallSignalPayload, senderAccountID: String, senderDeviceID: String) {
         throw CallSealError.undecryptable
     }
 }

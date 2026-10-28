@@ -47,12 +47,16 @@ internal class LinkFlow(
      * [MAX_WAIT_MS] have passed, or cancellation. The device clock is never consulted: only the server's answer
      * and the time spent waiting here end the wait. A network error, a 5xx or a rate limit is retried with
      * backoff and never ends linking. The claim itself is never repeated once it has been answered.
+     *
+     * [host] is the host [api] talks to. A code is claimed only on the host that issued it: on any other host
+     * the ticket is dropped unsent and linking ends with [AccountError.LinkExpired].
      */
-    suspend fun awaitApproval(api: IdentityApi): LinkApproved {
+    suspend fun awaitApproval(api: IdentityApi, host: String): LinkApproved {
         val t = ticket ?: throw AccountError.LinkExpired
         val pair = keys
-        val issuer = host ?: throw AccountError.LinkExpired
+        val issuer = this.host ?: throw AccountError.LinkExpired
         try {
+            if (!host.equals(issuer, ignoreCase = true)) throw AccountError.LinkExpired
             var waited = 0L
             var failures = 0
             while (true) {

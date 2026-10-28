@@ -1,6 +1,5 @@
 package org.example.app.net.account
 
-import java.time.Instant
 import kotlinx.serialization.json.JsonObject
 import okhttp3.OkHttpClient
 import org.example.app.contracts.Hpke
@@ -59,7 +58,6 @@ class Fixture(
     val hpke: Hpke = ReferenceHpke(),
     val store: SecretStore = MemorySecretStore(),
     signedIn: Boolean = false,
-    now: Instant = Instant.parse("2026-10-28T12:00:00Z"),
 ) {
     val server = FakeServer()
     val sessions = SessionStore(store)
@@ -69,7 +67,6 @@ class Fixture(
     val passkeys = FakePasskeys()
     val snapshots = FakeSnapshots()
     val sleeps = ArrayList<Long>()
-    var clock: Instant = now
     var assetLinksSeen: String? = "links"
 
     init {
@@ -87,7 +84,6 @@ class Fixture(
         passkeySupport = PasskeySupportCheck { _, _ -> passkeysSupported },
         makeClient = { addr -> if (addr.hostPort == hostPort) client else error("unexpected host ${addr.hostPort}") },
         sleep = { ms -> sleeps += ms },
-        clock = { clock },
     )
 
     fun serverInfo(protocol: Int = 1) = server.json(

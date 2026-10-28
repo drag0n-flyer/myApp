@@ -128,6 +128,9 @@ public struct VoIPPushResolver: Sendable {
         guard let sealed, !sealed.isEmpty else {
             return VoIPPushResolution(payload: .empty, isStranger: false, status: nil)
         }
+        // TODO(K4): the ring's device is `opened.senderDeviceID` (from the MLS credential). Before LiveCallEngine
+        // feeds `.incoming(fromDeviceID:)` for a push-woken call, it must check that device against the
+        // `call.ring` it later receives (or pass it as `fromDeviceID`), so the call is bound to the credential device.
         guard let opened = try? await sealer.openRecoveringSender(sealed), opened.payload.kind == .ring else {
             return VoIPPushResolution(payload: .undecryptable, isStranger: false, status: nil)
         }

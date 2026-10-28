@@ -177,9 +177,15 @@ class LiveConnection internal constructor(
             setState(id, ConnectionState.Connecting)
             val outcome = connectOnce(id, endpoint.request)
             if (!current(id)) return
-            if (outcome.httpStatus == 401 || outcome.code == 4003) {
+            if (outcome.code == 4003) {
                 finish(id, ConnectionState.Revoked)
                 client.handleRevoked(endpoint.generation)
+                return
+            }
+            if (outcome.httpStatus == 401) {
+                // Revoked only when a second call confirms it (SignOutReason); otherwise signed out, data kept.
+                val reason = client.handleUpgradeUnauthorized(endpoint.generation)
+                finish(id, if (reason == org.example.app.net.SignOutReason.Revoked) ConnectionState.Revoked else ConnectionState.Disconnected)
                 return
             }
             if (outcome.code == 4001) return finish(id, ConnectionState.Replaced)

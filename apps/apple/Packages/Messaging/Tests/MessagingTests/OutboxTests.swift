@@ -167,7 +167,7 @@ func makePair(serverMode: String, inner: String?, clock: TestClock = TestClock()
     try ana.deps.repo.upsertConversation(record)
     let conversations = RepoConversations(repo: ana.deps.repo)
     return Pair(server: server, ana: ana, bob: bob, conversation: record, probe: probe, sealer: sealer, clock: clock,
-                outbox: Outbox(deps: ana.deps, conversations: conversations), conversations: conversations)
+                outbox: Outbox(deps: ana.deps, conversations: conversations, readReceiptsEnabled: { true }), conversations: conversations)
 }
 
 // MARK: - Tests
@@ -412,6 +412,26 @@ func makePair(serverMode: String, inner: String?, clock: TestClock = TestClock()
         #expect(try p.repo.message(id: head.id)?.status == "failed")
         #expect(p.messagePosts().count == 2)               // the old head was not tried again
         #expect(try p.repo.message(id: next.id)?.status == "sent")
+    }
+
+    @Test func controlMessageExpiresAfter24Hours() async throws {
+        let p = try await makePair(serverMode: "e2ee", inner: "e2ee")
+        try p.outbox.enqueueControl(.delete(target: "m-1"), chatID: p.chatID)
+        let before = p.messagePosts().count
+        p.clock.advance(24 * 3600 + 0.001)
+        try await p.outbox.flush()
+        #expect(p.messagePosts().count == before, "an expired control message is not sent")
+        #expect(try p.repo.dueOutboxHeads(at: .distantFuture).isEmpty, "and leaves the queue")
+    }
+
+    @Test func controlMessageWithin24HoursIsSent() async throws {
+        let p = try await makePair(serverMode: "e2ee", inner: "e2ee")
+        try p.outbox.enqueueControl(.delete(target: "m-1"), chatID: p.chatID)
+        let before = p.messagePosts().count
+        p.clock.advance(24 * 3600)
+        try await p.outbox.flush()
+        #expect(p.messagePosts().count == before + 1)
+        #expect(try p.repo.dueOutboxHeads(at: .distantFuture).isEmpty)
     }
 
     @Test func manualRetryGoesToEndOfQueue() async throws {

@@ -44,6 +44,9 @@ final class AppModel {
     private var messaging: LiveMessaging?
     /// The wipe of the last signed-out account; the next sign-in waits for it, so it never opens half-deleted data.
     private var wipeTask: Task<Void, Never>?
+    /// A wipe failed every try (`DeviceSync.wipeAttempts`): no live store, connection or sign-in work runs until
+    /// the app starts again, which finishes the wipe first.
+    private var wipeFailed = false
     private var liveTasks: [Task<Void, Never>] = []
     private var apnsToken: Data?
     private var registrar: PushRegistrar?
@@ -67,6 +70,11 @@ final class AppModel {
         didSet {
             syncCalls()
             messaging?.autoDownload.value = settings.autoDownload
+            if settings.readReceipts != oldValue.readReceipts, let messaging {
+                messaging.readReceipts.value = settings.readReceipts
+                // Others' read ticks show or hide with the switch.
+                messaging.store.refresh()
+            }
         }
     }
     var network: NetworkType {
@@ -158,7 +166,9 @@ final class AppModel {
         live?.onSignedOut = { [weak self] in self?.deviceWasRemoved() }
         // A sign-out wipe that was cut short (kill, failure) is finished first; the sign-in below waits for it.
         if !launch.sampleData {
-            wipeTask = Task { try? await LiveMessaging.finishPendingWipe() }
+            wipeTask = Task { [weak self] in
+                do { try await LiveMessaging.finishPendingWipe() } catch { self?.wipeFailed = true }
+            }
         }
         if live?.isSignedIn == true { Task { await didSignIn() } }
         if let url = launch.openURL { handle(url: url) }
@@ -280,11 +290,8 @@ final class AppModel {
     func removeDevice(id: String) async {
         try? await account.removeDevice(id: id)
         await refreshDevices()
-        // The server tells the other devices; this one takes the removed device out of its groups itself.
-        if !linkedDevices.contains(where: { $0.id == id }), id != sessions?.current?.deviceID, let sync = messaging?.sync {
-            try? await sync.handleRevoked(deviceID: id)
-            await syncInbox()
-        }
+        // The server tells the other devices; this one runs reconcile itself (the scheduler skips this device's id).
+        if !linkedDevices.contains(where: { $0.id == id }) { await messaging?.reconciler.deviceRevoked(id) }
     }
 
     /// Deletes the account on the server, then returns to the welcome screen.
@@ -313,16 +320,13 @@ final class AppModel {
                 await previous?.value
                 // The old graph stops first: no event task, send or sync can write after the wipe.
                 await stopLive(force: true)
-                // The notification extension may hold the lock for a moment (`LockTimeout`): try a few times.
-                for attempt in 1...3 {
-                    do {
-                        if let old { try await old.wipeAfterSignOut() } else { try await LiveMessaging.finishPendingWipe() }
-                        break
-                    } catch {
-                        // The pending marker stays; the next launch or sign-in retries before any data is opened.
-                        print("wipe_failed")
-                        if attempt < 3 { try? await Task.sleep(for: .seconds(2)) }
-                    }
+                do {
+                    if let old { try await old.wipeAfterSignOut() } else { try await LiveMessaging.finishPendingWipe() }
+                } catch {
+                    // Tried `DeviceSync.wipeAttempts` times. Stop all further work; the pending marker stays and the
+                    // next launch retries before any data is opened.
+                    print("wipe_failed")
+                    self.wipeFailed = true
                 }
             }
         }
@@ -354,11 +358,13 @@ final class AppModel {
 
     /// Call after any sign-in succeeds: loads devices, starts the live connection and registers for push.
     func didSignIn() async {
+        await wipeTask?.value
+        guard !wipeFailed else { return }
         await refreshDevices()
         await installLiveStore()
         await startLive()
         await syncInbox()
-        await maintainDevices()
+        await replenishKeyPackages()
         await registerForPushIfAllowed()
     }
 
@@ -371,7 +377,7 @@ final class AppModel {
             Task {
                 await startLive()
                 await syncInbox()
-                await maintainDevices()
+                await replenishKeyPackages()
             }
         case .background:
             isBackground = true
@@ -388,9 +394,10 @@ final class AppModel {
     private func installLiveStore() async {
         await wipeTask?.value
         wipeTask = nil
-        guard !isSampleData, messaging == nil, let session = sessions?.current, let client = live?.client,
+        guard !wipeFailed, !isSampleData, messaging == nil, let session = sessions?.current, let client = live?.client,
               let built = await LiveMessaging.make(
-                session: session, client: client, network: network, settings: settings.autoDownload) else { return }
+                session: session, client: client, network: network, settings: settings.autoDownload,
+                readReceipts: settings.readReceipts) else { return }
         messaging = built
         callSealer.use(built.store)
         built.store.onChange = { [weak self] in self?.revision += 1 }
@@ -403,21 +410,11 @@ final class AppModel {
         await messaging?.store.syncInbox()
     }
 
-    /// Own-device upkeep once the inbox is in step: top up KeyPackages and add my other devices to my groups.
-    /// Both are retried at the next start or foreground, so a failure here is not reported.
-    private func maintainDevices() async {
+    /// Tops up this device's KeyPackages once the inbox is in step; retried at the next start or foreground, so a
+    /// failure is not reported. (Adding and removing my own devices in my groups is the reconciler's, on connect.)
+    private func replenishKeyPackages() async {
         guard let sync = messaging?.sync else { return }
         try? await sync.replenishKeyPackages()
-        try? await sync.reconcileOwnDevices()
-    }
-
-    /// Another device of this account was removed: take it out of my groups. (The server tells only the
-    /// other devices; the removed one learns from its 401 or a closed socket and wipes itself.)
-    private func otherDeviceRevoked(_ id: String) async {
-        await refreshDevices()
-        guard id != sessions?.current?.deviceID, let sync = messaging?.sync else { return }
-        try? await sync.handleRevoked(deviceID: id)
-        await syncInbox()
     }
 
     private func startLive() async {
@@ -427,7 +424,7 @@ final class AppModel {
 
     /// Creates the live connection and the call engine on top of it, once per sign-in.
     private func ensureConnection() {
-        guard connection == nil, let live, live.isSignedIn, let client = live.client else { return }
+        guard !wipeFailed, connection == nil, let live, live.isSignedIn, let client = live.client else { return }
         // Signed-in builds wait for the live store: the call engine reads chats from it and seals through it.
         guard isSampleData || messaging != nil || !LiveMessaging.isAvailable else { return }
         let c = LiveConnection(client: client, transport: URLSessionWebSocketTransport())
@@ -456,7 +453,7 @@ final class AppModel {
                 for await event in c.events {
                     signaling.ingest(event)   // call events go to the engine; the rest are handled here
                     switch event {
-                    case .deviceRevoked(let id): await self?.otherDeviceRevoked(id)
+                    case .deviceRevoked(let id): await self?.deviceRevoked(id)
                     case .inbox: await self?.syncInbox()
                     default: break
                     }
@@ -466,7 +463,11 @@ final class AppModel {
                 // `.revoked` also reaches the client's 401 path, which calls `deviceWasRemoved`.
                 for await state in c.states {
                     await self?.setConnectionState(state)
-                    if state == .revoked { await self?.stopLive() }
+                    switch state {
+                    case .revoked: await self?.stopLive()
+                    case .connected: await self?.didConnect()
+                    default: break
+                    }
                 }
             },
         ]
@@ -506,12 +507,27 @@ final class AppModel {
     }
     #endif
 
+    /// Every live connect: catch up on the inbox, then bring this account's devices in every chat in line with
+    /// the device list (mls-profile "Removing a device"); the scheduler runs it once more 11 minutes later.
+    private func didConnect() async {
+        await syncInbox()
+        await messaging?.reconciler.connected()
+    }
+
+    /// A `device.revoked` event (unsigned). For another device it only runs reconcile; one naming this device is
+    /// ignored. Only a 401 or 4003 (revoked session) signs this device out and wipes it, through `onSignedOut`.
+    private func deviceRevoked(_ id: String) async {
+        await refreshDevices()
+        await messaging?.reconciler.deviceRevoked(id)
+    }
+
     func callStatus(_ callID: String) async -> CallStatus? {
         guard let signaling = liveCalls?.signaling else { return nil }
         return try? await signaling.status(callID: callID)
     }
 
     private func stopLive(force: Bool = false) async {
+        await messaging?.reconciler.disconnected()
         await connection?.stop()
         connectionState = .idle
         if force || live?.isSignedIn != true {   // signed out: drop the connection and its listeners

@@ -113,25 +113,37 @@ private func syncInbox(_ device: TestDevice, joinWith joiner: ConversationManage
         #expect(bobSide.innerMode == "e2ee" && bobSide.mode == "e2ee")
     }
 
+    /// A create's add commit is never rebuilt (MLS profile, "Commits" step 5, exception), so the stale-epoch
+    /// retry is checked on a later commit.
     @Test func staleEpochRetries() async throws {
         let rig = try await Rig.make()
-        await rig.server.rejectNextCommits(1)
         let syncs = Counter()
-        let record = try await manager(rig.ana1, syncs: syncs).create(with: "acc-bob")
+        let mgr = manager(rig.ana1, syncs: syncs)
+        let record = try await mgr.create(with: "acc-bob")
+        let group = GroupID(raw: record.groupID)
+        await rig.server.rejectNextCommits(1)
+        let epoch = try await mgr.postCommitWithRetry(
+            serverID: record.serverID, group: group, addDevices: [], removeDevices: [rig.ana2.deviceID]
+        ) { try await rig.ana1.deps.mls.remove(members: ["acc-ana/\(rig.ana2.deviceID)"], from: group) }
         #expect(await syncs.value == 1)
-        #expect(record.epoch == 1)
-        #expect(try await rig.ana1.deps.mls.epoch(of: GroupID(raw: record.groupID)) == 1)
-        #expect(await rig.server.memberDevices(of: record.serverID).count == 4)
+        #expect(epoch == 2)
+        #expect(try await rig.ana1.deps.mls.epoch(of: group) == 2)
+        #expect(await rig.server.memberDevices(of: record.serverID).count == 3)
     }
 
     @Test func staleEpochGivesUp() async throws {
         let rig = try await Rig.make()
+        let mgr = manager(rig.ana1)
+        let record = try await mgr.create(with: "acc-bob")
+        let group = GroupID(raw: record.groupID)
         await rig.server.rejectNextCommits(4)
-        await #expect(throws: SyncError.epochConflict) { try await manager(rig.ana1).create(with: "acc-bob") }
-        #expect(try rig.ana1.deps.repo.conversations(chatID: "acc-bob").isEmpty)
-        let allIDs = await rig.server.conversationIDs()
-        let onlyID = try #require(allIDs.first)
-        #expect(await rig.server.memberDevices(of: onlyID).count == 1)
+        await #expect(throws: SyncError.epochConflict) {
+            try await mgr.postCommitWithRetry(
+                serverID: record.serverID, group: group, addDevices: [], removeDevices: [rig.ana2.deviceID]
+            ) { try await rig.ana1.deps.mls.remove(members: ["acc-ana/\(rig.ana2.deviceID)"], from: group) }
+        }
+        #expect(try await rig.ana1.deps.mls.epoch(of: group) == 1)
+        #expect(await rig.server.memberDevices(of: record.serverID).count == 4)
     }
 
     @Test func simultaneousCreate() async throws {

@@ -167,8 +167,10 @@ final class LiveCallEngine {
     private func handleRing(callID: String, from account: String, device: String, video: Bool, payload: Data) async {
         if let runner, runner.callID == callID { return }   // the push path already has it
         guard !hasLiveCall else { log.debug("ring ignored: already in a call"); return }
-        guard let ring = try? await sealer.open(payload, from: account),
-              ring.kind == .ring, ring.callID == callID else { return }
+        // The ring must come from the device the server names: the MLS credential's device binds the call to it.
+        guard let opened = try? await sealer.open(payload, from: account), opened.senderDeviceID == device,
+              opened.payload.kind == .ring, opened.payload.callID == callID else { return }
+        let ring = opened.payload
         let contact = chat.contact(id: account)
             ?? Contact(id: account, displayName: String(localized: "Unknown"), username: "")
         guard chat.incomingCall(from: contact, video: video) == .ring else {

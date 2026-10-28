@@ -63,17 +63,18 @@ class DeviceSync(
      * - an own device that is listed and not in the group is added, then the `mode` envelope is sent again so the new
      *   device learns it (Design 18);
      * - an own device that is in the group and no longer listed is removed (a device that missed `device.revoked`
-     *   catches up here; the profile allows 24 hours from coming online), but only when the list is non-empty and
-     *   contains this device, and only when the device was missing from two lists at least ten minutes apart (the
+     *   catches up here; the profile allows 24 hours from coming online), but only when the list contains this device, and only when the device was missing from two lists at least ten minutes apart (the
      *   first time is stored; the injected clock is used) and was not listed within those ten minutes. A bad list or
      *   a device linked during the run cannot remove anyone.
-     * Each conversation is tried even when another fails; the first error is thrown at the end.
+     * Each conversation, and each of the two steps in it, is tried even when another fails; the first error is thrown
+     * at the end.
      */
     suspend fun reconcileOwnDevices() {
         val records = server.devices()
         val listed = records.map { it.id }.toSet()
         val others = listed - me.deviceId
         // A wrong, empty or partial answer must never remove anything: the list has to contain this device.
+        // It never wipes either: only a 401 or close code 4003 proves this device was revoked.
         val trustworthy = me.deviceId in listed
         val now = clock.now()
         if (trustworthy) {
@@ -84,17 +85,26 @@ class DeviceSync(
         }
         val stillStale = HashSet<String>()
         var failure: Exception? = null
+        var removeFailed = false
         for (conversation in activeConversations()) {
+            // Adding and removing are separate steps: a failed add (no KeyPackages) never skips a removal.
             try {
                 if (others.isNotEmpty()) addMissing(others, conversation)
-                if (trustworthy) removeUnlisted(listed, conversation, now, stillStale)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 failure = failure ?: e
             }
+            try {
+                if (trustworthy) removeUnlisted(listed, conversation, now, stillStale)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                failure = failure ?: e
+                removeFailed = true
+            }
         }
-        if (trustworthy && failure == null) {
+        if (trustworthy && !removeFailed) {
             // A device that is no longer in any group needs no mark.
             for ((key, value) in repo.entries(MISSING_PREFIX)) {
                 if (value.isNotEmpty() && key.removePrefix(MISSING_PREFIX) !in stillStale) repo.set(key, ByteArray(0))
@@ -152,25 +162,13 @@ class DeviceSync(
     }
 
     /**
-     * Removes `"<me>/<deviceId>"` from every group that has it. If the revoked device is this one, the device wipes
-     * itself instead (it can no longer post commits). Every conversation is tried; the first error is thrown at the end.
+     * `device.revoked` is not signed, so it is only a hint: it starts [reconcileOwnDevices], and removal still needs
+     * two lists ten minutes apart. An event naming this device is ignored: the server never sends it to the revoked
+     * device, and only a 401 or close code 4003 on an authenticated call can prove it.
      */
     suspend fun handleRevoked(deviceId: String) {
-        if (deviceId == me.deviceId) {
-            wipeLocalData()
-            return
-        }
-        var failure: Exception? = null
-        for (conversation in activeConversations()) {
-            try {
-                remove(deviceId, conversation)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                failure = failure ?: e
-            }
-        }
-        failure?.let { throw it }
+        if (deviceId == me.deviceId) return
+        reconcileOwnDevices()
     }
 
     private suspend fun remove(deviceId: String, conversation: ConversationRecord) {

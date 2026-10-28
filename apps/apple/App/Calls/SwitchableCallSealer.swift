@@ -15,10 +15,10 @@ final class SwitchableCallSealer: SenderRecoveringSealer, @unchecked Sendable {
     func seal(_ payload: CallSignalPayload, to contactID: String) async throws -> Data {
         try await sealer.seal(payload, to: contactID)
     }
-    func open(_ data: Data, from contactID: String) async throws -> CallSignalPayload {
+    func open(_ data: Data, from contactID: String) async throws -> (payload: CallSignalPayload, senderDeviceID: String) {
         try await sealer.open(data, from: contactID)
     }
-    func openRecoveringSender(_ data: Data) async throws -> (payload: CallSignalPayload, senderAccountID: String) {
+    func openRecoveringSender(_ data: Data) async throws -> (payload: CallSignalPayload, senderAccountID: String, senderDeviceID: String) {
         try await sealer.openRecoveringSender(data)
     }
 }

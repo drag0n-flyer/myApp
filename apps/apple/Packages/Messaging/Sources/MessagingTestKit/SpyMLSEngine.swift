@@ -9,6 +9,8 @@ public final class SpyMLSEngine: MLSEngine, @unchecked Sendable {
     private var failing: Set<Data> = []
     private var membersFail = false
     private var _rejected = 0
+    private var membersFailures: (count: Int, error: MLSError) = (0, .busy)
+    private var _addCount = 0
     private var holds: [Data: (entered: AsyncStream<Void>.Continuation, release: AsyncStream<Void>)] = [:]
 
     public init(_ inner: MLSEngine) { self.inner = inner }
@@ -23,6 +25,12 @@ public final class SpyMLSEngine: MLSEngine, @unchecked Sendable {
 
     /// `members(of:)` throws `MLSError.storage` while set.
     public func failMembers(_ on: Bool) { lock.withLock { membersFail = on } }
+
+    /// The next `count` calls to `members(of:)` throw `error`.
+    public func failNextMembers(_ count: Int, with error: MLSError) { lock.withLock { membersFailures = (count, error) } }
+
+    /// How many add commits `add` has built.
+    public var addCount: Int { lock.withLock { _addCount } }
 
     /// `process` for this payload stops until `release()` is called. `entered` yields once `process` is running.
     public func hold(_ payload: Data) -> (entered: AsyncStream<Void>, release: @Sendable () -> Void) {
@@ -51,7 +59,10 @@ public final class SpyMLSEngine: MLSEngine, @unchecked Sendable {
 
     public func makeKeyPackages(count: Int) async throws -> [Data] { try await inner.makeKeyPackages(count: count) }
     public func createGroup() async throws -> GroupID { try await inner.createGroup() }
-    public func add(keyPackages: [Data], to group: GroupID) async throws -> CommitBundle { try await inner.add(keyPackages: keyPackages, to: group) }
+    public func add(keyPackages: [Data], to group: GroupID) async throws -> CommitBundle {
+        lock.withLock { _addCount += 1 }
+        return try await inner.add(keyPackages: keyPackages, to: group)
+    }
     public func remove(members: [String], from group: GroupID) async throws -> CommitBundle { try await inner.remove(members: members, from: group) }
     public func commitAccepted(_ group: GroupID) async throws { try await inner.commitAccepted(group) }
     public func commitRejected(_ group: GroupID) async throws {
@@ -68,6 +79,12 @@ public final class SpyMLSEngine: MLSEngine, @unchecked Sendable {
     public func decryptApplication(_ group: GroupID, _ message: Data) async throws -> ApplicationMessage { try await inner.decryptApplication(group, message) }
     public func members(of group: GroupID) async throws -> [String] {
         if lock.withLock({ membersFail }) { throw MLSError.storage("injected failure") }
+        let injected = lock.withLock { () -> MLSError? in
+            guard membersFailures.count > 0 else { return nil }
+            membersFailures.count -= 1
+            return membersFailures.error
+        }
+        if let injected { throw injected }
         return try await inner.members(of: group)
     }
 }

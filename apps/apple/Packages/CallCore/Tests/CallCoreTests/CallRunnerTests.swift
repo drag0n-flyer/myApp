@@ -30,8 +30,8 @@ private final class Rig {
                             record: { [unowned self] s, c, o, _ in history.append((s, c, o)) })
     }
 
-    /// A payload as the other side would have sent it.
-    func sealed(_ p: CallSignalPayload, from id: String = "bob") -> Data {
+    /// A payload as the other side would have sent it; `id` is the MLS credential identity `<account>/<device>`.
+    func sealed(_ p: CallSignalPayload, from id: String = "bob/d1") -> Data {
         let d = try! JSONEncoder().encode(p)
         sealer.setSender(id, of: d)
         return d
@@ -66,7 +66,7 @@ private final class Rig {
         let r = Rig()
         r.runner.handle(.start(contact: bob, video: false, callID: "c1"))
         let offer = CallSignalPayload(kind: .offer, callID: "c1", sdp: sdp(calleeFP), dtlsFingerprint: calleeFP)
-        await r.runner.ingest(.answered(callID: "c1", deviceID: "d1", payload: r.sealed(offer, from: "mallory")))
+        await r.runner.ingest(.answered(callID: "c1", deviceID: "d1", payload: r.sealed(offer, from: "mallory/d1")))
         await r.runner.settled()
         #expect(r.runner.state?.phase.isEndedForTest == true)
         #expect(r.frames().contains("call.hangup"))

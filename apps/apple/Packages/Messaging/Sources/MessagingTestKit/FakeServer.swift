@@ -41,7 +41,7 @@ public actor FakeServer {
     private var blocks: [String: Set<String>] = [:]             // account -> blocked accounts
     private var reports: [[String: String]] = []
     private var requestLog: [String] = []
-    private var requestFailures: [(prefix: String, count: Int)] = []
+    private var requestFailures: [(prefix: String, count: Int, status: Int)] = []
     private var attachments: [String: Data] = [:]
     private var messageSeqs: [String: Int64] = [:]              // "device|conv|clientMsgID" -> seq
     private var subscribers: [String: [UUID: AsyncStream<ServerEvent>.Continuation]] = [:]
@@ -51,6 +51,7 @@ public actor FakeServer {
     private var responseLost = false
     private var messageFailures: [Int] = []   // statuses for the next message posts
     private var counter = 0
+    private var deviceListFilter: (@Sendable ([String]) -> [String])?
     private let now: @Sendable () -> Date
 
     public init(now: @escaping @Sendable () -> Date = { Date(timeIntervalSince1970: 1_700_000_000) }) {
@@ -58,6 +59,15 @@ public actor FakeServer {
     }
 
     public func setDefaultMode(_ mode: String) { defaultMode = mode }
+
+    /// Changes the mode the server reports for one conversation (a value a newer server might send).
+    public func setMode(_ mode: String, of conversationID: String) { conversations[conversationID]?.mode = mode }
+
+    /// Forgets a conversation: every later request about it gets `404 not_found`.
+    public func removeConversation(_ conversationID: String) { conversations[conversationID] = nil }
+
+    /// The epoch the server holds for a conversation (`nil` when it does not exist).
+    public func epoch(of conversationID: String) -> UInt64? { conversations[conversationID]?.epoch }
 
     /// A message as the server stores it (what the sender posted).
     public struct StoredMessage: Sendable, Equatable {
@@ -94,6 +104,19 @@ public actor FakeServer {
     public var escrowKey = Data((0..<32).map { UInt8(0x40 + $0) })
 
     // MARK: - Test hooks
+
+    /// Revokes a device as the server does: its row goes, and with it its conversation memberships, KeyPackages
+    /// and session. It stays a leaf in every MLS group until another device commits a Remove.
+    public func revokeDevice(account: String, deviceID: String) {
+        accounts[account]?.devices.removeAll { $0 == deviceID }
+        deviceAccount[deviceID] = nil
+        keyPackages[deviceID] = nil
+        for id in conversations.keys { conversations[id]?.members.remove(deviceID) }
+    }
+
+    /// Changes what `GET /v1/devices` answers (a wrong, empty or partial list); nil gives the true list again.
+    /// The filter gets the account's device IDs in order and returns the ones to list.
+    public func setDeviceListFilter(_ filter: (@Sendable ([String]) -> [String])?) { deviceListFilter = filter }
 
     /// Adds a device to `account`, creating the account (with `username`) on first use.
     public func registerDevice(account: String, username: String) -> String {
@@ -135,8 +158,11 @@ public actor FakeServer {
     /// Each report's `accountID`, `reason`, `conversationID` and `messages` (the number of messages sent).
     public func submittedReports() -> [[String: String]] { reports }
 
-    /// Fails the next `count` requests whose `"METHOD /path"` starts with `prefix` with a 503. They are not logged.
-    public func failNextRequests(_ prefix: String, count: Int = 1) { requestFailures.append((prefix, count)) }
+    /// Fails the next `count` requests whose `"METHOD /path"` starts with `prefix` with `status` (a 503 by default).
+    /// They are not logged.
+    public func failNextRequests(_ prefix: String, count: Int = 1, status: Int = 503) {
+        requestFailures.append((prefix, count, status))
+    }
 
     /// Every handled authenticated request so far, as `"METHOD /path"` (for example `"PUT /v1/blocks/acc-bob"`).
     public func requests() -> [String] { requestLog }
@@ -164,8 +190,9 @@ public actor FakeServer {
         let line = "\(method) \(path)"
         if let i = requestFailures.firstIndex(where: { line.hasPrefix($0.prefix) }) {
             requestFailures[i].count -= 1
+            let status = requestFailures[i].status
             if requestFailures[i].count <= 0 { requestFailures.remove(at: i) }
-            return failure(503, "unavailable")
+            return failure(status, status == 503 ? "unavailable" : "injected")
         }
         requestLog.append(line)
         let body = request.httpBody ?? Data()
@@ -413,7 +440,8 @@ public actor FakeServer {
         struct Out: Encodable {
             let id: String, name: String, platform: String, createdAt: Date, lastSeenAt: Date, current: Bool
         }
-        let list = (accounts[me.account]?.devices ?? []).map {
+        let all = accounts[me.account]?.devices ?? []
+        let list = (deviceListFilter?(all) ?? all).map {
             Out(id: $0, name: "Test device \($0)", platform: "ios", createdAt: now(), lastSeenAt: now(), current: $0 == me.device)
         }
         struct Reply: Encodable { let devices: [Out] }

@@ -1,5 +1,7 @@
 package org.example.app.ui.settings
 
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
@@ -41,9 +43,19 @@ private fun platformName(platform: DevicePlatform): Int = when (platform) {
     DevicePlatform.Other -> R.string.device_other
 }
 
-/** Loaded once when opened; no polling. "Link a device" opens the scan screen (task A8). */
+/**
+ * Loaded when opened and on each [refreshes] signal (`device.revoked`); no polling. "Link a device" opens the scan
+ * screen (task A8).
+ */
 @Composable
-fun LinkedDevicesScreen(account: AccountService, onBack: () -> Unit, modifier: Modifier = Modifier, onLinkDevice: () -> Unit = {}, now: () -> Instant = Instant::now) {
+fun LinkedDevicesScreen(
+    account: AccountService,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+    onLinkDevice: () -> Unit = {},
+    now: () -> Instant = Instant::now,
+    refreshes: Flow<Unit> = emptyFlow(),
+) {
     var devices by remember { mutableStateOf<List<DeviceInfo>>(emptyList()) }
     var removingId by rememberSaveable { mutableStateOf<String?>(null) }
     val removing = devices.firstOrNull { it.id == removingId }
@@ -54,6 +66,7 @@ fun LinkedDevicesScreen(account: AccountService, onBack: () -> Unit, modifier: M
     LaunchedEffect(account, reload) {
         try { devices = account.devices(); loadFailed = false } catch (_: AccountError) { loadFailed = true }
     }
+    LaunchedEffect(refreshes) { refreshes.collect { reload++ } }
 
     SettingsPage(stringResource(R.string.settings_linked_devices), onBack, modifier) {
         if (loadFailed) item {

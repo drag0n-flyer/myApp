@@ -54,7 +54,7 @@ private struct Node {
         let deps = device.deps
         let keys = EscrowKeyProvider(server: deps.server)
         let manager = ConversationManager(deps: deps, escrowKey: keys.closure)
-        let outbox = Outbox(deps: deps, conversations: manager, keys: keys)
+        let outbox = Outbox(deps: deps, conversations: manager, keys: keys, readReceiptsEnabled: { true })
         inbox = InboxProcessor(
             deps: deps, conversations: manager, handler: IncomingHandler(me: deps.me, now: deps.now, log: { _ in }),
             controls: outbox)

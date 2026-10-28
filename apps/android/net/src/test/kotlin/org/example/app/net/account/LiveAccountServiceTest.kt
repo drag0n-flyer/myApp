@@ -266,6 +266,20 @@ class LiveAccountServiceTest {
         }
     }
 
+    /** The app's messaging stack and live socket use the client bound to the stored session (task I1). */
+    @Test
+    fun sessionClientIsTheSessionsHostOrNull() {
+        assertEquals(null, f.service.sessionClient)
+        val g = Fixture(signedIn = true)
+        try {
+            assertEquals(g.client, g.service.sessionClient)
+            g.service.signOutLocally()
+            assertEquals(null, g.service.sessionClient)
+        } finally {
+            g.shutdown()
+        }
+    }
+
     @Test
     fun invalidAddressIsRejected() = runBlocking<Unit> {
         assertFailsWith<AccountError.InvalidServerAddress> { f.service.connect("http://evil.example.org") }

@@ -100,15 +100,17 @@ private actor StateLog {
     var deviceID: String { store.current?.deviceID ?? "" }
 
     /// The server sends at most 3 codes an hour to one address, so each test uses its own address.
-    /// Connects, signs up `username` with a passkey and returns the account's username as the server sees it.
+    /// Connects, signs up `username` (display name "Ana") with a passkey and returns the account's username as the server sees it.
     func signUp(username: String, email: String, mail: Mailbox) async throws -> String {
         _ = try await service.connect(host: "localhost")
         #expect(try await service.redeemInvite(code: try env("E2E_INVITE_CODE")))
         let before = mail.newest()
-        try await service.startSignUp(username: username, email: email)
+        try await service.startSignUp(displayName: "Ana", username: username, email: email)
         try await service.verifyEmail(code: try await mail.code(after: before))
         try await service.finishSignUp()
-        return try await client.me().username
+        let me = try await client.me()
+        #expect(me.displayName == "Ana")
+        return me.username
     }
 }
 
@@ -144,8 +146,11 @@ private actor StateLog {
         // The iPhone approves it; the code's host (localhost) matches the iPhone's server.
         let request = try await iphone.service.linkRequest(qrText: code.qrText)
         #expect(request.deviceName == "Ana's Mac")
-        try await iphone.service.approveLink(request)
-        try await waiting.value
+        let approval = try await iphone.service.approveLink(request)
+        #expect(approval.snapshotSent)
+        let linked = try await waiting.value
+        // Nothing imports the contact list yet (plan 7).
+        #expect(!linked.contactsCopied)
 
         // The Mac now has the same account and a live connection.
         let phoneMe = try await iphone.client.me()
