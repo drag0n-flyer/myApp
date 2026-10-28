@@ -49,12 +49,13 @@ class SpyMlsEngine(private val inner: MlsEngine, private val lockHeld: () -> Boo
     /** Counted in [processApplicationCalls], not in [processCalls]. */
     var processApplicationCalls = 0
         private set
-    override suspend fun processApplication(message: ByteArray): Incoming.Application {
+    override suspend fun processApplication(group: GroupId, message: ByteArray): Incoming.Application {
         check("processApplication")
         processApplicationCalls += 1
         failProcess?.invoke(message)?.let { throw it }
-        return inner.processApplication(message)
+        return inner.processApplication(group, message)
     }
+    override fun groupOf(message: ByteArray) = inner.groupOf(message)
     override suspend fun epoch(group: GroupId) = inner.epoch(group)
     override suspend fun exportSecret(group: GroupId, label: String, length: Int) = inner.exportSecret(group, label, length)
     override suspend fun members(group: GroupId): List<String> {

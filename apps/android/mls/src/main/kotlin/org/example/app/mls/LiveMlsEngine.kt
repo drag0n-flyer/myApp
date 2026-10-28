@@ -98,13 +98,26 @@ class LiveMlsEngine(identity: String, storageDir: File, secrets: SecretStore) : 
         is Processed.Joined -> Incoming.Joined(GroupId(result.groupId), result.epoch.toLong())
     }
 
-    override suspend fun processApplication(message: ByteArray): Incoming.Application =
-        when (val result = call { it.processApplication(message) }) {
-            is Processed.Application ->
-                Incoming.Application(GroupId(result.groupId), result.sender, result.plaintext, result.epoch.toLong())
-            // The Rust side returns only an application message here; anything else is a refusal.
-            else -> throw MlsException.Malformed
-        }
+    override suspend fun processApplication(group: GroupId, message: ByteArray): Incoming.Application {
+        val result = call { it.decryptApplication(group.raw, message) }
+        return Incoming.Application(group, result.sender, result.plaintext, result.epoch.toLong())
+    }
+
+    /**
+     * MLSMessage: version u16, wire format u16 (2 = PrivateMessage), then the group id as a variable-length
+     * vector (RFC 9420 section 2.1.2: the top two bits of the first byte give a 1, 2 or 4 byte length).
+     * Only picks which group to hand the engine; the engine checks the same header itself.
+     */
+    override fun groupOf(message: ByteArray): GroupId? {
+        if (message.size < 5 || message[2].toInt() != 0 || message[3].toInt() != PRIVATE_MESSAGE) return null
+        val first = message[4].toInt() and 0xFF
+        val width = when (first shr 6) { 0 -> 1; 1 -> 2; 2 -> 4; else -> return null }
+        if (message.size < 4 + width) return null
+        var length = first and 0x3F
+        for (k in 1 until width) length = (length shl 8) or (message[4 + k].toInt() and 0xFF)
+        if (length < 0 || message.size - 4 - width < length) return null
+        return GroupId(message.copyOfRange(4 + width, 4 + width + length))
+    }
 
     override suspend fun epoch(group: GroupId): Long = call { it.epoch(group.raw) }.toLong()
 
@@ -140,5 +153,6 @@ class LiveMlsEngine(identity: String, storageDir: File, secrets: SecretStore) : 
     private companion object {
         /** Process-wide: two engines on one directory still take turns. */
         val engineLock = Mutex()
+        const val PRIVATE_MESSAGE = 2
     }
 }

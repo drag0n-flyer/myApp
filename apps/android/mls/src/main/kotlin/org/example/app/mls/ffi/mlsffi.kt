@@ -650,7 +650,13 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_mlsffi_checksum_method_engine_commit_rejected(
     ): Int
+    external fun uniffi_mlsffi_checksum_method_engine_confirm(
+    ): Int
     external fun uniffi_mlsffi_checksum_method_engine_create_group(
+    ): Int
+    external fun uniffi_mlsffi_checksum_method_engine_decrypt_application(
+    ): Int
+    external fun uniffi_mlsffi_checksum_method_engine_discard(
     ): Int
     external fun uniffi_mlsffi_checksum_method_engine_encrypt(
     ): Int
@@ -662,11 +668,19 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_mlsffi_checksum_method_engine_key_packages(
     ): Int
+    external fun uniffi_mlsffi_checksum_method_engine_member_keys(
+    ): Int
     external fun uniffi_mlsffi_checksum_method_engine_members(
     ): Int
     external fun uniffi_mlsffi_checksum_method_engine_process(
     ): Int
     external fun uniffi_mlsffi_checksum_method_engine_remove(
+    ): Int
+    external fun uniffi_mlsffi_checksum_method_engine_stage_process(
+    ): Int
+    external fun uniffi_mlsffi_checksum_method_stagedprocess_discard(
+    ): Int
+    external fun uniffi_mlsffi_checksum_method_stagedprocess_incoming(
     ): Int
     external fun uniffi_mlsffi_checksum_constructor_engine_new(
     ): Int
@@ -700,8 +714,14 @@ internal object UniffiLib {
     ): Unit
     external fun uniffi_mlsffi_fn_method_engine_commit_rejected(`ptr`: Long,`groupId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    external fun uniffi_mlsffi_fn_method_engine_confirm(`ptr`: Long,`staged`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
     external fun uniffi_mlsffi_fn_method_engine_create_group(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    external fun uniffi_mlsffi_fn_method_engine_decrypt_application(`ptr`: Long,`groupId`: RustBuffer.ByValue,`message`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_mlsffi_fn_method_engine_discard(`ptr`: Long,`staged`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
     external fun uniffi_mlsffi_fn_method_engine_encrypt(`ptr`: Long,`groupId`: RustBuffer.ByValue,`plaintext`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_mlsffi_fn_method_engine_epoch(`ptr`: Long,`groupId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -712,11 +732,23 @@ internal object UniffiLib {
     ): Byte
     external fun uniffi_mlsffi_fn_method_engine_key_packages(`ptr`: Long,`count`: Int,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    external fun uniffi_mlsffi_fn_method_engine_member_keys(`ptr`: Long,`groupId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     external fun uniffi_mlsffi_fn_method_engine_members(`ptr`: Long,`groupId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_mlsffi_fn_method_engine_process(`ptr`: Long,`message`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_mlsffi_fn_method_engine_remove(`ptr`: Long,`groupId`: RustBuffer.ByValue,`identities`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_mlsffi_fn_method_engine_stage_process(`ptr`: Long,`groupId`: RustBuffer.ByValue,`message`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Long
+    external fun uniffi_mlsffi_fn_clone_stagedprocess(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): Long
+    external fun uniffi_mlsffi_fn_free_stagedprocess(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_mlsffi_fn_method_stagedprocess_discard(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    external fun uniffi_mlsffi_fn_method_stagedprocess_incoming(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_mlsffi_fn_func_generate_signature_keypair(uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -866,7 +898,16 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_mlsffi_checksum_method_engine_commit_rejected() != 28185) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_mlsffi_checksum_method_engine_confirm() != 36301) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_mlsffi_checksum_method_engine_create_group() != 33515) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_mlsffi_checksum_method_engine_decrypt_application() != 60401) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_mlsffi_checksum_method_engine_discard() != 59375) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_mlsffi_checksum_method_engine_encrypt() != 39710) {
@@ -884,6 +925,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_mlsffi_checksum_method_engine_key_packages() != 55313) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_mlsffi_checksum_method_engine_member_keys() != 24692) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_mlsffi_checksum_method_engine_members() != 51469) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -891,6 +935,15 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_mlsffi_checksum_method_engine_remove() != 57957) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_mlsffi_checksum_method_engine_stage_process() != 55380) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_mlsffi_checksum_method_stagedprocess_discard() != 46153) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_mlsffi_checksum_method_stagedprocess_incoming() != 48755) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_mlsffi_checksum_constructor_engine_new() != 23522) {
@@ -1302,7 +1355,19 @@ public interface EngineInterface {
     
     fun `commitRejected`(`groupId`: kotlin.ByteArray)
     
+    /**
+     * Persists a staged message; `Stale` if the group's state changed since staging.
+     */
+    fun `confirm`(`staged`: StagedProcess)
+    
     fun `createGroup`(): kotlin.ByteArray
+    
+    /**
+     * Decrypts an application message; anything else is `NotApplication`.
+     */
+    fun `decryptApplication`(`groupId`: kotlin.ByteArray, `message`: kotlin.ByteArray): ApplicationMessage
+    
+    fun `discard`(`staged`: StagedProcess)
     
     fun `encrypt`(`groupId`: kotlin.ByteArray, `plaintext`: kotlin.ByteArray): Encrypted
     
@@ -1315,6 +1380,11 @@ public interface EngineInterface {
     fun `keyPackages`(`count`: kotlin.UInt): List<kotlin.ByteArray>
     
     /**
+     * Every member's identity and leaf signature public key, sorted by identity.
+     */
+    fun `memberKeys`(`groupId`: kotlin.ByteArray): List<MemberKey>
+    
+    /**
      * Current members as "<accountID>/<deviceID>" (README contract: `members(of:)`).
      */
     fun `members`(`groupId`: kotlin.ByteArray): List<kotlin.String>
@@ -1322,6 +1392,11 @@ public interface EngineInterface {
     fun `process`(`message`: kotlin.ByteArray): Processed
     
     fun `remove`(`groupId`: kotlin.ByteArray, `identities`: List<kotlin.String>): CommitBundle
+    
+    /**
+     * Decrypts and validates without persisting anything; see `confirm`.
+     */
+    fun `stageProcess`(`groupId`: kotlin.ByteArray, `message`: kotlin.ByteArray): StagedProcess
     
     companion object
 }
@@ -1471,6 +1546,22 @@ open class Engine: Disposable, AutoCloseable, EngineInterface
     
 
     
+    /**
+     * Persists a staged message; `Stale` if the group's state changed since staging.
+     */
+    @Throws(FfiException::class)override fun `confirm`(`staged`: StagedProcess)
+        = 
+    callWithHandle {
+    uniffiRustCallWithError(FfiException) { _status ->
+    UniffiLib.uniffi_mlsffi_fn_method_engine_confirm(
+        it,
+        FfiConverterTypeStagedProcess.lower(`staged`),_status)
+}
+    }
+    
+    
+
+    
     @Throws(FfiException::class)override fun `createGroup`(): kotlin.ByteArray {
             return FfiConverterByteArray.lift(
     callWithHandle {
@@ -1482,6 +1573,35 @@ open class Engine: Disposable, AutoCloseable, EngineInterface
     }
     )
     }
+    
+
+    
+    /**
+     * Decrypts an application message; anything else is `NotApplication`.
+     */
+    @Throws(FfiException::class)override fun `decryptApplication`(`groupId`: kotlin.ByteArray, `message`: kotlin.ByteArray): ApplicationMessage {
+            return FfiConverterTypeApplicationMessage.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiException) { _status ->
+    UniffiLib.uniffi_mlsffi_fn_method_engine_decrypt_application(
+        it,
+        FfiConverterByteArray.lower(`groupId`),FfiConverterByteArray.lower(`message`),_status)
+}
+    }
+    )
+    }
+    
+
+    override fun `discard`(`staged`: StagedProcess)
+        = 
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_mlsffi_fn_method_engine_discard(
+        it,
+        FfiConverterTypeStagedProcess.lower(`staged`),_status)
+}
+    }
+    
     
 
     
@@ -1556,6 +1676,23 @@ open class Engine: Disposable, AutoCloseable, EngineInterface
 
     
     /**
+     * Every member's identity and leaf signature public key, sorted by identity.
+     */
+    @Throws(FfiException::class)override fun `memberKeys`(`groupId`: kotlin.ByteArray): List<MemberKey> {
+            return FfiConverterSequenceTypeMemberKey.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiException) { _status ->
+    UniffiLib.uniffi_mlsffi_fn_method_engine_member_keys(
+        it,
+        FfiConverterByteArray.lower(`groupId`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
      * Current members as "<accountID>/<deviceID>" (README contract: `members(of:)`).
      */
     @Throws(FfiException::class)override fun `members`(`groupId`: kotlin.ByteArray): List<kotlin.String> {
@@ -1600,6 +1737,23 @@ open class Engine: Disposable, AutoCloseable, EngineInterface
     
 
     
+    /**
+     * Decrypts and validates without persisting anything; see `confirm`.
+     */
+    @Throws(FfiException::class)override fun `stageProcess`(`groupId`: kotlin.ByteArray, `message`: kotlin.ByteArray): StagedProcess {
+            return FfiConverterTypeStagedProcess.lift(
+    callWithHandle {
+    uniffiRustCallWithError(FfiException) { _status ->
+    UniffiLib.uniffi_mlsffi_fn_method_engine_stage_process(
+        it,
+        FfiConverterByteArray.lower(`groupId`),FfiConverterByteArray.lower(`message`),_status)
+}
+    }
+    )
+    }
+    
+
+    
 
     
 
@@ -1634,6 +1788,343 @@ public object FfiConverterTypeEngine: FfiConverter<Engine, Long> {
 
     override fun write(value: Engine, buf: ByteBuffer) {
         buf.putLong(lower(value))
+    }
+}
+
+
+// This template implements a class for working with a Rust struct via a handle
+// to the live Rust struct on the other side of the FFI.
+//
+// There's some subtlety here, because we have to be careful not to operate on a Rust
+// struct after it has been dropped, and because we must expose a public API for freeing
+// theq Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
+//
+//   * Each instance holds an opaque handle to the underlying Rust struct.
+//     Method calls need to read this handle from the object's state and pass it in to
+//     the Rust FFI.
+//
+//   * When an instance is no longer needed, its handle should be passed to a
+//     special destructor function provided by the Rust FFI, which will drop the
+//     underlying Rust struct.
+//
+//   * Given an instance, calling code is expected to call the special
+//     `destroy` method in order to free it after use, either by calling it explicitly
+//     or by using a higher-level helper like the `use` method. Failing to do so risks
+//     leaking the underlying Rust struct.
+//
+//   * We can't assume that calling code will do the right thing, and must be prepared
+//     to handle Kotlin method calls executing concurrently with or even after a call to
+//     `destroy`, and to handle multiple (possibly concurrent!) calls to `destroy`.
+//
+//   * We must never allow Rust code to operate on the underlying Rust struct after
+//     the destructor has been called, and must never call the destructor more than once.
+//     Doing so may trigger memory unsafety.
+//
+//   * To mitigate many of the risks of leaking memory and use-after-free unsafety, a `Cleaner`
+//     is implemented to call the destructor when the Kotlin object becomes unreachable.
+//     This is done in a background thread. This is not a panacea, and client code should be aware that
+//      1. the thread may starve if some there are objects that have poorly performing
+//     `drop` methods or do significant work in their `drop` methods.
+//      2. the thread is shared across the whole library. This can be tuned by using `android_cleaner = true`,
+//         or `android = true` in the [`kotlin` section of the `uniffi.toml` file](https://mozilla.github.io/uniffi-rs/kotlin/configuration.html).
+//
+// If we try to implement this with mutual exclusion on access to the handle, there is the
+// possibility of a race between a method call and a concurrent call to `destroy`:
+//
+//    * Thread A starts a method call, reads the value of the handle, but is interrupted
+//      before it can pass the handle over the FFI to Rust.
+//    * Thread B calls `destroy` and frees the underlying Rust struct.
+//    * Thread A resumes, passing the already-read handle value to Rust and triggering
+//      a use-after-free.
+//
+// One possible solution would be to use a `ReadWriteLock`, with each method call taking
+// a read lock (and thus allowed to run concurrently) and the special `destroy` method
+// taking a write lock (and thus blocking on live method calls). However, we aim not to
+// generate methods with any hidden blocking semantics, and a `destroy` method that might
+// block if called incorrectly seems to meet that bar.
+//
+// So, we achieve our goals by giving each instance an associated `AtomicLong` counter to track
+// the number of in-flight method calls, and an `AtomicBoolean` flag to indicate whether `destroy`
+// has been called. These are updated according to the following rules:
+//
+//    * The initial value of the counter is 1, indicating a live object with no in-flight calls.
+//      The initial value for the flag is false.
+//
+//    * At the start of each method call, we atomically check the counter.
+//      If it is 0 then the underlying Rust struct has already been destroyed and the call is aborted.
+//      If it is nonzero them we atomically increment it by 1 and proceed with the method call.
+//
+//    * At the end of each method call, we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+//    * When `destroy` is called, we atomically flip the flag from false to true.
+//      If the flag was already true we silently fail.
+//      Otherwise we atomically decrement and check the counter.
+//      If it has reached zero then we destroy the underlying Rust struct.
+//
+// Astute readers may observe that this all sounds very similar to the way that Rust's `Arc<T>` works,
+// and indeed it is, with the addition of a flag to guard against multiple calls to `destroy`.
+//
+// The overall effect is that the underlying Rust struct is destroyed only when `destroy` has been
+// called *and* all in-flight method calls have completed, avoiding violating any of the expectations
+// of the underlying Rust code.
+//
+// This makes a cleaner a better alternative to _not_ calling `destroy()` as
+// and when the object is finished with, but the abstraction is not perfect: if the Rust object's `drop`
+// method is slow, and/or there are many objects to cleanup, and it's on a low end Android device, then the cleaner
+// thread may be starved, and the app will leak memory.
+//
+// In this case, `destroy`ing manually may be a better solution.
+//
+// The cleaner can live side by side with the manual calling of `destroy`. In the order of responsiveness, uniffi objects
+// with Rust peers are reclaimed:
+//
+// 1. By calling the `destroy` method of the object, which calls `rustObject.free()`. If that doesn't happen:
+// 2. When the object becomes unreachable, AND the Cleaner thread gets to call `rustObject.free()`. If the thread is starved then:
+// 3. The memory is reclaimed when the process terminates.
+//
+// [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
+//
+
+
+/**
+ * The result of [`EngineCore::stage_process`]: what `process` would return,
+ * plus what is needed to apply it later. Holds no key material and nothing is
+ * persisted for it. `confirm` re-runs the processing against the stored state
+ * and applies it only if the state is the one this was staged against.
+ */
+public interface StagedProcessInterface {
+    
+    /**
+     * Drops this staged message (same as `Engine::discard`). Nothing was persisted.
+     */
+    fun `discard`()
+    
+    /**
+     * What `process` would return for this message.
+     */
+    fun `incoming`(): Processed
+    
+    companion object
+}
+
+/**
+ * The result of [`EngineCore::stage_process`]: what `process` would return,
+ * plus what is needed to apply it later. Holds no key material and nothing is
+ * persisted for it. `confirm` re-runs the processing against the stored state
+ * and applies it only if the state is the one this was staged against.
+ */
+open class StagedProcess: Disposable, AutoCloseable, StagedProcessInterface
+{
+
+    @Suppress("UNUSED_PARAMETER")
+    /**
+     * @suppress
+     */
+    constructor(withHandle: UniffiWithHandle, handle: Long) {
+        this.handle = handle
+        this.cleanable = UniffiLib.CLEANER.register(this, UniffiCleanAction(handle))
+    }
+
+    /**
+     * @suppress
+     *
+     * This constructor can be used to instantiate a fake object. Only used for tests. Any
+     * attempt to actually use an object constructed this way will fail as there is no
+     * connected Rust object.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    constructor(noHandle: NoHandle) {
+        this.handle = 0
+        this.cleanable = null
+    }
+
+    protected val handle: Long
+    protected val cleanable: UniffiCleaner.Cleanable?
+
+    private val wasDestroyed = AtomicBoolean(false)
+    private val callCounter = AtomicLong(1)
+
+    override fun destroy() {
+        // Only allow a single call to this method.
+        // TODO: maybe we should log a warning if called more than once?
+        if (this.wasDestroyed.compareAndSet(false, true)) {
+            // This decrement always matches the initial count of 1 given at creation time.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    @Synchronized
+    override fun close() {
+        this.destroy()
+    }
+
+    internal inline fun <R> callWithHandle(block: (handle: Long) -> R): R {
+        // Check and increment the call counter, to keep the object alive.
+        // This needs a compare-and-set retry loop in case of concurrent updates.
+        do {
+            val c = this.callCounter.get()
+            if (c == 0L) {
+                throw IllegalStateException("${this.javaClass.simpleName} object has already been destroyed")
+            }
+            if (c == Long.MAX_VALUE) {
+                throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
+            }
+        } while (! this.callCounter.compareAndSet(c, c + 1L))
+        // Now we can safely do the method call without the handle being freed concurrently.
+        try {
+            return block(this.uniffiCloneHandle())
+        } finally {
+            // This decrement always matches the increment we performed above.
+            if (this.callCounter.decrementAndGet() == 0L) {
+                cleanable?.clean()
+            }
+        }
+    }
+
+    // Use a static inner class instead of a closure so as not to accidentally
+    // capture `this` as part of the cleanable's action.
+    private class UniffiCleanAction(private val handle: Long) : Runnable {
+        override fun run() {
+            if (handle == 0.toLong()) {
+                // Fake object created with `NoHandle`, don't try to free.
+                return;
+            }
+            uniffiRustCall { status ->
+                UniffiLib.uniffi_mlsffi_fn_free_stagedprocess(handle, status)
+            }
+        }
+    }
+
+    /**
+     * @suppress
+     */
+    fun uniffiCloneHandle(): Long {
+        if (handle == 0.toLong()) {
+            throw InternalException("uniffiCloneHandle() called on NoHandle object");
+        }
+        return uniffiRustCall() { status ->
+            UniffiLib.uniffi_mlsffi_fn_clone_stagedprocess(handle, status)
+        }
+    }
+
+    
+    /**
+     * Drops this staged message (same as `Engine::discard`). Nothing was persisted.
+     */override fun `discard`()
+        = 
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_mlsffi_fn_method_stagedprocess_discard(
+        it,
+        _status)
+}
+    }
+    
+    
+
+    
+    /**
+     * What `process` would return for this message.
+     */override fun `incoming`(): Processed {
+            return FfiConverterTypeProcessed.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_mlsffi_fn_method_stagedprocess_incoming(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+
+    
+
+
+    
+    
+    /**
+     * @suppress
+     */
+    companion object
+    
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeStagedProcess: FfiConverter<StagedProcess, Long> {
+    override fun lower(value: StagedProcess): Long {
+        return value.uniffiCloneHandle()
+    }
+
+    override fun lift(value: Long): StagedProcess {
+        return StagedProcess(UniffiWithHandle, value)
+    }
+
+    override fun read(buf: ByteBuffer): StagedProcess {
+        return lift(buf.getLong())
+    }
+
+    override fun allocationSize(value: StagedProcess) = 8UL
+
+    override fun write(value: StagedProcess, buf: ByteBuffer) {
+        buf.putLong(lower(value))
+    }
+}
+
+
+
+/**
+ * An application message decrypted by `decrypt_application`.
+ */
+data class ApplicationMessage (
+    var `sender`: kotlin.String
+    , 
+    var `plaintext`: kotlin.ByteArray
+    , 
+    /**
+     * The epoch it was sent in.
+     */
+    var `epoch`: kotlin.ULong
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeApplicationMessage: FfiConverterRustBuffer<ApplicationMessage> {
+    override fun read(buf: ByteBuffer): ApplicationMessage {
+        return ApplicationMessage(
+            FfiConverterString.read(buf),
+            FfiConverterByteArray.read(buf),
+            FfiConverterULong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ApplicationMessage) = (
+            FfiConverterString.allocationSize(value.`sender`) +
+            FfiConverterByteArray.allocationSize(value.`plaintext`) +
+            FfiConverterULong.allocationSize(value.`epoch`)
+    )
+
+    override fun write(value: ApplicationMessage, buf: ByteBuffer) {
+            FfiConverterString.write(value.`sender`, buf)
+            FfiConverterByteArray.write(value.`plaintext`, buf)
+            FfiConverterULong.write(value.`epoch`, buf)
     }
 }
 
@@ -1758,6 +2249,47 @@ public object FfiConverterTypeHpkeKeyPair: FfiConverterRustBuffer<HpkeKeyPair> {
 
 
 
+/**
+ * A group member's identity and MLS signature public key (the leaf's).
+ */
+data class MemberKey (
+    var `identity`: kotlin.String
+    , 
+    var `signatureKey`: kotlin.ByteArray
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeMemberKey: FfiConverterRustBuffer<MemberKey> {
+    override fun read(buf: ByteBuffer): MemberKey {
+        return MemberKey(
+            FfiConverterString.read(buf),
+            FfiConverterByteArray.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: MemberKey) = (
+            FfiConverterString.allocationSize(value.`identity`) +
+            FfiConverterByteArray.allocationSize(value.`signatureKey`)
+    )
+
+    override fun write(value: MemberKey, buf: ByteBuffer) {
+            FfiConverterString.write(value.`identity`, buf)
+            FfiConverterByteArray.write(value.`signatureKey`, buf)
+    }
+}
+
+
+
 data class SignatureKeypair (
     var `publicKey`: kotlin.ByteArray
     , 
@@ -1843,6 +2375,25 @@ sealed class FfiException: kotlin.Exception() {
             get() = ""
     }
     
+    /**
+     * A staged `process` can no longer be confirmed: the group's stored state
+     * changed since it was staged (or it was already confirmed or discarded).
+     */
+    class Stale(
+        ) : FfiException() {
+        override val message
+            get() = ""
+    }
+    
+    /**
+     * `decrypt_application` was given something that is not an application message.
+     */
+    class NotApplication(
+        ) : FfiException() {
+        override val message
+            get() = ""
+    }
+    
     class Storage(
         
         val v1: kotlin.String
@@ -1892,13 +2443,15 @@ public object FfiConverterTypeFfiError : FfiConverterRustBuffer<FfiException> {
             4 -> FfiException.Duplicate()
             5 -> FfiException.EpochGap()
             6 -> FfiException.PendingCommit()
-            7 -> FfiException.Storage(
+            7 -> FfiException.Stale()
+            8 -> FfiException.NotApplication()
+            9 -> FfiException.Storage(
                 FfiConverterString.read(buf),
                 )
-            8 -> FfiException.Crypto(
+            10 -> FfiException.Crypto(
                 FfiConverterString.read(buf),
                 )
-            9 -> FfiException.Internal(
+            11 -> FfiException.Internal(
                 FfiConverterString.read(buf),
                 )
             else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
@@ -1928,6 +2481,14 @@ public object FfiConverterTypeFfiError : FfiConverterRustBuffer<FfiException> {
                 4UL
             )
             is FfiException.PendingCommit -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+            )
+            is FfiException.Stale -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+            )
+            is FfiException.NotApplication -> (
                 // Add the size for the Int that specifies the variant plus the size needed for all fields
                 4UL
             )
@@ -1975,18 +2536,26 @@ public object FfiConverterTypeFfiError : FfiConverterRustBuffer<FfiException> {
                 buf.putInt(6)
                 Unit
             }
-            is FfiException.Storage -> {
+            is FfiException.Stale -> {
                 buf.putInt(7)
+                Unit
+            }
+            is FfiException.NotApplication -> {
+                buf.putInt(8)
+                Unit
+            }
+            is FfiException.Storage -> {
+                buf.putInt(9)
                 FfiConverterString.write(value.v1, buf)
                 Unit
             }
             is FfiException.Crypto -> {
-                buf.putInt(8)
+                buf.putInt(10)
                 FfiConverterString.write(value.v1, buf)
                 Unit
             }
             is FfiException.Internal -> {
-                buf.putInt(9)
+                buf.putInt(11)
                 FfiConverterString.write(value.v1, buf)
                 Unit
             }
@@ -2210,6 +2779,34 @@ public object FfiConverterSequenceByteArray: FfiConverterRustBuffer<List<kotlin.
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterByteArray.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeMemberKey: FfiConverterRustBuffer<List<MemberKey>> {
+    override fun read(buf: ByteBuffer): List<MemberKey> {
+        val len = buf.getInt()
+        return List<MemberKey>(len) {
+            FfiConverterTypeMemberKey.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<MemberKey>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeMemberKey.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<MemberKey>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeMemberKey.write(it, buf)
         }
     }
 }

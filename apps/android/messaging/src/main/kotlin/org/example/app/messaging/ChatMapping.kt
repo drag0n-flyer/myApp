@@ -31,6 +31,9 @@ internal object ChatMapping {
     const val SYSTEM_SENDER = "system"
     const val JOIN_FAILED_PREFIX = "join-failed-"
 
+    /** A message ID that only this device may create. */
+    fun isReservedId(id: String): Boolean = id.startsWith(CALL_PREFIX) || id.startsWith(JOIN_FAILED_PREFIX)
+
     fun status(stored: String, showRead: Boolean): DeliveryStatus = when (Receipts.displayStatus(stored, showRead)) {
         "delivered" -> DeliveryStatus.Delivered
         "read" -> DeliveryStatus.Read

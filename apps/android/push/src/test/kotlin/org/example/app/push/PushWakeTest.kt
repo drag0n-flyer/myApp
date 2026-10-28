@@ -252,6 +252,16 @@ class PushWakeTest {
     }
 
     @Test
+    fun ignoredCallPostsNothing() = runTest {
+        handler.call = RingOutcome.Ignore
+        dispatcher().onFcm(mapOf("k" to "call", "d" to b64(pad(ByteArray(1)))), highPriority = true)
+        assertTrue(ring.rung.isEmpty())
+        assertTrue(effects.shown.isEmpty() && effects.missed.isEmpty() && effects.missedShown.isEmpty())
+        assertEquals(0, effects.strangerShown)
+        assertEquals(listOf(true to false), effects.pushes)
+    }
+
+    @Test
     fun droppedAndEmptyCallFallBackToGeneric() = runTest {
         handler.call = RingOutcome.Drop
         dispatcher().onFcm(mapOf("k" to "call", "d" to b64(pad(ByteArray(1)))), highPriority = true)

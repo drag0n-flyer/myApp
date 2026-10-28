@@ -24,6 +24,9 @@ class MemberKey(val identity: String, val signatureKey: ByteArray)
 
 sealed class MlsException(message: String) : Exception(message) {
     object Malformed : MlsException("malformed")
+
+    /** `processApplication` was given something other than an application message; nothing was changed. */
+    object NotApplication : MlsException("notApplication")
     object UnknownGroup : MlsException("unknownGroup")
     object NotMember : MlsException("notMember")
     object Duplicate : MlsException("duplicate")
@@ -45,11 +48,14 @@ interface MlsEngine {
     suspend fun process(message: ByteArray): Incoming
 
     /**
-     * Like [process], but only an application message is accepted. A commit, a proposal or a Welcome is refused
-     * with [MlsException.Malformed] before any stored group state changes. For channels that carry application
-     * messages only (call signals).
+     * Like [process], but only an application message for [group] is accepted. A commit, a proposal or a Welcome
+     * is refused with [MlsException.NotApplication] before any stored group state changes; a message for another
+     * group is [MlsException.Malformed]. For channels that carry application messages only (call signals).
      */
-    suspend fun processApplication(message: ByteArray): Incoming.Application
+    suspend fun processApplication(group: GroupId, message: ByteArray): Incoming.Application
+
+    /** The group named in the clear in an application message, or null when [message] has none (or is garbage). */
+    fun groupOf(message: ByteArray): GroupId?
     suspend fun epoch(group: GroupId): Long
     suspend fun exportSecret(group: GroupId, label: String, length: Int): ByteArray
     suspend fun members(group: GroupId): List<String>

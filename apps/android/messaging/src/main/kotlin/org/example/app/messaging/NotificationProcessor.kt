@@ -173,15 +173,19 @@ class NotificationProcessor(
         if (ring.kind != CallSignalPayload.Kind.ring) return RingOutcome.Drop
         val from = opened.senderAccountId
         val contact = repo.contact(from)
-        // A stranger and a blocked caller never ring.
-        if (contact == null || !contact.isContact || repo.isBlocked(from)) return RingOutcome.SilentMissed(ring.callID, from)
+        // A blocked caller gets nothing, not even a missed-call notice (the server drops such rings once it knows the block).
+        if (repo.isBlocked(from)) return RingOutcome.Ignore
+        // A stranger never rings: a quiet "Missed call" notice.
+        if (contact == null || !contact.isContact) return RingOutcome.SilentMissed(ring.callID, from)
         val name = contact.displayName.ifEmpty { contact.username }
         // Only a call that ended before anyone answered is a missed call. Answered or declined elsewhere is not.
+        // TODO(E6): ask the server for `call.status` (design:226) after this returns Ring, outside MlsGate. D7 keeps the network out of the ring gate.
         val end = endedCalls.endOf(ring.callID)
         if (end != null && !end.answered && end.reason in MISSED_REASONS) {
             return RingOutcome.MissedBeforeAnswer(ring.callID, from, name)
         }
-        if (end != null) return RingOutcome.Drop
+        // Answered or declined on another device: the ring is over, show nothing.
+        if (end != null) return RingOutcome.Ignore
         return RingOutcome.Ring(ring.callID, from, name, ring.video ?: false)
     }
 
@@ -189,10 +193,15 @@ class NotificationProcessor(
      * Fetches the inbox (at most [maxItems]) and returns what is new to show. Outside `MlsGate`: the inbox processor
      * takes the lock for each decrypt and never holds it across the network.
      */
-    suspend fun fetchOutcomes(maxItems: Int = 20): List<NotificationOutcome> =
-        inbox.syncCollecting(maxItems).results.mapNotNull { result ->
+    suspend fun fetchOutcomes(maxItems: Int = 20): List<NotificationOutcome> {
+        val outcome = inbox.syncCollecting(maxItems)
+        // A fetch that failed before anything was stored must reach the fetch runner, so it retries. When some items
+        // were stored first, they are shown; the next push or app start fetches the rest.
+        outcome.failure?.let { if (outcome.results.isEmpty()) throw it }
+        return outcome.results.mapNotNull { result ->
             (result as? AppliedResult.Stored)?.let { outcomeFor(it.message) }?.takeIf { it !== NotificationOutcome.Nothing }
         }
+    }
 
     companion object {
         const val PREVIEW_LIMIT = 140

@@ -8,6 +8,7 @@ internal object ErrorMapping {
     fun map(error: Throwable): MlsException = when (error) {
         is MlsException -> error
         is FfiException.Malformed -> MlsException.Malformed
+        is FfiException.NotApplication -> MlsException.NotApplication
         is FfiException.UnknownGroup -> MlsException.UnknownGroup
         is FfiException.NotMember -> MlsException.NotMember
         is FfiException.Duplicate -> MlsException.Duplicate

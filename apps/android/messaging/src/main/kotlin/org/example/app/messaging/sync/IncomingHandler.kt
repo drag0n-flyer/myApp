@@ -3,6 +3,7 @@ package org.example.app.messaging.sync
 import java.util.Locale
 import org.example.app.contracts.Incoming
 import org.example.app.contracts.MemberKey
+import org.example.app.messaging.ChatMapping
 import org.example.app.messaging.content.Att
 import org.example.app.messaging.content.ContentCodec
 import org.example.app.messaging.content.ContentEnvelope
@@ -141,6 +142,9 @@ class IncomingHandler(
         val chatId = conversation.chatId
 
         fun store(replyTo: String? = null, folded: String = ""): AppliedResult {
+            // IDs with a local meaning (`call-…`, `join-failed-…`) are never taken from a peer: a peer could forge a
+            // call line or a placeholder in its own chat.
+            if (ChatMapping.isReservedId(envelope.id)) return AppliedResult.Ignored
             val record = MessageRecord(
                 id = envelope.id.ifEmpty { "unsupported-${raw.cursor}" }, chatId = chatId, conversationId = conversation.serverId,
                 senderAccount = account, senderDevice = device, sentAt = envelope.at, receivedAt = clock.now(), envelope = plaintext,

@@ -125,6 +125,17 @@ class LiveChatStoreTest {
         s.markRead("acc-ana"); s.settle()
         assertTrue(bob.repo.dueOutbox(Long.MAX_VALUE).isEmpty(), "no read receipt queued")
         assertEquals("read", bob.repo.message("in-1")!!.status)
+        // The Outbox asks the same switch when a queued read receipt is about to go out: off drops it, on sends it.
+        val receipt = { ContentEnvelope.Receipt("r", NOW, org.example.app.messaging.content.ReceiptKind.Read, listOf("in-1")) }
+        val posted = rig.server.messages.size
+        s.outbox.enqueueControl("acc-ana") { _, at -> receipt().copy(at = at) }
+        s.outbox.flush()
+        assertEquals(posted, rig.server.messages.size, "switch off: the queued read receipt is not sent")
+        assertTrue(bob.repo.dueOutbox(Long.MAX_VALUE).isEmpty(), "and it is dropped, not held")
+        bob.readReceiptsSwitch = { true }
+        s.outbox.enqueueControl("acc-ana") { _, at -> receipt().copy(at = at) }
+        s.outbox.flush()
+        assertEquals(posted + 1, rig.server.messages.size, "switch on: it is sent")
     }
 
     @Test
@@ -157,36 +168,64 @@ class LiveChatStoreTest {
 
     @Test
     fun failedWelcomeStrangerIsNotShownAsARequest() = runTest {
+        // A real message request: a stranger (ana, not a contact) starts a conversation and bob joins it.
         val rig = Rig().start()
         val bob = rig.bob1
+        rig.ana1.manager.create("acc-bob")
+        bob.processor.sync()
+        // A Welcome that failed to open from another stranger leaves only a placeholder.
         bob.repo.upsertChat(ChatRecord("acc-mallory", isRequest = true, unread = 0, muted = false, lastActivity = NOW))
         bob.repo.insertMessage(MessageRecord("join-failed-7", "acc-mallory", null, "acc-mallory", "d", NOW, NOW, """{"at":1,"id":"join-failed-7","k":"joinFailed","v":1}""".encodeToByteArray(), "delivered", undecryptable = true))
         val s = store(bob)
-        assertTrue(s.requests.value.isEmpty())
-        assertTrue(s.chats.value.isEmpty())
-        // A real request from the same account (a conversation exists) is shown.
+        assertEquals(listOf("acc-ana"), s.requests.value.map { it.id }, "only the verified request is shown")
+        assertTrue(s.requests.value.single().isRequest)
+        assertTrue(s.chats.value.none { it.id == "acc-mallory" })
+        // The same account sending a real message later (a real conversation) is a request like any other.
         bob.repo.insertMessage(MessageRecord("m-1", "acc-mallory", null, "acc-mallory", "d", NOW + 1, NOW, org.example.app.messaging.content.ContentCodec.encode(ContentEnvelope.Text("m-1", NOW, "hi")), "delivered"))
         s.refresh()
-        assertEquals(1, s.requests.value.size)
+        assertEquals(setOf("acc-ana", "acc-mallory"), s.requests.value.map { it.id }.toSet())
     }
 
     @Test
     fun inactiveConversationIsNotRemoval() = runTest {
         val (rig, s, conv) = joined()
+        rig.ana1.send(conv, ContentEnvelope.Text("m-1", NOW, "hello"))
+        s.syncInbox()
+        val before = assertNotNull(s.chat("acc-ana"))
+        assertTrue(before.messages.any { it.id == "m-1" })
         rig.bob1.repo.upsertConversation(rig.bob1.repo.conversation(conv.serverId)!!.copy(active = false))
         s.refresh()
-        val chat = assertNotNull(s.chat("acc-ana"))
-        assertTrue(chat.messages.none { it.content is MessageContent.System })
-        assertFalse(chat.isRequest)
-        assertTrue(chat.messages.none { it.content is MessageContent.Deleted })
+        // Nothing about the chat changes: it stays in the list, with the same lines and no "removed" line.
+        assertEquals(before, assertNotNull(s.chat("acc-ana")))
+        assertTrue(s.chats.value.any { it.id == "acc-ana" })
+        assertTrue(s.chat("acc-ana")!!.messages.none { it.content is MessageContent.System })
     }
 
     @Test
     fun resumePendingCreatesIsExposed() = runTest {
         val rig = Rig().start()
+        // Killed after the server applied the create and before anything was written.
+        rig.server.afterCommitApplied = { rig.server.afterCommitApplied = null; throw org.example.app.messaging.sync.SimulatedKill() }
+        assertFailsWith<org.example.app.messaging.sync.SimulatedKill> { rig.ana1.manager.create("acc-bob") }
+        assertNull(rig.ana1.repo.preferredConversation("acc-bob"))
+        rig.ana1.restart()
         val s = store(rig.ana1)
-        s.resumePendingCreates() // nothing pending: returns
-        assertTrue(rig.server.conversationIds().isEmpty())
+        s.resumePendingCreates()
+        assertNotNull(rig.ana1.repo.preferredConversation("acc-bob"), "the cut-short create was finished")
+        assertEquals(1, rig.server.conversationIds().size)
+        assertNotNull(s.chat("acc-bob"), "and the chat list was reloaded")
+    }
+
+    @Test
+    fun peerMessageIdsWithReservedPrefixesAreRejected() = runTest {
+        val (rig, s, conv) = joined()
+        rig.ana1.send(conv, ContentEnvelope.Text("call-x", NOW, "fake call line"))
+        rig.ana1.send(conv, ContentEnvelope.Text("join-failed-9", NOW, "fake placeholder"))
+        rig.ana1.send(conv, ContentEnvelope.Text("ok-1", NOW, "fine"))
+        s.syncInbox()
+        assertNull(rig.bob1.repo.message("call-x"))
+        assertNull(rig.bob1.repo.message("join-failed-9"))
+        assertNotNull(rig.bob1.repo.message("ok-1"))
     }
 
     @Test

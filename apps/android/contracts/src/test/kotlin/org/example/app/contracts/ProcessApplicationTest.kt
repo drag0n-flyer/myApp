@@ -13,17 +13,30 @@ class ProcessApplicationTest {
         val g = ana.createGroup()
         val add = ana.add(bob.makeKeyPackages(1), g)
         ana.commitAccepted(g)
-        assertFailsWith<MlsException.Malformed> { bob.processApplication(add.welcome!!) }
+        assertFailsWith<MlsException.NotApplication> { bob.processApplication(g, add.welcome!!) }
         assertFailsWith<MlsException.UnknownGroup> { bob.epoch(g) }
         bob.process(add.welcome!!)
         val second = ana.add(cy.makeKeyPackages(1), g)
         ana.commitAccepted(g)
-        assertFailsWith<MlsException.Malformed> { bob.processApplication(second.commit) }
+        assertFailsWith<MlsException.NotApplication> { bob.processApplication(g, second.commit) }
         assertEquals(1L, bob.epoch(g))
         bob.process(second.commit)
         assertEquals(2L, bob.epoch(g))
-        val app = bob.processApplication(ana.encrypt("hi".encodeToByteArray(), g).ciphertext)
+        val app = bob.processApplication(g, ana.encrypt("hi".encodeToByteArray(), g).ciphertext)
         assertContentEquals("hi".encodeToByteArray(), app.plaintext)
         assertEquals("a/1", app.sender)
+    }
+
+    @Test
+    fun anotherGroupIsMalformedAndGroupOfReadsTheHeader() = runTest {
+        val ana = FakeMlsEngine("a/1"); val bob = FakeMlsEngine("b/1")
+        val g = ana.createGroup(); val other = ana.createGroup()
+        val add = ana.add(bob.makeKeyPackages(1), g); ana.commitAccepted(g)
+        bob.process(add.welcome!!)
+        val ct = ana.encrypt("hi".encodeToByteArray(), g).ciphertext
+        assertFailsWith<MlsException.Malformed> { bob.processApplication(other, ct) }
+        assertEquals(g, bob.groupOf(ct))
+        assertEquals(null, bob.groupOf(add.commit))
+        assertEquals(null, bob.groupOf(byteArrayOf(1, 2)))
     }
 }

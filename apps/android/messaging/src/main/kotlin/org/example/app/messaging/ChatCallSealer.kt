@@ -70,8 +70,10 @@ class ChatCallSealer(
     suspend fun openHoldingLock(data: ByteArray): RecoveredCallSignal {
         val hash = PayloadHash.of(data)
         if (repo.isProcessed(hash)) throw CallSealException.Undecryptable
+        // The group comes from the message's clear-text header; the engine refuses a message for any other group.
+        val group = mls.groupOf(data) ?: throw CallSealException.Undecryptable
         val incoming = try {
-            mls.processApplication(data)
+            mls.processApplication(group, data)
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {

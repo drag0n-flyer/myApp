@@ -2,6 +2,7 @@ package org.example.app.messaging
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
@@ -140,9 +141,32 @@ class NotificationProcessorTest {
             val s = setup(contact = true, ended = { end })
             val r = s.ringPush()
             assertEquals(expectMissed, r is RingOutcome.MissedBeforeAnswer, "${end.reason} answered=${end.answered}")
+            // Answered or declined elsewhere shows nothing at all (design: a ring that is over is dropped silently).
+            if (!expectMissed) assertIs<RingOutcome.Ignore>(r, "${end.reason} answered=${end.answered}")
             if (r is RingOutcome.MissedBeforeAnswer) assertEquals("acc-ana", r.chatId)
             assertTrue(r !is RingOutcome.Ring)
         }
+    }
+
+    @Test
+    fun blockedContactRingShowsNothing() = runTest {
+        val s = setup(contact = true)
+        s.rig.bob1.repo.block("acc-ana", NOW)
+        assertIs<RingOutcome.Ignore>(s.ringPush())
+    }
+
+    @Test
+    fun blockedStrangerRingShowsNothing() = runTest {
+        val s = setup(contact = false)
+        s.rig.bob1.repo.block("acc-ana", NOW)
+        assertIs<RingOutcome.Ignore>(s.ringPush())
+    }
+
+    @Test
+    fun fetchFailureWithNothingFetchedPropagatesSoTheRunnerRetries() = runTest {
+        val s = setup(contact = true)
+        s.rig.server.failNextInboxReads = 1
+        assertFailsWith<Exception> { s.np.fetchOutcomes() }
     }
 
     @Test

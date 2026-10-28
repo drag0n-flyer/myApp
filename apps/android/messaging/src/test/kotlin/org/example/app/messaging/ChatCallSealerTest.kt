@@ -73,6 +73,37 @@ class ChatCallSealerTest {
         assertFailsWith<CallSealException.WrongSender> { sealer.open(frame, "justanaccount") }
     }
 
+    /** Sender identity with an empty device part (`acc/`). */
+    @Test
+    fun identityWithEmptyDevicePartIsWrongSender() = runTest {
+        val sender = FakeMlsEngine("acc-a/")
+        val receiver = FakeMlsEngine("acc-b/d1")
+        val g = sender.createGroup()
+        val add = sender.add(receiver.makeKeyPackages(1), g)
+        sender.commitAccepted(g)
+        receiver.process(add.welcome!!)
+        val frame = sender.encrypt(ContentCodec.encode(ContentEnvelope.CallSig("id", NOW, ring)), g).ciphertext
+        val rig = Rig().start()
+        val sealer = ChatCallSealer(receiver, InMemoryRepository(), TestMlsLock(), rig.bob1.clock, rig.bob1.manager, rig.bob1.handler)
+        assertFailsWith<CallSealException.WrongSender> { sealer.open(frame, "acc-a") }
+    }
+
+    @Test
+    fun sealerPassesTheMessagesOwnGroupToTheEngine() = runTest {
+        val a = FakeMlsEngine("acc-a/d1")
+        val bob = FakeMlsEngine("acc-b/d1")
+        val g = a.createGroup()
+        val add = a.add(bob.makeKeyPackages(1), g); a.commitAccepted(g)
+        bob.process(add.welcome!!)
+        val frame = a.encrypt(ContentCodec.encode(ContentEnvelope.CallSig("id", NOW, ring)), g).ciphertext
+        val rig = Rig().start()
+        val spy = SpyMlsEngine(bob) { true }
+        val sealer = ChatCallSealer(spy, InMemoryRepository(), TestMlsLock(), rig.bob1.clock, rig.bob1.manager, rig.bob1.handler)
+        // The sealer hands the engine the message's own group, so a normal frame opens.
+        assertEquals("call-1", sealer.openRecoveringSender(frame).payload.callID)
+        assertEquals(1, spy.processApplicationCalls)
+    }
+
     @Test
     fun commitIsRejectedAndStateStaysUnchanged() = runTest {
         val a = FakeMlsEngine("acc-a/d1")

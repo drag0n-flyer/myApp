@@ -13,7 +13,7 @@ interface MissedCallRecorder {
     suspend fun recordMissedCall(callId: String, fromAccountId: String)
 }
 
-/** Fetches the inbox and returns what to show for each new item (the D7 processor, under `MlsGate`). */
+/** Fetches the inbox and returns what to show for each new item (the D7 processor's `fetchOutcomes`). It must NOT run under `MlsGate`: the inbox processor takes the non-reentrant lock for each decrypt. */
 interface InboxFetcher {
     suspend fun fetch(): List<NotificationOutcome>
 }
