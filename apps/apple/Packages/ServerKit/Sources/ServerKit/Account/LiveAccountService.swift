@@ -210,6 +210,8 @@ public final class LiveAccountService: AccountService {
 
     // MARK: - Linking, new device
 
+    public var linkSavePending: Bool { unsaved != nil }
+
     public func makeLinkCode() async throws(AccountError) -> LinkCode {
         let c = await ready()
         unsaved = nil
