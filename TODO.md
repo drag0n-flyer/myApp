@@ -1,6 +1,6 @@
 # Progress
 
-Last updated: 2026-10-28, 08:20 UTC.
+Last updated: 2026-10-28, 11:50 UTC.
 
 | Track | Done | % |
 |---|---|---|
@@ -52,6 +52,7 @@ Extra work beyond the plans, in progress (each is reviewed before it merges; ETA
 | Android: the same own-device wiring, with the same protection | `android/reconcile-wiring` | merged (only a rejected session wipes a phone; switched on by Android I1) | done |
 | Port: sign-up sends the display name, email-code sign-up, read-receipts switch | `feat/ios-port-signup` | merged | done |
 | Port: linking skips an unreadable or too-large contact list; link-code check compares the port | `feat/ios-port-linking` | merged | done |
+| Small follow-ups: a pending link save stays tied to the server that issued it (switching server is refused meanwhile); after a claimed link only the session save is retried; read-receipt outbox tests | `fix/ios-followups` | merged (CI green, all 8 jobs). Open, low: capture the server at the start of the link wait, so a "Change" tap at the instant the claim succeeds can't file the session under the new server | done |
 | App ID in one file (`apps/apple/AppID.xcconfig`) and a stronger photo-privacy test | `chore/appid-xcconfig` | written, waiting for Mac CI | 1–2 h |
 
 Android has the same inbox fixes (merged): a crafted invite can't stall the inbox, a new chat is abandoned only when really gone, and a failure after a chat starts never creates a second one.
