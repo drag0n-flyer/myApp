@@ -52,6 +52,9 @@ import org.webrtc.VideoSource
 import org.webrtc.VideoTrack
 import org.webrtc.audio.JavaAudioDeviceModule
 
+/** RNNoise's rate: 480 samples are 10 ms. */
+const val RNNOISE_SAMPLE_RATE_HZ = 48_000
+
 class MediaSessionException(message: String) : Exception(message)
 
 /**
@@ -72,6 +75,8 @@ object WebRtcFactory {
                 .createInitializationOptions(),
         )
         val adm = JavaAudioDeviceModule.builder(app)
+            // RNNoise needs 48 kHz capture (480-sample frames); some devices and emulators default to 16 kHz.
+            .setInputSampleRate(RNNOISE_SAMPLE_RATE_HZ)
             .setUseHardwareAcousticEchoCanceler(AudioSetup.USE_HARDWARE_ACOUSTIC_ECHO_CANCELER)
             .setUseHardwareNoiseSuppressor(AudioSetup.USE_HARDWARE_NOISE_SUPPRESSOR)
             .createAudioDeviceModule()
