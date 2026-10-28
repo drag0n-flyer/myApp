@@ -66,6 +66,10 @@ expect_fail "$r" "hard-coded new ID accepted"
 r=$(make_tree stale com.acme.chat); printf 'let g = "group.%s"\n' "$P" > "$r/apps/apple/App/G.swift"
 expect_fail "$r" "placeholder left in Swift accepted"
 
+# git grep failing (not a repository, or blocked by safe.directory) is an error, not "no hits".
+r=$(make_tree norepo "$P"); rm -rf "$r/.git"
+if "$CHECK" "$r" >/dev/null 2>&1; then fail "a tree git grep cannot read accepted"; fi
+
 r=$(make_tree noid "$P"); printf '// no ID\n' > "$r/apps/apple/AppID.xcconfig"
 expect_fail "$r" "missing APP_ID accepted"
 

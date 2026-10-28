@@ -43,8 +43,18 @@ ids="$(pattern "$placeholder")|$(pattern "$app_id")"
 dirs=()
 for d in apps/apple tools/call-lab; do [ -d "$d" ] && dirs+=("$d"); done
 
+# Exit 1 is "no hits"; anything else (not a repository, blocked by safe.directory) is an error.
+rc=0
+hits=$(git grep -niIE "$ids" -- "${dirs[@]}" \
+  ':(exclude,glob)**/Generated/**' ':(exclude,glob)**/*.xcodeproj/**' ':(exclude)apps/apple/Prototypes') || rc=$?
+if [ "$rc" -gt 1 ]; then
+  echo "error: git grep failed (exit $rc) in $root" >&2
+  exit 1
+fi
+
 status=0
 while IFS= read -r hit; do
+  [ -n "$hit" ] || continue
   file="${hit%%:*}"
   rest="${hit#*:}"
   line="${rest#*:}"
@@ -56,8 +66,7 @@ while IFS= read -r hit; do
     echo "error: app ID hard-coded outside $xcconfig: $hit" >&2
     status=1
   fi
-done < <(git grep -niIE "$ids" -- "${dirs[@]}" \
-  ':(exclude,glob)**/Generated/**' ':(exclude,glob)**/*.xcodeproj/**' ':(exclude)apps/apple/Prototypes' || true)
+done <<< "$hits"
 
 [ "$status" = 0 ] && echo "ok: app ID $app_id is set only in $xcconfig"
 exit "$status"
