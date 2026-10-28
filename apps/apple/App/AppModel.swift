@@ -352,7 +352,7 @@ final class AppModel {
                 Task { [weak self] in
                     for await event in c.events {
                         switch event {
-                        case .deviceRevoked: await self?.refreshDevices()
+                        case .deviceRevoked(let id): await self?.deviceRevoked(id)
                         case .inbox: await self?.syncInbox()
                         default: break
                         }
@@ -360,14 +360,40 @@ final class AppModel {
                 },
                 Task { [weak self] in
                     // `.revoked` also reaches the client's 401 path, which calls `deviceWasRemoved`.
-                    for await state in c.states where state == .revoked { await self?.stopLive() }
+                    for await state in c.states {
+                        switch state {
+                        case .revoked: await self?.stopLive()
+                        case .connected: await self?.didConnect()
+                        default: break
+                        }
+                    }
                 },
             ]
         }
         await connection?.start()
     }
 
+    /// Every live connect: catch up on the inbox, then bring this account's devices in every chat in line with
+    /// the device list (mls-profile "Removing a device"); the scheduler runs it once more 11 minutes later.
+    private func didConnect() async {
+        await syncInbox()
+        await messaging?.reconciler.connected()
+    }
+
+    /// Another device of this account was removed: update the list and take it out of every chat. This device's
+    /// own removal goes through the sign-out path instead, which stops the store before wiping.
+    private func deviceRevoked(_ id: String) async {
+        await refreshDevices()
+        guard let messaging else { return }
+        if id == messaging.deviceID {
+            deviceWasRemoved()
+            return
+        }
+        try? await messaging.sync.handleRevoked(deviceID: id)
+    }
+
     private func stopLive(force: Bool = false) async {
+        await messaging?.reconciler.disconnected()
         await connection?.stop()
         if force || live?.isSignedIn != true {   // signed out: drop the connection and its listeners
             let tasks = liveTasks

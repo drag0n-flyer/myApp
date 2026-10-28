@@ -25,6 +25,10 @@ struct LiveMessaging {
     let inbox: InboxProcessor
     /// Wipes this account's local data at sign-out (`wipeLocalData`).
     let sync: DeviceSync
+    /// Runs own-device reconcile on each live connect and once more 11 minutes later.
+    let reconciler: ReconcileScheduler
+    /// This device, to tell its own revocation from another device's.
+    let deviceID: String
     let network: SharedValue<NetworkType>
     let autoDownload: SharedValue<AutoDownloadSettings>
 
@@ -53,6 +57,7 @@ struct LiveMessaging {
     /// Sign-out: stop this graph (no task can write afterwards), then wipe its data. Throws when the wipe fails;
     /// the pending marker (written by the caller before it started) stays, so the next launch retries.
     func wipeAfterSignOut() async throws {
+        await reconciler.disconnected()
         await store.shutdown()
         try await sync.wipeLocalData()
         if let container = Self.container { try LocalAccountData.clearWipePending(in: container) }
@@ -108,7 +113,10 @@ struct LiveMessaging {
             deps: deps, outbox: outbox, network: { networkBox.value }, settings: { settingsBox.value })
         let store = LiveChatStore(
             deps: deps, outbox: outbox, inbox: inbox, conversations: conversations, attachments: attachments)
-        return LiveMessaging(store: store, inbox: inbox, sync: sync, network: networkBox, autoDownload: settingsBox)
+        let reconciler = ReconcileScheduler(reconcile: { try await sync.reconcileOwnDevices() })
+        return LiveMessaging(
+            store: store, inbox: inbox, sync: sync, reconciler: reconciler, deviceID: session.deviceID,
+            network: networkBox, autoDownload: settingsBox)
     }
 
     /// MERGE(M5): the real engine, `makeMLSEngine(identity:storage:)` (plan 4), keeping its group state in the
