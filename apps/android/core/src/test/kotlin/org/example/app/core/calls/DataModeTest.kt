@@ -24,7 +24,7 @@ class DataModeTest {
     }
 
     @Test fun estimates() {
-        assertEquals(listOf(2, 3, 5, 8), DataMode.entries.map { it.estimatedMBPer10Minutes })
+        assertEquals(listOf(2, 3, 5, 6), DataMode.entries.map { it.estimatedMBPer10Minutes })
         assertEquals(5_000, DataMode.DataSaver.bytesPerSecond)
     }
 

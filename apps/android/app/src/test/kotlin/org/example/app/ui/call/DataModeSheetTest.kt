@@ -44,7 +44,7 @@ class DataModeSheetTest {
         for (t in listOf("Data for this call", "Auto", "Ultra-low", "Data saver", "Balanced", "High quality")) {
             rule.onNode(hasText(t)).assertIsDisplayed()
         }
-        for (t in listOf("~2 MB per 10 min", "~3 MB per 10 min", "~5 MB per 10 min", "~8 MB per 10 min")) {
+        for (t in listOf("~2 MB per 10 min", "~3 MB per 10 min", "~5 MB per 10 min", "~6 MB per 10 min")) {
             rule.onNodeWithText(t).assertIsDisplayed()
         }
         rule.onNodeWithText("This call only · audio, both directions, estimated").assertIsDisplayed()

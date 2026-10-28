@@ -100,7 +100,7 @@ class CallScreenTest {
         rule.onNodeWithText("00:05").assertIsDisplayed()
         rule.onNodeWithText("Good").assertIsDisplayed()
         rule.onNodeWithText("Auto · High quality", substring = true).assertIsDisplayed()
-        rule.onNodeWithText("≈ 67 KB used").assertIsDisplayed()
+        rule.onNodeWithText("≈ 50 KB used").assertIsDisplayed()
     }
 
     @Test
