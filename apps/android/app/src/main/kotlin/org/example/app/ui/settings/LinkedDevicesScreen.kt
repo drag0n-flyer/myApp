@@ -1,5 +1,9 @@
 package org.example.app.ui.settings
 
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.semantics.Role
 import android.text.format.DateUtils
@@ -42,10 +46,28 @@ fun LinkedDevicesScreen(account: AccountService, onBack: () -> Unit, modifier: M
     var devices by remember { mutableStateOf<List<DeviceInfo>>(emptyList()) }
     var removingId by rememberSaveable { mutableStateOf<String?>(null) }
     val removing = devices.firstOrNull { it.id == removingId }
+    var loadFailed by remember { mutableStateOf(false) }
+    var removeFailed by remember { mutableStateOf(false) }
+    var reload by remember { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
-    LaunchedEffect(account) { devices = try { account.devices() } catch (_: AccountError) { emptyList() } }
+    LaunchedEffect(account, reload) {
+        try { devices = account.devices(); loadFailed = false } catch (_: AccountError) { loadFailed = true }
+    }
 
     SettingsPage(stringResource(R.string.settings_linked_devices), onBack, modifier) {
+        if (loadFailed) item {
+            ListItem(
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                headlineContent = { Text(stringResource(R.string.devices_load_failed)) },
+                trailingContent = { TextButton(onClick = { reload++ }) { Text(stringResource(R.string.try_again)) } },
+            )
+        }
+        if (removeFailed) item {
+            ListItem(
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+                headlineContent = { Text(stringResource(R.string.devices_remove_failed), color = MaterialTheme.colorScheme.error) },
+            )
+        }
         items(devices, key = { it.id }) { device ->
             val name = device.name
             ListItem(
@@ -86,8 +108,8 @@ fun LinkedDevicesScreen(account: AccountService, onBack: () -> Unit, modifier: M
                 TextButton(onClick = {
                     removingId = null
                     scope.launch {
-                        try { account.removeDevice(device.id) } catch (_: AccountError) { }
-                        devices = try { account.devices() } catch (_: AccountError) { devices }
+                        removeFailed = try { account.removeDevice(device.id); false } catch (_: AccountError) { true }
+                        try { devices = account.devices() } catch (_: AccountError) { }
                     }
                 }) { Text(stringResource(R.string.remove)) }
             },

@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import org.example.app.R
 import org.example.app.core.chats.ChatStore
 import org.example.app.core.chats.MessageContent
+import org.example.app.ui.usernameText
 import org.example.app.ui.Avatar
 import org.example.app.ui.keyString
 
@@ -87,7 +88,7 @@ fun ChatInfoScreen(
             Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Avatar(contact.displayName, size = 84.dp)
                 Text(contact.displayName, style = MaterialTheme.typography.titleLarge)
-                Text("@${contact.username}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(usernameText(contact.username), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(onClick = { onCall(false) }) { Text(stringResource(R.string.info_audio)) }
                     TextButton(onClick = { onCall(true) }) { Text(stringResource(R.string.info_video)) }

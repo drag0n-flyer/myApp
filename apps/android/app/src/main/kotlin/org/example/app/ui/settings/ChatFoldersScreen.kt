@@ -1,5 +1,7 @@
 package org.example.app.ui.settings
 
+import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.runtime.toMutableStateList
@@ -39,6 +41,9 @@ fun ChatFoldersScreen(store: ChatStore, onBack: () -> Unit, modifier: Modifier =
     var renamingId by rememberSaveable { mutableStateOf<String?>(null) }
     val renaming = folders.firstOrNull { it.id == renamingId }
     var creating by rememberSaveable { mutableStateOf(false) }
+    var deletingId by rememberSaveable { mutableStateOf<String?>(null) }
+    val deleting = folders.firstOrNull { it.id == deletingId }
+    val renameLabel = stringResource(R.string.folders_rename)
 
     SettingsPage(stringResource(R.string.settings_folders), onBack, modifier) {
         items(folders.filter { it.kind != ChatFolder.Kind.Custom }, key = { it.id }) { folder ->
@@ -47,7 +52,7 @@ fun ChatFoldersScreen(store: ChatStore, onBack: () -> Unit, modifier: Modifier =
         item { FooterText(stringResource(R.string.folders_fixed_footer)) }
         itemsIndexed(custom, key = { _, it -> it.id }) { index, folder ->
             ListItem(
-                modifier = Modifier.clickable(role = Role.Button) { renamingId = folder.id },
+                modifier = Modifier.clickable(onClickLabel = renameLabel, role = Role.Button) { renamingId = folder.id },
                 headlineContent = { Text(folder.name) },
                 trailingContent = {
                     Row {
@@ -57,7 +62,7 @@ fun ChatFoldersScreen(store: ChatStore, onBack: () -> Unit, modifier: Modifier =
                         if (index < custom.lastIndex) IconButton(onClick = { store.moveFolder(folder.id, index + 1) }) {
                             Icon(painterResource(R.drawable.ic_arrow_down), contentDescription = stringResource(R.string.folders_move_down, folder.name))
                         }
-                        IconButton(onClick = { store.deleteFolder(folder.id) }) {
+                        IconButton(onClick = { deletingId = folder.id }) {
                             Icon(painterResource(R.drawable.ic_close), contentDescription = stringResource(R.string.folders_delete, folder.name))
                         }
                     }
@@ -66,7 +71,7 @@ fun ChatFoldersScreen(store: ChatStore, onBack: () -> Unit, modifier: Modifier =
         }
         item {
             ListItem(
-                modifier = Modifier.clickable(role = Role.Button) { creating = true },
+                modifier = Modifier.clickable(onClickLabel = stringResource(R.string.folders_new), role = Role.Button) { creating = true },
                 leadingContent = { Icon(painterResource(R.drawable.ic_add), contentDescription = null) },
                 headlineContent = { Text(stringResource(R.string.folders_new)) },
             )
@@ -87,6 +92,15 @@ fun ChatFoldersScreen(store: ChatStore, onBack: () -> Unit, modifier: Modifier =
             dismissButton = { TextButton(onClick = { renamingId = null }) { Text(stringResource(R.string.cancel)) } },
         )
     }
+    deleting?.let { folder ->
+        AlertDialog(
+            onDismissRequest = { deletingId = null },
+            title = { Text(stringResource(R.string.folders_delete_title)) },
+            text = { Text(stringResource(R.string.folders_delete_body, folder.name)) },
+            confirmButton = { TextButton(onClick = { store.deleteFolder(folder.id); deletingId = null }) { Text(stringResource(R.string.delete)) } },
+            dismissButton = { TextButton(onClick = { deletingId = null }) { Text(stringResource(R.string.cancel)) } },
+        )
+    }
     if (creating) {
         var name by rememberSaveable { mutableStateOf("") }
         val chosen = rememberSaveable(saver = listSaver<SnapshotStateList<String>, String>(save = { it.toList() }, restore = { it.toMutableStateList() })) { mutableStateListOf<String>() }
@@ -97,7 +111,7 @@ fun ChatFoldersScreen(store: ChatStore, onBack: () -> Unit, modifier: Modifier =
                 androidx.compose.foundation.layout.Column {
                     OutlinedTextField(name, { name = it }, label = { Text(stringResource(R.string.folders_name)) }, singleLine = true)
                     SectionHeader(stringResource(R.string.folders_chats))
-                    androidx.compose.foundation.lazy.LazyColumn {
+                    androidx.compose.foundation.lazy.LazyColumn(Modifier.heightIn(max = 240.dp)) {
                         items(chats, key = { it.id }) { chat ->
                             val on = chat.id in chosen
                             SwitchRow(store.contact(chat.contactId)?.displayName ?: chat.contactId, on) { v -> if (v) chosen.add(chat.id) else chosen.remove(chat.id) }

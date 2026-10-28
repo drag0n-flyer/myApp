@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalLocale
 import org.example.app.R
 import org.example.app.core.chats.ChatStore
+import org.example.app.ui.usernameText
 import org.example.app.ui.Avatar
 
 /** Invite and Add rows, then contacts in alphabetical sections. Opening a contact opens (or creates) their chat. */
@@ -52,7 +53,7 @@ fun ContactsScreen(
         LazyColumn(Modifier.padding(padding)) {
             item {
                 ListItem(
-                    modifier = Modifier.clickable(role = Role.Button) { onInvite(inviteUrl) },
+                    modifier = Modifier.clickable(onClickLabel = stringResource(R.string.contacts_invite), role = Role.Button) { onInvite(inviteUrl) },
                     leadingContent = { Icon(painterResource(R.drawable.ic_contacts), contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                     headlineContent = { Text(stringResource(R.string.contacts_invite), color = MaterialTheme.colorScheme.primary) },
                 )
@@ -73,7 +74,7 @@ fun ContactsScreen(
                         modifier = Modifier.clickable(role = Role.Button) { onOpenChat(store.ensureChat(person.id)) },
                         leadingContent = { Avatar(person.displayName) },
                         headlineContent = { Text(person.displayName, maxLines = 1) },
-                        supportingContent = { Text("@${person.username}") },
+                        supportingContent = { Text(usernameText(person.username)) },
                     )
                 }
             }

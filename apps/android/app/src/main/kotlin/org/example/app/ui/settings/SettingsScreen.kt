@@ -25,6 +25,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import org.example.app.R
 import org.example.app.core.chats.Contact
+import org.example.app.ui.usernameText
 import org.example.app.ui.Avatar
 
 /** The pages the Settings tab opens. */
@@ -57,14 +58,14 @@ fun SettingsScreen(
                 ListItem(
                     leadingContent = { Avatar(me.displayName, size = 56.dp) },
                     headlineContent = { Text(me.displayName, style = MaterialTheme.typography.titleMedium) },
-                    supportingContent = { Text("@${me.username}") },
+                    supportingContent = { Text(usernameText(me.username)) },
                 )
                 HorizontalDivider()
             }
             items(SettingsPage.entries.toList(), key = { it.name }) { page ->
                 val title = stringResource(page.title)
                 ListItem(
-                    modifier = Modifier.fillMaxWidth().clickable(role = Role.Button) { onOpen(page) },
+                    modifier = Modifier.fillMaxWidth().clickable(onClickLabel = title, role = Role.Button) { onOpen(page) },
                     leadingContent = { Icon(painterResource(page.icon), contentDescription = null) },
                     headlineContent = { Text(title) },
                     trailingContent = when (page) {
