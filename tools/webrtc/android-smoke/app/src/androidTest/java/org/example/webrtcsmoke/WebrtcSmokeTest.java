@@ -12,6 +12,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 import org.webrtc.AudioCapturePostProcessing;
 import org.webrtc.OpusInfo;
+import org.webrtc.OpusVoiceEncoder;
 import org.webrtc.PeerConnectionFactory;
 
 /** Smoke test for the AAR built by tools/webrtc/build-android.sh (patches 0005 and 0006). */
@@ -29,6 +30,18 @@ public class WebrtcSmokeTest {
     assertTrue(OpusInfo.hasDeepPlc());
     assertTrue(OpusInfo.hasOsce());
     assertEquals(120, OpusInfo.maxPacketMs());
+  }
+
+  /** Patch 0008: 50 frames of silence encode to non-empty packets; pre-skip is 312. */
+  @Test
+  public void opusVoiceEncoder() {
+    try (OpusVoiceEncoder encoder = new OpusVoiceEncoder()) {
+      assertEquals(312, encoder.preSkip());
+      byte[] frame = new byte[OpusVoiceEncoder.FRAME_BYTES];
+      for (int i = 0; i < 50; i++) {
+        assertTrue(encoder.encode(frame, 0).length > 0);
+      }
+    }
   }
 
   @Test
