@@ -27,6 +27,8 @@ struct LiveMessaging {
     let sync: DeviceSync
     let network: SharedValue<NetworkType>
     let autoDownload: SharedValue<AutoDownloadSettings>
+    /// The Read receipts switch, read by the outbox and the chat store.
+    let readReceipts: SharedValue<Bool>
 
     /// The app-group container, or nil when the group is not available.
     static var container: URL? {
@@ -61,7 +63,8 @@ struct LiveMessaging {
     /// `nil` when the real MLS engine is not available in this build (see `makeEngine`) or when the shared
     /// container cannot be opened. The caller then keeps the sample store: it never falls back to a fake engine.
     static func make(
-        session: Session, client: ServerClient, network: NetworkType, settings: AutoDownloadSettings
+        session: Session, client: ServerClient, network: NetworkType, settings: AutoDownloadSettings,
+        readReceipts: Bool
     ) async -> LiveMessaging? {
         guard let container,
               makeEngineAvailable(),
@@ -92,7 +95,9 @@ struct LiveMessaging {
         let keys = EscrowKeyProvider(server: client)
         let syncHook = SyncHook()
         let conversations = ConversationManager(deps: deps, escrowKey: keys.closure, syncOnce: { try await syncHook.run() })
-        let outbox = Outbox(deps: deps, conversations: conversations, keys: keys)
+        let readReceiptsBox = SharedValue(readReceipts)
+        let outbox = Outbox(
+            deps: deps, conversations: conversations, keys: keys, readReceiptsEnabled: { readReceiptsBox.value })
         let inbox = InboxProcessor(
             deps: deps, conversations: conversations, handler: IncomingHandler(me: deps.me, now: now), controls: outbox)
         syncHook.set { _ = try await inbox.syncOnce() }
@@ -108,7 +113,9 @@ struct LiveMessaging {
             deps: deps, outbox: outbox, network: { networkBox.value }, settings: { settingsBox.value })
         let store = LiveChatStore(
             deps: deps, outbox: outbox, inbox: inbox, conversations: conversations, attachments: attachments)
-        return LiveMessaging(store: store, inbox: inbox, sync: sync, network: networkBox, autoDownload: settingsBox)
+        return LiveMessaging(
+            store: store, inbox: inbox, sync: sync, network: networkBox, autoDownload: settingsBox,
+            readReceipts: readReceiptsBox)
     }
 
     /// MERGE(M5): the real engine, `makeMLSEngine(identity:storage:)` (plan 4), keeping its group state in the

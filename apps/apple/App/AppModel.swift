@@ -47,6 +47,11 @@ final class AppModel {
         didSet {
             calls.settings = settings.call
             messaging?.autoDownload.value = settings.autoDownload
+            if settings.readReceipts != oldValue.readReceipts, let messaging {
+                messaging.readReceipts.value = settings.readReceipts
+                // Others' read ticks show or hide with the switch.
+                messaging.store.refresh()
+            }
         }
     }
     var network: NetworkType {
@@ -331,7 +336,8 @@ final class AppModel {
         wipeTask = nil
         guard !isSampleData, messaging == nil, let session = sessions?.current, let client = live?.client,
               let built = await LiveMessaging.make(
-                session: session, client: client, network: network, settings: settings.autoDownload) else { return }
+                session: session, client: client, network: network, settings: settings.autoDownload,
+                readReceipts: settings.readReceipts) else { return }
         messaging = built
         built.store.onChange = { [weak self] in self?.revision += 1 }
         chatStore = built.store
