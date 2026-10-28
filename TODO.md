@@ -5,7 +5,7 @@ Last updated: 2026-10-28, 11:50 UTC.
 | Track | Done | % |
 |---|---|---|
 | iPhone/Mac Phase 1 | 121 / 128 | 95% |
-| Android | 38 / 44 | 86% |
+| Android | 39 / 44 | 89% |
 | Admin dashboard | done, with admin accounts and 2FA, on `main` | 100% |
 
 Up to 15 agents work in parallel (on Opus until 2 Nov, when Sonnet's weekly limit resets). CI is the bottleneck: about 5 Mac jobs at once, and GitHub throttles status checks when many agents watch runs. Mac CI runs only the jobs a change needs. Android CI uses Linux runners only.
@@ -53,6 +53,7 @@ Extra work beyond the plans, in progress (each is reviewed before it merges; ETA
 | Port: sign-up sends the display name, email-code sign-up, read-receipts switch | `feat/ios-port-signup` | merged | done |
 | Port: linking skips an unreadable or too-large contact list; link-code check compares the port | `feat/ios-port-linking` | merged | done |
 | Small follow-ups: a pending link save stays tied to the server that issued it (switching server is refused meanwhile); after a claimed link only the session save is retried; read-receipt outbox tests | `fix/ios-followups` | merged (CI green, all 8 jobs). Open, low: capture the server at the start of the link wait, so a "Change" tap at the instant the claim succeeds can't file the session under the new server | done |
+| Android E6: Telecom calls and LiveCallEngine; sign-out and wipe end any call first | `android/e6` | merged (CI green on re-runs). Open, low: close the media in the 3 s hang-up timeout branch too (do it in E5); flaky `concurrentOpensAfterDeviceSwitchLeaveOneSession` (from I1, capture the failing assertion); `VoiceRecorderInstrumentedTest` timing window too tight on the API 36 emulator | done |
 | App ID in one file (`apps/apple/AppID.xcconfig`) and a stronger photo-privacy test | `chore/appid-xcconfig` | merged (CI green). Open, low: `check-app-id.sh` also scans git-ignored build output, so it fails on a local checkout that has built the MLS Kotlin bindings; CI is clean | done |
 
 Android has the same inbox fixes (merged): a crafted invite can't stall the inbox, a new chat is abandoned only when really gone, and a failure after a chat starts never creates a second one.
