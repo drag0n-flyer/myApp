@@ -371,11 +371,14 @@ public actor InboxProcessor {
                     pendingJoins[raw.cursor] = nil
                     return result
                 }
-                // The group's members after a commit (under the lock, before the transaction). A failure here only
-                // skips the lines for now: the MLS state has advanced, so the item must not be processed again.
-                var keys: [MemberKey]?
-                if case .commit(let group, _, false) = incoming { keys = try? await membership.keys(of: group) }
+                // The group's members after a commit (under the lock, before the transaction). The MLS state has
+                // advanced, so the item must not be processed again: a failure flags the conversation instead.
+                var keys: [MemberKey]?, unreadable = false
+                if case .commit(let group, _, false) = incoming {
+                    do { keys = try await membership.keys(of: group) } catch { unreadable = true }
+                }
                 return try repo.transaction {
+                    if unreadable { try Membership.markUnreadable(conversationID: raw.conversationID, db: repo) }
                     let result = try handler.apply(incoming, raw: raw, db: repo, memberKeys: keys)
                     try repo.markProcessed(hash: hash)
                     try repo.deleteRaw(cursor: raw.cursor)

@@ -43,6 +43,8 @@ public protocol ChatStore: AnyObject {
     func safetyNumber(for chatID: String) -> SafetyNumber?
     /// Local only.
     func setVerified(_ verified: Bool, chatID: String)
+    /// The members of one of the chat's groups could not be read: no safety number, and chat info says so.
+    func membersUnreadable(for chatID: String) -> Bool
     func receive(_ content: MessageContent, from contact: Contact)
     func accept(requestID: String)
     func block(contactID: String)
@@ -66,6 +68,9 @@ extension ChatStore {
 
     /// Stores that never fail to send have nothing to retry.
     public func retrySend(messageID: String) {}
+
+    /// Stores without an MLS engine can always read their members.
+    public func membersUnreadable(for chatID: String) -> Bool { false }
 
     public func send(_ content: MessageContent, in chatID: String) {
         send(content, in: chatID, replyTo: nil)

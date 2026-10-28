@@ -357,3 +357,25 @@ private final class StepClock: @unchecked Sendable {
     var now: Date { lock.withLock { date } }
     func advance(_ seconds: TimeInterval) { lock.withLock { date = date.addingTimeInterval(seconds) } }
 }
+
+/// A group whose members the engine cannot read (an unreadable credential, or any other failure) is flagged, never
+/// silently skipped. The flag clears on the next read that works.
+@Suite("TestMembersUnreadable") struct TestMembersUnreadable {
+    @Test func failedReadIsFlaggedAndClearedByTheNextRead() async throws {
+        let rig = try await Rig.make()
+        let conversation = try #require(try rig.ana1.repo.conversation(serverID: rig.conversationIDs[0]))
+        var deps = rig.ana1.device.deps
+        let spy = SpyMLSEngine(deps.mls)
+        deps.mls = spy
+        let membership = Membership(deps: deps)
+        #expect(try !Membership.membersUnreadable(chatID: "acc-bob", db: rig.ana1.repo))
+
+        spy.failMembers(true)
+        await #expect(throws: (any Error).self) { try await membership.update(conversation: conversation, db: rig.ana1.repo) }
+        #expect(try Membership.membersUnreadable(chatID: "acc-bob", db: rig.ana1.repo))
+
+        spy.failMembers(false)
+        _ = try await membership.update(conversation: conversation, db: rig.ana1.repo)
+        #expect(try !Membership.membersUnreadable(chatID: "acc-bob", db: rig.ana1.repo))
+    }
+}

@@ -737,3 +737,25 @@ private final class LogBox: @unchecked Sendable {
         #expect(try bob.deps.repo.conversation(serverID: second.serverID) != nil)
     }
 }
+
+@Suite("TestInboxMembersUnreadable") struct TestInboxMembersUnreadable {
+    /// A commit is processed (the MLS state has moved on) but its members cannot be read: the chat is flagged.
+    @Test func commitWithUnreadableMembersFlagsTheChat() async throws {
+        let rig = try await Rig.make()
+        let record = try await startChat(rig)
+        let bob1 = Side(rig.bob1)
+        _ = try await bob1.processor.syncOnce()
+        #expect(try !Membership.membersUnreadable(chatID: "acc-ana", db: bob1.deps.repo))
+
+        let group = GroupID(raw: record.groupID)
+        let bundle = try await rig.ana1.deps.mls.remove(members: ["acc-bob/\(rig.bob2.deviceID)"], from: group)
+        _ = try await rig.ana1.deps.server.postCommit(
+            conversationID: record.serverID, epoch: 1, commit: bundle.commit, welcome: nil, addDevices: [],
+            removeDevices: [rig.bob2.deviceID])
+        try await rig.ana1.deps.mls.commitAccepted(group)
+        bob1.spy.failMembers(true)
+        _ = try await bob1.processor.syncOnce()
+        #expect(try bob1.deps.repo.conversation(serverID: record.serverID)?.epoch == 2)
+        #expect(try Membership.membersUnreadable(chatID: "acc-ana", db: bob1.deps.repo))
+    }
+}

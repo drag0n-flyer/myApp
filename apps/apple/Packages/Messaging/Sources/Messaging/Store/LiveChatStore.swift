@@ -416,6 +416,11 @@ public final class LiveChatStore: ChatStore {
         return SafetyNumber(groups: ChatMapping.groups(row.current), isVerified: row.verified == row.current)
     }
 
+    /// The members of one of the chat's groups could not be read. A database error counts as unreadable.
+    public func membersUnreadable(for chatID: String) -> Bool {
+        (try? Membership.membersUnreadable(chatID: chatID, db: repo)) ?? true
+    }
+
     /// Local only: nothing is sent.
     public func setVerified(_ verified: Bool, chatID: String) {
         guard supportsSafetyNumbers, let row = coveredSafety(chatID) else { return }
@@ -424,12 +429,20 @@ public final class LiveChatStore: ChatStore {
     }
 
     /// The stored number, only when it is the number the preferred conversation's stored members give now, with no
-    /// placeholder key among them. Anything else (placeholder rows from before the real keys, a number written for
-    /// another conversation, members that cannot be framed) is hidden and cannot be verified, and the preferred
-    /// conversation is re-baselined from the engine.
+    /// placeholder key among them and no group of the chat flagged as unreadable. Anything else (placeholder rows
+    /// from before the real keys, unreadable members, a number written for another conversation, members that
+    /// cannot be framed) is hidden and cannot be verified, and the conversation is re-baselined from the engine.
     private func coveredSafety(_ chatID: String) -> (current: String, verified: String?)? {
         guard let row = (try? repo.safety(chatID: chatID)) ?? nil,
               let conversation = (try? repo.preferredConversation(chatID: chatID)) ?? nil else { return nil }
+        // Members that could not be read: no number until a read works (each flagged conversation is read again).
+        if membersUnreadable(for: chatID) {
+            for flagged in (try? repo.conversations(chatID: chatID)) ?? []
+            where flagged.active && ((try? Membership.isUnreadable(conversationID: flagged.serverID, db: repo)) ?? true) {
+                rebaseline(flagged)
+            }
+            return nil
+        }
         let keys = ((try? repo.members(conversationID: conversation.serverID)) ?? [])
             .map { MemberKey(identity: $0.identity, signatureKey: $0.signatureKey) }
         let number = try? SafetyNumberCalc.compute(accountA: deps.me.accountID, accountB: chatID, members: keys).joined()

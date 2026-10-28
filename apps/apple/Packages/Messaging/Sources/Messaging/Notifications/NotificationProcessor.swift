@@ -166,12 +166,15 @@ public struct NotificationProcessor: Sendable {
                 throw LeaveForApp()
             }
             let raw = try rawRecord(for: incoming, payload: payload)
-            // The group's members after a commit, read before the transaction. A failure only skips the device
-            // lines: the MLS state has advanced, so the payload must not be processed again.
-            var keys: [MemberKey]?
-            if case .commit(let group, _, false) = incoming { keys = try? await Membership(deps: deps).keys(of: group) }
+            // The group's members after a commit, read before the transaction. The MLS state has advanced, so the
+            // payload must not be processed again: a failure flags the conversation instead.
+            var keys: [MemberKey]?, unreadable = false
+            if case .commit(let group, _, false) = incoming {
+                do { keys = try await Membership(deps: deps).keys(of: group) } catch { unreadable = true }
+            }
             // The rows and the processed mark are written together or not at all.
             let result = try repo.transaction { () throws -> AppliedIncoming in
+                if unreadable { try Membership.markUnreadable(conversationID: raw.conversationID, db: repo) }
                 let result = try handler.applyIncoming(incoming, raw: raw, db: repo, memberKeys: keys)
                 try repo.markProcessed(hash: hash)
                 // The app sends the delivered receipt on its next sync (the extension never sends).
