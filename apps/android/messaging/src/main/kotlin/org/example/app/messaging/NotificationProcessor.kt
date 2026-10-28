@@ -179,7 +179,8 @@ class NotificationProcessor(
         if (contact == null || !contact.isContact) return RingOutcome.SilentMissed(ring.callID, from)
         val name = contact.displayName.ifEmpty { contact.username }
         // Only a call that ended before anyone answered is a missed call. Answered or declined elsewhere is not.
-        // TODO(E6): ask the server for `call.status` (design:226) after this returns Ring, outside MlsGate. D7 keeps the network out of the ring gate.
+        // The `call.status` check (design:226) runs after this returns Ring, outside MlsGate: LiveCallEngine.ring asks the
+        // server before it rings, so a call that ended in the meantime never rings. D7 keeps the network out of the ring gate.
         val end = endedCalls.endOf(ring.callID)
         if (end != null && !end.answered && end.reason in MISSED_REASONS) {
             return RingOutcome.MissedBeforeAnswer(ring.callID, from, name)

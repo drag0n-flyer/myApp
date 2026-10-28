@@ -5,7 +5,26 @@ import android.net.Uri
 import android.util.Log
 import java.io.File
 import java.time.Instant
+import android.os.SystemClock
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.MutableSharedFlow
+import org.example.app.calls.android.CallController
+import org.example.app.calls.android.CallHistory
+import org.example.app.calls.android.CallMedia
+import org.example.app.calls.android.CallPeer
+import org.example.app.calls.android.CallPeers
+import org.example.app.calls.android.LiveCallEngine
+import org.example.app.calls.session.CallContext
+import org.example.app.calls.session.IceServer
+import org.example.app.calls.session.LiveCallSignaling
+import org.example.app.calls.session.MediaSessionFactory
+import org.example.app.contracts.CallSignalSealer
+import org.example.app.contracts.LiveSocket
+import org.example.app.contracts.ServerEvent
+import org.example.app.core.chats.Contact
+import org.example.app.core.settings.UserSettings
+import org.example.app.net.api.TurnApi
+import org.example.app.push.MissedCallRecorder
 import org.example.app.contracts.Hpke
 import org.example.app.contracts.SecretNames
 import org.example.app.contracts.SecretStore
@@ -70,6 +89,12 @@ class LiveSession(
     /** This session's own scope: cancelled when the session ends, so none of its work outlives the account. */
     val scope: CoroutineScope,
     readReceiptsEnabled: () -> Boolean,
+    /** For calls: where this device stands (server policy, settings, network) for a contact or a stranger. */
+    callContext: (isContact: Boolean) -> CallContext,
+    callController: CallController,
+    callSettings: () -> UserSettings,
+    callMedia: (Context, () -> UserSettings) -> MediaSessionFactory = CallMedia::factory,
+    callSealer: CallSignalSealer? = null,
 ) {
     private val clock = Clock.System
     val database = platform.openDatabase(platform.databaseName, DbKey.loadOrCreate(secrets))
@@ -112,6 +137,33 @@ class LiveSession(
 
     /** The live socket for this session's host. */
     val socket: SocketHandle = platform.socket(client)
+
+    /** The socket's call frames. The socket has one collector (the graph's watcher), which passes them on here. */
+    val callEvents = MutableSharedFlow<ServerEvent>(extraBufferCapacity = 64)
+
+    /** Calls (E6): the call frames over the socket, signals sealed in the 1:1 chat, the phone through Telecom. */
+    val calls: LiveCallEngine = LiveCallEngine(
+        scope = scope,
+        signaling = LiveCallSignaling(
+            object : LiveSocket by socket.socket {
+                override val events = callEvents
+            },
+        ) { TurnApi(client).turnCredentials().iceServers.map { IceServer(it.urls, it.username, it.credential) } },
+        sealer = callSealer ?: sealer,
+        // TODO(E5) is in CallMedia: until WebRtcMediaSession lands, every call fails cleanly at setup.
+        media = callMedia(context, callSettings),
+        peers = CallPeers { id ->
+            repo.contact(id)?.let { CallPeer(Contact(it.accountId, it.displayName, it.username), it.isContact, repo.isBlocked(id)) }
+        },
+        context = callContext,
+        controller = callController,
+        history = CallHistory { summary, contactId, outgoing -> chatStore.recordCall(summary, contactId, outgoing, java.time.Instant.now()) },
+        strangers = object : MissedCallRecorder {
+            override suspend fun recordMissedCall(callId: String, fromAccountId: String) =
+                chatStore.recordStrangerMissedCall(callId, fromAccountId)
+        },
+        clock = org.example.app.calls.session.Clock { SystemClock.elapsedRealtime() },
+    ).also { it.attach() }
 
     /** Start-up: KeyPackages topped up (others can add this device), leftovers swept, the inbox read, cut-short creates finished. */
     suspend fun start() {

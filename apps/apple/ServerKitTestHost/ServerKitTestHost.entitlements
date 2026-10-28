@@ -4,7 +4,7 @@
 <dict>
 	<key>keychain-access-groups</key>
 	<array>
-		<string>$(AppIdentifierPrefix)org.example.app.serverkit-testhost</string>
+		<string>$(AppIdentifierPrefix)$(APP_ID).serverkit-testhost</string>
 	</array>
 </dict>
 </plist>

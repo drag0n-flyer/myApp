@@ -44,9 +44,9 @@ object PushWiring {
             override suspend fun onCallPush(padded: ByteArray): RingOutcome =
                 graph().openSession()?.notifications?.onCallPush(padded) ?: RingOutcome.Drop
         }
-        // TODO(E6): ring through `:calls-android` (Telecom); until then a contact's ring is not shown.
+        // A contact's ring goes to the session's LiveCallEngine, which asks `call.status` and rings through Telecom.
         val ring = object : IncomingCallSink {
-            override fun ring(outcome: RingOutcome.Ring) { Log.i(TAG, "ring not shown before E6: ${outcome.callId}") }
+            override fun ring(outcome: RingOutcome.Ring) = graph().ring(outcome)
         }
         val missed = object : MissedCallRecorder {
             override suspend fun recordMissedCall(callId: String, fromAccountId: String) {

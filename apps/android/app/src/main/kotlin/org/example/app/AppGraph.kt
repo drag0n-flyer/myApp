@@ -41,6 +41,17 @@ import org.example.app.core.calls.DataMode
 import org.example.app.core.calls.ModePreference
 import org.example.app.core.calls.NetworkType
 import org.example.app.core.calls.SimulatedCallEngine
+import org.example.app.core.calls.CallEngine
+import org.example.app.contracts.RingOutcome
+import org.example.app.calls.android.CallsRuntime
+import org.example.app.calls.android.telecom.FallbackCallController
+import org.example.app.calls.android.telecom.PlainCallController
+import org.example.app.calls.android.telecom.TelecomCallController
+import org.example.app.calls.session.CallContext
+import org.example.app.calls.session.MediaSessionFactory
+import org.example.app.contracts.CallSignalSealer
+import org.example.app.calls.android.CallMedia
+import org.example.app.live.SessionCallEngine
 import org.example.app.core.chats.ChatStore
 import org.example.app.core.chats.SampleChatStore
 import org.example.app.core.settings.IPHiding
@@ -76,7 +87,7 @@ private val SAMPLE_POLICY = ServerPolicy(ModePreference.Auto, DataMode.High, IPH
  * [LiveSession] with the MLS-backed chat store, the live socket and push. Nothing in the live build reads a sample
  * value: the server policy, network and settings come from the server and the device.
  *
- * Calls stay on the [SimulatedCallEngine] until E6 and are hidden in the live build ([callsAvailable]). The live socket
+ * Calls run on the [SimulatedCallEngine] with sample data and on the session's `LiveCallEngine` live. The live socket
  * is open only while the app is visible or a call is active ([setVisible], [setInCall]); push wakes the app otherwise.
  */
 class AppGraph(
@@ -84,6 +95,13 @@ class AppGraph(
     val sampleData: Boolean,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
     private val platform: LivePlatform = LivePlatform.android(context),
+    /** Telecom first, a plain notification and service where Telecom refuses. Tests swap the phone side. */
+    private val makeCallController: (Context) -> FallbackCallController =
+        { FallbackCallController(TelecomCallController(it), PlainCallController(it)) },
+    /** The peer connection for each call; `CallMedia` holds the TODO(E5) seam. */
+    private val callMedia: (Context, () -> UserSettings) -> MediaSessionFactory = CallMedia::factory,
+    /** Null: the session's MLS call sealer. Tests that run a call past the ring set a plain one. */
+    private val callSealer: CallSignalSealer? = null,
 ) {
     private val appContext = context.applicationContext
 
@@ -99,8 +117,8 @@ class AppGraph(
     /** The network the device is on now (always Wi-Fi with sample data). */
     val network: NetworkType get() = if (sampleData) NetworkType.Wifi else platform.network()
 
-    /** Calls run only on the simulated engine until E6, so the live build hides them. TODO(E6): true with `LiveCallEngine`. */
-    val callsAvailable: Boolean get() = sampleData
+    /** Calls show in both builds: the simulated engine with sample data, `LiveCallEngine` live. */
+    val callsAvailable: Boolean get() = true
 
     /** The invite link on the Contacts tab; none in the live build until the app can make real invites. */
     val inviteUrl: String? get() = if (sampleData) "https://${SAMPLE_POLICY.host}/invite/${SampleAccountService.SAMPLE_INVITE_CODE}" else null
@@ -128,13 +146,29 @@ class AppGraph(
         log = { Log.w("OwnDevices", it) },
     ).start(socket.states, socket.events)
 
-    // TODO(E6): the live call engine (`LiveCallEngine`) replaces the simulated one here, for both data modes.
-    val callEngine: SimulatedCallEngine by lazy {
-        SimulatedCallEngine(server = serverPolicy, settings = settingsStore.settings.value.call, network = network).also { engine ->
-            settingsStore.settings.map { it.call }.distinctUntilChanged().onEach { engine.settings = it }.launchIn(scope)
-            engine.state.map { it != null && !it.isEnded }.distinctUntilChanged().onEach { setInCall(it) }.launchIn(scope)
+    /**
+     * The simulated engine with sample data. Live, a [SessionCallEngine] that forwards to the open session's
+     * `LiveCallEngine` (E6); the Telecom service and the call activities reach it through [CallsRuntime].
+     */
+    val callEngine: CallEngine by lazy {
+        val engine: CallEngine = if (sampleData) {
+            SimulatedCallEngine(server = serverPolicy, settings = settingsStore.settings.value.call, network = network).also { sim ->
+                settingsStore.settings.map { it.call }.distinctUntilChanged().onEach { sim.settings = it }.launchIn(scope)
+            }
+        } else {
+            SessionCallEngine(scope).also {
+                CallsRuntime.controller = callController
+                CallsRuntime.engine = it
+            }
         }
+        engine.state.map { it != null && !it.isEnded }.distinctUntilChanged().onEach { setInCall(it) }.launchIn(scope)
+        engine
     }
+
+    private val callController: FallbackCallController by lazy { makeCallController(appContext) }
+
+    private fun callContext(isContact: Boolean) =
+        CallContext(serverPolicy, settingsStore.settings.value, network, isContact)
 
     /** The activity on screen, for the passkey and biometric prompts. Set by [MainActivity]. */
     @Volatile var activity: FragmentActivity? = null
@@ -214,6 +248,12 @@ class AppGraph(
      * Opens the signed-in services off the main thread if the account is signed in; null otherwise, and always null
      * while a wipe runs or is pending (a pending wipe is finished first). Data of another account is wiped first.
      */
+    /** A contact's call that came by push (D7 checked it): the session's `LiveCallEngine` rings it. */
+    fun ring(outcome: RingOutcome.Ring) {
+        callEngine // the Telecom service and the call screens reach the engine through CallsRuntime
+        scope.launch { quietly("ring") { openSession()?.calls?.ring(outcome) } }
+    }
+
     suspend fun openSession(): LiveSession? = withContext(Dispatchers.IO) {
         if (sampleData || wipeRunning) return@withContext null
         liveSession?.let { return@withContext it }
@@ -244,8 +284,14 @@ class AppGraph(
             val session = LiveSession(
                 device, client, secrets, platform, appContext, hpke, sessionScope,
                 readReceiptsEnabled = { settingsStore.settings.value.readReceipts },
+                callContext = ::callContext,
+                callController = callController,
+                callSettings = { settingsStore.settings.value },
+                callMedia = callMedia,
+                callSealer = callSealer,
             )
             liveSession = session
+            (callEngine as? SessionCallEngine)?.use(session.calls)
             start(session)
             session
         }
@@ -258,8 +304,15 @@ class AppGraph(
         }
         val live = session.socket.socket
         // The socket's events have one collector: the watcher. A pushed inbox item is read on the way through.
-        // TODO(E6): call events go to `LiveCallEngine`.
-        val events = live.events.onEach { if (it is ServerEvent.Inbox) quietly("sync") { session.chatStore.syncInbox() } }
+        // Call frames go on to the session's `LiveCallEngine`.
+        val events = live.events.onEach {
+            when (it) {
+                is ServerEvent.Inbox -> quietly("sync") { session.chatStore.syncInbox() }
+                is ServerEvent.CallRing, is ServerEvent.CallAnswered, is ServerEvent.CallSignal, is ServerEvent.CallEnded ->
+                    session.callEvents.emit(it)
+                is ServerEvent.DeviceRevoked -> Unit
+            }
+        }
         val socket = object : LiveSocket by live {
             override val events = events
         }
@@ -283,10 +336,18 @@ class AppGraph(
     }
 
     /** Takes the open session out of use: no new work starts on it. */
-    private fun detachSession(): LiveSession? = synchronized(this) { liveSession.also { liveSession = null } }
+    private fun detachSession(): LiveSession? = synchronized(this) {
+        liveSession.also {
+            liveSession = null
+            if (it != null) (callEngine as? SessionCallEngine)?.use(null)
+        }
+    }
 
     /** Stops and closes [session] step by step; every step runs. */
     private suspend fun stop(session: LiveSession, step: suspend (suspend () -> Unit) -> Unit, wipeRows: Boolean) {
+        // First, while the socket can still carry the hang-up: no call (Telecom, ringtone, notification, service)
+        // outlives the session into the next account.
+        step { session.calls.shutdown() }
         step { session.socket.stop() }
         step { withTimeoutOrNull(SHUTDOWN_MS) { session.chatStore.shutdown() } }
         step { session.scope.cancel() }

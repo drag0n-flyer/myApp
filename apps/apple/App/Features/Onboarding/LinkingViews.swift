@@ -25,12 +25,15 @@ struct LinkDeviceView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 Spacer()
-                Button("Change") {
-                    newHost = ""
-                    askingServer = true
+                // An approved sign-in waiting to be saved belongs to this server: it can't be moved.
+                if !model.account.linkSavePending {
+                    Button("Change") {
+                        newHost = ""
+                        askingServer = true
+                    }
+                    .font(.footnote)
+                    .accessibilityIdentifier("link.change")
                 }
-                .font(.footnote)
-                .accessibilityIdentifier("link.change")
             }
             .accessibilityElement(children: .combine)
             .accessibilityIdentifier("link.server")
@@ -49,6 +52,11 @@ struct LinkDeviceView: View {
                 Button("I scanned it") { model.onboarding.linked() }
                     .buttonStyle(PrimaryButtonStyle())
                     .accessibilityIdentifier("link.done")
+            } else if error != nil, model.account.linkSavePending {
+                // Approved, but this device's sign-in wasn't saved: retry the save, never a new code.
+                Button("Try again") { attempt += 1 }
+                    .buttonStyle(PrimaryButtonStyle())
+                    .accessibilityIdentifier("link.retry")
             } else if error == .linkExpired {
                 Button("Show new code") { attempt += 1 }
                     .buttonStyle(PrimaryButtonStyle())
@@ -74,15 +82,18 @@ struct LinkDeviceView: View {
         }
     }
 
-    /// Shows the code, then waits for the iPhone to approve it.
+    /// Shows the code, then waits for the iPhone to approve it. When an approved sign-in is still waiting to
+    /// be saved (a failed save, or the screen was left mid-retry) only the save is retried, with no new code.
     private func run() async {
         error = nil
-        qrText = ""
         if host.isEmpty { host = model.account.currentServer?.host ?? model.account.defaultServer.host }
         do throws(AccountError) {
-            qrText = try await model.account.makeLinkCode().qrText
-            if model.isSampleData { return }
-            let result = try await model.account.waitForLinkApproval()
+            if model.isSampleData {
+                qrText = try await model.account.makeLinkCode().qrText
+                return
+            }
+            if !model.account.linkSavePending { qrText = "" }
+            let result = try await model.account.linkThisDevice { qrText = $0 }
             await model.didSignIn()
             if result.contactsCopied {
                 model.onboarding.linked()

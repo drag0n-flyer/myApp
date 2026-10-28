@@ -1,5 +1,37 @@
 package org.example.app
 
+import kotlinx.coroutines.flow.MutableSharedFlow
+import org.example.app.calls.android.CallController
+import org.example.app.calls.android.CallInfo
+import org.example.app.calls.android.CallService
+import org.example.app.calls.android.Ringer
+import org.example.app.calls.android.telecom.PlainCallController
+import org.example.app.calls.android.telecom.FallbackCallController
+import org.example.app.calls.policy.AudioProfile
+import org.example.app.calls.policy.IceState
+import org.example.app.calls.policy.IceTransportPolicy
+import org.example.app.calls.policy.MediaStats
+import org.example.app.calls.policy.VideoTier
+import org.example.app.calls.session.IceServer
+import org.example.app.calls.session.MediaEvent
+import org.example.app.calls.session.MediaSession
+import org.example.app.calls.session.MediaSessionFactory
+import org.example.app.contracts.DataMode
+import org.example.app.contracts.IceCandidate
+import org.example.app.contracts.RingOutcome
+import org.example.app.contracts.CallSealException
+import org.example.app.contracts.CallSignalPayload
+import org.example.app.contracts.CallSignalSealer
+import org.example.app.contracts.OpenedCallSignal
+import org.example.app.core.calls.CallEndReason
+import org.example.app.core.calls.CallPhase
+import org.example.app.core.settings.NoiseSuppression
+import org.robolectric.Shadows.shadowOf
+import org.example.app.calls.android.CallsRuntime
+import org.example.app.calls.android.LiveCallEngine
+import org.example.app.core.calls.SimulatedCallEngine
+import org.example.app.live.SessionCallEngine
+import org.example.app.ui.calls.CallHistoryViewModel
 import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
@@ -185,10 +217,22 @@ class AppGraphTest {
         assertEquals("chat.example.org", graph.serverPolicy.host)
         assertFalse(graph.serverPolicy.host == "home.example.org")
         assertNull(graph.inviteUrl)
-        assertFalse(graph.callsAvailable)
         assertEquals(NetworkType.Mobile, graph.network)
         assertEquals(org.example.app.core.settings.UserSettings.initial(graph.serverPolicy), graph.settingsStore.settings.value)
         assertIs<LiveChatStore>(graph.chatStore)
+    }
+
+    /** Live calls run on `LiveCallEngine` through the open session; the Calls tab shows only real calls (none yet). */
+    @Test
+    fun liveModeUsesLiveCallEngine() {
+        val (graph, session) = opened()
+        assertTrue(graph.callsAvailable)
+        assertFalse(graph.callEngine is SimulatedCallEngine)
+        assertIs<LiveCallEngine>(session.calls)
+        assertSame(session.calls, assertIs<SessionCallEngine>(graph.callEngine).current)
+        assertSame(graph.callEngine, CallsRuntime.engine)
+        assertNull(graph.callEngine.state.value)
+        assertTrue(CallHistoryViewModel(graph.chatStore).records.value.isEmpty())
     }
 
     @Test
@@ -363,6 +407,116 @@ class AppGraphTest {
         graph.setVisible(false)
         assertFalse(socket.running, "background after the call")
     }
+
+    // ---- Calls end with the session (sign-out, wipe)
+
+    /** The Telecom side: the connections it holds open. [refuse] sends every call to the plain controller. */
+    private class TestTelecom(val refuse: Boolean) : CallController {
+        val open = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+        override fun reportIncoming(call: CallInfo) { if (refuse) throw IllegalStateException("refused"); open += call.callId }
+        override fun reportOutgoing(call: CallInfo) { if (refuse) throw IllegalStateException("refused"); open += call.callId }
+        override fun reportAnswered(callId: String, video: Boolean) = Unit
+        override fun reportActive(callId: String) = Unit
+        override fun reportEnded(callId: String, reason: CallEndReason) { open -= callId }
+        override fun reportMissed(call: CallInfo) = Unit
+    }
+
+    private class TestRinger : Ringer {
+        @Volatile var ringing = false
+        override fun start() { ringing = true }
+        override fun stop() { ringing = false }
+    }
+
+    private class TestMedia : MediaSession {
+        override val events = MutableSharedFlow<MediaEvent>(extraBufferCapacity = 8)
+        @Volatile var closed = false
+        private val sdp = "v=0\r\na=fingerprint:sha-256 AA:BB\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n"
+        override suspend fun configure(iceServers: List<IceServer>, policy: IceTransportPolicy, video: Boolean) = Unit
+        override suspend fun makeOffer(receive: AudioProfile, iceRestart: Boolean) = sdp
+        override suspend fun acceptOffer(sdp: String, send: AudioProfile, receive: AudioProfile) = this.sdp
+        override suspend fun acceptAnswer(sdp: String, send: AudioProfile) = Unit
+        override suspend fun rollback() = Unit
+        override suspend fun add(candidate: IceCandidate) = Unit
+        override suspend fun setAudioMaxBitrate(bps: Int) = Unit
+        override suspend fun setVideo(tier: VideoTier?, ceiling: DataMode) = Unit
+        override suspend fun setMuted(on: Boolean) = Unit
+        override suspend fun setNoiseSuppression(mode: NoiseSuppression) = Unit
+        override suspend fun stats() = MediaStats()
+        override suspend fun close() { closed = true }
+    }
+
+    /**
+     * A signed-in graph with a call from Bob ringing (or, with [active], answered and connected), then [end]: the call
+     * must leave nothing behind on the phone.
+     */
+    private fun callEndsWithSession(refuseTelecom: Boolean, active: Boolean, end: suspend (AppGraph) -> Unit) = runBlocking {
+        val telecom = TestTelecom(refuseTelecom)
+        val ringer = TestRinger()
+        val media = TestMedia()
+        answer = { r -> if (r.url.encodedPath == "/v1/turn") 200 to """{"iceServers":[],"ttl":60}""" else null }
+        saveSession()
+        val graph = AppGraph(
+            context, sampleData = false, scope = scope, platform = platform(),
+            makeCallController = { FallbackCallController(telecom, PlainCallController(it, ringer)) },
+            callMedia = { _, _ -> MediaSessionFactory { media } },
+            // The fake MLS engine has no 1:1 group with Bob to seal in: frames go out as plain bytes.
+            callSealer = object : CallSignalSealer {
+                override suspend fun seal(payload: CallSignalPayload, to: String) = ByteArray(1)
+                override suspend fun open(data: ByteArray, from: String): OpenedCallSignal = throw CallSealException.Undecryptable
+            },
+        )
+        val session = assertNotNull(graph.openSession())
+        session.chatStore.settle()
+        val app = shadowOf(context as android.app.Application)
+        session.calls.ring(RingOutcome.Ring("c1", "bob", "Bob", video = false))
+        waitFor { graph.callEngine.state.value?.phase == CallPhase.Incoming }
+        if (refuseTelecom) {
+            assertTrue(ringer.ringing)
+            assertEquals(1, callNotifications())
+        } else {
+            assertEquals(setOf("c1"), telecom.open.toSet())
+        }
+        if (active) {
+            graph.callEngine.answer(video = false)
+            waitFor { graph.callEngine.state.value?.phase == CallPhase.Connecting }
+            media.events.emit(MediaEvent.IceStateChanged(IceState.Connected))
+            waitFor { graph.callEngine.state.value?.phase == CallPhase.Active }
+            if (refuseTelecom) assertEquals(CallService::class.java.name, app.nextStartedService?.component?.className)
+        } else {
+            assertNull(app.peekNextStartedService(), "no service while it rings")
+        }
+        end(graph)
+        assertTrue(telecom.open.isEmpty(), "Telecom connection")
+        assertFalse(ringer.ringing, "ringtone")
+        assertEquals(0, callNotifications(), "notification")
+        if (active && refuseTelecom) assertEquals(CallService::class.java.name, app.nextStoppedService?.component?.className)
+        assertNull(app.peekNextStartedService(), "service")
+        assertTrue(media.closed, "media")
+        assertNull(graph.callEngine.state.value)
+    }
+
+    private fun callNotifications(): Int =
+        shadowOf(context.getSystemService(android.app.NotificationManager::class.java)).allNotifications.count { it.channelId == "calls" }
+
+    private val signOut: suspend (AppGraph) -> Unit = { graph ->
+        val ends = graph.sessionEnds.value
+        answer = { r ->
+            when (r.url.encodedPath) {
+                "/v1/devices" -> 401 to unauthorized
+                "/v1/me" -> 200 to """{"accountID":"acc-me"}"""
+                else -> null
+            }
+        }
+        runCatching { graph.accountService.devices() }
+        waitFor { graph.sessionEnds.value > ends }
+    }
+
+    private val wipe: suspend (AppGraph) -> Unit = { it.wipeAfterRevocation() }
+
+    @Test fun signOutWhileRingingEndsTheCall() = callEndsWithSession(refuseTelecom = false, active = false, end = signOut)
+    @Test fun wipeWhileRingingEndsTheCall() = callEndsWithSession(refuseTelecom = true, active = false, end = wipe)
+    @Test fun signOutDuringACallEndsIt() = callEndsWithSession(refuseTelecom = true, active = true, end = signOut)
+    @Test fun wipeDuringACallEndsIt() = callEndsWithSession(refuseTelecom = false, active = true, end = wipe)
 
     private suspend fun waitFor(condition: () -> Boolean) {
         kotlinx.coroutines.withTimeout(10_000) { while (!condition()) kotlinx.coroutines.delay(50) }

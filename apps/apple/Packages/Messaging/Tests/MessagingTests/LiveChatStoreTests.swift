@@ -425,6 +425,7 @@ private func text(_ message: Message?) -> String? {
         let bob = rig.bob.store
         rig.bob.readReceipts.on = false
         bob.markRead(chatID: "acc-ana")
+        #expect(try rig.bob.repo.dueOutbox(at: .distantFuture).isEmpty)
         await bob.settle()
         #expect(bob.chat(id: "acc-ana")?.unreadCount == 0)
         await rig.ana.store.syncInbox()
@@ -449,8 +450,23 @@ private func text(_ message: Message?) -> String? {
         let bob = rig.bob.store
         rig.bob.readReceipts.on = false
         bob.markRead(chatID: "acc-ana")
+        #expect(try rig.bob.repo.dueOutbox(at: .distantFuture).isEmpty)
         bob.accept(requestID: "acc-ana")
+        #expect(try rig.bob.repo.dueOutbox(at: .distantFuture).isEmpty)
         await bob.settle()
+        await rig.ana.store.syncInbox()
+        #expect(rig.ana.store.chat(id: "acc-bob")?.messages.last?.status == .delivered)
+    }
+
+    @Test func deliveredReceiptIsSentWithReadReceiptsOff() async throws {
+        let rig = try await Rig.make()
+        try await rig.anaChatsWithBob()
+        rig.bob.readReceipts.on = false
+        rig.ana.store.send(.text("hello"), in: "acc-bob")
+        await rig.ana.store.settle()
+        #expect(rig.ana.store.chat(id: "acc-bob")?.messages.last?.status == .sent)
+        await rig.bob.store.syncInbox()
+        await rig.bob.store.settle()
         await rig.ana.store.syncInbox()
         #expect(rig.ana.store.chat(id: "acc-bob")?.messages.last?.status == .delivered)
     }
