@@ -84,6 +84,10 @@ class VoiceRecorderInstrumentedTest {
         // The bundled encoder writes the standard 312; a phone encoder writes the pre-skip its own header reported.
         if (recorder.lastEncoder == VoiceEncoderKind.Bundled) assertEquals(312, stream.preSkip, "standard Opus pre-skip in 48 kHz units")
         assertEquals(recorder.lastPreSkip, stream.preSkip, "the encoder's pre-skip, in 48 kHz units")
+        // A phone encoder's value really came from its own OpusHead, not the fallback.
+        if (recorder.lastEncoder == VoiceEncoderKind.Platform) {
+            assertEquals(recorder.lastHeaderPreSkip, stream.preSkip, "pre-skip read from the phone encoder's OpusHead; ${diagnostics()}")
+        }
         assertEquals(listOf(ok.recording.file.name), dir.list()!!.toList())
     }
 

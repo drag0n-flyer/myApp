@@ -20,7 +20,10 @@ internal interface VoiceEncoder {
      * The pre-skip to write in the Ogg header, in 48 kHz samples: the phone encoder's own once it reported one (read
      * after [finish]), else [VoiceNoteFinisher.DEFAULT_PRE_SKIP]; always that 312 for the bundled encoder.
      */
-    val preSkip: Int
+    val preSkip: Int get() = headerPreSkip ?: VoiceNoteFinisher.DEFAULT_PRE_SKIP
+
+    /** The pre-skip read from the phone encoder's own `OpusHead` (in range), else null; always null for the bundled one. */
+    val headerPreSkip: Int?
 
     /** Encodes [size] bytes of PCM; [ptsUs] is the first sample's time. Appends finished packets to [out]. */
     fun encode(pcm: ByteArray, size: Int, ptsUs: Long, out: MutableList<ByteArray>)
@@ -68,7 +71,8 @@ internal class PlatformVoiceEncoder private constructor(private val codec: Media
     override val kind = VoiceEncoderKind.Platform
     private val info = MediaCodec.BufferInfo()
     @Volatile private var reportedPreSkip: Int? = null
-    override val preSkip: Int get() = reportedPreSkip ?: VoiceNoteFinisher.DEFAULT_PRE_SKIP
+    override val headerPreSkip: Int? get() = reportedPreSkip
+    override val preSkip: Int get() = preSkipOrDefault(reportedPreSkip)
 
     override fun encode(pcm: ByteArray, size: Int, ptsUs: Long, out: MutableList<ByteArray>) =
         feed(pcm, size, ptsUs, eos = false, out)
@@ -127,6 +131,9 @@ internal class PlatformVoiceEncoder private constructor(private val codec: Media
     companion object {
         private const val TAG = "VoiceEncoder"
 
+        /** The header's pre-skip when it was read and in range ([OpusHeadPreSkip.parse]), else the standard 312. */
+        internal fun preSkipOrDefault(header: Int?): Int = header ?: VoiceNoteFinisher.DEFAULT_PRE_SKIP
+
         fun open(): PlatformVoiceEncoder? {
             val format = MediaFormat.createAudioFormat(
                 MediaFormat.MIMETYPE_AUDIO_OPUS, MediaPlan.Voice.SAMPLE_RATE, MediaPlan.Voice.CHANNELS,
@@ -170,6 +177,7 @@ internal class PlatformVoiceEncoder private constructor(private val codec: Media
 internal class BundledVoiceEncoder private constructor(private val encoder: OpusVoiceEncoder) : VoiceEncoder {
     override val kind = VoiceEncoderKind.Bundled
     override val preSkip = VoiceNoteFinisher.DEFAULT_PRE_SKIP
+    override val headerPreSkip: Int? = null
     private val framer = PcmFramer(OpusVoiceEncoder.FRAME_BYTES)
 
     override fun encode(pcm: ByteArray, size: Int, ptsUs: Long, out: MutableList<ByteArray>) =
@@ -202,16 +210,19 @@ internal class BundledVoiceEncoder private constructor(private val encoder: Opus
 
 /**
  * Reads the pre-skip from an encoder's header: a plain RFC 7845 `OpusHead`, or Android's codec config, which wraps it
- * as `AOPUSHDR` + length + `OpusHead` (then `AOPUSDLY` and `AOPUSPRL`). Null when there is no whole `OpusHead`.
+ * as `AOPUSHDR` + length + `OpusHead` (then `AOPUSDLY` and `AOPUSPRL`). Null when there is no whole `OpusHead`, or
+ * when its pre-skip is 0 or over [MAX_PRE_SKIP] (half a second at 48 kHz): such a value is not believed.
  */
 internal object OpusHeadPreSkip {
     private val MAGIC = "OpusHead".toByteArray()
     private const val HEAD_SIZE = 19
+    const val MAX_PRE_SKIP = 24_000
 
     fun parse(bytes: ByteArray): Int? {
         for (at in 0..bytes.size - HEAD_SIZE) {
             if ((MAGIC.indices).all { bytes[at + it] == MAGIC[it] }) {
-                return (bytes[at + 10].toInt() and 0xFF) or ((bytes[at + 11].toInt() and 0xFF) shl 8)
+                val preSkip = (bytes[at + 10].toInt() and 0xFF) or ((bytes[at + 11].toInt() and 0xFF) shl 8)
+                return preSkip.takeIf { it in 1..MAX_PRE_SKIP }
             }
         }
         return null

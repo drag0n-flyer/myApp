@@ -40,4 +40,14 @@ class PlatformVoiceEncoderTest {
         assertNull(OpusHeadPreSkip.parse("OpusHead".toByteArray() + byteArrayOf(1, 1)), "cut short")
         assertNull(OpusHeadPreSkip.parse(ByteArray(40)), "no header")
     }
+
+    /** A header pre-skip of 0 or over half a second (24000 at 48 kHz) is not believed: the note gets the standard 312. */
+    @Test fun outOfRangePreSkipFallsBackTo312() {
+        assertEquals(24_000, OpusHeadPreSkip.parse(opusHead(24_000)))
+        assertNull(OpusHeadPreSkip.parse(opusHead(0)), "zero")
+        assertNull(OpusHeadPreSkip.parse(opusHead(24_001)), "over half a second")
+        assertNull(OpusHeadPreSkip.parse(opusHead(0xFFFF)), "max")
+        assertEquals(VoiceNoteFinisher.DEFAULT_PRE_SKIP, PlatformVoiceEncoder.preSkipOrDefault(OpusHeadPreSkip.parse(opusHead(0))))
+        assertEquals(3_840, PlatformVoiceEncoder.preSkipOrDefault(OpusHeadPreSkip.parse(opusHead(3_840))))
+    }
 }
