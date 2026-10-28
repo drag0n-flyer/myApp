@@ -89,7 +89,7 @@ turn_ip=${ip:-127.0.0.1}
 secret=$(openssl rand -hex 24)
 turnserver -n --listening-ip="$turn_ip" --relay-ip="$turn_ip" --listening-port=3478 \
     --use-auth-secret --static-auth-secret="$secret" --realm=lab.invalid \
-    --no-tls --no-dtls --no-cli --allow-loopback-peers --verbose --simple-log --log-file="$tmp/turn.log" >/dev/null 2>&1 &
+    --no-tls --no-dtls --no-cli --allow-loopback-peers --verbose --log-file=stdout >"$tmp/turn.log" 2>&1 &
 pids="$pids $!"
 
 export APP_HOST=localhost APP_LISTEN=127.0.0.1:8080 APP_ADMIN_LISTEN=127.0.0.1:9090
@@ -103,6 +103,18 @@ until curl -fsS http://127.0.0.1:9090/healthz >/dev/null 2>&1; do
     i=$((i + 1)); [ "$i" -gt 60 ] && { echo "server did not start" >&2; tail -20 "$tmp/server.log" >&2; exit 1; }
     sleep 1
 done
+
+# TURN self-test before any call: two relayed clients through coturn with the server's REST
+# credential scheme (HMAC-SHA1 of "expiry:user"), so a relay failure shows up with its cause.
+probe_user="$(($(date +%s) + 3600)):selftest"
+probe_cred=$(printf '%s' "$probe_user" | openssl dgst -sha1 -hmac "$secret" -binary | base64)
+echo "== TURN self-test ($turn_ip:3478)"
+turnutils_uclient -y -n 20 -l 120 -m 1 -u "$probe_user" -w "$probe_cred" "$turn_ip" </dev/null >"$tmp/uclient.log" 2>&1 &
+up=$!; i=0
+while kill -0 "$up" 2>/dev/null && [ "$i" -lt 30 ]; do sleep 1; i=$((i + 1)); done
+kill "$up" 2>/dev/null
+grep -iE "error|fail|lost|allocat|success|rtt|total" "$tmp/uclient.log" | tail -12 | sed 's/^/  uclient: /'
+grep -iE "error|denied|forbidden|401|403|438|refus|cannot" "$tmp/turn.log" | tail -10 | sed 's/^/  turn: /'
 
 # "accountID deviceID token" for each client.
 set -- $("$server" lab session --username labcaller --device ci-a --platform mac)
@@ -176,14 +188,13 @@ while read -r preset path profile snr; do
     echo "caller exit $rc_a, callee exit $rc_b"
 
     sudo pkill -INT -f "tcpdump -i lo0" </dev/null 2>/dev/null; sleep 2
-    # A shaped call with no packets through the pipe means the shaping never applied: fail the job.
+    # A shaped call whose dummynet rule matched no packets was not shaped: fail the job.
     if [ "$profile" != clean ]; then
-        shaped=$(sudo sh "$lab/netem/dummynet.sh" packets </dev/null)
-        echo "packets through the $profile pipe: $shaped"
-        sudo dnctl pipe show 1 </dev/null 2>&1 | head -40 | sed 's/^/  dnctl: /'   # raw, to check the parse
-        sudo pfctl -a com.apple/call-lab -vsr </dev/null 2>&1 | grep -v ALTQ | sed 's/^/  pf: /'
-        if [ "${shaped:-0}" -eq 0 ]; then
-            echo "FAIL $name: dummynet pipe for $profile saw 0 packets (shaping not applied)" >&2
+        sudo pfctl -a com.apple/call-lab -v -s dummynet </dev/null 2>&1 | grep -v ALTQ | sed 's/^/  pf: /'
+        if shaped=$(sudo sh "$lab/netem/dummynet.sh" check-shaped </dev/null); then
+            echo "packets through the $profile rule: $shaped"
+        else
+            echo "FAIL $name: the $profile dummynet rule matched 0 packets (shaping not applied)" >&2
             status=1
         fi
     fi
@@ -204,8 +215,8 @@ for i in sorted({0, len(rows) // 4, len(rows) // 2, len(rows) - 1}):
         print("  stats: " + ",".join(rows[i].get(c, "") for c in cols))
 PY
     if [ "$path" = relay ]; then
-        grep -iE "error|denied|forbidden|401|403|438|peer|allocat|permission" "$tmp/turn.log" 2>/dev/null \
-            | grep -vi secret | tail -15 | sed 's/^/  turn: /'
+        grep -iE "error|denied|forbidden|401|403|438|peer|allocat|permission|channel" "$tmp/turn.log" 2>/dev/null \
+            | grep -vi secret | tail -25 | sed 's/^/  turn: /'
     fi
     if [ -f "$tmp/$name.pcap" ]; then
         sudo chown "$(id -u)" "$tmp/$name.pcap"
