@@ -92,7 +92,6 @@ class LiveAccountService(
         ServerClient(url, sessionStore, OkHttpClient())
     },
     private val sleep: suspend (Long) -> Unit = { delay(it) },
-    @Suppress("unused") private val clock: () -> java.time.Instant = java.time.Instant::now,
 ) : AccountService {
     private var client: ServerClient = client
     private val link = LinkFlow(hpke, sleep)
@@ -136,7 +135,7 @@ class LiveAccountService(
         install(client)
         // Start on the stored session's host, as the iPhone does. Failures here are reported by ready().
         try {
-            (sessionStore.state as? SessionState.Present)?.let { bindTo(it.session.host) }
+            (sessionStore.state as? SessionState.Present)?.let { bindTo(it.session) }
         } catch (_: AccountError) {
         }
     }
@@ -161,6 +160,10 @@ class LiveAccountService(
             // A claimed link session and the link code belong to the host that issued them.
             unsaved = null
             link.forget()
+            // So does sign-up state: an invite code redeemed on one host is never sent to another.
+            inviteCode = null
+            signupId = null
+            pendingDisplayName = null
             client = c
             install(c)
         }
@@ -273,7 +276,7 @@ class LiveAccountService(
     override suspend fun waitForLinkApproval(): LinkedResult {
         val c = ready()
         // The claim answers once. If saving the session failed on an earlier call, only the save is retried.
-        val approved = unsaved ?: link.awaitApproval(IdentityApi(c)).also { unsaved = it }
+        val approved = unsaved ?: link.awaitApproval(IdentityApi(c), hostPortOf(c.baseUrl)).also { unsaved = it }
         accountCall { persist(approved.session, LINK_SAVE_ATTEMPTS, approved.host) }
         unsaved = null
         // A snapshot that did not open is null here and nothing is imported. A failed import leaves the
@@ -366,15 +369,15 @@ class LiveAccountService(
         if (updateRequired) throw AccountError.Server
         when (val s = sessionStore.state) {
             SessionState.Unavailable -> throw AccountError.Server
-            is SessionState.Present -> bindTo(s.session.host)
+            is SessionState.Present -> bindTo(s.session)
             SessionState.Absent -> {}
         }
         return client
     }
 
-    /** Makes [client] the one for [host], so the session token cannot go to another host. */
-    private fun bindTo(host: String) {
-        val address = sessionAddress(host) ?: throw AccountError.Server
+    /** Makes [client] the one for [session]'s host, so the session token cannot go to another host. */
+    private fun bindTo(session: Session) {
+        val address = sessionAddress(session) ?: throw AccountError.Server
         val wanted = canonical(address)
         if (hostPortOf(client.baseUrl).equals(wanted, ignoreCase = true) && schemeOk(client)) return
         val c = makeClient(address)
@@ -387,7 +390,7 @@ class LiveAccountService(
         if (forcedOut) throw AccountError.Server
         ready()
         val s = sessionStore.current ?: throw AccountError.Server
-        val wanted = sessionAddress(s.host)?.let { canonical(it) } ?: throw AccountError.Server
+        val wanted = sessionAddress(s)?.let { canonical(it) } ?: throw AccountError.Server
         if (!hostPortOf(client.baseUrl).equals(wanted, ignoreCase = true)) throw AccountError.Server
         return s
     }
@@ -397,7 +400,7 @@ class LiveAccountService(
      * out. Never overwrites a stored session that could not be read (the store refuses).
      */
     private suspend fun persist(s: NewSession, attempts: Int = SAVE_ATTEMPTS, host: String = hostPortOf(client.baseUrl)) {
-        val session = Session(host, s.accountID, s.deviceID, s.sessionToken)
+        val session = Session(host, s.accountID, s.deviceID, s.sessionToken, client.baseUrl.scheme)
         var attempt = 0
         var wait = SAVE_RETRY_MS
         while (true) {
@@ -469,14 +472,21 @@ class LiveAccountService(
         fun schemeOk(c: ServerClient) = c.baseUrl.isHttps || isLoopback(c.baseUrl.host)
 
         /**
-         * The address a stored session host stands for. Loopback keeps its port (no port means plain http on 80);
-         * 443 means https. Any other host is https.
+         * The address a stored session stands for. Any host other than loopback is https. Loopback keeps its
+         * port and the scheme saved with the session. A session saved before the scheme was recorded falls
+         * back to the port: no port means plain http on 80, and 443 means https.
          */
-        fun sessionAddress(host: String): ServerAddress? {
-            val a = ServerAddress.parse(host) ?: return null
+        fun sessionAddress(session: Session): ServerAddress? {
+            val a = ServerAddress.parse(session.host) ?: return null
             if (!isLoopback(a.host)) return a
-            val port = a.port ?: 80
-            return ServerAddress(a.host, port, port == 443)
+            val secure = when (session.scheme) {
+                "https" -> true
+                "http" -> false
+                null -> null
+                else -> return null
+            }
+            val port = a.port ?: if (secure == true) 443 else 80
+            return ServerAddress(a.host, port, secure ?: (port == 443))
         }
 
         /** Default ports are dropped, except for loopback, where the port is always kept. */
