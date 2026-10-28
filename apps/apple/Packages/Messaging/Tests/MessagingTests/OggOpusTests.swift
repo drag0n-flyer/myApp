@@ -215,10 +215,8 @@ func syntheticPackets(count: Int, sizes: [Int: Int] = [:]) -> [[UInt8]] {
             + OggPage(flags: OggPage.endOfStream, granule: 0, serial: 1, sequence: 1,
                       segments: OggPage.lacing(forPacketOf: tags.count), body: tags).encoded()
         }
-        var tags: [UInt8] = Array("OpusTags".utf8)
-        tags += le32(0); tags += le32(0)
-        var head: [UInt8] = Array("OpusHead".utf8)
-        head += [1, 1]; head += le16(312); head += le32(16_000); head += le16(0); head += [0]
+        let tags = Array("OpusTags".utf8) + le32(0) + le32(0)
+        var head: [UInt8] = ([Array("OpusHead".utf8), [1, 1], le16(312), le32(16_000), le16(0), [0]] as [[UInt8]]).flatMap { $0 }
         #expect(throws: Never.self) { try OggOpusReader.read(file(head: head, tags: tags)) }
         var v = head; v[8] = 0x10
         #expect(throws: OggOpusError.unsupportedVersion) { try OggOpusReader.read(file(head: v, tags: tags)) }
@@ -296,9 +294,14 @@ func syntheticPackets(count: Int, sizes: [Int: Int] = [:]) -> [[UInt8]] {
 
     @Test func headerPacketsMustBeAloneOnTheirPages() throws {
         var head: [UInt8] = Array("OpusHead".utf8)
-        head += [1, 1]; head += le16(312); head += le32(16_000); head += le16(0); head += [0]
+        head += [1, 1]
+        head += le16(312)
+        head += le32(16_000)
+        head += le16(0)
+        head += [0]
         var tags: [UInt8] = Array("OpusTags".utf8)
-        tags += le32(0); tags += le32(0)
+        tags += le32(0)
+        tags += le32(0)
         let both = OggPage(flags: OggPage.beginOfStream | OggPage.endOfStream, granule: 0, serial: 1, sequence: 0,
                            segments: [UInt8(head.count), UInt8(tags.count)], body: head + tags).encoded()
         #expect(throws: OggOpusError.badHeader) { try OggOpusReader.read(both) }

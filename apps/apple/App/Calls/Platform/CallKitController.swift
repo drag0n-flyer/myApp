@@ -111,51 +111,44 @@ final class CallKitController: NSObject, CXProviderDelegate {
         MainActor.assumeIsolated { handler?.callKitReset() }
     }
 
+    // Only Sendable values (the call id, flags) cross into the main-actor closures. `action` and `provider` stay
+    // out of them: CallKit lets `reportCall` and `fulfill` be called from the delegate queue.
     nonisolated func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
-        nonisolated(unsafe) let action = action
-        nonisolated(unsafe) let provider = provider
-        MainActor.assumeIsolated {
-            let update = CXCallUpdate()
-            update.remoteHandle = action.handle
-            update.localizedCallerName = outgoingNames.removeValue(forKey: action.callUUID)
-            update.hasVideo = action.isVideo
-            provider.reportCall(with: action.callUUID, updated: update)
-            provider.reportOutgoingCall(with: action.callUUID, startedConnectingAt: nil)
-            action.fulfill()
-        }
+        let callUUID = action.callUUID
+        let name = MainActor.assumeIsolated { outgoingNames.removeValue(forKey: callUUID) }
+        let update = CXCallUpdate()
+        update.remoteHandle = action.handle
+        update.localizedCallerName = name
+        update.hasVideo = action.isVideo
+        provider.reportCall(with: callUUID, updated: update)
+        provider.reportOutgoingCall(with: callUUID, startedConnectingAt: nil)
+        action.fulfill()
     }
 
     nonisolated func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
-        nonisolated(unsafe) let action = action
-        MainActor.assumeIsolated {
-            handler?.callKitAnswer(callID: action.callUUID)
-            action.fulfill()
-        }
+        let callUUID = action.callUUID
+        MainActor.assumeIsolated { handler?.callKitAnswer(callID: callUUID) }
+        action.fulfill()
     }
 
     nonisolated func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
-        nonisolated(unsafe) let action = action
-        MainActor.assumeIsolated {
-            handler?.callKitEnd(callID: action.callUUID)
-            action.fulfill()
-        }
+        let callUUID = action.callUUID
+        MainActor.assumeIsolated { handler?.callKitEnd(callID: callUUID) }
+        action.fulfill()
     }
 
     nonisolated func provider(_ provider: CXProvider, perform action: CXSetMutedCallAction) {
-        nonisolated(unsafe) let action = action
-        MainActor.assumeIsolated {
-            handler?.callKitSetMuted(callID: action.callUUID, muted: action.isMuted)
-            action.fulfill()
-        }
+        let callUUID = action.callUUID
+        let muted = action.isMuted
+        MainActor.assumeIsolated { handler?.callKitSetMuted(callID: callUUID, muted: muted) }
+        action.fulfill()
     }
 
     nonisolated func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
-        nonisolated(unsafe) let audioSession = audioSession
         MainActor.assumeIsolated { handler?.callKitAudioDidActivate(audioSession) }
     }
 
     nonisolated func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
-        nonisolated(unsafe) let audioSession = audioSession
         MainActor.assumeIsolated { handler?.callKitAudioDidDeactivate(audioSession) }
     }
 }

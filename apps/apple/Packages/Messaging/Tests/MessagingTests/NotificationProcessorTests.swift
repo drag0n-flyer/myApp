@@ -191,16 +191,21 @@ private struct NSEPair {
         let pair = try await NSEPair()
         let data = try await pair.push(.text("hi", replyTo: nil))
         let lock = pair.bob.deps.lock
-        let acquired = DispatchSemaphore(value: 0)
-        let holder = Thread {
-            try? lock.withLock(timeout: .seconds(1)) { acquired.signal(); Thread.sleep(forTimeInterval: 3) }
+        // The app side holds the lock until the test says so, never for a fixed time: a fixed sleep can end before
+        // a loaded runner schedules the processor, and then the processor gets the lock and the test proves nothing.
+        // The processor can only finish by giving up after its own lock timeout.
+        let release = DispatchSemaphore(value: 0)
+        await withCheckedContinuation { (acquired: CheckedContinuation<Void, Never>) in
+            let holder = Thread {
+                try? lock.withLock(timeout: .seconds(5)) { acquired.resume(); release.wait() }
+            }
+            holder.start()
         }
-        holder.start()
-        acquired.wait()
         let started = ContinuousClock.now
         let outcome = await pair.processor().process(pushData: data, deadline: NSEPair.deadline)
+        release.signal()
         #expect(outcome == .fallback)
-        #expect(ContinuousClock.now - started < .milliseconds(2500))
+        #expect(ContinuousClock.now - started >= NotificationProcessor.lockTimeout - .milliseconds(100))
         #expect(try pair.bob.deps.repo.message(id: "m1") == nil)
     }
 

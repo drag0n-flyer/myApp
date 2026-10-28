@@ -32,7 +32,7 @@ while IFS= read -r path; do
         *" $mod "*) changed[$mod]=1 ;;
         *) all=true ;;   # gradle/, other top-level directories
       esac ;;
-    apps/android/*|.github/workflows/android.yml|scripts/android-*.sh|scripts/build-mlsffi-android.sh|scripts/check-16kb.sh|apps/apple/Packages/SecureMessaging/mlsffi/*) all=true ;;
+    apps/android/*|.github/workflows/android.yml|scripts/android-*.sh|scripts/build-mlsffi-android.sh|scripts/check-16kb.sh|scripts/check-android-bundle*.sh|scripts/generate-oss-notices.py|scripts/license-texts/*|docs/security/license-allowlist.md|apps/apple/Packages/SecureMessaging/mlsffi/*) all=true ;;
   esac
 done
 

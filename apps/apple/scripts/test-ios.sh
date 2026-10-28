@@ -2,8 +2,8 @@
 # Generates the Xcode project and runs the iPhone UI tests on an available simulator.
 # IOS_RUNTIME=17 (or 18) picks a simulator with that iOS version when one is installed.
 set -euo pipefail
-SCRIPTS="$(cd "$(dirname "$0")" && pwd)"
-cd "$SCRIPTS/.."
+HERE="$(cd "$(dirname "$0")" && pwd)"
+cd "$HERE/.."
 
 xcodegen generate --spec project.yml
 
@@ -26,5 +26,5 @@ xcodebuild -project App.xcodeproj -scheme AppiOS -destination "id=$UDID" \
   -configuration Debug -resultBundlePath "$RESULT" CODE_SIGNING_ALLOWED=NO test
 
 # The notification service extension must be embedded and declare the right extension point.
-. "$SCRIPTS/lib-nse.sh"
+. "$HERE/lib-nse.sh"
 check_nse AppiOS "id=$UDID" "PlugIns/*.appex/Info.plist"

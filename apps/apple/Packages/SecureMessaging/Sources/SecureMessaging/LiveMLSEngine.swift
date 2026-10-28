@@ -69,14 +69,35 @@ public actor LiveMLSEngine: MLSEngine {
     }
 
     public func process(_ message: Data) async throws -> Incoming {
-        switch try locked({ try $0.process(message: message) }) {
-        case let .application(groupId, sender, plaintext, epoch):
-            return .application(group: GroupID(raw: groupId), sender: sender, plaintext: plaintext, epoch: epoch)
-        case let .commit(groupId, newEpoch, removedMe):
-            return .commit(group: GroupID(raw: groupId), newEpoch: newEpoch, removedMe: removedMe)
-        case let .joined(groupId, epoch):
-            return .joined(group: GroupID(raw: groupId), epoch: epoch)
-        }
+        Self.incoming(try locked { try $0.process(message: message) })
+    }
+
+    /// Real MLS signature keys: safety numbers can be shown.
+    public nonisolated var providesRealMemberKeys: Bool { true }
+
+    public func memberKeys(of group: GroupID) async throws -> [SecureMessagingCore.MemberKey] {
+        try locked { try $0.memberKeys(groupId: group.raw) }
+            .map { SecureMessagingCore.MemberKey(identity: $0.identity, signatureKey: $0.signatureKey) }
+    }
+
+    public func stageProcess(_ group: GroupID, _ message: Data) async throws -> SecureMessagingCore.StagedProcess {
+        let ffi = try locked { try $0.stageProcess(groupId: group.raw, message: message) }
+        return SecureMessagingCore.StagedProcess(group: group, incoming: Self.incoming(ffi.incoming()), token: ffi)
+    }
+
+    public func confirm(_ staged: SecureMessagingCore.StagedProcess) async throws {
+        guard let ffi = staged.token as? MLSFFIBindings.StagedProcess else { throw MLSError.malformed }
+        try locked { try $0.confirm(staged: ffi) }
+    }
+
+    /// Needs no engine call and no lock: a staged message holds nothing in storage.
+    public nonisolated func discard(_ staged: SecureMessagingCore.StagedProcess) {
+        (staged.token as? MLSFFIBindings.StagedProcess)?.discard()
+    }
+
+    public func decryptApplication(_ group: GroupID, _ message: Data) async throws -> SecureMessagingCore.ApplicationMessage {
+        let ffi = try locked { try $0.decryptApplication(groupId: group.raw, message: message) }
+        return SecureMessagingCore.ApplicationMessage(sender: ffi.sender, plaintext: ffi.plaintext, epoch: ffi.epoch)
     }
 
     public func epoch(of group: GroupID) async throws -> UInt64 {
@@ -102,6 +123,17 @@ public actor LiveMLSEngine: MLSEngine {
         SecureMessagingCore.CommitBundle(commit: ffi.commit, welcome: ffi.welcome, newEpoch: ffi.newEpoch)
     }
 
+    private static func incoming(_ processed: Processed) -> Incoming {
+        switch processed {
+        case let .application(groupId, sender, plaintext, epoch):
+            return .application(group: GroupID(raw: groupId), sender: sender, plaintext: plaintext, epoch: epoch)
+        case let .commit(groupId, newEpoch, removedMe):
+            return .commit(group: GroupID(raw: groupId), newEpoch: newEpoch, removedMe: removedMe)
+        case let .joined(groupId, epoch):
+            return .joined(group: GroupID(raw: groupId), epoch: epoch)
+        }
+    }
+
     /// Runs `body`, converting `FfiError` to `MLSError`. Anything else (a Rust panic surfaced
     /// by UniFFI) becomes `.internalError`; `MLSError` passes through unchanged.
     static func mapping<T>(_ body: () throws -> T) throws -> T {
@@ -119,6 +151,8 @@ public actor LiveMLSEngine: MLSEngine {
         case .Duplicate: return .duplicate
         case .EpochGap: return .epochGap
         case .PendingCommit: return .pendingCommit
+        case .Stale: return .stale
+        case .NotApplication: return .notApplication
         case .Storage(let message): return .storage(message)
         case .Crypto(let message): return .crypto(message)
         case .Internal(let message): return .internalError(message)

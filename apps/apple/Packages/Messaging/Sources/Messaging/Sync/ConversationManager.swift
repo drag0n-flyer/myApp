@@ -47,7 +47,7 @@ public actor ConversationManager: ConversationManaging {
 
     /// Runs `body` under the process lock (Design 12). Used for every step that changes MLS state or group
     /// rows. Never held across a network call, and never nested (the lock is not re-entrant).
-    func locked<T: Sendable>(_ body: () async throws -> T) async throws -> T {
+    func locked<T>(_ body: nonisolated(nonsending) () async throws -> T) async throws -> T {
         try await deps.lock.withAsyncLock(timeout: lockTimeout, body)
     }
 
@@ -232,24 +232,17 @@ public actor ConversationManager: ConversationManaging {
     /// network call). The pending commit sits in the MLS storage during the post: the MLS commit protocol
     /// needs it there until the server answers, and the inbox processor never merges or discards it, only
     /// an echo of this device's own commit does. `commitAccepted` and `setEpoch` are one locked step.
-    /// Drops my pending commit after a definite rejection. A busy lock (the other process is working) is
-    /// retried; if it stays busy the failure is thrown instead of the rejection, so the caller knows the pending
-    /// commit is still there and not silently left behind.
-    private func discardPendingCommit(_ group: GroupID) async throws {
-        var failure: Error?
-        for _ in 0..<3 {
-            do { try await locked { try await deps.mls.commitRejected(group) }; return } catch { failure = error }
-        }
-        if let failure { throw failure }
-    }
-
     func postCommitWithRetry(
         serverID: String, group: GroupID, addDevices: [String], removeDevices: [String],
-        build: @Sendable () async throws -> CommitBundle
+        build: nonisolated(nonsending) () async throws -> CommitBundle
     ) async throws -> UInt64 {
+        // The lock body must not touch `self`: a closure isolated to this actor that captures `build` (also isolated
+        // to it) is treated as sending it, which Swift 6.2 rejects. `mls` is read here so the body is not isolated.
+        let mls = deps.mls
         for attempt in 0...Self.maxStaleRetries {
-            let (bundle, epoch) = try await locked { () async throws -> (CommitBundle, UInt64) in
-                (try await build(), try await deps.mls.epoch(of: group))
+            let (bundle, epoch) = try await locked {
+                let bundle = try await build()
+                return (bundle, try await mls.epoch(of: group))
             }
             let newEpoch: UInt64
             do {
@@ -262,7 +255,7 @@ public actor ConversationManager: ConversationManaging {
                     // commit. Anything else (transport error, 5xx, lost reply) may have been applied by the
                     // server: keep it, so the echo of my own commit merges it (Design 17).
                     if (400..<500).contains(error.status), error.status != 408, error.status != 429 {
-                        try await discardPendingCommit(group)
+                        try? await locked { try await deps.mls.commitRejected(group) }
                     }
                     throw error
                 }

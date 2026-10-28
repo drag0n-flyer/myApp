@@ -167,7 +167,7 @@ final class VoIPPushCenter: NSObject, PKPushRegistryDelegate, CallKitCallHandlin
         case .none: break
         case let .endRinging(late): endAfterRing(kit: kit, late)
         case .endUnsettled:
-            callKit.reportEnded(callID: kit, reason: CXCallEndedReason(CallKitEndKind.unanswered))
+            callKit.reportEnded(callID: kit, reason: CXCallEndedReason(EndReason.unanswered))
             contexts[kit] = nil
         }
     }

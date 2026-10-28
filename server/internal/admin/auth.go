@@ -61,7 +61,10 @@ func csrfToken(cookieValue string) string {
 
 // loginLimits are the login rate limiters of one module. Module has no field
 // for them (module.go belongs to the skeleton), so they live here by module.
-type loginLimits struct{ perAddr, global *ratelimit.Limiter }
+type loginLimits struct {
+	perAddr, global, perUser, setup, totpTry *ratelimit.Limiter
+	pending                                  pendingLogins
+}
 
 var limitsByModule sync.Map // *Module -> *loginLimits
 
@@ -72,13 +75,26 @@ func (m *Module) limits() *loginLimits {
 	l, _ := limitsByModule.LoadOrStore(m, &loginLimits{
 		perAddr: ratelimit.New(5, time.Minute, m.d.Now),
 		global:  ratelimit.New(30, time.Hour, m.d.Now),
+		perUser: ratelimit.New(10, time.Hour, m.d.Now),
+		setup:   ratelimit.New(10, time.Minute, m.d.Now),
+		// Code guesses while signed in (turning two-step sign-in on or off).
+		totpTry: ratelimit.New(10, 10*time.Minute, m.d.Now),
 	})
 	return l.(*loginLimits)
 }
 
+// nilIfEmpty is JSON null for an empty string.
+func nilIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
 func unauthorized() error { return httpx.Err("unauthorized", "sign in required") }
 
-// cookieSecure is false only for a loopback Host.
+// cookieSecure is false for a loopback Host, and, with APP_ADMIN_ALLOW_HTTP,
+// for a Host listed in APP_ADMIN_HOSTS.
 func (m *Module) cookieSecure(r *http.Request) bool {
 	host := r.Host
 	if h, _, err := net.SplitHostPort(host); err == nil {
@@ -87,6 +103,9 @@ func (m *Module) cookieSecure(r *http.Request) bool {
 	host = strings.TrimSuffix(strings.TrimPrefix(strings.ToLower(host), "["), "]")
 	switch host {
 	case "localhost", "127.0.0.1", "::1":
+		return false
+	}
+	if m.d.Config.AdminAllowHTTP && m.hostAllowed(host) {
 		return false
 	}
 	return true
@@ -103,9 +122,9 @@ func retryAfter(w http.ResponseWriter, wait time.Duration) {
 	w.Header().Set("Retry-After", strconv.Itoa(max(1, int(math.Ceil(wait.Seconds())))))
 }
 
-// login exchanges a one-time token for a session cookie.
+// login signs in with a username and password.
 func (m *Module) login(w http.ResponseWriter, r *http.Request, _ Session) error {
-	// The login has no session yet, so no token, but the header checks stay.
+	// The login has no session yet, so no CSRF token, but the header checks stay.
 	if err := m.verifyCSRF(r, false); err != nil {
 		return err
 	}
@@ -119,51 +138,114 @@ func (m *Module) login(w http.ResponseWriter, r *http.Request, _ Session) error 
 		return httpx.Err("rate_limited", "too many attempts")
 	}
 	var in struct {
-		Token string `json:"token"`
+		Username string `json:"username"`
+		Password string `json:"password"`
 	}
 	if err := httpx.Decode(r, &in); err != nil {
 		return err
 	}
+	key := normalizeLoose(in.Username)
+	if len(key) > 64 {
+		key = key[:64]
+	}
+	if ok, wait := l.perUser.Allow(key); !ok {
+		retryAfter(w, wait)
+		return httpx.Err("rate_limited", "too many attempts")
+	}
+	return m.passwordLogin(w, r, in.Username, in.Password)
+}
+
+// passwordLogin signs in with a username and password. Every failure (no such
+// admin, wrong password, disabled) is the same 401, and one argon2 verify
+// always runs, so neither the answer nor the time says which names exist.
+func (m *Module) passwordLogin(w http.ResponseWriter, r *http.Request, username, password string) error {
 	ctx := r.Context()
+	name := normalizeLoose(username)
+	var id, hash string
+	var disabled, twoStep bool
+	err := m.d.DB.QueryRow(ctx,
+		`select id::text, password_hash, disabled_at is not null, totp_enabled_at is not null from admin_users where username = $1`, name).
+		Scan(&id, &hash, &disabled, &twoStep)
+	found := err == nil
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	matched := false
+	if _, perr := parsePHC(hash); found && perr == nil {
+		matched = verifyPassword(hash, password)
+	} else {
+		dummyVerifies.Add(1)
+		verifyDummy(password)
+	}
+	if afterPasswordVerify != nil {
+		afterPasswordVerify()
+	}
+	if found && matched && !disabled && twoStep {
+		// Only now, with the right password, does the answer differ.
+		return m.startPendingLogin(w, r, id, name, hash)
+	}
+	var sid string
+	if found && matched && !disabled {
+		err = pgx.BeginFunc(ctx, m.d.DB, func(tx pgx.Tx) error {
+			// The account may have been disabled, or its password changed,
+			// since the check above.
+			tag, err := tx.Exec(ctx,
+				`update admin_users set last_login_at = $2 where id = $1 and disabled_at is null and password_hash = $3`,
+				id, m.d.Now(), hash)
+			if err != nil {
+				return err
+			}
+			if tag.RowsAffected() == 0 {
+				return core.ErrNotFound
+			}
+			if sid, err = m.newSession(ctx, tx, r, id); err != nil {
+				return err
+			}
+			return m.audit(ctx, tx, Entry{Actor: "dashboard", AdminUserID: id, Action: "login", Target: id,
+				Detail: map[string]any{"username": name}})
+		})
+		if err == nil {
+			m.setCookie(w, r, sid, 0)
+			w.WriteHeader(http.StatusNoContent)
+			return nil
+		}
+		if !errors.Is(err, core.ErrNotFound) {
+			return err
+		}
+	}
+	// Only a well-formed username is recorded, so a password typed into the
+	// username field does not end up in the log.
+	shown := "(invalid)"
+	if usernameRE.MatchString(name) {
+		shown = name
+	}
+	if aerr := m.audit(ctx, m.d.DB, Entry{Actor: "dashboard", Action: "login.failed", Detail: map[string]any{"username": shown}}); aerr != nil {
+		m.d.Log.Error("admin audit write failed", "action", "login.failed")
+		return aerr
+	}
+	return unauthorized()
+}
+
+// newSession starts a session for an admin account inside tx and returns its
+// cookie value. A browser that signs in again gives up its
+// previous session.
+func (m *Module) newSession(ctx context.Context, tx pgx.Tx, r *http.Request, adminUserID string) (string, error) {
 	sid, err := randomString(32)
 	if err != nil {
-		return err
+		return "", err
 	}
 	csrf := csrfToken(sid)
 	now := m.d.Now()
-	err = pgx.BeginFunc(ctx, m.d.DB, func(tx pgx.Tx) error {
-		id, _, err := m.redeemToken(ctx, tx, in.Token)
-		if err != nil {
-			return err
+	if old, cerr := r.Cookie(cookieName); cerr == nil && old.Value != "" && len(old.Value) <= 256 {
+		if _, err := tx.Exec(ctx, `delete from admin_sessions where id_hash = $1`, hashString(old.Value)); err != nil {
+			return "", err
 		}
-		// A browser that signs in again gives up its previous session.
-		if old, cerr := r.Cookie(cookieName); cerr == nil && old.Value != "" && len(old.Value) <= 256 {
-			if _, err := tx.Exec(ctx, `delete from admin_sessions where id_hash = $1`, hashString(old.Value)); err != nil {
-				return err
-			}
-		}
-		if _, err := tx.Exec(ctx,
-			`insert into admin_sessions (id_hash, token_id, csrf_hash, created_at, last_seen_at, expires_at)
-			 values ($1, $2, $3, $4, $4, $5)`,
-			hashString(sid), id, hashString(csrf), now, now.Add(sessionLifetime)); err != nil {
-			return err
-		}
-		return m.audit(ctx, tx, Entry{Actor: "dashboard", TokenID: id, Action: "login", Target: id})
-	})
-	if errors.Is(err, core.ErrNotFound) {
-		// Unknown, used and expired tokens all look the same.
-		if aerr := m.audit(ctx, m.d.DB, Entry{Actor: "dashboard", Action: "login.failed"}); aerr != nil {
-			m.d.Log.Error("admin audit write failed", "action", "login.failed")
-			return aerr
-		}
-		return unauthorized()
 	}
-	if err != nil {
-		return err
-	}
-	m.setCookie(w, r, sid, 0)
-	w.WriteHeader(http.StatusNoContent)
-	return nil
+	_, err = tx.Exec(ctx,
+		`insert into admin_sessions (id_hash, admin_user_id, csrf_hash, created_at, last_seen_at, expires_at)
+		 values ($1, $2, $3, $4, $4, $5)`,
+		hashString(sid), adminUserID, hashString(csrf), now, now.Add(sessionLifetime))
+	return sid, err
 }
 
 // logout ends the request's session.
@@ -177,7 +259,7 @@ func (m *Module) logout(w http.ResponseWriter, r *http.Request, s Session) error
 		if _, err := tx.Exec(ctx, `delete from admin_sessions where id_hash = $1`, st.idHash); err != nil {
 			return err
 		}
-		return m.audit(ctx, tx, Entry{Actor: "dashboard", TokenID: s.TokenID, Action: "logout", Target: s.TokenID})
+		return m.audit(ctx, tx, s.entry("logout", s.ActorID(), nil))
 	})
 	if err != nil {
 		return err
@@ -194,8 +276,7 @@ func (m *Module) session(w http.ResponseWriter, r *http.Request, s Session) erro
 		return unauthorized()
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{
-		"tokenID":            s.TokenID,
-		"label":              s.Label,
+		"username":           s.Username,
 		"csrf":               st.csrf,
 		"idleTimeoutSeconds": int(idleTimeout.Seconds()),
 		"expiresAt":          st.expiresAt.UTC(),
@@ -203,7 +284,7 @@ func (m *Module) session(w http.ResponseWriter, r *http.Request, s Session) erro
 	return nil
 }
 
-// requireSession runs h as the signed-in token, or answers 401. A session that
+// requireSession runs h as the signed-in admin, or answers 401. A session that
 // is idle too long or past its lifetime is deleted.
 func (m *Module) requireSession(h apiFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -228,13 +309,16 @@ func (m *Module) lookupSession(r *http.Request) (Session, *sessionState, error) 
 		gotHash, csrfHash []byte
 		lastSeen, expires time.Time
 		ok                bool
+		disabled          bool
 	)
 	err = pgx.BeginFunc(ctx, m.d.DB, func(tx pgx.Tx) error {
 		err := tx.QueryRow(ctx,
-			`select s.id_hash, s.token_id, t.label, s.csrf_hash, s.last_seen_at, s.expires_at
-			 from admin_sessions s join admin_tokens t on t.id = s.token_id
+			`select s.id_hash, s.admin_user_id::text, u.username, u.disabled_at is not null,
+			        s.csrf_hash, s.last_seen_at, s.expires_at
+			 from admin_sessions s
+			 join admin_users u on u.id = s.admin_user_id
 			 where s.id_hash = $1 for update of s`, idHash).
-			Scan(&gotHash, &s.TokenID, &s.Label, &csrfHash, &lastSeen, &expires)
+			Scan(&gotHash, &s.AdminUserID, &s.Username, &disabled, &csrfHash, &lastSeen, &expires)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -245,7 +329,7 @@ func (m *Module) lookupSession(r *http.Request) (Session, *sessionState, error) 
 		if subtle.ConstantTimeCompare(gotHash, idHash) != 1 {
 			return nil
 		}
-		if now.Sub(lastSeen) > idleTimeout || !now.Before(expires) {
+		if disabled || now.Sub(lastSeen) > idleTimeout || !now.Before(expires) {
 			_, err := tx.Exec(ctx, `delete from admin_sessions where id_hash = $1`, idHash)
 			return err
 		}
@@ -265,8 +349,9 @@ func (m *Module) lookupSession(r *http.Request) (Session, *sessionState, error) 
 	return s, &sessionState{idHash: idHash, csrfHash: csrfHash, csrf: csrfToken(c.Value), expiresAt: expires}, nil
 }
 
-// cleanup deletes idle and expired sessions, unused expired tokens and audit
-// entries older than 365 days. Used tokens stay as long as their audit rows.
+// cleanup deletes idle and expired sessions and audit entries older than 365
+// days. A session of the removed token sign-in has no admin, so the join in
+// lookupSession never finds it; it goes with the other expired sessions.
 func (m *Module) cleanup(ctx context.Context) error {
 	now := m.d.Now()
 	if _, err := m.d.DB.Exec(ctx,
@@ -274,10 +359,10 @@ func (m *Module) cleanup(ctx context.Context) error {
 		now.Add(-idleTimeout), now); err != nil {
 		return err
 	}
-	if _, err := m.d.DB.Exec(ctx,
-		`delete from admin_tokens where used_at is null and expires_at <= $1`, now); err != nil {
-		return err
-	}
 	_, err := m.d.DB.Exec(ctx, `delete from admin_audit where at < $1`, now.Add(-auditKeep))
 	return err
 }
+
+// afterPasswordVerify is a test seam called between the password check and
+// the session insert of a password login.
+var afterPasswordVerify func()

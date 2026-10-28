@@ -1,5 +1,6 @@
 import AppCore
 import Foundation
+import SecureMessagingCore
 import LocalStore
 import ServerKit
 #if canImport(UniformTypeIdentifiers)

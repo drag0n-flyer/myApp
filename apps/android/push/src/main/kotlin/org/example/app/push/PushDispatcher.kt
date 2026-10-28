@@ -153,6 +153,8 @@ class PushDispatcher(
                 effects.showMissedCall(outcome.chatId, outcome.callerName)
                 effects.pushHandled(highPriority, showedSomething = true)
             }
+            // Nothing to show: no notification, no ring.
+            RingOutcome.Ignore -> effects.pushHandled(highPriority, showedSomething = false)
             // A ring that cannot be opened (or ran out of time): say that something arrived, like the iPhone.
             RingOutcome.Drop, null -> show(NotificationOutcome.Generic, highPriority)
         }

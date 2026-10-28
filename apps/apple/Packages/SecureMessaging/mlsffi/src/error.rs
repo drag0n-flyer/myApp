@@ -11,6 +11,11 @@ pub enum FfiError {
     /// The message belongs to a later epoch than the stored group: a commit was missed.
     EpochGap,
     PendingCommit,
+    /// A staged `process` can no longer be confirmed: the group's stored state
+    /// changed since it was staged (or it was already confirmed or discarded).
+    Stale,
+    /// `decrypt_application` was given something that is not an application message.
+    NotApplication,
     Storage(String),
     Crypto(String),
     Internal(String),
@@ -25,6 +30,8 @@ impl fmt::Display for FfiError {
             FfiError::Duplicate => write!(f, "duplicate message"),
             FfiError::EpochGap => write!(f, "message is from a later epoch than this device has"),
             FfiError::PendingCommit => write!(f, "a commit is already pending"),
+            FfiError::Stale => write!(f, "staged message is stale"),
+            FfiError::NotApplication => write!(f, "not an application message"),
             FfiError::Storage(m) => write!(f, "storage error: {m}"),
             FfiError::Crypto(m) => write!(f, "crypto error: {m}"),
             FfiError::Internal(m) => write!(f, "internal error: {m}"),

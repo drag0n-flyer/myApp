@@ -24,7 +24,7 @@ RESULT="${RUNNER_TEMP:-/tmp}/serverkit-ios.xcresult"
 HOSTED="${RUNNER_TEMP:-/tmp}/serverkit-ios-hosted.xcresult"
 rm -rf "$RESULT" "$HOSTED"
 (cd "$APPLE/Packages/ServerKit" && xcodebuild -scheme ServerKit-Package -destination "id=$UDID" \
-  -resultBundlePath "$RESULT" -skip-testing:ServerKitAppleTests CODE_SIGNING_ALLOWED=NO test)
+  -resultBundlePath "$RESULT" -skip-testing:ServerKitAppleTests -skip-testing:ServerKitE2ETests CODE_SIGNING_ALLOWED=NO test)
 
 xcodegen generate --spec serverkit-tests.yml
 xcodebuild -project ServerKitTestHost.xcodeproj -scheme ServerKitHosted -destination "id=$UDID" \

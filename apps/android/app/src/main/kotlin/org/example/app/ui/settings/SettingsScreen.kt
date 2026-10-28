@@ -1,5 +1,6 @@
 package org.example.app.ui.settings
 
+import androidx.compose.ui.semantics.Role
 import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
 import androidx.compose.foundation.clickable
@@ -24,6 +25,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import org.example.app.R
 import org.example.app.core.chats.Contact
+import org.example.app.ui.usernameText
 import org.example.app.ui.Avatar
 
 /** The pages the Settings tab opens. */
@@ -35,6 +37,7 @@ enum class SettingsPage(val route: String, @StringRes val title: Int, @DrawableR
     Notifications("settings/notifications", R.string.settings_notifications, R.drawable.ic_bell),
     ChatFolders("settings/folders", R.string.settings_folders, R.drawable.ic_inbox),
     CallsAudio("settings/audio", R.string.settings_calls_audio, R.drawable.ic_mic),
+    Licenses("settings/licenses", R.string.settings_licenses, R.drawable.ic_key),
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -56,14 +59,14 @@ fun SettingsScreen(
                 ListItem(
                     leadingContent = { Avatar(me.displayName, size = 56.dp) },
                     headlineContent = { Text(me.displayName, style = MaterialTheme.typography.titleMedium) },
-                    supportingContent = { Text("@${me.username}") },
+                    supportingContent = { Text(usernameText(me.username)) },
                 )
                 HorizontalDivider()
             }
             items(SettingsPage.entries.toList(), key = { it.name }) { page ->
                 val title = stringResource(page.title)
                 ListItem(
-                    modifier = Modifier.fillMaxWidth().clickable { onOpen(page) },
+                    modifier = Modifier.fillMaxWidth().clickable(onClickLabel = title, role = Role.Button) { onOpen(page) },
                     leadingContent = { Icon(painterResource(page.icon), contentDescription = null) },
                     headlineContent = { Text(title) },
                     trailingContent = when (page) {

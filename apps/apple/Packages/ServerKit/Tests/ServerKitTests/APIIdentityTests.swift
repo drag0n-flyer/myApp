@@ -79,6 +79,17 @@ private let sessionJSON = #"{"accountID":"a1","deviceID":"d1","sessionToken":"t1
         #expect(o.userDisplayName == "ana")
     }
 
+    /// What the Go server really sends (found by the end-to-end test): the options without a `publicKey` wrapper.
+    @Test func bareOptionsFromTheServerParse() throws {
+        let creation = #"{"rp":{"name":"[App]","id":"localhost"},"user":{"name":"carl","displayName":"carl","id":"miTugwx2Sh-gIJwXZIx4YQ"},"challenge":"l6Z7e0LUsBg1qZNQKNFZdIajvWNGONYk7dSIiiQTU5c","pubKeyCredParams":[{"type":"public-key","alg":-7}],"timeout":300000,"authenticatorSelection":{"requireResidentKey":true,"residentKey":"required","userVerification":"required"},"attestation":"none"}"#
+        let c = try ServerJSON.decoder().decode(CreationOptions.self, from: Data(creation.utf8))
+        #expect(c.rpID == "localhost" && c.rpName == "[App]" && c.userName == "carl")
+        #expect(c.challenge.count == 32 && c.userID.count == 16)
+        let request = #"{"challenge":"pwTLM16yzBHa79IIVBhDZArKKVWm4zqmqQ5vCEUw0qc","timeout":300000,"rpId":"localhost","userVerification":"required"}"#
+        let r = try ServerJSON.decoder().decode(RequestOptions.self, from: Data(request.utf8))
+        #expect(r.rpID == "localhost" && r.challenge.count == 32)
+    }
+
     @Test func registrationCredentialJSON() throws {
         let e = ServerJSON.encoder()
         e.outputFormatting = [.sortedKeys]

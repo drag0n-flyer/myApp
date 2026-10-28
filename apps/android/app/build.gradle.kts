@@ -26,6 +26,26 @@ android {
             it.systemProperty("maven.repo.local", gradle.gradleUserHomeDir.resolve("robolectric-repo").path)
             // Robolectric Compose tests together outgrow the default 512 MB test heap.
             it.maxHeapSize = "2g"
+            // The licenses test compares assets/oss-notices.json with the release runtime dependencies.
+            it.dependsOn("exportRuntimeDependencies")
+            it.systemProperty("oss.runtimeDependencies", layout.buildDirectory.file("oss/runtime-dependencies.txt").get().asFile.path)
+        }
+        // VoiceRecorderInstrumentedTest needs real AudioRecord and MediaCodec: it runs on the emulators of .github/workflows/android-emulator.yml.
+        managedDevices {
+            localDevices {
+                create("pixel6Api29") {
+                    device = "Pixel 6"
+                    apiLevel = 29
+                    systemImageSource = "aosp"
+                    require64Bit = true
+                }
+                create("pixel6Api36") {
+                    device = "Pixel 6"
+                    apiLevel = 36
+                    systemImageSource = "aosp"
+                    require64Bit = true
+                }
+            }
         }
     }
 }
@@ -76,6 +96,29 @@ tasks.register("checkNoComponentProcess") {
             }
         }
         check(offenders.isEmpty()) { "Merged release manifest declares android:process: $offenders" }
+    }
+}
+
+// Lists every external library of the release runtime classpath (group:name:version, one per line).
+// scripts/generate-oss-notices.py reads it for the licenses screen; a unit test checks the screen
+// lists every entry.
+val runtimeDependenciesFile = layout.buildDirectory.file("oss/runtime-dependencies.txt")
+tasks.register("exportRuntimeDependencies") {
+    group = "verification"
+    description = "Writes the release runtime dependencies (group:name:version) for the licenses page."
+    val root = configurations.named("releaseRuntimeClasspath").flatMap { it.incoming.resolutionResult.rootComponent }
+    val out = runtimeDependenciesFile
+    outputs.file(out)
+    doLast {
+        val ids = LinkedHashSet<String>()
+        val seen = HashSet<Any>()
+        fun walk(c: org.gradle.api.artifacts.result.ResolvedComponentResult) {
+            if (!seen.add(c.id)) return
+            (c.id as? org.gradle.api.artifacts.component.ModuleComponentIdentifier)?.let { ids += "${it.group}:${it.module}:${it.version}" }
+            c.dependencies.filterIsInstance<org.gradle.api.artifacts.result.ResolvedDependencyResult>().forEach { walk(it.selected) }
+        }
+        walk(root.get())
+        out.get().asFile.apply { parentFile.mkdirs() }.writeText(ids.sorted().joinToString("\n") + "\n")
     }
 }
 

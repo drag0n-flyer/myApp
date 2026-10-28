@@ -29,6 +29,7 @@ fun platformName(platform: DevicePlatform): String = stringResource(
         DevicePlatform.IPhone -> R.string.platform_iphone
         DevicePlatform.Mac -> R.string.platform_mac
         DevicePlatform.Android -> R.string.platform_android
+        DevicePlatform.Other -> R.string.platform_other
     },
 )
 

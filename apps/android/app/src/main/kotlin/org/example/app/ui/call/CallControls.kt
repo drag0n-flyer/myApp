@@ -88,7 +88,7 @@ fun CallControl(
         modifier
             .defaultMinSize(minHeight = 48.dp)
             .clip(MaterialTheme.shapes.medium)
-            .clickable(onClick = onClick)
+            .clickable(role = Role.Button, onClick = onClick)
             .clearAndSetSemantics {
                 contentDescription = label
                 role = Role.Button

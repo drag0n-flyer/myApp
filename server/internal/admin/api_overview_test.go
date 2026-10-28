@@ -17,7 +17,7 @@ import (
 
 // Helpers shared by lane B's admin tests.
 
-var testSession = Session{TokenID: "22222222-2222-2222-2222-222222222222", Label: "test"}
+var testSession = Session{AdminUserID: "22222222-2222-2222-2222-222222222222", Username: "test"}
 
 // call runs one request through testHandler as testSession.
 func call(t testing.TB, m *Module, method, path string, body any) *httptest.ResponseRecorder {

@@ -219,10 +219,10 @@
     <string name="link_scan_title">Scan the code on your new device</string>
     <string name="link_confirm_title">Confirm it\'s you</string>
     <string name="link_confirm_subtitle">Approving a device needs your fingerprint or face.</string>
-    <string name="link_confirm_use_lock">Use screen lock</string>
     <string name="platform_iphone">iPhone</string>
     <string name="platform_mac">Mac</string>
     <string name="platform_android">Android</string>
+    <string name="platform_other">Other device</string>
 
     <string name="lost_title">Sign in on a new phone</string>
     <string name="lost_message">Your account comes back, but old messages can only be restored from a backup.</string>
@@ -246,6 +246,7 @@
     <string name="err_invalid_address">That isn\'t a valid server address. Use a name like chat.example.org, with an optional port.</string>
     <string name="err_wrong_server">This code is for a different server.</string>
     <string name="err_passkey_unavailable">Passkeys aren\'t available on this server. Use an email code instead.</string>
+    <string name="err_passkey_temporary">Something went wrong with your passkey. Please try again.</string>
     <string name="err_biometrics">Couldn\'t confirm it\'s you. Check your fingerprint or face and try again.</string>
     <string name="err_network">Can\'t reach the server. Check your connection and try again.</string>
     <string name="err_server">Something went wrong on the server. Try again later.</string>
@@ -313,6 +314,10 @@
     <string name="settings_notifications">Notifications</string>
     <string name="settings_folders">Chat folders</string>
     <string name="settings_calls_audio">Calls &amp; Audio</string>
+    <string name="settings_licenses">Open-source licenses</string>
+    <string name="licenses_title">Open-source licenses</string>
+    <string name="licenses_load_failed">Couldn\'t load the licenses.</string>
+    <string name="licenses_pending">The full license text is added with this component\'s first release.</string>
     <string name="settings_server_connected">Connected</string>
 
     <!-- Privacy -->
@@ -363,6 +368,7 @@
     <string name="device_iphone">iPhone</string>
     <string name="device_mac">Mac</string>
     <string name="device_android">Android</string>
+    <string name="device_other">Other device</string>
     <string name="devices_remove">Remove %1$s</string>
     <string name="devices_remove_title">Remove this device?</string>
     <string name="devices_link">Link a device</string>
@@ -380,8 +386,17 @@
     <string name="folders_move_up">Move %1$s up</string>
     <string name="folders_move_down">Move %1$s down</string>
     <string name="remove">Remove</string>
+    <string name="delete">Delete</string>
+    <string name="try_again">Try again</string>
+    <string name="folders_delete_title">Delete this folder?</string>
+    <string name="folders_delete_body">%1$s will be removed. Your chats stay where they are.</string>
+    <string name="devices_load_failed">Couldn\'t load your devices</string>
+    <string name="devices_remove_failed">Couldn\'t remove the device. Try again.</string>
+    <string name="username_format">\@%1$s</string>
     <string name="server_address">Address</string>
     <string name="server_status">Status</string>
     <string name="server_connected">Connected</string>
     <string name="server_footer">Switching to another server doesn\'t move your contacts or chats.</string>
+    <string name="account_unavailable_message">Can\'t open your account right now</string>
+    <string name="account_unavailable_retry">Try again</string>
 </resources>
