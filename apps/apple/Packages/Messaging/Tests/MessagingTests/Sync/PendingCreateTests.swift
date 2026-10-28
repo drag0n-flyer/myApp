@@ -251,4 +251,25 @@ private struct Rig {
         #expect(try PendingCreate.load(serverID: old, db: ana.deps.repo) == nil)
         #expect(try ana.deps.repo.preferredConversation(chatID: "acc-bob")?.serverID == record.serverID)
     }
+
+    /// A resumed create is activated, then its `mode` post fails: the chat is active (not abandoned), so the error
+    /// is passed on and no second group is made. A retry reuses the first conversation and sends the mode then.
+    @Test func failedModePostAfterResumeKeepsTheFirstConversation() async throws {
+        let rig = try await Rig.make()
+        let ana = Creator(rig.ana1)
+        await rig.server.failNextRequests("POST /v1/conversations/", count: 1)
+        await #expect(throws: (any Error).self) { try await ana.manager.preferredConversation(with: "acc-bob") }
+        let serverID = try #require(await rig.server.conversationIDs().first)
+
+        await rig.server.failNextRequests("POST /v1/conversations/\(serverID)/messages", count: 1)
+        await #expect(throws: (any Error).self) { try await ana.manager.preferredConversation(with: "acc-bob") }
+        #expect(await rig.server.conversationIDs() == [serverID])
+        #expect(ana.spy.addCount == 1)
+        #expect(try ana.deps.repo.conversation(serverID: serverID)?.active == true)
+
+        let record = try await ana.manager.preferredConversation(with: "acc-bob")
+        #expect(record.serverID == serverID)
+        #expect(await rig.server.conversationIDs() == [serverID])
+        #expect(await rig.server.storedMessages(in: serverID).count == 1)  // the mode envelope
+    }
 }

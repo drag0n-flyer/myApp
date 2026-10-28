@@ -115,9 +115,12 @@ public actor ConversationManager: ConversationManaging {
             do {
                 return try await finishCreate(serverID: serverID, resumed: true)
             } catch {
-                // That conversation was abandoned (the server refused it for good, or the engine lost its commit):
-                // start a new one below.
-                if try PendingCreate.isPending(serverID: serverID, db: deps.repo) { throw error }
+                // Start a new one below only when that conversation was abandoned (the server refused it for good,
+                // or the engine lost its commit): neither pending nor active. An active one (a later step failed,
+                // such as the `mode` post) is the peer's chat too: the error is passed on and a retry reuses it.
+                if try PendingCreate.isPending(serverID: serverID, db: deps.repo) || activeOrNil(serverID) != nil {
+                    throw error
+                }
             }
         }
 
