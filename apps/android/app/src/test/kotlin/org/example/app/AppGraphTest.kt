@@ -313,6 +313,22 @@ class AppGraphTest {
         assertEquals(AccountState.SignedOut, graph.accountState)
     }
 
+    /**
+     * A revocation wipe that runs after an open read `pending` and before it took the revocation count, and that could
+     * not sign out or finish, leaves only the marker behind: the open sees it and opens nothing on the part-wiped data.
+     */
+    @Test
+    fun failedWipeBetweenThePendingCheckAndTheSnapshotOpensNothing() = runBlocking {
+        val graph = signedIn()
+        graph.beforeRevocationSnapshot = {
+            graph.beforeRevocationSnapshot = {}
+            root.mkdirs()
+            marker.writeText("full") // what a wipe whose sign-out and deletes failed leaves
+        }
+        assertNull(graph.openSession())
+        assertNull(graph.liveSession)
+    }
+
     /** Between a session's end and onboarding the screens still read a store: it is empty, never a crash. */
     @Test
     fun chatStoreIsSafeAfterTheSessionEnds() = runBlocking {
