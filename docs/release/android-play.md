@@ -36,7 +36,7 @@ Use Play App Signing. Google holds the app signing key. The owner makes and keep
 
 ## 3. What the `release-bundle` job already checks
 
-It runs on `main` and by hand (workflow dispatch), and `android-ci` requires it.
+It runs on `main`, on `v*` release tags (strict: pending notices fail) and by hand (workflow dispatch), and `android-ci` requires it.
 
 - The bundle's native ABIs are exactly `arm64-v8a`, `armeabi-v7a` and `x86_64`, and `libmlsffi.so` is in each.
 - Every 64-bit `.so` in the bundle is aligned to 16 KB (Play requires this for new apps and updates that target Android 15 and later). 32-bit `armeabi-v7a` libraries are exempt.
