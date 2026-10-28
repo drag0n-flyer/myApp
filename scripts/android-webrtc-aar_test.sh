@@ -48,6 +48,13 @@ check "the release refusal says why" grep -q "release build" "$tmp/out.txt"
 run x -- :webrtc:mergeReleaseJniLibFolders "-PwebrtcAar=$tmp/fixture.aar" "-PwebrtcAarSha256=$good"
 check "release build with the matching hash is accepted" test "$rc" -eq 0
 
+# assemble and build make the release variants without naming them.
+run x -- :webrtc:assemble "-PwebrtcAar=$tmp/fixture.aar"
+check "override is refused for assemble (it builds release) without a hash" test "$rc" -ne 0
+check "the assemble refusal says why" grep -q "release build" "$tmp/out.txt"
+run x -- :webrtc:assemble "-PwebrtcAar=$tmp/fixture.aar" "-PwebrtcAarSha256=$good"
+check "assemble with the matching hash is accepted" test "$rc" -eq 0
+
 run x -- :webrtc:unpackWebrtcAar "-PwebrtcAar=$tmp/fixture.aar" "-PwebrtcAarSha256=0000000000000000000000000000000000000000000000000000000000000000"
 check "a wrong hash fails" test "$rc" -ne 0
 check "the mismatch is reported" grep -qi "hash mismatch" "$tmp/out.txt"

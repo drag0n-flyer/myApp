@@ -274,6 +274,9 @@ jobs:
       - name: No android:process in the merged release manifest
         working-directory: apps/android
         run: ./gradlew --no-daemon :app:checkNoComponentProcess
+      - name: WebRTC AAR override rules (warning; refused in CI and for release builds without a matching hash)
+        # After the builds above: the test runs Gradle with --offline and needs their cache.
+        run: bash scripts/android-webrtc-aar_test.sh
 
   release-bundle:
     # Release checks on main and by hand: an unsigned bundle (CI has no signing key; the owner

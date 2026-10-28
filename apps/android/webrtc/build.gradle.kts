@@ -41,13 +41,13 @@ val webrtcAarOverride: String? = providers.gradleProperty("webrtcAar").orNull
 val downloadedAar = layout.buildDirectory.file("webrtc-download/libwebrtc.aar")
 val webrtcAarSha256: String? = providers.gradleProperty("webrtcAarSha256").orNull?.lowercase()
 val inCi: Boolean = providers.environmentVariable("CI").isPresent
-val releaseBuild: Boolean = gradle.startParameter.taskNames.any { it.contains("release", ignoreCase = true) }
 
-val validateWebrtcAarOverride by tasks.registering {
+// One validation task per mode. The release one is a dependency of every task whose name contains "Release"
+// (the variant's own tasks), so assemble, build and bundle reach it whatever the command line names.
+fun registerOverrideCheck(name: String, release: Boolean) = tasks.register(name) {
     val override = webrtcAarOverride
     val sha = webrtcAarSha256
     val ci = inCi
-    val release = releaseBuild
     inputs.property("override", override ?: "")
     inputs.property("sha", sha ?: "")
     inputs.property("ci", ci)
@@ -71,6 +71,13 @@ val validateWebrtcAarOverride by tasks.registering {
         if (release && sha == null) {
             throw GradleException("-PwebrtcAar is refused for a release build unless -PwebrtcAarSha256=<hash> is given and matches")
         }
+    }
+}
+val validateWebrtcAarOverride = registerOverrideCheck("validateWebrtcAarOverride", release = false)
+val validateWebrtcAarOverrideForRelease = registerOverrideCheck("validateWebrtcAarOverrideForRelease", release = true)
+tasks.configureEach {
+    if (name.contains("Release") && name != "validateWebrtcAarOverrideForRelease") {
+        dependsOn(validateWebrtcAarOverrideForRelease)
     }
 }
 
