@@ -31,6 +31,9 @@ final class AppModel {
     let isSampleData: Bool
     /// Shown after the server ends this device's session.
     var deviceRemovedAlert = false
+    /// Shown when this build lacks the shared app group or keychain group: live sign-in is refused
+    /// (the session would be stranded where the notification extension cannot read it) and the app stays on sample data.
+    var setupProblemAlert = false
     private var connection: LiveConnection?
     private let sessions: SessionStore?
     private var messaging: LiveMessaging?
@@ -88,7 +91,10 @@ final class AppModel {
         let account: any AccountService
         var live: LiveAccountService?
         var sessionStore: SessionStore?
-        if launch.sampleData {
+        // Fails closed like `makeMLSEngine`: no live account without both shared groups.
+        let setupProblems = launch.sampleData ? [] : MessagingLocations.liveSetupProblems(in: Bundle.main.infoDictionary ?? [:])
+        let sampleData = launch.sampleData || !setupProblems.isEmpty
+        if sampleData {
             account = SampleAccountService(platform: platform)
         } else {
             let sessions = SessionStore(storage: KeychainSessionStorage(accessGroup: config.keychainAccessGroup))
@@ -107,7 +113,8 @@ final class AppModel {
         self.account = account
         self.live = live
         self.sessions = sessionStore
-        self.isSampleData = launch.sampleData
+        self.isSampleData = sampleData
+        self.setupProblemAlert = !setupProblems.isEmpty
         self.server = server
         self.settings = settings
         self.network = launch.network
@@ -131,7 +138,7 @@ final class AppModel {
         self.onboarding = flow
         live?.onSignedOut = { [weak self] in self?.deviceWasRemoved() }
         // A sign-out wipe that was cut short (kill, failure) is finished first; the sign-in below waits for it.
-        if !launch.sampleData {
+        if !sampleData {
             wipeTask = Task { try? await LiveMessaging.finishPendingWipe() }
         }
         if live?.isSignedIn == true { Task { await didSignIn() } }

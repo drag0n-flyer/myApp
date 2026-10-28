@@ -16,8 +16,9 @@ struct AppConfig {
         let info = Bundle.main.infoDictionary ?? [:]
         func string(_ key: String) -> String { (info[key] as? String)?.trimmingCharacters(in: .whitespaces) ?? "" }
         let domains = string("PasskeyDomains").split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-        // Required: without it the app would use its private keychain group, which the extension cannot read.
-        let group = MessagingLocations.requiredInfoValue("KeychainAccessGroup", in: info) ?? ""
+        // Required for live sign-in; AppModel refuses it (and reports the missing key) when this is nil.
+        let group = MessagingLocations.requiredInfoValue(
+            MessagingLocations.keychainAccessGroupInfoKey, in: info, onMissing: { _ in }) ?? ""
         return AppConfig(
             defaultServerHost: string("DefaultServerHost").isEmpty ? "home.example.org" : string("DefaultServerHost"),
             passkeyDomains: domains,

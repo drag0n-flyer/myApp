@@ -430,6 +430,17 @@
         }
       }
     },
+    "This copy of the app is set up incorrectly, so it can't sign in. You can look around with sample chats." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This copy of the app is set up incorrectly, so it can't sign in. You can look around with sample chats."
+          }
+        }
+      }
+    },
     "This device was removed from your account." : {
       "extractionState" : "manual",
       "localizations" : {

@@ -22,7 +22,7 @@ check_nse() {
 }
 
 # The built app's and its notification extension's IDs come from APP_ID in AppID.xcconfig, and both
-# name the same app group.
+# name the same app group and keychain group.
 # Usage: check_app_ids <scheme> <destination> <app Info.plist inside App.app> <app bundle ID suffix after APP_ID>
 #                      <appex Info.plist glob inside App.app> <appex bundle ID suffix after APP_ID>
 check_app_ids() {
@@ -42,5 +42,14 @@ check_app_ids() {
   [ "$got" = "$app_id$6" ] || { echo "appex bundle ID is '$got', want '$app_id$6'" >&2; return 1; }
   got=$(plutil -extract AppGroupID raw "$appex")
   [ "$got" = "group.$app_id" ] || { echo "appex AppGroupID is '$got', want the app's 'group.$app_id'" >&2; return 1; }
-  echo "App ID OK: $app_id$4 and $app_id$6, group.$app_id"
+  # The shared keychain group: $(AppIdentifierPrefix)$(APP_ID).shared (the prefix is empty in unsigned builds).
+  local kc
+  kc=$(plutil -extract KeychainAccessGroup raw "$plist") || kc=""
+  case "$kc" in
+    "$app_id.shared"|*."$app_id.shared") ;;
+    *) echo "app KeychainAccessGroup is '$kc', want '<team prefix>$app_id.shared'" >&2; return 1 ;;
+  esac
+  got=$(plutil -extract KeychainAccessGroup raw "$appex") || got=""
+  [ "$got" = "$kc" ] || { echo "appex KeychainAccessGroup is '$got', want the app's '$kc'" >&2; return 1; }
+  echo "App ID OK: $app_id$4 and $app_id$6, group.$app_id, keychain $kc"
 }

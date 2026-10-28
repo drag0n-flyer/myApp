@@ -111,4 +111,19 @@ private final class Counter: @unchecked Sendable {
         #expect(MessagingLocations.requiredInfoValue("KeychainAccessGroup", in: ["KeychainAccessGroup": 3], onMissing: note) == nil)
         #expect(missing == ["KeychainAccessGroup", "KeychainAccessGroup"])
     }
+
+    /// Live sign-in needs both shared stores; a build without either must not sign in (Keychain
+    /// sessions would land in the app's private group, data would stay in sample mode).
+    @Test func liveSetupNeedsBothSharedGroups() {
+        var missing: [String] = []
+        let note: (String) -> Void = { missing.append($0) }
+        let both: [String: Any] = ["AppGroupID": "group.a", "KeychainAccessGroup": "T.a.shared"]
+        #expect(MessagingLocations.liveSetupProblems(in: both, onMissing: note).isEmpty)
+        #expect(missing.isEmpty)
+        #expect(MessagingLocations.liveSetupProblems(in: ["AppGroupID": "group.a"], onMissing: note) == ["KeychainAccessGroup"])
+        #expect(MessagingLocations.liveSetupProblems(in: ["KeychainAccessGroup": "T.a.shared"], onMissing: note) == ["AppGroupID"])
+        #expect(MessagingLocations.liveSetupProblems(in: [:], onMissing: note) == ["AppGroupID", "KeychainAccessGroup"])
+        #expect(missing == ["KeychainAccessGroup", "AppGroupID", "AppGroupID", "KeychainAccessGroup"])
+        #expect(MessagingLocations.keychainAccessGroupInfoKey == "KeychainAccessGroup")
+    }
 }

@@ -24,6 +24,10 @@ struct RootView: View {
         .alert("This device was removed from your account.", isPresented: $model.deviceRemovedAlert) {
             Button("OK", role: .cancel) {}
         }
+        .alert("This copy of the app is set up incorrectly, so it can't sign in. You can look around with sample chats.",
+               isPresented: $model.setupProblemAlert) {
+            Button("OK", role: .cancel) {}
+        }
         #if os(iOS)
         .fullScreenCover(isPresented: isCallPresented) {
             CallView(model: model)

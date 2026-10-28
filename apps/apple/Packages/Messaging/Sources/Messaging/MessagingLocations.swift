@@ -28,6 +28,18 @@ public enum MessagingLocations {
         return value
     }
 
+    /// The Info.plist key holding the Keychain access group the app and the extension share.
+    public static let keychainAccessGroupInfoKey = "KeychainAccessGroup"
+
+    /// The required keys this build lacks (each reported through `onMissing`). Live sign-in is refused
+    /// unless this is empty: without the keychain group the session would be saved where the
+    /// extension cannot read it, and without the app group the account's data has nowhere to go.
+    public static func liveSetupProblems(
+        in info: [String: Any], onMissing: (String) -> Void = reportMissingInfoValue
+    ) -> [String] {
+        [appGroupInfoKey, keychainAccessGroupInfoKey].filter { requiredInfoValue($0, in: info, onMissing: onMissing) == nil }
+    }
+
     /// Logs the missing key and stops a debug build (a broken project), like the missing MLS keychain key.
     public static func reportMissingInfoValue(_ key: String) {
         #if canImport(os)
