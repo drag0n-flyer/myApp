@@ -20,6 +20,9 @@ public enum SyncError: Error, Equatable, Sendable {
     /// My earlier add commit for a new conversation is still pending and its outcome is not known yet. It is kept
     /// (never discarded, never rebuilt); try again later.
     case commitInFlight
+    /// The server applied my add commit for a new conversation, but the engine no longer holds it (it never
+    /// merged it). The create is abandoned; a new one may start.
+    case createLost
 }
 
 /// Creates and joins 1:1 conversations (Design 1, 18). Lane A's other tasks (inbox processor,
@@ -32,6 +35,7 @@ public actor ConversationManager: ConversationManaging {
     private let escrowKey: @Sendable () async throws -> Data
     private let syncOnce: @Sendable () async throws -> Void
     private let lockTimeout: Duration
+    private let log: @Sendable (String) -> Void
     private var creating: [String: Task<ConversationRecord, Error>] = [:]
 
     /// - Parameters:
@@ -43,9 +47,11 @@ public actor ConversationManager: ConversationManaging {
         deps: MessagingDeps,
         escrowKey: @escaping @Sendable () async throws -> Data = { throw SyncError.escrowKeyUnavailable },
         syncOnce: @escaping @Sendable () async throws -> Void = {},
-        lockTimeout: Duration = .seconds(5)
+        lockTimeout: Duration = .seconds(5),
+        log: @escaping @Sendable (String) -> Void = { FileHandle.standardError.write(Data(($0 + "\n").utf8)) }
     ) {
         self.lockTimeout = lockTimeout
+        self.log = log
         self.deps = deps
         self.escrowKey = escrowKey
         self.syncOnce = syncOnce
@@ -108,8 +114,9 @@ public actor ConversationManager: ConversationManaging {
         if let serverID = try pendingCreate(for: peer) {
             do {
                 return try await finishCreate(serverID: serverID, resumed: true)
-            } catch let error as ServerError {
-                // The server refused that conversation for good: it was abandoned, so start a new one below.
+            } catch {
+                // That conversation was abandoned (the server refused it for good, or the engine lost its commit):
+                // start a new one below.
                 if try PendingCreate.isPending(serverID: serverID, db: deps.repo) { throw error }
             }
         }
@@ -179,8 +186,9 @@ public actor ConversationManager: ConversationManaging {
     /// - `resumed`: read the inbox first (the echo activates the row), then ask the server's epoch.
     /// - `200`, or the server past epoch 0: merge and activate.
     /// - A `stale_epoch`: read the inbox and the server's epoch; past 0 means applied, else it stays pending.
-    /// - A `404` (the conversation is gone): `commitRejected`; the row stays inactive and is never used. Any other
-    ///   rejection keeps it pending.
+    /// - A definite rejection of the post (4xx other than 408, 429, `stale_epoch`): not applied, so abandoned
+    ///   (`commitRejected`; the row stays inactive and is never used). On the epoch check only a `404` abandons.
+    /// - The engine lost the commit although the server applied it: logged and abandoned (`createLost`).
     /// - An unknown outcome: read the inbox; still pending means the error is thrown and the create stays pending.
     private func finishCreate(serverID: String, resumed: Bool) async throws -> ConversationRecord {
         if resumed {
@@ -203,7 +211,9 @@ public actor ConversationManager: ConversationManaging {
                 if try await serverEpoch(serverID) > 0 { return try await announced(try await acceptCreate(serverID)) }
                 throw error
             }
-            if Self.isGone(error.status) {
+            // A definite rejection of the post itself: the commit was not applied, so no Welcome went out and
+            // nothing is orphaned. Abandoned, never resent (a 403 for a since-deleted device would fail forever).
+            if Self.isDefiniteRejection(error.status) {
                 try await abandonCreate(serverID)
                 throw error
             }
@@ -243,15 +253,26 @@ public actor ConversationManager: ConversationManaging {
     /// The server applied the add commit: merge it (a no-op when the echo already did) and activate the row,
     /// with the members and the first safety number (no lines: it is new).
     private func acceptCreate(_ serverID: String) async throws -> ConversationRecord {
+        do {
+            return try await activateCreate(serverID)
+        } catch SyncError.createLost {
+            // Logged with IDs only; abandoned outside the lock (`abandonCreate` takes it).
+            log("create_lost conversation=\(serverID)")
+            try await abandonCreate(serverID)
+            throw SyncError.createLost
+        }
+    }
+
+    private func activateCreate(_ serverID: String) async throws -> ConversationRecord {
         let repo = deps.repo, mls = deps.mls, membership = membership
         return try await locked { () async throws -> ConversationRecord in
             guard var record = try repo.conversation(serverID: serverID) else { throw SyncError.commitInFlight }
             let group = GroupID(raw: record.groupID)
             try await mls.commitAccepted(group)
             let epoch = try await mls.epoch(of: group)
-            // The engine must have merged the add commit; still at epoch 0 means it lost it, and the row stays
-            // inactive (never usable at epoch 0).
-            guard epoch > 0 else { throw SyncError.commitInFlight }
+            // The engine must have merged the add commit; still at epoch 0 means it lost it. The row is never
+            // activated at epoch 0; the caller abandons the create.
+            guard epoch > 0 else { throw SyncError.createLost }
             let keys = try await membership.keys(of: group)
             return try repo.transaction {
                 record = try repo.conversation(serverID: serverID) ?? record
@@ -280,8 +301,8 @@ public actor ConversationManager: ConversationManaging {
     /// A 4xx other than a timeout or a rate limit: the server will never accept this request.
     static func isDefiniteRejection(_ status: Int) -> Bool { (400..<500).contains(status) && status != 408 && status != 429 }
 
-    /// The only answer that ends a pending create (MLS profile, step 5, exception): the conversation is gone. Any
-    /// other rejection keeps it pending, and a later call tries again.
+    /// The only answer to the epoch check that ends a pending create: the conversation is gone. Any other
+    /// rejection keeps it pending (the commit may already be applied), and a later call tries again.
     static func isGone(_ status: Int) -> Bool { status == 404 }
 
     // MARK: Join

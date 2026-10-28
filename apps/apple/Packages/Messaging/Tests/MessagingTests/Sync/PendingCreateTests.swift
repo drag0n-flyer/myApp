@@ -205,32 +205,50 @@ private struct Rig {
         #expect(try PendingCreate.load(serverID: serverID, db: ana.deps.repo) != nil)
         #expect(await rig.server.conversationIDs() == [serverID])
 
-        // A 403 on the resend.
-        await rig.server.failNextRequests("POST /v1/conversations/", count: 1, status: 403)
-        await #expect(throws: (any Error).self) { try await ana.manager.preferredConversation(with: "acc-bob") }
-        #expect(try PendingCreate.load(serverID: serverID, db: ana.deps.repo) != nil)
-        #expect(await rig.server.conversationIDs() == [serverID])
-
         let record = try await ana.manager.preferredConversation(with: "acc-bob")
         #expect(record.serverID == serverID)
         #expect(record.active)
         #expect(ana.spy.addCount == 1)
     }
 
-    /// The server is past epoch 0 but the engine did not merge the commit (its pending commit is gone): the
-    /// conversation is not activated at epoch 0.
-    @Test func acceptNeedsTheEngineMerged() async throws {
+    /// A definite rejection of the epoch-0 commit post (here a 403: the commit adds a device that has since been
+    /// deleted) means it was not applied and no Welcome went out: the create is abandoned, never resent, and the
+    /// next create builds a fresh group.
+    @Test func rejectedCommitPostAbandonsTheCreate() async throws {
+        let rig = try await Rig.make()
+        let ana = Creator(rig.ana1)
+        await rig.server.failNextRequests("POST /v1/conversations/", count: 1, status: 403)
+        await #expect(throws: (any Error).self) { try await ana.manager.create(with: "acc-bob") }
+        let old = try #require(await rig.server.conversationIDs().first)
+        #expect(try PendingCreate.load(serverID: old, db: ana.deps.repo) == nil)
+        #expect(try ana.deps.repo.conversation(serverID: old)?.active == false)
+
+        let record = try await ana.manager.create(with: "acc-bob")
+        #expect(record.serverID != old)
+        #expect(record.active)
+        #expect(record.groupID != (try ana.deps.repo.conversation(serverID: old)?.groupID))
+        #expect(ana.spy.addCount == 2)
+        #expect(await rig.server.epoch(of: old) == 0)
+    }
+
+    /// The server is past epoch 0 but the engine no longer holds the add commit (it never merged it): the
+    /// conversation is never activated at epoch 0. The create is abandoned and a new one proceeds.
+    @Test func engineThatLostThePendingCommitAbandonsTheCreate() async throws {
         let rig = try await Rig.make()
         let ana = Creator(rig.ana1)
         await rig.server.loseNextCommitResponses(1)
         await rig.server.failNextRequests("GET /v1/inbox", count: 1)
         await #expect(throws: (any Error).self) { try await ana.manager.preferredConversation(with: "acc-bob") }
-        let serverID = try #require(await rig.server.conversationIDs().first)
-        let stored = try #require(try ana.deps.repo.conversation(serverID: serverID))
+        let old = try #require(await rig.server.conversationIDs().first)
+        let stored = try #require(try ana.deps.repo.conversation(serverID: old))
         try await ana.deps.mls.commitRejected(GroupID(raw: stored.groupID))
 
-        await #expect(throws: (any Error).self) { try await ana.manager.preferredConversation(with: "acc-bob") }
-        #expect(try ana.deps.repo.conversation(serverID: serverID)?.active == false)
-        #expect(try ana.deps.repo.preferredConversation(chatID: "acc-bob") == nil)
+        let record = try await ana.manager.preferredConversation(with: "acc-bob")
+        #expect(record.serverID != old)
+        #expect(record.active)
+        #expect(record.epoch == 1)
+        #expect(try ana.deps.repo.conversation(serverID: old)?.active == false)
+        #expect(try PendingCreate.load(serverID: old, db: ana.deps.repo) == nil)
+        #expect(try ana.deps.repo.preferredConversation(chatID: "acc-bob")?.serverID == record.serverID)
     }
 }
