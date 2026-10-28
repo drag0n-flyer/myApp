@@ -148,6 +148,7 @@ final class Peer {
     var store: LiveChatStore?
     var deviceSync: DeviceSync?
     var repo: Repository?
+    var mls: LiveMLSEngine?
 
     init() {
         baseURL = URL(string: env("INTEROP_BASE_URL"))!
@@ -165,6 +166,12 @@ final class Peer {
             passkeys: NoPasskeys(), biometrics: AlwaysConfirm(), approvalReason: "Approve this device",
             linkCrypto: crypto.link,
             linkSnapshot: { (try? await box.deviceSync?.exportSnapshot()) ?? Data() })
+        // As the app's `AppModel`: once the linked session is saved, build the graph and import the snapshot into it.
+        service.importLinkSnapshot = { [unowned self] data in
+            _ = try signedIn()
+            guard let deviceSync else { throw PeerError("no graph") }
+            try await deviceSync.importSnapshot(data)
+        }
     }
 
     func signedIn() throws -> LiveChatStore {
@@ -201,6 +208,7 @@ final class Peer {
         self.store = store
         self.deviceSync = sync
         self.repo = repo
+        self.mls = mls
         box.set(sync)
         return store
     }
@@ -334,6 +342,17 @@ final class Peer {
         return number.groups.joined()
     }
 
+    /// `real <count>` when the engine gives real member signature keys for the chat's group (none is a
+    /// `fake-sig:` placeholder), `placeholder <count>` otherwise, or `none` when the engine has no real keys.
+    func memberKeys(_ peer: String) async throws -> String {
+        try await sync()
+        guard let mls, mls.providesRealMemberKeys else { return "none" }
+        guard let record = try repo?.preferredConversation(chatID: peer) else { throw PeerError("no conversation with \(peer)") }
+        let keys = try await mls.memberKeys(of: GroupID(raw: record.groupID))
+        let placeholder = keys.isEmpty || keys.contains { $0.signatureKey == Data("fake-sig:\($0.identity)".utf8) }
+        return "\(placeholder ? "placeholder" : "real") \(keys.count)"
+    }
+
     func seal(_ peer: String, kind: String, callID: String, sdpPath: String?) async throws -> String {
         let payload: CallSignalPayload
         switch kind {
@@ -367,13 +386,14 @@ final class Peer {
         return try await service.makeLinkCode().qrText
     }
 
-    /// Answers `<accountID> received -` once linked and the snapshot has arrived and opened. Nothing imports it:
-    /// LiveAccountService leaves that to plan 7 and no app code does it yet, so neither does the peer.
+    /// Answers `<accountID> imported <contact IDs, comma separated>` once linked. The account flow imports the
+    /// snapshot through `importLinkSnapshot`, the same path the app takes.
     func linkWait() async throws -> String {
-        _ = try await service.waitForLinkApproval()
-        guard service.receivedLinkSnapshot != nil else { throw PeerError("no snapshot received") }
+        let result = try await service.waitForLinkApproval()
+        guard result.contactsCopied else { throw PeerError("snapshot not imported") }
         let id = try await start()
-        return "\(id) received -"
+        let contacts = try signedIn().contacts.map(\.id).joined(separator: ",")
+        return "\(id) imported \(contacts.isEmpty ? "-" : contacts)"
     }
 
     func approve(_ qrText: String) async throws {
@@ -467,6 +487,7 @@ func run(_ peer: Peer, _ line: String) async throws -> String {
     case "send-photo": let a = try args(1); return try await peer.sendPhoto(a[0], path: a[1])
     case "wait-photo": let a = try args(1); return try await peer.waitPhoto(a[0], messageID: a[1])
     case "conversation": return try peer.conversation(try args(0)[0])
+    case "member-keys": return try await peer.memberKeys(try args(0)[0])
     case "safety": return try await peer.safety(try args(0)[0])
     case "seal":
         let a = rest.split(separator: " ").map(String.init)

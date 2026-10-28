@@ -267,13 +267,24 @@ grep -q "hello from android" "$WORK/escrow.jsonl" || fail escrow "A's text is no
 grep -q "hi from apple" "$WORK/escrow.jsonl" || fail escrow "B's text is not in the export"
 pass escrow
 
-# Safety numbers are equal on both sides.
-ask A safety-number safety "$ACC_B"
-SAFETY_A=$ANSWER
-ask B safety-number safety "$ACC_A"
-[ -n "$SAFETY_A" ] || fail safety-number "empty"
-same safety-number "safety numbers" "$ANSWER" "$SAFETY_A"
-pass "safety-number (identities only: Android's memberKeys are fake-sig placeholders until MLS M7)"
+# Safety numbers. The iPhone/Mac engine gives real MLS signature keys; Android's LiveMlsEngine.memberKeys still
+# returns `fake-sig:` placeholders (until MLS M7), so the Android app reports no real keys and shows no number.
+# Check each side for what is true today. An identity-only comparison is not possible any more: the Swift number
+# covers the real keys, so the two numbers cannot match until Android has them too.
+ask A safety-number-android member-keys "$ACC_B"
+same safety-number-android "Android member keys" "$ANSWER" "none"
+pass "safety-number-android (no real member keys: no number shown)"
+ask B safety-number-other member-keys "$ACC_A"
+if [ "$PEER_B" = swift ]; then
+  case "$ANSWER" in "real "*) ;; *) fail safety-number-other "Swift member keys '$ANSWER', want real" ;; esac
+  ask B safety-number-other safety "$ACC_A"
+  [ -n "$ANSWER" ] || fail safety-number-other "empty safety number"
+  pass "safety-number-other (computed from real member keys)"
+else
+  same safety-number-other "Android member keys" "$ANSWER" "none"
+  pass "safety-number-other (no real member keys)"
+fi
+echo "SKIP safety-number-compare (Android has no real member keys yet)"
 
 # Call signaling: each side seals a ring and an offer with a recorded SDP; the other opens it and the offer
 # passes the fingerprint check.
@@ -294,9 +305,9 @@ call_steps A B "$ACC_A" "$ACC_B" "$FIXTURES/chrome-offer.sdp" android-to-other
 call_steps B A "$ACC_B" "$ACC_A" "$OTHER_SDP" other-to-android
 
 # Linking: Android approves a new device of the other platform (it joins A), and the other platform approves
-# a new Android device (it joins B). Android's account flow imports the snapshot (its contacts then include the
-# peer); the iPhone's does not yet (plan 7), so for a Swift device only the snapshot's arrival is checked.
-# check_link <step> <expected account> <expected contact>: reads ANSWER = "<accountID> imported|received <contacts>".
+# a new Android device (it joins B). Each platform's account flow imports the snapshot, so the new device's
+# contacts then include the peer.
+# check_link <step> <expected account> <expected contact>: reads ANSWER = "<accountID> imported <contacts>".
 check_link() {
   set -- "$1" "$2" "$3" $ANSWER
   same "$1" "linked account" "$4" "$2"
@@ -304,10 +315,6 @@ check_link() {
     imported)
       case ",${6:-}," in *",$3,"*) ;; *) fail "$1" "snapshot contacts '${6:-}' miss $3" ;; esac
       pass "$1"
-      ;;
-    received)
-      pass "$1 (linked; snapshot sealed, sent and opened)"
-      echo "SKIP $1-snapshot-import (iPhone app does not import the link snapshot yet, plan 7)"
       ;;
     *) fail "$1" "unexpected answer '$ANSWER'" ;;
   esac

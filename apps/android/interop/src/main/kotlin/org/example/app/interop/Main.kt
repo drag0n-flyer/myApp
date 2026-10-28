@@ -26,12 +26,11 @@ import kotlinx.coroutines.runBlocking
  *   wait-photo <peer> <messageID>              -> OK <sha256 of the decrypted bytes>
  *   conversation <peer>                        -> OK <server conversation ID>
  *   safety <peer>                              -> OK <safety number digits>
+ *   member-keys <peer>                         -> OK real|placeholder <count>, or OK none (no real keys)
  *   seal <peer> ring|offer <callID> [<sdp path>] -> OK <base64 sealed>
  *   open <peer> <base64 sealed>                -> OK <kind> <callID> [fingerprint-ok]
  *   link-code                                  -> OK <QR text>   (a fresh device)
  *   link-wait                                  -> OK <accountID> imported <contact IDs, comma separated>
- *                                                 or OK <accountID> received -  (snapshot received, not imported:
- *                                                 the iPhone app does not import it yet, plan 7)
  *   approve <QR text>                          -> OK
  *   quit
  */
@@ -95,6 +94,7 @@ private suspend fun run(peer: Peer, line: String): String {
         "send-photo" -> args(1).let { peer.sendPhoto(it[0], it[1]) }
         "wait-photo" -> args(1).let { peer.waitPhoto(it[0], it[1]) }
         "conversation" -> args(0).let { peer.conversation(it[0]) }
+        "member-keys" -> args(0).let { peer.memberKeys(it[0]) }
         "safety" -> args(0).let { peer.safety(it[0]) }
         "seal" -> {
             val parts = line.split(' ')

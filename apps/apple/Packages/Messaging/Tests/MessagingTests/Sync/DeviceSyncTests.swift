@@ -342,9 +342,14 @@ private final class CountingTransport: HTTPTransport, @unchecked Sendable {
         #expect(try r2.get("setting.callMode") == Data("auto".utf8))
         #expect(try r2.get("inbox.cursor") == nil)
         #expect(try r2.messages(chatID: "acc-bob", before: nil, limit: 10).isEmpty)
-        // Importing twice changes nothing.
+        // Importing twice (a retried link) changes nothing: no second contact, chat, folder or block.
+        let once = (try r2.contacts(), try r2.chats().map(\.id), try r2.folderChats(folderID: "f1"), try r2.blockedIDs())
         try await fresh.importSnapshot(data)
         #expect(try r2.folders().count == 1)
+        #expect(try r2.contacts() == once.0)
+        #expect(try r2.chats().map(\.id) == once.1)
+        #expect(try r2.folderChats(folderID: "f1") == once.2)
+        #expect(try r2.blockedIDs() == once.3)
 
         await #expect(throws: DeviceSyncError.invalidSnapshot) { try await fresh.importSnapshot(Data("{\"v\":2}".utf8)) }
     }

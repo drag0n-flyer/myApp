@@ -58,6 +58,8 @@ final class AppModel {
     /// the app starts again, which finishes the wipe first.
     private var wipeFailed = false
     private var liveTasks: [Task<Void, Never>] = []
+    /// Gives the account service, built before this model, this device's link snapshot to send.
+    private let linkSnapshots: LinkSnapshotBridge
     private var apnsToken: Data?
     private var registrar: PushRegistrar?
     /// Seals call signals through the live chat store once it is installed; fails closed before that.
@@ -129,6 +131,7 @@ final class AppModel {
         let platform = DevicePlatform.iPhone
         let deviceName = UIDevice.current.name
         #endif
+        let bridge = LinkSnapshotBridge()
         let account: any AccountService
         var live: LiveAccountService?
         var sessionStore: SessionStore?
@@ -146,7 +149,8 @@ final class AppModel {
                 deviceName: deviceName, sessions: sessions,
                 makeClient: { ServerClient(host: $0, session: sessions) },
                 passkeys: PasskeyAuthenticator(),
-                approvalReason: String(localized: "Confirm to approve this new device."))
+                approvalReason: String(localized: "Confirm to approve this new device."),
+                linkSnapshot: { await bridge.export() })
             account = service
             live = service
             sessionStore = sessions
@@ -155,6 +159,7 @@ final class AppModel {
         let settings = UserSettings.initial(from: server)
         self.account = account
         self.live = live
+        self.linkSnapshots = bridge
         self.sessions = sessionStore
         self.isSampleData = sampleData
         self.hasBrokenSetup = !setupProblems.isEmpty
@@ -182,6 +187,11 @@ final class AppModel {
         }
         self.onboarding = flow
         live?.onSignedOut = { [weak self] reason in self?.serverEndedSession(reason) }
+        linkSnapshots.model = self
+        live?.importLinkSnapshot = { [weak self] data in
+            guard let self else { throw CancellationError() }
+            try await self.importLinkSnapshot(data)
+        }
         // A sign-out wipe that was cut short (kill, failure) is finished first; the sign-in below waits for it.
         if mode.isLive {
             wipeTask = Task { [weak self] in
@@ -442,6 +452,24 @@ final class AppModel {
         revision += 1
     }
 
+    /// The new device's side of linking, called by the account service once the linked session is saved and
+    /// before anything syncs: builds the live store and copies the snapshot's contacts, chats, folders, blocks and
+    /// settings into it, in one transaction (importing it again adds nothing). Throws when there is no live store or
+    /// the snapshot cannot be read; the device then starts without its contacts and no error is shown.
+    private func importLinkSnapshot(_ data: Data) async throws {
+        await installLiveStore()
+        guard let messaging else { throw LinkSnapshotError.noLiveStore }
+        try await messaging.sync.importSnapshot(data)
+        messaging.store.refresh()
+        revision += 1
+    }
+
+    /// The approving device's snapshot; empty (the new device then starts without contacts) with no live store.
+    fileprivate func exportLinkSnapshot() async -> Data {
+        guard let messaging else { return Data() }
+        return (try? await messaging.sync.exportSnapshot()) ?? Data()
+    }
+
     /// Fetches and processes the inbox (a pushed item, or catching up after the socket was away).
     private func syncInbox() async {
         await messaging?.store.syncInbox()
@@ -646,6 +674,14 @@ final class AppModel {
         guard let invite = InviteLink.parse(url) else { return }
         pendingInvite = invite
     }
+}
+
+private enum LinkSnapshotError: Error { case noLiveStore }
+
+/// The account service is built before `AppModel`, so its snapshot export reaches the model through this.
+@MainActor private final class LinkSnapshotBridge {
+    weak var model: AppModel?
+    func export() async -> Data { await model?.exportLinkSnapshot() ?? Data() }
 }
 
 /// Launch arguments used by UI tests: `-skipOnboarding`, `-uiTesting`, `-network mobile|wifi`, `-openURL <url>`, `-sampleData`.
