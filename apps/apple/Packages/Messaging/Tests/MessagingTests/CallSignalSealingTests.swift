@@ -57,14 +57,23 @@ private let offer = CallSignalPayload(kind: .offer, callID: "c1", sdp: "v=0…",
         let sealed = try await ana.store.seal(offer, to: "acc-bob")
         _ = try await bob.inbox.syncOnce()
         let opened = try await bob.store.open(sealed, from: "acc-ana")
-        #expect(opened == offer)
+        #expect(opened.payload == offer)
+        #expect(opened.senderDeviceID == ana.device.deviceID)
         // The sender comes out of the decrypted message.
         let again = try await ana.store.seal(offer, to: "acc-bob")
         let recovered = try await bob.store.openRecoveringSender(again)
         #expect(recovered.senderAccountID == "acc-ana")
+        #expect(recovered.senderDeviceID == ana.device.deviceID)
         #expect(recovered.payload == offer)
         // Opening the same bytes twice fails: the hash is marked processed.
         await #expect(throws: CallSealError.undecryptable) { try await bob.store.openRecoveringSender(again) }
+    }
+
+    @Test func callSenderIdentityNeedsAccountAndDevice() throws {
+        #expect(try LiveChatStore.callSender("acc-ana/dev-1") == ("acc-ana", "dev-1"))
+        for bad in ["acc-ana", "acc-ana/", "/dev-1", ""] {
+            #expect(throws: CallSealError.wrongSender) { try LiveChatStore.callSender(bad) }
+        }
     }
 
     @Test func openWrongSender() async throws {
@@ -102,7 +111,7 @@ private let offer = CallSignalPayload(kind: .offer, callID: "c1", sdp: "v=0…",
         let sealed = try await ana.store.seal(offer, to: "acc-bob")
         #expect(try ana.device.deps.repo.preferredConversation(chatID: "acc-bob") != nil)
         _ = try await bob.inbox.syncOnce()   // the welcome
-        #expect(try await bob.store.open(sealed, from: "acc-ana") == offer)
+        #expect(try await bob.store.open(sealed, from: "acc-ana").payload == offer)
         // Nothing was stored as a message in either chat.
         #expect(try ana.device.deps.repo.messages(chatID: "acc-bob", before: nil, limit: 10).isEmpty)
     }

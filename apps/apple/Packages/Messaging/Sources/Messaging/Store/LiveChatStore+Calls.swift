@@ -28,16 +28,27 @@ extension LiveChatStore {
         }
     }
 
-    /// Decrypts `data`; throws `CallSealError.wrongSender` unless the MLS sender's account is `contactID`.
-    nonisolated public func open(_ data: Data, from contactID: String) async throws -> CallSignalPayload {
+    /// Decrypts `data` and returns the payload with the sender's device from the MLS credential. Throws
+    /// `CallSealError.wrongSender` unless the MLS sender's account is `contactID` and the identity names a device.
+    nonisolated public func open(
+        _ data: Data, from contactID: String
+    ) async throws -> (payload: CallSignalPayload, senderDeviceID: String) {
         let opened = try await openRecoveringSender(data)
         guard opened.senderAccountID == contactID else { throw CallSealError.wrongSender }
-        return opened.payload
+        return (opened.payload, opened.senderDeviceID)
     }
 
-    /// Decrypts `data` and returns the payload with the sender's account ID, taken from the decrypted MLS
-    /// message (`"<accountID>/<deviceID>"`, the part before the slash), never from anything outside the
-    /// ciphertext. Every failure is `CallSealError.undecryptable`.
+    /// Splits an MLS credential identity `"<accountID>/<deviceID>"`. Throws `CallSealError.wrongSender` when
+    /// either part is missing: a call is bound to one device, so a sender without one is refused.
+    nonisolated static func callSender(_ identity: String) throws -> (account: String, device: String) {
+        let parts = identity.split(separator: "/", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty else { throw CallSealError.wrongSender }
+        return (String(parts[0]), String(parts[1]))
+    }
+
+    /// Decrypts `data` and returns the payload with the sender's account and device IDs, taken from the decrypted
+    /// MLS message (`"<accountID>/<deviceID>"`), never from anything outside the ciphertext. An identity without
+    /// both parts is `CallSealError.wrongSender`; every other failure is `CallSealError.undecryptable`.
     ///
     /// The call channel accepts call payloads only. `mls.process` has already advanced the group by the time
     /// the result is known, so a commit, Welcome or other content that arrives here is not applied to the
@@ -50,7 +61,7 @@ extension LiveChatStore {
     /// state and the hand-over to the inbox is no longer needed.
     nonisolated public func openRecoveringSender(
         _ data: Data
-    ) async throws -> (payload: CallSignalPayload, senderAccountID: String) {
+    ) async throws -> (payload: CallSignalPayload, senderAccountID: String, senderDeviceID: String) {
         let hash = PortableSHA256.hash(data)
         let repo = deps.repo
         let mls = deps.mls
@@ -69,12 +80,13 @@ extension LiveChatStore {
                     return .notACall
                 }
                 try repo.markProcessed(hash: hash)
-                return .call(payload, String(sender.split(separator: "/", maxSplits: 1).first ?? ""))
+                return .call(payload, sender)   // the full credential identity, split below
             }
         } catch { throw CallSealError.undecryptable }
         switch opened {
-        case .call(let payload, let account) where !account.isEmpty:
-            return (payload, account)
+        case .call(let payload, let identity):
+            let sender = try Self.callSender(identity)
+            return (payload, sender.account, sender.device)
         case .notACall:
             _ = try? await inbox.syncOnce()
             throw CallSealError.undecryptable

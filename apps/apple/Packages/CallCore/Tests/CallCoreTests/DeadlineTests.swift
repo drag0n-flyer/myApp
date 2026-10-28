@@ -169,4 +169,48 @@ private func hasHistory(_ fx: [CallEffect]) -> Bool { fx.contains { if case .rec
         let good = m.handle(.remote(answer, fromDeviceID: "dA", senderDeviceID: "dA"))
         #expect(good.contains { if case .acceptAnswer = $0 { true } else { false } })
     }
+
+    @Test func callerAnsweredLateIsNotMissedAtRingDeadline() {
+        var (m, clock) = caller()
+        _ = tick(&m, clock, after: 45)
+        answered(&m)
+        let fx = tick(&m, clock, after: 5)
+        #expect(m.state?.phase == .ringing)
+        #expect(!fx.contains(.sendHangup))
+    }
+
+    @Test func secondCallDoesNotInheritFirstCallsSetupClock() {
+        var (m, clock) = callee()
+        _ = tick(&m, clock, after: 10)
+        _ = m.handle(.hangup)
+        _ = m.handle(.start(contact: bob, video: false, callID: "c2"))
+        _ = tick(&m, clock, after: 25)
+        #expect(m.state?.phase == .ringing)
+    }
+
+    @Test func mismatchedAnsweringDeviceIsRefusedThroughTheSealer() async throws {
+        var (m, _) = caller()
+        let sealer = PlainCallSignalSealer()
+        answered(&m)
+        let forged = try await sealer.seal(offer(), to: "me")
+        sealer.setSender("bob/d2", of: forged)
+        let bad = await sealer.openInput(forged, from: "bob", fromDeviceID: "d1")
+        #expect(!hasAcceptOffer(m.handle(bad)))
+        #expect(m.state?.phase == .ringing)
+
+        var genuine = offer()
+        genuine.ceiling = .high   // different bytes from the forged frame
+        let data = try await sealer.seal(genuine, to: "me")
+        sealer.setSender("bob/d1", of: data)
+        #expect(hasAcceptOffer(m.handle(await sealer.openInput(data, from: "bob", fromDeviceID: "d1"))))
+    }
+
+    @Test func openInputMapsSealErrorsToRemoteRejected() async throws {
+        let sealer = PlainCallSignalSealer()
+        let data = try await sealer.seal(offer(), to: "me")
+        sealer.setSender("carol/d9", of: data)
+        let input = await sealer.openInput(data, from: "bob", fromDeviceID: "d1")
+        guard case .remoteRejected(.wrongSender, let device) = input else { Issue.record("got \(input)"); return }
+        #expect(device == "d1")
+    }
 }

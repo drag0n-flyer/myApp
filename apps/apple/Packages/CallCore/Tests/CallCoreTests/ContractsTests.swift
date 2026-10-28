@@ -17,11 +17,23 @@ import AppCore
         let sealer = PlainCallSignalSealer()
         let p = CallSignalPayload(kind: .ring, callID: "c1", video: false)
         let data = try await sealer.seal(p, to: "bob")
-        sealer.setSender("bob", of: data)
+        sealer.setSender("bob/d1", of: data)
         await #expect(throws: CallSealError.wrongSender) {
             _ = try await sealer.open(data, from: "carol")
         }
-        #expect(try await sealer.open(data, from: "bob") == p)
+        let opened = try await sealer.open(data, from: "bob")
+        #expect(opened.payload == p)
+        #expect(opened.senderDeviceID == "d1")
+        let recovered = try await sealer.openRecoveringSender(data)
+        #expect(recovered.senderAccountID == "bob" && recovered.senderDeviceID == "d1")
+    }
+
+    @Test func plainSealerRejectsIdentityWithoutDevice() async throws {
+        let sealer = PlainCallSignalSealer()
+        let data = try await sealer.seal(CallSignalPayload(kind: .ring, callID: "c1", video: false), to: "bob")
+        sealer.setSender("bob", of: data)
+        await #expect(throws: CallSealError.wrongSender) { _ = try await sealer.open(data, from: "bob") }
+        await #expect(throws: CallSealError.wrongSender) { _ = try await sealer.openRecoveringSender(data) }
     }
 
     @Test func fakeSignalingRecordsFrames() async throws {
