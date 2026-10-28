@@ -2,6 +2,7 @@
 
 pub mod engine;
 pub mod error;
+pub mod hpke;
 pub mod storage;
 
 uniffi::setup_scaffolding!();

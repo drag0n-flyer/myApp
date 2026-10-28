@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="432" height="432">
+  <title>Placeholder app icon, Android adaptive foreground (transparent)</title>
+  <g transform="translate(14.06 13.36) scale(0.078)">
+  <path fill="#FFFFFF" d="M322 232H702A130 130 0 0 1 832 362V562A130 130 0 0 1 702 692H478L300 810L328 692H322A130 130 0 0 1 192 562V362A130 130 0 0 1 322 232Z"/>
+  <g fill="#1260DD">
+    <rect x="356" y="402" width="72" height="120" rx="36"/>
+    <rect x="476" y="337" width="72" height="250" rx="36"/>
+    <rect x="596" y="377" width="72" height="170" rx="36"/>
+  </g>
+  </g>
+</svg>

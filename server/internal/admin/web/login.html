@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Sign in - Server admin</title>
+<link rel="stylesheet" href="static/admin.css">
+</head>
+<body data-page="login">
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site">
+    <p class="brand">Server admin</p>
+</header>
+<main id="main">
+<h1 id="title">Sign in</h1>
+<div id="notice"></div>
+<form id="setup-form" class="login" method="post" hidden>
+<p>There is no admin yet. Choose the username and password of the first admin. Anyone who can open this page can do this, so do it now.</p>
+<div class="field">
+<label for="setup-username">Username</label>
+<input type="text" id="setup-username" autocomplete="username" autocapitalize="off" spellcheck="false" required>
+<p class="hint">3 to 32 characters: letters, digits, dot, underscore or hyphen.</p>
+</div>
+<div class="field">
+<label for="setup-password">Password</label>
+<input type="password" id="setup-password" autocomplete="new-password" required>
+<p class="hint">At least 12 characters.</p>
+</div>
+<div class="field">
+<label for="setup-confirm">Confirm password</label>
+<input type="password" id="setup-confirm" autocomplete="new-password" required>
+</div>
+<button type="submit" id="create-first">Create admin</button>
+</form>
+<form id="login-form" class="login" method="post">
+<div class="field">
+<label for="username">Username</label>
+<input type="text" id="username" autocomplete="username" autocapitalize="off" spellcheck="false" required>
+</div>
+<div class="field">
+<label for="password">Password</label>
+<input type="password" id="password" autocomplete="current-password" required>
+</div>
+<button type="submit" id="sign-in">Sign in</button>
+</form>
+<form id="code-form" class="login" method="post" hidden>
+<p>Enter the 6-digit code from your authenticator app.</p>
+<div class="field">
+<label for="code">Code</label>
+<input type="text" id="code" inputmode="numeric" pattern="[0-9 ]*" autocomplete="one-time-code" autocapitalize="off" spellcheck="false" required>
+</div>
+<button type="submit" id="sign-in-code">Sign in</button>
+</form>
+</main>
+<noscript>This page needs JavaScript.</noscript>
+<script type="module" src="static/common.js"></script>
+<script type="module" src="static/login.js"></script>
+</body>
+</html>

@@ -47,7 +47,7 @@ public actor ConversationManager: ConversationManaging {
 
     /// Runs `body` under the process lock (Design 12). Used for every step that changes MLS state or group
     /// rows. Never held across a network call, and never nested (the lock is not re-entrant).
-    func locked<T>(_ body: () async throws -> T) async throws -> T {
+    func locked<T>(_ body: nonisolated(nonsending) () async throws -> T) async throws -> T {
         try await deps.lock.withAsyncLock(timeout: lockTimeout, body)
     }
 
@@ -234,11 +234,15 @@ public actor ConversationManager: ConversationManaging {
     /// an echo of this device's own commit does. `commitAccepted` and `setEpoch` are one locked step.
     func postCommitWithRetry(
         serverID: String, group: GroupID, addDevices: [String], removeDevices: [String],
-        build: () async throws -> CommitBundle
+        build: nonisolated(nonsending) () async throws -> CommitBundle
     ) async throws -> UInt64 {
+        // The lock body must not touch `self`: a closure isolated to this actor that captures `build` (also isolated
+        // to it) is treated as sending it, which Swift 6.2 rejects. `mls` is read here so the body is not isolated.
+        let mls = deps.mls
         for attempt in 0...Self.maxStaleRetries {
-            let (bundle, epoch) = try await locked { () async throws -> (CommitBundle, UInt64) in
-                (try await build(), try await deps.mls.epoch(of: group))
+            let (bundle, epoch) = try await locked {
+                let bundle = try await build()
+                return (bundle, try await mls.epoch(of: group))
             }
             let newEpoch: UInt64
             do {

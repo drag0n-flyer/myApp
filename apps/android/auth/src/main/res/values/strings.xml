@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="biometric_use_screen_lock">Use screen lock</string>
+    <string name="biometric_cancel">Cancel</string>
+</resources>

@@ -1,0 +1,350 @@
+name: android
+
+on:
+  workflow_dispatch:
+  push:
+    branches-ignore: [feat/server]
+    tags: ['v*']
+    paths:
+      - 'apps/android/**'
+      - '.github/workflows/android.yml'
+      - 'scripts/android-*.sh'
+      - 'scripts/build-mlsffi-android.sh'
+      - 'scripts/check-16kb.sh'
+      - 'scripts/check-android-bundle*.sh'
+      - 'scripts/generate-oss-notices.py'
+      - 'scripts/license-texts/**'
+      - 'docs/security/license-allowlist.md'
+      - 'apps/apple/Packages/SecureMessaging/mlsffi/**'
+  pull_request:
+    paths:
+      - 'apps/android/**'
+      - '.github/workflows/android.yml'
+      - 'scripts/android-*.sh'
+      - 'scripts/build-mlsffi-android.sh'
+      - 'scripts/check-16kb.sh'
+      - 'scripts/check-android-bundle*.sh'
+      - 'scripts/generate-oss-notices.py'
+      - 'scripts/license-texts/**'
+      - 'docs/security/license-allowlist.md'
+      - 'apps/apple/Packages/SecureMessaging/mlsffi/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      contracts: ${{ steps.flags.outputs.contracts }}
+      core: ${{ steps.flags.outputs.core }}
+      net: ${{ steps.flags.outputs.net }}
+      auth: ${{ steps.flags.outputs.auth }}
+      mls: ${{ steps.flags.outputs.mls }}
+      messaging: ${{ steps.flags.outputs.messaging }}
+      store: ${{ steps.flags.outputs.store }}
+      calls: ${{ steps.flags.outputs.calls }}
+      calls_android: ${{ steps.flags.outputs.calls_android }}
+      webrtc: ${{ steps.flags.outputs.webrtc }}
+      push: ${{ steps.flags.outputs.push }}
+      app: ${{ steps.flags.outputs.app }}
+      all: ${{ steps.flags.outputs.all }}
+      any: ${{ steps.flags.outputs.any }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Flag changed modules and their dependents
+        id: flags
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          base=""
+          if [ "$EVENT" = pull_request ]; then base="$BASE_SHA"
+          elif [ "$EVENT" = push ] && [ -n "$BEFORE_SHA" ] && [ "${BEFORE_SHA//0/}" != "" ]; then base="$BEFORE_SHA"; fi
+          if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+            git diff --name-only "$base" HEAD > changed.txt
+          else
+            # workflow_dispatch, new branch or unknown base: treat everything as changed
+            echo ".github/workflows/android.yml" > changed.txt
+          fi
+          scripts/android-changes.sh < changed.txt | tee -a "$GITHUB_OUTPUT"
+
+  mlsffi-android:
+    needs: changes
+    if: needs.changes.outputs.any == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      NDK_VERSION: 28.2.13676358
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Rust toolchain version
+        id: rust
+        run: echo "version=$(rustc --version | tr ' ' '-')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/apple/Packages/SecureMessaging/mlsffi/target
+          key: cargo-android-${{ runner.os }}-ndk${{ env.NDK_VERSION }}-${{ steps.rust.outputs.version }}-${{ hashFiles('apps/apple/Packages/SecureMessaging/mlsffi/Cargo.lock') }}
+          restore-keys: cargo-android-${{ runner.os }}-ndk${{ env.NDK_VERSION }}-${{ steps.rust.outputs.version }}-
+      - uses: actions/cache@v4
+        id: cargo-ndk
+        with:
+          path: ~/.cargo/bin/cargo-ndk
+          key: cargo-ndk-4.1.2-${{ runner.os }}
+      - name: Install cargo-ndk
+        if: steps.cargo-ndk.outputs.cache-hit != 'true'
+        run: cargo install --locked --version 4.1.2 cargo-ndk
+      - name: Install the NDK
+        run: |
+          set -euo pipefail
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" >/dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+      - name: Cross-build mlsffi for every ABI and regenerate the bindings
+        run: scripts/build-mlsffi-android.sh
+      - name: Binding drift check
+        run: git diff --exit-code -- apps/android/mls/src/main/kotlin
+      - name: ABI check
+        run: |
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            test -f "apps/android/mls/src/main/jniLibs/$abi/libmlsffi.so"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jniLibs
+          path: apps/android/mls/src/main/jniLibs
+          retention-days: 7
+          if-no-files-found: error
+
+  jvm:
+    needs: changes
+    if: needs.changes.outputs.any == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Test the changed JVM modules
+        env:
+          CONTRACTS: ${{ needs.changes.outputs.contracts }}
+          CORE: ${{ needs.changes.outputs.core }}
+          NET: ${{ needs.changes.outputs.net }}
+          CALLS: ${{ needs.changes.outputs.calls }}
+          MESSAGING: ${{ needs.changes.outputs.messaging }}
+        working-directory: apps/android
+        run: |
+          set -euo pipefail
+          tasks=()
+          [ "$CONTRACTS" = true ] && tasks+=(:contracts:test)
+          [ "$CORE" = true ] && tasks+=(:core:test)
+          [ "$NET" = true ] && tasks+=(:net:test)
+          [ "$CALLS" = true ] && tasks+=(:calls:test)
+          [ "$MESSAGING" = true ] && tasks+=(:messaging:test)
+          if [ "${#tasks[@]}" -eq 0 ]; then echo "no JVM module changed"; exit 0; fi
+          ./gradlew --no-daemon "${tasks[@]}"
+
+  robolectric:
+    needs: changes
+    if: needs.changes.outputs.any == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/cache@v4
+        with:
+          path: ~/.gradle/robolectric-repo
+          key: robolectric-${{ runner.os }}-${{ hashFiles('apps/android/gradle/libs.versions.toml') }}
+      - name: Rust toolchain version
+        id: rust
+        run: echo "version=$(rustc --version | tr ' ' '-')" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            apps/apple/Packages/SecureMessaging/mlsffi/target
+          key: cargo-host-${{ runner.os }}-${{ steps.rust.outputs.version }}-${{ hashFiles('apps/apple/Packages/SecureMessaging/mlsffi/Cargo.lock') }}
+          restore-keys: cargo-host-${{ runner.os }}-${{ steps.rust.outputs.version }}-
+      - name: Build the host libmlsffi.so (the :mls JVM tests load it through JNA)
+        if: needs.changes.outputs.mls == 'true'
+        working-directory: apps/apple/Packages/SecureMessaging/mlsffi
+        run: cargo build --release --lib --locked
+      - name: Unit tests of the changed Android modules and the app
+        env:
+          AUTH: ${{ needs.changes.outputs.auth }}
+          CALLS_ANDROID: ${{ needs.changes.outputs.calls_android }}
+          MLS: ${{ needs.changes.outputs.mls }}
+          PUSH: ${{ needs.changes.outputs.push }}
+          STORE: ${{ needs.changes.outputs.store }}
+          WEBRTC: ${{ needs.changes.outputs.webrtc }}
+          APP: ${{ needs.changes.outputs.app }}
+        working-directory: apps/android
+        run: |
+          set -euo pipefail
+          tasks=()
+          [ "$AUTH" = true ] && tasks+=(:auth:testDebugUnitTest)
+          [ "$CALLS_ANDROID" = true ] && tasks+=(:calls-android:testDebugUnitTest)
+          [ "$MLS" = true ] && tasks+=(:mls:testDebugUnitTest)
+          [ "$PUSH" = true ] && tasks+=(:push:testDebugUnitTest)
+          [ "$STORE" = true ] && tasks+=(:store:testDebugUnitTest)
+          [ "$WEBRTC" = true ] && tasks+=(:webrtc:testDebugUnitTest)
+          [ "$APP" = true ] && tasks+=(:app:testDebugUnitTest)
+          if [ "${#tasks[@]}" -eq 0 ]; then echo "no Android module changed"; exit 0; fi
+          ./gradlew --no-daemon "${tasks[@]}"
+
+  lint:
+    needs: changes
+    if: needs.changes.outputs.any == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Application ID check
+        working-directory: apps/android
+        run: ./gradlew --no-daemon checkAppId
+      - name: Lint (HardcodedText and SetTextI18n are errors)
+        working-directory: apps/android
+        run: ./gradlew --no-daemon lint
+
+  assemble:
+    needs: [changes, mlsffi-android]
+    if: needs.changes.outputs.any == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: jniLibs
+          path: apps/android/mls/src/main/jniLibs
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Assemble the debug build
+        working-directory: apps/android
+        run: ./gradlew --no-daemon assembleDebug
+      - name: R8 keep rules (release build keeps JNA and UniFFI classes)
+        working-directory: apps/android
+        run: ./gradlew --no-daemon :app:checkR8KeepRules
+      - name: No android:process in the merged release manifest
+        working-directory: apps/android
+        run: ./gradlew --no-daemon :app:checkNoComponentProcess
+
+  release-bundle:
+    # Release checks on main and by hand: an unsigned bundle (CI has no signing key; the owner
+    # signs with the upload key outside CI), native ABIs and 16 KB alignment, dependency licenses
+    # and the notices shipped in the app, and a secret scan.
+    needs: [changes, mlsffi-android]
+    if: (needs.changes.outputs.any == 'true' || startsWith(github.ref, 'refs/tags/')) && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: jniLibs
+          path: apps/android/mls/src/main/jniLibs
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build the unsigned release bundle (no signing properties are set on CI)
+        working-directory: apps/android
+        run: ./gradlew --no-daemon :app:bundleRelease :app:exportRuntimeDependencies
+      - name: Bundle ABIs are exactly arm64-v8a, armeabi-v7a, x86_64; 16 KB alignment of 64-bit libraries
+        run: scripts/check-android-bundle.sh --require libmlsffi.so apps/android/app/build/outputs/bundle/release/app-release.aab
+      - name: The bundle is unsigned
+        run: |
+          set -euo pipefail
+          if unzip -l apps/android/app/build/outputs/bundle/release/app-release.aab | grep -E 'META-INF/.*\.(SF|RSA|DSA|EC)$'; then
+            echo "bundle is signed; CI must not hold a signing key"; exit 1
+          fi
+      - name: Dependency licenses against the approved list, and the notices shipped in the app
+        run: |
+          set -euo pipefail
+          cargo fetch --locked --manifest-path apps/apple/Packages/SecureMessaging/mlsffi/Cargo.toml
+          # Pending notices only warn, except on a tag push, where they fail the release.
+          RELEASE=""
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then RELEASE="--release"; fi
+          python3 scripts/generate-oss-notices.py --check-android $RELEASE --android-output apps/android/app/src/main/assets/oss-notices.json
+          git diff --exit-code -- apps/android/app/src/main/assets/oss-notices.json
+      - name: Install gitleaks v8.28.0 (checksum verified)
+        run: |
+          set -euo pipefail
+          V=8.28.0
+          T=gitleaks_${V}_linux_x64.tar.gz
+          curl -fsSL -O "https://github.com/gitleaks/gitleaks/releases/download/v${V}/${T}"
+          echo "a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb  ${T}" | sha256sum -c -
+          tar xzf "$T" gitleaks
+          sudo install gitleaks /usr/local/bin/gitleaks
+      - name: Secret scan of apps/android
+        run: gitleaks dir apps/android --redact --no-banner --config .gitleaks.toml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-release-bundle-unsigned
+          path: apps/android/app/build/outputs/bundle/release/app-release.aab
+          retention-days: 7
+          if-no-files-found: error
+
+  android-ci:
+    # The one check to require in branch protection. Fails closed: a failed or cancelled
+    # job fails it, and skipped jobs pass only when `changes` itself succeeded.
+    if: always()
+    needs: [changes, mlsffi-android, jvm, robolectric, lint, assemble, release-bundle]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check every job result
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          CHANGES: ${{ needs.changes.result }}
+        run: |
+          set -euo pipefail
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          [ "$CHANGES" = success ] || { echo "changes did not succeed"; exit 1; }
+          if echo "$RESULTS" | jq -e '[.[].result] | any(. == "failure" or . == "cancelled")' >/dev/null; then
+            echo "a job failed or was cancelled"; exit 1
+          fi

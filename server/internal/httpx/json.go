@@ -48,3 +48,14 @@ func writeError(w http.ResponseWriter, e *Error) {
 		Error *Error `json:"error"`
 	}{e})
 }
+
+// WriteError answers err with the server's error envelope: an *Error as is,
+// anything else as 500 internal. The text of other errors is never sent or
+// logged.
+func WriteError(w http.ResponseWriter, err error) {
+	var e *Error
+	if !errors.As(err, &e) {
+		e = Err("internal", "internal error")
+	}
+	writeError(w, e)
+}

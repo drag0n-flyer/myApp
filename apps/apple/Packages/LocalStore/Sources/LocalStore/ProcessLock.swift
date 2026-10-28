@@ -40,7 +40,7 @@ public final class ProcessLock: Sendable {
     /// open file description, so it does not matter which thread the body resumes on. Waiting does not
     /// block a thread. Not re-entrant: a nested call from inside `body` waits until it times out.
     public func withAsyncLock<T>(
-        isolation: isolated (any Actor)? = #isolation, timeout: Duration, _ body: () async throws -> T
+        isolation: isolated (any Actor)? = #isolation, timeout: Duration, _ body: nonisolated(nonsending) () async throws -> T
     ) async throws -> T {
         let fd = open(url.path, O_CREAT | O_RDWR, 0o600)
         guard fd >= 0 else { throw LockError(errno: errno) }

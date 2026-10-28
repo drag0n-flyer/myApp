@@ -1,0 +1,87 @@
+package org.example.app.ui.settings
+
+import java.time.Instant
+import org.example.app.core.chats.SampleChatStore
+import org.example.app.core.chats.SampleData
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.performClick
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+import org.example.app.ui.allLabels
+import org.example.app.ui.theme.AppTheme
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35], qualifiers = "w411dp-h2000dp")
+class ChatFoldersScreenTest {
+    @get:Rule val rule = createComposeRule()
+    private val store = SampleChatStore(SampleData.make(Instant.now()))
+
+    @Test
+    fun listsFixedAndCustomFolders() {
+        rule.setContent { AppTheme { ChatFoldersScreen(store, onBack = {}) } }
+        rule.onNodeWithText("All").assertIsDisplayed()
+        rule.onNodeWithText("Unread").assertIsDisplayed()
+        rule.onNodeWithText("Work").assertIsDisplayed()
+        rule.onNodeWithText("All and Unread are always there.").assertIsDisplayed()
+    }
+
+    @Test
+    fun deleteFolder() {
+        rule.setContent { AppTheme { ChatFoldersScreen(store, onBack = {}) } }
+        rule.onNodeWithContentDescription("Delete Work").performClick()
+        rule.waitForIdle()
+        assertTrue(store.folders.value.any { it.name == "Work" }, "nothing is deleted before the user confirms")
+        rule.onNodeWithText("Delete this folder?").assertIsDisplayed()
+        rule.onNodeWithText("Cancel").performClick()
+        rule.waitForIdle()
+        assertTrue(store.folders.value.any { it.name == "Work" })
+        rule.onNodeWithContentDescription("Delete Work").performClick()
+        rule.onNodeWithText("Delete").performClick()
+        rule.waitForIdle()
+        assertTrue(store.folders.value.none { it.name == "Work" })
+    }
+
+    private fun customNames() = store.folders.value.filter { it.kind == org.example.app.core.chats.ChatFolder.Kind.Custom }.map { it.name }
+
+    @Test
+    fun moveUpAndDownReorderCustomFolders() {
+        store.addFolder("Family", emptySet())
+        assertEquals(listOf("Personal", "Work", "Family"), customNames())
+        rule.setContent { AppTheme { ChatFoldersScreen(store, onBack = {}) } }
+        rule.onNodeWithContentDescription("Move Family up").performClick()
+        rule.waitForIdle()
+        assertEquals(listOf("Personal", "Family", "Work"), customNames())
+        rule.onNodeWithContentDescription("Move Family down").performClick()
+        rule.waitForIdle()
+        assertEquals(listOf("Personal", "Work", "Family"), customNames())
+    }
+
+    @Test
+    fun firstFolderCannotMoveUpAndLastCannotMoveDown() {
+        store.addFolder("Family", emptySet())
+        rule.setContent { AppTheme { ChatFoldersScreen(store, onBack = {}) } }
+        rule.onNodeWithContentDescription("Move Personal up").assertDoesNotExist()
+        rule.onNodeWithContentDescription("Move Family down").assertDoesNotExist()
+    }
+
+    @Test
+    fun openDialogsSurviveRotation() {
+        val tester = androidx.compose.ui.test.junit4.StateRestorationTester(rule)
+        tester.setContent { AppTheme { ChatFoldersScreen(store, onBack = {}) } }
+        rule.onNodeWithContentDescription("Delete Work").performClick()
+        rule.onNodeWithText("Delete this folder?").assertIsDisplayed()
+        tester.emulateSavedInstanceStateRestore()
+        rule.onNodeWithText("Delete this folder?").assertIsDisplayed()
+        rule.onNodeWithText("Work will be removed.", substring = true).assertIsDisplayed()
+    }
+}

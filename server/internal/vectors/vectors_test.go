@@ -2,15 +2,20 @@ package vectors
 
 import (
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/hpke"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -44,6 +49,26 @@ func seq(start byte, n int) []byte {
 
 func suite() Suite {
 	return Suite{KEM: "DHKEM(X25519, HKDF-SHA256)", KDF: "HKDF-SHA256", AEAD: "ChaCha20Poly1305"}
+}
+
+// lowOrderKeysHex lists the X25519 small-order public keys: u = 0, 1, p-1 and
+// the two points of order 8, each with the non-canonical encodings (top bit
+// set, or u + p when that fits in 255 bits). RFC 7748 section 7.
+var lowOrderKeysHex = []string{
+	"0000000000000000000000000000000000000000000000000000000000000000",
+	"0000000000000000000000000000000000000000000000000000000000000080",
+	"edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+	"edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+	"0100000000000000000000000000000000000000000000000000000000000000",
+	"0100000000000000000000000000000000000000000000000000000000000080",
+	"eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+	"eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+	"e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800",
+	"e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b880",
+	"5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157",
+	"5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f11d7",
+	"ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+	"ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
 }
 
 func hpkePriv(t testing.TB, raw []byte) hpke.PrivateKey {
@@ -272,6 +297,7 @@ func genSealed(t *testing.T, name, info string, keyStart byte, plaintexts []stri
 		{"truncated by one byte", b64.EncodeToString(first[:len(first)-1]), info},
 		{"shorter than the encapsulated key", b64.EncodeToString(first[:31]), info},
 	}
+	f.LowOrderRecipientKeysHex = lowOrderKeysHex
 	write(t, name, f)
 }
 
@@ -453,6 +479,23 @@ func checkSealed(t *testing.T, name, wantInfo string, open func(hpke.PrivateKey,
 			}
 		}
 	}
+	// Go refuses to seal to a small-order recipient key, and the file lists them all.
+	if !slices.Equal(f.LowOrderRecipientKeysHex, lowOrderKeysHex) {
+		t.Fatal("lowOrderRecipientKeysHex is missing or stale; run with -update")
+	}
+	for _, h := range f.LowOrderRecipientKeysHex {
+		raw, err := ecdh.X25519().NewPublicKey(unhex(t, h))
+		if err != nil {
+			t.Fatalf("%s: %v", h, err)
+		}
+		pub, err := hpke.NewDHKEMPublicKey(raw)
+		if err != nil {
+			t.Fatalf("%s: %v", h, err)
+		}
+		if _, err := seal(pub, []byte(f.Cases[0].PlaintextJSON)); err == nil {
+			t.Errorf("Go sealed to low-order key %s", h)
+		}
+	}
 	// A wrong recipient key must not open any case.
 	wrong := hpkePriv(t, seq(0x10, 32))
 	for i, c := range f.Cases {
@@ -511,5 +554,210 @@ func TestTURNCredential(t *testing.T) {
 	}
 	if !found {
 		t.Error("required case missing")
+	}
+}
+
+const (
+	fileLink       = "link-v1.json"
+	fileAttachment = "attachment-stream.json"
+)
+
+// TestLinkVector opens every link-v1 case with the published key. The info
+// is link-v1 and the plaintext must be a LinkSnapshot of version 1.
+func TestLinkVector(t *testing.T) {
+	var f Sealed
+	load(t, fileLink, &f)
+	checkHeader(t, f.Header)
+	if f.Info != "link-v1" || len(f.Cases) == 0 {
+		t.Fatalf("info %q, %d cases", f.Info, len(f.Cases))
+	}
+	priv := hpkePriv(t, unhex(t, f.RecipientPrivateKeyHex))
+	if got := b64.EncodeToString(priv.PublicKey().Bytes()); got != f.RecipientPublicKeyB64 {
+		t.Errorf("public key %s", got)
+	}
+	for i, c := range f.Cases {
+		sealed := unb64(t, c.SealedB64)
+		pt, err := hpke.Open(priv, hpke.HKDFSHA256(), hpke.ChaCha20Poly1305(), []byte(f.Info), sealed)
+		if err != nil {
+			t.Fatalf("case %d: %v", i, err)
+		}
+		if string(pt) != c.PlaintextJSON {
+			t.Errorf("case %d: plaintext differs", i)
+		}
+		var snap struct {
+			V        int               `json:"v"`
+			Contacts []json.RawMessage `json:"contacts"`
+			Chats    []json.RawMessage `json:"chats"`
+			Folders  []json.RawMessage `json:"folders"`
+			Blocked  []string          `json:"blocked"`
+			Settings map[string]string `json:"settings"`
+		}
+		if err := json.Unmarshal(pt, &snap); err != nil || snap.V != 1 || len(snap.Contacts) == 0 || len(snap.Chats) == 0 {
+			t.Errorf("case %d: not a LinkSnapshot v1: %v", i, err)
+		}
+		if len(sealed) != 32+len(pt)+16 {
+			t.Errorf("case %d: sealed length %d", i, len(sealed))
+		}
+		// Wrong info must not open.
+		if _, err := hpke.Open(priv, hpke.HKDFSHA256(), hpke.ChaCha20Poly1305(), []byte("escrow-v1"), sealed); err == nil {
+			t.Errorf("case %d: opened under the wrong info", i)
+		}
+	}
+}
+
+// attachmentOpen is written from the spec (plan 7 Design 7) and shares nothing
+// with the generator: it splits the ciphertext into 65 536+16 byte pieces, opens
+// piece n with AES-256-GCM, nonce 0x00000000 || u64be(n), and AAD 0x01 only when
+// the piece is the final one. An empty file is one 16-byte piece.
+func attachmentOpen(t testing.TB, key, ct []byte, nonceHigh byte) ([]byte, error) {
+	t.Helper()
+	blk, err := aes.NewCipher(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gcm, err := cipher.NewGCM(blk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const piece = 65536 + 16
+	var plain []byte
+	for n := 0; ; n++ {
+		rest := ct[n*piece:]
+		final := len(rest) <= piece
+		if !final {
+			rest = rest[:piece]
+		}
+		var nonce [12]byte
+		nonce[0] = nonceHigh // 0 by the spec
+		binary.BigEndian.PutUint64(nonce[4:], uint64(n))
+		ad := []byte{0}
+		if final {
+			ad = []byte{1}
+		}
+		out, err := gcm.Open(nil, nonce[:], rest, ad)
+		if err != nil {
+			return nil, err
+		}
+		plain = append(plain, out...)
+		if final {
+			return plain, nil
+		}
+	}
+}
+
+// attachmentCiphertext builds the ciphertext from the spec by chunk count and
+// index, not by the generator's loop: n = max(1, ceil(len/65536)) chunks, chunk
+// i holds plain[i*65536:(i+1)*65536], and only chunk n-1 gets AAD 0x01.
+func attachmentCiphertext(t testing.TB, key, plain []byte) []byte {
+	t.Helper()
+	blk, err := aes.NewCipher(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gcm, err := cipher.NewGCM(blk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := max(1, (len(plain)+65535)/65536)
+	var ct []byte
+	for i := 0; i < n; i++ {
+		lo, hi := min(i*65536, len(plain)), min((i+1)*65536, len(plain))
+		nonce := append(make([]byte, 4), binary.BigEndian.AppendUint64(nil, uint64(i))...)
+		ad := []byte{0}
+		if i == n-1 {
+			ad[0] = 1
+		}
+		ct = append(ct, gcm.Seal(nil, nonce, plain[lo:hi], ad)...)
+	}
+	return ct
+}
+
+// TestAttachmentNonceRuleMatters shows the independent check is sensitive: one
+// wrong byte in the nonce rule makes the open fail.
+func TestAttachmentNonceRuleMatters(t *testing.T) {
+	key := seq(0x10, 32)
+	plain := make([]byte, 65537)
+	ct := attachmentCiphertext(t, key, plain)
+	if _, err := attachmentOpen(t, key, ct, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := attachmentOpen(t, key, ct, 1); err == nil {
+		t.Fatal("a changed nonce rule still opened")
+	}
+}
+
+func TestAttachmentVector(t *testing.T) {
+	var f AttachmentStream
+	load(t, fileAttachment, &f)
+	if f.Version != 1 || f.ChunkSize != 65536 {
+		t.Fatalf("header %+v", f)
+	}
+	want := map[int]bool{0: false, 1: false, 65536: false, 65537: false}
+	for _, c := range f.Cases {
+		if c.PlaintextSeed != "i mod 251" {
+			t.Errorf("%s: seed %q", c.Name, c.PlaintextSeed)
+		}
+		plain := make([]byte, c.PlaintextLength)
+		for i := range plain {
+			plain[i] = byte(i % 251)
+		}
+		key := unhex(t, c.KeyHex)
+		// The vector holds only the digest, so the ciphertext comes from the
+		// public AES-GCM calls below, one chunk at a time, written in the test
+		// itself, and is then checked against the vector's digest and opened
+		// again by the independent reader.
+		ct := attachmentCiphertext(t, key, plain)
+		got, err := attachmentOpen(t, key, ct, 0)
+		if err != nil || !bytes.Equal(got, plain) {
+			t.Errorf("%s: independent open failed: %v", c.Name, err)
+		}
+		chunks := max(1, (len(plain)+f.ChunkSize-1)/f.ChunkSize)
+		if len(ct) != len(plain)+16*chunks {
+			t.Errorf("%s: ciphertext length %d", c.Name, len(ct))
+		}
+		sum := sha256.Sum256(ct)
+		if hex.EncodeToString(sum[:]) != c.CiphertextSha256Hex {
+			t.Errorf("%s: ciphertext digest %x", c.Name, sum)
+		}
+		if base64.StdEncoding.EncodeToString(sum[:]) != c.DigestB64 {
+			t.Errorf("%s: digestB64", c.Name)
+		}
+		want[c.PlaintextLength] = true
+	}
+	for n, ok := range want {
+		if !ok {
+			t.Errorf("length %d missing", n)
+		}
+	}
+}
+
+// TestSwiftSealedOpensInGo opens the values the Swift apps sealed to the
+// published test keys. swift-sealed.json is written by the Swift tests
+// (WRITE_SWIFT_VECTORS=1, macOS CI) and is not committed, so the test skips
+// while it is absent.
+func TestSwiftSealedOpensInGo(t *testing.T) {
+	var s struct {
+		Handle SealedCase `json:"handle"`
+		Escrow SealedCase `json:"escrow"`
+	}
+	if err := Load("swift-sealed.json", &s); err != nil {
+		t.Skipf("swift-sealed.json not present: %v", err)
+	}
+	var h, e Sealed
+	load(t, fileHandle, &h)
+	load(t, fileEscrow, &e)
+	got, err := pushproto.OpenHandle(hpkePriv(t, unhex(t, h.RecipientPrivateKeyHex)), unb64(t, s.Handle.SealedB64))
+	if err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	if !bytes.Equal(canon(t, marshalHandle(got)), canon(t, []byte(s.Handle.PlaintextJSON))) {
+		t.Error("handle plaintext mismatch")
+	}
+	pt, err := delivery.OpenEscrow(hpkePriv(t, unhex(t, e.RecipientPrivateKeyHex)), unb64(t, s.Escrow.SealedB64))
+	if err != nil {
+		t.Fatalf("escrow: %v", err)
+	}
+	if !bytes.Equal(canon(t, pt), canon(t, []byte(s.Escrow.PlaintextJSON))) {
+		t.Error("escrow plaintext mismatch")
 	}
 }
