@@ -4,7 +4,7 @@ Last updated: 2026-10-29, 03:20 IST (21:50 UTC Oct 28).
 
 | Track | Done | % |
 |---|---|---|
-| iPhone/Mac Phase 1 | 127 / 128 | 99% |
+| iPhone/Mac Phase 1 | 127 / 128 | 99% (L10, real phones, is the only task left) |
 | Android | 44 / 44 | 100% |
 | Admin dashboard | done, with admin accounts and 2FA, on `main` | 100% |
 
@@ -63,6 +63,7 @@ Extra work beyond the plans, in progress (each is reviewed before it merges; ETA
 | Android emulator CI: started up to four emulators at once and the 16 GB runner was shut down; now one at a time | main | fixed | done |
 | Android store: foreign keys were off on the database's read connections (writes were always enforced, no bad data possible); now on for every connection, which also fixes the flaky `foreignKeysAreOn` | `fix/android-store-fk` | merged (reviewed, CI green) | done |
 | Android low-priority batch from today's reviews: revocation re-check during open, "can't check members" on every member read, call mode still sent when a write fails after adding a device, encoder fallback logged, voice notes use the encoder's real pre-skip (ruling) | `fix/android-lows` | merged (reviewed, CI green) | done |
+| iPhone: a newly linked iPhone or Mac imports the approver's contacts, chats, folders and blocks (sealed to a key in the QR code; the server can't add any); the approver now sends a real snapshot (it was empty). Interop's safety-number step checks iPhone uses real keys and skips the cross-platform compare until Android has them. Open, low: an approver with no live store reports a snapshot sent while it is empty; a cancelled import reports "not copied" | `feat/ios-link-snapshot` | merged (reviewed, interop and Apple CI green) | done |
 | App ID in one file (`apps/apple/AppID.xcconfig`) and a stronger photo-privacy test | `chore/appid-xcconfig` | merged (CI green). Open, low: `check-app-id.sh` also scans git-ignored build output, so it fails on a local checkout that has built the MLS Kotlin bindings; CI is clean | done |
 
 Android has the same inbox fixes (merged): a crafted invite can't stall the inbox, a new chat is abandoned only when really gone, and a failure after a chat starts never creates a second one.
