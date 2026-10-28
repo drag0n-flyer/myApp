@@ -86,8 +86,9 @@ object Escrow {
         val day = doy - (153 * mp + 2) / 5 + 1
         val month = if (mp < 10) mp + 3 else mp - 9
         val year = yoe + era * 400 + if (month <= 2) 1 else 0
-        return "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ".format(
-            year, month, day, msOfDay / 3_600_000, msOfDay / 60_000 % 60, msOfDay / 1000 % 60, msOfDay % 1000,
+        // Locale.ROOT: the default locale may use non-Latin digits (ar-EG, fa-IR, mr-IN), which are not RFC 3339.
+        return String.format(
+            java.util.Locale.ROOT, "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ", year, month, day, msOfDay / 3_600_000, msOfDay / 60_000 % 60, msOfDay / 1000 % 60, msOfDay % 1000,
         )
     }
 }
@@ -98,7 +99,7 @@ object Escrow {
  */
 class EscrowKeySource(private val fetch: suspend () -> ByteArray?) {
     private val mutex = Mutex()
-    private var cached: ByteArray? = null
+    @Volatile private var cached: ByteArray? = null
 
     /** @throws SyncException.EscrowKeyUnavailable when the server publishes no key. */
     suspend fun key(): ByteArray = mutex.withLock {

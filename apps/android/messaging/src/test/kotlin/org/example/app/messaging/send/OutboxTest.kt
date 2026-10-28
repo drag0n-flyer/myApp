@@ -262,6 +262,28 @@ class OutboxTest {
     }
 
     @Test
+    fun controlMessageExpiresAfter24Hours() = runTest {
+        val (rig, _) = joined()
+        rig.ana1.outbox.enqueueControl("acc-bob") { id, at -> ContentEnvelope.Delete(id, at, "m-1") }
+        val before = rig.server.messages.size
+        rig.ana1.nowMs = NOW + 24 * 3_600_000L + 1
+        rig.ana1.outbox.flush()
+        assertEquals(before, rig.server.messages.size, "an expired control message is not sent")
+        assertTrue(rig.ana1.repo.dueOutbox(Long.MAX_VALUE).isEmpty(), "and leaves the queue")
+    }
+
+    @Test
+    fun corruptControlRowIsDroppedAndDoesNotBlockTheChat() = runTest {
+        val (rig, _) = joined()
+        rig.ana1.repo.enqueue(org.example.app.messaging.ports.OutboxRecord("bad", "acc-bob", byteArrayOf(1, 2, 3), 0, NOW))
+        rig.ana1.outbox.enqueue(text("m-1"), "acc-bob")
+        runCatching { rig.ana1.outbox.flush() }
+        rig.ana1.outbox.flush()
+        assertEquals(1, rig.posted("m-1").size)
+        assertTrue(rig.ana1.repo.dueOutbox(Long.MAX_VALUE).isEmpty())
+    }
+
+    @Test
     fun sendControlSendsNowAndFailsLoudly() = runTest {
         val (rig, _) = joined()
         rig.ana1.outbox.sendControl("acc-bob") { id, at -> ContentEnvelope.Receipt(id, at, ReceiptKind.Read, listOf("x")) }

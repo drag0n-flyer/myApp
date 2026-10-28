@@ -6,6 +6,7 @@ import java.util.Base64
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import kotlinx.coroutines.test.runTest
@@ -60,6 +61,21 @@ class EscrowTest {
             sealed.toList(),
             Escrow.seal(body, "c0000000-0000-4000-8000-000000000001", "a0000000-0000-4000-8000-000000000001", 1793093400000, publicKey, hpke).toList(),
         )
+    }
+
+    @Test
+    fun rfc3339UsesLatinDigitsInEveryLocale() {
+        val saved = java.util.Locale.getDefault()
+        try {
+            for (tag in listOf("ar-EG", "fa-IR", "mr-IN", "hi-IN", "th-TH-u-nu-thai")) {
+                java.util.Locale.setDefault(java.util.Locale.forLanguageTag(tag))
+                assertEquals("2023-11-14T22:13:20.000Z", Escrow.rfc3339(1_700_000_000_000), tag)
+                val s = Escrow.rfc3339(1_709_251_199_999)
+                assertTrue(Regex("[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z").matches(s), "$tag: $s")
+            }
+        } finally {
+            java.util.Locale.setDefault(saved)
+        }
     }
 
     @Test

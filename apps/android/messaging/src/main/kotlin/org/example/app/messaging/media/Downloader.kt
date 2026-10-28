@@ -100,7 +100,7 @@ class Downloader(
         openDir.listFiles()?.forEach { if (it.name !in shown) it.deleteRecursively() }
     }
 
-    private fun hex(b: ByteArray) = b.joinToString("") { "%02x".format(it) }
+    private fun hex(b: ByteArray) = b.joinToString("") { String.format(java.util.Locale.ROOT, "%02x", it) }
 
     private fun lock(id: String) = locks.computeIfAbsent(id) { Mutex() }
 

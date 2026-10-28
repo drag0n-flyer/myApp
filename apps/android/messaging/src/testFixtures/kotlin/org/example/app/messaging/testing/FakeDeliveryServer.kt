@@ -66,6 +66,8 @@ class FakeDeliveryServer(var defaultMode: String = "e2ee") {
 
     /** Removes a device from `GET /v1/devices` (a revoked device). Its group membership is the clients' business. */
     fun revokeDevice(accountId: String, deviceId: String) = synchronized(lock) { revoked += "$accountId/$deviceId"; Unit }
+    /** Rewrites what `GET /v1/devices` answers (an empty, partial or recent list), for one account's view. */
+    var deviceListOverride: ((List<DeviceRecord>) -> List<DeviceRecord>)? = null
     var failNextInboxReads = 0
     var failConversationLookup: ServerException? = null
 
@@ -247,9 +249,10 @@ class FakeDeliveryServer(var defaultMode: String = "e2ee") {
 
         override suspend fun devices(): List<DeviceRecord> {
             call("devices")
-            return synchronized(lock) {
+            val list = synchronized(lock) {
                 keyPackages[account].orEmpty().keys.filter { "$account/$it" !in revoked }.map { DeviceRecord(it, it, "android", Instant.EPOCH, null, it == device) }
             }
+            return deviceListOverride?.invoke(list) ?: list
         }
 
         override suspend fun uploadAttachment(bytes: InputStream, length: Long): AttachmentRef = throw UnsupportedOperationException()

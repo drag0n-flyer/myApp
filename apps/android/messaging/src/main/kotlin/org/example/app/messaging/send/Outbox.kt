@@ -152,12 +152,22 @@ class Outbox(
 
     /** Returns true when the head left the queue (sent or failed). */
     private suspend fun process(item: OutboxRecord): Boolean {
-        val queuedAt = repo.message(item.messageId)?.receivedAt ?: clock.now()
+        val envelope = try {
+            ContentCodec.decode(item.envelope)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // A row that cannot be read never will be: drop it so it does not block its chat on every flush.
+            repo.completeSend(item.messageId, "failed")
+            return true
+        }
+        // A control message has no message row; its envelope time is when it was queued.
+        val queuedAt = repo.message(item.messageId)?.receivedAt ?: envelope.at
         if (clock.now() - queuedAt > MAX_AGE_MS) {
             repo.completeSend(item.messageId, "failed")
             return true
         }
-        return when (attempt(ContentCodec.decode(item.envelope), item.chatId)) {
+        return when (attempt(envelope, item.chatId)) {
             Outcome.Sent -> true.also { repo.completeSend(item.messageId, "sent") }
             Outcome.Failed -> true.also { repo.completeSend(item.messageId, "failed") }
             Outcome.Waiting -> false

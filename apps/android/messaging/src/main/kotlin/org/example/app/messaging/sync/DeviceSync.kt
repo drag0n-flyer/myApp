@@ -63,25 +63,47 @@ class DeviceSync(
      * - an own device that is listed and not in the group is added, then the `mode` envelope is sent again so the new
      *   device learns it (Design 18);
      * - an own device that is in the group and no longer listed is removed (a device that missed `device.revoked`
-     *   catches up here; the profile allows 24 hours from coming online).
+     *   catches up here; the profile allows 24 hours from coming online), but only when the list is non-empty and
+     *   contains this device, and only when the device was missing from two lists at least ten minutes apart (the
+     *   first time is stored; the injected clock is used) and was not listed within those ten minutes. A bad list or
+     *   a device linked during the run cannot remove anyone.
      * Each conversation is tried even when another fails; the first error is thrown at the end.
      */
     suspend fun reconcileOwnDevices() {
-        val listed = server.devices().map { it.id }.toSet()
+        val records = server.devices()
+        val listed = records.map { it.id }.toSet()
         val others = listed - me.deviceId
+        // A wrong, empty or partial answer must never remove anything: the list has to contain this device.
+        val trustworthy = me.deviceId in listed
+        val now = clock.now()
+        if (trustworthy) {
+            for (record in records) {
+                repo.set(SEEN_PREFIX + record.id, now.toString().encodeToByteArray())
+                repo.set(MISSING_PREFIX + record.id, ByteArray(0))
+            }
+        }
+        val stillStale = HashSet<String>()
         var failure: Exception? = null
         for (conversation in activeConversations()) {
             try {
                 if (others.isNotEmpty()) addMissing(others, conversation)
-                removeUnlisted(listed, conversation)
+                if (trustworthy) removeUnlisted(listed, conversation, now, stillStale)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 failure = failure ?: e
             }
         }
+        if (trustworthy && failure == null) {
+            // A device that is no longer in any group needs no mark.
+            for ((key, value) in repo.entries(MISSING_PREFIX)) {
+                if (value.isNotEmpty() && key.removePrefix(MISSING_PREFIX) !in stillStale) repo.set(key, ByteArray(0))
+            }
+        }
         failure?.let { throw it }
     }
+
+    private fun stamp(key: String): Long? = repo.get(key)?.takeIf { it.isNotEmpty() }?.decodeToString()?.toLongOrNull()
 
     private suspend fun addMissing(own: Set<String>, conversation: ConversationRecord) {
         val group = GroupId(conversation.groupId)
@@ -111,11 +133,22 @@ class DeviceSync(
         conversations.announceMode(fresh)
     }
 
-    private suspend fun removeUnlisted(listed: Set<String>, conversation: ConversationRecord) {
+    private suspend fun removeUnlisted(listed: Set<String>, conversation: ConversationRecord, now: Long, stillStale: MutableSet<String>) {
         val prefix = "${me.accountId}/"
         val stale = membersOf(GroupId(conversation.groupId))
             .filter { it.startsWith(prefix) }.map { it.removePrefix(prefix) }.filter { it != me.deviceId && it !in listed }.sorted()
-        for (deviceId in stale) remove(deviceId, conversation)
+        for (deviceId in stale) {
+            stillStale += deviceId
+            // Only a device missing from two lists at least ten minutes apart, and not seen or linked in that time.
+            val firstMissing = stamp(MISSING_PREFIX + deviceId)
+            if (firstMissing == null) {
+                repo.set(MISSING_PREFIX + deviceId, now.toString().encodeToByteArray())
+                continue
+            }
+            val lastSeen = stamp(SEEN_PREFIX + deviceId)
+            if (now - firstMissing < MISSING_FOR_MS || (lastSeen != null && now - lastSeen < MISSING_FOR_MS)) continue
+            remove(deviceId, conversation)
+        }
     }
 
     /**
@@ -222,5 +255,12 @@ class DeviceSync(
     companion object {
         /** Settings that travel in the snapshot live in `kv` under this prefix. */
         const val SETTINGS_PREFIX = "setting."
+
+        /** `kv` keys: when an own device was first missing from `GET /v1/devices`, and when it was last listed. */
+        private const val MISSING_PREFIX = "ownDevice.missingSince."
+        private const val SEEN_PREFIX = "ownDevice.seenAt."
+
+        /** How long a device must have been missing (and unseen) before this device removes it. */
+        private const val MISSING_FOR_MS = 10 * 60_000L
     }
 }

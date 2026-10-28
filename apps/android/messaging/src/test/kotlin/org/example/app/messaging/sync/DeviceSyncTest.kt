@@ -49,6 +49,8 @@ class DeviceSyncTest {
         // ana1 was offline for the event; now it compares the group's leaves with GET /v1/devices.
         rig.server.revokeDevice("acc-ana", "ana2")
         rig.ana1.deviceSync.reconcileOwnDevices()
+        rig.ana1.nowMs += 10 * 60_000L
+        rig.ana1.deviceSync.reconcileOwnDevices()
         assertFalse("acc-ana/ana2" in rig.membersOn(rig.ana1, record))
         assertTrue("acc-ana/ana1" in rig.membersOn(rig.ana1, record))
         // Nothing left to do: a second pass posts no commit.
@@ -169,5 +171,116 @@ class DeviceSyncTest {
         }
         assertEquals(before, rig.ana2.repo.contacts())
         assertNotNull(rig.ana2.repo.chat("acc-bob"))
+    }
+
+    // Own-device reconcile safety (mls-profile.md:94, ruling I2)
+
+    private val tenMinutes = 10 * 60_000L
+
+    private suspend fun TestDevice.reconcile() = deviceSync.reconcileOwnDevices()
+
+    @Test
+    fun removalNeedsTwoListsTenMinutesApart() = runTest {
+        val (rig, record) = joined()
+        rig.server.revokeDevice("acc-ana", "ana2")
+        rig.ana1.reconcile()
+        assertTrue("acc-ana/ana2" in rig.membersOn(rig.ana1, record), "first sighting only records the time")
+        rig.ana1.nowMs += tenMinutes - 1
+        rig.ana1.reconcile()
+        assertTrue("acc-ana/ana2" in rig.membersOn(rig.ana1, record), "not yet ten minutes")
+        rig.ana1.nowMs += 1
+        rig.ana1.reconcile()
+        assertFalse("acc-ana/ana2" in rig.membersOn(rig.ana1, record))
+        rig.assertLockDiscipline()
+    }
+
+    @Test
+    fun missingTimeSurvivesARestart() = runTest {
+        val (rig, record) = joined()
+        rig.server.revokeDevice("acc-ana", "ana2")
+        rig.ana1.reconcile()
+        rig.ana1.restart()
+        rig.ana1.nowMs += tenMinutes
+        rig.ana1.reconcile()
+        assertFalse("acc-ana/ana2" in rig.membersOn(rig.ana1, record))
+    }
+
+    @Test
+    fun deviceThatReappearsInTheListStartsOverAfterwards() = runTest {
+        val (rig, record) = joined()
+        rig.server.deviceListOverride = { l -> l.filter { it.id != "ana2" } }
+        rig.ana1.reconcile()
+        rig.server.deviceListOverride = null
+        rig.ana1.nowMs += tenMinutes
+        rig.ana1.reconcile()
+        rig.server.deviceListOverride = { l -> l.filter { it.id != "ana2" } }
+        rig.ana1.reconcile()
+        assertTrue("acc-ana/ana2" in rig.membersOn(rig.ana1, record), "the earlier sighting was cleared")
+    }
+
+    @Test
+    fun emptyListRemovesNothing() = runTest {
+        val (rig, record) = joined()
+        rig.server.deviceListOverride = { emptyList() }
+        val commits = rig.server.commitPosts.size
+        rig.ana1.reconcile()
+        rig.ana1.nowMs += 2 * tenMinutes
+        rig.ana1.reconcile()
+        assertEquals(commits, rig.server.commitPosts.size)
+        assertTrue("acc-ana/ana2" in rig.membersOn(rig.ana1, record))
+    }
+
+    @Test
+    fun listWithoutThisDeviceRemovesNothing() = runTest {
+        val (rig, record) = joined()
+        rig.server.deviceListOverride = { l -> l.filter { it.id == "ana2" } }
+        val commits = rig.server.commitPosts.size
+        rig.ana1.reconcile()
+        rig.ana1.nowMs += 2 * tenMinutes
+        rig.ana1.reconcile()
+        assertEquals(commits, rig.server.commitPosts.size)
+        assertTrue("acc-ana/ana2" in rig.membersOn(rig.ana1, record))
+        assertTrue("acc-ana/ana1" in rig.membersOn(rig.ana1, record))
+    }
+
+    @Test
+    fun partialListRemovesOnlyTheDevicesMissingFromTwoLists() = runTest {
+        val (rig, record) = joined()
+        val ana3 = TestDevice(rig.server, "acc-ana", "ana3", rig.escrowKeys.publicKey)
+        ana3.api.uploadKeyPackages(ana3.mls.makeKeyPackages(3))
+        rig.ana1.reconcile()
+        assertTrue("acc-ana/ana3" in rig.membersOn(rig.ana1, record))
+        // A partial answer lacks ana2 and ana3; ana3 shows up again in the second list, ana2 does not.
+        rig.server.deviceListOverride = { l -> l.filter { it.id == "ana1" } }
+        rig.ana1.reconcile()
+        rig.server.deviceListOverride = { l -> l.filter { it.id != "ana2" } }
+        rig.ana1.nowMs += tenMinutes
+        rig.ana1.reconcile()
+        val members = rig.membersOn(rig.ana1, record)
+        assertFalse("acc-ana/ana2" in members)
+        assertTrue("acc-ana/ana3" in members)
+        assertTrue("acc-ana/ana1" in members)
+    }
+
+    @Test
+    fun deviceLinkedDuringTheReconcileIsNeverRemoved() = runTest {
+        val (rig, record) = joined()
+        // The list was fetched before ana2 was linked far enough to appear; another device already added it to the group.
+        val first = rig.ana1.nowMs
+        rig.server.deviceListOverride = { l -> l.filter { it.id != "ana2" } }
+        rig.ana1.reconcile()
+        // Even if the server then lists it as linked a moment ago while a later pass runs, it stays.
+        rig.ana1.nowMs = first + tenMinutes - 1
+        rig.ana1.reconcile()
+        assertTrue("acc-ana/ana2" in rig.membersOn(rig.ana1, record))
+        // A device listed as linked or seen in the last ten minutes is never a removal candidate, whatever else is true.
+        rig.server.deviceListOverride = { l ->
+            l.filter { it.id != "ana2" } + org.example.app.contracts.DeviceRecord(
+                "ana2", "ana2", "android", java.time.Instant.ofEpochMilli(rig.ana1.nowMs - 1000), null, false,
+            )
+        }
+        rig.ana1.nowMs += 5 * tenMinutes
+        rig.ana1.reconcile()
+        assertTrue("acc-ana/ana2" in rig.membersOn(rig.ana1, record))
     }
 }

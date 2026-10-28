@@ -26,7 +26,8 @@ class TestDevice(val server: FakeDeliveryServer, account: String, device: String
     val mls = SpyMlsEngine(FakeMlsEngine(me.identity)) { lock.isHeld }
     val api = server.api(account, device)
     val repo = InMemoryRepository()
-    val clock = Clock { NOW }
+    var nowMs = NOW
+    val clock = Clock { nowMs }
     val membership = Membership(me, mls, realMemberKeys = false, clock = clock)
     val logs = mutableListOf<String>()
     val handler = IncomingHandler(me, clock, log = { logs += it })
