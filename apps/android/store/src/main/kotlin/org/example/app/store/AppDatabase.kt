@@ -6,6 +6,7 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
+import androidx.sqlite.db.SupportSQLiteOpenHelper
 import org.example.app.messaging.ports.AttachmentState
 import org.example.app.messaging.ports.ConversationMode
 import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
@@ -38,7 +39,7 @@ abstract class AppDatabase : RoomDatabase() {
             System.loadLibrary("sqlcipher")
             val factory = SupportOpenHelperFactory(key.copyOf(), null, true)
             return Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, name)
-                .openHelperFactory(factory)
+                .openHelperFactory(ForeignKeysOnEveryConnection(factory))
                 .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
                 .addCallback(callback(allowNoFts = false))
                 .build()
@@ -79,10 +80,40 @@ abstract class AppDatabase : RoomDatabase() {
             }
 
             override fun onOpen(db: SupportSQLiteDatabase) {
-                // Cascades (chat -> messages, conversations, ...) need this on every connection.
-                db.query("PRAGMA foreign_keys=ON").close()
                 // Overwrite deleted content so a deleted message does not linger in free pages.
                 db.query("PRAGMA secure_delete=ON").close()
+            }
+        }
+
+        /**
+         * Turns foreign keys on for every pooled connection. `PRAGMA foreign_keys` is per connection, and a pragma run
+         * in onOpen reaches only the one connection it lands on; with WAL the pool's reader connections opened later
+         * would have them off. [SupportSQLiteDatabase.setForeignKeyConstraintsEnabled] in onConfigure puts it in the
+         * pool's configuration, which every connection applies when it opens. Room exposes no onConfigure, so the
+         * helper's callback is wrapped.
+         */
+        private class ForeignKeysOnEveryConnection(private val delegate: SupportSQLiteOpenHelper.Factory) : SupportSQLiteOpenHelper.Factory {
+            override fun create(configuration: SupportSQLiteOpenHelper.Configuration): SupportSQLiteOpenHelper {
+                val inner = configuration.callback
+                val callback = object : SupportSQLiteOpenHelper.Callback(inner.version) {
+                    override fun onConfigure(db: SupportSQLiteDatabase) {
+                        db.setForeignKeyConstraintsEnabled(true)
+                        inner.onConfigure(db)
+                    }
+                    override fun onCreate(db: SupportSQLiteDatabase) = inner.onCreate(db)
+                    override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = inner.onUpgrade(db, oldVersion, newVersion)
+                    override fun onDowngrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = inner.onDowngrade(db, oldVersion, newVersion)
+                    override fun onOpen(db: SupportSQLiteDatabase) = inner.onOpen(db)
+                    override fun onCorruption(db: SupportSQLiteDatabase) = inner.onCorruption(db)
+                }
+                return delegate.create(
+                    SupportSQLiteOpenHelper.Configuration.builder(configuration.context)
+                        .name(configuration.name)
+                        .callback(callback)
+                        .noBackupDirectory(configuration.useNoBackupDirectory)
+                        .allowDataLossOnRecovery(configuration.allowDataLossOnRecovery)
+                        .build(),
+                )
             }
         }
 
