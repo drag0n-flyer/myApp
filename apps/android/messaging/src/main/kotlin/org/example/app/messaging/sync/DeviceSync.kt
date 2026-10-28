@@ -67,7 +67,8 @@ class DeviceSync(
      *   contains this device, and only when the device was missing from two lists at least ten minutes apart (the
      *   first time is stored; the injected clock is used) and was not listed within those ten minutes. A bad list or
      *   a device linked during the run cannot remove anyone.
-     * Each conversation is tried even when another fails; the first error is thrown at the end.
+     * Each conversation, and each of the two steps in it, is tried even when another fails; the first error is thrown
+     * at the end.
      */
     suspend fun reconcileOwnDevices() {
         val records = server.devices()
@@ -84,17 +85,26 @@ class DeviceSync(
         }
         val stillStale = HashSet<String>()
         var failure: Exception? = null
+        var removeFailed = false
         for (conversation in activeConversations()) {
+            // Adding and removing are separate steps: a failed add (no KeyPackages) never skips a removal.
             try {
                 if (others.isNotEmpty()) addMissing(others, conversation)
-                if (trustworthy) removeUnlisted(listed, conversation, now, stillStale)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 failure = failure ?: e
             }
+            try {
+                if (trustworthy) removeUnlisted(listed, conversation, now, stillStale)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                failure = failure ?: e
+                removeFailed = true
+            }
         }
-        if (trustworthy && failure == null) {
+        if (trustworthy && !removeFailed) {
             // A device that is no longer in any group needs no mark.
             for ((key, value) in repo.entries(MISSING_PREFIX)) {
                 if (value.isNotEmpty() && key.removePrefix(MISSING_PREFIX) !in stillStale) repo.set(key, ByteArray(0))

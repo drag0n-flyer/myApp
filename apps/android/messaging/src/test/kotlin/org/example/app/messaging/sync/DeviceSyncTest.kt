@@ -262,6 +262,20 @@ class DeviceSyncTest {
     }
 
     @Test
+    fun anAddThatFailsDoesNotStopTheRemoval() = runTest {
+        val (rig, record) = joined()
+        // ana3 is listed but has no KeyPackages, so adding it fails in every conversation.
+        val ana3 = TestDevice(rig.server, "acc-ana", "ana3", rig.escrowKeys.publicKey)
+        ana3.api.uploadKeyPackages(emptyList())
+        rig.server.revokeDevice("acc-ana", "ana2")
+        assertFailsWith<SyncException.NoKeyPackages> { rig.ana1.reconcile() }
+        rig.ana1.nowMs += tenMinutes
+        assertFailsWith<SyncException.NoKeyPackages> { rig.ana1.reconcile() }
+        assertFalse("acc-ana/ana2" in rig.membersOn(rig.ana1, record))
+        assertFalse("acc-ana/ana3" in rig.membersOn(rig.ana1, record))
+    }
+
+    @Test
     fun partialListRemovesOnlyTheDevicesMissingFromTwoLists() = runTest {
         val (rig, record) = joined()
         val ana3 = TestDevice(rig.server, "acc-ana", "ana3", rig.escrowKeys.publicKey)
