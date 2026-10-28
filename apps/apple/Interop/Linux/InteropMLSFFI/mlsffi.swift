@@ -1,0 +1,1 @@
+../../../Packages/SecureMessaging/Sources/MLSFFIBindings/mlsffi.swift

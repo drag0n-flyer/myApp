@@ -53,6 +53,7 @@ jobs:
       webrtc: ${{ steps.flags.outputs.webrtc }}
       push: ${{ steps.flags.outputs.push }}
       app: ${{ steps.flags.outputs.app }}
+      interop: ${{ steps.flags.outputs.interop }}
       all: ${{ steps.flags.outputs.all }}
       any: ${{ steps.flags.outputs.any }}
     steps:
@@ -152,6 +153,7 @@ jobs:
           NET: ${{ needs.changes.outputs.net }}
           CALLS: ${{ needs.changes.outputs.calls }}
           MESSAGING: ${{ needs.changes.outputs.messaging }}
+          INTEROP: ${{ needs.changes.outputs.interop }}
         working-directory: apps/android
         run: |
           set -euo pipefail
@@ -161,6 +163,8 @@ jobs:
           [ "$NET" = true ] && tasks+=(:net:test)
           [ "$CALLS" = true ] && tasks+=(:calls:test)
           [ "$MESSAGING" = true ] && tasks+=(:messaging:test)
+          # The interop peer (scripts/interop.sh runs it in the interop workflow): compiled here, on Linux.
+          [ "$INTEROP" = true ] && tasks+=(:interop:compileKotlin)
           if [ "${#tasks[@]}" -eq 0 ]; then echo "no JVM module changed"; exit 0; fi
           ./gradlew --no-daemon "${tasks[@]}"
 
