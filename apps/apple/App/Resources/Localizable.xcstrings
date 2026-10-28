@@ -1089,6 +1089,40 @@
           }
         }
       }
+    },
+    "%@, %@" : {
+      "comment" : "VoiceOver label of a call info row: the row's name, then its value",
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@, %@"
+          }
+        }
+      }
+    },
+    "Your chats couldn't be opened" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your chats couldn't be opened"
+          }
+        }
+      }
+    },
+    "Check your connection, then try again." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Check your connection, then try again."
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

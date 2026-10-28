@@ -23,7 +23,9 @@ struct CallInfoSheet: View {
                         Text(LocalizedStringKey(row.label))
                     }
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel(Text("\(String(localized: String.LocalizationValue(row.label))), \(String(localized: String.LocalizationValue(row.value)))"))
+                    .accessibilityLabel(Text(
+                        "\(String(localized: String.LocalizationValue(row.label))), \(String(localized: String.LocalizationValue(row.value)))",
+                        comment: "VoiceOver label of a call info row: the row's name, then its value"))
                     .accessibilityIdentifier("callinfo.row.\(index)")
                 }
             }

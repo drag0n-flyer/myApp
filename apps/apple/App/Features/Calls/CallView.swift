@@ -9,6 +9,7 @@ struct CallView: View {
     /// appeared in the iPhone UI test while the data sheet did.
     @State private var sheet: CallSheet?
     @State private var voiceIsolationOn = CallView.isVoiceIsolationOn
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         ZStack {
@@ -68,10 +69,14 @@ struct CallView: View {
             guard model.isSampleData, !model.isUITesting else { return }   // the sample engine needs a clock; the live one has its own
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
-                model.sampleCalls.advance(by: 1)
+                model.sampleCalls?.advance(by: 1)
             }
         }
         .onAppear { voiceIsolationOn = Self.isVoiceIsolationOn }
+        // Voice Isolation is switched on in Control Center, outside the app: look again when the app comes back.
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { voiceIsolationOn = Self.isVoiceIsolationOn }
+        }
         .task(id: model.activeCall?.isEnded) {
             // UI tests keep the ended call on screen so they can read the final banner.
             guard model.activeCall?.isEnded == true, !model.isUITesting else { return }
@@ -252,11 +257,11 @@ private struct SimulateMenu: View {
 
     var body: some View {
         Menu {
-            Button("Good") { model.sampleCalls.simulate(.good) }
-            Button("Weak") { model.sampleCalls.simulate(.weak) }
-            Button("Very weak") { model.sampleCalls.simulate(.veryWeak) }
-            Button("Lost") { model.sampleCalls.simulate(.lost) }
-            Button("Advance 10 s") { model.sampleCalls.advance(by: 10) }
+            Button("Good") { model.sampleCalls?.simulate(.good) }
+            Button("Weak") { model.sampleCalls?.simulate(.weak) }
+            Button("Very weak") { model.sampleCalls?.simulate(.veryWeak) }
+            Button("Lost") { model.sampleCalls?.simulate(.lost) }
+            Button("Advance 10 s") { model.sampleCalls?.advance(by: 10) }
         } label: {
             Label("Simulate", systemImage: "wand.and.stars")
                 .font(.caption)

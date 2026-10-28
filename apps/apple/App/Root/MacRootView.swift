@@ -166,13 +166,13 @@ extension AppModel: MacRingHandling {
     /// Signed in: the live engine owns the call. Sample data: the simulated engine plays it.
     func macRingAnswer(callID: String, caller: Contact?, video: Bool) {
         if let liveCalls { liveCalls.ringAnswer(callID: callID, video: video); return }
-        guard let caller else { return }
+        guard let caller, let sampleCalls else { return }   // a live account never plays a simulated call
         sampleCalls.simulateIncoming(from: caller, video: video)
         sampleCalls.answer(video: video)
     }
 
     func macRingDecline(callID: String) {
-        if let liveCalls { liveCalls.ringDecline(callID: callID) } else { sampleCalls.decline() }
+        if let liveCalls { liveCalls.ringDecline(callID: callID) } else { sampleCalls?.decline() }
     }
 
     func macRingStatus(callID: String) async -> CallStatus? { await liveCalls?.ringStatus(callID: callID) }

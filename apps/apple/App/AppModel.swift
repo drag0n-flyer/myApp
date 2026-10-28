@@ -21,17 +21,23 @@ enum AppTab: Hashable {
 @MainActor
 @Observable
 final class AppModel {
-    /// `SampleChatStore` with `-sampleData` (and until the real messaging stack is available); `LiveChatStore`
-    /// once this device is signed in and the stack could be built (`installLiveStore`).
+    /// `SampleChatStore` with `-sampleData`. A live account: `EmptyChatStore` until `LiveChatStore` is built
+    /// (`installLiveStore`); a live account never sees sample chats (`AppStores`).
     private(set) var chatStore: any ChatStore
-    /// Sample calls: the whole engine in `-sampleData` mode, and an inert placeholder before sign-in.
-    let sampleCalls: SimulatedCallEngine
-    /// The real engine, once signed in (it needs the live connection). `nil` in `-sampleData` mode.
+    /// The simulated engine, `-sampleData` only.
+    let sampleCalls: SimulatedCallEngine?
+    /// `calls` while there is no live engine: the simulated engine with sample data, an inert one for a live account.
+    private let idleCalls: any CallEngine
+    /// The real engine, once signed in (it needs the live connection and the live store). `nil` in `-sampleData` mode.
     private(set) var liveCalls: LiveCallEngine?
     var calls: any CallEngine {
         if let liveCalls { return liveCalls }
-        return sampleCalls
+        return idleCalls
     }
+    /// The live store could not be built after sign-in: an error is shown, with a retry. No sample data stands in.
+    var liveStoreUnavailable = false
+    /// Open while the live store and call engine are in place; a VoIP push that woke the app waits on it.
+    private let callReady = ReadinessGate()
     let account: any AccountService
     /// `nil` in `-sampleData` mode.
     private let live: LiveAccountService?
@@ -79,14 +85,14 @@ final class AppModel {
     }
     var network: NetworkType {
         didSet {
-            sampleCalls.setNetwork(network); liveCalls?.setNetwork(network)
+            sampleCalls?.setNetwork(network); liveCalls?.setNetwork(network)
             messaging?.network.value = network
         }
     }
 
     private func syncCalls() {
-        sampleCalls.server = server
-        sampleCalls.settings = settings.call
+        sampleCalls?.server = server
+        sampleCalls?.settings = settings.call
         liveCalls?.update(server: server, settings: settings)
     }
     var onboarding: OnboardingFlow
@@ -146,9 +152,11 @@ final class AppModel {
         self.settings = settings
         self.network = launch.network
         self.isUITesting = launch.isUITesting
-        let chatStore = SampleChatStore()
+        let stores = AppStores(sampleData: launch.sampleData, server: server, settings: settings.call, network: launch.network)
+        let chatStore = stores.chatStore
         self.chatStore = chatStore
-        self.sampleCalls = SimulatedCallEngine(server: server, settings: settings.call, network: launch.network)
+        self.sampleCalls = stores.sampleCalls
+        self.idleCalls = stores.idleCalls
         #if os(macOS)
         var flow = OnboardingFlow(platform: .mac)
         #else
@@ -173,7 +181,7 @@ final class AppModel {
         if live?.isSignedIn == true { Task { await didSignIn() } }
         if let url = launch.openURL { handle(url: url) }
         chatStore.onChange = { [weak self] in self?.revision += 1 }
-        sampleCalls.onChange = { [weak self] state in self?.callStateChanged(state) }
+        sampleCalls?.onChange = { [weak self] state in self?.callStateChanged(state) }
         Task { await refreshDevices() }
         #if os(macOS)
         macRinger = MacRinger(handler: self, systemUI: !launch.isUITesting)
@@ -309,7 +317,7 @@ final class AppModel {
     }
 
     private func resetToWelcome() {
-        // The live store belongs to the signed-out account. The sample store stands in until the next sign-in.
+        // The live store belongs to the signed-out account. An empty store stands in until the next sign-in.
         if !isSampleData, let container = LiveMessaging.container {
             // Durable first: if the app is killed or a step fails, the next launch (or the next sign-in) wipes.
             try? LocalAccountData.markWipePending(in: container)
@@ -333,9 +341,9 @@ final class AppModel {
         if messaging != nil {
             messaging = nil
             callSealer.clear()
-            let sample = SampleChatStore()
-            sample.onChange = { [weak self] in self?.revision += 1 }
-            chatStore = sample
+            let empty = AppStores.signedOutStore(sampleData: isSampleData)
+            empty.onChange = { [weak self] in self?.revision += 1 }
+            chatStore = empty
             revision += 1
         }
         #if os(macOS)
@@ -394,10 +402,16 @@ final class AppModel {
     private func installLiveStore() async {
         await wipeTask?.value
         wipeTask = nil
-        guard !wipeFailed, !isSampleData, messaging == nil, let session = sessions?.current, let client = live?.client,
-              let built = await LiveMessaging.make(
-                session: session, client: client, network: network, settings: settings.autoDownload,
-                readReceipts: settings.readReceipts) else { return }
+        guard !wipeFailed, !isSampleData, messaging == nil, let session = sessions?.current, let client = live?.client
+        else { return }
+        guard let built = await LiveMessaging.make(
+            session: session, client: client, network: network, settings: settings.autoDownload,
+            readReceipts: settings.readReceipts) else {
+            // Never fall back to sample chats: the chat list stays empty and the error offers a retry.
+            liveStoreUnavailable = true
+            return
+        }
+        liveStoreUnavailable = false
         messaging = built
         callSealer.use(built.store)
         built.store.onChange = { [weak self] in self?.revision += 1 }
@@ -425,8 +439,9 @@ final class AppModel {
     /// Creates the live connection and the call engine on top of it, once per sign-in.
     private func ensureConnection() {
         guard !wipeFailed, connection == nil, let live, live.isSignedIn, let client = live.client else { return }
-        // Signed-in builds wait for the live store: the call engine reads chats from it and seals through it.
-        guard isSampleData || messaging != nil || !LiveMessaging.isAvailable else { return }
+        // The call engine reads chats from the live store and seals through it: no live store, no engine (never on
+        // the sample or empty store).
+        guard messaging != nil else { return }
         let c = LiveConnection(client: client, transport: URLSessionWebSocketTransport())
         connection = c
         let signaling = LiveCallSignaling(connection: c, client: client)
@@ -448,6 +463,8 @@ final class AppModel {
         engine.ringer = macRinger
         #endif
         liveCalls = engine
+        // Pushes that woke the app before this point can now be opened and handed to the engine.
+        Task { await callReady.open() }
         liveTasks = [
             Task { [weak self] in
                 for await event in c.events {
@@ -493,7 +510,8 @@ final class AppModel {
         let resolver = VoIPPushResolver(
             sealer: callSealer,
             contact: { [weak self] id in await self?.contact(id: id) },
-            status: { [weak self] id in await self?.callStatus(id) })
+            status: { [weak self] id in await self?.callStatus(id) },
+            ready: callReady)   // a push that woke the app waits (bounded) for sign-in to finish
         let center = VoIPPushCenter(callKit: callKit, resolver: resolver,
                                     onToken: { [weak self] token in Task { @MainActor in await self?.didReceiveVoIPToken(token) } })
         self.callKit = callKit
@@ -527,18 +545,29 @@ final class AppModel {
     }
 
     private func stopLive(force: Bool = false) async {
+        let signedOut = force || live?.isSignedIn != true
+        if signedOut {
+            await callReady.close()
+            // While the connection is still up: hang up a running call, close its media, let every effect run.
+            await liveCalls?.shutdown()
+        }
         await messaging?.reconciler.disconnected()
         await connection?.stop()
         connectionState = .idle
-        if force || live?.isSignedIn != true {   // signed out: drop the connection and its listeners
+        if signedOut {   // drop the connection and its listeners
             let tasks = liveTasks
             tasks.forEach { $0.cancel() }
             for task in tasks { await task.value }   // none can touch the store afterwards
             liveTasks = []
             connection = nil
-            liveCalls?.shutdown()
             liveCalls = nil
         }
+    }
+
+    /// The "Try Again" of the live store error.
+    func retryLiveStore() async {
+        liveStoreUnavailable = false
+        await didSignIn()
     }
 
     /// Asks for a push token when notifications are already allowed (the Permissions step asks first).

@@ -74,9 +74,11 @@ final class LiveCallEngine {
         }
     }
 
-    func shutdown() {
+    /// Sign-out or wipe. Call it while the connection is still up: a live call is hung up (the hangup is sent),
+    /// its media is closed, and this returns once every effect has run.
+    func shutdown() async {
         eventsTask?.cancel(); eventsTask = nil
-        runner?.handle(.hangup)
+        await runner?.shutdown()
     }
 
     // MARK: - Settings and network
@@ -247,9 +249,22 @@ extension LiveCallEngine: @MainActor CallEngine {
         #endif
     }
     func setVideo(_ on: Bool) { runner?.handle(.setVideo(on)) }
-    func end() { runner?.handle(.hangup) }
+    func end() { hangUpFromApp(.hangup) }
     func answer(video: Bool) { runner?.handle(.answer(video: video)) }
-    func decline() { runner?.handle(.decline) }
+    func decline() { hangUpFromApp(.decline) }
+
+    /// End or Decline in our own UI. iPhone: a call CallKit knows is ended through a `CXEndCallAction` request, which
+    /// comes back as `callKitEnd` and hangs up there; the call is never reported to CallKit as ended by the other side.
+    private func hangUpFromApp(_ input: CallInput) {
+        #if os(iOS)
+        let kit = runner.flatMap { hasLiveCall ? kitID($0.callID) : nil }
+        if InAppHangup.route(systemKnowsCall: kit != nil && callKit != nil) == .requestSystemEnd, let kit, let callKit {
+            callKit.requestEnd(callID: kit) { [weak self] in self?.runner?.handle(input) }   // refused: hang up here
+            return
+        }
+        #endif
+        runner?.handle(input)
+    }
 
     func setNetwork(_ type: NetworkType) {
         network = type
@@ -328,7 +343,7 @@ extension LiveCallEngine: CallKitCallHandling {
 extension LiveCallEngine: VoIPPushHandling {
     func engineKnows(callID: String) -> Bool { runner?.callID == callID && hasLiveCall }
 
-    func voipPushDidResolveRing(kitCallID: UUID, contact: Contact, ring: CallSignalPayload, answer: Bool) {
+    func voipPushDidResolveRing(kitCallID: UUID, contact: Contact, ring: CallSignalPayload, device: String, answer: Bool) {
         guard !hasLiveCall else {
             callKit?.reportEnded(callID: kitCallID, reason: .unanswered)
             voip?.pushCallFinished(kitCallID: kitCallID)
@@ -336,8 +351,8 @@ extension LiveCallEngine: VoIPPushHandling {
         }
         pushKitIDs[ring.callID] = kitCallID
         if answer { earlyActions[ring.callID.lowercased()] = .answer(video: ring.video ?? false) }
-        // A push carries no sender device: the machine binds to the device whose answer arrives.
-        beginIncoming(callID: ring.callID, contact: contact, device: "", ring: ring)
+        // Bound to the caller's device from the push's MLS credential: answers from other devices are dropped.
+        beginIncoming(callID: ring.callID, contact: contact, device: device, ring: ring)
     }
 
     func voipPushDeclined(kitCallID: UUID, contact: Contact, ring: CallSignalPayload) {

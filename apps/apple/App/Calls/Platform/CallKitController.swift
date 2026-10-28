@@ -100,9 +100,13 @@ final class CallKitController: NSObject, CXProviderDelegate {
         controller.request(CXTransaction(action: action)) { _ in }
     }
 
-    /// App-initiated end (hang up button in our own UI).
-    func requestEnd(callID: UUID) {
-        controller.request(CXTransaction(action: CXEndCallAction(call: callID))) { _ in }
+    /// App-initiated end (End or Decline in our own UI). CallKit answers with `CXEndCallAction`, which hangs up the
+    /// call through `CallKitCallHandling.callKitEnd`. `failed` runs on the main actor when CallKit refused the request.
+    func requestEnd(callID: UUID, failed: @escaping @MainActor () -> Void = {}) {
+        controller.request(CXTransaction(action: CXEndCallAction(call: callID))) { error in
+            let refused = error != nil
+            Task { @MainActor in if refused { failed() } }
+        }
     }
 
     // MARK: CXProviderDelegate (delivered on the main queue)

@@ -24,6 +24,11 @@ struct RootView: View {
         .alert("This device was removed from your account.", isPresented: $model.deviceRemovedAlert) {
             Button("OK", role: .cancel) {}
         }
+        .alert("Your chats couldn't be opened", isPresented: $model.liveStoreUnavailable) {
+            Button("Try again") { Task { await model.retryLiveStore() } }
+        } message: {
+            Text("Check your connection, then try again.")
+        }
         #if os(iOS)
         .fullScreenCover(isPresented: isCallPresented) {
             CallView(model: model)
