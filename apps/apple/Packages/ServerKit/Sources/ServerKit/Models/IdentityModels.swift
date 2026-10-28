@@ -50,11 +50,7 @@ public enum LinkClaim: Equatable, Sendable {
 
 // MARK: - WebAuthn
 
-private struct PublicKeyEnvelope<T: Decodable>: Decodable {
-    let publicKey: T
-}
-
-/// Registration options, parsed from go-webauthn's `{"publicKey":{…}}`.
+/// Registration options. The Go server sends WebAuthn options bare (`{"challenge":…}`), as its spec says.
 public struct CreationOptions: Decodable, Equatable, Sendable {
     public let challenge: Data
     public let rpID: String
@@ -81,13 +77,13 @@ public struct CreationOptions: Decodable, Equatable, Sendable {
     }
 
     public init(from decoder: Decoder) throws {
-        let i = try PublicKeyEnvelope<Inner>(from: decoder).publicKey
+        let i = try Inner(from: decoder)
         self.init(challenge: i.challenge.data, rpID: i.rp.id, rpName: i.rp.name, userID: i.user.id.data,
                   userName: i.user.name, userDisplayName: i.user.displayName)
     }
 }
 
-/// Sign-in options, from `{"publicKey":{"challenge","rpId"}}`.
+/// Sign-in options, from `{"challenge","rpId"}`.
 public struct RequestOptions: Decodable, Equatable, Sendable {
     public let challenge: Data
     public let rpID: String
@@ -103,7 +99,7 @@ public struct RequestOptions: Decodable, Equatable, Sendable {
     }
 
     public init(from decoder: Decoder) throws {
-        let i = try PublicKeyEnvelope<Inner>(from: decoder).publicKey
+        let i = try Inner(from: decoder)
         self.init(challenge: i.challenge.data, rpID: i.rpId)
     }
 }
