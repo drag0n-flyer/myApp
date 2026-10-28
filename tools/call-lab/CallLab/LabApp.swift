@@ -9,7 +9,15 @@ import SwiftUI
 
 @main
 struct LabApp: App {
-    @StateObject private var call = LabCall()
+    @StateObject private var call: LabCall
+
+    init() {
+        let c = LabCall()
+        _call = StateObject(wrappedValue: c)
+        // Started here, not from a view's .task: a binary launched straight from a shell (CI) may never
+        // show its window, and then no view task runs.
+        Headless.start(c)
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -17,7 +25,6 @@ struct LabApp: App {
                 ConnectView()
             }
             .environmentObject(call)
-            .task { await Headless.runIfRequested(call) }
         }
         #if os(macOS)
         Window("Rig", id: "rig") { RigView() }
@@ -32,6 +39,13 @@ struct LabApp: App {
 /// Exit status: 0 when the call ran and ended, 1 on a call error or timeout, 64 on bad arguments, 66 on a bad stimulus.
 @MainActor
 enum Headless {
+    /// Starts the headless run on the main actor when `--headless` is present.
+    static func start(_ call: LabCall) {
+        guard CommandLine.arguments.contains("--headless") else { return }
+        log("headless: launched")
+        Task { @MainActor in await runIfRequested(call) }
+    }
+
     static func runIfRequested(_ call: LabCall) async {
         let opts: LabLaunchOptions
         do {

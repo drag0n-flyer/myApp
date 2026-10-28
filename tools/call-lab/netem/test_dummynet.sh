@@ -106,23 +106,62 @@ pfctl -a com.apple/call-lab -F all
 pfctl -X 4242' "$out"
 }
 
-# `packets` sums Tot_pkt over pipe 1's dynamic queues (run_calls.sh fails a shaped call at 0).
-test_packets_counts_pipe_traffic() {
+# dnctl's per-queue rows are garbage on macOS 26 (fixture: the real `dnctl pipe show 1` from the
+# runner, 2026-10-28), so `packets` counts with pf's own counter on the anchor's dummynet rule.
+fake_tools() { # pfctl -s dummynet output file
     mkdir -p "$tmp/bin"
-    cat > "$tmp/bin/dnctl" <<'EOS'
-#!/bin/sh
-cat <<'OUT'
-00001:  32.000 Kbit/s   40 ms   50 sl.plr 0.050000 2 queues (64 buckets) droptail
-    mask: 0x00 0xffffffff/0xffff -> 0x00000000/0x0000
-BKT Prot ___Source IP/port____ ____Dest. IP/port____ Tot_pkt/bytes Pkt/Byte Drp
- 12 udp      127.0.0.1/53000       127.0.0.1/3478      1500   120000  0    0  75
- 40 udp      127.0.0.1/53002       127.0.0.1/3478       700    56000  0    0  35
+    printf '#!/bin/sh\ncat "%s"\n' "$dir/fixtures/dnctl-pipe-show-macos26.txt" > "$tmp/bin/dnctl"
+    printf '#!/bin/sh\ncase "$*" in *"-s dummynet"*) cat "%s";; esac\nexit 0\n' "$1" > "$tmp/bin/pfctl"
+    chmod +x "$tmp/bin/dnctl" "$tmp/bin/pfctl"
+}
+
+test_packets_from_pf_rule_counter() {
+    cat > "$tmp/pf-shaped" <<'OUT'
+dummynet out quick on lo0 proto udp all pipe 1
+  [ Evaluations: 25345     Packets: 25345     Bytes: 3254400     States: 0     ]
+  [ Inserted: uid 0 pid 36410 ]
 OUT
+    fake_tools "$tmp/pf-shaped"
+    check packets_from_pf_rule_counter 25345 "$(PATH="$tmp/bin:$PATH" sh "$S" packets 2>&1)"
+    PATH="$tmp/bin:$PATH" sh "$S" check-shaped >/dev/null 2>&1; check check_shaped_passes 0 "$?"
+}
+
+# Negative: shaping not applied (rule never matched, or no rule in the anchor) must fail.
+test_check_shaped_fails_when_not_applied() {
+    cat > "$tmp/pf-idle" <<'OUT'
+dummynet out quick on lo0 proto udp all pipe 1
+  [ Evaluations: 812       Packets: 0         Bytes: 0           States: 0     ]
+OUT
+    fake_tools "$tmp/pf-idle"
+    check packets_zero_when_rule_idle 0 "$(PATH="$tmp/bin:$PATH" sh "$S" packets 2>&1)"
+    out=$(PATH="$tmp/bin:$PATH" sh "$S" check-shaped 2>&1); rc=$?
+    check check_shaped_fails_idle "1 shaping not applied: 0 packets matched the dummynet rule" "$rc $out"
+    : > "$tmp/pf-empty"
+    fake_tools "$tmp/pf-empty"
+    PATH="$tmp/bin:$PATH" sh "$S" check-shaped >/dev/null 2>&1; check check_shaped_fails_no_rule 1 "$?"
+}
+
+# dnctl can fail once with ENOMEM on a fresh runner (run 40738133728); apply retries the pipe
+# config a few times, and still fails when it keeps failing.
+test_pipe_config_retried() {
+    mkdir -p "$tmp/bin"
+    printf '#!/bin/sh\nexit 0\n' > "$tmp/bin/pfctl"; printf '#!/bin/sh\nexit 0\n' > "$tmp/bin/ifconfig"
+    printf '#!/bin/sh\nexit 0\n' > "$tmp/bin/sleep"
+    cat > "$tmp/bin/dnctl" <<EOS
+#!/bin/sh
+n=\$(cat "$tmp/dn" 2>/dev/null || echo 0); n=\$((n + 1)); echo \$n > "$tmp/dn"
+[ \$n -ge \$(cat "$tmp/dn-ok") ] && exit 0
+echo "dnctl: setsockopt(IP_DUMMYNET_CONFIGURE): Cannot allocate memory" >&2; exit 71
 EOS
-    chmod +x "$tmp/bin/dnctl"
-    check packets_counts_pipe_traffic 2200 "$(PATH="$tmp/bin:$PATH" sh "$S" packets 2>&1)"
-    printf '#!/bin/sh\necho "00001:  unlimited    0 ms   50 sl.plr 0.000000 0 queues (64 buckets) droptail"\n' > "$tmp/bin/dnctl"
-    check packets_zero_when_idle 0 "$(PATH="$tmp/bin:$PATH" sh "$S" packets 2>&1)"
+    chmod +x "$tmp/bin/"*
+    echo 2 > "$tmp/dn-ok"; rm -f "$tmp/dn"
+    PATH="$tmp/bin:$PATH" sh "$S" apply lo0 loss5 >/dev/null 2>&1; rc=$?
+    check pipe_config_retried "0 2" "$rc $(cat "$tmp/dn")"
+    echo 99 > "$tmp/dn-ok"; rm -f "$tmp/dn"
+    PATH="$tmp/bin:$PATH" sh "$S" apply lo0 loss5 >/dev/null 2>&1; rc=$?
+    [ "$rc" -ne 0 ] && r=nonzero || r=zero
+    check pipe_config_gives_up "nonzero 3" "$r $(cat "$tmp/dn")"
+    rm -f "$tmp/bin/sleep"
 }
 
 test_unknown_profile() {
@@ -156,7 +195,9 @@ test_jitter_is_noted_not_applied
 test_clear
 test_main_ruleset_loaded_before_anchor
 test_token_kept_and_released
-test_packets_counts_pipe_traffic
+test_packets_from_pf_rule_counter
+test_check_shaped_fails_when_not_applied
+test_pipe_config_retried
 test_unknown_profile
 test_bad_interface_name
 test_usage

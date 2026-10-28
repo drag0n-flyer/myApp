@@ -41,6 +41,9 @@ def make_run(root, name, profile="clean", events=None, header=None, stats_rows=N
     return d
 
 
+RELAY_ROWS = [{"local_cand": "relay", "remote_cand": "relay", "rtt_ms": "1"}]
+
+
 def connect_events(ms):
     return [(0, "invite_sent"), (1000, "answer_received"), (1000 + ms, "first_audio_packet"), (300000, "ended")]
 
@@ -106,7 +109,7 @@ class SummarizeTests(unittest.TestCase):
 
     def test_relay_counts_caller_leg_once(self):
         # Each client's leg to coturn is counted on its own; the legs differ, so halving their sum would be wrong.
-        make_run(self.runs, "relay", profile="clean", meta={"path": "relay"},
+        make_run(self.runs, "relay", profile="clean", meta={"path": "relay"}, stats_rows=RELAY_ROWS,
                  bytes_json={"bytes_per_min": 400000.0, "mb_per_10min": 4.0},
                  legs_json={"caller": {"bytes_per_min": 100000.0, "mb_per_10min": 1.0},
                             "callee": {"bytes_per_min": 300000.0, "mb_per_10min": 3.0}})
@@ -114,6 +117,22 @@ class SummarizeTests(unittest.TestCase):
         self.assertEqual(r["bytes_per_min"], 100000.0)
         self.assertEqual(r["mb_per_10min"], 1.0)
         self.assertEqual(r["callee_mb_per_10min"], 3.0)
+
+    def test_relay_pair_must_be_relay(self):
+        # Smoke check before measuring: a relay run whose selected pair is not relay measured the wrong path.
+        host = [{"local_cand": "host", "remote_cand": "host", "rtt_ms": "1"}]
+        make_run(self.runs, "relay-host", profile="loss5", meta={"path": "relay"}, stats_rows=host)
+        r = self.result("relay-host")
+        self.assertEqual(r["result"], "fail")
+        self.assertIn("selected candidate pair is not relay (local host)", r["reasons"])
+        make_run(self.runs, "relay-none", profile="loss5", meta={"path": "relay"}, stats_rows=[{"rtt_ms": "1"}])
+        self.assertIn("selected candidate pair is not relay (local none)", self.result("relay-none")["reasons"])
+        ok = [{"local_cand": "relay", "remote_cand": "relay", "rtt_ms": "1"}]
+        make_run(self.runs, "relay-ok", profile="loss5", meta={"path": "relay"}, stats_rows=ok)
+        self.assertEqual(self.result("relay-ok")["result"], "pass")
+        self.assertEqual(self.result("relay-ok")["pair"], "relay/relay")
+        make_run(self.runs, "direct-host", profile="loss5", stats_rows=host)
+        self.assertEqual(self.result("direct-host")["result"], "pass")
 
     def test_relay_without_legs_reports_no_bytes(self):
         make_run(self.runs, "relay", profile="clean", meta={"path": "relay"},
@@ -125,6 +144,7 @@ class SummarizeTests(unittest.TestCase):
     def test_direct_uses_whole_capture(self):
         make_run(self.runs, "direct", profile="clean", bytes_json={"bytes_per_min": 150000.0, "mb_per_10min": 1.5})
         r = self.result("direct")
+        self.assertEqual(r["kbps_per_direction"], 10.0)   # 1.5 MB / 600 s, both directions, halved
         self.assertEqual(r["bytes_per_min"], 150000.0)
         self.assertEqual(r["mb_per_10min"], 1.5)
 
@@ -140,7 +160,9 @@ class SummarizeTests(unittest.TestCase):
         self.assertEqual(self.result("ok")["jitter"], "not simulated")
         out = os.path.join(self.tmp.name, "out")
         summarize.main([self.runs, "--out", out])
-        self.assertIn("jitter: not simulated", open(os.path.join(out, "summary.md")).read())
+        md = open(os.path.join(out, "summary.md")).read()
+        self.assertIn("jitter: not simulated", md)
+        self.assertIn("per direction", md)
 
     def test_header_matches_statsrow_source(self):
         self.assertTrue(HEADER.startswith("t_ms,run_id,preset,"))

@@ -13,10 +13,12 @@
 # `dummynet-anchor "com.apple/*"` line of /etc/pf.conf, so apply loads that main ruleset first.
 # apply enables pf with `pfctl -E` and keeps the reference token in $DUMMYNET_TOKEN_FILE;
 # clear releases it with `pfctl -X <token>`.
-# `packets` prints how many packets went through pipe 1 (summed over its per-socket queues).
+# `packets` prints how many packets matched the anchor's dummynet rule (pf's rule counter; dnctl's
+# per-queue rows are garbage on macOS 26, see fixtures/dnctl-pipe-show-macos26.txt).
+# `check-shaped` exits 1 when that count is 0: the shaping was not applied.
 # Usage: dummynet.sh [--dry-run] apply <iface> <profile> [direct|relay]
 #        dummynet.sh [--dry-run] clear
-#        dummynet.sh packets
+#        dummynet.sh packets | check-shaped
 dir=$(cd "$(dirname "$0")" && pwd)
 anchor=com.apple/call-lab
 token_file=${DUMMYNET_TOKEN_FILE:-/var/run/call-lab-pf.token}
@@ -28,7 +30,7 @@ run() {
     "$@" || { echo "failed: $*" >&2; exit 1; }
 }
 
-usage() { echo "usage: dummynet.sh [--dry-run] apply <iface> <profile> [direct|relay] | clear | packets" >&2; exit 64; }
+usage() { echo "usage: dummynet.sh [--dry-run] apply <iface> <profile> [direct|relay] | clear | packets | check-shaped" >&2; exit 64; }
 
 check_iface() {
     if ! printf '%s\n' "$1" | grep -Eq '^[A-Za-z0-9_.:-]{1,15}$'; then
@@ -38,13 +40,28 @@ check_iface() {
     if ! ifconfig "$1" >/dev/null 2>&1; then echo "no such interface: $1" >&2; exit 2; fi
 }
 
+# Like run, but tries 3 times, 1 s apart: dnctl has failed once with ENOMEM on a fresh runner.
+run_retry() {
+    if [ "$dry" -eq 1 ]; then echo "$*"; return 0; fi
+    for try in 1 2 3; do
+        "$@" && return 0
+        [ "$try" -lt 3 ] && sleep 1
+    done
+    echo "failed: $*" >&2; exit 1
+}
+
 pipe() { # number delay loss_pct rate
     plr=$(awk -v l="$3" 'BEGIN { printf "%g", l / 100 }')
     if [ "$4" = "-" ]; then
-        run dnctl pipe "$1" config delay "$2" plr "$plr" mask src-ip 0xffffffff src-port 0xffff
+        run_retry dnctl pipe "$1" config delay "$2" plr "$plr" mask src-ip 0xffffffff src-port 0xffff
     else
-        run dnctl pipe "$1" config bw "$4"Kbit/s delay "$2" plr "$plr" mask src-ip 0xffffffff src-port 0xffff
+        run_retry dnctl pipe "$1" config bw "$4"Kbit/s delay "$2" plr "$plr" mask src-ip 0xffffffff src-port 0xffff
     fi
+}
+
+pf_packets() { # sum of "Packets: N" over the anchor's dummynet rules (0 when there are none)
+    pfctl -a "$anchor" -v -s dummynet 2>/dev/null | sed -n 's/.*Packets: *\([0-9][0-9]*\).*/\1/p' |
+        awk '{ s += $1 } END { printf "%d\n", s }'
 }
 
 case "$1" in
@@ -94,8 +111,13 @@ clear)
     ;;
 packets)
     [ $# -eq 1 ] || usage
-    # Queue rows: BKT Prot Source/port Dest/port Tot_pkt Tot_bytes ...
-    dnctl pipe show 1 | awk '$1 ~ /^[0-9]+$/ && $3 ~ /\// && $4 ~ /\// { s += $5 } END { print s + 0 }'
+    pf_packets
+    ;;
+check-shaped)
+    [ $# -eq 1 ] || usage
+    n=$(pf_packets)
+    if [ "$n" -eq 0 ]; then echo "shaping not applied: 0 packets matched the dummynet rule" >&2; exit 1; fi
+    echo "$n"
     ;;
 *) usage ;;
 esac

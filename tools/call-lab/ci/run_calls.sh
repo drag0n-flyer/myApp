@@ -44,9 +44,24 @@ done
     exit 64
 }
 seconds=${LAB_SECONDS:-300}
-bin="$app/Contents/MacOS/CallLabMac"
+# The executable name comes from the app's Info.plist (CFBundleExecutable; the target's PRODUCT_NAME),
+# never hard-coded. plistlib reads XML and binary plists, on macOS and Linux.
+exe=$(python3 -I -c 'import plistlib, sys
+with open(sys.argv[1], "rb") as f:
+    print(plistlib.load(f)["CFBundleExecutable"])' "$app/Contents/Info.plist" 2>/dev/null)
+[ -n "$exe" ] || { echo "no CFBundleExecutable in $app/Contents/Info.plist" >&2; exit 2; }
+bin="$app/Contents/MacOS/$exe"
+
+# coturn's arguments (address, secret). No value contains spaces.
+turn_args() {
+    echo "-n --listening-ip=$1 --relay-ip=$1 --listening-port=3478 --use-auth-secret" \
+        "--static-auth-secret=$2 --realm=lab.invalid --no-tls --no-cli --allow-loopback-peers" \
+        "--verbose --log-file=stdout"
+}
 
 if [ "$dry" -eq 1 ]; then
+    echo "app binary: $bin"
+    echo "turnserver: $(turn_args "<turn-ip>" "<secret>")"
     echo "$MATRIX" | while read -r preset path profile snr; do
         echo "call $preset $path $profile noise=$snr ${seconds}s"
         sh "$lab/netem/dummynet.sh" --dry-run apply lo0 "$profile" "$path" 2>/dev/null | sed 's/^/  /'
@@ -73,15 +88,24 @@ trap 'cleanup; exit 143' TERM
 ip=$(ipconfig getifaddr en0 2>/dev/null || true)
 locals=127.0.0.1${ip:+,$ip}
 
+# coturn listens and relays on the runner's en0 address (traffic between local addresses still
+# crosses lo0, where the capture and the shaping are); 127.0.0.1 on a runner without en0.
+# Every option must exist in the installed coturn: on an unknown one (4.18 dropped --no-dtls; DTLS
+# is now off unless --dtls) it prints its usage and exits, and the relay calls get no TURN server.
+# --allow-loopback-peers needs --no-cli (coturn refuses it with an open, password-less CLI).
+turn_ip=${ip:-127.0.0.1}
 # The TURN secret is made fresh for this run and never leaves the runner.
 secret=$(openssl rand -hex 24)
-turnserver -n --listening-ip=127.0.0.1 --relay-ip=127.0.0.1 --listening-port=3478 \
-    --use-auth-secret --static-auth-secret="$secret" --realm=lab.invalid \
-    --no-tls --no-dtls --no-cli --allow-loopback-peers --simple-log --log-file="$tmp/turn.log" >/dev/null 2>&1 &
-pids="$pids $!"
+turnserver $(turn_args "$turn_ip" "$secret") >"$tmp/turn.log" 2>&1 &
+turn_pid=$!
+pids="$pids $turn_pid"
+sleep 2
+if ! kill -0 "$turn_pid" 2>/dev/null; then
+    echo "coturn exited at start:" >&2; grep -vi secret "$tmp/turn.log" | head -5 >&2; exit 1
+fi
 
 export APP_HOST=localhost APP_LISTEN=127.0.0.1:8080 APP_ADMIN_LISTEN=127.0.0.1:9090
-export APP_DATA_DIR="$tmp/data" APP_TURN_SECRET="$secret" APP_RELAYS=127.0.0.1 APP_LAB_MODE=1
+export APP_DATA_DIR="$tmp/data" APP_TURN_SECRET="$secret" APP_RELAYS=$turn_ip APP_LAB_MODE=1
 mkdir -p "$APP_DATA_DIR"
 "$server" migrate || { echo "migrate failed" >&2; exit 1; }
 "$server" serve >"$tmp/server.log" 2>&1 &
@@ -92,6 +116,18 @@ until curl -fsS http://127.0.0.1:9090/healthz >/dev/null 2>&1; do
     sleep 1
 done
 
+# TURN self-test before any call: two relayed clients through coturn with the server's REST
+# credential scheme (HMAC-SHA1 of "expiry:user"), so a relay failure shows up with its cause.
+probe_user="$(($(date +%s) + 3600)):selftest"
+probe_cred=$(printf '%s' "$probe_user" | openssl dgst -sha1 -hmac "$secret" -binary | base64)
+echo "== TURN self-test ($turn_ip:3478)"
+turnutils_uclient -y -n 20 -l 120 -m 1 -u "$probe_user" -w "$probe_cred" "$turn_ip" </dev/null >"$tmp/uclient.log" 2>&1 &
+up=$!; i=0
+while kill -0 "$up" 2>/dev/null && [ "$i" -lt 30 ]; do sleep 1; i=$((i + 1)); done
+kill "$up" 2>/dev/null
+grep -iE "error|fail|lost|allocat|success|rtt|total" "$tmp/uclient.log" | tail -12 | sed 's/^/  uclient: /'
+grep -iE "error|denied|forbidden|401|403|438|refus|cannot" "$tmp/turn.log" | tail -10 | sed 's/^/  turn: /'
+
 # "accountID deviceID token" for each client.
 set -- $("$server" lab session --username labcaller --device ci-a --platform mac)
 tok_a=$3
@@ -101,11 +137,12 @@ acct_b=$1; tok_b=$3
 unset APP_TURN_SECRET
 
 # Waits for pid $1 at most $2 seconds; kills it after that. Returns its exit status (124 on timeout).
+# Its counter is not `n`: the matrix loop numbers the runs with `n`.
 wait_for() {
-    n=0
+    waited=0
     while kill -0 "$1" 2>/dev/null; do
-        n=$((n + 1))
-        if [ "$n" -gt "$2" ]; then kill "$1" 2>/dev/null; wait "$1" 2>/dev/null; return 124; fi
+        waited=$((waited + 1))
+        if [ "$waited" -gt "$2" ]; then kill "$1" 2>/dev/null; wait "$1" 2>/dev/null; return 124; fi
         sleep 1
     done
     wait "$1"
@@ -163,18 +200,36 @@ while read -r preset path profile snr; do
     echo "caller exit $rc_a, callee exit $rc_b"
 
     sudo pkill -INT -f "tcpdump -i lo0" </dev/null 2>/dev/null; sleep 2
-    # A shaped call with no packets through the pipe means the shaping never applied: fail the job.
+    # A shaped call whose dummynet rule matched no packets was not shaped: fail the job.
     if [ "$profile" != clean ]; then
-        shaped=$(sudo sh "$lab/netem/dummynet.sh" packets </dev/null)
-        echo "packets through the $profile pipe: $shaped"
-        if [ "${shaped:-0}" -eq 0 ]; then
-            echo "FAIL $name: dummynet pipe for $profile saw 0 packets (shaping not applied)" >&2
+        sudo pfctl -a com.apple/call-lab -v -s dummynet </dev/null 2>&1 | grep -v ALTQ | sed 's/^/  pf: /'
+        if shaped=$(sudo sh "$lab/netem/dummynet.sh" check-shaped </dev/null); then
+            echo "packets through the $profile rule: $shaped"
+        else
+            echo "FAIL $name: the $profile dummynet rule matched 0 packets (shaping not applied)" >&2
             status=1
         fi
     fi
     sudo sh "$lab/netem/dummynet.sh" clear </dev/null >/dev/null
 
     for f in stats.csv events.csv; do [ -f "$run/caller/$f" ] && cp "$run/caller/$f" "$run/$f"; done
+    # Diagnostics for the job log: the caller's events and a few stats rows (selected columns).
+    [ -f "$run/events.csv" ] && sed 's/^/  events: /' "$run/events.csv"
+    [ -f "$run/stats.csv" ] && python3 -I - "$run/stats.csv" <<'PY'
+import csv, sys
+rows = list(csv.DictReader(open(sys.argv[1])))
+cols = ["t_ms", "opus_bps", "ptime", "dtx", "fec", "local_cand", "remote_cand", "rtt_ms", "a_bytes_sent",
+        "a_hdr_bytes_sent", "a_pkts_sent", "a_bytes_recv", "a_pkts_recv", "a_pkts_lost", "concealed_samples",
+        "v_bytes_sent", "v_bytes_recv", "pair_bytes_sent", "pair_bytes_recv", "avail_out_bps"]
+print("  stats: " + ",".join(cols))
+for i in sorted({0, len(rows) // 4, len(rows) // 2, len(rows) - 1}):
+    if 0 <= i < len(rows):
+        print("  stats: " + ",".join(rows[i].get(c, "") for c in cols))
+PY
+    if [ "$path" = relay ]; then
+        grep -iE "error|denied|forbidden|401|403|438|peer|allocat|permission|channel" "$tmp/turn.log" 2>/dev/null \
+            | grep -vi secret | tail -25 | sed 's/^/  turn: /'
+    fi
     if [ -f "$tmp/$name.pcap" ]; then
         sudo chown "$(id -u)" "$tmp/$name.pcap"
         if [ "$path" = relay ]; then

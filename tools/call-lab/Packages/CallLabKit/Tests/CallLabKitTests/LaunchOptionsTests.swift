@@ -30,3 +30,25 @@ final class LaunchOptionsTests: XCTestCase {
         XCTAssertThrowsError(try LabLaunchOptions.parse(["x", "--headless", "--role", "caller", "--out"]))   // no value
     }
 }
+
+/// The server's `httpx.Bytes` takes base64url without padding (`base64.RawURLEncoding`) and rejects
+/// anything else with `bad_request` ("bad call frame").
+final class PayloadEncodingTests: XCTestCase {
+    func testEncodedIsBase64URLWithoutPadding() throws {
+        // Long and varied enough that standard base64 would contain '+', '/' and '='.
+        for n in 0..<40 {
+            let sdp = String(repeating: "a=fmtp:111 minptime=10;useinbandfec=1~?>\n", count: n + 1) + String(repeating: "x", count: n)
+            let s = try LabPayload(kind: .offer, sdp: sdp).encoded()
+            XCTAssertFalse(s.contains("+") || s.contains("/") || s.contains("="), s)
+            XCTAssertEqual(try LabPayload.decode(s).sdp, sdp)
+        }
+    }
+
+    func testDecodesServerBase64URL() throws {
+        // {"kind":"bye"} as base64url without padding, the way the server sends payloads.
+        let json = Data(#"{"kind":"bye"}"#.utf8)
+        let url = json.base64EncodedString().replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+        XCTAssertEqual(try LabPayload.decode(url).kind, .bye)
+    }
+}
