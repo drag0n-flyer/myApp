@@ -40,7 +40,8 @@ struct CallView: View {
                 .padding(.bottom, 12)
                 .animation(.default, value: call.banner)
                 // Labelled on the button itself: after the full-screen frame, the element would span the
-                // screen and a tap on its centre would miss the button.
+                // screen and a tap on its centre would miss the button. The glass sits behind the button, not
+                // in its label: inside the label (iOS 26 glass effect) the tap never reached the button.
                 VStack {
                     HStack {
                         Spacer()
@@ -48,9 +49,10 @@ struct CallView: View {
                             Image(systemName: "info.circle")
                                 .font(.title3)
                                 .padding(10)
-                                .glassBackground(in: Circle())
+                                .contentShape(Circle())
                         }
                         .buttonStyle(.plain)
+                        .background { Color.clear.glassBackground(in: Circle()).allowsHitTesting(false) }
                         .foregroundStyle(.white)
                         .accessibilityLabel("Call info")
                         .accessibilityIdentifier("call.info")
