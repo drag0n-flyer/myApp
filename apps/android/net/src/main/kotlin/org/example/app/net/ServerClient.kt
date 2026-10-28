@@ -18,6 +18,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import okhttp3.Call
+import org.example.app.core.account.ServerAddress
 import okhttp3.Callback
 import okhttp3.HttpUrl
 import okhttp3.MediaType.Companion.toMediaType
@@ -36,6 +37,13 @@ class ServerClient internal constructor(
 ) {
     constructor(host: String, session: SessionStore, http: OkHttpClient = OkHttpClient()) :
         this(HttpUrl.Builder().scheme("https").host(host).build(), session, http)
+
+    /**
+     * The client for [address]: https, or plain http only for a loopback address (development servers), as
+     * `LiveAccountService` requires. Throws [IllegalArgumentException] for plain http anywhere else.
+     */
+    constructor(address: ServerAddress, session: SessionStore, http: OkHttpClient = OkHttpClient()) :
+        this(urlFor(address), session, http)
 
     // The API never redirects; following one could carry the Bearer token to another scheme or host.
     private val base: OkHttpClient = http.newBuilder()
@@ -248,6 +256,13 @@ class ServerClient internal constructor(
 
     private companion object {
         val JSON = "application/json".toMediaType()
+        val LOOPBACK = setOf("localhost", "127.0.0.1", "::1")
+
+        fun urlFor(address: ServerAddress): HttpUrl {
+            require(address.secure || address.host in LOOPBACK) { "plain http is only for loopback" }
+            return HttpUrl.Builder().scheme(if (address.secure) "https" else "http").host(address.host)
+                .apply { address.port?.let { port(it) } }.build()
+        }
     }
 }
 

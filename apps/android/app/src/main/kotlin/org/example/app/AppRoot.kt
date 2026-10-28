@@ -58,7 +58,6 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 private const val MAIN = "main"
 private const val CHAT = "chat/{id}"
 private const val INFO = "chatinfo/{id}"
-private const val ONBOARDING = "onboarding"
 /** The approving phone scans a new device's code (opened from Linked devices). */
 const val LINK_SCAN = "linkscan"
 private const val REQUESTS = "requests"
@@ -100,7 +99,23 @@ fun AppRoot(
             AccountUnavailableScreen(onTryAgain = { accountState = graph.accountService.accountState })
             return@AppTheme
         }
-        val onboarding = startWithOnboarding ?: (accountState == AccountState.SignedOut)
+        // Onboarding is shown on its own, before anything reads the chat store (the live one needs a signed-in account).
+        var onboarding by remember { mutableStateOf(startWithOnboarding ?: (accountState == AccountState.SignedOut)) }
+        val sessionEnds by graph.sessionEnds.collectAsStateWithLifecycle()
+        var seenEnds by remember { mutableIntStateOf(sessionEnds) }
+        if (sessionEnds != seenEnds) {
+            // Signed out by the server or wiped after a revocation: back to onboarding.
+            seenEnds = sessionEnds
+            onboarding = true
+        }
+        if (onboarding) {
+            val vm = viewModel<OnboardingViewModel>(
+                key = "onboarding-$sessionEnds",
+                factory = viewModelFactory { initializer { OnboardingViewModel(graph.accountService, saved = createSavedStateHandle()) } },
+            )
+            OnboardingHost(vm, onFinished = { onboarding = false })
+            return@AppTheme
+        }
         val nav = rememberNavController()
         val idArg = listOf(navArgument("id") { type = NavType.StringType })
         val context = LocalContext.current
@@ -115,13 +130,7 @@ fun AppRoot(
         )
         val call by callVm.call.collectAsStateWithLifecycle()
         Box {
-        NavHost(nav, startDestination = if (onboarding) ONBOARDING else MAIN) {
-            composable(ONBOARDING) {
-                val vm = viewModel<OnboardingViewModel>(
-                    factory = viewModelFactory { initializer { OnboardingViewModel(graph.accountService, saved = createSavedStateHandle()) } },
-                )
-                OnboardingHost(vm, onFinished = { nav.navigate(MAIN) { popUpTo(ONBOARDING) { inclusive = true } } })
-            }
+        NavHost(nav, startDestination = MAIN) {
             composable(LINK_SCAN) {
                 val vm = viewModel<LinkApprovalViewModel>(factory = factory { LinkApprovalViewModel(graph.accountService) })
                 LinkApprovalFlow(vm, onDone = { nav.popBackStack() })

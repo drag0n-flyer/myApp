@@ -131,6 +131,13 @@ class LiveAccountService(
     /** Absent, present or unavailable (the secret store was busy); the UI maps `Unavailable` to a retry screen. */
     val sessionState: SessionState get() = sessionStore.state
 
+    /**
+     * The client bound to the stored session's host, for the app's messaging stack and live socket (task I1); a
+     * 401 on it signs out like any other call. Null when signed out or when the session cannot be read.
+     */
+    val sessionClient: ServerClient?
+        get() = if (!isSignedIn) null else try { ready() } catch (_: AccountError) { null }
+
     init {
         install(client)
         // Start on the stored session's host, as the iPhone does. Failures here are reported by ready().
