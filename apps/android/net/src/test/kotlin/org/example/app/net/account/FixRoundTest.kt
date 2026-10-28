@@ -292,10 +292,10 @@ class FixRoundTest {
 
     @Test
     fun theDeviceClockDoesNotEndLinking() = runBlocking<Unit> {
-        // The device clock is far ahead of the server's expiry; only the server's answer ends the wait.
+        // The code's expiry is already past by the device clock; only the server's answer ends the wait.
         val n = AtomicInteger()
         val g = waiting { f ->
-            f.clock = Instant.parse("2030-01-01T00:00:00Z")
+            f.server.json("POST /v1/link", """{"linkID":"L1","secret":"S1","claimToken":"C1","expiresAt":"2020-01-01T00:00:00Z"}""")
             f.server.route("POST /v1/link/L1/claim") {
                 if (n.incrementAndGet() < 3) MockResponse().setResponseCode(202).setBody("{}") else MockResponse().setBody(approvedJson)
             }

@@ -23,6 +23,9 @@ import org.example.app.messaging.testing.TestMlsLock
 
 fun TestDevice.sealer() = ChatCallSealer(mls, repo, lock, clock, manager, handler)
 
+private fun oneToOne(g: GroupId, chatId: String) =
+    org.example.app.messaging.ports.ConversationRecord("conv-1", chatId, g.raw, "e2ee", "e2ee", false, 1, true, NOW)
+
 private val ring = CallSignalPayload(kind = CallSignalPayload.Kind.ring, callID = "call-1", video = true)
 
 class ChatCallSealerTest {
@@ -48,6 +51,45 @@ class ChatCallSealerTest {
         val rig = joined()
         val sealed = rig.ana1.sealer().seal(ring, "acc-bob")
         assertFailsWith<CallSealException.WrongSender> { rig.bob1.sealer().open(sealed, "acc-someone-else") }
+    }
+
+    /** A ring counts only in the 1:1 conversation with its sender (calls.md): not in a group held with someone else. */
+    @Test
+    fun aRingInAnotherConversationIsWrongSender() = runTest {
+        val rig = joined()
+        val sealed = rig.ana1.sealer().seal(ring, "acc-bob")
+        // On Bob's side, this group is now the conversation with Carol, not with Ana.
+        val conv = rig.bob1.repo.preferredConversation("acc-ana")!!
+        rig.bob1.repo.upsertConversation(conv.copy(chatId = "acc-carol"))
+        assertFailsWith<CallSealException.WrongSender> { rig.bob1.sealer().open(sealed, "acc-ana") }
+    }
+
+    /** No conversation row yet: the group itself must be the 1:1 one (only this account and the sender's). */
+    @Test
+    fun aRingInAnUnrecordedGroupWithAThirdAccountIsWrongSender() = runTest {
+        val a = FakeMlsEngine("acc-a/d1")
+        val bob = FakeMlsEngine("acc-bob/bob1")
+        val carol = FakeMlsEngine("acc-carol/c1")
+        val g = a.createGroup()
+        val add = a.add(bob.makeKeyPackages(1) + carol.makeKeyPackages(1), g); a.commitAccepted(g)
+        bob.process(add.welcome!!)
+        val frame = a.encrypt(ContentCodec.encode(ContentEnvelope.CallSig("id", NOW, ring)), g).ciphertext
+        val rig = Rig().start()
+        val sealer = ChatCallSealer(bob, InMemoryRepository(), TestMlsLock(), rig.bob1.clock, rig.bob1.manager, rig.bob1.handler)
+        assertFailsWith<CallSealException.WrongSender> { sealer.openRecoveringSender(frame) }
+    }
+
+    @Test
+    fun aRingInAnUnrecordedOneToOneGroupOpens() = runTest {
+        val a = FakeMlsEngine("acc-a/d1")
+        val bob = FakeMlsEngine("acc-bob/bob1")
+        val g = a.createGroup()
+        val add = a.add(bob.makeKeyPackages(1), g); a.commitAccepted(g)
+        bob.process(add.welcome!!)
+        val frame = a.encrypt(ContentCodec.encode(ContentEnvelope.CallSig("id", NOW, ring)), g).ciphertext
+        val rig = Rig().start()
+        val sealer = ChatCallSealer(bob, InMemoryRepository(), TestMlsLock(), rig.bob1.clock, rig.bob1.manager, rig.bob1.handler)
+        assertEquals("acc-a", sealer.openRecoveringSender(frame).senderAccountId)
     }
 
     @Test
@@ -98,7 +140,8 @@ class ChatCallSealerTest {
         val frame = a.encrypt(ContentCodec.encode(ContentEnvelope.CallSig("id", NOW, ring)), g).ciphertext
         val rig = Rig().start()
         val spy = SpyMlsEngine(bob) { true }
-        val sealer = ChatCallSealer(spy, InMemoryRepository(), TestMlsLock(), rig.bob1.clock, rig.bob1.manager, rig.bob1.handler)
+        val repo = InMemoryRepository().also { it.upsertConversation(oneToOne(g, "acc-a")) }
+        val sealer = ChatCallSealer(spy, repo, TestMlsLock(), rig.bob1.clock, rig.bob1.manager, rig.bob1.handler)
         // The sealer hands the engine the message's own group, so a normal frame opens.
         assertEquals("call-1", sealer.openRecoveringSender(frame).payload.callID)
         assertEquals(1, spy.processApplicationCalls)
