@@ -55,7 +55,10 @@ class DeviceSync(
         repo.chats().flatMap { repo.conversations(it.id) }.filter { it.active }
 
     /** A failed read flags the group's conversation (`Membership.markUnreadable`) and still throws. */
-    private suspend fun membersOf(group: GroupId): Set<String> = lock.withLock {
+    private suspend fun membersOf(group: GroupId): Set<String> = lock.withLock { membersHoldingLock(group) }
+
+    /** [membersOf] for a caller that already holds the lock (a commit's build step). */
+    private suspend fun membersHoldingLock(group: GroupId): Set<String> =
         try {
             mls.members(group).toSet()
         } catch (e: CancellationException) {
@@ -64,7 +67,6 @@ class DeviceSync(
             repo.conversationByGroup(group.raw)?.let { Membership.markUnreadable(it.serverId, repo) }
             throw e
         }
-    }
 
     // Own devices
 
@@ -138,7 +140,7 @@ class DeviceSync(
         try {
             conversations.postCommitWithRetry(conversation.serverId, group, claimed.keys.toList(), emptyList()) {
                 // Under the lock. After a stale epoch the inbox has been read: another own device may have added them.
-                val use = claimed.filterKeys { it in missing(mls.members(group).toSet()) }
+                val use = claimed.filterKeys { it in missing(membersHoldingLock(group)) }
                 if (use.isEmpty()) throw AlreadyDone()
                 mls.add(use.values.toList(), group)
             }
@@ -187,7 +189,7 @@ class DeviceSync(
         if (identity !in membersOf(group)) return
         try {
             conversations.postCommitWithRetry(conversation.serverId, group, emptyList(), listOf(deviceId)) {
-                if (identity !in mls.members(group)) throw AlreadyDone()
+                if (identity !in membersHoldingLock(group)) throw AlreadyDone()
                 mls.remove(listOf(identity), group)
             }
         } catch (_: AlreadyDone) {

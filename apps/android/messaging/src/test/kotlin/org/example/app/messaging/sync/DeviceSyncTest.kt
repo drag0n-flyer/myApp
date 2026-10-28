@@ -345,4 +345,33 @@ class DeviceSyncTest {
         assertFailsWith<IllegalStateException> { rig.ana1.deviceSync.reconcileOwnDevices() }
         assertTrue(Membership.isUnreadable(record.serverId, rig.ana1.repo))
     }
+
+    /** Fails the [nth] members read of [record]'s group from now on (1-based), and only that one. */
+    private fun TestDevice.failNthMembersRead(record: ConversationRecord, nth: Int) {
+        var reads = 0
+        mls.failMembers = { g -> if (g.raw == record.groupId && ++reads == nth) IllegalStateException("odd") else null }
+    }
+
+    /** The add's commit re-reads the members under the lock; a failed re-read flags the chat too. */
+    @Test
+    fun unreadableMembersWhileBuildingTheAddFlagTheChat() = runTest {
+        val (rig, record) = joined()
+        val ana3 = TestDevice(rig.server, "acc-ana", "ana3", rig.escrowKeys.publicKey)
+        ana3.api.uploadKeyPackages(ana3.mls.makeKeyPackages(3))
+        rig.ana1.failNthMembersRead(record, 2) // 1: the check before claiming; 2: the re-read inside the commit
+        runCatching { rig.ana1.deviceSync.reconcileOwnDevices() }
+        assertTrue(Membership.isUnreadable(record.serverId, rig.ana1.repo))
+    }
+
+    /** The removal's commit re-reads the members under the lock; a failed re-read flags the chat too. */
+    @Test
+    fun unreadableMembersWhileBuildingTheRemovalFlagTheChat() = runTest {
+        val (rig, record) = joined()
+        rig.server.revokeDevice("acc-ana", "ana2")
+        rig.ana1.reconcile()
+        rig.ana1.nowMs += tenMinutes
+        rig.ana1.failNthMembersRead(record, 3) // 1: the stale list; 2: the check before removing; 3: inside the commit
+        runCatching { rig.ana1.reconcile() }
+        assertTrue(Membership.isUnreadable(record.serverId, rig.ana1.repo))
+    }
 }
