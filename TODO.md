@@ -49,7 +49,7 @@ Extra work beyond the plans, in progress (each is reviewed before it merges; ETA
 | Port: a lost reply to a new chat's first commit no longer orphans it; one bad invite no longer stalls the inbox | `fix/ios-port-inbox` | 2nd fix round (when to give up on a new chat) on CI; review found and fixed a remote inbox stall | 1–2 h |
 | Port: calls check the answering device; ring (50 s) and setup (30 s) deadlines | `fix/ios-port-calls` | review approved; fix round (sender device wired through, 2 tests) on CI | 1 h |
 | Port: own devices kept in line with the account; old control messages expire after 24 h | `feat/ios-port-reconcile` | review approved; fix round (wiring, a faked "device revoked" can never wipe or remove) on CI | 1–2 h |
-| Android: the same own-device wiring, with the same protection | `android/reconcile-wiring` | review found the faked-revoke wipe; fixed, on CI | 1–2 h |
+| Android: the same own-device wiring, with the same protection | `android/reconcile-wiring` | merged (only a rejected session wipes a phone; switched on by Android I1) | done |
 | Port: sign-up sends the display name, email-code sign-up, read-receipts switch | `feat/ios-port-signup` | written, on CI, review next | 2–3 h |
 | Port: linking skips an unreadable or too-large contact list; link-code check compares the port | `feat/ios-port-linking` | written, on CI, review next | 2–3 h |
 | App ID in one file (`apps/apple/AppID.xcconfig`) and a stronger photo-privacy test | `chore/appid-xcconfig` | written, waiting for Mac CI | 1–2 h |
