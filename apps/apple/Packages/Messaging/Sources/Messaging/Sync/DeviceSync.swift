@@ -103,15 +103,23 @@ public actor DeviceSync {
         }
         var stillStale: Set<String> = []
         var failure: Error?
+        var removalFailed = false
         for conversation in try activeConversations() {
-            do {
-                if !others.isEmpty { try await addMissing(others, to: conversation) }
-                if trustworthy { try await removeUnlisted(listed, from: conversation, now: now, stillStale: &stillStale) }
-            } catch {
-                failure = failure ?? error
+            // Separate steps: a failed add (say, no KeyPackages for a new device) must not stop removals.
+            if !others.isEmpty {
+                do { try await addMissing(others, to: conversation) } catch { failure = failure ?? error }
+            }
+            if trustworthy {
+                do {
+                    try await removeUnlisted(listed, from: conversation, now: now, stillStale: &stillStale)
+                } catch {
+                    removalFailed = true
+                    failure = failure ?? error
+                }
             }
         }
-        if trustworthy, failure == nil {
+        // `stillStale` is complete only when every removal step ran (a failed add does not matter here).
+        if trustworthy, !removalFailed {
             // A device that is no longer in any group needs no mark.
             for (key, value) in try deps.repo.entries(prefix: Self.missingPrefix)
             where !value.isEmpty && !stillStale.contains(String(key.dropFirst(Self.missingPrefix.count))) {
