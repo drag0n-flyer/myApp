@@ -37,6 +37,22 @@ import Foundation
         #expect(l.capture == CaptureFormat(width: 480, height: 270, fps: 15))
     }
 
+    /// Mirrors the apps' bandwidth estimator ceiling (CallCore `MediaLogic.bweMaxBitrate`): the wire budget of the
+    /// lowest app mode whose Opus target covers the Opus rate, plus the video cap.
+    @Test func bweCeilingIsTheModeWireBudget() {
+        #expect(SenderLimits(LabPreset.ultraLow.knobs).bweMaxBitrateBps == 21_000)
+        #expect(SenderLimits(LabPreset.dataSaver.knobs).bweMaxBitrateBps == 30_000)
+        #expect(SenderLimits(LabPreset.balanced.knobs).bweMaxBitrateBps == 51_000 + 175_000)
+        var k = LabPreset.high.knobs
+        k.video = nil
+        #expect(SenderLimits(k).bweMaxBitrateBps == 75_000)
+        k.opusBitrate = 64_000
+        #expect(SenderLimits(k).bweMaxBitrateBps == 75_000)
+        k = LabPreset.ultraLow.knobs
+        k.senderMaxBitrate = 6_000
+        #expect(SenderLimits(k).bweMaxBitrateBps == 21_000)
+    }
+
     // MARK: signaling frames
     @Test func inviteFrameJSON() throws {
         let f = LabClientFrame.invite(callID: "c1", to: "acct", video: true, payload: "AAA")
