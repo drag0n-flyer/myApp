@@ -108,11 +108,12 @@ acct_b=$1; tok_b=$3
 unset APP_TURN_SECRET
 
 # Waits for pid $1 at most $2 seconds; kills it after that. Returns its exit status (124 on timeout).
+# Its counter is not `n`: the matrix loop numbers the runs with `n`.
 wait_for() {
-    n=0
+    waited=0
     while kill -0 "$1" 2>/dev/null; do
-        n=$((n + 1))
-        if [ "$n" -gt "$2" ]; then kill "$1" 2>/dev/null; wait "$1" 2>/dev/null; return 124; fi
+        waited=$((waited + 1))
+        if [ "$waited" -gt "$2" ]; then kill "$1" 2>/dev/null; wait "$1" 2>/dev/null; return 124; fi
         sleep 1
     done
     wait "$1"

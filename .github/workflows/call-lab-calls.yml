@@ -98,6 +98,7 @@ jobs:
           for f in "$RUNNER_TEMP"/runs/*/caller.log "$RUNNER_TEMP"/runs/*/callee.log; do
             [ -f "$f" ] && { echo "== $f"; tail -5 "$f"; }
           done
+          [ -f "$RUNNER_TEMP/runs/server.log" ] && { echo "== server.log"; grep -viE 'token|secret' "$RUNNER_TEMP/runs/server.log" | tail -15; }
           exit $rc
 
       # Summary Markdown and CSV only (under 1 MB); recordings, pcaps and logs are not uploaded.
