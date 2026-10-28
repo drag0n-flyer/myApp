@@ -5,13 +5,23 @@ import FoundationNetworking
 
 public enum Auth: Sendable { case none, session }
 
+/// Why the server ended the session. Ruling (decision log, 2026-10-28): only `revoked` wipes local data. It is a 4003
+/// close, or a 401 whose body is the server's own `unauthorized` error and that a second authenticated call
+/// (`GET /v1/me`) confirms; for a 401 on the WebSocket upgrade, whose body is not read, the second call decides.
+/// Any other 401 is `sessionEnded`: signed out, data kept.
+public enum SignOutReason: Equatable, Sendable { case revoked, sessionEnded }
+
 public actor ServerClient {
     let baseURL: URL
     let session: SessionStore
     private let transport: HTTPTransport
-    private var onUnauthorized: (@Sendable () async -> Void)?
+    private var onUnauthorized: (@Sendable (SignOutReason) async -> Void)?
     /// Set once a 401 has been handled; stays set until the next `SessionStore.save`.
     private var signedOutAtGeneration: Int?
+    /// The reason given for that sign-out; nil while its confirming call is in flight.
+    private var signedOutReason: SignOutReason?
+    /// A 4003 arrived while the confirming call was in flight: the sign-out wipes whatever the call says.
+    private var revokedWhileConfirming = false
 
     public init(host: String, session: SessionStore, transport: HTTPTransport = URLSessionTransport()) {
         var c = URLComponents()
@@ -30,7 +40,7 @@ public actor ServerClient {
     }
     #endif
 
-    public func setOnUnauthorized(_ f: @escaping @Sendable () async -> Void) {
+    public func setOnUnauthorized(_ f: @escaping @Sendable (SignOutReason) async -> Void) {
         onUnauthorized = f
     }
 
@@ -118,19 +128,64 @@ public actor ServerClient {
         if (200..<300).contains(response.statusCode) { return (data, response) }
 
         let err = Self.mapError(data: data, response: response)
-        if response.statusCode == 401 && auth == .session { await handleUnauthorized(sentAt: sentAt) }
+        if response.statusCode == 401 && auth == .session {
+            await handleUnauthorized(sentAt: sentAt, serverError: err.code == "unauthorized")
+        }
         throw err
     }
 
-    func handleUnauthorized(sentAt: Int) async {
+    /// Signs out once per session generation and tells the app why (`SignOutReason`). The confirming call runs
+    /// before the session is cleared, with the same token, and never comes back here.
+    @discardableResult
+    func handleUnauthorized(sentAt: Int, serverError: Bool, revoked: Bool = false) async -> SignOutReason {
         // A login (save) since the request was sent means the 401 is about an old token.
-        guard session.generation == sentAt else { return }
-        if signedOutAtGeneration == sentAt { return }
+        guard session.generation == sentAt else { return .sessionEnded }
+        if signedOutAtGeneration == sentAt {
+            // Already handled. A 4003 still upgrades it to a wipe: the pending one, or one that ended without.
+            guard revoked else { return .sessionEnded }
+            switch signedOutReason {
+            case nil: revokedWhileConfirming = true
+            case .sessionEnded?:
+                signedOutReason = .revoked
+                await onUnauthorized?(.revoked)
+            case .revoked?: break
+            }
+            return .revoked
+        }
+        // Set before the confirming call suspends this actor: a second 401 meanwhile does not sign out again.
         signedOutAtGeneration = sentAt
+        signedOutReason = nil
+        revokedWhileConfirming = false
+        var reason: SignOutReason
+        if revoked {
+            reason = .revoked
+        } else if serverError, await confirmUnauthorized() {
+            reason = .revoked
+        } else {
+            reason = .sessionEnded
+        }
+        // A login during the confirming call: the 401 was about the old token.
+        guard session.generation == sentAt else { return .sessionEnded }
+        if revokedWhileConfirming { reason = .revoked }
+        signedOutReason = reason
         // If the storage delete fails the cache is kept consistent with disk; the app is still
         // told to sign out and may retry clear().
         try? session.clear()
-        await onUnauthorized?()
+        await onUnauthorized?(reason)
+        return reason
+    }
+
+    /// True only when `GET /v1/me` with the current token is also the server's own 401 `unauthorized`.
+    private func confirmUnauthorized() async -> Bool {
+        guard let s = session.current, let url = URL(string: "/v1/me", relativeTo: baseURL)?.absoluteURL else {
+            return false
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "GET"
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.setValue("Bearer \(s.token)", forHTTPHeaderField: "Authorization")
+        guard let (data, response) = try? await transport.send(req) else { return false }
+        return response.statusCode == 401 && Self.mapError(data: data, response: response).code == "unauthorized"
     }
 
     private static func mapError(data: Data, response: HTTPURLResponse) -> ServerError {

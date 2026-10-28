@@ -11,8 +11,13 @@ extension ServerClient {
         return (url, ["Authorization": "Bearer \(s.token)"], session.generation)
     }
 
-    /// Close code 4003: same effect as a 401 on an authenticated call.
+    /// Close code 4003: the server revoked this device.
     func handleRevoked(generation: Int) async {
-        await handleUnauthorized(sentAt: generation)
+        await handleUnauthorized(sentAt: generation, serverError: true, revoked: true)
+    }
+
+    /// A 401 on the WebSocket upgrade (its body is not read): revoked only if a second call confirms it.
+    func handleUpgradeUnauthorized(generation: Int) async -> SignOutReason {
+        await handleUnauthorized(sentAt: generation, serverError: true)
     }
 }

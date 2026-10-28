@@ -56,7 +56,7 @@ public actor ReconcileScheduler {
     /// `device.revoked` is unsigned, and the server never sends it to the revoked device (that socket closes with
     /// 4003). So an event never removes or wipes by itself:
     /// - another device of this account: reconcile runs, and its two-lists-ten-minutes rule decides;
-    /// - this device: ignored. Only a 401 or 4003 (revoked session) may wipe this device; the client's sign-out
+    /// - this device: ignored. Only a 4003 or a confirmed 401 (revoked session) may wipe this device; the sign-out
     ///   path handles those. A device list never does: a wrong, partial or lagging list must not wipe.
     public func deviceRevoked(_ id: String) async {
         guard id != deviceID else { return }
