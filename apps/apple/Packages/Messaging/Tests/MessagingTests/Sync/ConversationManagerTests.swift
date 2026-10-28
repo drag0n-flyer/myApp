@@ -291,6 +291,12 @@ private struct BusyLockAfterCommit: HTTPTransport {
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         let reply = try await inner.send(request)
         guard request.httpMethod == "POST", request.url?.path.hasSuffix("/commits") == true else { return reply }
+        holdLockOnAnotherThread()
+        return reply
+    }
+
+    /// Returns once the other thread holds the lock. Synchronous: Darwin forbids a semaphore wait in async code.
+    private func holdLockOnAnotherThread() {
         let ready = DispatchSemaphore(value: 0)
         let seconds = Double(hold.components.seconds) + Double(hold.components.attoseconds) / 1e18
         Thread {
@@ -300,7 +306,6 @@ private struct BusyLockAfterCommit: HTTPTransport {
             }
         }.start()
         ready.wait()
-        return reply
     }
 }
 
