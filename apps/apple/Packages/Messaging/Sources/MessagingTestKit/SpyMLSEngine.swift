@@ -54,6 +54,11 @@ public final class SpyMLSEngine: MLSEngine, @unchecked Sendable {
     public func encrypt(_ plaintext: Data, in group: GroupID) async throws -> (ciphertext: Data, epoch: UInt64) { try await inner.encrypt(plaintext, in: group) }
     public func epoch(of group: GroupID) async throws -> UInt64 { try await inner.epoch(of: group) }
     public func exportSecret(group: GroupID, label: String, length: Int) async throws -> Data { try await inner.exportSecret(group: group, label: label, length: length) }
+    public func memberKeys(of group: GroupID) async throws -> [MemberKey] { try await inner.memberKeys(of: group) }
+    public func stageProcess(_ group: GroupID, _ message: Data) async throws -> StagedProcess { try await inner.stageProcess(group, message) }
+    public func confirm(_ staged: StagedProcess) async throws { try await inner.confirm(staged) }
+    public func discard(_ staged: StagedProcess) { inner.discard(staged) }
+    public func decryptApplication(_ group: GroupID, _ message: Data) async throws -> ApplicationMessage { try await inner.decryptApplication(group, message) }
     public func members(of group: GroupID) async throws -> [String] {
         if lock.withLock({ membersFail }) { throw MLSError.storage("injected failure") }
         return try await inner.members(of: group)

@@ -24,6 +24,9 @@ sealed interface RingOutcome {
     /** The call ended or was cancelled before it was answered: no ring, a "Missed call" for that chat. */
     class MissedBeforeAnswer(val callId: String, val chatId: String, val callerName: String) : RingOutcome
 
+    /** Show nothing at all: the call is already over (answered or declined on another device), or the caller is blocked. */
+    object Ignore : RingOutcome
+
     /** The ring could not be opened or read. */
     object Drop : RingOutcome
 }
