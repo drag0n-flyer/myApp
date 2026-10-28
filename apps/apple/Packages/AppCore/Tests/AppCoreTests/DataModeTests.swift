@@ -15,7 +15,7 @@ import Testing
 }
 
 @Test func estimates() {
-    #expect(DataMode.allCases.map(\.estimatedMBPer10Minutes) == [2, 3, 5, 8])
+    #expect(DataMode.allCases.map(\.estimatedMBPer10Minutes) == [2, 3, 5, 6])
     #expect(DataMode.dataSaver.bytesPerSecond == 5_000)
     #expect(DataFormat.estimate(.ultraLow) == "~2 MB per 10 min")
 }

@@ -1,0 +1,13 @@
+run_id,label,preset,path,profile,noise_snr_db,client_b,connect_ms,first_audio,disconnected,header_ok,bytes_per_min,mb_per_10min,kbps_per_direction,callee_mb_per_10min,pair,jitter,loss_pct,concealed_pct,rtt_ms_median,visqol_moslqo,dnsmos_sig,dnsmos_bak,dnsmos_ovrl,result,reasons
+01-ultraLow-direct-clean,"CI, simulated",ultraLow,direct,clean,,mac-headless,1139,1,0,1,178382.5,1.78,11.9,,host/host,not simulated,0.0,0.0,0.0,not measured,not measured,not measured,not measured,pass,
+02-dataSaver-direct-clean,"CI, simulated",dataSaver,direct,clean,,mac-headless,1055,1,0,1,274797.5,2.75,18.3,,host/host,not simulated,0.0,0.0,0.0,not measured,not measured,not measured,not measured,pass,
+03-balanced-direct-clean,"CI, simulated",balanced,direct,clean,,mac-headless,1060,1,0,1,409842.6,4.1,27.3,,host/host,not simulated,0.0,0.02,0.0,not measured,not measured,not measured,not measured,pass,
+04-high-direct-clean,"CI, simulated",high,direct,clean,,mac-headless,1049,1,0,1,503917.0,5.04,33.6,,host/host,not simulated,0.0,0.0,0.0,not measured,not measured,not measured,not measured,pass,
+05-ultraLow-direct-clean,"CI, simulated",ultraLow,direct,clean,,mac-headless,1088,1,0,1,176408.7,1.76,11.7,,host/host,not simulated,0.0,0.01,0.0,not measured,not measured,not measured,not measured,pass,
+06-dataSaver-direct-clean,"CI, simulated",dataSaver,direct,clean,,mac-headless,1184,1,0,1,275848.5,2.76,18.4,,host/host,not simulated,0.0,0.0,0.0,not measured,not measured,not measured,not measured,pass,
+07-balanced-direct-clean,"CI, simulated",balanced,direct,clean,,mac-headless,1127,1,0,1,409660.7,4.1,27.3,,host/host,not simulated,0.0,0.0,0.0,not measured,not measured,not measured,not measured,pass,
+08-high-direct-clean,"CI, simulated",high,direct,clean,,mac-headless,1164,1,0,1,498715.7,4.99,33.3,,host/host,not simulated,0.97,0.6,1.0,not measured,not measured,not measured,not measured,pass,
+09-ultraLow-direct-clean,"CI, simulated",ultraLow,direct,clean,,mac-headless,1241,1,0,1,224751.7,2.25,15.0,,host/host,not simulated,0.0,0.0,0.0,not measured,not measured,not measured,not measured,pass,
+10-dataSaver-direct-clean,"CI, simulated",dataSaver,direct,clean,,mac-headless,1065,1,0,1,257724.8,2.58,17.2,,host/host,not simulated,0.0,0.01,0.0,not measured,not measured,not measured,not measured,pass,
+11-balanced-direct-clean,"CI, simulated",balanced,direct,clean,,mac-headless,1118,1,0,1,410188.8,4.1,27.3,,host/host,not simulated,0.0,0.0,0.0,not measured,not measured,not measured,not measured,pass,
+12-high-direct-clean,"CI, simulated",high,direct,clean,,mac-headless,1088,1,0,1,503685.0,5.04,33.6,,host/host,not simulated,0.0,0.0,0.0,not measured,not measured,not measured,not measured,pass,
