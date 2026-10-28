@@ -21,13 +21,14 @@ public enum DataMode: Int, CaseIterable, Comparable, Codable, Sendable {
         }
     }
 
-    /// Estimated audio data per 10 minutes, both directions. Placeholder until Phase 0 measurements.
+    /// Estimated audio data per 10 minutes, both directions.
+    /// Measured 2026-10-28 (CI, simulated), see docs/measurements/2026-10-28-data-use-ci.md
     public var estimatedMBPer10Minutes: Int {
         switch self {
         case .ultraLow: 2
         case .dataSaver: 3
         case .balanced: 5
-        case .high: 8
+        case .high: 6
         }
     }
 

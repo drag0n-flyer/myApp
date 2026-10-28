@@ -4,13 +4,16 @@ package org.example.app.core.calls
 enum class DataMode {
     UltraLow, DataSaver, Balanced, High;
 
-    /** Estimated audio data per 10 minutes, both directions. Placeholder until Phase 0 measurements. */
+    /**
+     * Estimated audio data per 10 minutes, both directions.
+     * Measured 2026-10-28 (CI, simulated), see docs/measurements/2026-10-28-data-use-ci.md
+     */
     val estimatedMBPer10Minutes: Int
         get() = when (this) {
             UltraLow -> 2
             DataSaver -> 3
             Balanced -> 5
-            High -> 8
+            High -> 6
         }
 
     val bytesPerSecond: Int get() = estimatedMBPer10Minutes * 1_000_000 / 600

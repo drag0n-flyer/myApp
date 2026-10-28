@@ -51,7 +51,45 @@ test_turnserver_options_exist() {
     check turnserver_cli_off yes "$r"
 }
 
+# The matrix: weekly (default) is the 7-call L10a matrix; estimates (L11) is every preset, direct,
+# clean, 3 runs each, round by round, so a drift on the runner falls on every preset alike.
+calls() { # extra arguments
+    make_app "$tmp/CallLab.app" CallLab
+    sh "$S" --app "$tmp/CallLab.app" --server s --stimulus x.wav --out o --dry-run "$@" 2>&1 | sed -n 's/^call //p'
+}
+
+test_matrix_weekly_default() {
+    w='ultraLow direct clean noise=- 300s
+balanced direct clean noise=- 300s
+ultraLow relay clean noise=- 300s
+balanced relay clean noise=- 300s
+ultraLow direct loss5 noise=- 300s
+balanced direct cap32 noise=- 300s
+balanced direct 3g noise=- 300s'
+    check matrix_weekly_default "$w" "$(LAB_SECONDS= calls)"
+    check matrix_weekly_named "$w" "$(LAB_SECONDS= calls --matrix weekly)"
+}
+
+test_matrix_estimates() {
+    round='ultraLow direct clean noise=- 300s
+dataSaver direct clean noise=- 300s
+balanced direct clean noise=- 300s
+high direct clean noise=- 300s'
+    check matrix_estimates "$round
+$round
+$round" "$(LAB_SECONDS= calls --matrix estimates)"
+}
+
+test_matrix_unknown_fails() {
+    make_app "$tmp/CallLab.app" CallLab
+    out=$(sh "$S" --app "$tmp/CallLab.app" --server s --stimulus x.wav --out o --dry-run --matrix nope 2>&1); rc=$?
+    check matrix_unknown_fails "64 unknown matrix: nope (weekly or estimates)" "$rc $out"
+}
+
 test_binary_from_info_plist
+test_matrix_weekly_default
+test_matrix_estimates
+test_matrix_unknown_fails
 test_missing_info_plist_fails
 test_turnserver_options_exist
 if [ "$fail" -eq 0 ]; then echo "PASS $total/$total"; else echo "FAIL $((total - fail))/$total"; exit 1; fi
