@@ -2,6 +2,8 @@ package org.example.app.ui.contacts
 
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -43,7 +45,8 @@ fun ContactsScreen(
     val locale = LocalLocale.current.platformLocale
     val collator = remember(locale) { java.text.Collator.getInstance(locale) }
     val sections = remember(contacts, locale) {
-        contacts.sortedWith(compareBy(collator) { it.displayName }).groupBy { it.displayName.take(1).uppercase(locale) }.toSortedMap(collator)
+        contacts.sortedWith(compareBy(collator) { it.displayName }).groupBy { sectionLetter(it.displayName, locale) }
+            .toSortedMap(compareBy<String> { it == "#" }.thenComparing(collator))
     }
     val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     Scaffold(
@@ -67,7 +70,7 @@ fun ContactsScreen(
             }
             for ((letter, people) in sections) {
                 item(key = "h-$letter") {
-                    Text(letter, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp))
+                    Text(letter, modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp).semantics { heading() }, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
                 }
                 items(people, key = { it.id }) { person ->
                     ListItem(
@@ -80,4 +83,23 @@ fun ContactsScreen(
             }
         }
     }
+}
+
+/**
+ * The section a name sorts under: its first letter without accents ("Émile" under "E"), taken by code point so an
+ * emoji is never split. Anything that does not start with a letter (emoji, digits, symbols) goes under "#".
+ * Only Latin, Greek and Cyrillic are decomposed, so Hangul and kana keep their own first character.
+ */
+internal fun sectionLetter(name: String, locale: java.util.Locale): String {
+    val trimmed = name.trim()
+    if (trimmed.isEmpty()) return "#"
+    val first = trimmed.codePointAt(0)
+    if (!Character.isLetter(first)) return "#"
+    val script = Character.UnicodeScript.of(first)
+    val base = if (script == Character.UnicodeScript.LATIN || script == Character.UnicodeScript.GREEK || script == Character.UnicodeScript.CYRILLIC) {
+        val stripped = java.text.Normalizer.normalize(String(Character.toChars(first)), java.text.Normalizer.Form.NFD)
+            .filter { Character.getType(it) != Character.NON_SPACING_MARK.toInt() }
+        if (stripped.isEmpty()) first else stripped.codePointAt(0)
+    } else first
+    return String(Character.toChars(base)).uppercase(locale)
 }

@@ -52,7 +52,9 @@ import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -300,7 +302,7 @@ private fun SimulateMenu(viewModel: CallViewModel, modifier: Modifier = Modifier
             Icon(painterResource(R.drawable.ic_sync), contentDescription = stringResource(R.string.call_simulate), tint = Color.White)
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            @Composable fun item(label: Int, action: () -> Unit) = DropdownMenuItem(text = { Text(stringResource(label)) }, onClick = { open = false; action() })
+            @Composable fun item(label: Int, action: () -> Unit) = DropdownMenuItem(text = { Text(stringResource(label)) }, onClick = { open = false; action() }, modifier = Modifier.semantics { role = Role.Button })
             item(R.string.call_simulate_good) { viewModel.simulate(SimulatedNetwork.Good) }
             item(R.string.call_simulate_weak) { viewModel.simulate(SimulatedNetwork.Weak) }
             item(R.string.call_simulate_very_weak) { viewModel.simulate(SimulatedNetwork.VeryWeak) }

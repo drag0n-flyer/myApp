@@ -73,4 +73,15 @@ class ChatFoldersScreenTest {
         rule.onNodeWithContentDescription("Move Personal up").assertDoesNotExist()
         rule.onNodeWithContentDescription("Move Family down").assertDoesNotExist()
     }
+
+    @Test
+    fun openDialogsSurviveRotation() {
+        val tester = androidx.compose.ui.test.junit4.StateRestorationTester(rule)
+        tester.setContent { AppTheme { ChatFoldersScreen(store, onBack = {}) } }
+        rule.onNodeWithContentDescription("Delete Work").performClick()
+        rule.onNodeWithText("Delete this folder?").assertIsDisplayed()
+        tester.emulateSavedInstanceStateRestore()
+        rule.onNodeWithText("Delete this folder?").assertIsDisplayed()
+        rule.onNodeWithText("Work will be removed.", substring = true).assertIsDisplayed()
+    }
 }

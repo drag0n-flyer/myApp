@@ -3,6 +3,8 @@ package org.example.app.ui.chatlist
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -59,6 +61,7 @@ fun ChatListScreen(
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.mark_all_read)) },
                                 onClick = { menuOpen = false; viewModel.markAllRead() },
+                                modifier = Modifier.semantics { role = Role.Button },
                             )
                         }
                     }

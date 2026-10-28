@@ -1,10 +1,5 @@
 package org.example.app.ui.settings
 
-import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.runtime.saveable.listSaver
-import androidx.compose.runtime.snapshots.SnapshotStateList
-import androidx.compose.runtime.toMutableStateList
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.clickable
@@ -15,16 +10,13 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -79,18 +71,9 @@ fun ChatFoldersScreen(store: ChatStore, onBack: () -> Unit, modifier: Modifier =
     }
 
     renaming?.let { folder ->
-        var name by rememberSaveable(folder.id) { mutableStateOf(folder.name) }
-        AlertDialog(
-            onDismissRequest = { renamingId = null },
-            title = { Text(stringResource(R.string.folders_rename)) },
-            text = { OutlinedTextField(name, { name = it }, label = { Text(stringResource(R.string.folders_name)) }, singleLine = true) },
-            confirmButton = {
-                TextButton(enabled = name.isNotBlank(), onClick = { store.renameFolder(folder.id, name.trim()); renamingId = null }) {
-                    Text(stringResource(R.string.folders_save))
-                }
-            },
-            dismissButton = { TextButton(onClick = { renamingId = null }) { Text(stringResource(R.string.cancel)) } },
-        )
+        FormDialog(onDismiss = { renamingId = null }) {
+            RenameFolderForm(folder.name, onSave = { store.renameFolder(folder.id, it); renamingId = null }, onCancel = { renamingId = null })
+        }
     }
     deleting?.let { folder ->
         AlertDialog(
@@ -102,29 +85,12 @@ fun ChatFoldersScreen(store: ChatStore, onBack: () -> Unit, modifier: Modifier =
         )
     }
     if (creating) {
-        var name by rememberSaveable { mutableStateOf("") }
-        val chosen = rememberSaveable(saver = listSaver<SnapshotStateList<String>, String>(save = { it.toList() }, restore = { it.toMutableStateList() })) { mutableStateListOf<String>() }
-        AlertDialog(
-            onDismissRequest = { creating = false },
-            title = { Text(stringResource(R.string.folders_new)) },
-            text = {
-                androidx.compose.foundation.layout.Column {
-                    OutlinedTextField(name, { name = it }, label = { Text(stringResource(R.string.folders_name)) }, singleLine = true)
-                    SectionHeader(stringResource(R.string.folders_chats))
-                    androidx.compose.foundation.lazy.LazyColumn(Modifier.heightIn(max = 240.dp)) {
-                        items(chats, key = { it.id }) { chat ->
-                            val on = chat.id in chosen
-                            SwitchRow(store.contact(chat.contactId)?.displayName ?: chat.contactId, on) { v -> if (v) chosen.add(chat.id) else chosen.remove(chat.id) }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(enabled = name.isNotBlank(), onClick = { store.addFolder(name.trim(), chosen.toSet()); creating = false }) {
-                    Text(stringResource(R.string.folders_create))
-                }
-            },
-            dismissButton = { TextButton(onClick = { creating = false }) { Text(stringResource(R.string.cancel)) } },
-        )
+        FormDialog(onDismiss = { creating = false }) {
+            NewFolderForm(
+                chats.map { it.id to (store.contact(it.contactId)?.displayName ?: it.contactId) },
+                onCreate = { name, ids -> store.addFolder(name, ids); creating = false },
+                onCancel = { creating = false },
+            )
+        }
     }
 }
