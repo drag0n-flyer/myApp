@@ -56,6 +56,8 @@ class InMemoryRepository : Repository {
 
     @Volatile var failNextTransactions = 0
     var onInsertRaw: ((List<RawInboxRecord>) -> Unit)? = null
+    /** Throws its result instead of writing the `kv` key, when not null (a failed database write). */
+    @Volatile var failSet: ((String) -> Throwable?)? = null
 
     /** Number of outermost transactions that committed. */
     var commits = 0
@@ -254,7 +256,7 @@ class InMemoryRepository : Repository {
 
     // key-value
     override fun get(key: String) = tx { s.kv[key] }
-    override fun set(key: String, value: ByteArray) = tx { s.kv[key] = value }
+    override fun set(key: String, value: ByteArray) = tx { failSet?.invoke(key)?.let { throw it }; s.kv[key] = value }
     override fun entries(prefix: String) = tx { s.kv.filterKeys { it.startsWith(prefix) } }
 
     override fun wipe() = tx { s = State() }

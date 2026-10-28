@@ -584,6 +584,23 @@ class ConversationManagerTest {
         assertFalse(Membership.membersUnreadable("acc-bob", rig.ana1.repo))
     }
 
+    /** The members cannot be read and the flag cannot be written either: that database error is not swallowed. */
+    @Test
+    fun failedUnreadableFlagWriteAfterACommitIsNotSwallowed() = runTest {
+        val rig = Rig().start()
+        val record = rig.ana1.manager.create("acc-bob")
+        val group = GroupId(record.groupId)
+        rig.ana1.mls.failMembers = { MlsException.Crypto("unreadable credential") }
+        rig.ana1.repo.failSet = { key -> if (key.startsWith(Membership.UNREADABLE_PREFIX)) IllegalStateException("disk full") else null }
+        val e = assertFailsWith<IllegalStateException> {
+            rig.ana1.manager.postCommitWithRetry(record.serverId, group, emptyList(), listOf("ana2")) {
+                rig.ana1.mls.remove(listOf("acc-ana/ana2"), group)
+            }
+        }
+        assertEquals("disk full", e.message)
+        assertEquals(2L, rig.ana1.repo.conversation(record.serverId)?.epoch, "the commit itself was merged and stored")
+    }
+
     /** `update` flags the conversation when the read fails and still throws; a database-only `apply` never sets it. */
     @Test
     fun updateFlagsOnFailureAndClearsOnSuccess() = runTest {
