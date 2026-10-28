@@ -344,9 +344,20 @@ class ConversationManager(
             critical {
                 mls.commitAccepted(group)
                 repo.setEpoch(serverId, newEpoch)
-                // Best effort: the next update compares the whole stored state. A failed read is not silent: `update`
-                // flags the conversation, which hides the safety number until a read works.
-                repo.conversation(serverId)?.let { c -> runCatching { membership.update(c, repo) } }
+                // Best effort: the next update compares the whole stored state. A failed read is not silent: it flags
+                // the conversation, which hides the safety number until a read works. Database errors (the flag's
+                // write included) are thrown, like everywhere else here.
+                repo.conversation(serverId)?.let { c ->
+                    val keys = try {
+                        membership.keys(group)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        Membership.markUnreadable(c.serverId, repo)
+                        null
+                    }
+                    keys?.let { repo.transaction { membership.apply(it, c, repo) } }
+                }
             }
             return newEpoch
         }

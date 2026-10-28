@@ -58,7 +58,10 @@ class NoteSlot {
  * with [VoiceNoteValidator], and only then writes the file. Pure Kotlin, so it is tested with synthetic frames.
  */
 object VoiceNoteFinisher {
-    /** The standard pre-skip, 312 samples in 48 kHz units (RFC 7845), always written, as on the iPhone. The encoder's own header is not read. */
+    /**
+     * The standard pre-skip, 312 samples in 48 kHz units (RFC 7845): the bundled encoder's, as on the iPhone. A phone
+     * encoder that reports its own pre-skip gets that one instead ([VoiceEncoder.preSkip]).
+     */
     const val DEFAULT_PRE_SKIP = 312
 
     /**
@@ -67,14 +70,14 @@ object VoiceNoteFinisher {
      */
     const val MAX_CAPTURE_SAMPLES: Long = (MediaPlan.Voice.MAX_DURATION * MediaPlan.Voice.SAMPLE_RATE).toLong() - 2 * 320
 
-    fun finish(packets: List<ByteArray>, outputDir: File): StopResult {
+    fun finish(packets: List<ByteArray>, outputDir: File, preSkip: Int = DEFAULT_PRE_SKIP): StopResult {
         if (packets.isEmpty()) return StopResult.Failed(VoiceFailure.Encoder)
         val samples = packets.sumOf { (OpusPacket.samples48k(it) ?: return StopResult.Failed(VoiceFailure.Encoder)).toLong() }
         if (MediaPlan.Voice.tooShort(samples / 48_000.0)) return StopResult.TooShort
         val bytes: ByteArray
         val stream: OggOpusStream
         try {
-            bytes = OggOpusWriter.write(packets, DEFAULT_PRE_SKIP, MediaPlan.Voice.SAMPLE_RATE.toLong(), MediaPlan.Voice.CHANNELS)
+            bytes = OggOpusWriter.write(packets, preSkip, MediaPlan.Voice.SAMPLE_RATE.toLong(), MediaPlan.Voice.CHANNELS)
             stream = VoiceNoteValidator.validate(bytes)
         } catch (e: VoiceNoteException) {
             return StopResult.Failed(VoiceFailure.Invalid)

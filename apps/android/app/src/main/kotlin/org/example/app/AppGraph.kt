@@ -272,13 +272,19 @@ class AppGraph(
     /** Test seam only: runs after an open read the stored session and before it takes the lock. */
     internal var beforeOpenLock: suspend () -> Unit = {}
 
+    /** Test seam only: runs after an open checked for a pending wipe and before it took the revocation count. */
+    internal var beforeRevocationSnapshot: suspend () -> Unit = {}
+
     private suspend fun openLocked(): LiveSession? {
         if (wipeRunning) return null
         liveSession?.let { return it }
         if (local.pending != null) quietly("pending wipe") { finishPendingWipe() }
         if (local.pending != null) return null
+        beforeRevocationSnapshot()
         // Taken with the running check: a revocation wipe that starts and ends before the lock below is still seen.
         val revoked = synchronized(this@AppGraph) { if (wipeRunning) return null; revocations }
+        // A wipe that ran and failed between the check above and the count leaves only its marker: nothing opens on it.
+        if (local.pending != null) return null
         val stored = sessions.current ?: return null
         val device = LocalDevice(stored.accountId, stored.deviceId)
         if (!local.ownedBy(device.identity)) {

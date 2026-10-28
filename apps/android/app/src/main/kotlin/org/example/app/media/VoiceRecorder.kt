@@ -45,6 +45,14 @@ class VoiceRecorder(
     @Volatile var lastEncoder: VoiceEncoderKind? = null
         private set
 
+    /** The pre-skip written in the last finished note's Ogg header (48 kHz samples). */
+    @Volatile var lastPreSkip: Int? = null
+        private set
+
+    /** The pre-skip the last note's phone encoder reported in its own `OpusHead`; null for the bundled encoder or none. */
+    @Volatile var lastHeaderPreSkip: Int? = null
+        private set
+
     internal var encoderChoice = VoiceEncoderChoice.PlatformFirst
 
     fun start(): StartResult {
@@ -132,7 +140,7 @@ class VoiceRecorder(
                 // Stopped before the microphone delivered anything: too short, not an encoder failure (the bundled
                 // encoder emits no packet for no audio).
                 s.samples == 0L && s.packets.isEmpty() -> StopResult.TooShort
-                else -> VoiceNoteFinisher.finish(s.packets, outputDir)
+                else -> VoiceNoteFinisher.finish(s.packets, outputDir, s.encoder.preSkip.also { lastPreSkip = it; lastHeaderPreSkip = s.encoder.headerPreSkip })
             },
         )
     }
