@@ -33,6 +33,7 @@ import org.example.app.messaging.ports.Repository
  *   current epoch. It takes the lock itself, so it is never called from inside [critical]. It also takes the inbox
  *   processor's own (non-re-entrant) mutexes, so [postCommitWithRetry] and [create] must never be called from inside
  *   `InboxProcessor.drain` (D5, D7).
+ * @param log Logs IDs only, never content.
  */
 class ConversationManager(
     private val me: LocalDevice,
@@ -44,6 +45,7 @@ class ConversationManager(
     private val membership: Membership,
     private val escrow: EscrowSealer? = null,
     private val syncOnce: suspend () -> Unit,
+    private val log: (String) -> Unit = { System.err.println(it) },
 ) {
     /** This device's account. */
     val localAccountId: String get() = me.accountId
@@ -80,9 +82,12 @@ class ConversationManager(
         pendingCreate(contactId)?.let { serverId ->
             try {
                 return finishCreate(serverId, resumed = true)
-            } catch (e: ServerException) {
-                // The server refused that conversation for good: it was abandoned, so start a new one below.
-                if (PendingCreate.isPending(repo, serverId)) throw e
+            } catch (e: Exception) {
+                if (e !is ServerException && e !is SyncException.CreateLost) throw e
+                // Start a new one below only when that conversation was abandoned (the server refused it for good, or
+                // the engine lost its commit): neither pending nor active. An active one (a later step failed, such
+                // as the `mode` post) is kept: a new group would leave the peer holding the first Welcome.
+                if (PendingCreate.isPending(repo, serverId) || activeOrNull(serverId) != null) throw e
             }
         }
 
@@ -141,7 +146,10 @@ class ConversationManager(
      *
      * - [resumed]: read the inbox first (the echo activates the row), then ask the server's epoch.
      * - `200`, or the server past epoch 0: merge and activate.
-     * - A definite rejection: `commitRejected`; the row stays inactive and is never used.
+     * - A definite rejection of the post (4xx other than 408, 429, `stale_epoch`): not applied, so no Welcome went
+     *   out; abandoned (`commitRejected`; the row stays inactive and is never used). On the epoch check only a `404`
+     *   abandons.
+     * - The engine lost the commit although the server applied it: logged and abandoned (`CreateLost`).
      * - An unknown outcome: read the inbox; still pending means the error is thrown and the create stays pending.
      */
     private suspend fun finishCreate(serverId: String, resumed: Boolean): ConversationRecord {
@@ -177,11 +185,14 @@ class ConversationManager(
         return announced(acceptCreate(serverId))
     }
 
-    /** The server's epoch; a definite rejection (the conversation is gone) abandons the create. */
+    /**
+     * The server's epoch. Only a `404` (the conversation is gone) abandons the create: the commit may already be
+     * applied, so any other refusal (a `403` included) keeps it pending.
+     */
     private suspend fun serverEpoch(serverId: String): Long = try {
         server.conversation(serverId).epoch
     } catch (e: ServerException) {
-        if (isDefiniteRejection(e.status)) abandonCreate(serverId)
+        if (isGone(e.status)) abandonCreate(serverId)
         throw e
     }
 
@@ -197,12 +208,26 @@ class ConversationManager(
     private fun activeOrNull(serverId: String): ConversationRecord? =
         repo.conversation(serverId)?.takeIf { it.active && !PendingCreate.isPending(repo, serverId) }
 
-    /** The server applied the add commit: merge it (a no-op when the echo already did) and activate the row. */
-    private suspend fun acceptCreate(serverId: String): ConversationRecord = critical {
+    /**
+     * The server applied the add commit: merge it (a no-op when the echo already did) and activate the row. When the
+     * engine lost the commit (still at epoch 0), the create is logged (IDs only) and abandoned: [SyncException.CreateLost].
+     */
+    private suspend fun acceptCreate(serverId: String): ConversationRecord = try {
+        activateCreate(serverId)
+    } catch (e: SyncException.CreateLost) {
+        // Abandoned outside the lock (`abandonCreate` takes it).
+        log("create_lost conversation=$serverId")
+        abandonCreate(serverId)
+        throw e
+    }
+
+    private suspend fun activateCreate(serverId: String): ConversationRecord = critical {
         val record = repo.conversation(serverId) ?: throw SyncException.CommitInFlight
         val group = GroupId(record.groupId)
         mls.commitAccepted(group)
         val epoch = mls.epoch(group)
+        // The engine must have merged the add commit; still at epoch 0 means it lost it. Never activated at epoch 0.
+        if (epoch <= 0) throw SyncException.CreateLost
         val keys = membership.keys(group)
         repo.transaction {
             val active = (repo.conversation(serverId) ?: record).copy(active = true, epoch = epoch)
@@ -234,11 +259,15 @@ class ConversationManager(
      * Called by the inbox processor under the lock, after `process` returned `Joined`. [serverMode] was fetched before
      * the lock. `innerMode` stays null until the creator's `mode` envelope arrives.
      * @throws SyncException.NoPeer when no member belongs to another account.
-     * @throws SyncException.ConversationRebound when [serverConversationId] is already bound to another group.
+     * @throws SyncException.ConversationRebound when [serverConversationId] is already bound to another group, or
+     *   [group] to another server conversation.
      */
     suspend fun planJoin(group: GroupId, serverConversationId: String, serverMode: String): JoinPlan {
-        // A server ID already bound to another group is never rebound (it would move that chat's messages).
+        // A server ID already bound to another group is never rebound (it would move that chat's messages), and a group
+        // already bound to another server ID is never bound twice (`group_id` is unique: the write would fail on every
+        // retry and stall the inbox). Anyone who shares a chat with me knows its group ID and can build such a Welcome.
         repo.conversation(serverConversationId)?.let { if (!it.groupId.contentEquals(group.raw)) throw SyncException.ConversationRebound }
+        repo.conversationByGroup(group.raw)?.let { if (it.serverId != serverConversationId) throw SyncException.ConversationRebound }
         val keys = membership.keys(group)
         val peer = keys.map { it.identity.substringBefore('/') }.toSet().minus(me.accountId).minOrNull()
             ?: throw SyncException.NoPeer
@@ -361,5 +390,8 @@ class ConversationManager(
 
         /** A 4xx that means the server did not apply the request. 408 and 429 may have been applied or retried. */
         fun isDefiniteRejection(status: Int) = status in 400..499 && status != 408 && status != 429
+
+        /** The conversation no longer exists on the server. */
+        fun isGone(status: Int) = status == 404
     }
 }

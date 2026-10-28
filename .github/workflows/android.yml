@@ -259,6 +259,8 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
+      - name: Fetch the RNNoise model (checksum verified)
+        run: scripts/android-fetch-rnnoise-model.sh
       - name: Assemble the debug build
         working-directory: apps/android
         run: ./gradlew --no-daemon assembleDebug
@@ -291,6 +293,8 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: gradle/actions/setup-gradle@v4
+      - name: Fetch the RNNoise model (checksum verified)
+        run: scripts/android-fetch-rnnoise-model.sh
       - name: Build the unsigned release bundle (no signing properties are set on CI)
         working-directory: apps/android
         run: ./gradlew --no-daemon :app:bundleRelease :app:exportRuntimeDependencies

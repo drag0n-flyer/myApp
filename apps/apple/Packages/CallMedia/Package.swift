@@ -16,7 +16,9 @@ var targets: [Target] = [
         name: "RNNoise",
         path: "Sources/RNNoise",
         publicHeadersPath: "include",
-        cSettings: [.define("RNNOISE_EXPORT="), .define("NDEBUG"), .headerSearchPath(".")]
+        // DISABLE_DEBUG_FLOAT is upstream's default (configure.ac): the float debug copy of the
+        // weights is left out, so the model runs on its int8 weights (~3.5 MB instead of ~15 MB).
+        cSettings: [.define("RNNOISE_EXPORT="), .define("NDEBUG"), .define("DISABLE_DEBUG_FLOAT"), .headerSearchPath(".")]
     ),
     .target(
         name: "NoiseSuppression",

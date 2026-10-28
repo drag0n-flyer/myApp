@@ -16,6 +16,8 @@ android {
     defaultConfig {
         applicationId = appId
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // LiveSmokeTest runs only when the android-emulator job has started the Go server on the host (-PliveServer=true).
+        providers.gradleProperty("liveServer").orNull?.let { testInstrumentationRunnerArguments["liveServer"] = it }
     }
 
     buildFeatures { compose = true }
@@ -150,6 +152,9 @@ dependencies {
     implementation(libs.zxing.core)
     implementation(libs.androidx.biometric)
     implementation(libs.kotlinx.coroutines.android)
+    // Already in the app through :net and :store; the live wiring (task I1) builds their clients and closes the database.
+    implementation(libs.okhttp)
+    implementation(libs.androidx.room.runtime)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
