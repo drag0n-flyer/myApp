@@ -12,7 +12,9 @@ data class NewSession(
     @SerialName("accountID") val accountID: String,
     @SerialName("deviceID") val deviceID: String,
     @SerialName("sessionToken") val sessionToken: String,
-)
+) {
+    override fun toString() = "NewSession(accountID=$accountID, deviceID=$deviceID)"
+}
 
 @Serializable
 data class Me(
@@ -29,7 +31,10 @@ data class LinkTicket(
     @SerialName("secret") val secret: String,
     @SerialName("claimToken") val claimToken: String,
     @SerialName("expiresAt") @Serializable(with = InstantSerializer::class) val expiresAt: Instant,
-)
+) {
+    /** The secret and claim token are never printed. */
+    override fun toString() = "LinkTicket(linkID=$linkID, expiresAt=$expiresAt)"
+}
 
 @Serializable
 data class LinkInfo(

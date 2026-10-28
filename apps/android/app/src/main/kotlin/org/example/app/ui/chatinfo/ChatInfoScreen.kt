@@ -1,5 +1,6 @@
 package org.example.app.ui.chatinfo
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -24,7 +25,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import org.example.app.R
 import org.example.app.core.chats.ChatStore
 import org.example.app.core.chats.MessageContent
+import org.example.app.ui.usernameText
 import org.example.app.ui.Avatar
 import org.example.app.ui.keyString
 
@@ -59,8 +60,8 @@ fun ChatInfoScreen(
     onBlocked: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val chats by store.chats.collectAsState()
-    val requests by store.requests.collectAsState()
+    val chats by store.chats.collectAsStateWithLifecycle()
+    val requests by store.requests.collectAsStateWithLifecycle()
     var revision by remember { mutableIntStateOf(0) }
     // Read again after the lists change or the verified flag is toggled.
     val chat = remember(chats, requests, revision) { store.chat(chatId) }
@@ -87,7 +88,7 @@ fun ChatInfoScreen(
             Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Avatar(contact.displayName, size = 84.dp)
                 Text(contact.displayName, style = MaterialTheme.typography.titleLarge)
-                Text("@${contact.username}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(usernameText(contact.username), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(onClick = { onCall(false) }) { Text(stringResource(R.string.info_audio)) }
                     TextButton(onClick = { onCall(true) }) { Text(stringResource(R.string.info_video)) }
@@ -123,7 +124,7 @@ fun ChatInfoScreen(
             }
             if (store.supportsSafetyNumbers) {
                 ListItem(
-                    modifier = Modifier.clickable { showVerify = true },
+                    modifier = Modifier.clickable(role = Role.Button) { showVerify = true },
                     leadingContent = { Icon(painterResource(R.drawable.ic_verified), contentDescription = null) },
                     headlineContent = { Text(stringResource(R.string.info_verify)) },
                 )
@@ -135,11 +136,11 @@ fun ChatInfoScreen(
             )
             HorizontalDivider()
             ListItem(
-                modifier = Modifier.clickable { confirmReport = true },
+                modifier = Modifier.clickable(role = Role.Button) { confirmReport = true },
                 headlineContent = { Text(stringResource(R.string.info_report), color = MaterialTheme.colorScheme.error) },
             )
             ListItem(
-                modifier = Modifier.clickable { confirmBlock = true },
+                modifier = Modifier.clickable(role = Role.Button) { confirmBlock = true },
                 headlineContent = { Text(stringResource(R.string.info_block, contact.displayName), color = MaterialTheme.colorScheme.error) },
             )
         }

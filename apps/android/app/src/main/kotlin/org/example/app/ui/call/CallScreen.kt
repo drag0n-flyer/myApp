@@ -1,5 +1,7 @@
 package org.example.app.ui.call
 
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.app.Activity
 import android.content.ContextWrapper
 import androidx.activity.compose.BackHandler
@@ -37,7 +39,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,7 +52,9 @@ import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -140,9 +143,9 @@ fun CallScreen(
     onThemeResolved: (ColorScheme) -> Unit = {},
 ) {
     CallTheme(onResolved = onThemeResolved) {
-        val call by viewModel.call.collectAsState()
+        val call by viewModel.call.collectAsStateWithLifecycle()
         val current = call ?: return@CallTheme
-        var showData by remember { mutableStateOf(false) }
+        var showData by rememberSaveable { mutableStateOf(false) }
         CallBackHandler(onMinimise)
 
         if (ticking) {
@@ -293,13 +296,13 @@ private fun VideoStage() {
 /** Sample build only: plays network conditions. */
 @Composable
 private fun SimulateMenu(viewModel: CallViewModel, modifier: Modifier = Modifier) {
-    var open by remember { mutableStateOf(false) }
+    var open by rememberSaveable { mutableStateOf(false) }
     Box(modifier) {
         IconButton(onClick = { open = true }) {
             Icon(painterResource(R.drawable.ic_sync), contentDescription = stringResource(R.string.call_simulate), tint = Color.White)
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            @Composable fun item(label: Int, action: () -> Unit) = DropdownMenuItem(text = { Text(stringResource(label)) }, onClick = { open = false; action() })
+            @Composable fun item(label: Int, action: () -> Unit) = DropdownMenuItem(text = { Text(stringResource(label)) }, onClick = { open = false; action() }, modifier = Modifier.semantics { role = Role.Button })
             item(R.string.call_simulate_good) { viewModel.simulate(SimulatedNetwork.Good) }
             item(R.string.call_simulate_weak) { viewModel.simulate(SimulatedNetwork.Weak) }
             item(R.string.call_simulate_very_weak) { viewModel.simulate(SimulatedNetwork.VeryWeak) }

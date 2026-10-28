@@ -1,5 +1,6 @@
 package org.example.app
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
@@ -8,7 +9,6 @@ import android.os.Build
 import android.provider.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -16,6 +16,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import org.example.app.core.account.AccountState
 import org.example.app.core.account.SampleAccountService
 import org.example.app.ui.contacts.AddContactScreen
 import org.example.app.ui.contacts.ContactsScreen
@@ -90,9 +91,16 @@ private inline fun <reified T : ViewModel> factory(crossinline make: () -> T) = 
 fun AppRoot(
     graph: AppGraph,
     // Sample mode goes straight to the chats; the live build starts with onboarding until signed in.
-    startWithOnboarding: Boolean = !graph.sampleData && !graph.accountService.isSignedIn,
+    startWithOnboarding: Boolean? = null,
 ) {
     AppTheme {
+        // An account that cannot be read right now is not a signed-out one: ask again, never onboard over it.
+        var accountState by remember { mutableStateOf(if (graph.sampleData) AccountState.SignedIn else graph.accountService.accountState) }
+        if (startWithOnboarding == null && accountState == AccountState.Unavailable) {
+            AccountUnavailableScreen(onTryAgain = { accountState = graph.accountService.accountState })
+            return@AppTheme
+        }
+        val onboarding = startWithOnboarding ?: (accountState == AccountState.SignedOut)
         val nav = rememberNavController()
         val idArg = listOf(navArgument("id") { type = NavType.StringType })
         val context = LocalContext.current
@@ -105,9 +113,9 @@ fun AppRoot(
                 )
             },
         )
-        val call by callVm.call.collectAsState()
+        val call by callVm.call.collectAsStateWithLifecycle()
         Box {
-        NavHost(nav, startDestination = if (startWithOnboarding) ONBOARDING else MAIN) {
+        NavHost(nav, startDestination = if (onboarding) ONBOARDING else MAIN) {
             composable(ONBOARDING) {
                 val vm = viewModel<OnboardingViewModel>(
                     factory = viewModelFactory { initializer { OnboardingViewModel(graph.accountService, saved = createSavedStateHandle()) } },
@@ -153,14 +161,15 @@ fun AppRoot(
                 AddContactScreen(graph.chatStore, onBack = { nav.popBackStack() }, onAdded = { nav.popBackStack() })
             }
             composable(SettingsPage.Server.route) { ServerScreen(graph.serverPolicy.host, onBack = { nav.popBackStack() }) }
-            composable(SettingsPage.LinkedDevices.route) { LinkedDevicesScreen(graph.accountService, onBack = { nav.popBackStack() }, onLinkDevice = { nav.navigate(LINK_SCAN) }) }
+            composable(SettingsPage.LinkedDevices.route) { LinkedDevicesScreen(graph.accountService, onBack = { nav.popBackStack() }, onLinkDevice = { nav.navigate(LINK_SCAN) }, refreshes = graph.deviceListChanged) }
             composable(SettingsPage.Privacy.route) { PrivacyScreen(graph.settingsStore, graph.chatStore, onBack = { nav.popBackStack() }) }
             composable(SettingsPage.DataStorage.route) { DataStorageScreen(graph.settingsStore, graph.serverPolicy, onBack = { nav.popBackStack() }) }
             composable(SettingsPage.ChatFolders.route) { ChatFoldersScreen(graph.chatStore, onBack = { nav.popBackStack() }) }
             composable(SettingsPage.CallsAudio.route) { CallsAudioScreen(graph.settingsStore, onBack = { nav.popBackStack() }) }
+            composable(SettingsPage.Licenses.route) { LicensesScreen(onBack = { nav.popBackStack() }) }
             composable(SettingsPage.Notifications.route) {
                 val context = LocalContext.current
-                val delivery by graph.settingsStore.delivery.collectAsState()
+                val delivery by graph.settingsStore.delivery.collectAsStateWithLifecycle()
                 val fullScreenAllowed by rememberRefreshedOnResume { canUseFullScreenIntent(context) }
                 NotificationsScreen(
                     delivery, graph.settingsStore::setDelivery,

@@ -1,14 +1,14 @@
 # Progress
 
-Last updated: 2026-10-29 (morning).
+Last updated: 2026-10-28, 08:20 UTC.
 
 | Track | Done | % |
 |---|---|---|
-| iPhone/Mac Phase 1 | 119 / 128 | 93% |
-| Android | 33 / 44 | 75% |
+| iPhone/Mac Phase 1 | 120 / 128 | 94% |
+| Android | 37 / 44 | 84% |
 | Admin dashboard | done, with admin accounts and 2FA, on `main` | 100% |
 
-About 10–12 agents work in parallel. Mac CI runs only the jobs a change needs. Android CI uses Linux runners only.
+Up to 15 agents work in parallel (on Opus until 2 Nov, when Sonnet's weekly limit resets). CI is the bottleneck: about 5 Mac jobs at once, and GitHub throttles status checks when many agents watch runs. Mac CI runs only the jobs a change needs. Android CI uses Linux runners only.
 
 App code is written on Linux. It counts as done here once it is written, reviewed and merged. It is checked for real only when its CI run is green.
 
@@ -33,38 +33,47 @@ Admin dashboard: `http://localhost:9044/admin/`. `.env` also sets `APP_ADMIN_HOS
 |---|---|---|---|---|
 | [Go server](docs/superpowers/plans/2026-10-27-go-server.md) | 27 / 27 | 100% | on `main`, plus Android devices, FCM/UnifiedPush, `.env` loading, the Makefile and the admin dashboard | done |
 | [App UI on sample data](docs/superpowers/plans/2026-10-27-app-ui-sample-data.md) | 16 / 16 | 100% | on `main` | done; Mac UI test confirmed on the next green run |
-| [Client networking](docs/superpowers/plans/2026-10-27-client-networking.md) | 14 / 14 | 100% | S3 (end-to-end against the real server) reviewed and fixed, green in CI | merge once main CI is green |
-| [MLS client core](docs/superpowers/plans/2026-10-27-mls-client-core.md) | 6 / 7 | 86% | M7 merged into M6's branch; M6 (notification extension prototype) reviewed, in its fix round; a real-iPhone checklist follows | 0.5 day |
-| [WebRTC + Opus build](docs/superpowers/plans/2026-10-27-webrtc-opus-build.md) | 4 / 6 | 67% | Task 5: Mac CI build; then Task 6, the first release | 1 day |
+| [Client networking](docs/superpowers/plans/2026-10-27-client-networking.md) | 14 / 14 | 100% | on `main`, with end-to-end tests against the real Go server in CI | done |
+| [MLS client core](docs/superpowers/plans/2026-10-27-mls-client-core.md) | 7 / 7 | 100% | on `main`; the real-iPhone checklist for the notification extension is yours (see "Waiting on the owner") | done |
+| [WebRTC + Opus build](docs/superpowers/plans/2026-10-27-webrtc-opus-build.md) | 4 / 6 | 67% | Task 5: Mac CI build, fixing the last Swift errors (agent running); then Task 6, the first release | 1 day |
 | [Client calling](docs/superpowers/plans/2026-10-27-client-calling.md) | 15 / 16 | 94% | I1 left | 1 day after WebRTC |
-| [Client messaging](docs/superpowers/plans/2026-10-27-client-messaging.md) | 15 / 16 | 94% | I1 (integration with calling) written, Linux tests pass; getting the iPhone and Mac app builds green on CI | 0.5 day |
+| [Client messaging](docs/superpowers/plans/2026-10-27-client-messaging.md) | 15 / 16 | 94% | I1 (integration with calling): lock tests fixed (a merge had silently restored old code), call info button fixed, all Linux tests pass; the photo test fix is on CI, then the first iPhone and Mac app runs | 2–4 h |
 | [Security docs and release](docs/superpowers/plans/2026-10-27-security-docs-release.md) | 13 / 14 | 93% | only Task 13 left, deferred by the owner | done for now |
 | [Call lab](docs/superpowers/plans/2026-10-27-call-lab.md) | 9 / 12 | 75% | L10a waits for WebRTC; L10 deferred; L11 last | 1 day after WebRTC |
 
-Queued for the iPhone/Mac after the current work:
-- the app ID moves into one file, `apps/apple/AppID.xcconfig`
-- bugs the Android port found that the iPhone shares: a chat can be orphaned if the reply to its first commit is lost; one bad join can stop the whole inbox
-- the call machine should check the answering device against its encryption identity, and give up on calls that never connect (ring and setup deadlines)
-- sign-up sends the display name (`PATCH /v1/me/settings` after sign-up) and has an email-code path that never registers a passkey, matching Android
-- the read-receipts switch works (off stops sending read receipts and hides others' read ticks; not retroactive), matching Android
-- linking: a contact list that can't be opened is skipped (sign in, tell the user) instead of failing the link; a too-large one is skipped with a note to the approver; the link-code check must compare the port too
-- own-device reconcile (protocol requirement) with Android's safety checks; control messages in the outbox expire after 24 h
+Extra work beyond the plans, in progress (each is reviewed before it merges; ETAs are agent time):
+
+| Work | Branch | Now | ETA |
+|---|---|---|---|
+| Android review follow-ups (server binding, invite clearing, 1:1 call signals) | `android/followups` | merged | done |
+| Port: a lost reply to a new chat's first commit no longer orphans it; one bad invite no longer stalls the inbox | `fix/ios-port-inbox` | 2nd fix round (when to give up on a new chat) on CI; review found and fixed a remote inbox stall | 1–2 h |
+| Port: calls check the answering device; ring (50 s) and setup (30 s) deadlines | `fix/ios-port-calls` | review approved; fix round (sender device wired through, 2 tests) on CI | 1 h |
+| Port: own devices kept in line with the account; old control messages expire after 24 h | `feat/ios-port-reconcile` | review approved; fix round (wiring, a faked "device revoked" can never wipe or remove) on CI | 1–2 h |
+| Android: the same own-device wiring, with the same protection | `android/reconcile-wiring` | merged (only a rejected session wipes a phone; switched on by Android I1) | done |
+| Port: sign-up sends the display name, email-code sign-up, read-receipts switch | `feat/ios-port-signup` | written, on CI, review next | 2–3 h |
+| Port: linking skips an unreadable or too-large contact list; link-code check compares the port | `feat/ios-port-linking` | written, on CI, review next | 2–3 h |
+| App ID in one file (`apps/apple/AppID.xcconfig`) and a stronger photo-privacy test | `chore/appid-xcconfig` | written, waiting for Mac CI | 1–2 h |
+
+Android has the same inbox fixes (merged): a crafted invite can't stall the inbox, a new chat is abandoned only when really gone, and a failure after a chat starts never creates a second one.
 
 ## Main CI
 
-The Apple apps workflow on `main` is red. The fix on `fix/swift62-ci` has Linux packages, CallMedia and ServerKit-on-iPhone green; the iPhone and Mac app builds and the Mac package tests are on their last runs, including a lock test that never ran on Apple platforms before and is being investigated. Android CI and the security check on `main` are green.
+Green: Apple apps (every job, after the Swift 6.2 / Xcode 26 fix), MLS client core, Android, security. Follow-ups from its review:
+- the photo test is being strengthened (see the iPhone/Mac list above)
+- the Mac UI tests run without the app's sandbox, app-group and keychain permissions (a test build can't launch with them unsigned); a signed check of those is needed before release
+- CallKit calls now report from CallKit's own queue; check calls once on a real iPhone
 
 ## Android, by lane ([plan](docs/superpowers/plans/2026-10-28-android-client.md))
 
 | Lane | Tasks | Done | Now |
 |---|---|---|---|
-| A, scaffold and UI | 9 | 8 | A1–A8 on `main`; A9 (accessibility and languages) built, in review |
-| B, networking and accounts | 7 | 6 | B1–B6 on `main` (B5 key store, B6 passkeys and fingerprint unlock); B7 (live accounts, linking) in its last re-review |
+| A, scaffold and UI | 9 | 9 | done |
+| B, networking and accounts | 7 | 7 | done, with B7's review follow-ups merged (the http/https choice is saved with a session, a link code is claimed only on the server that issued it, changing server clears the invite code) |
 | C, MLS bindings | 4 | 4 | done |
-| D, storage and messaging | 7 | 6 | D1–D6 on `main`; D7 (live chat store, notification processor, call signal sealer) next |
-| E, WebRTC and calls | 6 (+E5b) | 2 | E3, E4 on `main`; E2 (WebRTC build) on CI, last 32-bit link fix; E1 after E2; then E5, E5b (bundled Opus for phones without an encoder), E6 |
+| D, storage and messaging | 7 | 7 | done. D7 took M7's `decryptApplication` from the iPhone side; checking `call.status` for late ring pushes moved to E6/I1. A ring is accepted only from the 1:1 chat with its sender (merged) |
+| E, WebRTC and calls | 6 (+E5b) | 2 | E3, E4 on `main`; E2 (WebRTC build): x86_64 and packaging green, the two ARM builds re-running after Google download errors; E1 after E2; then E5, E5b (bundled Opus for phones without an encoder), E6 |
 | F, push | 4 | 4 | done |
-| G, CI | 4 | 3 | G1–G3 on `main` (G3: emulator tests on Android 10 and 16, every module); G4 (release bundle, licenses, Play documents) in progress |
+| G, CI | 4 | 4 | done; G4: release bundle, license notices, Play documents. A `v*` tag release fails until the SQLCipher, WebRTC and Opus notice texts are filled in |
 | I, integration and iPhone↔Android test | 2 | 0 | waits for all lanes |
 
 ETA: about 1.5 days of agent work.
@@ -81,7 +90,7 @@ Added 2026-10-29 (owner decisions), reviewed twice, on `main`:
 - **Plain HTTP on the LAN** for hosts in `APP_ADMIN_HOSTS` when `APP_ADMIN_ALLOW_HTTP=true` (default off; logs a warning).
 - **CLI recovery:** `bin/appserver admin user list|add|reset-password|reset-2fa|disable|enable`; passwords are typed without echo.
 
-Small follow-ups from the last review: a rare race needing the password and two valid codes at once, a few extra tests.
+Follow-ups from the last review are merged too (one session per pending login, escaped QR label, turning on two-step sign-in asks for the password).
 
 ## Waiting on the owner
 
@@ -102,6 +111,8 @@ Small follow-ups from the last review: a rare race needing the password and two 
    - a build without Firebase, for F-Droid
    - the CPU threshold for hiding enhanced noise suppression, after measuring on the OnePlus 5
    - the Play data safety answers and the account-deletion web page
+   - confirm the 14 Google libraries in the license allowlist (pulled in by Firebase messaging and Google sign-in; one, `play-services-identity-credentials`, is an alpha release)
+   - the SQLCipher license text (not in the downloaded files)
    - a self-hosted runner for automated iPhone↔Android call tests
 9. **Before App Store submission:**
    - the Mac camera permission

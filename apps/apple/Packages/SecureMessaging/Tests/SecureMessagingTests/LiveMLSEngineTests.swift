@@ -130,14 +130,19 @@ private func makeGroup(creator: any MLSEngine, joiners: [any MLSEngine]) async t
             }
         }
         thread.start()
-        acquired.wait()
+        // `DispatchSemaphore.wait` is unavailable in async contexts: wait on a global queue.
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global().async { acquired.wait(); continuation.resume() }
+        }
         await #expect(throws: MLSError.busy) { _ = try await a.createGroup() }
         release.signal()
         // Once the holder lets go the engine works again.
         _ = try await LiveMLSEngine(identity: alice, storage: dir, keys: InMemorySigningKeyStore()).createGroup()
     }
 
-    #if os(iOS)
+    // The simulator has no data protection and reports no class, so this runs on a device only
+    // (DEVICE-CHECKLIST.md covers it for the owner).
+    #if os(iOS) && !targetEnvironment(simulator)
     @Test func testStorageProtectionClass() throws {
         let dir = tempDir()
         _ = try live(alice, dir: dir)

@@ -55,4 +55,48 @@ class LinkedDevicesScreenTest {
         rule.onNodeWithText("Link a device").performClick()
         assertEquals(1, linked)
     }
+
+    private class Failing(
+        private val inner: SampleAccountService = SampleAccountService(),
+        var failLoad: Boolean = false,
+        var failRemove: Boolean = false,
+    ) : org.example.app.core.account.AccountService by inner {
+        override suspend fun devices() = if (failLoad) throw org.example.app.core.account.AccountError.Network else inner.devices()
+        override suspend fun removeDevice(id: String) { if (failRemove) throw org.example.app.core.account.AccountError.Network else inner.removeDevice(id) }
+    }
+
+    @Test
+    fun failedLoadIsNotShownAsAnEmptyListAndCanBeRetried() {
+        val account = Failing(failLoad = true)
+        rule.setContent { AppTheme { LinkedDevicesScreen(account, onBack = {}) } }
+        rule.waitUntil(5_000) { rule.onAllNodesWithText("Couldn't load your devices").fetchSemanticsNodes().isNotEmpty() }
+        account.failLoad = false
+        rule.onNodeWithText("Try again").performClick()
+        rule.waitUntil(5_000) { rule.onAllNodesWithText("iPhone").fetchSemanticsNodes().isNotEmpty() }
+        rule.onNodeWithText("Couldn't load your devices").assertDoesNotExist()
+    }
+
+    /** `device.revoked` reaches the screen as a refresh: the list is read again. */
+    @Test
+    fun aRefreshSignalReloadsTheList() {
+        var loads = 0
+        val account = object : org.example.app.core.account.AccountService by SampleAccountService() {
+            override suspend fun devices() = SampleAccountService().devices().also { loads++ }
+        }
+        val refreshes = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+        rule.setContent { AppTheme { LinkedDevicesScreen(account, onBack = {}, refreshes = refreshes) } }
+        rule.waitUntil(5_000) { loads == 1 }
+        refreshes.tryEmit(Unit)
+        rule.waitUntil(5_000) { loads == 2 }
+    }
+
+    @Test
+    fun failedRemovalShowsAnError() {
+        val account = Failing(failRemove = true)
+        rule.setContent { AppTheme { LinkedDevicesScreen(account, onBack = {}) } }
+        rule.waitUntil(5_000) { rule.onAllNodesWithText("iPhone").fetchSemanticsNodes().isNotEmpty() }
+        rule.onNodeWithContentDescription("Remove iPhone").performClick()
+        rule.onNodeWithText("Remove").performClick()
+        rule.waitUntil(5_000) { rule.onAllNodesWithText("Couldn't remove the device. Try again.").fetchSemanticsNodes().isNotEmpty() }
+    }
 }

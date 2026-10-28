@@ -57,7 +57,7 @@ private actor SleepLog {
 }
 
 private let serverJSON = #"{"protocol":1,"host":"chat.test","requiresInvite":true,"policy":{"defaultMode":"auto","maxMode":"high","defaultIPHiding":"nonContacts"},"encryption":{"newConversations":"e2ee","escrowKey":null},"features":[],"federation":false,"limits":{"attachmentBytes":1}}"#
-private let creationJSON = #"{"publicKey":{"challenge":"AAEC","rp":{"name":"Chat","id":"chat.test"},"user":{"name":"ana","displayName":"ana","id":"AAEC"}}}"#
+private let creationJSON = #"{"challenge":"AAEC","rp":{"name":"Chat","id":"chat.test"},"user":{"name":"ana","displayName":"ana","id":"AAEC"}}"#
 private let sessionJSON = #"{"accountID":"a1","deviceID":"d1","sessionToken":"t1"}"#
 private func err(_ code: String) -> String { #"{"error":{"code":"\#(code)","message":"x"}}"# }
 
@@ -173,7 +173,7 @@ private func err(_ code: String) -> String { #"{"error":{"code":"\#(code)","mess
     @Test func signInWithPasskey() async throws {
         let r = Rig()
         await r.t.respond("POST", "/v1/signin/passkey/options", status: 200,
-                          json: #"{"challengeID":"ch1","options":{"publicKey":{"challenge":"AAEC","rpId":"chat.test"}}}"#)
+                          json: #"{"challengeID":"ch1","options":{"challenge":"AAEC","rpId":"chat.test"}}"#)
         await r.t.respond("POST", "/v1/signin/passkey/finish", status: 200, json: sessionJSON)
         try await r.service.signInWithPasskey()
         #expect(await r.passkey.asserted == 1)

@@ -1,12 +1,13 @@
 package org.example.app.ui.settings
 
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.activity.compose.BackHandler
@@ -21,8 +22,8 @@ import org.example.app.ui.keyString
 
 @Composable
 fun PrivacyScreen(settings: SettingsStore, chatStore: ChatStore, onBack: () -> Unit, modifier: Modifier = Modifier) {
-    val current by settings.settings.collectAsState()
-    val blocked by chatStore.blockedIds.collectAsState()
+    val current by settings.settings.collectAsStateWithLifecycle()
+    val blocked by chatStore.blockedIds.collectAsStateWithLifecycle()
     var showBlocked by rememberSaveable { mutableStateOf(false) }
 
     if (showBlocked) {
@@ -54,7 +55,7 @@ fun PrivacyScreen(settings: SettingsStore, chatStore: ChatStore, onBack: () -> U
         }
         item {
             ListItem(
-                modifier = Modifier.clickable { showBlocked = true },
+                modifier = Modifier.clickable(role = Role.Button) { showBlocked = true },
                 headlineContent = { Text(stringResource(R.string.privacy_blocked)) },
                 trailingContent = { Text(blocked.size.toString(), color = MaterialTheme.colorScheme.onSurfaceVariant) },
             )

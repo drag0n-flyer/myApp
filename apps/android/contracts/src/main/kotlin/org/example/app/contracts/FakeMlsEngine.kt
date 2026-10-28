@@ -135,6 +135,20 @@ class FakeMlsEngine(private val identity: String) : MlsEngine {
         }
     }
 
+    override suspend fun processApplication(group: GroupId, message: ByteArray): Incoming.Application {
+        // The tag is read before anything is parsed or changed, so a refused frame leaves every group as it was.
+        if (message.firstOrNull() != APPLICATION) throw MlsException.NotApplication
+        if (groupOf(message) != group) throw MlsException.Malformed
+        return process(message) as Incoming.Application
+    }
+
+    override fun groupOf(message: ByteArray): GroupId? =
+        if (message.firstOrNull() != APPLICATION) null else try {
+            readFrame(message, APPLICATION) { GroupId(takeBytes()) }
+        } catch (_: MlsException) {
+            null
+        }
+
     override suspend fun epoch(group: GroupId): Long = lock.withLock { groupOrThrow(group).epoch }
 
     /** Deterministic from the group, epoch and label, so every member derives the same bytes. */

@@ -218,7 +218,15 @@ fn three_devices_add_and_remove() {
         other => panic!("expected Commit, got {other:?}"),
     }
     match alice2.process(removal.commit).unwrap() {
-        Processed::Commit { removed_me, .. } => assert!(removed_me),
+        Processed::Commit {
+            removed_me,
+            new_epoch,
+            ..
+        } => {
+            assert!(removed_me);
+            // The epoch the commit creates, even though this device is out of it.
+            assert_eq!(new_epoch, 2);
+        }
         other => panic!("expected Commit, got {other:?}"),
     }
 
@@ -279,6 +287,21 @@ fn pending_commit_blocks_new_commit() {
     assert!(
         matches!(second, Err(FfiError::PendingCommit)),
         "got {second:?}"
+    );
+}
+
+#[test]
+fn pending_commit_wins_over_every_other_remove_error() {
+    let (alice, bob) = (dev("acct-a/dev-1"), dev("acct-b/dev-1"));
+    let g = alice.create_group().unwrap();
+    alice
+        .add(g.clone(), vec![bob.key_packages(1).unwrap().remove(0)])
+        .unwrap();
+    // Bob is not a member yet (his commit is pending), but the pending commit is reported first.
+    let removal = alice.remove(g, vec!["acct-b/dev-1".into()]);
+    assert!(
+        matches!(removal, Err(FfiError::PendingCommit)),
+        "got {removal:?}"
     );
 }
 
@@ -780,4 +803,449 @@ fn storage_error_after_durable_write_means_reload() {
     // The error said "unknown"; the reload shows the commit did land.
     assert_eq!(alice.epoch(g.clone()).unwrap(), 4);
     assert!(!alice.has_pending_commit(g).unwrap());
+}
+
+// ---------------------------------------------------------------------------
+// M7: member keys, staged processing, application-only decryption.
+
+/// Every file of the group's directory with its bytes, sorted by name.
+fn group_files(d: &Dev, g: &[u8]) -> Vec<(String, Vec<u8>)> {
+    let mut out = vec![];
+    for e in std::fs::read_dir(d.path(&format!("groups/{}", hex(g)))).unwrap() {
+        let e = e.unwrap();
+        out.push((
+            e.file_name().to_string_lossy().into_owned(),
+            std::fs::read(e.path()).unwrap(),
+        ));
+    }
+    out.sort();
+    out
+}
+
+fn add_member(adder: &Dev, g: &[u8], joiner: &Dev) -> mlsffi::engine::CommitBundle {
+    let bundle = adder
+        .add(g.to_vec(), vec![joiner.key_packages(1).unwrap().remove(0)])
+        .unwrap();
+    adder.commit_accepted(g.to_vec()).unwrap();
+    bundle
+}
+
+#[test]
+fn member_keys_are_the_leaf_signature_keys_sorted() {
+    // Created in non-sorted order on purpose.
+    let (carol, alice, bob) = (
+        dev("acct-c/dev-1"),
+        dev("acct-a/dev-1"),
+        dev("acct-b/dev-1"),
+    );
+    let g = group_of(&carol, &[&bob, &alice]);
+    let expected = vec![
+        (alice.identity.clone(), alice.public.clone()),
+        (bob.identity.clone(), bob.public.clone()),
+        (carol.identity.clone(), carol.public.clone()),
+    ];
+    for d in [&alice, &bob, &carol] {
+        let keys: Vec<(String, Vec<u8>)> = d
+            .member_keys(g.clone())
+            .unwrap()
+            .into_iter()
+            .map(|k| (k.identity, k.signature_key))
+            .collect();
+        assert_eq!(keys, expected, "as seen by {}", d.identity);
+    }
+    assert!(matches!(
+        alice.member_keys(vec![9; 32]),
+        Err(FfiError::UnknownGroup)
+    ));
+}
+
+#[test]
+fn member_key_changes_when_the_member_rejoins_with_a_new_key() {
+    // The engine has no in-place key rotation; a device that is removed and re-added with a
+    // fresh signing key is the available way for a member's leaf key to change.
+    let (alice, mut bob) = (dev("acct-a/dev-1"), dev("acct-b/dev-1"));
+    let g = group_of(&alice, &[&bob]);
+    let old = alice.member_keys(g.clone()).unwrap();
+    assert_eq!(old[1].signature_key, bob.public);
+
+    let removal = alice.remove(g.clone(), vec![bob.identity.clone()]).unwrap();
+    alice.commit_accepted(g.clone()).unwrap();
+    bob.process(removal.commit).unwrap();
+
+    let fresh = generate_signature_keypair().unwrap();
+    bob = Dev {
+        engine: build("acct-b/dev-1", &fresh.public_key, &fresh.secret_key, &bob.dir),
+        dir: bob.dir,
+        identity: "acct-b/dev-1".into(),
+        public: fresh.public_key.clone(),
+        secret: fresh.secret_key,
+    };
+    let readd = add_member(&alice, &g, &bob);
+    bob.process(readd.welcome.unwrap()).unwrap();
+
+    let new = alice.member_keys(g.clone()).unwrap();
+    assert_eq!(new[1].identity, "acct-b/dev-1");
+    assert_eq!(new[1].signature_key, fresh.public_key);
+    assert_ne!(new[1].signature_key, old[1].signature_key);
+    assert_eq!(new[0], old[0]);
+    assert_eq!(bob.member_keys(g).unwrap(), new);
+}
+
+#[test]
+fn stage_then_discard_persists_nothing_and_stages_again() {
+    let (alice, bob) = (dev("acct-a/dev-1"), dev("acct-b/dev-1"));
+    let g = group_of(&alice, &[&bob]);
+    let ct = alice.encrypt(g.clone(), b"hello".to_vec()).unwrap().ciphertext;
+
+    let before = group_files(&bob, &g);
+    let staged = bob.stage_process(g.clone(), ct.clone()).unwrap();
+    match staged.incoming() {
+        Processed::Application {
+            sender, plaintext, ..
+        } => {
+            assert_eq!(sender, "acct-a/dev-1");
+            assert_eq!(plaintext, b"hello");
+        }
+        other => panic!("expected Application, got {other:?}"),
+    }
+    assert_eq!(group_files(&bob, &g), before, "stage must not write");
+    bob.discard(staged.clone());
+    assert_eq!(group_files(&bob, &g), before);
+
+    // A discarded stage cannot be confirmed.
+    assert!(matches!(bob.confirm(staged), Err(FfiError::Stale)));
+    // And the same message stages again, and then confirms.
+    let again = bob.stage_process(g.clone(), ct.clone()).unwrap();
+    bob.confirm(again).unwrap();
+    assert_ne!(group_files(&bob, &g), before);
+}
+
+#[test]
+fn stage_then_confirm_makes_the_message_a_duplicate() {
+    let (alice, bob) = (dev("acct-a/dev-1"), dev("acct-b/dev-1"));
+    let g = group_of(&alice, &[&bob]);
+    let ct = alice.encrypt(g.clone(), b"once".to_vec()).unwrap().ciphertext;
+
+    let staged = bob.stage_process(g.clone(), ct.clone()).unwrap();
+    bob.confirm(staged.clone()).unwrap();
+    assert!(matches!(
+        bob.stage_process(g.clone(), ct.clone()),
+        Err(FfiError::Duplicate)
+    ));
+    assert!(matches!(bob.process(ct), Err(FfiError::Duplicate)));
+    // Confirming twice is refused, not applied twice.
+    assert!(matches!(bob.confirm(staged), Err(FfiError::Stale)));
+}
+
+#[test]
+fn crash_before_confirm_leaves_the_engine_unchanged_and_the_message_processes_again() {
+    let (alice, mut bob) = (dev("acct-a/dev-1"), dev("acct-b/dev-1"));
+    let carol = dev("acct-c/dev-1");
+    let g = group_of(&alice, &[&bob]);
+    let app = alice.encrypt(g.clone(), b"survives".to_vec()).unwrap().ciphertext;
+    let commit = alice
+        .add(g.clone(), vec![carol.key_packages(1).unwrap().remove(0)])
+        .unwrap()
+        .commit;
+
+    let before = group_files(&bob, &g);
+    let staged_app = bob.stage_process(g.clone(), app.clone()).unwrap();
+    let staged_commit = bob.stage_process(g.clone(), commit.clone()).unwrap();
+    assert!(matches!(
+        staged_commit.incoming(),
+        Processed::Commit { new_epoch: 2, .. }
+    ));
+    // "Crash": the app dies after writing its rows and before confirm.
+    drop(staged_app);
+    drop(staged_commit);
+    bob.restart();
+    assert_eq!(group_files(&bob, &g), before);
+    assert_eq!(bob.epoch(g.clone()).unwrap(), 1);
+
+    // Retry: both process again, as if the first attempt never happened.
+    let staged = bob.stage_process(g.clone(), app.clone()).unwrap();
+    bob.confirm(staged).unwrap();
+    let staged = bob.stage_process(g.clone(), commit.clone()).unwrap();
+    bob.confirm(staged).unwrap();
+    assert_eq!(bob.epoch(g.clone()).unwrap(), 2);
+    assert!(matches!(bob.process(app), Err(FfiError::Duplicate)));
+}
+
+#[test]
+fn confirm_after_the_epoch_advanced_is_stale() {
+    let (alice, bob, carol) = (
+        dev("acct-a/dev-1"),
+        dev("acct-b/dev-1"),
+        dev("acct-c/dev-1"),
+    );
+    let g = group_of(&alice, &[&bob]);
+    let ct = alice.encrypt(g.clone(), b"old epoch".to_vec()).unwrap().ciphertext;
+    let staged = bob.stage_process(g.clone(), ct).unwrap();
+
+    // Another path (here: the next commit) advances bob's group first.
+    let bundle = add_member(&alice, &g, &carol);
+    bob.process(bundle.commit).unwrap();
+    let after_commit = group_files(&bob, &g);
+
+    assert!(matches!(bob.confirm(staged), Err(FfiError::Stale)));
+    assert_eq!(group_files(&bob, &g), after_commit, "stale confirm must not write");
+    assert_eq!(bob.epoch(g).unwrap(), 2);
+}
+
+#[test]
+fn confirm_after_any_other_state_change_is_stale() {
+    // Same epoch, but the sender ratchet moved (bob encrypted in between): confirming would
+    // overwrite that ratchet advance and let a key be used twice, so it must be refused.
+    let (alice, bob) = (dev("acct-a/dev-1"), dev("acct-b/dev-1"));
+    let g = group_of(&alice, &[&bob]);
+    let ct = alice.encrypt(g.clone(), b"x".to_vec()).unwrap().ciphertext;
+    let staged = bob.stage_process(g.clone(), ct.clone()).unwrap();
+    bob.encrypt(g.clone(), b"bob talks".to_vec()).unwrap();
+    let after = group_files(&bob, &g);
+    assert!(matches!(bob.confirm(staged), Err(FfiError::Stale)));
+    assert_eq!(group_files(&bob, &g), after);
+    // Re-staging works and applies.
+    let staged = bob.stage_process(g.clone(), ct).unwrap();
+    bob.confirm(staged).unwrap();
+
+    // Two stages of the same message: the first confirm wins, the second is stale.
+    let ct2 = alice.encrypt(g.clone(), b"y".to_vec()).unwrap().ciphertext;
+    let s1 = bob.stage_process(g.clone(), ct2.clone()).unwrap();
+    let s2 = bob.stage_process(g.clone(), ct2).unwrap();
+    bob.confirm(s1).unwrap();
+    assert!(matches!(bob.confirm(s2), Err(FfiError::Stale)));
+}
+
+#[test]
+fn staged_welcome_joins_only_on_confirm() {
+    let (alice, bob) = (dev("acct-a/dev-1"), dev("acct-b/dev-1"));
+    let g = alice.create_group().unwrap();
+    let bundle = add_member(&alice, &g, &bob);
+    let welcome = bundle.welcome.unwrap();
+
+    let staged = bob.stage_process(g.clone(), welcome.clone()).unwrap();
+    assert!(matches!(
+        staged.incoming(),
+        Processed::Joined { epoch: 1, .. }
+    ));
+    assert!(matches!(bob.epoch(g.clone()), Err(FfiError::UnknownGroup)));
+    bob.discard(staged);
+    // Not joined, key package still there: stage again and confirm.
+    let staged = bob.stage_process(g.clone(), welcome.clone()).unwrap();
+    bob.confirm(staged).unwrap();
+    assert_eq!(bob.epoch(g.clone()).unwrap(), 1);
+    say(&alice, &bob, &g, b"joined");
+    // The Welcome consumed its key package.
+    assert!(bob.stage_process(g.clone(), welcome).is_err());
+}
+
+#[test]
+fn stage_for_the_wrong_group_is_malformed() {
+    let (alice, bob) = (dev("acct-a/dev-1"), dev("acct-b/dev-1"));
+    let g = group_of(&alice, &[&bob]);
+    let other = group_of(&alice, &[&bob]);
+    let ct = alice.encrypt(g.clone(), b"x".to_vec()).unwrap().ciphertext;
+    let before = (group_files(&bob, &g), group_files(&bob, &other));
+    assert!(matches!(
+        bob.stage_process(other.clone(), ct.clone()),
+        Err(FfiError::Malformed)
+    ));
+    assert_eq!((group_files(&bob, &g), group_files(&bob, &other)), before);
+    // Nothing was consumed: the right group still takes the message.
+    let staged = bob.stage_process(g, ct).unwrap();
+    bob.confirm(staged).unwrap();
+}
+
+#[test]
+fn decrypt_application_returns_plaintext_and_sender() {
+    let (alice, bob) = (dev("acct-a/dev-1"), dev("acct-b/dev-1"));
+    let g = group_of(&alice, &[&bob]);
+    let ct = alice.encrypt(g.clone(), b"call offer".to_vec()).unwrap();
+    let got = bob.decrypt_application(g.clone(), ct.ciphertext.clone()).unwrap();
+    assert_eq!(got.sender, "acct-a/dev-1");
+    assert_eq!(got.plaintext, b"call offer");
+    assert_eq!(got.epoch, ct.epoch);
+    // It consumed the message like `process` does.
+    assert!(matches!(
+        bob.decrypt_application(g.clone(), ct.ciphertext),
+        Err(FfiError::Duplicate)
+    ));
+    say(&alice, &bob, &g, b"still works");
+}
+
+#[test]
+fn decrypt_application_refuses_everything_else_without_touching_state() {
+    let (alice, bob, carol) = (
+        dev("acct-a/dev-1"),
+        dev("acct-b/dev-1"),
+        dev("acct-c/dev-1"),
+    );
+    let g = group_of(&alice, &[&bob]);
+    let bundle = alice
+        .add(g.clone(), vec![carol.key_packages(1).unwrap().remove(0)])
+        .unwrap();
+    alice.commit_accepted(g.clone()).unwrap();
+
+    let before = group_files(&bob, &g);
+    // A commit (a private message whose content is not application data).
+    assert!(matches!(
+        bob.decrypt_application(g.clone(), bundle.commit.clone()),
+        Err(FfiError::NotApplication)
+    ));
+    assert_eq!(group_files(&bob, &g), before, "state unchanged by the refused commit");
+    assert_eq!(bob.epoch(g.clone()).unwrap(), 1);
+    // A Welcome, and garbage.
+    assert!(matches!(
+        carol.decrypt_application(g.clone(), bundle.welcome.clone().unwrap()),
+        Err(FfiError::NotApplication)
+    ));
+    assert!(matches!(carol.epoch(g.clone()), Err(FfiError::UnknownGroup)));
+    assert!(matches!(
+        bob.decrypt_application(g.clone(), vec![1, 2, 3]),
+        Err(FfiError::Malformed)
+    ));
+
+    // The refused commit was not consumed: it still applies normally.
+    assert!(matches!(
+        bob.process(bundle.commit).unwrap(),
+        Processed::Commit { new_epoch: 2, .. }
+    ));
+    carol.process(bundle.welcome.unwrap()).unwrap();
+}
+
+#[test]
+fn decrypt_application_for_the_wrong_group_consumes_nothing() {
+    let (alice, bob) = (dev("acct-a/dev-1"), dev("acct-b/dev-1"));
+    let g = group_of(&alice, &[&bob]);
+    let other = group_of(&alice, &[&bob]);
+    let ct = alice.encrypt(g.clone(), b"x".to_vec()).unwrap().ciphertext;
+    let before = (group_files(&bob, &g), group_files(&bob, &other));
+    assert!(matches!(
+        bob.decrypt_application(other.clone(), ct.clone()),
+        Err(FfiError::Malformed)
+    ));
+    assert_eq!((group_files(&bob, &g), group_files(&bob, &other)), before);
+    // Same ciphertext still decrypts for the right group.
+    assert_eq!(bob.decrypt_application(g, ct).unwrap().plaintext, b"x");
+}
+
+/// A second client on alice's storage whose handshake messages are encrypted
+/// (PrivateMessage), as an attacker or a future version could send them. Only
+/// builds messages in memory; nothing is written to alice's files.
+fn private_handshake_client(d: &Dev) -> mls_rs::Client<impl mls_rs::client_builder::MlsConfig> {
+    use mls_rs::client_builder::ClientBuilder;
+    use mls_rs::crypto::{SignaturePublicKey, SignatureSecretKey};
+    use mls_rs::identity::basic::{BasicCredential, BasicIdentityProvider};
+    use mls_rs::identity::SigningIdentity;
+    use mls_rs::mls_rules::{DefaultMlsRules, EncryptionOptions};
+    use mls_rs::client_builder::PaddingMode;
+    let storage = mlsffi::storage::FileStorage::new(d.dir.0.clone()).unwrap();
+    let identity = SigningIdentity::new(
+        BasicCredential::new(d.identity.clone().into_bytes()).into_credential(),
+        SignaturePublicKey::new(d.public.clone()),
+    );
+    ClientBuilder::new()
+        .group_state_storage(storage.clone())
+        .key_package_repo(storage)
+        .identity_provider(BasicIdentityProvider::new())
+        .crypto_provider(mls_rs_crypto_rustcrypto::RustCryptoProvider::default())
+        .mls_rules(
+            DefaultMlsRules::new()
+                .with_encryption_options(EncryptionOptions::new(true, PaddingMode::None)),
+        )
+        .signing_identity(
+            identity,
+            SignatureSecretKey::new(d.secret.clone()),
+            mls_rs::CipherSuite::CURVE25519_AES128,
+        )
+        .build()
+}
+
+
+#[test]
+fn decrypt_application_refuses_proposals_and_encrypted_commits_without_touching_state() {
+    let (alice, bob, carol) = (
+        dev("acct-a/dev-1"),
+        dev("acct-b/dev-1"),
+        dev("acct-c/dev-1"),
+    );
+    let g = group_of(&alice, &[&bob]);
+    let client = private_handshake_client(&alice);
+
+    // A proposal sent as a PrivateMessage.
+    let mut ag = client.load_group(&g).unwrap();
+    let proposal = ag.propose_update(vec![]).unwrap();
+    assert_eq!(proposal.wire_format(), mls_rs::WireFormat::PrivateMessage);
+    let proposal = proposal.to_bytes().unwrap();
+
+    // A commit sent as a PrivateMessage (so it is only recognizable after decryption).
+    let mut ag = client.load_group(&g).unwrap();
+    let commit = ag
+        .commit_builder()
+        .add_member(mls_rs::MlsMessage::from_bytes(&carol.key_packages(1).unwrap().remove(0)).unwrap())
+        .unwrap()
+        .build()
+        .unwrap()
+        .commit_message;
+    assert_eq!(commit.wire_format(), mls_rs::WireFormat::PrivateMessage);
+    let commit = commit.to_bytes().unwrap();
+
+    let before = group_files(&bob, &g);
+    for (name, bytes) in [("proposal", proposal), ("private commit", commit.clone())] {
+        assert!(
+            matches!(
+                bob.decrypt_application(g.clone(), bytes.clone()),
+                Err(FfiError::NotApplication)
+            ),
+            "{name}"
+        );
+        assert_eq!(group_files(&bob, &g), before, "{name}: state unchanged");
+        assert_eq!(bob.epoch(g.clone()).unwrap(), 1);
+    }
+    // The private commit was not consumed by the refusal: it still applies.
+    assert!(matches!(
+        bob.process(commit).unwrap(),
+        Processed::Commit { new_epoch: 2, .. }
+    ));
+}
+
+#[test]
+fn proposals_through_process_stay_malformed_and_change_nothing() {
+    let (alice, bob) = (dev("acct-a/dev-1"), dev("acct-b/dev-1"));
+    let g = group_of(&alice, &[&bob]);
+    let client = private_handshake_client(&alice);
+    let proposal = client
+        .load_group(&g)
+        .unwrap()
+        .propose_update(vec![])
+        .unwrap()
+        .to_bytes()
+        .unwrap();
+    let before = group_files(&bob, &g);
+    assert!(matches!(bob.process(proposal.clone()), Err(FfiError::Malformed)));
+    assert!(matches!(
+        bob.stage_process(g.clone(), proposal),
+        Err(FfiError::Malformed)
+    ));
+    assert_eq!(group_files(&bob, &g), before);
+}
+
+#[test]
+fn remove_while_a_commit_is_pending_reports_the_pending_commit() {
+    let (alice, bob, carol) = (
+        dev("acct-a/dev-1"),
+        dev("acct-b/dev-1"),
+        dev("acct-c/dev-1"),
+    );
+    let g = group_of(&alice, &[&bob]);
+    alice
+        .add(g.clone(), vec![carol.key_packages(1).unwrap().remove(0)])
+        .unwrap();
+    let before = group_files(&alice, &g);
+    // Even for a member that is not in the group (yet): the pending commit is reported first.
+    assert!(matches!(
+        alice.remove(g.clone(), vec![carol.identity.clone()]),
+        Err(FfiError::PendingCommit)
+    ));
+    assert_eq!(group_files(&alice, &g), before);
 }

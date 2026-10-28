@@ -1,5 +1,6 @@
 import AppCore
 import Foundation
+import Messaging
 import Observation
 import ServerKit
 import SwiftUI
