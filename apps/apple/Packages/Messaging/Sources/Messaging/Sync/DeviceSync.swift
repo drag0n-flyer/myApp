@@ -34,6 +34,9 @@ public struct LinkSnapshot: Codable, Equatable, Sendable {
 public enum DeviceSyncError: Error, Equatable, Sendable {
     /// `importSnapshot` got bytes that are not a `LinkSnapshot` of version 1.
     case invalidSnapshot
+    /// A wipe failed every try: this device stops all further work (no reconcile, revocation or KeyPackage
+    /// call) until the app starts again and finishes the wipe.
+    case halted
 }
 
 /// Own-device changes (Design 5, 18, 19): adds new own devices to every conversation, removes revoked ones,
@@ -51,6 +54,8 @@ public actor DeviceSync {
     private let wipeMLS: @Sendable () async throws -> Void
     private let deleteSigningKey: @Sendable () async throws -> Void
     private let lockTimeout: Duration
+    /// Set when `wipeLocalData` failed every try.
+    private var halted = false
 
     /// - Parameter wipeMLS: deletes the MLS engine's storage. `MLSEngine` has no such call, so the app
     ///   passes one that removes the engine's database. Required: a revoked device must not keep key material.
@@ -79,17 +84,89 @@ public actor DeviceSync {
 
     // MARK: Own devices
 
-    /// Adds every own device that is not in a group yet, in every active conversation, then sends the
-    /// `mode` envelope again so the new devices learn it (Design 18). Each conversation is tried even when
-    /// another fails; the first error is thrown at the end.
+    /// Brings every active conversation in line with `GET /v1/devices` (mls-profile "Removing a device"):
+    /// - an own device that is listed and not in the group is added, then the `mode` envelope is sent again so
+    ///   the new device learns it (Design 18);
+    /// - an own device that is in the group and no longer listed is removed (a device that missed
+    ///   `device.revoked` catches up here; the profile allows 24 hours from coming online), but only when the list
+    ///   is non-empty and contains this device, and only when the device was missing from two lists at least ten
+    ///   minutes apart (the first time is stored; `deps.now` is used) and was not listed within those ten minutes.
+    ///   A bad list or a device linked during the run cannot remove anyone.
+    /// Each conversation is tried even when another fails; the first error is thrown at the end.
     public func reconcileOwnDevices() async throws {
-        let ids = try await deps.server.devices().map(\.id).filter { $0 != deps.me.deviceID }
-        guard !ids.isEmpty else { return }
+        guard !halted else { throw DeviceSyncError.halted }
+        let records = try await deps.server.devices()
+        let listed = Set(records.map(\.id))
+        let others = listed.subtracting([deps.me.deviceID])
+        // A wrong, empty or partial answer must never remove anything: the list has to contain this device.
+        let trustworthy = listed.contains(deps.me.deviceID)
+        let now = Self.milliseconds(deps.now())
+        if trustworthy {
+            for record in records {
+                try deps.repo.set(Self.seenPrefix + record.id, Data(String(now).utf8))
+                try deps.repo.set(Self.missingPrefix + record.id, Data())
+            }
+        }
+        var stillStale: Set<String> = []
         var failure: Error?
+        var removalFailed = false
         for conversation in try activeConversations() {
-            do { try await addMissing(Set(ids), to: conversation) } catch { failure = failure ?? error }
+            // Separate steps: a failed add (say, no KeyPackages for a new device) must not stop removals.
+            if !others.isEmpty {
+                do { try await addMissing(others, to: conversation) } catch { failure = failure ?? error }
+            }
+            if trustworthy {
+                do {
+                    try await removeUnlisted(listed, from: conversation, now: now, stillStale: &stillStale)
+                } catch {
+                    removalFailed = true
+                    failure = failure ?? error
+                }
+            }
+        }
+        // `stillStale` is complete only when every removal step ran (a failed add does not matter here).
+        if trustworthy, !removalFailed {
+            // A device that is no longer in any group needs no mark.
+            for (key, value) in try deps.repo.entries(prefix: Self.missingPrefix)
+            where !value.isEmpty && !stillStale.contains(String(key.dropFirst(Self.missingPrefix.count))) {
+                try deps.repo.set(key, Data())
+            }
         }
         if let failure { throw failure }
+    }
+
+    /// When an own device was first missing from a trusted list (milliseconds; empty when it was listed since).
+    static let missingPrefix = "ownDevice.missingSince."
+    /// When an own device was last listed (milliseconds).
+    static let seenPrefix = "ownDevice.seenAt."
+    /// How long a device must be missing, and unlisted, before reconcile removes it (decision log 2026-10-28).
+    static let missingFor: Int64 = 10 * 60_000
+
+    private static func milliseconds(_ date: Date) -> Int64 { Int64((date.timeIntervalSince1970 * 1000).rounded()) }
+
+    private func stamp(_ key: String) throws -> Int64? {
+        guard let data = try deps.repo.get(key), !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return nil }
+        return Int64(text)
+    }
+
+    private func removeUnlisted(
+        _ listed: Set<String>, from conversation: ConversationRecord, now: Int64, stillStale: inout Set<String>
+    ) async throws {
+        let prefix = "\(deps.me.accountID)/"
+        let stale = try await deps.mls.members(of: GroupID(raw: conversation.groupID))
+            .filter { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) }
+            .filter { $0 != deps.me.deviceID && !listed.contains($0) }.sorted()
+        for deviceID in stale {
+            stillStale.insert(deviceID)
+            // Only a device missing from two lists at least ten minutes apart, and not seen or linked in that time.
+            guard let firstMissing = try stamp(Self.missingPrefix + deviceID) else {
+                try deps.repo.set(Self.missingPrefix + deviceID, Data(String(now).utf8))
+                continue
+            }
+            let lastSeen = try stamp(Self.seenPrefix + deviceID)
+            if now - firstMissing < Self.missingFor || (lastSeen.map { now - $0 < Self.missingFor } ?? false) { continue }
+            try await remove("\(deps.me.accountID)/\(deviceID)", deviceID: deviceID, from: conversation)
+        }
     }
 
     private func addMissing(_ own: Set<String>, to conversation: ConversationRecord) async throws {
@@ -129,19 +206,15 @@ public actor DeviceSync {
         try await conversations.announceMode(fresh)
     }
 
-    /// Removes `"<me>/<deviceID>"` from every group that has it. If the revoked device is this one, the
-    /// device wipes itself instead (it can no longer post commits).
+    /// A `device.revoked` event. The event is unsigned and the server never sends it to the revoked device itself,
+    /// so it never removes or wipes by itself (owner ruling): for another device of this account it runs
+    /// `reconcileOwnDevices`, whose two-lists-ten-minutes rule decides; one naming this device is ignored (a real
+    /// revocation reaches this device as a 401 or close code 4003, and the app signs out and wipes then).
+    /// The app goes through `ReconcileScheduler.deviceRevoked`, which also keeps it from overlapping a reconcile.
     public func handleRevoked(deviceID: String) async throws {
-        if deviceID == deps.me.deviceID {
-            try await wipeLocalData()
-            return
-        }
-        let identity = "\(deps.me.accountID)/\(deviceID)"
-        var failure: Error?
-        for conversation in try activeConversations() {
-            do { try await remove(identity, deviceID: deviceID, from: conversation) } catch { failure = failure ?? error }
-        }
-        if let failure { throw failure }
+        guard !halted else { throw DeviceSyncError.halted }
+        guard deviceID != deps.me.deviceID else { return }
+        try await reconcileOwnDevices()
     }
 
     private func remove(_ identity: String, deviceID: String, from conversation: ConversationRecord) async throws {
@@ -164,6 +237,7 @@ public actor DeviceSync {
 
     /// Checks the server's KeyPackage count at most every 6 hours and uploads 50 when it is below 10.
     public func replenishKeyPackages() async throws {
+        guard !halted else { throw DeviceSyncError.halted }
         let now = deps.now()
         if let data = try deps.repo.get(Self.checkedAtKey), let text = String(data: data, encoding: .utf8),
            let ms = Int64(text), now.timeIntervalSince(Date(timeIntervalSince1970: Double(ms) / 1000)) < Self.checkInterval {
@@ -185,11 +259,22 @@ public actor DeviceSync {
 
     /// Deletes the database rows, the media directory and the MLS storage. Every step runs; the first
     /// error is thrown at the end.
+    /// A failed wipe is tried again (`wipeAttempts` in all); if it still fails, this device stops all further
+    /// work (`DeviceSyncError.halted`) and the error is thrown.
     public func wipeLocalData() async throws {
-        try await Self.wipe(
-            repo: deps.repo, mediaDirectory: deps.mediaDirectory, lock: deps.lock, wipeMLS: wipeMLS,
-            deleteSigningKey: deleteSigningKey, lockTimeout: lockTimeout)
+        do {
+            try await Self.wipe(
+                repo: deps.repo, mediaDirectory: deps.mediaDirectory, lock: deps.lock, wipeMLS: wipeMLS,
+                deleteSigningKey: deleteSigningKey, lockTimeout: lockTimeout)
+        } catch {
+            halted = true
+            throw error
+        }
     }
+
+    /// How many times a wipe is tried before it gives up, and the pause between tries.
+    public static let wipeAttempts = 3
+    static let wipeRetryDelay: Duration = .milliseconds(200)
 
     /// The wipe without a running graph (the app calls it at launch to finish a wipe that was cut short). Rows,
     /// media, MLS storage, then the signing key.
@@ -197,6 +282,28 @@ public actor DeviceSync {
         repo: Repository, mediaDirectory: URL, lock: ProcessLock,
         wipeMLS: @Sendable () async throws -> Void, deleteSigningKey: @Sendable () async throws -> Void = {},
         lockTimeout: Duration = .seconds(5)
+    ) async throws {
+        // A wiped device's data cannot come back, and leftover data must not stay: a failed wipe is tried again,
+        // `wipeAttempts` times in all. Every try runs every step; the last try's first error is thrown.
+        var attempt = 1
+        while true {
+            do {
+                try await wipeOnce(
+                    repo: repo, mediaDirectory: mediaDirectory, lock: lock, wipeMLS: wipeMLS,
+                    deleteSigningKey: deleteSigningKey, lockTimeout: lockTimeout)
+                return
+            } catch {
+                guard attempt < wipeAttempts else { throw error }
+                attempt += 1
+                try? await Task.sleep(for: wipeRetryDelay)
+            }
+        }
+    }
+
+    private static func wipeOnce(
+        repo: Repository, mediaDirectory: URL, lock: ProcessLock,
+        wipeMLS: @Sendable () async throws -> Void, deleteSigningKey: @Sendable () async throws -> Void,
+        lockTimeout: Duration
     ) async throws {
         // No network inside: the whole wipe is one locked step, so the notification extension cannot
         // process an item into a half-deleted store.

@@ -110,8 +110,9 @@ private struct Boom: Error {}
             try await LocalAccountData.prepare(
                 accountID: "acc-bob", container: container, repo: repo, wipe: wipeSteps(device, calls, failSigningKey: true))
         }
-        // The other steps still ran, the marker stays for the next launch, and bob does not own the data.
-        #expect(calls.count("mls") == 1)
+        // Tried `wipeAttempts` times; the other steps still ran each time, the marker stays for the next launch,
+        // and bob does not own the data.
+        #expect(calls.count("mls") == DeviceSync.wipeAttempts)
         #expect(LocalAccountData.isWipePending(in: container))
         #expect(try repo.get(LocalAccountData.ownerKey).flatMap { String(data: $0, encoding: .utf8) } != "acc-bob")
         // The next launch retries and succeeds.
