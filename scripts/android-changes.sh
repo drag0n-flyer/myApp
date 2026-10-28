@@ -5,17 +5,17 @@
 # the workflow, the Android scripts, the mlsffi crate) marks everything changed.
 set -euo pipefail
 
-MODULES=(contracts core net auth mls messaging store calls calls-android webrtc push app)
+MODULES=(contracts core net auth mls messaging store calls calls-android webrtc push app interop)
 # module:dependents (direct); closed transitively below
 DEPENDENTS=(
-  "contracts:core net auth mls messaging store calls calls-android webrtc push app"
-  "core:messaging app"
-  "net:messaging push app"
+  "contracts:core net auth mls messaging store calls calls-android webrtc push app interop"
+  "core:messaging app interop"
+  "net:messaging push app interop"
   "auth:push app"
-  "mls:messaging app"
-  "messaging:store push app"
+  "mls:messaging app interop"
+  "messaging:store push app interop"
   "store:messaging app"
-  "calls:calls-android app"
+  "calls:calls-android app interop"
   "webrtc:calls-android app"
   "calls-android:app"
   "push:calls-android app"
