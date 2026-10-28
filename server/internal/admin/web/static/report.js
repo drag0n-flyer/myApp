@@ -27,7 +27,7 @@ function render(r) {
       ["Shared messages", String(r.messageCount)],
       ["Note", r.hasNote ? "yes" : "no"],
       ["State", r.handledAt ? "Handled " + formatTime(r.handledAt) : "Open"],
-      ["Handled by token", r.handledBy],
+      ["Handled by (admin id)", r.handledBy],
     ]),
   );
   // O-2: the shared messages and the note are not shown until the owner approves it.

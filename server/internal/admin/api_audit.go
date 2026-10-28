@@ -17,6 +17,9 @@ var auditActions = map[string]bool{
 	"token.create": true, "sessions.end": true, "login": true, "login.failed": true, "logout": true,
 	"invite.create": true, "invite.revoke": true, "account.view": true, "device.revoke": true,
 	"account.delete": true, "report.view": true, "report.handle": true,
+	"admin.setup": true, "admin.add": true, "admin.disable": true, "admin.enable": true,
+	"admin.password": true, "admin.remove": true,
+	"admin.totp.enable": true, "admin.totp.disable": true, "admin.totp.reset": true, "login.code_failed": true,
 }
 
 type auditEntry struct {
@@ -25,6 +28,8 @@ type auditEntry struct {
 	Actor      string          `json:"actor"`
 	TokenID    *string         `json:"tokenID"`
 	TokenLabel string          `json:"tokenLabel"`
+	AdminID    *string         `json:"adminID"`
+	Username   string          `json:"username"`
 	Action     string          `json:"action"`
 	Target     string          `json:"target"`
 	Detail     json.RawMessage `json:"detail"`
@@ -47,8 +52,9 @@ func (m *Module) listAudit(w http.ResponseWriter, r *http.Request, _ Session) er
 		after = &n
 	}
 	rows, err := m.d.DB.Query(r.Context(),
-		`select a.id, a.at, a.actor, a.token_id::text, coalesce(t.label, ''), a.action, a.target, a.detail
+		`select a.id, a.at, a.actor, a.token_id::text, coalesce(t.label, ''), a.admin_user_id::text, coalesce(u.username, ''), a.action, a.target, a.detail
 		 from admin_audit a left join admin_tokens t on t.id = a.token_id
+		 left join admin_users u on u.id = a.admin_user_id
 		 where ($1 = '' or a.action = $1)
 		   and ($2::bigint is null or (a.at, a.id) < (select at, id from admin_audit where id = $2))
 		 order by a.at desc, a.id desc
@@ -60,7 +66,7 @@ func (m *Module) listAudit(w http.ResponseWriter, r *http.Request, _ Session) er
 	entries := []auditEntry{}
 	for rows.Next() {
 		var e auditEntry
-		if err := rows.Scan(&e.ID, &e.At, &e.Actor, &e.TokenID, &e.TokenLabel, &e.Action, &e.Target, &e.Detail); err != nil {
+		if err := rows.Scan(&e.ID, &e.At, &e.Actor, &e.TokenID, &e.TokenLabel, &e.AdminID, &e.Username, &e.Action, &e.Target, &e.Detail); err != nil {
 			return err
 		}
 		entries = append(entries, e)
