@@ -20,12 +20,20 @@ make_tree() {
   printf 'PRODUCT_BUNDLE_IDENTIFIER: $(APP_ID).calllab\n' > "$r/tools/call-lab/project.yml"
   printf '%s.proto\n' "$P" > "$a/Prototypes/P/project.yml"
   printf '%s\n' "$P" > "$a/Packages/X/.build/out.txt"
+  # Git-ignored build output (the MLS Kotlin bindings, say) holds the ID and is never checked.
+  mkdir -p "$a/Packages/K/build/generated"
+  printf 'build/\n' > "$a/Packages/K/.gitignore"
+  printf 'package %s.mls\n' "$P" > "$a/Packages/K/build/generated/mls.kt"
+  printf '.build/\n' > "$r/.gitignore"
+  git init -q "$r"
   echo "$r"
 }
+# The check reads tracked files: stage the fixture's files first.
+check() { git -C "$1" add -A && "$CHECK" "$1"; }
 export CHECK_APP_ID_ALLOWED='apps/apple/Packages/S/Log.swift|Logger(subsystem: "@ID@", category: "push")'
-expect_fail() { if "$CHECK" "$1" >/dev/null 2>&1; then fail "$2"; fi; }
+expect_fail() { if check "$1" >/dev/null 2>&1; then fail "$2"; fi; }
 
-r=$(make_tree ok "$P"); "$CHECK" "$r" >/dev/null || fail "clean tree rejected"
+r=$(make_tree ok "$P"); check "$r" >/dev/null || fail "clean tree rejected"
 
 r=$(make_tree bundle "$P"); printf '    PRODUCT_BUNDLE_IDENTIFIER: %s.mac\n' "$P" >> "$r/apps/apple/project.yml"
 expect_fail "$r" "hard-coded bundle ID accepted"
@@ -49,10 +57,10 @@ r=$(make_tree othercat "$P"); printf 'let l = Logger(subsystem: "%s", category: 
 expect_fail "$r" "a log name that is not listed accepted"
 
 r=$(make_tree similar "$P"); printf '%sle and org/example/app\n' "$P" >> "$r/apps/apple/project.yml"
-"$CHECK" "$r" >/dev/null || fail "a different ID was rejected"
+check "$r" >/dev/null || fail "a different ID was rejected"
 
 # A new ID: hard-coding it, or keeping the placeholder, is caught.
-r=$(make_tree newid com.acme.chat); "$CHECK" "$r" >/dev/null || fail "clean tree with a new ID rejected"
+r=$(make_tree newid com.acme.chat); check "$r" >/dev/null || fail "clean tree with a new ID rejected"
 printf 'x: com.acme.chat.nse\n' >> "$r/apps/apple/project.yml"
 expect_fail "$r" "hard-coded new ID accepted"
 r=$(make_tree stale com.acme.chat); printf 'let g = "group.%s"\n' "$P" > "$r/apps/apple/App/G.swift"
