@@ -3,10 +3,13 @@
 #include <stdint.h>
 #include <stdatomic.h>
 #include <stddef.h>
-#include <math.h>
 #include <string.h>
 
 #include "rnnoise.h"
+
+#ifdef APP_CAPTURE_TEST_TONE
+#include <math.h>
+#endif
 
 #define FRAME_SAMPLES 480
 
@@ -69,11 +72,13 @@ typedef struct HookContext {
     atomic_long denoised_frames;
     atomic_int last_frame_size;
     _Atomic(DenoiseState *) state;
-    /* Test stimulus: a 440 Hz tone written into the capture, so loopback tests send real audio. */
+    atomic_int sample_rate_hz;
+#ifdef APP_CAPTURE_TEST_TONE
+    /* Test stimulus (debug builds only): a 440 Hz tone written into the capture, so loopback tests send real audio. */
     atomic_int tone;
     atomic_long tone_frames;
-    atomic_int sample_rate_hz;
     double tone_phase; /* audio thread only */
+#endif
 } HookContext;
 
 static HookContext g_hook;
@@ -89,6 +94,7 @@ static void hook_initialize(void *context, int sample_rate_hz, int num_channels)
     if (fresh != NULL && !atomic_compare_exchange_strong(&h->state, &expected, fresh)) rnnoise_destroy(fresh);
 }
 
+#ifdef APP_CAPTURE_TEST_TONE
 static void write_tone(HookContext *h, float *const *channels, size_t num_frames, size_t num_channels) {
     int rate = atomic_load(&h->sample_rate_hz);
     double step = 2.0 * 3.14159265358979323846 * 440.0 / (rate > 0 ? rate : 48000);
@@ -100,6 +106,7 @@ static void write_tone(HookContext *h, float *const *channels, size_t num_frames
     }
     atomic_fetch_add(&h->tone_frames, 1);
 }
+#endif
 
 static void hook_process(void *context, float *const *channels, size_t num_frames, size_t num_channels) {
     HookContext *h = (HookContext *)context;
@@ -119,7 +126,9 @@ static void hook_process(void *context, float *const *channels, size_t num_frame
         }
         atomic_fetch_add(&h->denoised_frames, 1);
     }
+#ifdef APP_CAPTURE_TEST_TONE
     if (atomic_load(&h->tone)) write_tone(h, channels, num_frames, num_channels);
+#endif
 }
 
 static void hook_reset(void *context) {
@@ -175,6 +184,8 @@ Java_org_example_app_calls_android_media_CaptureHookJni_nativeResetForCall(JNIEn
     atomic_store(&g_hook.reset_pending, 1);
 }
 
+#ifdef APP_CAPTURE_TEST_TONE
+/* Test hooks: compiled into debug builds only (CMake defines APP_CAPTURE_TEST_TONE for Debug). */
 JNIEXPORT void JNICALL
 Java_org_example_app_calls_android_media_CaptureHookJni_nativeSetTone(JNIEnv *env, jclass cls, jboolean on) {
     (void)env;
@@ -188,3 +199,4 @@ Java_org_example_app_calls_android_media_CaptureHookJni_nativeToneFrames(JNIEnv 
     (void)cls;
     return (jlong)atomic_load(&g_hook.tone_frames);
 }
+#endif

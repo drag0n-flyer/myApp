@@ -1,5 +1,7 @@
 package org.example.app.calls.android.media
 
+import org.example.app.calls.android.BuildConfig
+
 /** RNNoise works on 10 ms mono frames at 48 kHz. */
 const val RNNOISE_FRAME_SAMPLES = 480
 
@@ -138,13 +140,17 @@ object CaptureHook {
     /** Drops RNNoise's history before the next frame, so a call does not start from the last call's state. */
     fun resetForCall() = CaptureHookJni.nativeResetForCall()
 
-    /** Test stimulus: replaces the captured audio with a 440 Hz tone, so loopback tests send real audio. */
+    /**
+     * Test stimulus: replaces the captured audio with a 440 Hz tone, so loopback tests send real audio. Debug
+     * builds only: the native code is not in release builds, so the setter does nothing there.
+     */
     internal var tone: Boolean = false
         set(value) {
+            if (!BuildConfig.DEBUG) return
             field = value
             CaptureHookJni.nativeSetTone(value)
         }
 
-    /** Frames the tone has been written into. */
-    internal val toneFrames: Long get() = CaptureHookJni.nativeToneFrames()
+    /** Frames the tone has been written into; 0 in release builds. */
+    internal val toneFrames: Long get() = if (BuildConfig.DEBUG) CaptureHookJni.nativeToneFrames() else 0L
 }

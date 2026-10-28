@@ -27,3 +27,5 @@ target_include_directories(rnnoise_jni PRIVATE ${RNNOISE_DIR} ${RNNOISE_DIR}/inc
 target_compile_definitions(rnnoise_jni PRIVATE NDEBUG RNNOISE_EXPORT= DISABLE_DEBUG_FLOAT)
 target_compile_options(rnnoise_jni PRIVATE -O2 -fvisibility=hidden)
 target_link_libraries(rnnoise_jni PRIVATE m)
+# The loopback tests' tone stimulus (rnnoise_jni.c) is compiled into debug builds only.
+target_compile_definitions(rnnoise_jni PRIVATE $<$<CONFIG:Debug>:APP_CAPTURE_TEST_TONE>)
