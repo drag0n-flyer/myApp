@@ -58,9 +58,34 @@ struct Membership: Sendable {
         !rows.isEmpty && rows.allSatisfy { isPlaceholder($0.identity, $0.signatureKey) }
     }
 
+    /// A `kv` flag per conversation: the engine could not read its members (a member's credential it cannot read,
+    /// or any other failure), so its device lines and safety number may be out of date. Set instead of skipping
+    /// silently; cleared by the next `apply`. While set, the chat shows no safety number and says why.
+    static let unreadablePrefix = "members.unreadable."
+
+    static func markUnreadable(conversationID: String, db: Repository) throws {
+        guard try db.conversation(serverID: conversationID) != nil else { return }
+        try db.set(unreadablePrefix + conversationID, Data([1]))
+    }
+
+    static func isUnreadable(conversationID: String, db: Repository) throws -> Bool {
+        try db.get(unreadablePrefix + conversationID) == Data([1])
+    }
+
+    /// True when the members of any active conversation of the chat could not be read.
+    static func membersUnreadable(chatID: String, db: Repository) throws -> Bool {
+        try db.conversations(chatID: chatID).contains { try $0.active && isUnreadable(conversationID: $0.serverID, db: db) }
+    }
+
     func update(conversation: ConversationRecord, db: Repository) async throws -> MembershipChange {
-        let keys = try await keys(of: GroupID(raw: conversation.groupID))
-        return try db.transaction { try apply(keys: keys, conversation: conversation, db: db) }
+        let read: [MemberKey]
+        do {
+            read = try await keys(of: GroupID(raw: conversation.groupID))
+        } catch {
+            try Self.markUnreadable(conversationID: conversation.serverID, db: db)
+            throw error
+        }
+        return try db.transaction { try apply(keys: read, conversation: conversation, db: db) }
     }
 
     /// Database-only half. Run it inside the caller's transaction.
@@ -68,6 +93,9 @@ struct Membership: Sendable {
         // The epoch in the line IDs is the stored one: callers store the new epoch first.
         let conversation = try db.conversation(serverID: conversation.serverID) ?? conversation
         let stored = try db.members(conversationID: conversation.serverID)
+        if try Self.isUnreadable(conversationID: conversation.serverID, db: db) {
+            try db.set(Self.unreadablePrefix + conversation.serverID, Data())
+        }
         let myIdentity = "\(me.accountID)/\(me.deviceID)"
         var change = MembershipChange()
         var lines: [(id: String, event: SystemEvent)] = []

@@ -250,6 +250,8 @@ final class AppModel {
     var supportsSafetyNumbers: Bool { _ = revision; return chatStore.supportsSafetyNumbers }
     func safetyNumber(for chatID: String) -> SafetyNumber? { _ = revision; return chatStore.safetyNumber(for: chatID) }
     func setVerified(_ verified: Bool, chatID: String) { chatStore.setVerified(verified, chatID: chatID); revision += 1 }
+    /// True when one of the chat's groups could not be read; chat info then says so and hides Verify.
+    func membersUnreadable(for chatID: String) -> Bool { _ = revision; return chatStore.membersUnreadable(for: chatID) }
 
     @discardableResult
     func addContact(username: String) async -> Contact? {

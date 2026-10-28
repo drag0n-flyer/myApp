@@ -413,3 +413,19 @@ private struct NSEPair {
         #expect(pair.inbox.recorded.isEmpty)
     }
 }
+
+@Suite("TestNotificationMembersUnreadable") struct TestNotificationMembersUnreadable {
+    @Test func commitWithUnreadableMembersFlagsTheChat() async throws {
+        let pair = try await NSEPair()
+        let carol = await makeDevice(FakeServer(), account: "acc-carol", username: "carol")
+        let bundle = try await pair.ana.deps.mls.add(keyPackages: try await carol.deps.mls.makeKeyPackages(count: 1), to: pair.group)
+        var deps = pair.bob.deps
+        let spy = SpyMLSEngine(deps.mls)
+        deps.mls = spy
+        spy.failMembers(true)
+        let processor = NotificationProcessor(deps: deps, handler: TestHandler(), inbox: pair.inbox, conversations: NoConversations())
+        _ = await processor.process(pushData: padded(bundle.commit), deadline: NSEPair.deadline)
+        #expect(try pair.bob.deps.repo.isProcessed(hash: PortableSHA256.hash(bundle.commit)))
+        #expect(try Membership.membersUnreadable(chatID: "acc-ana", db: pair.bob.deps.repo))
+    }
+}

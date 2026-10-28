@@ -848,6 +848,17 @@
         }
       }
     },
+    "Can't check the devices in this chat right now, so the safety number is hidden." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Can't check the devices in this chat right now, so the safety number is hidden."
+          }
+        }
+      }
+    },
     "Verified" : {
       "extractionState" : "manual",
       "localizations" : {

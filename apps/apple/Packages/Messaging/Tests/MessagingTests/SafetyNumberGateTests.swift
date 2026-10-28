@@ -130,3 +130,27 @@ func storeNumber(_ repo: Repository, me: String, peer: String, key: UInt8) throw
         #expect(store.safetyNumber(for: "acc-bob")?.groups.joined() != old)
     }
 }
+
+/// A chat whose members cannot be read shows no number and no verified state, and says so.
+@Suite("TestSafetyNumberMembersUnreadable") @MainActor struct TestSafetyNumberMembersUnreadable {
+    @Test func unreadableMembersHideTheNumberAndTheVerifiedState() async throws {
+        let server = FakeServer()
+        let device = await makeDevice(server, account: "acc-ana", username: "ana", realMemberKeys: true)
+        let manager = ConversationManager(deps: device.deps)
+        let outbox = Outbox(deps: device.deps, conversations: manager, readReceiptsEnabled: { true })
+        let inbox = InboxProcessor(
+            deps: device.deps, conversations: manager, handler: IncomingHandler(me: device.deps.me, now: device.deps.now, log: { _ in }))
+        let store = LiveChatStore(deps: device.deps, outbox: outbox, inbox: inbox, conversations: manager, attachments: nil)
+        _ = store.ensureChat(with: "acc-bob")
+        let number = try storeNumber(device.deps.repo, me: "acc-ana", peer: "acc-bob", key: 1)
+        try device.deps.repo.setVerified(chatID: "acc-bob", number)
+        #expect(store.safetyNumber(for: "acc-bob")?.isVerified == true)
+        #expect(!store.membersUnreadable(for: "acc-bob"))
+
+        try Membership.markUnreadable(conversationID: "conv-acc-bob", db: device.deps.repo)
+        #expect(store.membersUnreadable(for: "acc-bob"))
+        #expect(store.safetyNumber(for: "acc-bob") == nil)
+        store.setVerified(false, chatID: "acc-bob")
+        #expect(try device.deps.repo.safety(chatID: "acc-bob")?.verified == number)  // unchanged, not re-verifiable
+    }
+}

@@ -182,6 +182,10 @@ func msg(_ c: MessageContent) -> Message {
     #expect(s.safetyNumber(for: "nope") == nil)
 }
 
+@MainActor @Test func sampleStoreCanAlwaysReadMembers() {
+    #expect(!SampleChatStore().membersUnreadable(for: "chat-riya"))
+}
+
 @MainActor @Test func attachmentAndDownload() {
     let s = SampleChatStore()
     s.sendAttachment(URL(fileURLWithPath: "/tmp/x.pdf"), kind: .file, in: "chat-riya")
