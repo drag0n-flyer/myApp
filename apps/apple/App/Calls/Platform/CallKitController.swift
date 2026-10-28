@@ -112,6 +112,8 @@ final class CallKitController: NSObject, CXProviderDelegate {
     }
 
     nonisolated func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
+        nonisolated(unsafe) let action = action
+        nonisolated(unsafe) let provider = provider
         MainActor.assumeIsolated {
             let update = CXCallUpdate()
             update.remoteHandle = action.handle
@@ -124,6 +126,7 @@ final class CallKitController: NSObject, CXProviderDelegate {
     }
 
     nonisolated func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
+        nonisolated(unsafe) let action = action
         MainActor.assumeIsolated {
             handler?.callKitAnswer(callID: action.callUUID)
             action.fulfill()
@@ -131,6 +134,7 @@ final class CallKitController: NSObject, CXProviderDelegate {
     }
 
     nonisolated func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
+        nonisolated(unsafe) let action = action
         MainActor.assumeIsolated {
             handler?.callKitEnd(callID: action.callUUID)
             action.fulfill()
@@ -138,6 +142,7 @@ final class CallKitController: NSObject, CXProviderDelegate {
     }
 
     nonisolated func provider(_ provider: CXProvider, perform action: CXSetMutedCallAction) {
+        nonisolated(unsafe) let action = action
         MainActor.assumeIsolated {
             handler?.callKitSetMuted(callID: action.callUUID, muted: action.isMuted)
             action.fulfill()
@@ -145,10 +150,12 @@ final class CallKitController: NSObject, CXProviderDelegate {
     }
 
     nonisolated func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
+        nonisolated(unsafe) let audioSession = audioSession
         MainActor.assumeIsolated { handler?.callKitAudioDidActivate(audioSession) }
     }
 
     nonisolated func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
+        nonisolated(unsafe) let audioSession = audioSession
         MainActor.assumeIsolated { handler?.callKitAudioDidDeactivate(audioSession) }
     }
 }
