@@ -45,6 +45,9 @@ class ConversationManager(
     private val escrow: EscrowSealer? = null,
     private val syncOnce: suspend () -> Unit,
 ) {
+    /** This device's account. */
+    val localAccountId: String get() = me.accountId
+
     /** Serialises creates (and their recovery) for all contacts, not only per contact: creates are rare. */
     private val creating = Mutex()
 
