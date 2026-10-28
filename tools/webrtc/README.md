@@ -44,4 +44,4 @@ It needs Xcode, a lot of free disk space, and several hours. To test the result 
 
 ## Licenses
 
-Each release carries `LICENSE.md`, the licenses of WebRTC and every third-party library in the framework. The build fails if it names a GPL, LGPL or AGPL license. A copy lives in `apps/apple/Packages/WebRTCBinary/THIRD_PARTY_LICENSES.md` once the first release is published.
+Each release carries `LICENSE.md`, the licenses of WebRTC and every third-party library in the framework. The build fails if it names a GPL, LGPL or AGPL license. A copy of the pinned release's `LICENSE.md` lives in `apps/apple/Packages/WebRTCBinary/THIRD_PARTY_LICENSES.md`.
