@@ -14,7 +14,7 @@ extension CallSignalSealer {
     /// Opens a payload the server framed as sent by `fromDeviceID`, as the machine's input: `.remote` carrying the
     /// credential device (the machine drops it when that differs from `fromDeviceID`), or `.remoteRejected`.
     ///
-    /// TODO(K4): LiveCallEngine opens every `call.answered` and `call.signal` payload through this, so the
+    /// LiveCallEngine opens every `call.answered` and `call.signal` payload through this, so the
     /// credential device reaches `.remote(_, fromDeviceID:, senderDeviceID:)`. Never build `.remote` without it.
     public func openInput(_ data: Data, from contactID: String, fromDeviceID: String) async -> CallInput {
         do {
