@@ -85,10 +85,10 @@ class LinkScreensTest {
         assertEquals(listOf("other.example.net"), hosts)
     }
 
-    private fun flow(vm: LinkApprovalViewModel, codes: MutableList<String>, bio: BiometricResult, done: () -> Unit) = rule.setContent {
+    private fun flow(vm: LinkApprovalViewModel, codes: MutableList<String>, done: () -> Unit) = rule.setContent {
         AppTheme {
             LinkApprovalFlow(
-                vm, onDone = done, confirm = { bio },
+                vm, onDone = done,
                 scanner = { onResult -> androidx.compose.material3.Button({ onResult(codes.removeAt(0)) }) { androidx.compose.material3.Text("scan") } },
             )
         }
@@ -97,7 +97,7 @@ class LinkScreensTest {
     @Test
     fun wrongCodeThenRightCodeIsReadByTheSameScreen() {
         val vm = LinkApprovalViewModel(org.example.app.core.account.SampleAccountService())
-        flow(vm, mutableListOf("https://other.example.net/link/x#y", "https://home.example.org/link/x#y"), BiometricResult.Success) {}
+        flow(vm, mutableListOf("https://other.example.net/link/x#y", "https://home.example.org/link/x#y")) {}
         rule.onNodeWithText("scan").performClick()
         rule.waitForIdle()
         rule.onNodeWithText("This code is for a different server.").assertExists()
@@ -107,10 +107,10 @@ class LinkScreensTest {
     }
 
     @Test
-    fun approveRunsTheScreensBiometricThenFinishes() {
+    fun approveCallsTheServiceThenFinishes() {
         var done = 0
         val vm = LinkApprovalViewModel(org.example.app.core.account.SampleAccountService())
-        flow(vm, mutableListOf("https://home.example.org/link/x#y"), BiometricResult.Success) { done++ }
+        flow(vm, mutableListOf("https://home.example.org/link/x#y")) { done++ }
         rule.onNodeWithText("scan").performClick()
         rule.waitForIdle()
         rule.onNodeWithText("Approve").performClick()
@@ -119,10 +119,14 @@ class LinkScreensTest {
     }
 
     @Test
-    fun cancellingTheBiometricStaysOnTheApprovalWithoutAnError() {
+    fun aCancelledCheckStaysOnTheApprovalWithoutAnError() {
         var done = 0
-        val vm = LinkApprovalViewModel(org.example.app.core.account.SampleAccountService())
-        flow(vm, mutableListOf("https://home.example.org/link/x#y"), BiometricResult.Cancelled) { done++ }
+        val sample = org.example.app.core.account.SampleAccountService()
+        val cancelling = object : org.example.app.core.account.AccountService by sample {
+            override suspend fun approveLink(request: LinkRequest): org.example.app.core.account.LinkApproval = throw AccountError.Cancelled
+        }
+        val vm = LinkApprovalViewModel(cancelling)
+        flow(vm, mutableListOf("https://home.example.org/link/x#y")) { done++ }
         rule.onNodeWithText("scan").performClick()
         rule.waitForIdle()
         rule.onNodeWithText("Approve").performClick()
