@@ -4,7 +4,7 @@ Last updated: 2026-10-28, 15:30 UTC.
 
 | Track | Done | % |
 |---|---|---|
-| iPhone/Mac Phase 1 | 124 / 128 | 97% |
+| iPhone/Mac Phase 1 | 125 / 128 | 98% |
 | Android | 39 / 44 | 89% |
 | Admin dashboard | done, with admin accounts and 2FA, on `main` | 100% |
 
@@ -39,7 +39,7 @@ Admin dashboard: `http://localhost:9044/admin/`. `.env` also sets `APP_ADMIN_HOS
 | [Client calling](docs/superpowers/plans/2026-10-27-client-calling.md) | 16 / 16 | 100% | I1 merged. With the real WebRTC build the encoder holds 10 kbps (about 19 kbps on the wire, inside GOAL.md's 17–21); the send-bitrate test now checks the audio payload, the encoder target and the wire total | done |
 | [Client messaging](docs/superpowers/plans/2026-10-27-client-messaging.md) | 16 / 16 | 100% | I1 merged: live store, calls tied to the caller's device, CallKit hang-up, sign-out ends calls first, a setup-error screen instead of sample chats; Apple CI green | done |
 | [Security docs and release](docs/superpowers/plans/2026-10-27-security-docs-release.md) | 13 / 14 | 93% | only Task 13 left, deferred by the owner | done for now |
-| [Call lab](docs/superpowers/plans/2026-10-27-call-lab.md) | 9 / 12 | 75% | WebRTC is in: L10a can start; L10 deferred; L11 last | about 1 day |
+| [Call lab](docs/superpowers/plans/2026-10-27-call-lab.md) | 10 / 12 | 83% | L10a merged: a weekly Mac job runs 7 test calls between two Mac app processes under simulated networks (labelled "CI, simulated"); its first run is the real test of the network shaping. Four rulings for you to confirm in the decision log. L10 deferred (release gate); L11 next | about 0.5 day |
 
 Extra work beyond the plans, in progress (each is reviewed before it merges; ETAs are agent time):
 
