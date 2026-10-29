@@ -121,7 +121,34 @@ tasks.register("exportRuntimeDependencies") {
         }
         walk(root.get())
         out.get().asFile.apply { parentFile.mkdirs() }.writeText(ids.sorted().joinToString("\n") + "\n")
+        // The licenses come from the POMs, but Gradle fetches only the .module file of a library that
+        // publishes one, and a restored CI cache can lack a POM Gradle already parsed. Resolve each POM,
+        // then the parent POMs a POM inherits its licenses from, and copy them to oss/poms
+        // (group/name/version/pom/name-version.pom), where scripts/generate-oss-notices.py reads them.
+        val pomDir = out.get().asFile.resolveSibling("poms").apply { deleteRecursively() }
+        val fetched = HashSet<String>()
+        var pending: Set<String> = ids
+        while (pending.isNotEmpty()) {
+            fetched += pending
+            // An artifact query fetches each exact version; a configuration would let guava-parent
+            // 33.3.1 replace the 26.0 that listenablefuture names as its parent.
+            val query = project.dependencies.createArtifactResolutionQuery()
+            pending.forEach { val (g, n, v) = it.split(":"); query.forModule(g, n, v) }
+            val poms = query.withArtifacts(org.gradle.maven.MavenModule::class.java, org.gradle.maven.MavenPomArtifact::class.java).execute().resolvedComponents.map { c ->
+                val id = c.id as org.gradle.api.artifacts.component.ModuleComponentIdentifier
+                val file = c.getArtifacts(org.gradle.maven.MavenPomArtifact::class.java).filterIsInstance<org.gradle.api.artifacts.result.ResolvedArtifactResult>().single().file
+                file.copyTo(pomDir.resolve("${id.group}/${id.module}/${id.version}/pom/${id.module}-${id.version}.pom"), overwrite = true)
+            }
+            pending = poms.mapNotNull { pom ->
+                val parent = javax.xml.parsers.DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(pom)
+                    .documentElement.childNodes.let { n -> (0 until n.length).map(n::item) }
+                    .firstOrNull { it.nodeName == "parent" } ?: return@mapNotNull null
+                val field = { tag: String -> parent.childNodes.let { n -> (0 until n.length).map(n::item) }.first { it.nodeName == tag }.textContent.trim() }
+                "${field("groupId")}:${field("artifactId")}:${field("version")}"
+            }.toSet() - fetched
+        }
     }
+    notCompatibleWithConfigurationCache("resolves the POMs of the runtime libraries at execution time")
 }
 
 dependencies {

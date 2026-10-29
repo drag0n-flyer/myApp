@@ -12,7 +12,7 @@ Sources:
 
 - Android (with --android-output): the same crates and vendored components plus the Gradle
   runtime dependencies listed in --gradle-deps (written by `./gradlew :app:exportRuntimeDependencies`).
-  Their licenses come from the POM files in the Gradle cache. --check-android also fails on a
+  Their licenses come from the POM files that task copies to apps/android/app/build/oss/poms. --check-android also fails on a
   Gradle library whose license is copyleft, or not allowed and not approved in
   docs/security/license-allowlist.md (section gradle-libraries).
 
@@ -24,7 +24,6 @@ import argparse
 import hashlib
 import importlib.util
 import json
-import os
 import re
 import subprocess
 import sys
@@ -38,6 +37,7 @@ CANONICAL_DIR = REPO_ROOT / "scripts/license-texts"
 LICENSE_FILE = re.compile(r"^(licen[sc]e|copying|unlicense)", re.IGNORECASE)
 ALLOWLIST = REPO_ROOT / "docs/security/license-allowlist.md"
 DEFAULT_GRADLE_DEPS = REPO_ROOT / "apps/android/app/build/oss/runtime-dependencies.txt"
+DEFAULT_GRADLE_POMS = REPO_ROOT / "apps/android/app/build/oss/poms"
 DEFAULT_ANDROID_OUTPUT = REPO_ROOT / "apps/android/app/src/main/assets/oss-notices.json"
 ANDROID_SDK_TERMS = "https://developer.android.com/studio/terms.html"
 # Libraries whose POM lists several licenses or none. JNA is dual-licensed (LGPL-2.1-or-later OR
@@ -279,8 +279,7 @@ def main():
     parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
     parser.add_argument("--output", help=f"Apple notices (default {DEFAULT_OUTPUT.relative_to(REPO_ROOT)}; skipped when only Android output is requested)")
     parser.add_argument("--gradle-deps", default=str(DEFAULT_GRADLE_DEPS))
-    parser.add_argument("--gradle-cache", default=os.path.join(
-        os.environ.get("GRADLE_USER_HOME", os.path.expanduser("~/.gradle")), "caches/modules-2/files-2.1"))
+    parser.add_argument("--gradle-cache", default=str(DEFAULT_GRADLE_POMS))
     parser.add_argument("--android-output", help="also write the Android notices (adds the Gradle libraries)")
     parser.add_argument("--release", action="store_true",
                         help="with --check-android: a pending notice fails the check (tagged release); "
