@@ -121,7 +121,26 @@ tasks.register("exportRuntimeDependencies") {
         }
         walk(root.get())
         out.get().asFile.apply { parentFile.mkdirs() }.writeText(ids.sorted().joinToString("\n") + "\n")
+        // The licenses come from the POMs, but Gradle fetches only the .module file of a library that
+        // publishes one, so a fresh cache (CI) has no POM for it. Fetch each POM, then the parent POMs
+        // a POM inherits its licenses from.
+        val fetched = HashSet<String>()
+        var pending: Set<String> = ids
+        while (pending.isNotEmpty()) {
+            fetched += pending
+            val poms = project.configurations.detachedConfiguration(
+                *pending.map { project.dependencies.create("$it@pom") }.toTypedArray(),
+            ).apply { isTransitive = false }.resolve()
+            pending = poms.mapNotNull { pom ->
+                val parent = javax.xml.parsers.DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(pom)
+                    .documentElement.childNodes.let { n -> (0 until n.length).map(n::item) }
+                    .firstOrNull { it.nodeName == "parent" } ?: return@mapNotNull null
+                val field = { tag: String -> parent.childNodes.let { n -> (0 until n.length).map(n::item) }.first { it.nodeName == tag }.textContent.trim() }
+                "${field("groupId")}:${field("artifactId")}:${field("version")}"
+            }.toSet() - fetched
+        }
     }
+    notCompatibleWithConfigurationCache("resolves the POMs of the runtime libraries at execution time")
 }
 
 dependencies {
