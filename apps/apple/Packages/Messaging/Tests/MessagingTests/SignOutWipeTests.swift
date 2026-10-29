@@ -162,6 +162,42 @@ private struct Boom: Error {}
         #expect(LocalAccountData.hasRecordedDevice(repo: repo))
     }
 
+    // The notification extension cannot wipe, so it only checks: the same rule as `prepare`, read-only.
+    @Test func ownershipCheckMatchesPrepareWithoutWriting() async throws {
+        let (device, container) = try await device()
+        let repo = device.deps.repo
+        // Nothing recorded: the app would wipe, so the data is not this account's.
+        #expect(!LocalAccountData.isOwned(accountID: "acc-ana", deviceID: "dev-1", container: container, repo: repo))
+        #expect(try repo.get(LocalAccountData.ownerKey) == nil)
+        try repo.set(LocalAccountData.ownerKey, Data("acc-ana".utf8))
+        // Legacy owner without a device belongs to the signed-in device, as in `prepare`.
+        #expect(LocalAccountData.isOwned(accountID: "acc-ana", deviceID: "dev-1", container: container, repo: repo))
+        try await LocalAccountData.prepare(
+            accountID: "acc-ana", deviceID: "dev-1", container: container, repo: repo, wipe: wipeSteps(device, Calls()))
+        #expect(LocalAccountData.isOwned(accountID: "acc-ana", deviceID: "dev-1", container: container, repo: repo))
+        #expect(!LocalAccountData.isOwned(accountID: "acc-bob", deviceID: "dev-1", container: container, repo: repo))
+        #expect(!LocalAccountData.isOwned(accountID: "acc-ana", deviceID: "dev-2", container: container, repo: repo))
+        try LocalAccountData.markWipePending(in: container)
+        #expect(!LocalAccountData.isOwned(accountID: "acc-ana", deviceID: "dev-1", container: container, repo: repo))
+    }
+
+    // The extension reads the owner from the database file read-only: a missing file is not owned and is not created.
+    @Test func ownershipCheckOnTheFileIsReadOnly() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("own-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = MessagingLocations.databaseURL(in: dir)
+        #expect(!LocalAccountData.isOwned(accountID: "acc-ana", deviceID: "dev-1", container: dir, databaseURL: url))
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+
+        let db = try Database(url: url)
+        try migrate(db)
+        let repo = Repository(db: db, now: { Date() })
+        try await LocalAccountData.prepare(accountID: "acc-ana", deviceID: "dev-1", container: dir, repo: repo, wipe: {})
+        #expect(LocalAccountData.isOwned(accountID: "acc-ana", deviceID: "dev-1", container: dir, databaseURL: url))
+        #expect(!LocalAccountData.isOwned(accountID: "acc-bob", deviceID: "dev-1", container: dir, databaseURL: url))
+    }
+
     @Test func freshDatabaseGetsOwnerWithoutError() async throws {
         let (device, container) = try await device()
         #expect(try await LocalAccountData.prepare(

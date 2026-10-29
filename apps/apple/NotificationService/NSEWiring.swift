@@ -21,8 +21,9 @@ enum NSEWiring {
         return await processor.process(pushData: pushData, deadline: deadline)
     }
 
-    /// nil when there is no session yet (signed out), the container is unavailable, the MLS
-    /// engine cannot be made, or the stored database cannot be opened or is newer than this build.
+    /// nil when there is no session yet (signed out), the container is unavailable, the local data
+    /// does not belong to the signed-in account and device, the MLS engine cannot be made, or the
+    /// stored database cannot be opened or is newer than this build.
     private static func makeDeps() -> MessagingDeps? {
         let info = Bundle.main.infoDictionary ?? [:]
         let accessGroup = MessagingLocations.requiredInfoValue("KeychainAccessGroup", in: info)
@@ -31,18 +32,26 @@ enum NSEWiring {
               let group = MessagingLocations.appGroupID,
               let container = StoreLocation.appGroup(group)
         else { return nil }
+        let databaseURL = MessagingLocations.databaseURL(in: container)
+        // Only the app wipes (`LocalAccountData.prepare`). The owner is read on a strict read-only connection: data
+        // of another account or device, with a wipe pending, or missing is left unopened (no database, no MLS
+        // storage), and the push shows the generic notification.
+        guard LocalAccountData.isOwned(
+            accountID: session.accountID, deviceID: session.deviceID, container: container, databaseURL: databaseURL)
+        else { return nil }
         do {
-            let db = try Database(url: MessagingLocations.databaseURL(in: container))
+            let db = try Database(url: databaseURL)
             try NotificationBudget.configure(db)
-            try migrate(db)
             let now: @Sendable () -> Date = { Date() }
+            let repo = Repository(db: db, now: now)
+            try migrate(db)
             guard let mls = NSEAdapters.makeEngine(container: container, accountID: session.accountID, deviceID: session.deviceID)
             else { return nil }
             return MessagingDeps(
                 me: (session.accountID, session.deviceID),
                 server: ServerClient(host: session.host, session: sessions),
                 mls: mls,
-                repo: Repository(db: db, now: now),
+                repo: repo,
                 lock: ProcessLock(url: MessagingLocations.lockURL(in: container)),
                 escrow: NSEUnavailable(), attachments: NSEUnavailable(), notifier: NSEDeviceNotice(),
                 mediaDirectory: MessagingLocations.mediaURL(in: container),

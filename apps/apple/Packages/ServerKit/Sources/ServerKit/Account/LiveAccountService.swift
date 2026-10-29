@@ -238,6 +238,9 @@ public final class LiveAccountService: AccountService {
         guard let ticket else { throw .linkExpired }
         let key = linkPrivateKey
         defer { self.ticket = nil; linkPrivateKey = nil }
+        // The host and policy are read with the client, so a server change during the wait cannot re-file the
+        // session or send its token to the other server.
+        let claimHost = host, claimServer = currentServer
         let c = await ready()
         while true {
             let claim = try await call(link: true) { () async throws(ServerError) in
@@ -248,8 +251,15 @@ public final class LiveAccountService: AccountService {
                 if let sealed, let key {
                     snapshot = try? linkCrypto.open(sealed, privateKey: key)
                 }
-                unsaved = (s, snapshot, host)
-                return try await saveLinked(s, snapshot: snapshot, host: host)
+                // A "Change server" during the wait moved the service to another host: move it back, so every
+                // later authenticated call uses the claim host's client.
+                if host != claimHost || working !== c {
+                    host = claimHost
+                    currentServer = claimServer
+                    adopt(c)
+                }
+                unsaved = (s, snapshot, claimHost)
+                return try await saveLinked(s, snapshot: snapshot, host: claimHost)
             }
             if now() >= ticket.expiresAt { throw .linkExpired }
             do { try await sleep(.seconds(2)) } catch { throw .cancelled }

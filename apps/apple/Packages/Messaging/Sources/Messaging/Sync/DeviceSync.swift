@@ -153,7 +153,8 @@ public actor DeviceSync {
         _ listed: Set<String>, from conversation: ConversationRecord, now: Int64, stillStale: inout Set<String>
     ) async throws {
         let prefix = "\(deps.me.accountID)/"
-        let stale = try await deps.mls.members(of: GroupID(raw: conversation.groupID))
+        let stale = try await Membership.members(
+            of: GroupID(raw: conversation.groupID), conversationID: conversation.serverID, mls: deps.mls, db: deps.repo)
             .filter { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) }
             .filter { $0 != deps.me.deviceID && !listed.contains($0) }.sorted()
         for deviceID in stale {
@@ -174,7 +175,7 @@ public actor DeviceSync {
         let group = GroupID(raw: conversation.groupID)
         let serverID = conversation.serverID
         @Sendable func missing() async throws -> [String] {
-            let members = Set(try await deps.mls.members(of: group))
+            let members = Set(try await Membership.members(of: group, conversationID: serverID, mls: deps.mls, db: deps.repo))
             return own.filter { !members.contains("\(deps.me.accountID)/\($0)") }.sorted()
         }
         let todo = try await missing()
@@ -220,12 +221,16 @@ public actor DeviceSync {
     private func remove(_ identity: String, deviceID: String, from conversation: ConversationRecord) async throws {
         let deps = self.deps
         let group = GroupID(raw: conversation.groupID)
-        guard try await deps.mls.members(of: group).contains(identity) else { return }
+        let serverID = conversation.serverID
+        @Sendable func members() async throws -> [String] {
+            try await Membership.members(of: group, conversationID: serverID, mls: deps.mls, db: deps.repo)
+        }
+        guard try await members().contains(identity) else { return }
         do {
             _ = try await conversations.postCommitWithRetry(
-                serverID: conversation.serverID, group: group, addDevices: [], removeDevices: [deviceID]
+                serverID: serverID, group: group, addDevices: [], removeDevices: [deviceID]
             ) {
-                guard try await deps.mls.members(of: group).contains(identity) else { throw AlreadyDone() }
+                guard try await members().contains(identity) else { throw AlreadyDone() }
                 return try await deps.mls.remove(members: [identity], from: group)
             }
         } catch is AlreadyDone {

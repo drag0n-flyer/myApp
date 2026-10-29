@@ -456,6 +456,20 @@ private final class CountingTransport: HTTPTransport, @unchecked Sendable {
         #expect(await commitPosts(rig) == commits)
     }
 
+    // A reconcile that cannot read a group's members flags the conversation, as `Membership` does.
+    @Test func unreadableMembersAreFlagged() async throws {
+        let rig = try await Rig.make()
+        var deps = rig.ana1.device.deps
+        let spy = SpyMLSEngine(deps.mls)
+        deps.mls = spy
+        let sync = DeviceSync(deps: deps, conversations: rig.ana1.conversations, wipeMLS: {})
+        #expect(try !Membership.membersUnreadable(chatID: "acc-bob", db: deps.repo))
+        spy.failMembers(true)
+        await #expect(throws: (any Error).self) { try await sync.reconcileOwnDevices() }
+        #expect(try Membership.membersUnreadable(chatID: "acc-bob", db: deps.repo))
+        #expect(try Membership.membersUnreadable(chatID: "acc-carol", db: deps.repo))
+    }
+
     @Test func removalNeedsTwoListsTenMinutesApart() async throws {
         let clock = MutableClock()
         let rig = try await Rig.make(clock: clock)

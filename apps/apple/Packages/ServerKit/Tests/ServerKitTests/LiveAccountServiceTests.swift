@@ -121,6 +121,14 @@ private func err(_ code: String) -> String { #"{"error":{"code":"\#(code)","mess
     }
 }
 
+@MainActor private final class ServiceBox {
+    var service: LiveAccountService?
+    private(set) var changed = false
+    func changeServer(to host: String) async {
+        changed = (try? await service?.connect(host: host)) != nil
+    }
+}
+
 @MainActor @Suite struct LiveAccountServiceTests {
     @Test func connectReadsPolicy() async throws {
         let r = Rig()
@@ -319,6 +327,35 @@ private func err(_ code: String) -> String { #"{"error":{"code":"\#(code)","mess
         #expect(imports.snapshots.count == 1)
         #expect(r.service.isSignedIn)
         #expect(r.service.linkSavePending == false)
+    }
+
+    /// A "Change server" tap while the claim is in flight must not file the session under the new host.
+    @Test func linkSessionKeepsTheHostTheClaimWasMadeOn() async throws {
+        let box = ServiceBox()
+        let r = Rig(onSleep: { n, t in
+            if n == 1 {
+                await t.respond("GET", "/v1/server", status: 200,
+                                json: serverJSON.replacingOccurrences(of: "chat.test", with: "other.test"))
+                await box.changeServer(to: "other.test")
+                await t.respond("POST", "/v1/link/L1/claim", status: 200, json: sessionJSON)
+            }
+        })
+        box.service = r.service
+        await r.t.respond("GET", "/v1/server", status: 200, json: serverJSON)
+        _ = try await r.service.connect(host: "chat.test")
+        await r.t.respond("POST", "/v1/link", status: 200, json: #"{"linkID":"L1","secret":"S1","claimToken":"C1","expiresAt":"2026-11-01T12:05:00Z"}"#)
+        await r.t.respond("POST", "/v1/link/L1/claim", status: 202, json: "{}")
+        _ = try await r.service.makeLinkCode()
+        _ = try await r.service.waitForLinkApproval()
+        #expect(box.changed)
+        #expect(r.store.current?.host == "chat.test")
+        // Later authenticated calls go to the claim host; the other server never sees the token.
+        #expect(r.service.currentServer?.host == "chat.test")
+        await r.t.respond("GET", "/v1/devices", status: 200, json: #"{"devices":[]}"#)
+        _ = try await r.service.devices()
+        let sent = await r.t.requests
+        #expect(sent.last?.url?.host == "chat.test" && sent.last?.url?.path == "/v1/devices")
+        #expect(!sent.contains { $0.url?.host == "other.test" && $0.value(forHTTPHeaderField: "Authorization") != nil })
     }
 
     @Test func linkExpiresAfterFiveMinutes() async throws {

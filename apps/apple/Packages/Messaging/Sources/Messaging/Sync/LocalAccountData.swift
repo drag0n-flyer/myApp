@@ -33,6 +33,31 @@ public enum LocalAccountData {
         ((try? repo.get(ownerDeviceKey)) ?? nil) != nil
     }
 
+    /// Whether the data in `repo` may be used for `accountID` on `deviceID` as it is: the check `prepare` makes,
+    /// without wiping or writing. For readers that cannot wipe (the notification extension); unreadable counts as
+    /// not owned.
+    public static func isOwned(accountID: String, deviceID: String, container: URL, repo: Repository) -> Bool {
+        do {
+            let owner = try repo.get(ownerKey).flatMap { String(data: $0, encoding: .utf8) }
+            let ownerDevice = try repo.get(ownerDeviceKey).flatMap { String(data: $0, encoding: .utf8) }
+            return !needsWipe(owner: owner, ownerDevice: ownerDevice, accountID: accountID, deviceID: deviceID, container: container)
+        } catch {
+            return false
+        }
+    }
+
+    /// `isOwned` on the database file at `databaseURL`, opened strictly read-only (`Database.readOnly`): nothing is
+    /// created or written. A missing or unreadable file is not owned.
+    public static func isOwned(accountID: String, deviceID: String, container: URL, databaseURL: URL) -> Bool {
+        guard let db = try? Database.readOnly(url: databaseURL) else { return false }
+        return isOwned(accountID: accountID, deviceID: deviceID, container: container, repo: Repository(db: db, now: { Date() }))
+    }
+
+    /// A stored account with no device is from before devices were recorded and belongs to the signed-in device.
+    private static func needsWipe(owner: String?, ownerDevice: String?, accountID: String, deviceID: String, container: URL) -> Bool {
+        isWipePending(in: container) || owner != accountID || (ownerDevice ?? deviceID) != deviceID
+    }
+
     /// Makes the data in `repo` safe to use for `accountID` on `deviceID`. Wipes (with `wipe`) when a wipe is pending,
     /// when the stored owner is another account or device, or when no owner is recorded; then records the owner.
     /// A stored account with no device is from before devices were recorded, when every server sign-out wiped, so
@@ -45,7 +70,7 @@ public enum LocalAccountData {
     ) async throws -> Bool {
         let owner = try repo.get(ownerKey).flatMap { String(data: $0, encoding: .utf8) }
         let ownerDevice = try repo.get(ownerDeviceKey).flatMap { String(data: $0, encoding: .utf8) }
-        let needsWipe = isWipePending(in: container) || owner != accountID || (ownerDevice ?? deviceID) != deviceID
+        let needsWipe = needsWipe(owner: owner, ownerDevice: ownerDevice, accountID: accountID, deviceID: deviceID, container: container)
         if needsWipe {
             try markWipePending(in: container)   // a kill between the wipe and the owner write repeats the wipe
             try await wipe()

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Fails when the app ID is hard-coded in apps/apple or tools/call-lab outside apps/apple/AppID.xcconfig:
+# Fails when the app ID is hard-coded in the tracked files of apps/apple or tools/call-lab outside apps/apple/AppID.xcconfig:
 # the iPhone/Mac counterpart of Android's checkAppId task. Usage: check-app-id.sh [repository root]
 #
 # project.yml, serverkit-tests.yml, the call lab and the entitlements build every ID from $(APP_ID);
@@ -39,11 +39,22 @@ fi
 pattern() { printf '%s([^A-Za-z0-9_]|$)' "$(printf '%s' "$1" | sed 's/[.]/\\./g')"; }
 ids="$(pattern "$placeholder")|$(pattern "$app_id")"
 
+# Tracked files only: git-ignored build output (.build, the MLS Kotlin bindings) is never read.
 dirs=()
 for d in apps/apple tools/call-lab; do [ -d "$d" ] && dirs+=("$d"); done
 
+# Exit 1 is "no hits"; anything else (not a repository, blocked by safe.directory) is an error.
+rc=0
+hits=$(git grep -niIE "$ids" -- "${dirs[@]}" \
+  ':(exclude,glob)**/Generated/**' ':(exclude,glob)**/*.xcodeproj/**' ':(exclude)apps/apple/Prototypes') || rc=$?
+if [ "$rc" -gt 1 ]; then
+  echo "error: git grep failed (exit $rc) in $root" >&2
+  exit 1
+fi
+
 status=0
 while IFS= read -r hit; do
+  [ -n "$hit" ] || continue
   file="${hit%%:*}"
   rest="${hit#*:}"
   line="${rest#*:}"
@@ -55,9 +66,7 @@ while IFS= read -r hit; do
     echo "error: app ID hard-coded outside $xcconfig: $hit" >&2
     status=1
   fi
-done < <(grep -rniIE "$ids" "${dirs[@]}" \
-  --exclude-dir=.build --exclude-dir=.swiftpm --exclude-dir=Generated --exclude-dir='*.xcodeproj' \
-  --exclude-dir=DerivedData --exclude-dir=Prototypes || true)
+done <<< "$hits"
 
 [ "$status" = 0 ] && echo "ok: app ID $app_id is set only in $xcconfig"
 exit "$status"
