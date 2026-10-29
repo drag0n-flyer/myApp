@@ -13,6 +13,10 @@ data class AdaptorOutput(
 /**
  * Picks the audio mode and video tier a network can sustain, from a [MediaStats] sample every 2 s.
  * Degrades video tier, then video off, then audio. Recovers one level after several good samples.
+ * The session caps the estimate at the current level's ceiling ([MediaStats.bweCeiling]), so an estimate at the cap
+ * means "at least the cap": it counts as enough headroom to try the next level. For a grace period after a step-up a
+ * low estimate alone does not step down (WebRTC ramps up gradually); loss still does. A step-up that fails (loss in
+ * the grace period, or an estimate still low when it ends) starts a hold-off, doubling with each failure in a row.
  * Mirrors the iPhone's QualityAdaptor exactly.
  */
 class QualityAdaptor(private var ceiling: DataMode, private var videoWanted: Boolean) {
@@ -23,6 +27,16 @@ class QualityAdaptor(private var ceiling: DataMode, private var videoWanted: Boo
         const val LOSS_UP_MAX = 0.02
         const val GOOD_SAMPLES_TO_STEP_UP = 5
         const val AUDIO_ONLY_BELOW = 60_000.0
+
+        /** An estimate at or above this share of the session's ceiling is capped, not measured. */
+        const val SATURATED_SHARE = 0.95
+
+        /** Samples without a step-up after a failed one (30 s); doubles per failure in a row, up to [MAX_HOLD_OFF_FACTOR]. */
+        const val STEP_UP_HOLD_OFF_SAMPLES = 15
+        const val MAX_HOLD_OFF_FACTOR = 4
+
+        /** Samples after a step-up (10 s) in which a low estimate alone does not step down: WebRTC ramps up gradually. */
+        const val STEP_UP_GRACE_SAMPLES = 5
     }
 
     private data class Level(val mode: DataMode, val tier: VideoTier?)
@@ -31,6 +45,9 @@ class QualityAdaptor(private var ceiling: DataMode, private var videoWanted: Boo
     private var badLossRun = 0
     private var goodRun = 0
     private var lastAvail: Double? = null
+    private var samplesSinceStepUp: Int? = null // set from a step-up until its grace period ends
+    private var failedStepUps = 0
+    private var holdOff = 0
 
     val currentMode: DataMode get() = current.mode
     val currentTier: VideoTier? get() = current.tier
@@ -77,39 +94,75 @@ class QualityAdaptor(private var ceiling: DataMode, private var videoWanted: Boo
             if (lossTrigger) {
                 goodRun = 0
                 badLossRun = 0
-                if (idx < ladder.size - 1) current = ladder[idx + 1]
+                if (idx < ladder.size - 1) stepDown(ladder[idx + 1])
             }
             return output(lastAvail ?: Double.POSITIVE_INFINITY)
         }
         val avail = measured
         lastAvail = measured
-        val bandwidthBad = avail < need(ladder[idx]) * STEP_DOWN_MARGIN ||
+        // After a step-up the estimate needs a few samples to climb: a low estimate alone waits for the grace period.
+        var graceEnded = false
+        samplesSinceStepUp?.let { n ->
+            samplesSinceStepUp = n + 1
+            graceEnded = n + 1 >= STEP_UP_GRACE_SAMPLES
+        }
+        val inGrace = samplesSinceStepUp != null && !graceEnded
+        val lowEstimate = avail < need(ladder[idx]) * STEP_DOWN_MARGIN ||
             (current.tier != null && avail < AUDIO_ONLY_BELOW)
+        val bandwidthBad = lowEstimate && !inGrace
+        if (graceEnded && !bandwidthBad && !lossTrigger) {
+            samplesSinceStepUp = null // the step-up held
+            failedStepUps = 0
+        }
 
         if (bandwidthBad || lossTrigger) {
             goodRun = 0
             if (idx < ladder.size - 1) {
-                current = if (bandwidthBad) {
-                    ladder.subList(idx + 1, ladder.size).firstOrNull { fits(it, avail) } ?: ladder.last()
-                } else {
-                    ladder[idx + 1]
-                }
+                stepDown(
+                    if (bandwidthBad) {
+                        ladder.subList(idx + 1, ladder.size).firstOrNull { fits(it, avail) } ?: ladder.last()
+                    } else {
+                        ladder[idx + 1]
+                    },
+                )
             }
             if (lossTrigger) badLossRun = 0
         } else if (idx > 0) {
             val next = ladder[idx - 1]
+            // A capped estimate hides the headroom: treat it as unknown, and let good loss decide.
+            val saturated = s.bweCeiling?.let { avail >= it * SATURATED_SHARE } ?: false
             val good = s.inboundLossFraction < LOSS_UP_MAX &&
-                avail >= need(next) * STEP_UP_MARGIN &&
-                (next.tier == null || avail >= AUDIO_ONLY_BELOW)
-            goodRun = if (good) goodRun + 1 else 0
-            if (goodRun >= GOOD_SAMPLES_TO_STEP_UP) {
+                (
+                    saturated ||
+                        (avail >= need(next) * STEP_UP_MARGIN && (next.tier == null || avail >= AUDIO_ONLY_BELOW))
+                    )
+            if (holdOff > 0) {
+                holdOff--
+                goodRun = 0
+            } else {
+                goodRun = if (good) goodRun + 1 else 0
+            }
+            if (goodRun >= GOOD_SAMPLES_TO_STEP_UP && samplesSinceStepUp == null) {
                 current = next
                 goodRun = 0
+                samplesSinceStepUp = 0
             }
         } else {
             goodRun = 0
         }
         return output(avail)
+    }
+
+    /**
+     * A step down for loss during the grace period after a step-up, or for a low estimate when it ends, means the
+     * step-up failed: hold off before retrying.
+     */
+    private fun stepDown(level: Level) {
+        current = level
+        if (samplesSinceStepUp == null) return
+        samplesSinceStepUp = null
+        failedStepUps++
+        holdOff = STEP_UP_HOLD_OFF_SAMPLES * minOf(1 shl minOf(failedStepUps - 1, 30), MAX_HOLD_OFF_FACTOR)
     }
 
     /** Best first: video tiers at the ceiling mode, then audio only from the ceiling mode down. */

@@ -144,4 +144,21 @@ class StatsMapperTest {
         assertEquals(5_000, MediaLogic.senderBitrateCap(5_000, p))
         assertEquals(50_000, MediaLogic.senderBitrateCap(50_000, null))
     }
+
+    /** The bandwidth estimator's ceiling is the mode's wire budget, so loss-driven padding and probes cannot exceed it. */
+    @Test
+    fun bweCapIsTheModeWireBudget() {
+        assertEquals(21_000, MediaLogic.bweMaxBitrate(10_000))
+        assertEquals(30_000, MediaLogic.bweMaxBitrate(16_000))
+        assertEquals(51_000, MediaLogic.bweMaxBitrate(24_000))
+        assertEquals(75_000, MediaLogic.bweMaxBitrate(40_000))
+        for (mode in DataMode.entries) {
+            val p = AudioProfile.forMode(mode)
+            assertEquals(p.wireBudget, MediaLogic.bweMaxBitrate(p.maxAverageBitrate), "$mode")
+        }
+        assertEquals(21_000, MediaLogic.bweMaxBitrate(6_000)) // below the lowest mode
+        assertEquals(30_000, MediaLogic.bweMaxBitrate(12_000)) // the lowest mode that covers it
+        assertEquals(75_000, MediaLogic.bweMaxBitrate(64_000)) // above the highest mode
+        assertEquals(171_000, MediaLogic.bweMaxBitrate(10_000, videoBitrate = 150_000))
+    }
 }

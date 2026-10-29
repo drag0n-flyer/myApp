@@ -321,7 +321,8 @@ final class LabCall: ObservableObject {
         #endif
     }
 
-    /// maxBitrate from `SenderLimits` (audio: senderMaxBitrate; video: the rung's maxBitrate).
+    /// maxBitrate from `SenderLimits` (audio: senderMaxBitrate; video: the rung's maxBitrate), and the bandwidth
+    /// estimator ceiling the apps set (`bweMaxBitrateBps`).
     private func applySenderLimits() {
         let l = SenderLimits(knobs)
         func setMax(_ sender: RTCRtpSender?, _ bps: Int?) {
@@ -332,6 +333,7 @@ final class LabCall: ObservableObject {
         }
         setMax(audioSender, l.audioMaxBitrateBps)
         setMax(videoSender, l.videoMaxBitrateBps)
+        _ = pc?.setBweMinBitrateBps(nil, currentBitrateBps: nil, maxBitrateBps: NSNumber(value: l.bweMaxBitrateBps))
     }
 
     private func iceStateChanged(_ s: RTCIceConnectionState) {

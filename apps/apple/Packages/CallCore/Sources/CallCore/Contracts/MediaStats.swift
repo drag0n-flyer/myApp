@@ -23,16 +23,17 @@ public struct MediaStats: Sendable, Equatable {
     public var bytesSent: Int64, bytesReceived: Int64, packetsSent: Int64, packetsReceived: Int64
     public var usingRelay: Bool                    // local candidate type == relay
     public var audioCodec: String?                 // log only
+    public var bweCeiling: Double?                 // bps, the estimator ceiling the session set (the estimate cannot pass it)
 
     public init(availableOutgoingBitrate: Double? = nil, roundTripTime: Double? = nil,
                 inboundLossFraction: Double = 0, jitter: Double? = nil,
                 bytesSent: Int64 = 0, bytesReceived: Int64 = 0,
                 packetsSent: Int64 = 0, packetsReceived: Int64 = 0,
-                usingRelay: Bool = false, audioCodec: String? = nil) {
+                usingRelay: Bool = false, audioCodec: String? = nil, bweCeiling: Double? = nil) {
         self.availableOutgoingBitrate = availableOutgoingBitrate; self.roundTripTime = roundTripTime
         self.inboundLossFraction = inboundLossFraction; self.jitter = jitter
         self.bytesSent = bytesSent; self.bytesReceived = bytesReceived
         self.packetsSent = packetsSent; self.packetsReceived = packetsReceived
-        self.usingRelay = usingRelay; self.audioCodec = audioCodec
+        self.usingRelay = usingRelay; self.audioCodec = audioCodec; self.bweCeiling = bweCeiling
     }
 }

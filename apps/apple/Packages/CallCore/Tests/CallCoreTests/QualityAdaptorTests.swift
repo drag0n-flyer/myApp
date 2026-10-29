@@ -7,6 +7,22 @@ private func sample(_ avail: Double?, loss: Double = 0) -> MediaStats {
     MediaStats(availableOutgoingBitrate: avail, inboundLossFraction: loss)
 }
 
+/// The estimate WebRTC reports while the session caps it at `cap` (the current level's ceiling): it sits at the cap.
+private func capped(_ cap: Int, loss: Double = 0) -> MediaStats {
+    MediaStats(availableOutgoingBitrate: Double(cap), inboundLossFraction: loss, bweCeiling: Double(cap))
+}
+
+/// The session's estimator ceiling for the adaptor's current level (`MediaLogic.bweMaxBitrate`).
+private func cap(_ a: QualityAdaptor) -> Int {
+    MediaLogic.bweMaxBitrate(audioBitrate: AudioProfile.for(a.currentMode).maxAverageBitrate,
+                             videoBitrate: a.currentTier.map { VideoLadder.spec($0).maxBps } ?? 0)
+}
+
+/// Feeds `n` samples of the capped estimate at the adaptor's current ceiling.
+private func feedCapped(_ a: inout QualityAdaptor, _ n: Int, loss: Double = 0) {
+    for _ in 0..<n { _ = a.ingest(capped(cap(a), loss: loss)) }
+}
+
 private struct SeededRNG: RandomNumberGenerator {
     var state: UInt64
     mutating func next() -> UInt64 {
@@ -174,5 +190,100 @@ private struct SeededRNG: RandomNumberGenerator {
             last = o
         }
         #expect(changes <= 4)
+    }
+
+    // MARK: capped estimate (the session caps the estimate at the level's wire budget)
+
+    @Test func capSaturationStepsBackUp() {
+        var a = QualityAdaptor(ceiling: .balanced, videoWanted: false)
+        _ = a.ingest(sample(30_000))
+        #expect(a.currentMode == .ultraLow)
+        feedCapped(&a, QualityAdaptor.goodSamplesToStepUp - 1)
+        #expect(a.currentMode == .ultraLow)
+        feedCapped(&a, 1)
+        #expect(a.currentMode == .dataSaver)
+        feedCapped(&a, QualityAdaptor.goodSamplesToStepUp)
+        #expect(a.currentMode == .balanced)
+    }
+
+    @Test func capSaturationTurnsVideoBackOnAtTheLowestTier() {
+        var a = QualityAdaptor(ceiling: .high, videoWanted: true)
+        _ = a.ingest(sample(50_000))
+        #expect(a.currentTier == nil)
+        for _ in 0..<20 where a.currentTier == nil { feedCapped(&a, 1) }
+        #expect(a.currentMode == .high)
+        #expect(a.currentTier == .p180)
+    }
+
+    @Test func capSaturationWithLossDoesNotStepUp() {
+        var a = QualityAdaptor(ceiling: .balanced, videoWanted: false)
+        _ = a.ingest(sample(30_000))
+        feedCapped(&a, 30, loss: 0.05)
+        #expect(a.currentMode == .ultraLow)
+    }
+
+    /// A step-up whose estimate is still under the new level's step-down line when the grace period ends.
+    private func failAfterGrace(_ a: inout QualityAdaptor, _ avail: Double) {
+        for _ in 0..<QualityAdaptor.stepUpGraceSamples { _ = a.ingest(sample(avail)) }
+    }
+
+    @Test func slowlyRampingEstimateAfterAStepUpHolds() {
+        var a = QualityAdaptor(ceiling: .balanced, videoWanted: false)
+        _ = a.ingest(sample(30_000))
+        feedCapped(&a, QualityAdaptor.goodSamplesToStepUp)
+        #expect(a.currentMode == .dataSaver)
+        // WebRTC ramps up over several seconds; Data saver's step-down line is 25.5k.
+        for est in [22_000.0, 23_500, 25_000, 27_000, 30_000] {
+            _ = a.ingest(MediaStats(availableOutgoingBitrate: est, bweCeiling: 30_000))
+            #expect(a.currentMode == .dataSaver, "\(est)")
+        }
+        feedCapped(&a, QualityAdaptor.goodSamplesToStepUp)
+        #expect(a.currentMode == .balanced)   // the step-up held, so no hold-off
+    }
+
+    @Test func lossDuringTheGracePeriodFallsBackAndHoldsOff() {
+        var a = QualityAdaptor(ceiling: .balanced, videoWanted: false)
+        _ = a.ingest(sample(30_000))
+        feedCapped(&a, QualityAdaptor.goodSamplesToStepUp)
+        #expect(a.currentMode == .dataSaver)
+        feedCapped(&a, 2, loss: 0.15)   // two samples over the loss limit: down at once
+        #expect(a.currentMode == .ultraLow)
+        feedCapped(&a, QualityAdaptor.stepUpHoldOffSamples + QualityAdaptor.goodSamplesToStepUp - 1)
+        #expect(a.currentMode == .ultraLow)
+        feedCapped(&a, 1)
+        #expect(a.currentMode == .dataSaver)
+    }
+
+    @Test func failedStepUpHoldsOffAndBacksOff() {
+        var a = QualityAdaptor(ceiling: .balanced, videoWanted: false)
+        let up = QualityAdaptor.goodSamplesToStepUp, hold = QualityAdaptor.stepUpHoldOffSamples
+        _ = a.ingest(sample(30_000))
+        feedCapped(&a, up)
+        #expect(a.currentMode == .dataSaver)
+        failAfterGrace(&a, 20_000)   // the network cannot sustain it
+        #expect(a.currentMode == .ultraLow)
+        feedCapped(&a, hold + up - 1)
+        #expect(a.currentMode == .ultraLow)
+        feedCapped(&a, 1)
+        #expect(a.currentMode == .dataSaver)
+        failAfterGrace(&a, 20_000)   // fails again: the hold-off doubles
+        feedCapped(&a, 2 * hold + up - 1)
+        #expect(a.currentMode == .ultraLow)
+        feedCapped(&a, 1)
+        #expect(a.currentMode == .dataSaver)
+        // A step-up that holds clears the back-off.
+        feedCapped(&a, up)
+        #expect(a.currentMode == .balanced)
+        failAfterGrace(&a, 40_000)
+        #expect(a.currentMode == .dataSaver)
+        feedCapped(&a, hold + up)
+        #expect(a.currentMode == .balanced)
+    }
+
+    @Test func estimateBelowTheCapIsNotSaturated() {
+        var a = QualityAdaptor(ceiling: .balanced, videoWanted: false)
+        _ = a.ingest(sample(30_000))
+        for _ in 0..<30 { _ = a.ingest(MediaStats(availableOutgoingBitrate: 19_000, bweCeiling: 21_000)) }
+        #expect(a.currentMode == .ultraLow)
     }
 }

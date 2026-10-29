@@ -30,6 +30,16 @@ public enum MediaLogic {
         max(0, min(bps, profile.maxAverageBitrate))
     }
 
+    /// Bandwidth estimator ceiling (`setBweMinBitrateBps(nil, nil, max)`): the wire budget of the lowest mode whose Opus
+    /// target covers `audioBitrate` (the highest mode's budget above that), plus the video sender's cap when video is on.
+    /// Without it WebRTC's estimator may grow to 1 Gbps; under loss its loss-based stage pads up to that estimate and
+    /// probes after each drop, so an audio call sends payload-less padding far past its budget.
+    public static func bweMaxBitrate(audioBitrate: Int, videoBitrate: Int = 0) -> Int {
+        let modes = DataMode.allCases.map { AudioProfile.for($0) }.sorted { $0.maxAverageBitrate < $1.maxAverageBitrate }
+        let audio = modes.first { $0.maxAverageBitrate >= audioBitrate } ?? modes[modes.count - 1]
+        return audio.wireBudget + max(0, videoBitrate)
+    }
+
     /// A tier never exceeds what the data-mode ceiling allows.
     public static func clampTier(_ tier: VideoTier, ceiling: DataMode) -> VideoTier {
         min(tier, VideoLadder.allowed(ceiling: ceiling) ?? .p180)

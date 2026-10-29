@@ -10,6 +10,10 @@ public struct AdaptorOutput: Equatable, Sendable {
 
 /// Picks the audio mode and video tier a network can sustain, from a `MediaStats` sample every 2 s.
 /// Degrades video tier, then video off, then audio. Recovers one level after several good samples.
+/// The session caps the estimate at the current level's ceiling (`MediaStats.bweCeiling`), so an estimate at the cap
+/// means "at least the cap": it counts as enough headroom to try the next level. For a grace period after a step-up a
+/// low estimate alone does not step down (WebRTC ramps up gradually); loss still does. A step-up that fails (loss in
+/// the grace period, or an estimate still low when it ends) starts a hold-off, doubling with each failure in a row.
 public struct QualityAdaptor: Sendable {
     public static let stepDownMargin = 0.85
     public static let stepUpMargin = 1.3
@@ -17,6 +21,13 @@ public struct QualityAdaptor: Sendable {
     public static let lossUpMax = 0.02
     public static let goodSamplesToStepUp = 5
     public static let audioOnlyBelow = 60_000.0
+    /// An estimate at or above this share of the session's ceiling is capped, not measured.
+    public static let saturatedShare = 0.95
+    /// Samples without a step-up after a failed one (30 s); doubles per failure in a row, up to `maxHoldOffFactor`.
+    public static let stepUpHoldOffSamples = 15
+    public static let maxHoldOffFactor = 4
+    /// Samples after a step-up (10 s) in which a low estimate alone does not step down: WebRTC ramps up gradually.
+    public static let stepUpGraceSamples = 5
 
     private struct Level: Equatable { var mode: DataMode; var tier: VideoTier? }
 
@@ -26,6 +37,9 @@ public struct QualityAdaptor: Sendable {
     private var badLossRun = 0
     private var goodRun = 0
     private var lastAvail: Double?
+    private var samplesSinceStepUp: Int?   // set from a step-up until its grace period ends
+    private var failedStepUps = 0
+    private var holdOff = 0
 
     public init(ceiling: DataMode, videoWanted: Bool) {
         self.ceiling = ceiling
@@ -71,35 +85,54 @@ public struct QualityAdaptor: Sendable {
             if lossTrigger {
                 goodRun = 0
                 badLossRun = 0
-                if idx < ladder.count - 1 { current = ladder[idx + 1] }
+                if idx < ladder.count - 1 { stepDown(to: ladder[idx + 1]) }
             }
             return output(avail: lastAvail ?? .infinity)
         }
         let avail = measured
         lastAvail = measured
-        let bandwidthBad = avail < Double(need(ladder[idx])) * Self.stepDownMargin
+        // After a step-up the estimate needs a few samples to climb: a low estimate alone waits for the grace period.
+        var graceEnded = false
+        if let n = samplesSinceStepUp {
+            samplesSinceStepUp = n + 1
+            graceEnded = n + 1 >= Self.stepUpGraceSamples
+        }
+        let inGrace = samplesSinceStepUp != nil && !graceEnded
+        let lowEstimate = avail < Double(need(ladder[idx])) * Self.stepDownMargin
             || (current.tier != nil && avail < Self.audioOnlyBelow)
+        let bandwidthBad = lowEstimate && !inGrace
+        if graceEnded && !bandwidthBad && !lossTrigger {
+            samplesSinceStepUp = nil   // the step-up held
+            failedStepUps = 0
+        }
 
         if bandwidthBad || lossTrigger {
             goodRun = 0
             if idx < ladder.count - 1 {
                 if bandwidthBad {
-                    let target = ladder[(idx + 1)...].first { fits($0, avail) } ?? ladder[ladder.count - 1]
-                    current = target
+                    stepDown(to: ladder[(idx + 1)...].first { fits($0, avail) } ?? ladder[ladder.count - 1])
                 } else {
-                    current = ladder[idx + 1]
+                    stepDown(to: ladder[idx + 1])
                 }
             }
             if lossTrigger { badLossRun = 0 }
         } else if idx > 0 {
             let next = ladder[idx - 1]
+            // A capped estimate hides the headroom: treat it as unknown, and let good loss decide.
+            let saturated = s.bweCeiling.map { avail >= $0 * Self.saturatedShare } ?? false
             let good = s.inboundLossFraction < Self.lossUpMax
-                && avail >= Double(need(next)) * Self.stepUpMargin
-                && (next.tier == nil || avail >= Self.audioOnlyBelow)
-            goodRun = good ? goodRun + 1 : 0
-            if goodRun >= Self.goodSamplesToStepUp {
+                && (saturated || (avail >= Double(need(next)) * Self.stepUpMargin
+                                  && (next.tier == nil || avail >= Self.audioOnlyBelow)))
+            if holdOff > 0 {
+                holdOff -= 1
+                goodRun = 0
+            } else {
+                goodRun = good ? goodRun + 1 : 0
+            }
+            if goodRun >= Self.goodSamplesToStepUp && samplesSinceStepUp == nil {
                 current = next
                 goodRun = 0
+                samplesSinceStepUp = 0
             }
         } else {
             goodRun = 0
@@ -111,6 +144,16 @@ public struct QualityAdaptor: Sendable {
     public var currentTier: VideoTier? { current.tier }
 
     // MARK: - Private
+
+    /// A step down for loss during the grace period after a step-up, or for a low estimate when it ends, means the
+    /// step-up failed: hold off before retrying.
+    private mutating func stepDown(to level: Level) {
+        current = level
+        guard samplesSinceStepUp != nil else { return }
+        samplesSinceStepUp = nil
+        failedStepUps += 1
+        holdOff = Self.stepUpHoldOffSamples * min(1 << min(failedStepUps - 1, 30), Self.maxHoldOffFactor)
+    }
 
     /// Best first: video tiers at the ceiling mode, then audio only from the ceiling mode down.
     private func levels() -> [Level] {
