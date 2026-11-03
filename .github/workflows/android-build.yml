@@ -1,0 +1,74 @@
+# Android test build: builds an installable debug APK and uploads it. Manually started.
+# Debug signed with a key made on the runner, so a newer build installs only after removing the
+# older one. Not for the Play Store; android.yml's release-bundle job checks the release build.
+
+name: android-build
+
+on:
+  workflow_dispatch:
+    inputs:
+      server_host:
+        description: Server the app connects to by default
+        default: chat.shimul.me
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      NDK_VERSION: 28.2.13676358
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set the default server
+        env:
+          SERVER_HOST: ${{ inputs.server_host }}
+        run: |
+          set -euo pipefail
+          [[ "$SERVER_HOST" =~ ^[A-Za-z0-9.-]+$ ]] || { echo "::error::Bad server name"; exit 1; }
+          F=apps/android/app/src/main/kotlin/org/example/app/live/LivePlatform.kt
+          sed -i "s/DEFAULT_SERVER_HOST = \"[^\"]*\"/DEFAULT_SERVER_HOST = \"$SERVER_HOST\"/" "$F"
+          grep -F "DEFAULT_SERVER_HOST = \"$SERVER_HOST\"" "$F"
+      - name: Install cargo-ndk
+        run: cargo install --locked --version 4.1.2 cargo-ndk
+      - name: Install the NDK
+        run: |
+          set -euo pipefail
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" >/dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+      # Not committed. The app cannot send or read messages without it.
+      - name: Build the MLS engine for every ABI
+        run: scripts/build-mlsffi-android.sh
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Fetch the RNNoise model (checksum verified)
+        run: scripts/android-fetch-rnnoise-model.sh
+      - name: Build the APK
+        working-directory: apps/android
+        run: ./gradlew --no-daemon :app:assembleDebug
+      - name: Check the APK holds the MLS engine for every ABI
+        run: |
+          set -euo pipefail
+          APK=apps/android/app/build/outputs/apk/debug/app-debug.apk
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            unzip -l "$APK" | grep -F "lib/$abi/libmlsffi.so"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: App-android
+          path: apps/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 14
+          if-no-files-found: error
