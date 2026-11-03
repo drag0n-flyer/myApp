@@ -13,9 +13,11 @@ on:
       - .github/workflows/ios-build.yml
       - scripts/check_unsigned_ipa.py
       - scripts/test_unsigned_ipa.py
+      - scripts/package-unsigned-ipa.sh
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: ios-build-${{ github.ref }}
@@ -33,9 +35,68 @@ jobs:
       - name: Package validation tests
         run: python3 -m unittest discover -s scripts -p test_unsigned_ipa.py
 
+      - name: Restore native framework cache
+        id: native-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: apps/apple/Packages/SecureMessaging/Artifacts/MLSFFI.xcframework
+          key: ios-mls-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/apple/Packages/SecureMessaging/mlsffi/Cargo.toml', 'apps/apple/Packages/SecureMessaging/mlsffi/Cargo.lock', 'apps/apple/Packages/SecureMessaging/mlsffi/src/**', 'apps/apple/Packages/SecureMessaging/mlsffi/build.rs', 'apps/apple/Packages/SecureMessaging/scripts/build-mlsffi.sh', 'apps/apple/Packages/SecureMessaging/Sources/MLSFFIBindings/**') }}
+
+      # The MLS workflow already publishes this framework. Reuse only when the
+      # entire Rust tree, build script and Swift bindings match this checkout.
+      - name: Reuse matching framework from successful MLS CI
+        id: native-artifact
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, shutil, subprocess
+          def gh(*args):
+              return subprocess.check_output(['gh', *args], text=True)
+          repo = os.environ['GITHUB_REPOSITORY']
+          package = 'apps/apple/Packages/SecureMessaging'
+          destination = pathlib.Path(package) / 'Artifacts/MLSFFI.xcframework'
+          try:
+              runs = json.loads(gh('run', 'list', '--repo', repo, '--workflow', 'mls.yml',
+                                   '--status', 'success', '--limit', '1', '--json', 'databaseId,headSha'))
+              if runs:
+                  run = runs[0]
+                  tree = json.loads(gh('api', f"repos/{repo}/git/trees/{run['headSha']}?recursive=1"))
+                  if tree.get('truncated'):
+                      raise ValueError('Source tree response was truncated')
+                  entries = {item['path']: item['sha'] for item in tree['tree']}
+                  paths = [f'{package}/mlsffi', f'{package}/scripts/build-mlsffi.sh',
+                           f'{package}/Sources/MLSFFIBindings']
+                  matches = all(entries.get(path) == subprocess.check_output(
+                      ['git', 'rev-parse', f'HEAD:{path}'], text=True).strip() for path in paths)
+                  if matches:
+                      gh('run', 'download', str(run['databaseId']), '--repo', repo,
+                         '--name', 'MLSFFI-xcframework', '--dir', str(destination))
+                      if not (destination / 'Info.plist').is_file():
+                          raise ValueError('Downloaded framework is incomplete')
+                      with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+                          output.write('reused=true\n')
+                      print(f"Reused MLS framework from successful run {run['databaseId']}; all source hashes match.")
+                  else:
+                      print('Published framework sources differ; building from this checkout.')
+          except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as error:
+              print(f'No reusable framework available; building locally on this runner: {error}')
+              if destination.exists():
+                  shutil.rmtree(destination)
+          PY
+
       - name: Build the MLS engine
+        if: steps.native-cache.outputs.cache-hit != 'true' && steps.native-artifact.outputs.reused != 'true'
         working-directory: apps/apple/Packages/SecureMessaging
         run: scripts/build-mlsffi.sh
+
+      - name: Save native framework cache
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: apps/apple/Packages/SecureMessaging/Artifacts/MLSFFI.xcframework
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
 
       - name: Generate Xcode project
         run: |
@@ -53,13 +114,9 @@ jobs:
 
       - name: Package and verify unsigned IPA
         run: |
-          mkdir -p "$RUNNER_TEMP/ipa/Payload" "$RUNNER_TEMP/download/signing-templates"
+          mkdir -p "$RUNNER_TEMP/download/signing-templates"
           APP="$RUNNER_TEMP/dd/Build/Products/Debug-iphoneos/App.app"
-          xcrun lipo -verify_arch arm64 "$APP/App"
-          xcrun lipo -verify_arch arm64 "$APP/PlugIns/NotificationService.appex/NotificationService"
-          ditto "$APP" "$RUNNER_TEMP/ipa/Payload/App.app"
-          ditto -c -k --keepParent "$RUNNER_TEMP/ipa/Payload" "$RUNNER_TEMP/download/App-unsigned.ipa"
-          python3 scripts/check_unsigned_ipa.py "$RUNNER_TEMP/download/App-unsigned.ipa"
+          bash scripts/package-unsigned-ipa.sh "$APP" "$RUNNER_TEMP/download/App-unsigned.ipa"
           cp apps/apple/App/AppiOS.entitlements apps/apple/NotificationService/NSE-iOS.entitlements \
             apps/apple/AppID.xcconfig "$RUNNER_TEMP/download/signing-templates/"
           cat > "$RUNNER_TEMP/download/SIGNING.txt" <<'NOTES'

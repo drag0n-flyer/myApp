@@ -1,6 +1,8 @@
 import importlib.util
 from pathlib import Path
 import plistlib
+import subprocess
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -56,6 +58,24 @@ class UnsignedIPATests(unittest.TestCase):
         self.package(profile=True)
         with self.assertRaisesRegex(ValueError, "provisioning profile"):
             self.checker.check(self.ipa)
+
+    @unittest.skipUnless(sys.platform == "darwin", "uses Apple's lipo and ditto")
+    def test_packages_arm64_binaries_with_real_apple_tools(self):
+        self.package()
+        root = Path(self.temp.name) / "app with spaces"
+        with zipfile.ZipFile(self.ipa) as archive:
+            archive.extractall(root)
+        app = root / "Payload/App.app"
+        for executable in (app / "App", app / "PlugIns/NotificationService.appex/NotificationService"):
+            # A small ARM64 Mach-O fixture catches lipo argument/order errors without Xcode.
+            subprocess.run(["xcrun", "clang", "-target", "arm64-apple-ios17.0", "-x", "c",
+                            "-c", "-", "-o", str(executable)],
+                           input="int fixture(void) { return 0; }", text=True, check=True)
+        output = root / "output/App-unsigned.ipa"
+        result = subprocess.run(["bash", str(Path(__file__).with_name("package-unsigned-ipa.sh")),
+                                 str(app), str(output)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.checker.check(output), "com.test.phone")
 
 
 if __name__ == "__main__":
