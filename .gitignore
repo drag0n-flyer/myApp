@@ -5,6 +5,7 @@ knowledge/
 
 # Apple apps
 apps/apple/*.xcodeproj
+apps/apple/iPhone.local.xcconfig
 .build/
 DerivedData/
 tools/call-lab/*.xcodeproj

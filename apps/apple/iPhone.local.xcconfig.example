@@ -1,0 +1,7 @@
+// Copy this file to iPhone.local.xcconfig (git-ignored).
+// Enter the 10-character team ID from your Apple Developer membership.
+// Sign in to that team in Xcode > Settings > Apple Accounts first.
+DEVELOPMENT_TEAM =
+
+// Set the app's unique APP_ID in AppID.xcconfig, its single source of truth.
+// Keep certificates, signing keys and passwords out of this file.

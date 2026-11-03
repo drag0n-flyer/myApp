@@ -9,6 +9,17 @@
 #   make restart   kill, then run
 #   make logs      follow the log
 #   make clean     remove the binary and the log (server must be stopped)
+#   make iphone    build and install the iOS app on the connected iPhone
+#
+# iPhone setup (Mac with Xcode 26+, iOS support, XcodeGen and Rust/rustup):
+#   Sign in to Xcode with your Apple Developer team. Trust this Mac on the phone
+#   and enable Settings > Privacy & Security > Developer Mode.
+#   Copy apps/apple/iPhone.local.xcconfig.example to iPhone.local.xcconfig in
+#   that directory and fill in DEVELOPMENT_TEAM (the local file is git-ignored).
+#   Set your unique APP_ID in apps/apple/AppID.xcconfig before the first install.
+#   Alternatively: make iphone DEVELOPMENT_TEAM=YOURTEAMID
+#   If several phones are connected: make iphone IPHONE_DEVICE=<device-UDID>
+#   Signing uses Xcode's account; this command needs no exported keys or certificates.
 #
 # Database (PostgreSQL 18 in Docker, on 127.0.0.1 only; data kept in a volume):
 #   make db        start it; user and database "appserver", password POSTGRES_PASSWORD from .env
@@ -42,7 +53,12 @@ endif
 env:
 	@if [ -f "$(ENV_FILE)" ]; then echo "$(ENV_FILE) already exists; not touching it."; else cp .env.example "$(ENV_FILE)" && chmod 600 "$(ENV_FILE)" && echo "Created $(ENV_FILE). Edit it: set the passwords and APP_HOST."; fi
 
-.PHONY: env build run kill restart logs clean db db-stop db-shell
+.PHONY: env build run kill restart logs clean db db-stop db-shell iphone
+
+export DEVELOPMENT_TEAM IPHONE_DEVICE
+
+iphone:
+	@python3 scripts/iphone.py
 
 build:
 	cd server && go build -trimpath -o ../bin/appserver ./cmd/appserver
