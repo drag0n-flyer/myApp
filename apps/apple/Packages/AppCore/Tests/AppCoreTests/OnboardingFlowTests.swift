@@ -30,11 +30,15 @@ import Testing
     #expect(f.step == .createAccount)
 }
 
-@Test func macIsLinkOnly() {
+@Test func macCanCreateAccount() {
     var f = OnboardingFlow(platform: .mac)
-    #expect(!f.canCreateAccount)
+    #expect(f.canCreateAccount)
     f.getStarted()
-    #expect(f.step == .welcome)
+    #expect(f.step == .joinServer)
+}
+
+@Test func macCanStillLink() {
+    var f = OnboardingFlow(platform: .mac)
     f.alreadyHaveAccount()
     #expect(f.step == .linkDevice)
 }
