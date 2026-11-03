@@ -1,0 +1,67 @@
+# Mac test build: builds the Mac app on a GitHub Mac and uploads it, so no Xcode is needed
+# locally. Manually started. The app is ad-hoc signed without its entitlements, so macOS gives
+# it no app group, keychain group, push or passkeys: it is for looking at, not for real use.
+
+name: mac-build
+
+on:
+  workflow_dispatch:
+    inputs:
+      server_host:
+        description: Server the app connects to by default
+        default: chat.shimul.me
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mac-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Not committed. Without it the app builds but has no messaging engine.
+      - name: Build the MLS engine
+        working-directory: apps/apple/Packages/SecureMessaging
+        run: scripts/build-mlsffi.sh
+
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate --spec apps/apple/project.yml
+
+      # The hardened runtime would refuse the ad-hoc signed libraries.
+      - name: Build the app
+        env:
+          SERVER_HOST: ${{ inputs.server_host }}
+        run: |
+          xcodebuild -project apps/apple/App.xcodeproj -scheme AppMac -configuration Release \
+            -destination 'generic/platform=macOS' -derivedDataPath "$RUNNER_TEMP/dd" \
+            DEFAULT_SERVER_HOST="$SERVER_HOST" PASSKEY_DOMAINS="$SERVER_HOST" \
+            CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGN_ENTITLEMENTS= \
+            ENABLE_HARDENED_RUNTIME=NO build
+
+      - name: Check the app
+        run: |
+          APP="$RUNNER_TEMP/dd/Build/Products/Release/App.app"
+          lipo -archs "$APP/Contents/MacOS/App"
+          codesign --verify --deep "$APP"
+          /usr/libexec/PlistBuddy -c 'Print :DefaultServerHost' "$APP/Contents/Info.plist"
+
+      # ditto keeps the framework symlinks that a plain artifact upload would break.
+      - name: Package the app
+        run: ditto -c -k --keepParent "$RUNNER_TEMP/dd/Build/Products/Release/App.app" "$RUNNER_TEMP/App-mac.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: App-mac
+          path: ${{ runner.temp }}/App-mac.zip
+          retention-days: 14
