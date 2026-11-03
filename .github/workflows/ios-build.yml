@@ -1,0 +1,90 @@
+# Builds a physical-iPhone artifact for later local signing. No signing credentials.
+name: ios-build
+
+on:
+  workflow_dispatch:
+    inputs:
+      server_host:
+        description: Server the app connects to by default
+        default: chat.shimul.me
+        required: true
+  push:
+    paths:
+      - .github/workflows/ios-build.yml
+      - scripts/check_unsigned_ipa.py
+      - scripts/test_unsigned_ipa.py
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Package validation tests
+        run: python3 -m unittest discover -s scripts -p test_unsigned_ipa.py
+
+      - name: Build the MLS engine
+        working-directory: apps/apple/Packages/SecureMessaging
+        run: scripts/build-mlsffi.sh
+
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate --spec apps/apple/project.yml
+
+      - name: Build unsigned iPhone app
+        env:
+          SERVER_HOST: ${{ inputs.server_host || 'chat.shimul.me' }}
+        run: |
+          xcodebuild -project apps/apple/App.xcodeproj -scheme AppiOS -configuration Debug \
+            -destination 'generic/platform=iOS' -sdk iphoneos -derivedDataPath "$RUNNER_TEMP/dd" \
+            DEFAULT_SERVER_HOST="$SERVER_HOST" PASSKEY_DOMAINS="$SERVER_HOST" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= build
+
+      - name: Package and verify unsigned IPA
+        run: |
+          mkdir -p "$RUNNER_TEMP/ipa/Payload" "$RUNNER_TEMP/download/signing-templates"
+          APP="$RUNNER_TEMP/dd/Build/Products/Debug-iphoneos/App.app"
+          xcrun lipo -verify_arch arm64 "$APP/App"
+          xcrun lipo -verify_arch arm64 "$APP/PlugIns/NotificationService.appex/NotificationService"
+          ditto "$APP" "$RUNNER_TEMP/ipa/Payload/App.app"
+          ditto -c -k --keepParent "$RUNNER_TEMP/ipa/Payload" "$RUNNER_TEMP/download/App-unsigned.ipa"
+          python3 scripts/check_unsigned_ipa.py "$RUNNER_TEMP/download/App-unsigned.ipa"
+          cp apps/apple/App/AppiOS.entitlements apps/apple/NotificationService/NSE-iOS.entitlements \
+            apps/apple/AppID.xcconfig "$RUNNER_TEMP/download/signing-templates/"
+          cat > "$RUNNER_TEMP/download/SIGNING.txt" <<'NOTES'
+          This IPA is unsigned and cannot be installed yet.
+          It includes the iPhone app, its notification extension and the real MLS engine.
+          No signing certificate or provisioning profile was used for this build.
+
+          Before signing locally, choose the final app ID and app group, and supply matching
+          development profiles for the app and extension that include your iPhone.
+          The included signing-templates are source templates, not resolved entitlements.
+          Resolve APP_ID, AppIdentifierPrefix and PASSKEY_DOMAINS from your signing setup.
+          Make the app and extension Info.plist bundle IDs, AppGroupID and KeychainAccessGroup
+          agree with those entitlements and profiles. With no team configured during this
+          build, KeychainAccessGroup does not yet have your team's App ID prefix.
+          Sign embedded code before the enclosing app. Certificates and private keys stay local.
+          This is a development build: APNs uses the development/sandbox environment.
+          The push gateway remains the project's placeholder until configured separately.
+          NOTES
+          git rev-parse HEAD > "$RUNNER_TEMP/download/COMMIT.txt"
+          cd "$RUNNER_TEMP/download"
+          shasum -a 256 App-unsigned.ipa > SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: App-ios-unsigned
+          path: ${{ runner.temp }}/download/
+          if-no-files-found: error
+          retention-days: 14
