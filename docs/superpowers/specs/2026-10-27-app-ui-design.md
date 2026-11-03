@@ -129,7 +129,7 @@ Opened by tapping the header pill. Photo, name, username; buttons for audio call
 **Lost all devices:** "I already have an account" → "I don't have my old device" → sign in with a passkey synced through iCloud Keychain, or enter username or email and the email code → signed in on the new device with an empty history (Phase 1). The screen says plainly that old messages can't be restored without a backup.
 
 ### 6.8 Linking a device ("I already have an account")
-- **iPhone is the primary device.** Accounts are created on iPhone only. The Mac is link-only in Phase 1, like Signal Desktop.
+- **The iPhone and the Mac can each create an account or link to an existing one.** (Owner decision, 2026-11-04: the Mac was link-only in the first draft, like Signal Desktop; it now offers "Get started" as well, since the sign-up flow already runs on macOS.)
 - The new device (usually the Mac) shows a QR code; the user scans it with the iPhone from Settings → Linked devices. The new device then syncs. (Not drafted.)
 
 ### 6.10 Contacts and message requests (not drafted; my call)
@@ -175,7 +175,7 @@ Opened by tapping the header pill. Photo, name, username; buttons for audio call
 - Recovery key step skippable with a reminder; it appears in Phase 2 with backups.
 - Chat info, Contacts, Calls tab, Linked devices, Calls & Audio, and Mac layouts as described in §6.3, §6.4, §6.6, §6.8, §6.9.
 - iOS 17–25 use the standard tab bar; the floating glass tab bar is iOS 26+ only.
-- iPhone is the primary device; the Mac is link-only in Phase 1.
+- The iPhone and the Mac can each create an account or link to an existing one (owner decision, 2026-11-04; see §6.8).
 - Contacts are added in the app; strangers go to Message requests; strangers' calls don't ring.
 - Mobile-data limit can be lifted per call from the Data sheet.
 - Synced vs per-device settings as in §6.11.

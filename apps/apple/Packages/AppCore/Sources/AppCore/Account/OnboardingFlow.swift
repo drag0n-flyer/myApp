@@ -22,7 +22,8 @@ public enum OnboardingStep: Equatable, Sendable {
     case linkDevice, lostDevice
 }
 
-/// Welcome and sign-up steps. Accounts are created on iPhone; the Mac only links (UI design §6.8).
+/// Welcome and sign-up steps. The iPhone and the Mac can both create an account or link to an
+/// existing one (UI design §6.8). Android has its own app, so it never creates an account here.
 public struct OnboardingFlow: Sendable {
     public let platform: DevicePlatform
     public private(set) var step: OnboardingStep = .welcome
@@ -33,7 +34,7 @@ public struct OnboardingFlow: Sendable {
         self.platform = platform
     }
 
-    public var canCreateAccount: Bool { platform == .iPhone }
+    public var canCreateAccount: Bool { platform == .iPhone || platform == .mac }
 
     public mutating func getStarted() {
         guard step == .welcome, canCreateAccount else { return }
