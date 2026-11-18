@@ -130,6 +130,18 @@ struct ChatView: View {
 
     // MARK: - Timeline
 
+    private static let bottomID = "chat-bottom"
+
+    /// Scrolls to the end of the chat. A far-away row of a lazy stack is only sized by estimate the first time,
+    /// so the scroll is repeated once it has been laid out.
+    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+        Task { @MainActor in
+            proxy.scrollTo(Self.bottomID, anchor: .bottom)
+            try? await Task.sleep(for: .milliseconds(200))
+            proxy.scrollTo(Self.bottomID, anchor: .bottom)
+        }
+    }
+
     private func messages(_ chat: Chat) -> some View {
         let all = history.messages(newest: chat.messages)
         let rows = ChatTimeline.rows(messages: all, firstUnreadID: firstUnreadID, calendar: .current)
@@ -143,6 +155,8 @@ struct ChatView: View {
                         rowView(row, all: all, indexByID: indexByID, byID: byID, newestID: newestID, chat: chat, proxy: proxy)
                             .id(row.id)
                     }
+                    // Always the last child: the one target for every "go to the bottom".
+                    Color.clear.frame(height: 1).id(Self.bottomID)
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
@@ -157,18 +171,17 @@ struct ChatView: View {
                 }
             }
             .overlay(alignment: .bottomTrailing) {
-                if !tracker.atBottom, let newestID {
+                if !tracker.atBottom, newestID != nil {
                     scrollButton(count: tracker.unseenCount(in: all)) {
-                        tracker.setAtBottom(true, newestID: newestID)
-                        // After this update has laid out, as the follow-new-messages scroll does; an animated
-                        // scroll started inside the same update did not reach the bottom in CI.
-                        Task { @MainActor in proxy.scrollTo(newestID, anchor: .bottom) }
+                        // The button goes away when the newest row appears, not on tap, so a scroll that
+                        // lands short leaves it there to try again.
+                        scrollToBottom(proxy)
                     }
                 }
             }
             .onChange(of: newestID) { _, new in
-                if tracker.messagesChanged(newestID: new), let new {
-                    Task { @MainActor in proxy.scrollTo(new, anchor: .bottom) }
+                if tracker.messagesChanged(newestID: new) {
+                    scrollToBottom(proxy)
                 }
             }
             .onChange(of: firstUnreadID) { _, new in
