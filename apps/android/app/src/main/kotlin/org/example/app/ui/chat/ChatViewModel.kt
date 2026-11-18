@@ -152,6 +152,9 @@ class ChatViewModel(
         return true
     }
 
+    /** The chat screen was left: a typing signal that is out ends at once. Sends nothing when none is out. */
+    fun leftChat() { signals?.messageSent(chatId) }
+
     // Older history
 
     /**

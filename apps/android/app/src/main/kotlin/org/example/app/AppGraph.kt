@@ -71,6 +71,7 @@ import org.example.app.core.people.ScriptedSignals
 import org.example.app.core.people.SignalChannel
 import org.example.app.core.people.WitnessStore
 import org.example.app.live.EphemeralSignalChannel
+import org.example.app.live.buildSignals
 import org.example.app.live.KvWitnessStore
 import org.example.app.core.settings.IPHiding
 import org.example.app.core.settings.ServerPolicy
@@ -117,6 +118,9 @@ internal fun statusOf(socket: ConnectionState?, sessionGone: Boolean, networkUp:
 }
 
 internal const val SETTINGS_PREFS = "settings"
+
+/** Most a leaving app waits for `away` to go out before it closes the socket. */
+private const val AWAY_WAIT_MS = 2_000L
 
 /** Sample data only. */
 private val SAMPLE_POLICY = ServerPolicy(ModePreference.Auto, DataMode.High, IPHiding.NonContacts, true, "home.example.org")
@@ -402,15 +406,7 @@ class AppGraph(
     private val idleSignals: PeopleSignals by lazy { makeSignals(scope, ScriptedSignals(), EmptyChatStore, NoWitnessStore) }
 
     private fun makeSignals(into: CoroutineScope, channel: SignalChannel, store: ChatStore, witnesses: WitnessStore): PeopleSignals =
-        PeopleSignals(
-            scope = into, channel = channel,
-            typingEnabled = { settingsStore.settings.value.typingIndicator },
-            presenceEnabled = { settingsStore.settings.value.onlineAndLastSeen },
-            // Never to or for a blocked contact, nor a chat that is not known or is still a message request.
-            blocked = { id -> store.chat(id).let { it == null || it.isRequest || it.contactId in store.blockedIds.value } },
-            presenceTargets = { PresenceTargets.pick(store.chats.value, System.currentTimeMillis()) },
-            witnesses = witnesses, nowMs = System::currentTimeMillis,
-        ).also { it.watchMessages(store.chats, store.me.id) }
+        buildSignals(into, channel, store, settingsStore.settings, witnesses)
 
     @Volatile private var wipeRunning = false
 
@@ -742,11 +738,17 @@ class AppGraph(
     private var inCall = false
 
     /** The app came to the foreground or left it. */
-    fun setVisible(value: Boolean) = synchronized(this) {
-        visible = value
-        // `online` goes out before the socket is stopped on leaving: the frame is queued first.
-        (if (sampleData) sampleSignals else liveSignals)?.setForeground(value)
-        updateSocket()
+    fun setVisible(value: Boolean) {
+        val handedOver = synchronized(this) {
+            visible = value
+            (if (sampleData) sampleSignals else liveSignals)?.setForeground(value).also { if (value || it == null || it.isCompleted) updateSocket() }
+        }
+        if (value || handedOver == null || handedOver.isCompleted) return
+        // Leaving: the socket stays open until `away` and typing-off are out (at most two seconds), unless the app is back by then.
+        scope.launch {
+            withTimeoutOrNull(AWAY_WAIT_MS) { handedOver.join() }
+            synchronized(this@AppGraph) { if (!visible) updateSocket() }
+        }
     }
 
     /** A call started or ended. */

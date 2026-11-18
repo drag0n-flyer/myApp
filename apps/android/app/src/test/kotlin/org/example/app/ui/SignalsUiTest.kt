@@ -11,6 +11,9 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.longClick
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.performTouchInput
 import java.time.Instant
 import kotlin.test.assertEquals
 import kotlinx.coroutines.CoroutineScope
@@ -118,6 +121,7 @@ class SignalsUiTest {
         rule.setContent { AppTheme { ChatScreen(chat, myId = "me", onBack = {}, onOpenInfo = {}, onCall = null) } }
         store.block("riya")
         channel.emit("chat-riya", Signal.Typing(true))
+        chat.typed(isEmpty = false) // typing after the block
         rule.waitForIdle()
         rule.onAllNodesWithText("typing…").assertCountEquals(0)
         assertEquals(emptyList(), channel.sent)
@@ -173,5 +177,76 @@ class SignalsUiTest {
         model.setForeground(true)
         model.setForeground(false)
         assertEquals(emptyList(), channel.sent)
+    }
+
+    @Test fun anEditBeganCancelledAndFinishedSendsNoTyping() {
+        val own = org.example.app.core.chats.Message(
+            "m1", "me", Instant.now().minusSeconds(60), MessageContent.Text("typo"), org.example.app.core.chats.DeliveryStatus.Sent, null, emptyList(),
+        )
+        val data = SampleData.make(Instant.now())
+        val editStore = SampleChatStore(data.copy(chats = listOf(org.example.app.core.chats.Chat("chat-riya", "riya", org.example.app.core.chats.ChatEncryption.EndToEnd, emptySet(), 0, listOf(own), false))))
+        val chat = ChatViewModel(editStore, "chat-riya", NetworkType.Wifi, signals = signals) { AutoDownloadSettings() }
+        rule.setContent { AppTheme { ChatScreen(chat, myId = "me", onBack = {}, onOpenInfo = {}, onCall = null) } }
+        fun beginEdit() {
+            rule.onNodeWithText("typo").performTouchInput { longClick() }
+            rule.onNodeWithText("Edit").performClick()
+            rule.onNodeWithText("Editing").assertIsDisplayed()
+        }
+        beginEdit()
+        rule.onNodeWithContentDescription("Close").performClick() // cancelled
+        rule.waitForIdle()
+        beginEdit()
+        rule.onNode(hasSetTextAction()).performTextInput("!")
+        rule.onNodeWithContentDescription("Send").performClick() // finished
+        rule.waitForIdle()
+        assertEquals(emptyList(), channel.sent)
+    }
+
+    @Test fun leavingTheChatWhileTypingSendsOffAtOnce() {
+        val chat = ChatViewModel(store, "chat-riya", NetworkType.Wifi, signals = signals) { AutoDownloadSettings() }
+        var open by mutableStateOf(true)
+        rule.setContent { AppTheme { if (open) ChatScreen(chat, myId = "me", onBack = {}, onOpenInfo = {}, onCall = null) } }
+        rule.onNode(hasSetTextAction()).performTextInput("hi")
+        rule.waitForIdle()
+        rule.runOnIdle { open = false }
+        rule.waitForIdle()
+        assertEquals(listOf("chat-riya" to Signal.Typing(true), "chat-riya" to Signal.Typing(false)), channel.sent)
+    }
+
+    @Test fun switchingAPrivacySwitchOffClearsALineAlreadyShown() {
+        val live = MutableStateFlow(UserSettings())
+        val built = org.example.app.live.buildSignals(scope, channel, store, live, NoWitnessStore)
+        channel.emit("chat-riya", Signal.Typing(true))
+        channel.emit("chat-riya", Signal.Presence(true))
+        assertEquals(true, built.views.value["chat-riya"]?.typing)
+        live.value = live.value.copy(typingIndicator = false)
+        assertEquals(false, built.views.value["chat-riya"]?.typing == true)
+        assertEquals(true, built.views.value["chat-riya"]?.presence == org.example.app.core.people.PresenceLine.Result.Online)
+        live.value = live.value.copy(onlineAndLastSeen = false)
+        assertEquals(null, built.views.value["chat-riya"])
+    }
+
+    @Test fun blockingAContactClearsALineAlreadyShown() {
+        val built = org.example.app.live.buildSignals(scope, channel, store, MutableStateFlow(UserSettings()), NoWitnessStore)
+        channel.emit("chat-riya", Signal.Typing(true))
+        assertEquals(true, built.views.value["chat-riya"]?.typing)
+        store.block("riya")
+        assertEquals(null, built.views.value["chat-riya"])
+    }
+
+    @Test fun theRealBlockedRuleDropsRequestAndUnknownChats() {
+        val built = org.example.app.live.buildSignals(scope, channel, store, MutableStateFlow(UserSettings()), NoWitnessStore)
+        val request = store.requests.value.first().id
+        assertEquals(true, store.chat(request)?.isRequest)
+        for (id in listOf(request, "chat-nobody")) {
+            channel.emit(id, Signal.Typing(true))
+            channel.emit(id, Signal.Presence(true))
+            built.composerChanged(id, isEmpty = false)
+            built.setForeground(true)
+            assertEquals(null, built.views.value[id], id)
+        }
+        // only real, unblocked chats get `online`
+        assertEquals(true, channel.sent.none { it.first == request || it.first == "chat-nobody" })
+        built.setForeground(false)
     }
 }

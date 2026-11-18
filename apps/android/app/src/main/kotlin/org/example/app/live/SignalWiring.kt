@@ -2,7 +2,17 @@ package org.example.app.live
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineScope
+import org.example.app.core.chats.ChatStore
+import org.example.app.core.people.PeopleSignals
+import org.example.app.core.people.PresenceTargets
+import org.example.app.core.settings.UserSettings
 import kotlinx.coroutines.withContext
 import org.example.app.core.people.IncomingSignal
 import org.example.app.core.people.Signal
@@ -23,11 +33,11 @@ class EphemeralSignalChannel(private val ephemeral: EphemeralChannel, private va
         return ephemeral.send(chatId, body)
     }
 
-    override val incoming: Flow<IncomingSignal> = ephemeral.events.map { event ->
+    override val incoming: Flow<IncomingSignal> = ephemeral.events.mapNotNull { event ->
         when (val body = event.body) {
             is ContentEnvelope.Typing -> IncomingSignal(event.chatId, Signal.Typing(body.on))
             is ContentEnvelope.Presence -> IncomingSignal(event.chatId, Signal.Presence(body.state == "online"))
-            else -> error("only typing and presence qualify") // EphemeralChannel never emits another kind
+            else -> null // EphemeralChannel emits only these two kinds
         }
     }
 }
@@ -47,4 +57,28 @@ class KvWitnessStore(private val repo: RoomRepository) : WitnessStore {
     private companion object {
         const val PREFIX = "witness."
     }
+}
+
+/**
+ * The screens' [PeopleSignals] over [channel] and [store]. Nothing is sent to or shown for a blocked contact, a chat that
+ * is not known, or a message request. Turning a Privacy switch off or blocking a contact clears a line already shown.
+ */
+fun buildSignals(
+    into: CoroutineScope, channel: SignalChannel, store: ChatStore, settings: StateFlow<UserSettings>, witnesses: WitnessStore,
+    nowMs: () -> Long = System::currentTimeMillis,
+): PeopleSignals {
+    val signals = PeopleSignals(
+        scope = into, channel = channel,
+        typingEnabled = { settings.value.typingIndicator },
+        presenceEnabled = { settings.value.onlineAndLastSeen },
+        blocked = { id -> store.chat(id).let { it == null || it.isRequest || it.contactId in store.blockedIds.value } },
+        presenceTargets = { PresenceTargets.pick(store.chats.value, nowMs()) },
+        witnesses = witnesses, nowMs = nowMs,
+    )
+    signals.watchMessages(store.chats, store.me.id)
+    into.launch {
+        combine(settings.map { it.typingIndicator to it.onlineAndLastSeen }.distinctUntilChanged(), store.blockedIds) { _, _ -> }
+            .collect { signals.refresh() }
+    }
+    return signals
 }

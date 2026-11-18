@@ -117,6 +117,7 @@ fun ChatScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val peer by viewModel.peer.collectAsStateWithLifecycle()
+    androidx.compose.runtime.DisposableEffect(viewModel) { onDispose { viewModel.leftChat() } }
     val list = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboard.current
