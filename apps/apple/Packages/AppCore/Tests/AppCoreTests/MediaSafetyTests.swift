@@ -107,11 +107,33 @@ import Testing
         #expect(s.playingID == "b")
     }
 
-    @Test func tappingThePlayingOneStopsIt() {
+    @Test func tappingThePlayingOnePausesAndAgainResumes() {
         var s = VoiceSelection()
         _ = s.toggle("a")
-        #expect(s.toggle("a") == .stop)
+        #expect(!s.isPaused)
+        #expect(s.toggle("a") == .pause)
+        #expect(s.isPaused)
+        #expect(s.playingID == "a")
+        #expect(s.toggle("a") == .resume)
+        #expect(!s.isPaused)
+    }
+
+    @Test func switchingAfterPauseStartsFresh() {
+        var s = VoiceSelection()
+        _ = s.toggle("a")
+        _ = s.toggle("a")
+        #expect(s.toggle("b") == .play)
+        #expect(!s.isPaused)
+        #expect(s.playingID == "b")
+    }
+
+    @Test func stopClearsEverything() {
+        var s = VoiceSelection()
+        _ = s.toggle("a")
+        _ = s.toggle("a")
+        s.stop()
         #expect(s.playingID == nil)
+        #expect(!s.isPaused)
     }
 
     @Test func finishedClearsOnlyTheMatchingOne() {
@@ -129,6 +151,36 @@ import Testing
         #expect(VoiceSelection.elapsedText(progress: 0.5, duration: 0) == "0:00")
         #expect(VoiceSelection.clamp(-1) == 0)
         #expect(VoiceSelection.clamp(.nan) == 0)
+    }
+}
+
+@Suite struct MediaStagingTests {
+    private func makeDir() throws -> URL {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("staging-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    @Test func removesOnlyOldEntries() throws {
+        let dir = try makeDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let old = dir.appendingPathComponent("old.jpg"), fresh = dir.appendingPathComponent("fresh.jpg")
+        try Data("x".utf8).write(to: old)
+        try Data("y".utf8).write(to: fresh)
+        let now = Date()
+        try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-7200)], ofItemAtPath: old.path)
+        MediaStaging.sweep(directory: dir, olderThan: 3600, now: now)
+        #expect(!FileManager.default.fileExists(atPath: old.path))
+        #expect(FileManager.default.fileExists(atPath: fresh.path))
+    }
+
+    @Test func zeroAgeRemovesEverythingAndMissingDirectoryIsFine() throws {
+        let dir = try makeDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try Data("x".utf8).write(to: dir.appendingPathComponent("a"))
+        MediaStaging.sweep(directory: dir, olderThan: -1, now: Date())
+        #expect((try FileManager.default.contentsOfDirectory(atPath: dir.path)).isEmpty)
+        MediaStaging.sweep(directory: dir.appendingPathComponent("missing"), olderThan: 0, now: Date())
     }
 }
 

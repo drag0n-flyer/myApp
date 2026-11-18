@@ -82,25 +82,44 @@ public struct BoundedCache<Key: Hashable, Value> {
     }
 }
 
+/// Files handed to the engine (photos picked, taken or imported) are plaintext copies in a staging folder.
+public enum MediaStaging {
+    /// Removes entries last changed more than `age` seconds before `now`. A missing folder is fine.
+    public static func sweep(directory: URL, olderThan age: TimeInterval, now: Date) {
+        let fm = FileManager.default
+        guard let entries = try? fm.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: [.contentModificationDateKey], options: []) else { return }
+        for entry in entries {
+            let changed = (try? entry.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            if now.timeIntervalSince(changed) > age { try? fm.removeItem(at: entry) }
+        }
+    }
+}
+
 /// Which voice message is playing; only one at a time.
 public struct VoiceSelection: Equatable, Sendable {
-    public enum Action: Equatable, Sendable { case play, stop }
+    public enum Action: Equatable, Sendable { case play, pause, resume }
     public private(set) var playingID: String?
+    public private(set) var isPaused = false
     public init() {}
 
-    /// Tapping the playing message stops it; tapping another one switches to it.
+    /// Tapping the current message pauses it, or resumes it when paused; tapping another one starts that one.
     public mutating func toggle(_ id: String) -> Action {
-        if playingID == id { playingID = nil; return .stop }
+        if playingID == id {
+            isPaused.toggle()
+            return isPaused ? .pause : .resume
+        }
         playingID = id
+        isPaused = false
         return .play
     }
 
     /// Playback ended or failed; only clears when it is still the current one.
     public mutating func finished(_ id: String) {
-        if playingID == id { playingID = nil }
+        if playingID == id { stop() }
     }
 
-    public mutating func stop() { playingID = nil }
+    public mutating func stop() { playingID = nil; isPaused = false }
 
     public static func clamp(_ progress: Double) -> Double {
         progress.isNaN ? 0 : min(max(progress, 0), 1)
