@@ -45,7 +45,7 @@ public struct GroupMember: Hashable, Sendable {
 }
 
 /// A line in a group chat that says what changed in the member list.
-public enum GroupSystemLine: Hashable, Sendable {
+public enum GroupSystemLine: Hashable, Codable, Sendable {
     /// "%@ added %@"; `by` is `nil` when the actor is not known.
     case added(by: String?, who: String)
     /// "%@ removed %@"
@@ -57,6 +57,25 @@ public enum GroupSystemLine: Hashable, Sendable {
     /// "%@ is now an admin"
     case madeAdmin(who: String)
     case noLongerAdmin(who: String)
+    /// "%@ changed the group name to “%@”"; `name` is the new group name, not an account.
+    case nameChanged(by: String?, name: String)
+    /// "%@ changed the group photo"
+    case photoChanged(by: String?)
+
+    /// The same line with every account ID run through `name` (the group name in `nameChanged` is left as it is).
+    public func resolved(_ name: (String) -> String) -> GroupSystemLine {
+        func opt(_ account: String?) -> String? { account.map(name) }
+        switch self {
+        case .added(let by, let who): return .added(by: opt(by), who: name(who))
+        case .removed(let by, let who): return .removed(by: opt(by), who: name(who))
+        case .left(let who): return .left(who: name(who))
+        case .youWereRemoved: return .youWereRemoved
+        case .madeAdmin(let who): return .madeAdmin(who: name(who))
+        case .noLongerAdmin(let who): return .noLongerAdmin(who: name(who))
+        case .nameChanged(let by, let title): return .nameChanged(by: opt(by), name: title)
+        case .photoChanged(let by): return .photoChanged(by: opt(by))
+        }
+    }
 }
 
 public enum MemberDiff {

@@ -35,6 +35,8 @@ public final class SampleChatStore: ChatStore {
     public private(set) var blockedIDs: Set<String> = []
     public private(set) var reportedChatIDs: Set<String> = []
     private var allChats: [Chat]
+    /// The member list of each sample group, by chat ID.
+    private var rosters: [String: [GroupMember]] = [:]
     private let directory: [String: String]
     private var nextID = 0
 
@@ -366,7 +368,76 @@ public final class SampleChatStore: ChatStore {
         let id = ChatID.group(makeID())
         allChats.append(Chat(id: id, contactID: nil, encryption: .endToEnd, folderIDs: [], unreadCount: 0, messages: [],
                              isRequest: false, title: title))
+        rosters[id] = [GroupMember(accountID: me.id, role: .owner)] + others.sorted().map { GroupMember(accountID: $0, role: .member) }
         return .created(chatID: id, notAdded: [])
+    }
+
+    // MARK: - Group changes
+
+    public func groupMembers(chatID: String) -> [GroupMember] { (rosters[chatID] ?? []).sorted { $0.accountID < $1.accountID } }
+
+    private func myRole(in chatID: String) -> GroupRole? { rosters[chatID]?.first { $0.accountID == me.id }?.role }
+
+    /// The chat and my role in it, when I may still change something there.
+    private func admin(_ chatID: String) -> (index: Int, role: GroupRole)? {
+        guard let i = index(of: chatID), allChats[i].myGroupState == .member, let role = myRole(in: chatID) else { return nil }
+        return (i, role)
+    }
+
+    public func addMembers(chatID: String, accounts: [String]) async -> GroupChangeOutcome {
+        guard index(of: chatID) != nil, rosters[chatID] != nil else { return .failed(.notFound) }
+        guard let (_, role) = admin(chatID), role.canAdd else { return .failed(.forbidden) }
+        let current = Set((rosters[chatID] ?? []).map(\.accountID))
+        let fresh = Array(Set(accounts).subtracting(current)).sorted()
+        guard current.count + fresh.count <= 100 else { return .failed(.full) }
+        defer { onChange?() }
+        rosters[chatID, default: []] += fresh.map { GroupMember(accountID: $0, role: .member) }
+        return .added(notAdded: [])
+    }
+
+    public func removeMember(chatID: String, account: String) async -> GroupChangeOutcome {
+        guard index(of: chatID) != nil, let target = rosters[chatID]?.first(where: { $0.accountID == account }) else { return .failed(.notFound) }
+        guard account != me.id else { return await leaveGroup(chatID: chatID) }
+        guard let (_, role) = admin(chatID), role.canRemove(target: target.role) else { return .failed(.forbidden) }
+        defer { onChange?() }
+        rosters[chatID]?.removeAll { $0.accountID == account }
+        return .done
+    }
+
+    public func leaveGroup(chatID: String) async -> GroupChangeOutcome {
+        guard index(of: chatID) != nil, rosters[chatID] != nil else { return .failed(.notFound) }
+        guard let (i, role) = admin(chatID) else { return .failed(.forbidden) }
+        if role == .owner, (rosters[chatID] ?? []).count > 1 { return .failed(.ownerMustTransfer) }
+        defer { onChange?() }
+        rosters[chatID]?.removeAll { $0.accountID == me.id }
+        allChats[i].myGroupState = .left
+        return .done
+    }
+
+    public func setRole(chatID: String, account: String, role: GroupRole) async -> GroupChangeOutcome {
+        guard index(of: chatID) != nil, rosters[chatID]?.contains(where: { $0.accountID == account }) == true else { return .failed(.notFound) }
+        guard let (_, mine) = admin(chatID), mine.canSetRoles, account != me.id else { return .failed(.forbidden) }
+        defer { onChange?() }
+        if role == .owner, let m = rosters[chatID]?.firstIndex(where: { $0.accountID == me.id }) { rosters[chatID]?[m].role = .admin }
+        if let t = rosters[chatID]?.firstIndex(where: { $0.accountID == account }) { rosters[chatID]?[t].role = role }
+        return .done
+    }
+
+    public func renameGroup(chatID: String, name: String) async -> GroupChangeOutcome {
+        guard index(of: chatID) != nil, rosters[chatID] != nil else { return .failed(.notFound) }
+        guard let title = GroupNameRule.clean(name) else { return .failed(.invalidName) }
+        guard let (i, role) = admin(chatID), role.canEditInfo else { return .failed(.forbidden) }
+        defer { onChange?() }
+        allChats[i].title = title
+        return .done
+    }
+
+    public func setGroupPhoto(chatID: String, photo: Data?) async -> GroupChangeOutcome {
+        guard index(of: chatID) != nil, rosters[chatID] != nil else { return .failed(.notFound) }
+        if let photo, !ProfilePhotoRule.isAcceptable(photo) { return .failed(.invalidPhoto) }
+        guard let (_, role) = admin(chatID), role.canEditInfo else { return .failed(.forbidden) }
+        onChange?()
+        return .done
     }
 
     public func addFolder(name: String, chatIDs: Set<String>) -> ChatFolder {
