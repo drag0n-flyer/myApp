@@ -32,6 +32,7 @@ func New(d core.Deps) *Module {
 func (m *Module) Routes(r *httpx.Router) {
 	m.keyPackageRoutes(r)
 	m.conversationRoutes(r)
+	m.groupRoutes(r)
 	m.messageRoutes(r)
 	m.inboxRoutes(r)
 }

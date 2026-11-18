@@ -14,6 +14,9 @@ import (
 
 var uuidRE = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
+// maxGroupMembers is the most accounts a group may hold, the owner included.
+const maxGroupMembers = 100
+
 func (m *Module) conversationRoutes(r *httpx.Router) {
 	r.Authed("POST /v1/conversations", m.createConversation)
 	r.Authed("GET /v1/conversations/{id}", m.getConversation)
@@ -24,42 +27,75 @@ type conversationResponse struct {
 	ConversationID string `json:"conversationID"`
 	Mode           string `json:"mode"`
 	Epoch          int64  `json:"epoch"`
+	Kind           string `json:"kind"`
+}
+
+type memberJSON struct {
+	Account string `json:"account"`
+	Role    string `json:"role"`
 }
 
 func (m *Module) createConversation(w http.ResponseWriter, r *http.Request) error {
 	p := httpx.PrincipalFrom(r.Context())
 	var in struct {
-		Members []string `json:"members"`
+		Kind     string   `json:"kind"`
+		Members  []string `json:"members"`
+		Accounts []string `json:"accounts"`
 	}
 	if err := httpx.Decode(r, &in); err != nil {
 		return err
 	}
-	if len(in.Members) != 1 {
-		return httpx.Err("bad_request", "members must hold exactly one other account")
-	}
-	other := strings.ToLower(in.Members[0])
-	if other == strings.ToLower(p.AccountID) {
-		return httpx.Err("bad_request", "members must hold exactly one other account")
-	}
 	ctx := r.Context()
-	if !uuidRE.MatchString(other) {
-		return httpx.Err("not_found", "no such account")
+	var kind string
+	var others []string
+	switch in.Kind {
+	case "", "direct":
+		kind = "direct"
+		if len(in.Members) != 1 {
+			return httpx.Err("bad_request", "members must hold exactly one other account")
+		}
+		other := strings.ToLower(in.Members[0])
+		if other == strings.ToLower(p.AccountID) {
+			return httpx.Err("bad_request", "members must hold exactly one other account")
+		}
+		if !uuidRE.MatchString(other) {
+			return httpx.Err("not_found", "no such account")
+		}
+		others = []string{other}
+	case "group":
+		kind = "group"
+		var err error
+		if others, err = parseAccountList(in.Accounts, p.AccountID); err != nil {
+			return err
+		}
+		if len(others) < 1 || len(others) > maxGroupMembers-1 {
+			return httpx.Err("bad_request", "accounts must hold 1 to 99 other accounts")
+		}
+	default:
+		return httpx.Err("bad_request", "kind must be direct or group")
 	}
-	var exists bool
-	if err := m.d.DB.QueryRow(ctx, `select exists (select 1 from accounts where id = $1)`, other).Scan(&exists); err != nil {
+	var found int
+	if err := m.d.DB.QueryRow(ctx, `select count(*) from accounts where id = any($1::uuid[])`, others).Scan(&found); err != nil {
 		return err
 	}
-	if !exists {
+	if found != len(others) {
 		return httpx.Err("not_found", "no such account")
 	}
 
 	id := core.NewID()
 	mode := m.d.Policy.Encryption.NewConversations
 	err := pgx.BeginFunc(ctx, m.d.DB, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `insert into conversations (id, mode, created_at) values ($1, $2, $3)`, id, mode, m.d.Now()); err != nil {
+		if _, err := tx.Exec(ctx, `insert into conversations (id, mode, kind, created_at) values ($1, $2, $3, $4)`, id, mode, kind, m.d.Now()); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `insert into conversation_accounts (conversation_id, account_id) values ($1, $2), ($1, $3)`, id, p.AccountID, other); err != nil {
+		creatorRole := "member"
+		if kind == "group" {
+			creatorRole = "owner"
+		}
+		if _, err := tx.Exec(ctx, `insert into conversation_accounts (conversation_id, account_id, role) values ($1, $2, $3)`, id, p.AccountID, creatorRole); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `insert into conversation_accounts (conversation_id, account_id) select $1, unnest($2::uuid[])`, id, others); err != nil {
 			return err
 		}
 		_, err := tx.Exec(ctx, `insert into conversation_devices (conversation_id, device_id) values ($1, $2)`, id, p.DeviceID)
@@ -68,7 +104,7 @@ func (m *Module) createConversation(w http.ResponseWriter, r *http.Request) erro
 	if err != nil {
 		return err
 	}
-	httpx.JSON(w, http.StatusOK, conversationResponse{id, mode, 0})
+	httpx.JSON(w, http.StatusOK, conversationResponse{id, mode, 0, kind})
 	return nil
 }
 
@@ -79,15 +115,47 @@ func (m *Module) getConversation(w http.ResponseWriter, r *http.Request) error {
 	if !uuidRE.MatchString(id) {
 		return notFound
 	}
-	var out conversationResponse
-	err := m.d.DB.QueryRow(r.Context(),
-		`select c.id::text, c.mode, c.epoch from conversations c
-		 join conversation_devices cd on cd.conversation_id = c.id
-		 where c.id = $1 and cd.device_id = $2`, id, p.DeviceID).Scan(&out.ConversationID, &out.Mode, &out.Epoch)
+	ctx := r.Context()
+	var out struct {
+		conversationResponse
+		Members        []memberJSON `json:"members"`
+		MembersVersion int64        `json:"membersVersion"`
+	}
+	// One snapshot, so the member list and its version always agree.
+	tx, err := m.d.DB.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	// A direct conversation is readable by its member devices; a group by any
+	// device of a member account (a removed account's devices are gone from
+	// both sets in the same transaction that removes it).
+	err = tx.QueryRow(ctx,
+		`select c.id::text, c.mode, c.epoch, c.kind, c.members_version from conversations c
+		 where c.id = $1 and (
+		   (c.kind = 'direct' and exists (select 1 from conversation_devices cd where cd.conversation_id = c.id and cd.device_id = $2))
+		   or (c.kind = 'group' and exists (select 1 from conversation_accounts ca where ca.conversation_id = c.id and ca.account_id = $3)))`,
+		id, p.DeviceID, p.AccountID).Scan(&out.ConversationID, &out.Mode, &out.Epoch, &out.Kind, &out.MembersVersion)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return notFound
 	}
 	if err != nil {
+		return err
+	}
+	rows, err := tx.Query(ctx, `select account_id::text, role from conversation_accounts where conversation_id = $1 order by account_id`, id)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	out.Members = []memberJSON{}
+	for rows.Next() {
+		var mm memberJSON
+		if err := rows.Scan(&mm.Account, &mm.Role); err != nil {
+			return err
+		}
+		out.Members = append(out.Members, mm)
+	}
+	if err := rows.Err(); err != nil {
 		return err
 	}
 	httpx.JSON(w, http.StatusOK, out)
