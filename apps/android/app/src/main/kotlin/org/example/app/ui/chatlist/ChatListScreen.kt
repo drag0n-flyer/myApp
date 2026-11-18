@@ -3,6 +3,9 @@ package org.example.app.ui.chatlist
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.clickable
@@ -115,8 +118,15 @@ fun ChatListScreen(
                 }
                 if (state.archivedRows.isNotEmpty()) {
                     item(key = "archived") {
+                        // One item for a screen reader: "Archived, N".
+                        val archivedLabel = stringResource(R.string.archived_row) + ", " + state.archivedRows.size
                         ListItem(
-                            modifier = Modifier.clickable(role = Role.Button, onClick = onOpenArchive),
+                            modifier = Modifier.clickable(role = Role.Button, onClick = onOpenArchive)
+                                .clearAndSetSemantics {
+                                    contentDescription = archivedLabel
+                                    role = Role.Button
+                                    onClick { onOpenArchive(); true }
+                                },
                             leadingContent = { Icon(painterResource(R.drawable.ic_archive), contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                             headlineContent = { Text(stringResource(R.string.archived_row)) },
                             trailingContent = {

@@ -22,7 +22,12 @@ interface ChatDao {
     @Query("UPDATE chats SET is_request = :v WHERE id = :id") fun setRequest(id: String, v: Boolean)
     @Query("UPDATE chats SET pinned_at = :at WHERE id = :id") fun setPinnedAt(id: String, at: Long?)
     @Query("UPDATE chats SET muted = :v WHERE id = :id") fun setMuted(id: String, v: Boolean)
-    @Query("UPDATE chats SET archived = :v WHERE id = :id") fun setArchived(id: String, v: Boolean)
+    /** Archiving also unpins, in the same statement; unarchiving leaves the pin as it is (none). */
+    @Query("UPDATE chats SET archived = :v, pinned_at = CASE WHEN :v THEN NULL ELSE pinned_at END WHERE id = :id")
+    fun setArchived(id: String, v: Boolean)
+    @Query("UPDATE chats SET last_activity = :at WHERE id = :id AND last_activity < :at") fun bumpActivity(id: String, at: Long)
+    @Query("UPDATE chats SET unread = unread + :delta, last_activity = MAX(last_activity, :at) WHERE id = :id")
+    fun bumpChat(id: String, delta: Int, at: Long)
     @Query("SELECT text FROM drafts WHERE chat_id = :id") fun draft(id: String): String?
     @Query("SELECT chat_id, text FROM drafts ORDER BY chat_id") fun drafts(): List<DraftRow>
     /** Only for a chat that exists; a draft for no chat is dropped rather than failing the foreign key. */

@@ -57,8 +57,8 @@ class ChatListActionsTest {
         longPress("Sam")
         rule.onNodeWithText("Archive").performClick()
         rule.waitUntil(5_000) { rule.onAllNodesWithTextCount("Sam") == 0 }
-        rule.onNodeWithText("Archived").assertIsDisplayed()
-        rule.onNodeWithText("Archived").performClick()
+        rule.onNodeWithContentDescription("Archived, 1").assertIsDisplayed()
+        rule.onNodeWithContentDescription("Archived, 1").performClick()
         rule.onNodeWithText("Sam").assertIsDisplayed()
         longPress("Sam")
         rule.onNodeWithText("Unarchive").assertIsDisplayed()

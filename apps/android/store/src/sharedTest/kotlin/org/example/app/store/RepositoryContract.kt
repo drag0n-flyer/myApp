@@ -323,9 +323,9 @@ abstract class RepositoryContract {
 
     @Test fun pinMuteAndArchiveChangeOnlyTheirOwnColumn() {
         repo.setUnread("chat1", 3)
-        repo.setPinnedAt("chat1", 500)
         repo.setMuted("chat1", true)
         repo.setArchived("chat1", true)
+        repo.setPinnedAt("chat1", 500) // directly: the store itself never leaves an archived chat pinned
         val row = repo.chat("chat1")!!
         assertEquals(500L, row.pinnedAt)
         assertTrue(row.muted)
@@ -372,9 +372,9 @@ abstract class RepositoryContract {
     }
 
     @Test fun bumpActivityRaisesOnlyLastActivityAndNeverUndoesPinMuteArchive() {
-        repo.setPinnedAt("chat1", 500)
         repo.setMuted("chat1", true)
         repo.setArchived("chat1", true)
+        repo.setPinnedAt("chat1", 500) // directly: the store itself never leaves an archived chat pinned
         repo.bumpActivity("chat1", 900)
         val row = repo.chat("chat1")!!
         assertEquals(900L, row.lastActivity)

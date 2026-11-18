@@ -108,7 +108,7 @@ class InMemoryRepository : Repository {
     }
     override fun setPinnedAt(chatId: String, at: Long?) = tx { s.chats[chatId]?.let { s.chats[chatId] = it.copy(pinnedAt = at) }; Unit }
     override fun setMuted(chatId: String, muted: Boolean) = tx { s.chats[chatId]?.let { s.chats[chatId] = it.copy(muted = muted) }; Unit }
-    override fun setArchived(chatId: String, archived: Boolean) = tx { s.chats[chatId]?.let { s.chats[chatId] = it.copy(archived = archived) }; Unit }
+    override fun setArchived(chatId: String, archived: Boolean) = tx { s.chats[chatId]?.let { s.chats[chatId] = it.copy(archived = archived, pinnedAt = if (archived) null else it.pinnedAt) }; Unit }
     override fun draft(chatId: String) = tx { s.drafts[chatId] }
     override fun drafts() = tx { s.drafts.toMap() }
     override fun setDraft(chatId: String, text: String?, at: Long) = tx {

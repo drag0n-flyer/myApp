@@ -48,14 +48,17 @@ class SampleChatStore(
             return true
         }
         if (chat.pinnedAt != null) return true
-        if (allChats.count { it.pinnedAt != null } >= ChatListOrder.MAX_PINS) return false
+        if (allChats.count { it.pinnedAt != null && !it.archived } >= ChatListOrder.MAX_PINS) return false
         mutate { change(chatId) { it.copy(pinnedAt = clock()) } }
         true
     }
 
     override fun setMuted(chatId: String, muted: Boolean) = mutate { change(chatId) { it.copy(muted = muted) } }
 
-    override fun setArchived(chatId: String, archived: Boolean) = mutate { change(chatId) { it.copy(archived = archived) } }
+    /** Archiving also unpins; unarchiving does not pin again. */
+    override fun setArchived(chatId: String, archived: Boolean) = mutate {
+        change(chatId) { it.copy(archived = archived, pinnedAt = if (archived) null else it.pinnedAt) }
+    }
 
     override fun setDraft(chatId: String, text: String?) = mutate {
         change(chatId) { it.copy(draft = text?.takeIf { t -> t.isNotBlank() }) }

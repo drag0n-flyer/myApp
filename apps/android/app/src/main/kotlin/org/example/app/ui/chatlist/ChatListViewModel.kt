@@ -86,8 +86,9 @@ class ChatListViewModel(
 
     fun select(folderId: String) { selected.value = folderId }
 
+    /** Archived chats are left alone: they keep their unread count. */
     fun markAllRead() {
-        store.chats.value.filter { it.unreadCount > 0 }.forEach { store.markRead(it.id) }
+        store.chats.value.filter { it.unreadCount > 0 && !it.archived }.forEach { store.markRead(it.id) }
     }
 
     /** False, and nothing changed, when this would be a sixth pinned chat. */

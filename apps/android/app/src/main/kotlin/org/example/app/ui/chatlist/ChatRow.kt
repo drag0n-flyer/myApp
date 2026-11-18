@@ -171,6 +171,7 @@ fun SwipeableChatRow(
     SwipeToDismissBox(
         state = state,
         modifier = modifier,
+        enableDismissFromStartToEnd = !inArchive,
         backgroundContent = {
             when (state.dismissDirection) {
                 SwipeToDismissBoxValue.StartToEnd -> SwipeBackground(
@@ -188,12 +189,13 @@ fun SwipeableChatRow(
             ChatRow(
                 row, onClick,
                 modifier = Modifier.semantics {
-                    customActions = listOf(
-                        CustomAccessibilityAction(pinLabel) { togglePin(); true },
-                        CustomAccessibilityAction(muteLabel) { actions.setMuted(current.chatId, !current.muted); true },
-                        CustomAccessibilityAction(archiveLabel) { toggleArchive(); true },
-                        CustomAccessibilityAction(readLabel) { actions.markRead(current.chatId); true },
-                    )
+                    // No Pin in the archive: an archived chat is never pinned. Mark as read only with unread messages.
+                    customActions = buildList {
+                            if (!inArchive) add(CustomAccessibilityAction(pinLabel) { togglePin(); true })
+                            add(CustomAccessibilityAction(muteLabel) { actions.setMuted(current.chatId, !current.muted); true })
+                            add(CustomAccessibilityAction(archiveLabel) { toggleArchive(); true })
+                            if (current.unreadCount > 0) add(CustomAccessibilityAction(readLabel) { actions.markRead(current.chatId); true })
+                    }
                 },
                 onLongClick = {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -201,10 +203,12 @@ fun SwipeableChatRow(
                 },
             )
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                DropdownMenuItem(text = { Text(pinLabel) }, onClick = { menuOpen = false; togglePin() })
+                if (!inArchive) DropdownMenuItem(text = { Text(pinLabel) }, onClick = { menuOpen = false; togglePin() })
                 DropdownMenuItem(text = { Text(muteLabel) }, onClick = { menuOpen = false; actions.setMuted(current.chatId, !current.muted) })
                 DropdownMenuItem(text = { Text(archiveLabel) }, onClick = { menuOpen = false; toggleArchive() })
-                DropdownMenuItem(text = { Text(readLabel) }, onClick = { menuOpen = false; actions.markRead(current.chatId) })
+                if (row.unreadCount > 0) {
+                    DropdownMenuItem(text = { Text(readLabel) }, onClick = { menuOpen = false; actions.markRead(current.chatId) })
+                }
             }
         }
     }

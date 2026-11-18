@@ -359,15 +359,17 @@ class LiveChatStoreTest {
         val (rig, s, _) = joined()
         s.setPinned("acc-ana", true)
         s.setMuted("acc-ana", true)
+        s.settle()
+        assertNotNull(rig.bob1.repo.chat("acc-ana")!!.pinnedAt)
         s.setArchived("acc-ana", true)
         s.settle()
         val row = rig.bob1.repo.chat("acc-ana")!!
-        assertNotNull(row.pinnedAt)
+        assertNull(row.pinnedAt, "archiving unpins")
         assertTrue(row.muted)
         assertTrue(row.archived)
         assertEquals(setOf("acc-ana"), s.mutedChatIds.value)
         val again = store(rig.bob1).chat("acc-ana")!!
-        assertNotNull(again.pinnedAt)
+        assertNull(again.pinnedAt)
         assertTrue(again.muted)
         assertTrue(again.archived)
         s.setPinned("acc-ana", false); s.setMuted("acc-ana", false); s.setArchived("acc-ana", false); s.settle()
@@ -515,7 +517,7 @@ class LiveChatStoreTest {
         s.setDraft("acc-new", "hello"); s.settle()
         assertNull(rig.bob1.repo.draft("acc-new"))
         rig.bob1.repo.upsertChat(ChatRecord("acc-new", isRequest = false, unread = 0, muted = false, lastActivity = NOW))
-        s.refresh()
+        s.refresh(); s.settle()
         assertEquals("hello", rig.bob1.repo.draft("acc-new"))
         assertEquals("hello", s.chat("acc-new")!!.draft)
     }

@@ -221,13 +221,8 @@ class IncomingHandler(
 
     /** An incoming message from someone else counts as unread and moves the chat up. */
     private fun bumpChat(message: MessageRecord, repo: Repository) {
-        val chat = repo.chat(message.chatId) ?: return
-        repo.upsertChat(
-            chat.copy(
-                unread = chat.unread + if (message.senderAccount != me.accountId) 1 else 0,
-                lastActivity = maxOf(chat.lastActivity, minOf(message.sentAt, clock.now())),
-            ),
-        )
+        // One statement: reading the row and writing it back could undo a pin, mute or archive made in between.
+        repo.bumpChat(message.chatId, if (message.senderAccount != me.accountId) 1 else 0, minOf(message.sentAt, clock.now()))
     }
 }
 

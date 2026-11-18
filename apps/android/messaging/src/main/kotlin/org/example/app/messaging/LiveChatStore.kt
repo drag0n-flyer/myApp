@@ -263,6 +263,9 @@ class LiveChatStore(
         val drafts = runCatching { repo.drafts() }.getOrDefault(emptyMap()).toMutableMap()
         for ((chatId, text) in draftsPending) if (text.isBlank()) drafts.remove(chatId) else drafts[chatId] = text
         val pinned = runCatching { pinsPending.toMap() }.getOrDefault(emptyMap())
+        // A draft typed before its chat existed: write it now that the row is here.
+        val rowIds = records.map { it.id }.toSet()
+        for ((id, text) in draftsPending) if (text.isNotEmpty() && id in rowIds) write(reload = false) { persistDraft(id) }
         val built = records.mapNotNull { record ->
             val all = repo.conversations(record.id)
             val latest = repo.messages(record.id, null, CACHED_MESSAGES)
@@ -323,7 +326,8 @@ class LiveChatStore(
     override fun setPinned(chatId: String, pinned: Boolean): Boolean {
         synchronized(pinLock) {
             if (pinned) {
-                val shown = (_chats.value + _requests.value).filter { it.pinnedAt != null }.map { it.id }.toMutableSet()
+                // An archived chat is never pinned, so it never counts.
+                val shown = (_chats.value + _requests.value).filter { it.pinnedAt != null && !it.archived }.map { it.id }.toMutableSet()
                 for ((id, on) in pinsPending) if (on) shown += id else shown -= id
                 if (chatId !in shown && shown.size >= ChatListOrder.MAX_PINS) return false
             }
@@ -342,7 +346,16 @@ class LiveChatStore(
 
     override fun setMuted(chatId: String, muted: Boolean) = write { repo.setMuted(chatId, muted) }
 
-    override fun setArchived(chatId: String, archived: Boolean) = write { repo.setArchived(chatId, archived) }
+    /** Archiving also unpins (one write); unarchiving does not pin again. */
+    override fun setArchived(chatId: String, archived: Boolean) {
+        if (archived) {
+            synchronized(pinLock) { pinsPending[chatId] = false }
+            write { repo.setArchived(chatId, true) }
+            write(reload = false) { pinsPending.remove(chatId, false) }
+        } else {
+            write { repo.setArchived(chatId, false) }
+        }
+    }
 
     /**
      * Called on every keystroke, so it shows at once (the chat list sees "Draft:" the moment the chat is left) and the
@@ -352,12 +365,27 @@ class LiveChatStore(
         val value = text?.takeIf { it.isNotBlank() } ?: ""
         draftsPending[chatId] = value
         val patch = { list: List<Chat> -> list.map { if (it.id == chatId) it.copy(draft = value.ifEmpty { null }) else it } }
-        _chats.update(patch)
-        _requests.update(patch)
-        val at = nowMs()
-        write(reload = false) {
-            repo.setDraft(chatId, value.ifEmpty { null }, at)
-            draftsPending.remove(chatId, value)
+        // Under the reload lock, so a reload that began earlier cannot publish its older draft after this one.
+        synchronized(reloadLock) {
+            _chats.update(patch)
+            _requests.update(patch)
+        }
+        write(reload = false) { persistDraft(chatId) }
+    }
+
+    /**
+     * Writes the newest pending text for the chat. A chat with no row yet keeps its draft in memory (the row is not
+     * there for the draft to hang on); [reload] writes it as soon as the row exists. If it never does, it lives for the
+     * process only.
+     */
+    private fun persistDraft(chatId: String) {
+        val text = draftsPending[chatId] ?: return
+        if (text.isEmpty()) {
+            repo.setDraft(chatId, null, nowMs())
+            draftsPending.remove(chatId, text)
+        } else if (repo.chat(chatId) != null) {
+            repo.setDraft(chatId, text, nowMs())
+            draftsPending.remove(chatId, text)
         }
     }
 
@@ -971,10 +999,8 @@ class LiveChatStore(
         false
     }
 
-    private fun bumpActivity(chatId: String, at: Long) {
-        val chat = repo.chat(chatId) ?: return
-        if (at > chat.lastActivity) repo.upsertChat(chat.copy(lastActivity = at))
-    }
+    /** One column in one statement: a pin, mute or archive made meanwhile is never written back to its old value. */
+    private fun bumpActivity(chatId: String, at: Long) = repo.bumpActivity(chatId, at)
 
     // Folders
 
