@@ -276,6 +276,8 @@
     <string name="call_decline">Decline</string>
     <string name="call_remote_video">Video from the other person</string>
     <string name="call_self_video">Your video</string>
+    <string name="call_camera_off">Camera access is off. Turn it on in Settings.</string>
+    <string name="call_camera_unavailable">The camera isn\'t available right now. The call continues with audio.</string>
     <string name="call_data_sheet_title">Data for this call</string>
     <string name="call_data_sheet_footer">This call only · audio, both directions, estimated</string>
     <string name="data_size_kb">%1$s KB</string>

@@ -257,7 +257,21 @@ class AppGraph(
             }
         }
         engine.state.map { it != null && !it.isEnded }.distinctUntilChanged().onEach { setInCall(it) }.launchIn(scope)
+        if (!sampleData) watchNetworkDuringCalls(engine)
         engine
+    }
+
+    /** Live calls hear about Wi-Fi / mobile data changes at once: watched only while a call is on (NetworkWatcher dedupes repeats). */
+    private fun watchNetworkDuringCalls(engine: CallEngine) {
+        val connectivity = appContext.getSystemService(android.net.ConnectivityManager::class.java) ?: return
+        val watcher = org.example.app.calls.android.NetworkWatcher(connectivity) { engine.setNetwork(it) }
+        engine.state.map { it != null && !it.isEnded }.distinctUntilChanged().onEach { live ->
+            try {
+                if (live) watcher.start() else watcher.stop()
+            } catch (e: RuntimeException) {
+                Log.w(TAG, "network watcher: ${e.javaClass.simpleName}")
+            }
+        }.launchIn(scope)
     }
 
     private val callController: FallbackCallController by lazy { makeCallController(appContext) }

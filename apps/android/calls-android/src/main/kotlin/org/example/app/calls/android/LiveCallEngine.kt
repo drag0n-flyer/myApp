@@ -146,8 +146,22 @@ class LiveCallEngine(
     override fun setVideo(on: Boolean) = submit(CallEvent.SetVideo(on))
 
     override fun setNetwork(type: NetworkType) = enqueue {
+        // The network the call already runs on (from its context until the first report): a repeat changes nothing,
+        // and must not restart the media path again.
+        if (type == (network ?: callContext(isContact).network)) {
+            network = type
+            return@enqueue
+        }
         network = type
-        run(machine.handle(CallEvent.ContextChanged(callContext(isContact))))
+        // No network: record it only. Nothing can be offered over it, and a mode-change offer made now would block the
+        // restart that the network's return needs.
+        if (type == NetworkType.Offline) return@enqueue
+        // The new network may change the data-mode ceiling, which asks for a mode-change offer. On a path change that
+        // offer must be the ICE restart itself (same new profile, sent at once), not a plain offer that makes the
+        // restart wait for its answer.
+        val fx = machine.handle(CallEvent.ContextChanged(callContext(isContact)))
+            .map { if (it is CallEffect.CreateOffer) CallEffect.RestartIce(it.receive) else it }
+        run(fx)
         if (live) run(machine.handle(CallEvent.PathChanged))
     }
 
@@ -250,6 +264,7 @@ class LiveCallEngine(
         outgoing = isOutgoing
         isContact = contact
         shownPhase = null
+        network = null // each call starts from the device's current network, not the last call's
         run(machine.handle(CallEvent.ContextChanged(callContext(contact))))
     }
 

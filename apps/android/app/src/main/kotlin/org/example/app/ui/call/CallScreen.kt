@@ -67,6 +67,7 @@ import org.example.app.core.calls.CallEndReason
 import org.example.app.core.calls.CallPhase
 import org.example.app.core.calls.CallQuality
 import org.example.app.core.calls.CallState
+import org.example.app.calls.android.media.CallVideo
 import org.example.app.core.calls.SimulatedNetwork
 import org.example.app.ui.Avatar
 import org.example.app.ui.DataText
@@ -126,6 +127,9 @@ object SystemCallClock : CallClock {
     override suspend fun awaitNextSecond() = delay(1_000)
 }
 
+private val ALWAYS_OFF = kotlinx.coroutines.flow.MutableStateFlow(false)
+private val ALWAYS_ON = kotlinx.coroutines.flow.MutableStateFlow(true)
+
 private val CallBackdrop = Brush.verticalGradient(listOf(Color(0xFF2A3560), Color(0xFF11142B), Color(0xFF070914)))
 
 /**
@@ -138,7 +142,10 @@ fun CallScreen(
     modifier: Modifier = Modifier,
     ticking: Boolean = true,
     clock: CallClock = SystemCallClock,
-    canFlipCamera: Boolean = false,
+    /** Null: flip shows when the live session reports more than one camera. */
+    canFlipCamera: Boolean? = null,
+    /** Null: the system's camera permission. */
+    cameraAccess: CameraAccess? = null,
     onMinimise: (() -> Unit)? = null,
     onThemeResolved: (ColorScheme) -> Unit = {},
 ) {
@@ -147,6 +154,8 @@ fun CallScreen(
         val current = call ?: return@CallTheme
         var showData by rememberSaveable { mutableStateOf(false) }
         CallBackHandler(onMinimise)
+        val surface by CallVideo.surface.collectAsStateWithLifecycle()
+        val camera = CameraGate(viewModel, current, surface, cameraAccess ?: rememberSystemCameraAccess())
 
         if (ticking) {
             val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -180,9 +189,18 @@ fun CallScreen(
                     val banner = remember(current.banner) { current.banner }
                     banner?.let { CallBannerView(it, Modifier.padding(bottom = 8.dp)) }
                 }
+                camera.message?.let {
+                    Text(it, Modifier.fillMaxWidth().padding(bottom = 8.dp), style = MaterialTheme.typography.bodyMedium, color = Color.White, textAlign = TextAlign.Center)
+                }
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     if (current.isVideoCall && current.isVideoOn) {
-                        VideoStage()
+                        val live = surface
+                        val remoteOn by (live?.remoteVideoOn ?: ALWAYS_OFF).collectAsStateWithLifecycle()
+                        val front by (live?.frontCamera ?: ALWAYS_ON).collectAsStateWithLifecycle()
+                        VideoStage(
+                            remote = live?.remote, local = live?.local, avatarName = viewModel.contactName(current),
+                            egl = live?.eglContext, remoteVideoOn = remoteOn, mirrorLocal = front,
+                        )
                     } else {
                         AudioStage(current, viewModel.contactName(current), modeText(viewModel, current))
                     }
@@ -191,8 +209,8 @@ fun CallScreen(
                 CallControls(
                     current,
                     onSpeaker = viewModel::toggleSpeaker,
-                    canFlip = canFlipCamera,
-                    onFlip = {},
+                    canFlip = canFlipCamera ?: ((surface?.cameraCount ?: 0) > 1),
+                    onFlip = { surface?.flipCamera() },
                     onMute = viewModel::toggleMute,
                     onVideo = viewModel::toggleVideo,
                     onData = { showData = true },
@@ -272,24 +290,6 @@ private fun SignalBars(level: Int) {
         for (i in 0 until 4) {
             Box(Modifier.width(3.dp).height((4 + i * 3).dp).background(if (i < level) Color(0xFF4CD964) else Color.White.copy(alpha = 0.3f), RoundedCornerShape(1.dp)))
         }
-    }
-}
-
-/** Placeholder video until the WebRTC engine exists. */
-@Composable
-private fun VideoStage() {
-    val remote = stringResource(R.string.call_remote_video)
-    val self = stringResource(R.string.call_self_video)
-    Box(Modifier.fillMaxSize()) {
-        Icon(
-            painterResource(R.drawable.ic_person), contentDescription = remote,
-            tint = Color.White.copy(alpha = 0.25f), modifier = Modifier.size(160.dp).align(Alignment.Center),
-        )
-        Box(
-            Modifier.align(Alignment.TopEnd).padding(top = 48.dp).size(width = 84.dp, height = 120.dp)
-                .background(Brush.verticalGradient(listOf(Color.Gray, Color(0x663B6FD8))), RoundedCornerShape(16.dp))
-                .semantics { contentDescription = self },
-        )
     }
 }
 

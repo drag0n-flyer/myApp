@@ -78,6 +78,11 @@ class CallViewModel(
     fun toggleMute() = call.value?.let { engine.setMuted(!it.isMuted) }
     fun toggleSpeaker() = call.value?.let { engine.setSpeaker(!it.isSpeakerOn) }
     fun toggleVideo() = call.value?.let { engine.setVideo(!it.isVideoOn) }
+    /** The camera is not usable: the call goes on as audio. */
+    fun videoOff() {
+        if (call.value?.isVideoOn == true) engine.setVideo(false)
+    }
+
     fun setMode(preference: ModePreference) = engine.setMode(preference)
 
     /** One second of the sample clock. Does nothing with a real engine, which keeps its own time. */
