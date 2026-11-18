@@ -406,6 +406,50 @@ class AppGraphTest {
         assertFalse(File(root, "media").exists(), "old media gone")
     }
 
+    @Test
+    fun aDifferentAccountSigningInAfterADataWipeGetsDefaultSettings() = runBlocking {
+        val (graph, session) = opened()
+        graph.settingsStore.update { it.copy(readReceipts = false, ipHiding = org.example.app.core.settings.IPHiding.Always) }
+        session.database.close()
+        saveSession(device = "dev-2")
+        val next = AppGraph(context, sampleData = false, scope = scope, platform = platform())
+        assertNotNull(next.openSession())
+        assertEquals(org.example.app.core.settings.UserSettings.initial(next.serverPolicy), next.settingsStore.settings.value)
+        assertNull(context.getSharedPreferences("settings", Context.MODE_PRIVATE).getString("settings", null))
+    }
+
+    @Test
+    fun theSameAccountSigningBackInKeepsItsSettings() = runBlocking {
+        val (graph, session) = opened()
+        graph.settingsStore.update { it.copy(readReceipts = false) }
+        session.database.close()
+        val next = AppGraph(context, sampleData = false, scope = scope, platform = platform())
+        assertNotNull(next.openSession())
+        assertEquals(false, next.settingsStore.settings.value.readReceipts)
+    }
+
+    @Test
+    fun anAccountActionErrorFromBeforeIsNotShownAfterTheNextSignIn() = runBlocking {
+        val (graph, _) = opened()
+        answer = { r ->
+            when {
+                r.method == "GET" && r.url.encodedPath == "/v1/devices" -> 200 to
+                    """{"devices":[{"id":"dev-1","name":"Test phone","platform":"android","createdAt":"2026-01-01T00:00:00Z","current":true}]}"""
+                r.method == "DELETE" && r.url.encodedPath == "/v1/devices/dev-1" -> 204 to ""
+                else -> null
+            }
+        }
+        onCancelNotifications = { throw IllegalStateException("notification service gone") } // a wipe step fails after the revoke
+        graph.accountActions.start(org.example.app.ui.settings.ProfileAction.SigningOut)
+        var waited = 0
+        while (graph.accountActions.error.value == null && waited++ < 300) Thread.sleep(10)
+        assertNotNull(graph.accountActions.error.value, "the failure was kept")
+        onCancelNotifications = {}
+        graph.finishPendingWipe()
+        runCatching { graph.accountService.connect("chat.example.org") } // the next sign-in starts here
+        assertNull(graph.accountActions.error.value, "a new session starts without the old error")
+    }
+
     /** Two opens at once after a device switch (UI plus push): one wipe, one live session, its data intact. */
     @Test
     fun concurrentOpensAfterDeviceSwitchLeaveOneSession() = runBlocking {
