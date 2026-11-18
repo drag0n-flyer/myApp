@@ -15,6 +15,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
@@ -23,54 +24,89 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import org.example.app.R
 import org.example.app.core.settings.MediaKind
 import org.example.app.messaging.content.TextLimit
 
-/** Attach, message field, and a mic that turns into send once there is text. */
+/** The bar above the composer: who is being replied to, or that a message is being edited. */
+sealed interface ComposerBar {
+    data class Replying(val author: String, val preview: String) : ComposerBar
+    data object Editing : ComposerBar
+}
+
+/**
+ * Attach, message field, and a mic that turns into send once there is text. The text belongs to the caller, which keeps
+ * a draft per chat and fills the field when a message is edited. [bar] shows above the field with a close button.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun Composer(
     enabled: Boolean,
+    text: String,
+    onTextChange: (String) -> Unit,
     onSend: (String) -> Unit,
     onAttach: (MediaKind) -> Unit,
     onRecordVoice: () -> Unit,
     modifier: Modifier = Modifier,
+    bar: ComposerBar? = null,
+    onCloseBar: () -> Unit = {},
 ) {
-    var text by rememberSaveable { mutableStateOf("") }
     var sheet by rememberSaveable { mutableStateOf(false) }
-    Row(
-        modifier.fillMaxWidth().imePadding().navigationBarsPadding().padding(horizontal = 8.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        IconButton(onClick = { sheet = true }, enabled = enabled) {
-            Icon(painterResource(R.drawable.ic_attach), contentDescription = stringResource(R.string.attach))
-        }
-        TextField(
-            value = text,
-            onValueChange = { text = TextLimit.truncate(it) },
-            enabled = enabled,
-            placeholder = { Text(stringResource(if (enabled) R.string.message_hint else R.string.sending_paused_hint)) },
-            maxLines = 5,
-            colors = TextFieldDefaults.colors(focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent),
-            shape = RoundedCornerShape(24.dp),
-            modifier = Modifier.weight(1f),
-        )
-        if (text.isNotBlank()) {
-            IconButton(onClick = { onSend(text); text = "" }, enabled = enabled) {
-                Icon(painterResource(R.drawable.ic_send), contentDescription = stringResource(R.string.send))
+    Column(modifier.fillMaxWidth().imePadding().navigationBarsPadding()) {
+        if (bar != null) {
+            val label = when (bar) {
+                is ComposerBar.Replying -> stringResource(R.string.chat_replying_to, bar.author)
+                ComposerBar.Editing -> stringResource(R.string.chat_editing)
             }
-        } else {
-            IconButton(onClick = onRecordVoice, enabled = enabled) {
-                Icon(painterResource(R.drawable.ic_mic), contentDescription = stringResource(R.string.record_voice))
+            Row(
+                Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Column(Modifier.weight(1f).semantics(mergeDescendants = true) {}) {
+                    Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    if (bar is ComposerBar.Replying) {
+                        Text(bar.preview, maxLines = 1, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                IconButton(onClick = onCloseBar) {
+                    Icon(painterResource(R.drawable.ic_close), contentDescription = stringResource(R.string.chat_bar_close))
+                }
+            }
+        }
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            IconButton(onClick = { sheet = true }, enabled = enabled) {
+                Icon(painterResource(R.drawable.ic_attach), contentDescription = stringResource(R.string.attach))
+            }
+            TextField(
+                value = text,
+                onValueChange = { onTextChange(TextLimit.truncate(it)) },
+                enabled = enabled,
+                placeholder = { Text(stringResource(if (enabled) R.string.message_hint else R.string.sending_paused_hint)) },
+                maxLines = 5,
+                colors = TextFieldDefaults.colors(focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent),
+                shape = RoundedCornerShape(24.dp),
+                modifier = Modifier.weight(1f),
+            )
+            if (text.isNotBlank()) {
+                IconButton(onClick = { onSend(text) }, enabled = enabled) {
+                    Icon(painterResource(R.drawable.ic_send), contentDescription = stringResource(R.string.send))
+                }
+            } else {
+                IconButton(onClick = onRecordVoice, enabled = enabled) {
+                    Icon(painterResource(R.drawable.ic_mic), contentDescription = stringResource(R.string.record_voice))
+                }
             }
         }
     }
