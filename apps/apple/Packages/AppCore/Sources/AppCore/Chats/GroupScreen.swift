@@ -17,8 +17,11 @@ public struct GroupMemberRow: Hashable, Sendable {
     public var isMe: Bool
     /// The person is a contact of this device: only then is there a one-to-one chat page for Message and the safety number.
     public var isContact: Bool
+    /// A one-to-one chat with this person already exists: only then is there a safety number to show (nothing is created for it).
+    public var hasDirectChat: Bool
 
-    public init(accountID: String, name: String, role: GroupRole, isMe: Bool, isContact: Bool) {
+    public init(accountID: String, name: String, role: GroupRole, isMe: Bool, isContact: Bool, hasDirectChat: Bool = false) {
+        self.hasDirectChat = hasDirectChat
         self.accountID = accountID; self.name = name; self.role = role; self.isMe = isMe; self.isContact = isContact
     }
 }
@@ -125,7 +128,8 @@ public enum GroupScreenRules {
     public static func actions(myRole: GroupRole?, myState: GroupMyState, target: GroupMemberRow) -> [GroupMemberAction] {
         guard !target.isMe, myState == .member else { return [] }
         var list: [GroupMemberAction] = []
-        if target.isContact { list += [.message, .viewSafetyNumber] }
+        if target.isContact { list.append(.message) }
+        if target.isContact, target.hasDirectChat { list.append(.viewSafetyNumber) }
         if myRole?.canSetRoles == true {
             switch target.role {
             case .member: list += [.makeAdmin, .makeOwner]

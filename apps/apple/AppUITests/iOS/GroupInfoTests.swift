@@ -65,8 +65,9 @@ final class GroupInfoTests: XCTestCase {
 
         app.element("groupinfo.leave").tap()
         XCTAssertTrue(app.staticTexts["Leave this group?"].waitToExist())
-        // The destructive button of the confirmation is the last "Leave group" on screen.
-        app.buttons.matching(NSPredicate(format: "label == 'Leave group'")).allElementsBoundByIndex.last?.tap()
+        let confirm = app.buttons["groupinfo.leave.confirm"]
+        XCTAssertTrue(confirm.waitToExist())
+        confirm.tap()
         XCTAssertTrue(app.staticTexts["Choose a new owner before you leave."].waitToExist())
     }
 }

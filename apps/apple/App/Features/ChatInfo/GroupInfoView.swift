@@ -54,6 +54,7 @@ struct GroupInfoView: View {
         }
         .confirmationDialog("Leave this group?", isPresented: $confirmLeave, titleVisibility: .visible) {
             Button("Leave group", role: .destructive) { run { await model.leaveGroup(chatID: chatID) } }
+                .accessibilityIdentifier("groupinfo.leave.confirm")
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("You will stop getting its messages. Its history stays on this device until you delete the chat.")
@@ -221,7 +222,7 @@ struct GroupInfoView: View {
         case .message:
             model.openChatID = model.openChat(with: member.accountID)
         case .viewSafetyNumber:
-            safetyChat = SafetyTarget(chatID: model.openChat(with: member.accountID))
+            if let existing = model.chat(id: member.accountID)?.id { safetyChat = SafetyTarget(chatID: existing) }
         case .makeAdmin:
             run { await model.setRole(chatID: chatID, account: member.accountID, role: .admin) }
         case .removeAdmin:

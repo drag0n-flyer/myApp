@@ -19,7 +19,8 @@ extension SampleChatStore {
         guard ChatID.isGroup(chatID), let chat = chat(id: chatID), let group = sampleGroups[chatID] else { return nil }
         let members = group.members.map { member in
             GroupMemberRow(accountID: member.accountID, name: contact(id: member.accountID)?.displayName ?? "", role: member.role,
-                            isMe: member.accountID == me.id, isContact: contacts.contains { $0.id == member.accountID })
+                            isMe: member.accountID == me.id, isContact: contacts.contains { $0.id == member.accountID },
+                            hasDirectChat: allChats.contains { $0.contactID == member.accountID })
         }
         return GroupInfo(chatID: chatID, name: chat.title, photo: group.photo, members: members,
                          myRole: group.members.first { $0.accountID == me.id }?.role, myState: group.myState)

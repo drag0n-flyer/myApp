@@ -11,7 +11,8 @@ extension LiveChatStore {
         let members = records.map { record -> GroupMemberRow in
             let isContact = groupMemberIsContact(record.accountID)
             return GroupMemberRow(accountID: record.accountID, name: groupMemberName(record.accountID, isContact: isContact),
-                                  role: GroupRole(wire: record.role), isMe: record.accountID == myID, isContact: isContact)
+                                  role: GroupRole(wire: record.role), isMe: record.accountID == myID, isContact: isContact,
+                                  hasDirectChat: self.chat(id: record.accountID) != nil)
         }
         return GroupInfo(chatID: chatID, name: chat.title, photo: GroupScreenRules.displayablePhoto(chat.photo), members: members,
                          myRole: records.first { $0.accountID == myID }.map { GroupRole(wire: $0.role) },

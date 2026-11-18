@@ -29,7 +29,7 @@ import MessagingTestKit
         #expect(info.photo == groupJpeg)
         #expect(info.members.count == 3)
         let bob = try #require(info.members.first { $0.accountID == "acc-bob" })
-        #expect(bob.name == "Bob" && bob.role == .admin && bob.isContact && !bob.isMe)
+        #expect(bob.name == "Bob" && bob.role == .admin && bob.isContact && !bob.isMe && !bob.hasDirectChat)
         let zed = try #require(info.members.first { $0.accountID == "acc-zed" })
         #expect(zed.role == .member && !zed.isContact && zed.name.isEmpty)
         #expect(info.members.first { $0.accountID == me }?.isMe == true)

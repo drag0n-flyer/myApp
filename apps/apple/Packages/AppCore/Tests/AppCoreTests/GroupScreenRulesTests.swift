@@ -3,7 +3,7 @@ import Testing
 @testable import AppCore
 
 private func member(_ id: String, _ name: String, _ role: GroupRole, me: Bool = false, contact: Bool = true) -> GroupMemberRow {
-    GroupMemberRow(accountID: id, name: name, role: role, isMe: me, isContact: contact)
+    GroupMemberRow(accountID: id, name: name, role: role, isMe: me, isContact: contact, hasDirectChat: contact)
 }
 
 @Test func membersAreSortedOwnerThenAdminsThenMembersByName() {
@@ -116,4 +116,9 @@ private func member(_ id: String, _ name: String, _ role: GroupRole, me: Bool = 
     #expect(GroupChangeOutcome.failed(.invalidName).message != nil)
     #expect(GroupChangeOutcome.failed(.invalidPhoto).message != nil)
     #expect(GroupChangeOutcome.failed(.other).message != nil)
+}
+
+@Test func theSafetyNumberNeedsAnExistingOneToOneChat() {
+    let noChat = GroupMemberRow(accountID: "x", name: "X", role: .member, isMe: false, isContact: true, hasDirectChat: false)
+    #expect(GroupScreenRules.actions(myRole: .member, myState: .member, target: noChat) == [.message])
 }
