@@ -314,12 +314,15 @@ class ChatViewModelActionsTest {
         private val base = inner.chat("chat-riya")!!
         private val flow = MutableStateFlow(listOf(base.copy(messages = all.takeLast(50))))
         var reads = 0
+        /** Called on every page read, like a store that changes while the screen loads. */
+        var onRead: (() -> Unit)? = null
         /** Rows the store never shows (a hidden safety-number line) but that still sit between two messages. */
         var hiddenIds: Set<String> = emptySet()
         override val chats: StateFlow<List<Chat>> get() = flow
         override fun chat(id: String): Chat? = flow.value.firstOrNull { it.id == id }
         override fun messages(chatId: String, before: String?, limit: Int): List<Message> {
             reads++
+            onRead?.invoke()
             val end = if (before == null) all.size else all.indexOfFirst { it.id == before }.let { if (it < 0) return emptyList() else it }
             return all.subList(maxOf(0, end - limit), end).filter { it.id !in hiddenIds }
         }
@@ -523,15 +526,37 @@ class ChatViewModelActionsTest {
     }
 
     @Test
-    fun aJumpTargetSurvivesAnArrival() = runTest {
+    fun aJumpTargetSurvivesAnArrivalWhileTheListIsStillAtTheBottom() = runTest {
         val store = windowed(1_500)
         val vm = vm(store)
+        // The list has not scrolled yet: it is still at the bottom (the default) when the pages arrive.
         assertTrue(vm.ensureLoaded("m10"))
-        // The screen scrolled away from the bottom to show it.
-        vm.setAtBottom(false)
         store.arrive(0)
         assertTrue(nums(vm).contains(10))
         assertEquals(0, nums(vm).first())
+    }
+
+    @Test
+    fun aJumpOnOpeningSurvivesTheReadMarkEmissionDuringTheLoad() = runTest {
+        val store = windowed(1_500)
+        var n = 0
+        // Opening a chat marks it read, which makes the store emit while the jump is still loading its pages.
+        store.onRead = { store.publishUnread(++n) }
+        val vm = vm(store)
+        assertTrue(vm.ensureLoaded("m100"))
+        assertTrue(nums(vm).contains(100))
+        assertEquals(1_400, nums(vm).size)
+    }
+
+    @Test
+    fun afterTheJumpIsFinishedTrimmingWorksAgain() = runTest {
+        val store = windowed(1_500)
+        val vm = vm(store)
+        assertTrue(vm.ensureLoaded("m10"))
+        vm.finishJump()
+        store.arrive(0)
+        assertEquals(550, nums(vm).size)
+        assertFalse(nums(vm).contains(10))
     }
 
     @Test

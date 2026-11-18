@@ -115,14 +115,20 @@ fun ChatScreen(
 
     // Jump to a message, loading older pages first if it is not loaded. Gives up quietly when history ends before it.
     suspend fun jumpTo(id: String) {
-        if (!viewModel.ensureLoaded(id)) return
-        viewModel.state.first { s -> s.messages.any { it.id == id } }
-        var frames = 0
-        while (rowsRef.none { it.key == id } && frames++ < 60) androidx.compose.runtime.withFrameNanos { }
-        val index = rowsRef.indexOfFirst { it.key == id }
-        if (index < 0) return
-        // The list is reversed, so a negative offset moves the row up from the bottom edge, towards the middle.
-        list.animateScrollToItem(index, -(list.layoutInfo.viewportSize.height / 3))
+        try {
+            if (!viewModel.ensureLoaded(id)) return
+            viewModel.state.first { s -> s.messages.any { it.id == id } }
+            var frames = 0
+            while (rowsRef.none { it.key == id } && frames++ < 60) androidx.compose.runtime.withFrameNanos { }
+            val index = rowsRef.indexOfFirst { it.key == id }
+            if (index < 0) return
+            // The list is reversed, so a negative offset moves the row up from the bottom edge, towards the middle.
+            list.animateScrollToItem(index, -(list.layoutInfo.viewportSize.height / 3))
+        } finally {
+            // Scrolled, gave up or cancelled: say where the list is, then let trimming resume. Never left set.
+            viewModel.finishJump()
+            viewModel.setAtBottom(list.firstVisibleItemIndex == 0 && list.firstVisibleItemScrollOffset == 0)
+        }
         highlighted = id
         delay(HIGHLIGHT_MS)
         if (highlighted == id) highlighted = null
