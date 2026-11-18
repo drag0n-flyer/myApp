@@ -81,13 +81,13 @@ interface MessageDao {
     /** IGNORE makes a repeated message ID a no-op; the return value is the new row ID or -1. */
     @Insert(onConflict = OnConflictStrategy.IGNORE) fun insert(m: MessageEntity): Long
     @Query("SELECT * FROM messages WHERE id = :id") fun get(id: String): MessageEntity?
-    @Query("SELECT * FROM messages WHERE chat_id = :chatId ORDER BY sent_at DESC, id DESC LIMIT :limit")
-    fun newest(chatId: String, limit: Int): List<MessageEntity>
+    @Query("SELECT * FROM messages WHERE chat_id = :chatId AND (expires_at IS NULL OR expires_at > :now) ORDER BY sent_at DESC, id DESC LIMIT :limit")
+    fun newest(chatId: String, now: Long, limit: Int): List<MessageEntity>
     @Query(
         "SELECT * FROM messages WHERE chat_id = :chatId AND (sent_at < :sentAt OR (sent_at = :sentAt AND id < :id)) " +
-            "ORDER BY sent_at DESC, id DESC LIMIT :limit",
+            "AND (expires_at IS NULL OR expires_at > :now) ORDER BY sent_at DESC, id DESC LIMIT :limit",
     )
-    fun olderThan(chatId: String, sentAt: Long, id: String, limit: Int): List<MessageEntity>
+    fun olderThan(chatId: String, sentAt: Long, id: String, now: Long, limit: Int): List<MessageEntity>
     @Query(
         "UPDATE messages SET status = :status WHERE id IN (:ids) AND " +
             "CASE status WHEN 'sending' THEN 0 WHEN 'sent' THEN 1 WHEN 'delivered' THEN 2 WHEN 'read' THEN 3 ELSE -1 END < :rank",
@@ -120,12 +120,25 @@ interface MessageDao {
     @Query("DELETE FROM reactions WHERE message_id = :messageId AND account_id = :accountId") fun removeReaction(messageId: String, accountId: String)
     @Query("SELECT * FROM reactions WHERE message_id = :messageId ORDER BY account_id") fun reactions(messageId: String): List<ReactionEntity>
 
-    @Query("SELECT chat_id, id FROM messages WHERE deleted = 0 AND folded LIKE :pattern ESCAPE '\\' ORDER BY sent_at DESC LIMIT :limit")
-    fun searchLike(pattern: String, limit: Int): List<SearchRow>
+    @Query("SELECT chat_id, id FROM messages WHERE deleted = 0 AND (expires_at IS NULL OR expires_at > :now) AND folded LIKE :pattern ESCAPE '\\' ORDER BY sent_at DESC LIMIT :limit")
+    fun searchLike(pattern: String, now: Long, limit: Int): List<SearchRow>
 
     @Upsert fun upsertAttachment(a: AttachmentEntity)
-    @Query("SELECT * FROM attachments WHERE id = :id") fun attachment(id: String): AttachmentEntity?
-    @Query("SELECT * FROM attachments WHERE message_id = :messageId ORDER BY id LIMIT 1") fun attachmentForMessage(messageId: String): AttachmentEntity?
+    @Query(
+        "SELECT * FROM attachments WHERE id = :id AND NOT EXISTS " +
+            "(SELECT 1 FROM messages m WHERE m.id = attachments.message_id AND m.expires_at <= :now)",
+    )
+    fun attachment(id: String, now: Long): AttachmentEntity?
+    @Query(
+        "SELECT * FROM attachments WHERE message_id = :messageId AND NOT EXISTS " +
+            "(SELECT 1 FROM messages m WHERE m.id = attachments.message_id AND m.expires_at <= :now) ORDER BY id LIMIT 1",
+    )
+    fun attachmentForMessage(messageId: String, now: Long): AttachmentEntity?
+    @Query(
+        "SELECT chat_id, COUNT(*) AS n FROM messages WHERE expires_at <= :now AND sender_account NOT IN (:own, 'system') " +
+            "AND status != 'read' GROUP BY chat_id",
+    )
+    fun expiredUnread(now: Long, own: String): List<UnreadRow>
     @Query("UPDATE attachments SET state = :state, downloaded = :downloaded, local_path = :path WHERE id = :id")
     fun setAttachmentState(id: String, state: String, downloaded: Long, path: String?)
 }
