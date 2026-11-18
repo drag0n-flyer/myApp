@@ -128,6 +128,15 @@ private struct Rig {
 
     var last: Message? { ana.store.chat(id: "acc-bob")?.messages.last }
 
+    /// Picks a file and waits until its row shows (the copy happens off the main actor).
+    func send() async throws {
+        let before = ana.store.chat(id: "acc-bob")?.messages.count ?? 0
+        ana.store.sendAttachment(try file(), kind: .file, in: "acc-bob")
+        for _ in 0..<500 where (ana.store.chat(id: "acc-bob")?.messages.count ?? 0) == before {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
     func messagePosts() async -> Int {
         await server.requests().filter { $0.hasPrefix("POST /v1/conversations/") && $0.hasSuffix("/messages") }.count
     }
@@ -145,7 +154,7 @@ private struct Rig {
     @Test func theRowIsSendingBeforeTheUploadFinishesWithRealNameAndSize() async throws {
         let rig = try await Rig.make()
         rig.gate.hold()
-        rig.ana.store.sendAttachment(try rig.file(), kind: .file, in: "acc-bob")
+        try await rig.send()
         let sending = try #require(rig.last)
         #expect(sending.status == .sending)
         #expect(sending.content == .file(name: "report.pdf", bytes: 100_000))
@@ -174,7 +183,7 @@ private struct Rig {
     @Test func aFailedUploadLeavesTheRowFailedWithFilesKeptAndRetrySends() async throws {
         let rig = try await Rig.make()
         rig.gate.failNext()
-        rig.ana.store.sendAttachment(try rig.file(), kind: .file, in: "acc-bob")
+        try await rig.send()
         let id = try #require(rig.last?.id)
         await rig.ana.store.settle()
         #expect(rig.last?.status == .failed)
@@ -197,7 +206,7 @@ private struct Rig {
     @Test func twoRetriesUploadOnce() async throws {
         let rig = try await Rig.make()
         rig.gate.failNext()
-        rig.ana.store.sendAttachment(try rig.file(), kind: .file, in: "acc-bob")
+        try await rig.send()
         let id = try #require(rig.last?.id)
         await rig.ana.store.settle()
         #expect(rig.gate.uploads == 1)
@@ -218,7 +227,7 @@ private struct Rig {
     @Test func afterARestartTheRetryReallySends() async throws {
         let rig = try await Rig.make()
         rig.gate.failNext()
-        rig.ana.store.sendAttachment(try rig.file(), kind: .file, in: "acc-bob")
+        try await rig.send()
         let id = try #require(rig.last?.id)
         await rig.ana.store.settle()
         try? FileManager.default.removeItem(at: rig.ana.device.directory.appendingPathComponent("tmp-sweep"))
@@ -261,24 +270,80 @@ private struct Rig {
 
     @Test func aPrepareFailureRemovesTheRow() async throws {
         let rig = try await Rig.make()
-        rig.ana.store.sendAttachment(try rig.file(), kind: .file, in: "acc-bob")
-        let id = try #require(rig.last?.id)
-        // The source disappears before the upload starts: nothing can ever be sent.
-        for name in rig.files(in: rig.ana.pending.appendingPathComponent(id)) where name.hasPrefix("source") {
-            try FileManager.default.removeItem(at: rig.ana.pending.appendingPathComponent(id).appendingPathComponent(name))
-        }
+        // A failed upload whose source file is gone can never be sent: "Try again" removes the row and its folder.
+        let envelope = ContentEnvelope(id: "gone1", at: 1_700_000_000_000, body: .file(
+            Att(id: "", key: Data(), dg: Data(), sz: 5, csz: 5), name: "a.bin", mime: "x/y", replyTo: nil))
+        let at = testEpochDate
+        _ = try rig.ana.repo.insertMessage(MessageRecord(
+            id: "gone1", chatID: "acc-bob", conversationID: nil, senderAccount: "acc-ana", senderDevice: nil, sentAt: at, receivedAt: at,
+            envelope: envelope.encoded(), status: "failed", replyTo: nil, editedAt: nil, deleted: false, undecryptable: false, folded: ""))
+        let folder = rig.ana.pending.appendingPathComponent("gone1")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try PendingUpload(kind: "file", chatID: "acc-bob", name: "a.bin", sourceName: "source.bin", mime: "x/y", duration: 0).write(to: folder)
+        rig.ana.store.retrySend(messageID: "gone1")
         await rig.ana.store.settle()
-        #expect(try rig.ana.repo.message(id: id) == nil)
-        #expect(try rig.ana.repo.attachment(messageID: id) == nil)
+        #expect(try rig.ana.repo.message(id: "gone1") == nil)
         #expect(rig.files(in: rig.ana.pending).isEmpty)
         #expect(rig.gate.uploads == 0)
         #expect(await rig.messagePosts() == 0)
     }
 
+    @Test func aCrashBetweenTheCommitAndTheMoveKeepsTheFile() async throws {
+        let rig = try await Rig.make()
+        try await rig.send()
+        let id = try #require(rig.last?.id)
+        await rig.ana.store.settle()
+        let record = try #require(try rig.ana.repo.attachment(messageID: id))
+        let local = URL(fileURLWithPath: try #require(record.localPath))
+        #expect(FileManager.default.fileExists(atPath: local.path))
+        // The state after a crash: committed, but the plaintext still sits in the pending folder.
+        let folder = rig.ana.pending.appendingPathComponent(id)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try PendingUpload(kind: "file", chatID: "acc-bob", name: "report.pdf", sourceName: "source.pdf", mime: "application/pdf", duration: 0)
+            .write(to: folder)
+        try FileManager.default.moveItem(at: local, to: folder.appendingPathComponent("source.pdf"))
+
+        let restarted = Side(rig.ana.device, withAttachments: true)
+        #expect(FileManager.default.fileExists(atPath: local.path), "the only copy was moved into place")
+        #expect(rig.files(in: rig.ana.pending).isEmpty)
+        let phase = restarted.store.chat(id: "acc-bob")?.messages.last?.media?.phase
+        #expect(phase == .local(local))
+        #expect(MediaBubbleState(media: restarted.store.chat(id: "acc-bob")?.messages.last?.media,
+                                 fileExists: { FileManager.default.fileExists(atPath: $0.path) }) == .ready(local))
+    }
+
+    @Test func ifTheMoveCannotBeRedoneTheAttachmentBecomesRemote() async throws {
+        let rig = try await Rig.make()
+        try await rig.send()
+        let id = try #require(rig.last?.id)
+        await rig.ana.store.settle()
+        let record = try #require(try rig.ana.repo.attachment(messageID: id))
+        try FileManager.default.removeItem(atPath: try #require(record.localPath))
+        let folder = rig.ana.pending.appendingPathComponent(id)   // nothing left to move
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try PendingUpload(kind: "file", chatID: "acc-bob", name: "report.pdf", sourceName: "source.pdf", mime: "application/pdf", duration: 0)
+            .write(to: folder)
+        _ = Side(rig.ana.device, withAttachments: true)
+        #expect(try rig.ana.repo.attachment(messageID: id)?.state == "remote")
+        #expect(rig.files(in: rig.ana.pending).isEmpty)
+    }
+
+    @Test func aDeleteAfterTheCommitSendsTheMessageThenTheDelete() async throws {
+        let rig = try await Rig.make()
+        try await rig.send()
+        let id = try #require(rig.last?.id)
+        await rig.ana.store.settle()
+        #expect(rig.last?.status == .sent)
+        rig.ana.store.delete(messageID: id, in: "acc-bob")
+        await rig.ana.store.settle()
+        let peer = try #require(await rig.bobReceives())
+        #expect(peer.content == .deleted, "the peer never keeps a message the sender deleted")
+    }
+
     @Test func deletingDuringAHeldUploadSendsNothingAndLeavesNothing() async throws {
         let rig = try await Rig.make()
         rig.gate.hold()
-        rig.ana.store.sendAttachment(try rig.file(), kind: .file, in: "acc-bob")
+        try await rig.send()
         let id = try #require(rig.last?.id)
         await rig.gate.waitForUploads(1)
         rig.ana.store.delete(messageID: id, in: "acc-bob")

@@ -318,7 +318,7 @@ public final class LiveChatStore: ChatStore {
     /// that is never queued. The upload then runs in the background (`AttachmentService.uploadPending`): a failure
     /// makes the row "failed" with the files kept, and "Try again" really uploads again.
     private func sendMedia(_ fileURL: URL, kind: MediaKind, duration: Double, chatID: String) {
-        guard attachments != nil, ensureChatRow(chatID) != nil else { return }
+        guard attachments != nil, !closed, ensureChatRow(chatID) != nil else { return }
         let id = freshID()
         guard let folder = pendingFolder(id) else { return }
         let kindName: String
@@ -328,47 +328,57 @@ public final class LiveChatStore: ChatStore {
         case .file, .video: kindName = "file"
         }
         let name = MediaFileName.clean(fileURL.lastPathComponent)
-        let ext = AttachmentID.safeExtension(of: name) ?? "bin"
-        let sourceName = "source." + ext
-        let fm = FileManager.default
-        let size: Int64
-        do {
-            try fm.createDirectory(at: folder, withIntermediateDirectories: true)
-            try fm.copyItem(at: fileURL, to: folder.appendingPathComponent(sourceName))
-            size = Int64(try folder.appendingPathComponent(sourceName).resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0)
-            try PendingUpload(kind: kindName, chatID: chatID, name: name, sourceName: sourceName,
-                              mime: Self.mimeType(of: fileURL, kind: kind), duration: duration).write(to: folder)
-        } catch {
-            PendingUpload.removeFolder(folder)
-            return
+        let sourceName = "source." + (AttachmentID.safeExtension(of: name) ?? "bin")
+        let meta = PendingUpload(kind: kindName, chatID: chatID, name: name, sourceName: sourceName,
+                                 mime: Self.mimeType(of: fileURL, kind: kind), duration: duration)
+        // The copy of a large file happens off the main actor; the row appears when it is done. A crash before
+        // that leaves a folder with no row, which the next start removes.
+        background { [weak self] in
+            let fm = FileManager.default
+            let staged = folder.appendingPathComponent(sourceName)
+            let size: Int64
+            do {
+                try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+                try fm.copyItem(at: fileURL, to: staged)
+                size = Int64(try staged.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0)
+                try meta.write(to: folder)
+            } catch {
+                PendingUpload.removeFolder(folder)
+                return
+            }
+            await self?.stagedForUpload(id: id, meta: meta, size: size, staged: staged, folder: folder)
         }
+    }
+
+    /// The picked file is staged: the message shows as "sending" with its real name and size, and the upload starts.
+    private func stagedForUpload(id: String, meta: PendingUpload, size: Int64, staged: URL, folder: URL) {
+        guard !closed else { PendingUpload.removeFolder(folder); return }
         let placeholder = Att(id: "", key: Data(), dg: Data(), sz: size, csz: size)
         let body: ContentEnvelope.Body
-        switch kindName {
+        switch meta.kind {
         case "photo": body = .photo(placeholder, w: 0, h: 0, thumb: nil, replyTo: nil)
-        case "voice": body = .voice(placeholder, duration: duration, replyTo: nil)
-        default: body = .file(placeholder, name: name, mime: Self.mimeType(of: fileURL, kind: kind), replyTo: nil)
+        case "voice": body = .voice(placeholder, duration: meta.duration, replyTo: nil)
+        default: body = .file(placeholder, name: meta.name, mime: meta.mime, replyTo: nil)
         }
         let at = deps.now()
         let envelope = ContentEnvelope(id: id, at: Int64((at.timeIntervalSince1970 * 1000).rounded()), body: body)
         let record = MessageRecord(
-            id: id, chatID: chatID, conversationID: nil, senderAccount: deps.me.accountID, senderDevice: deps.me.deviceID,
+            id: id, chatID: meta.chatID, conversationID: nil, senderAccount: deps.me.accountID, senderDevice: deps.me.deviceID,
             sentAt: at, receivedAt: at, envelope: envelope.encoded(), status: "sending", replyTo: nil, editedAt: nil,
-            deleted: false, undecryptable: false, folded: kindName == "file" ? fold(name) : "")
+            deleted: false, undecryptable: false, folded: meta.kind == "file" ? fold(meta.name) : "")
         do {
             try repo.transaction {
                 guard try repo.insertMessage(record) else { throw AttachmentServiceError.pendingMissing }
                 // The sender sees (and can play) the picked file while it uploads.
                 try repo.upsertAttachment(AttachmentRecord(
-                    id: AttachmentService.placeholderAttachmentID(id), messageID: id, kind: kindName, key: Data(), digest: Data(),
-                    size: size, cipherSize: size, state: "local", downloaded: size,
-                    localPath: folder.appendingPathComponent(sourceName).path))
+                    id: AttachmentService.placeholderAttachmentID(id), messageID: id, kind: meta.kind, key: Data(), digest: Data(),
+                    size: size, cipherSize: size, state: "local", downloaded: size, localPath: staged.path))
             }
         } catch {
             PendingUpload.removeFolder(folder)
             return
         }
-        bumpActivity(chatID, at: at)
+        bumpActivity(meta.chatID, at: at)
         refresh()
         startUpload(id)
     }
@@ -412,6 +422,28 @@ public final class LiveChatStore: ChatStore {
         refresh()
     }
 
+    /// The upload committed but the plaintext was not moved to the attachment's local path: put it there; if that is
+    /// not possible, the attachment becomes "remote" so a download can fetch the sender's own upload.
+    private func finishInterruptedMove(messageID: String, folder: URL) {
+        guard let record = (try? repo.attachment(messageID: messageID)) ?? nil, record.state == "local",
+              let path = record.localPath else { return }
+        let fm = FileManager.default
+        let local = URL(fileURLWithPath: path)
+        if fm.fileExists(atPath: local.path) { return }
+        func giveUp() { try? repo.setAttachmentState(id: record.id, state: "remote", downloaded: 0, localPath: nil) }
+        guard MediaPathGuard.isInside(local, directory: deps.mediaDirectory), let meta = PendingUpload.read(from: folder) else { return giveUp() }
+        let prepared = folder.appendingPathComponent("prepared.jpg")
+        let source = meta.kind == "photo" && fm.fileExists(atPath: prepared.path) ? prepared : folder.appendingPathComponent(meta.sourceName)
+        guard fm.fileExists(atPath: source.path) else { return giveUp() }
+        do {
+            try fm.moveItem(at: source, to: local)
+            try applyProtection(to: local, .complete)
+        } catch {
+            try? fm.removeItem(at: local)
+            giveUp()
+        }
+    }
+
     /// At start-up: an upload that was running when the app stopped is not running now, so its row is "failed" (the
     /// files are kept, "Try again" uploads again). A folder whose message is gone, deleted, or already queued is
     /// removed.
@@ -427,7 +459,10 @@ public final class LiveChatStore: ChatStore {
                 continue
             }
             if let att = ContentEnvelope.decode(record.envelope).body.attachment, AttachmentID.isValid(att.id) {
-                PendingUpload.removeFolder(folder)   // it was queued; only the cleanup was cut short
+                // It was queued. The cut may have come between the commit and moving the plaintext into place: the
+                // pending folder then holds the only copy, so it is moved before the folder goes.
+                finishInterruptedMove(messageID: name, folder: folder)
+                PendingUpload.removeFolder(folder)
             } else if !uploading.contains(name) {
                 _ = try? repo.markUnsentFailed(id: name)
             }
@@ -483,9 +518,18 @@ public final class LiveChatStore: ChatStore {
         guard let record = (try? repo.message(id: messageID)) ?? nil, record.chatID == chatID,
               record.senderAccount == deps.me.accountID, !record.deleted,
               !record.id.hasPrefix(ChatMapping.callPrefix) else { return }
-        // An attachment that was never uploaded was never queued: the other person never hears of it.
-        let neverQueued = ContentEnvelope.decode(record.envelope).body.attachment.map { !AttachmentID.isValid($0.id) } ?? false
-        guard (try? repo.markDeleted(id: messageID, sender: deps.me.accountID)) == true else { return }
+        // One transaction reads whether the message was ever queued and marks it deleted, so an upload that commits
+        // in between cannot leave the peer with a message that has no Delete after it. (The upload's own commit also
+        // refuses a row already marked deleted.)
+        let accountID = deps.me.accountID
+        let marked: Bool? = try? repo.transaction { () -> Bool? in
+            guard let current = try repo.message(id: messageID), current.chatID == chatID, current.senderAccount == accountID,
+                  !current.deleted else { return nil }
+            let never = ContentEnvelope.decode(current.envelope).body.attachment.map { !AttachmentID.isValid($0.id) } ?? false
+            guard try repo.markDeleted(id: messageID, sender: accountID) else { return nil }
+            return never
+        }
+        guard let neverQueued = marked else { return }
         if neverQueued, !uploading.contains(messageID) {
             // A running upload cleans up after itself when it finds the message deleted.
             _ = try? repo.deleteUnsentMessage(id: messageID, sender: deps.me.accountID)
