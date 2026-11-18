@@ -42,11 +42,11 @@ object TypingSender {
     }
 }
 
-/** Whether to show "typing…": for 10,000 ms after the last `on: true`. The caller forgets the time on `on: false` or on an incoming message. */
+/** Whether to show "typing…": for 10,000 ms after the last `on: true`; never when the clock went back (a negative age). The caller forgets the time on `on: false` or on an incoming message. */
 object TypingShown {
     const val SHOWN_MS = 10_000L
 
-    fun isTyping(lastOnMs: Long?, nowMs: Long): Boolean = lastOnMs != null && nowMs - lastOnMs < SHOWN_MS
+    fun isTyping(lastOnMs: Long?, nowMs: Long): Boolean = lastOnMs != null && nowMs >= lastOnMs && nowMs - lastOnMs < SHOWN_MS
 }
 
 /**
@@ -64,7 +64,7 @@ object PresenceLine {
     }
 
     fun text(lastOnlineMs: Long?, lastWitnessedMs: Long?, nowMs: Long): Result = when {
-        lastOnlineMs != null && nowMs - lastOnlineMs < ONLINE_MS -> Result.Online
+        lastOnlineMs != null && nowMs >= lastOnlineMs && nowMs - lastOnlineMs < ONLINE_MS -> Result.Online
         lastWitnessedMs != null -> Result.LastSeen(lastWitnessedMs)
         else -> Result.None
     }

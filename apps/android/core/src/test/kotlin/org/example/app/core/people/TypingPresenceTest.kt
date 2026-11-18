@@ -103,4 +103,12 @@ class TypingPresenceTest {
     @Test fun nothingWitnessedShowsNothing() {
         assertEquals(PresenceLine.Result.None, PresenceLine.text(null, null, 1_000))
     }
+
+    @Test fun aClockThatWentBackIsNotTypingNorOnline() {
+        assertFalse(TypingShown.isTyping(1_000, 999))
+        assertTrue(TypingShown.isTyping(1_000, 1_000))
+        assertEquals(PresenceLine.Result.None, PresenceLine.text(1_000, null, 999))
+        assertEquals(PresenceLine.Result.LastSeen(500), PresenceLine.text(1_000, 500, 999))
+        assertEquals(PresenceLine.Result.Online, PresenceLine.text(1_000, null, 1_000))
+    }
 }

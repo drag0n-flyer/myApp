@@ -7,6 +7,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.currentTime
@@ -278,5 +279,68 @@ class PeopleSignalsTest {
         chats.value = listOf(chatAt("riya", 200, archived = true))
         runCurrent()
         assertEquals(false, r.typing("riya"))
+    }
+
+    /** A channel that takes time to send and only delivers while its "socket" is open. */
+    private class SlowSocket(val test: TestScope) : SignalChannel {
+        var open = true
+        val delivered = ArrayList<Pair<String, Signal>>()
+        override val incoming = kotlinx.coroutines.flow.emptyFlow<IncomingSignal>()
+        override suspend fun send(chatId: String, signal: Signal): Boolean {
+            kotlinx.coroutines.delay(100)
+            if (!open) return false
+            delivered += chatId to signal
+            return true
+        }
+    }
+
+    @Test fun leavingSendsTypingOffAndAwayBeforeTheSocketIsClosed() = runTest {
+        val socket = SlowSocket(this)
+        val model = PeopleSignals(
+            scope = backgroundScope, channel = socket, typingEnabled = { true }, presenceEnabled = { true },
+            blocked = { false }, presenceTargets = { listOf("riya", "sam") }, nowMs = { currentTime },
+        )
+        model.setForeground(true)
+        model.composerChanged("riya", isEmpty = false)
+        advanceTimeBy(1_000)
+        runCurrent()
+        socket.delivered.clear()
+
+        val job = model.setForeground(false)
+        // what the app does: stop the socket once the frames are out, but never wait more than two seconds
+        var closedAt = -1L
+        backgroundScope.launch {
+            kotlinx.coroutines.withTimeoutOrNull(2_000) { job.join() }
+            socket.open = false
+            closedAt = currentTime
+        }
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertEquals(
+            listOf("riya" to Signal.Typing(false), "riya" to Signal.Presence(false), "sam" to Signal.Presence(false)),
+            socket.delivered,
+        )
+        assertTrue(closedAt >= 1_000 + 300, "closed after the three frames, at $closedAt")
+    }
+
+    @Test fun leavingWithNothingTypingSendsOnlyAway() = runTest {
+        val r = Rig(this)
+        r.model.setForeground(true)
+        runCurrent()
+        r.model.setForeground(false).join()
+        assertEquals(
+            listOf(Signal.Presence(true), Signal.Presence(true), Signal.Presence(false), Signal.Presence(false)),
+            r.sent.map { it.second },
+        )
+    }
+
+    @Test fun leavingTheChatWhileTypingSendsOffAtOnceAndNothingWhenNothingWasSent() = rig { r ->
+        r.model.messageSent("riya") // nothing typed: nothing sent
+        runCurrent()
+        assertEquals(emptyList(), r.sent)
+        r.model.composerChanged("riya", isEmpty = false)
+        r.model.messageSent("riya")
+        runCurrent()
+        assertEquals(listOf(Signal.Typing(true), Signal.Typing(false)), r.sent.map { it.second })
     }
 }

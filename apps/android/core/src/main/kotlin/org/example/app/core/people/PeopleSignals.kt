@@ -1,6 +1,7 @@
 package org.example.app.core.people
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -75,6 +76,8 @@ class PeopleSignals(
     // Typing goes first and is never dropped; presence is bounded and drops its oldest frames when the queue is full.
     private val typingQueue = ArrayDeque<Pair<String, Signal>>()
     private val presenceQueue = ArrayDeque<Pair<String, Signal>>()
+    // Barriers sit behind everything queued when they were made; typing always goes first, so one in the presence queue is reached last.
+    private val barriers = ArrayDeque<CompletableDeferred<Unit>>()
     private val wake = Channel<Unit>(Channel.CONFLATED)
     private val _views = MutableStateFlow<Map<String, PeerView>>(emptyMap())
 
@@ -85,7 +88,12 @@ class PeopleSignals(
         scope.launch {
             for (ignored in wake) {
                 while (true) {
-                    val next = synchronized(lock) { typingQueue.removeFirstOrNull() ?: presenceQueue.removeFirstOrNull() } ?: break
+                    val next = synchronized(lock) { typingQueue.removeFirstOrNull() ?: presenceQueue.removeFirstOrNull() }
+                    if (next == null) {
+                        // Everything queued before a barrier has been handed to the channel.
+                        synchronized(lock) { val done = barriers.toList(); barriers.clear(); done }.forEach { it.complete(Unit) }
+                        break
+                    }
                     try { channel.send(next.first, next.second) } catch (e: CancellationException) { throw e } catch (_: Exception) { }
                 }
             }
@@ -107,9 +115,9 @@ class PeopleSignals(
         val now = nowMs()
         val typingOk = typingEnabled()
         val presenceOk = presenceEnabled()
-        val next = HashMap<String, PeerView>()
-        var deadline: Long? = null
         synchronized(lock) {
+            val next = HashMap<String, PeerView>()
+            var deadline: Long? = null
             val chats = typingOn.keys + lastOnline.keys + witnessed.keys
             for (chat in chats) {
                 if (blocked(chat)) continue
@@ -119,9 +127,10 @@ class PeopleSignals(
                 if (typing) typingOn[chat]?.let { deadline = minOf(deadline ?: Long.MAX_VALUE, it + TypingShown.SHOWN_MS) }
                 if (line == PresenceLine.Result.Online) lastOnline[chat]?.let { deadline = minOf(deadline ?: Long.MAX_VALUE, it + PresenceLine.ONLINE_MS) }
             }
+            // One block: two refreshes must not interleave between the new view and its expiry timer.
+            _views.value = next
+            scheduleExpiry(deadline, now)
         }
-        _views.value = next
-        scheduleExpiry(deadline, now)
     }
 
     private fun scheduleExpiry(deadline: Long?, now: Long) {
@@ -244,10 +253,14 @@ class PeopleSignals(
         scheduleTick()
     }
 
-    /** The app came to the foreground (`online` now and every 60 s) or left it (`away`). */
-    fun setForeground(value: Boolean) {
+    /**
+     * The app came to the foreground (`online` now and every 60 s) or left it: typing ends and `away` goes out. The
+     * returned job completes when those frames have been handed to the channel, so the caller can keep the socket
+     * open until then. For `true`, or when nothing changed, it is already complete.
+     */
+    fun setForeground(value: Boolean): Job {
         synchronized(lock) {
-            if (foreground == value) return
+            if (foreground == value) return Job().apply { complete() }
             foreground = value
             heartbeat?.cancel()
             heartbeat = null
@@ -259,9 +272,24 @@ class PeopleSignals(
                     delay(HEARTBEAT_MS)
                 }
             }
-        } else {
-            sendPresence(online = false)
+            return Job().apply { complete() }
         }
+        endTyping()
+        sendPresence(online = false)
+        val barrier = CompletableDeferred<Unit>()
+        synchronized(lock) { barriers.addLast(barrier) }
+        wake.trySend(Unit)
+        return barrier
+    }
+
+    /** Sends `on: false` to every chat where `on: true` is out, and forgets the typing state. */
+    private fun endTyping() {
+        val ended = synchronized(lock) {
+            tickJob?.cancel()
+            tickJob = null
+            senders.filterValues { it.typing }.keys.toList().also { senders.clear() }
+        }
+        for (chat in ended) enqueue(chat to Signal.Typing(false))
     }
 
     private fun enqueue(item: Pair<String, Signal>) {
