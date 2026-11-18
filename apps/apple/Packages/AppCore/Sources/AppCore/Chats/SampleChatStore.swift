@@ -63,6 +63,7 @@ public final class SampleChatStore: ChatStore {
 
     public func send(_ content: MessageContent, in chatID: String, replyTo: String?) {
         defer { onChange?() }
+        if case .text = content, let i = index(of: chatID) { allChats[i].draft = nil }
         append(Message(id: makeID(), senderID: me.id, sentAt: Date(), content: content, status: .sent, replyToID: replyTo, reactions: []), to: chatID)
     }
 

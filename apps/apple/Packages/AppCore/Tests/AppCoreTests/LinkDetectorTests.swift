@@ -1,30 +1,6 @@
 import XCTest
 @testable import AppCore
 
-final class DraftKeeperTests: XCTestCase {
-    func testSetAndGet() {
-        var keeper = DraftKeeper()
-        keeper.set("hello", for: "a")
-        XCTAssertEqual(keeper.draft(for: "a"), "hello")
-    }
-
-    func testChatsAreIndependent() {
-        var keeper = DraftKeeper()
-        keeper.set("one", for: "a")
-        keeper.set("two", for: "b")
-        XCTAssertEqual(keeper.draft(for: "a"), "one")
-        XCTAssertEqual(keeper.draft(for: "b"), "two")
-        XCTAssertEqual(keeper.draft(for: "c"), "")
-    }
-
-    func testWhitespaceOnlyIsDropped() {
-        var keeper = DraftKeeper()
-        keeper.set("hi", for: "a")
-        keeper.set("   ", for: "a")
-        XCTAssertEqual(keeper.draft(for: "a"), "")
-    }
-}
-
 final class LinkDetectorTests: XCTestCase {
     func testDetectsWebLink() {
         let text = LinkDetector.attributed("see https://example.com/a now")

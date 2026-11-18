@@ -125,7 +125,7 @@ struct MacRootView: View {
         case .chat(let id):
             selectedChatID = id
             detailPath = []
-        case .requests, .info:
+        case .requests, .info, .archive:
             detailPath = [route]
         }
     }

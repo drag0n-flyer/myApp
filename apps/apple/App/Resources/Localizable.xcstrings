@@ -101,6 +101,28 @@
         }
       }
     },
+    "Archive" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Archive"
+          }
+        }
+      }
+    },
+    "Archived" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Archived"
+          }
+        }
+      }
+    },
     "Asked" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -519,6 +541,17 @@
         }
       }
     },
+    "Draft:" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Draft:"
+          }
+        }
+      }
+    },
     "Earlier message" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -684,6 +717,17 @@
         }
       }
     },
+    "Mark as read" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mark as read"
+          }
+        }
+      }
+    },
     "Marked as verified" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -728,6 +772,28 @@
         }
       }
     },
+    "Mute" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mute"
+          }
+        }
+      }
+    },
+    "Muted" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Muted"
+          }
+        }
+      }
+    },
     "New chat" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -757,6 +823,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "No app can open this file."
+          }
+        }
+      }
+    },
+    "No archived chats" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No archived chats"
           }
         }
       }
@@ -944,6 +1021,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Photo · %@"
+          }
+        }
+      }
+    },
+    "Pin" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pin"
+          }
+        }
+      }
+    },
+    "Pinned" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pinned"
           }
         }
       }
@@ -1531,6 +1630,17 @@
         }
       }
     },
+    "Unarchive" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unarchive"
+          }
+        }
+      }
+    },
     "Unblock" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1560,6 +1670,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Unknown"
+          }
+        }
+      }
+    },
+    "Unmute" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unmute"
+          }
+        }
+      }
+    },
+    "Unpin" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unpin"
           }
         }
       }
@@ -1670,6 +1802,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "You added a new device"
+          }
+        }
+      }
+    },
+    "You can pin up to 5 chats." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You can pin up to 5 chats."
           }
         }
       }

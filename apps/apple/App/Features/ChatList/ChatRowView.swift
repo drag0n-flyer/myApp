@@ -8,6 +8,7 @@ struct ChatRowView: View {
 
     private var time: String { chat.lastMessage.map { TimeLabel.format($0.sentAt) } ?? "" }
     private var preview: String { chat.lastMessage?.previewText ?? "" }
+    private var draftLine: String? { ChatListOrder.draftPreview(chat.draft) }
 
     var body: some View {
         HStack(alignment: .center, spacing: 11) {
@@ -21,14 +22,28 @@ struct ChatRowView: View {
                         .font(.headline)
                         .lineLimit(typeSize.isAccessibilitySize ? 3 : 1)
                     if !typeSize.isAccessibilitySize { Spacer(minLength: 6) }
-                    Text(time)
-                        .font(.caption)
-                        .foregroundStyle(chat.unreadCount > 0 ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-                        .fixedSize()
+                    HStack(spacing: 4) {
+                        if chat.pinnedAt != nil { Image(systemName: "pin.fill") }
+                        if chat.muted { Image(systemName: "bell.slash.fill") }
+                        Text(time)
+                            .foregroundStyle(chat.unreadCount > 0 && !chat.muted ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
                 }
                 HStack(alignment: .center) {
-                    PreviewText(message: chat.lastMessage)
+                    if let draftLine {
+                        HStack(spacing: 4) {
+                            Text("Draft:").foregroundStyle(.red)
+                            Text(draftLine).foregroundStyle(.secondary)
+                        }
+                        .font(.subheadline)
                         .lineLimit(typeSize.isAccessibilitySize ? 2 : 1)
+                    } else {
+                        PreviewText(message: chat.lastMessage)
+                            .lineLimit(typeSize.isAccessibilitySize ? 2 : 1)
+                    }
                     Spacer(minLength: 6)
                     if chat.unreadCount > 0 {
                         Text("\(chat.unreadCount)")
@@ -36,7 +51,7 @@ struct ChatRowView: View {
                             .foregroundStyle(.white)
                             .padding(.horizontal, 6)
                             .frame(minWidth: 20, minHeight: 20)
-                            .background(Capsule().fill(.tint))
+                            .background(Capsule().fill(chat.muted ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint)))
                             .fixedSize()
                     }
                 }
@@ -49,7 +64,11 @@ struct ChatRowView: View {
     }
 
     private var accessibilityText: Text {
-        var parts = [name, preview, time]
+        var parts = [name]
+        if chat.pinnedAt != nil { parts.append(String(localized: "Pinned")) }
+        if chat.muted { parts.append(String(localized: "Muted")) }
+        if let draftLine { parts.append(String(localized: "Draft:") + " " + draftLine) } else { parts.append(preview) }
+        parts.append(time)
         if chat.unreadCount > 0 { parts.append(String(localized: "\(chat.unreadCount) unread")) }
         return Text(parts.filter { !$0.isEmpty }.joined(separator: ", "))
     }

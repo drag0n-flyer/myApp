@@ -3,12 +3,11 @@ import Foundation
 import Observation
 
 /// State of the chat screen that outlives a `ChatView`. `AppModel.swift` belongs to another task, so the
-/// stored properties live here and `AppModel+Chat` reads them. Process lifetime only (spec 5.3 "Drafts").
+/// stored properties live here and `AppModel+Chat` reads them. Process lifetime only.
 @MainActor
 @Observable
 final class ChatScreenState {
     static let shared = ChatScreenState()
-    var drafts = DraftKeeper()
     var reactionGate = ReactionGate()
     /// Set by chat info's Search button; the chat with this ID opens its search field and clears it.
     var searchRequestChatID: String?
@@ -31,21 +30,27 @@ final class ChatScreenState {
     }
 
     private func clearState() {
-        drafts = DraftKeeper()
         reactionGate = ReactionGate()
         searchRequestChatID = nil
     }
 }
 
 extension AppModel {
-    /// Unsent composer text per chat for the life of the process.
-    var drafts: DraftKeeper {
-        get {
-            let state = ChatScreenState.shared
-            return state.isOwner(chatStore.me.id) ? state.drafts : DraftKeeper()
-        }
-        set { ChatScreenState.shared.ensureOwner(chatStore.me.id); ChatScreenState.shared.drafts = newValue }
-    }
+    /// The saved unsent text of a chat (kept in the store, so it survives a restart).
+    func draft(for chatID: String) -> String { chatStore.chat(id: chatID)?.draft ?? "" }
+
+    func setDraft(_ text: String, for chatID: String) { chatStore.setDraft(chatID, text) }
+
+    // MARK: Chat list actions (the stores call `onChange`, which refreshes every view)
+
+    /// Chats this device archived. Every read touches `revision` so SwiftUI tracks store changes.
+    var archivedChats: [Chat] { _ = revision; return chatStore.archivedChats }
+
+    /// False when 5 chats are already pinned: the caller shows "You can pin up to 5 chats."
+    @discardableResult
+    func setPinned(_ chatID: String, _ pinned: Bool) -> Bool { chatStore.setPinned(chatID, pinned) }
+    func setMuted(_ chatID: String, _ muted: Bool) { chatStore.setMuted(chatID, muted) }
+    func setArchived(_ chatID: String, _ archived: Bool) { chatStore.setArchived(chatID, archived) }
 
     /// Chat whose search field should open (set by chat info's Search button).
     var chatSearchRequest: String? {

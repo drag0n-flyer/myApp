@@ -25,6 +25,8 @@ struct ChatView: View {
     @State private var draft = ""
     /// The draft set aside while the edit bar fills the composer.
     @State private var draftBeforeEdit = ""
+    /// Set while the composer is emptied by a send: that change is not saved as a new draft.
+    @State private var sentClear = false
     /// Messages whose download the person started; older loaded pages are re-read until each one finishes.
     @State private var downloading: Set<String> = []
     @State private var voice = VoicePlayer()
@@ -111,7 +113,7 @@ struct ChatView: View {
                 capturedUnread = true
                 lastNewest = chat.messages
                 firstUnreadID = ChatTimeline.firstUnreadID(messages: chat.messages, unreadCount: chat.unreadCount, myID: model.me.id)
-                draft = model.drafts.draft(for: chatID)
+                draft = model.draft(for: chatID)
             }
             model.markRead(chatID: chatID)
             openSearchIfRequested()
@@ -127,7 +129,9 @@ struct ChatView: View {
         .mediaPreview(preview)
         .onChange(of: searchRequest) { _, _ in openSearchIfRequested() }
         .onChange(of: draft) { _, text in
-            if editing == nil { model.drafts.set(text, for: chatID) }
+            // The clearing after a send is the store's job (it clears the draft only once the message is queued).
+            if sentClear { sentClear = false; return }
+            if editing == nil { model.setDraft(text, for: chatID) }
         }
         .onChange(of: chat?.messages) { _, _ in closeBarsForChangedMessages() }
         .onChange(of: model.revision) { _, _ in syncHistory() }
@@ -490,6 +494,7 @@ struct ChatView: View {
         tracker.setAtBottom(true, newestID: history.messages(newest: chat.messages).last?.id)
         model.send(.text(text), in: chatID, replyTo: replyingTo?.id)
         replyingTo = nil
+        sentClear = true
         draft = ""
     }
 
