@@ -44,3 +44,17 @@ private func store(_ texts: [String]) throws -> Repository {
     #expect(try repo.search("alpha", limit: 10).isEmpty)
     #expect(try repo.search("gamma", limit: 10).count == 1)
 }
+
+@Test func testSearchInOneChatIgnoresNewerHitsElsewhere() throws {
+    let (_, repo) = try makeRepo()
+    try repo.upsertChat(chat("c1"))
+    try repo.upsertChat(chat("c2"))
+    _ = try repo.insertMessage(message("old", chat: "c2", at: 1, folded: fold("hello from c2")))
+    for i in 0..<5 { _ = try repo.insertMessage(message("n\(i)", chat: "c1", at: Double(10 + i), folded: fold("hello from c1"))) }
+    // The global newest 3 hits are all in c1.
+    #expect(try repo.search("hello", limit: 3).allSatisfy { $0.chatID == "c1" })
+    #expect(try repo.search("hello", chatID: "c2", limit: 3).map(\.messageID) == ["old"])
+    #expect(try repo.search("he", chatID: "c2", limit: 3).map(\.messageID) == ["old"])
+    #expect(try repo.search("hello", chatID: "c1", limit: 10).count == 5)
+    #expect(try repo.search("hello", chatID: "missing", limit: 10).isEmpty)
+}

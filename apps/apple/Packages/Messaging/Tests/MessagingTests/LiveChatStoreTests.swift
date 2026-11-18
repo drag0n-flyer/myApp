@@ -410,6 +410,19 @@ private func text(_ message: Message?) -> String? {
         #expect(store.messages(in: "acc-bob", before: "nope", limit: 2).isEmpty)
         #expect(store.searchMessages("  CAFE ", limit: 10).map(\.messageID) == ["m3"])
         #expect(store.searchMessages("", limit: 10).isEmpty)
+        // Scoped to the chat, and carrying the message's date. Another chat has a NEWER hit, so a global search
+        // limited to one hit would miss this chat's.
+        try rig.ana.repo.upsertContact(ContactRecord(accountID: "acc-x", username: "x", displayName: "X", isContact: true, addedAt: rig.clock.now()))
+        _ = store.ensureChat(with: "acc-x")
+        rig.clock.advance(10)
+        try rig.insertText(rig.ana, chat: "acc-x", id: "x1", from: "acc-x", text: "Cafe later")
+        store.refresh()
+        #expect(store.searchMessages("cafe", limit: 1).map(\.messageID) == ["x1"], "the global newest hit is in the other chat")
+        let scoped = store.searchMessages("cafe", in: "acc-bob", limit: 1)
+        #expect(scoped.map(\.messageID) == ["m3"])
+        #expect(scoped.first?.sentAt == store.messages(in: "acc-bob", before: "m4", limit: 2).last?.sentAt)
+        #expect(store.searchMessages("cafe", in: "acc-x", limit: 5).map(\.messageID) == ["x1"])
+        #expect(store.searchMessages("cafe", in: "acc-nobody", limit: 5).isEmpty)
 
         let work = store.addFolder(name: "Work", chatIDs: ["acc-bob"])
         let more = store.addFolder(name: "More", chatIDs: [])

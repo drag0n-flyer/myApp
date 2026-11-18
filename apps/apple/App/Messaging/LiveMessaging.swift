@@ -69,6 +69,7 @@ struct LiveMessaging {
     func wipeAfterSignOut() async throws {
         await stop()
         try await sync.wipeLocalData()
+        MediaPreview.removeTemporaryFolders()
         if let container = Self.container { try LocalAccountData.clearWipePending(in: container) }
     }
 

@@ -101,7 +101,7 @@ final class AppModel {
     }
     var network: NetworkType {
         didSet {
-            sampleCalls?.setNetwork(network); liveCalls?.setNetwork(network)
+            sampleCalls?.setNetwork(network)   // the live engine is told by the path monitor, with its verdict
             messaging?.network.value = network
         }
     }
@@ -422,6 +422,10 @@ final class AppModel {
     private func resetToWelcome(revoked: Bool = true) {
         // Drafts and the pending in-chat search belong to the account that is leaving.
         ChatScreenState.shared.reset()
+        // Decoded pictures and plaintext copies made for previews and sends belong to it too.
+        MediaPreview.removeTemporaryFolders()
+        Task { await ThumbnailLoader.shared.clear() }
+        MediaFileCheck.shared.clear()
         // The live store belongs to the signed-out account. An empty store stands in until the next sign-in.
         if !isSampleData {
             let old = messaging
@@ -635,7 +639,7 @@ final class AppModel {
         monitor.onChange = { [weak self] network, meaningful in
             guard let self else { return }
             if self.network != network { self.network = network }
-            if meaningful { self.liveCalls?.pathChanged() }
+            self.liveCalls?.networkChanged(network, meaningful: meaningful)
         }
         monitor.start()
         pathMonitor = monitor

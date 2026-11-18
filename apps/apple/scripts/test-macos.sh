@@ -4,6 +4,9 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 cd "$HERE/.."
 
+# The app links CallMedia, whose RNNoise model weights are not committed.
+Packages/CallMedia/scripts/fetch-rnnoise-model.sh
+
 xcodegen generate --spec project.yml
 
 RESULT="${RUNNER_TEMP:-/tmp}/mac-ui.xcresult"

@@ -41,6 +41,9 @@ jobs:
             test -n "${!name}" || { echo "::error::Missing secret for $name"; exit 1; }
           done
 
+      - name: Fetch the noise model
+        run: apps/apple/Packages/CallMedia/scripts/fetch-rnnoise-model.sh
+
       - name: Generate Xcode project
         run: |
           brew install xcodegen
