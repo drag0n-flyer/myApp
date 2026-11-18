@@ -158,6 +158,7 @@ JSON in and out. Authenticated endpoints need `Authorization: Bearer <session to
 | `invite_invalid` | 403 | `expired` | 410 |
 | `too_large` | 413 | `rate_limited` | 429 |
 | `escrow_required` | 400 | `escrow_forbidden` | 400 |
+| `owner_must_transfer` | 409 | `group_full` | 409 |
 | `calls_disabled` | 503 | `internal` | 500 |
 
 `conflict` (409) is the admin API's answer when a change would break a rule, such as removing the last enabled admin.
@@ -207,7 +208,21 @@ Phase 1 conversations have exactly two accounts. The server tracks which **devic
 | `GET /v1/inbox?after=<cursor>&limit=<n>` | ✓ | → `{items:[InboxItem], more:bool}`; `limit` defaults to 100, maximum 500 |
 | `POST /v1/inbox/ack` | ✓ | `{upTo:cursor}` → `204`; deletes this device's items with cursor ≤ `upTo` |
 
-`InboxItem = {cursor:int64, kind:"message"|"commit"|"welcome", conversationID, seq?, epoch, senderAccountID, senderDeviceID, payload:b64, sentAt}`
+`InboxItem = {cursor:int64, kind:"message"|"commit"|"welcome"|"members", conversationID, seq?, epoch, senderAccountID, senderDeviceID, payload:b64, sentAt, membersVersion?:int64}`. A `members` item has an empty `payload` and carries `membersVersion` only; the client then calls `GET /v1/conversations/{id}`.
+
+**Groups (people and groups design, 6.7).** `conversations.kind` is `direct` (default; everything above, unchanged) or `group`. A group has 2 to 100 accounts; each has a role `owner`, `admin` or `member` (one owner; direct conversations hold only `member`). `conversations.members_version` starts at 0 and rises by one on every membership or role change. All decisions below are made in one transaction while the conversation row is locked, reading roles after the lock.
+
+| Method and path | Auth | Request → response |
+|---|---|---|
+| `POST /v1/conversations` | ✓ | `{kind:"group", accounts:[accountID]}` (1 to 99 other accounts, distinct, not the caller) → `{conversationID, mode, epoch:0, kind:"group"}`. The caller is `owner`; the others `member`. Unknown or malformed accounts: `not_found` without naming one. `kind` omitted or `"direct"` keeps `{members:[…]}`; the response gains `kind` |
+| `GET /v1/conversations/{id}` | ✓ | → `{conversationID, mode, epoch, kind, members:[{account, role}], membersVersion}` (list and version from one snapshot). A direct conversation: member devices only, as before. A group: any device of a member account. Others: `not_found` |
+| `POST /v1/conversations/{id}/accounts` | ✓ (owner, admin) | `{accounts:[accountID]}` → `{membersVersion, deleted:false}`. Already-members are skipped (no bump if nobody is new). More than 100 accounts in total: `409 group_full`, nothing added. A plain member: `forbidden`. Blocks are not consulted |
+| `DELETE /v1/conversations/{id}/accounts/{account}` | ✓ | → `{membersVersion, deleted}`. Owner removes an admin or member; admin removes a member; anyone removes themselves (leave). Otherwise `forbidden`. An owner leaving while others remain: `409 owner_must_transfer`. The last member leaving deletes the conversation (`deleted:true`; escrow copies go with it, queued inbox rows stay). A target that is not a member: `not_found` |
+| `PUT /v1/conversations/{id}/accounts/{account}/role` | ✓ (owner) | `{role:"owner"\|"admin"\|"member"}` → `{membersVersion, deleted:false}`. Setting another member to `owner` makes the caller `admin`. The caller's own role cannot be set (`bad_request`); an unchanged role does not bump the version |
+
+Every membership endpoint answers `not_found` when the caller's account is not a member, and `bad_request` for a direct conversation. Each change removes a removed or departed account's devices from `conversation_devices` at once and delivers one stored, pushed `members` item to every member device present before the change (the removed account's devices included; the caller's own device gets it without a push). A removed device's already-stored inbox items stay deliverable.
+
+Group commit and delivery rules: `addDevices` only for devices of current member accounts; `removeDevices` only for devices of the sender's own account or of accounts that are not members (else `forbidden`, nothing applied). Welcomes go only to added devices, which are by that rule devices of members. Blocking does not filter adds, messages, commits or pushes in a group.
 
 Fan-out rules:
 - A commit goes to every member device present *before* the commit, **including the sender** (so a sender that lost the `200` can tell its commit won; client plan 4).
