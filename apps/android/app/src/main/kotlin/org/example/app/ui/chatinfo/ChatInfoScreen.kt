@@ -64,13 +64,21 @@ fun ChatInfoScreen(
     modifier: Modifier = Modifier,
     /** Opens "Media and files" of this chat. */
     onOpenGallery: () -> Unit = {},
+    /** A group's member menu: open that person's chat ([safetyNumber] false) or its info page ([safetyNumber] true). */
+    onOpenMember: (accountId: String, safetyNumber: Boolean) -> Unit = { _, _ -> },
+    /** After "Delete chat" on a group the person left. */
+    onDeleted: () -> Unit = onBack,
 ) {
+    // A group chat has its own info page (a group chat ID never changes for a chat).
+    if (org.example.app.core.groups.ChatID.isGroup(chatId)) {
+        GroupInfoScreen(store, chatId, onBack, onOpenGallery, onOpenMember, onDeleted, modifier)
+        return
+    }
     val chats by store.chats.collectAsStateWithLifecycle()
     val requests by store.requests.collectAsStateWithLifecycle()
     var revision by remember { mutableIntStateOf(0) }
     // Read again after the lists change or the verified flag is toggled.
     val chat = remember(chats, requests, revision) { store.chat(chatId) }
-    // A group chat has no contact: the page stays empty until the group info screen exists.
     val contact = chat?.contactId?.let { store.contact(it) }
     var showVerify by rememberSaveable { mutableStateOf(false) }
     var confirmReport by rememberSaveable { mutableStateOf(false) }
