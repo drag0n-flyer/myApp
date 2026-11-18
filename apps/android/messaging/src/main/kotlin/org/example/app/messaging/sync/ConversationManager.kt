@@ -411,12 +411,15 @@ class ConversationManager(
      * [build] and the epoch read run under the lock; the post does not. `commitAccepted` and `setEpoch` are one step.
      */
     suspend fun postCommitWithRetry(
-        serverId: String, group: GroupId, addDevices: List<String>, removeDevices: List<String>, build: suspend () -> CommitBundle,
+        serverId: String, group: GroupId, addDevices: List<String>, removeDevices: List<String>,
+        /** The devices the commit [build] made actually adds, read after each build (a rebuild after a stale epoch may add fewer). Null: [addDevices]. */
+        addedBy: (() -> List<String>)? = null,
+        build: suspend () -> CommitBundle,
     ): Long {
         for (attempt in 0..MAX_STALE_RETRIES) {
             val (bundle, epoch) = buildCommit(group, build)
             val newEpoch = try {
-                server.postCommit(serverId, epoch, bundle.commit, bundle.welcome, addDevices, removeDevices)
+                server.postCommit(serverId, epoch, bundle.commit, bundle.welcome, addedBy?.invoke() ?: addDevices, removeDevices)
             } catch (e: ServerException) {
                 if (e.status == 409 && e.code == "stale_epoch") {
                     critical { mls.commitRejected(group) }

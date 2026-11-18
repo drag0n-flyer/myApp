@@ -176,7 +176,7 @@ class GroupSync(
     private suspend fun gone(chat: ChatRecord, actor: String?) {
         val left = actor == me.accountId
         conversations.critical {
-            repo.transaction { GroupState.markGone(repo, clock, chat, if (left) MyState.LEFT else MyState.REMOVED, line = !left) }
+            repo.transaction { GroupState.markGone(repo, clock, chat, if (left) MyState.LEFT else MyState.REMOVED, line = true) }
         }
         chat.conversationId?.let { actors.remove(it) }
     }
@@ -199,7 +199,10 @@ class GroupSync(
         }
         val present = inGroup.map { it.substringBefore('/') }.toSet()
         val missing = accounts.filter { it != me.accountId && it !in present }.sorted()
-        return if (missing.isEmpty()) emptyList() else addMissing(chat, conversation, group, missing)
+        if (missing.isEmpty()) return emptyList()
+        // Only an owner or admin claims KeyPackages and adds devices; a plain member still removes departed devices.
+        val myRole = members.firstOrNull { it.accountId == me.accountId }?.let { GroupRole.from(it.role) }
+        return if (myRole?.canAdd == true) addMissing(chat, conversation, group, missing) else missing
     }
 
     private suspend fun removeStale(conversation: ConversationRecord, group: GroupId, stale: List<String>, accounts: Set<String>) {
@@ -234,11 +237,13 @@ class GroupSync(
         val modeKnown = repo.conversation(conversation.serverId)?.innerMode != null
         if (modeKnown) ModePin.setPending(repo, conversation.serverId, true)
         var failure: Exception? = null
+        var used: List<String> = claimed.keys.toList()
         try {
-            conversations.postCommitWithRetry(conversation.serverId, group, claimed.keys.toList(), emptyList()) {
+            conversations.postCommitWithRetry(conversation.serverId, group, used, emptyList(), addedBy = { used }) {
                 val present = mls.members(group).map { it.substringBefore('/') }.toSet()
                 val use = claimed.filter { owner.getValue(it.key) !in present }
                 if (use.isEmpty()) throw AlreadyDone()
+                used = use.keys.toList()
                 mls.add(use.values.toList(), group)
             }
         } catch (_: AlreadyDone) {

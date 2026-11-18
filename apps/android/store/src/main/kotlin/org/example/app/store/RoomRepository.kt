@@ -163,11 +163,11 @@ class RoomRepository(
 
     override fun groupMembers(chatId: String) = chats.members(chatId).map { GroupMemberRecord(it.accountId, it.role) }
 
-    override fun setGroupInfo(chatId: String, title: String, photo: ByteArray?, ver: Int): Boolean {
+    override fun setGroupInfo(chatId: String, title: String, photo: ByteArray?, ver: Int, sameVerReplaces: Boolean): Boolean {
         GroupStoreRules.requireInfo(title, photo)
         return transaction {
             val chat = chats.get(chatId)
-            if (chat == null || chat.kind != ChatKind.GROUP || ver < 1 || (chat.groupVer != null && ver <= chat.groupVer)) {
+            if (chat == null || chat.kind != ChatKind.GROUP || ver < 1 || (chat.groupVer != null && (if (sameVerReplaces) ver < chat.groupVer else ver <= chat.groupVer))) {
                 return@transaction false
             }
             chats.setInfo(chatId, title, photo, ver)

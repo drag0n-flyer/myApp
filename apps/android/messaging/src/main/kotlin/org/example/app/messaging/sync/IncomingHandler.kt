@@ -264,9 +264,13 @@ class IncomingHandler(
     private fun applyGroupInfo(group: ContentEnvelope.Group, account: String, chatId: String, repo: Repository) {
         val chat = repo.chat(chatId)?.takeIf { it.kind == ChatKind.GROUP } ?: return
         val role = repo.groupMembers(chatId).firstOrNull { it.accountId == account }?.let { GroupRole.from(it.role) }
-        if (!GroupMerge.accept(chat.groupVer, group.ver, role)) return
+        // Equal versions (two admins at once): the greater (name, photo) wins, so every device converges.
+        val currentTitle = chat.title
+        val tie = chat.groupVer == group.ver && role?.canEditInfo == true && currentTitle != null &&
+            GroupMerge.beats(currentTitle, chat.photo, group.name, group.photo)
+        if (!tie && !GroupMerge.accept(chat.groupVer, group.ver, role)) return
         // The decoder already checked the name and photo; a store that refuses them must not stall the inbox.
-        val kept = runCatching { repo.setGroupInfo(chatId, group.name, group.photo, group.ver) }.getOrDefault(false)
+        val kept = runCatching { repo.setGroupInfo(chatId, group.name, group.photo, group.ver, sameVerReplaces = tie) }.getOrDefault(false)
         // The first name and photo a device learns (a new member, the creator's own) are not a change.
         if (!kept || chat.groupVer == null) return
         val by = account.takeIf { it != me.accountId }

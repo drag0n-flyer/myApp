@@ -195,10 +195,10 @@ class InMemoryRepository : Repository {
         old
     }
     override fun groupMembers(chatId: String): List<GroupMemberRecord> = tx { s.groupMembers[chatId].orEmpty() }
-    override fun setGroupInfo(chatId: String, title: String, photo: ByteArray?, ver: Int): Boolean = tx {
+    override fun setGroupInfo(chatId: String, title: String, photo: ByteArray?, ver: Int, sameVerReplaces: Boolean): Boolean = tx {
         GroupStoreRules.requireInfo(title, photo)
         val chat = s.chats[chatId]
-        if (chat == null || chat.kind != ChatKind.GROUP || ver < 1 || (chat.groupVer != null && ver <= chat.groupVer)) return@tx false
+        if (chat == null || chat.kind != ChatKind.GROUP || ver < 1 || (chat.groupVer != null && (if (sameVerReplaces) ver < chat.groupVer else ver <= chat.groupVer))) return@tx false
         s.chats[chatId] = chat.copy(title = title, photo = photo, groupVer = ver)
         true
     }

@@ -58,6 +58,7 @@ class SampleGroupMembersTest {
         assertEquals(MessagePreview.Resource("system_group_added_by_you", listOf("Bo")), key(SystemEvent.GroupAdded(null, "Bo", byYou = true)))
         assertEquals(MessagePreview.Resource("system_group_removed_plain", listOf("Bo")), key(SystemEvent.GroupRemoved(null, "Bo")))
         assertEquals(MessagePreview.Resource("system_group_left", listOf("Bo")), key(SystemEvent.GroupLeft("Bo")))
+        assertEquals(MessagePreview.Resource("system_you_left"), key(SystemEvent.GroupLeft(null)))
         assertEquals(MessagePreview.Resource("system_you_were_removed"), key(SystemEvent.YouWereRemoved))
         assertEquals(MessagePreview.Resource("system_made_admin", listOf("Bo")), key(SystemEvent.MadeAdmin("Bo")))
         assertEquals(MessagePreview.Resource("system_you_no_longer_admin"), key(SystemEvent.NoLongerAdmin(null)))

@@ -324,7 +324,7 @@ interface Repository {
      * changed, otherwise or for a chat that is not a group.
      * @throws IllegalArgumentException for a name or photo that fails [GroupStoreRules.requireInfo].
      */
-    fun setGroupInfo(chatId: String, title: String, photo: ByteArray?, ver: Int): Boolean
+    fun setGroupInfo(chatId: String, title: String, photo: ByteArray?, ver: Int, sameVerReplaces: Boolean = false): Boolean
     /** One column. @throws IllegalArgumentException for a value outside [MyState.all]. */
     fun setMyState(chatId: String, state: String)
     /**

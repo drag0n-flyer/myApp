@@ -39,6 +39,7 @@ import org.example.app.core.chats.Chat
 import org.example.app.core.chats.ChatFolder
 import org.example.app.core.chats.ChatListOrder
 import org.example.app.core.chats.ChatStore
+import org.example.app.core.chats.GroupChangeFailed
 import org.example.app.core.chats.GroupCreateFailed
 import org.example.app.core.chats.GroupCreated
 import org.example.app.core.chats.Contact
@@ -319,6 +320,8 @@ class LiveChatStore(
         scope.launch {
             try {
                 while (flushWanted.getAndSet(false)) {
+                    // A group whose mode post failed at creation: its `group` and `profile` envelopes are queued now (a marker, retried here).
+                    groupCreator.resumeInit()
                     try { outbox.flush() } catch (e: CancellationException) { throw e } catch (_: Exception) { }
                     runPending()
                     reload()
@@ -1323,6 +1326,58 @@ class LiveChatStore(
     }
 
     private val groupCreator = org.example.app.messaging.sync.GroupCreator(conversations, repo, outbox)
+    private val groupSync = org.example.app.messaging.sync.GroupSync(device, mls, server, repo, lock, clock, conversations, outbox, syncOnce = { inbox.sync() })
+    private val groupAdmin = org.example.app.messaging.sync.GroupAdmin(device, server, repo, storeClock, groupSync, outbox)
+
+    init {
+        // A `members` item is only a hint: it is stored durably, then the group's list is read from the server.
+        inbox.onMembers = { event -> if (groupSync.note(event)) scheduleGroupSync() }
+    }
+
+    private fun scheduleGroupSync() {
+        if (closed.get()) return
+        inFlight.update { it + 1 }
+        scope.launch {
+            try { runGroupSync() } finally { inFlight.update { it - 1 } }
+        }
+    }
+
+    private suspend fun runGroupSync() {
+        try { groupSync.runPending() } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+        requestFlush()
+        reload()
+    }
+
+    /**
+     * Reads the member list of every group this account is in, and follows up (devices of people who left are removed
+     * from the group, devices of people just added are added). Call it at start-up and at every reconnect.
+     */
+    suspend fun syncGroups() {
+        if (closed.get()) return
+        groupSync.noteAll()
+        runGroupSync()
+    }
+
+    private suspend fun <T> groupChange(block: suspend () -> T): T {
+        if (closed.get()) throw GroupChangeFailed(GroupChangeFailed.Reason.Other)
+        try {
+            return block().also { requestFlush(); reload() }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: GroupChangeFailed) {
+            throw e
+        } catch (e: Exception) {
+            throw GroupChangeFailed(GroupChangeFailed.Reason.Other, e)
+        }
+    }
+
+    override suspend fun addMembers(chatId: String, accounts: List<String>): List<String> = groupChange { groupAdmin.addMembers(chatId, accounts) }
+    override suspend fun removeMember(chatId: String, account: String) = groupChange { groupAdmin.removeMember(chatId, account) }
+    override suspend fun leaveGroup(chatId: String) = groupChange { groupAdmin.leave(chatId) }
+    override suspend fun setRole(chatId: String, account: String, role: org.example.app.core.groups.GroupRole) =
+        groupChange { groupAdmin.setRole(chatId, account, role) }
+    override suspend fun renameGroup(chatId: String, name: String) = groupChange { groupAdmin.rename(chatId, name) }
+    override suspend fun setGroupPhoto(chatId: String, photo: ByteArray?) = groupChange { groupAdmin.setPhoto(chatId, photo) }
 
     override suspend fun createGroup(contactIds: List<String>, name: String, photo: ByteArray?): GroupCreated {
         if (closed.get()) throw GroupCreateFailed(GroupCreateFailed.Reason.Other)

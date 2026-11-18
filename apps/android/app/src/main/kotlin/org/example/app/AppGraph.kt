@@ -584,7 +584,7 @@ class AppGraph(
             override val events = events
         }
         watchOwnDevices(
-            socket, session.deviceSync, syncInbox = { session.chatStore.syncInbox() },
+            socket, session.deviceSync, syncInbox = { session.chatStore.syncInbox(); session.chatStore.syncGroups() },
             // In the graph's scope: the wipe cancels the session's scope, which must not cancel the wipe.
             wipe = { scope.launch { quietly("wipe") { wipeAfterRevocation() } }.join() },
             scope = session.scope,

@@ -31,7 +31,8 @@ sealed interface SystemEvent {
     /** [by] added [who] (display names); [byYou] means this account did it; neither is an unknown actor. */
     data class GroupAdded(val by: String?, val who: String, val byYou: Boolean = false) : SystemEvent
     data class GroupRemoved(val by: String?, val who: String, val byYou: Boolean = false) : SystemEvent
-    data class GroupLeft(val who: String) : SystemEvent
+    /** A null name is "You left". */
+    data class GroupLeft(val who: String?) : SystemEvent
     data object YouWereRemoved : SystemEvent
     /** A null name is "You". */
     data class MadeAdmin(val who: String?) : SystemEvent
@@ -145,7 +146,8 @@ data class Message(
                     e.by != null -> MessagePreview.Resource("system_group_removed", listOf(e.by, e.who))
                     else -> MessagePreview.Resource("system_group_removed_plain", listOf(e.who))
                 }
-                is SystemEvent.GroupLeft -> MessagePreview.Resource("system_group_left", listOf(e.who))
+                is SystemEvent.GroupLeft ->
+                    if (e.who == null) MessagePreview.Resource("system_you_left") else MessagePreview.Resource("system_group_left", listOf(e.who))
                 SystemEvent.YouWereRemoved -> MessagePreview.Resource("system_you_were_removed")
                 is SystemEvent.MadeAdmin ->
                     if (e.who == null) MessagePreview.Resource("system_you_made_admin") else MessagePreview.Resource("system_made_admin", listOf(e.who))
@@ -204,6 +206,8 @@ data class Chat(
     val title: String? = null,
     /** The chat's disappearing-message time in seconds; 0 is off. */
     val timerSeconds: Int = 0,
+    /** A group this account left or was removed from: nothing can be sent, the history stays until the chat is deleted. */
+    val readOnly: Boolean = false,
 ) {
     /** True for a group chat (`g:<conversationID>`). */
     val isGroup: Boolean get() = org.example.app.core.groups.ChatID.isGroup(id)

@@ -95,7 +95,7 @@ class GroupAdminTest {
         f.admin(cat).leave(chat)
         assertEquals(MyState.LEFT, cat.repo.chat(chat)!!.myState)
         assertTrue(cat.repo.conversations(chat).isEmpty())
-        assertTrue(cat.repo.messages(chat, null, 100).none { it.id.startsWith("sys-removed-") })
+        assertEquals(listOf("""{"groupLeft":{}}"""), cat.repo.messages(chat, null, 100).filter { it.id.startsWith("sys-gone-") }.map { it.envelope.decodeToString() })
         assertEquals(Reason.Forbidden, failure { f.admin(cat).rename(chat, "Mine") })
         f.catchUp(cat) // its own members item: nothing happens to a chat it left
         assertEquals(MyState.LEFT, cat.repo.chat(chat)!!.myState)
@@ -177,6 +177,23 @@ class GroupAdminTest {
         bob.outbox.flush()
         cat.processor.sync()
         assertTrue(cat.repo.chat(chat)!!.groupVer!! >= 3)
+    }
+
+    @Test
+    fun twoAdminsRenamingAtTheSameMomentEveryoneEndsOnTheGreaterNameInEitherArrivalOrder() = runTest {
+        for (anaFirst in listOf(true, false)) {
+            val (w, f, chat) = group()
+            val ana = w.device("ana1")
+            val bob = w.device("bob1")
+            f.admin(ana).setRole(chat, "acc-bob", GroupRole.Admin)
+            f.catchUp(bob)
+            for (d in listOf("bob2", "cat1", "dan1")) f.catchUp(w.device(d))
+            f.admin(ana).rename(chat, "Alpha") // both build ver 2 before seeing the other
+            f.admin(bob).rename(chat, "Beta")
+            if (anaFirst) { ana.outbox.flush(); bob.outbox.flush() } else { bob.outbox.flush(); ana.outbox.flush() }
+            for (d in w.all) d.processor.sync()
+            for (d in w.all.filter { it.repo.chat(chat) != null }) assertEquals("Beta", d.repo.chat(chat)!!.title, "${d.me.identity} anaFirst=$anaFirst")
+        }
     }
 
     @Test

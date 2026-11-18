@@ -40,9 +40,11 @@ internal object GroupState {
             PendingCreate.clear(repo, c.serverId)
             repo.set(Membership.UNREADABLE_PREFIX + c.serverId, ByteArray(0))
         }
-        if (line && state == MyState.REMOVED) {
+        if (line) {
             val now = clock.now()
-            insertLine(repo, chat.id, chat.conversationId, "sys-removed-${chat.conversationId}-$now", now, envelope("youWereRemoved", emptyMap()))
+            // "You were removed", or, when this account left (here or on another of its devices), "You left".
+            val body = if (state == MyState.REMOVED) envelope("youWereRemoved", emptyMap()) else envelope("groupLeft", emptyMap())
+            insertLine(repo, chat.id, chat.conversationId, "sys-gone-${chat.conversationId}-$now", now, body)
         }
     }
 

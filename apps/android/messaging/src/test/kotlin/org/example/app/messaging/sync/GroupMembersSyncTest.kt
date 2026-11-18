@@ -176,9 +176,38 @@ class GroupMembersSyncTest {
         // Its device comes online with KeyPackages; the next client that looks adds it.
         val eve = w.device("none-eve1")
         eve.api.uploadKeyPackages(eve.mls.makeKeyPackages(2))
-        val later = f.of(w.device("bob1")).reconcile("conv-0001")
+        // A plain member does not claim KeyPackages or add devices; it reports the account as missing.
+        val claimsBefore = w.server.calls.count { it == "acc-bob/bob1 claimKeyPackages" }
+        assertEquals(listOf("acc-eve"), f.of(w.device("bob1")).reconcile("conv-0001").notAddedYet)
+        assertEquals(claimsBefore, w.server.calls.count { it == "acc-bob/bob1 claimKeyPackages" })
+        assertTrue(w.server.conversation("conv-0001")!!.members.none { it.startsWith("acc-eve/") })
+        // The owner does.
+        val later = f.of(ana).reconcile("conv-0001")
         assertEquals(emptyList(), later.notAddedYet)
         assertTrue(w.server.conversation("conv-0001")!!.members.contains("acc-eve/none-eve1"))
+    }
+
+    @Test
+    fun twoAdminsAddingTheSameAccountOneCommitLandsAndTheOtherFindsNothingLeft() = runTest {
+        val w = GroupWorld(
+            mapOf("acc-ana" to listOf("ana1"), "acc-bob" to listOf("bob1"), "acc-cat" to listOf("cat1"), "acc-eve" to listOf("eve1", "eve2")),
+        ).start()
+        val f = GroupSyncFixture(w)
+        val ana = w.device("ana1")
+        val bob = w.device("bob1")
+        val chat = ana.groups.create(listOf("acc-bob", "acc-cat"), "Trio", null).chatId
+        ana.outbox.flush()
+        for (d in w.all.filter { it.me.accountId != "acc-eve" }) f.catchUp(d)
+        ana.api.setRole("conv-0001", "acc-bob", "admin")
+        ana.api.addAccounts("conv-0001", listOf("acc-eve"))
+        f.catchUp(bob) // bob is an admin now and has read the list: adds eve's two devices
+        val epoch = w.server.conversation("conv-0001")!!.epoch
+        f.of(ana).runPending() // ana's view is a version behind: its commit is stale, is rebuilt, and finds eve already in
+        f.of(ana).noteAll()
+        f.of(ana).runPending()
+        assertEquals(epoch, w.server.conversation("conv-0001")!!.epoch, "no second add commit")
+        assertEquals(listOf("acc-eve/eve1", "acc-eve/eve2"), w.server.conversation("conv-0001")!!.members.filter { it.startsWith("acc-eve/") })
+        assertTrue(chat.isNotEmpty())
     }
 
     @Test
@@ -228,7 +257,7 @@ class GroupMembersSyncTest {
         ana.api.removeAccount("conv-0001", "acc-bob")
         f.catchUp(bob)
         assertEquals(MyState.REMOVED, bob.repo.chat(chat)!!.myState)
-        assertEquals(listOf("""{"youWereRemoved":{}}"""), bob.repo.messages(chat, null, 100).filter { it.id.startsWith("sys-removed-") }.map { it.envelope.decodeToString() })
+        assertEquals(listOf("""{"youWereRemoved":{}}"""), bob.repo.messages(chat, null, 100).filter { it.id.startsWith("sys-gone-") }.map { it.envelope.decodeToString() })
         assertTrue(bob.repo.conversations(chat).isEmpty(), "the old conversation row is gone")
         // A late message to the group (from before the server dropped his devices) is never shown and never kept.
         val record = assertNotNull(ana.repo.preferredConversation(chat))
