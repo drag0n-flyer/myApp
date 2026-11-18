@@ -30,7 +30,7 @@ extension LiveChatStore {
     }
 
     /// Publishes a new version when the own name or photo is not what the last version said, then queues the current
-    /// version once in every chat that has not had it: not for a blocked contact, a message request or a group.
+    /// version once in every chat that has not had it: not for a blocked contact or a message request; a group only while this device is a member.
     /// The "sent" marker is written in the same transaction as the queued message, so a queue that fails leaves the
     /// chat pending for the next pass. Calling it again changes nothing.
     public func sendOwnProfileIfNeeded() {
@@ -58,7 +58,9 @@ extension LiveChatStore {
         guard ver >= 1, let name else { return }
         let blocked = Set((try? repo.blockedIDs()) ?? [])
         let targets = ((try? repo.chats()) ?? []).map {
-            ProfileSender.Target(chatID: $0.id, blocked: blocked.contains($0.id), isRequest: $0.isRequest, isOneToOne: !$0.id.hasPrefix("g:"))
+            ProfileSender.Target(chatID: $0.id, blocked: blocked.contains($0.id), isRequest: $0.isRequest,
+                                 // A group this device is still in gets it too (its members need not know me otherwise).
+                                 isOneToOne: !$0.id.hasPrefix("g:") || ($0.kind == "group" && $0.myState == "member"))
         }
         let sent = ((try? repo.entries(prefix: OwnProfile.sentPrefix)) ?? [:]).reduce(into: [String: Int]()) {
             $0[String($1.key.dropFirst(OwnProfile.sentPrefix.count))] = OwnProfile.int($1.value)

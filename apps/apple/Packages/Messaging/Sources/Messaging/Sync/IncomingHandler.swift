@@ -268,8 +268,8 @@ public struct IncomingHandler: Sendable {
                 try OwnProfile.adopt(name: name, photo: photo, ver: ver, repo: db, me: me.accountID)
                 return .ignored
             }
-            // Only the chat's own peer, and never a blocked account.
-            guard account == chatID, try !db.isBlocked(account) else { return .ignored }
+            // Only the chat's own peer (in a group: a member, which `groupAccepts` has checked), never a blocked account.
+            guard account == chatID || ChatID.isGroup(chatID), try !db.isBlocked(account) else { return .ignored }
             guard ProfileMerge.accept(current: try db.profile(for: account)?.ver, incoming: ver) else { return .ignored }
             try db.saveProfile(accountID: account, name: name, photo: photo, ver: ver)
             return .ignored
