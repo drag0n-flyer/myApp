@@ -82,7 +82,8 @@ class ChatScreenTest {
         launch(store, NetworkType.Wifi)
         rule.waitForIdle()
         rule.onNodeWithText("Photo · 240 KB").assertIsDisplayed()
-        assertEquals(listOf("2"), store.downloads)
+        // The voice message ("1") downloads by itself too, so that it can be played.
+        assertEquals(listOf("1", "2"), store.downloads.sorted())
     }
 
     @Test
@@ -103,11 +104,12 @@ class ChatScreenTest {
     }
 
     @Test
-    fun photoOnMobileDataIsNotDownloadedByItself() {
+    fun photoOnMobileDataIsNotDownloadedByItselfButAVoiceMessageIs() {
         val store = RecordingStore(storeWith(photoAndVoice))
         launch(store, NetworkType.Mobile)
         rule.waitForIdle()
-        assertEquals(emptyList(), store.downloads)
+        // "Always download voice messages" is on by default; photos wait for a tap on mobile data.
+        assertEquals(listOf("1"), store.downloads)
     }
 
     private fun longChat(): SampleChatStore =

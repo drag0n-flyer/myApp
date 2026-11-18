@@ -31,9 +31,12 @@ fun interface AttachmentOpener {
  * Failure of any kind is null.
  */
 suspend fun AttachmentOpener.openOrNull(messageId: String, io: CoroutineDispatcher = Dispatchers.IO): OpenedMedia? {
+    // The result is kept here as well as returned: when the caller is cancelled, withContext throws and drops its value.
+    val held = java.util.concurrent.atomic.AtomicReference<OpenedMedia?>(null)
     val opened = try {
-        withContext(io + NonCancellable) { open(messageId) }
+        withContext(io + NonCancellable) { open(messageId).also { held.set(it) } }
     } catch (e: CancellationException) {
+        held.get()?.close()
         throw e
     } catch (e: Exception) {
         null

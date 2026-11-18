@@ -16,11 +16,13 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
@@ -36,6 +38,8 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import java.io.File
+import kotlin.math.roundToInt
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -55,6 +59,8 @@ class MediaHost(
     val onOpenFile: (messageId: String, name: String) -> Unit = { _, _ -> },
     val onShareFile: (messageId: String, name: String) -> Unit = { _, _ -> },
     val fileExists: (String) -> Boolean = { File(it).exists() },
+    /** Plays voice messages; null leaves the play button without effect. */
+    val voice: VoicePlayer? = null,
 )
 
 /**
@@ -93,6 +99,58 @@ fun PhotoBubble(
             MediaPlaceholder(state, nothingToDownload = isOwn && message.media == null, wait = wait, blurred = true, onDownload = onDownload)
         }
         Text(title, style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+private val NO_VOICE = MutableStateFlow(VoiceState())
+
+/**
+ * A voice message: play or pause, a progress bar, and the elapsed time while it plays (its length otherwise). Not yet
+ * downloaded, the play button downloads it. A message that cannot be played says "Couldn't download" and offers to try again.
+ */
+@Composable
+fun VoiceBubble(message: Message, seconds: Double, isOwn: Boolean, host: MediaHost?, onDownload: () -> Unit) {
+    val state = rememberBubbleState(message.media, host)
+    val voice = host?.voice
+    val ui by (voice?.state ?: NO_VOICE).collectAsState()
+    val mine = ui.messageId == message.id
+    val playing = mine && ui.playing
+    val failedHere = ui.failedId == message.id
+    val totalMs = if (mine && ui.durationMs > 0) ui.durationMs else seconds.roundToInt() * 1000
+    val positionMs = if (mine) ui.positionMs else 0
+    // A voice message I sent is not kept on this phone in a form that can be played.
+    val nothingToPlay = isOwn && message.media == null
+    val downloadingLabel = stringResource(R.string.downloading)
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        when {
+            state is MediaBubbleState.Downloading -> CircularProgressIndicator(
+                progress = { state.fraction.toFloat() },
+                modifier = Modifier.semantics { contentDescription = downloadingLabel }.size(32.dp),
+            )
+            state is MediaBubbleState.Failed || failedHere -> Column {
+                Text(stringResource(R.string.media_couldnt_download), style = MaterialTheme.typography.bodyMedium)
+                // A message that downloaded but would not play is tried again; one that did not download is fetched again.
+                TextButton(onClick = { if (failedHere) voice?.toggle(message.id) else onDownload() }) { Text(stringResource(R.string.chat_try_again)) }
+            }
+            else -> IconButton(
+                onClick = { if (state is MediaBubbleState.Ready) voice?.toggle(message.id) else onDownload() },
+                enabled = !nothingToPlay,
+            ) {
+                Icon(
+                    painterResource(if (playing) R.drawable.ic_pause else R.drawable.ic_play),
+                    contentDescription = stringResource(if (playing) R.string.media_pause else R.string.play_voice),
+                )
+            }
+        }
+        if (state !is MediaBubbleState.Failed && !failedHere && state !is MediaBubbleState.Downloading) {
+            Column(Modifier.widthIn(min = 120.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                LinearProgressIndicator(
+                    progress = { if (totalMs > 0) (positionMs.toFloat() / totalMs).coerceIn(0f, 1f) else 0f },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(voiceClock(if (mine) positionMs else totalMs), style = MaterialTheme.typography.labelMedium)
+            }
+        }
     }
 }
 

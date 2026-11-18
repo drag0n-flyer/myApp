@@ -52,6 +52,8 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -72,7 +74,9 @@ import org.example.app.ui.media.AttachmentOpener
 import org.example.app.ui.media.MediaActions
 import org.example.app.ui.media.MediaHost
 import org.example.app.ui.media.PhotoCache
+import org.example.app.ui.media.MediaPlayerEngine
 import org.example.app.ui.media.PhotoViewerScreen
+import org.example.app.ui.media.VoicePlayer
 import org.example.app.ui.previewText
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -138,12 +142,17 @@ fun ChatScreen(
     DisposableEffect(photos) { onDispose { photos.clear() } }
     var viewingPhoto by rememberSaveable { mutableStateOf<String?>(null) }
     val mediaActions = remember(context, opener) { MediaActions(context, opener, scope, notify = { notice = it }) }
-    val mediaHost = remember(opener, photos, mediaActions) {
+    // One voice message plays at a time; it stops when the screen is left or the app goes to the background.
+    val voice = remember(opener) { VoicePlayer(scope, opener, MediaPlayerEngine.factory) }
+    DisposableEffect(voice) { onDispose { voice.release() } }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { voice.stop() }
+    val mediaHost = remember(opener, photos, mediaActions, voice) {
         MediaHost(
             opener, photos,
             onOpenPhoto = { viewingPhoto = it },
             onOpenFile = mediaActions::openFile,
             onShareFile = mediaActions::shareFile,
+            voice = voice,
         )
     }
 
@@ -343,6 +352,7 @@ fun ChatScreen(
                             val autoKind = when (message.content) {
                                 is MessageContent.Photo -> MediaKind.Photo
                                 is MessageContent.File -> MediaKind.File
+                                is MessageContent.Voice -> MediaKind.Voice
                                 else -> null
                             }
                             // The item re-enters composition on scroll-back and rotation; the ViewModel asks the store only once per id.

@@ -54,6 +54,7 @@ import org.example.app.ui.dataSizeText
 import org.example.app.ui.media.FileBubble
 import org.example.app.ui.media.MediaHost
 import org.example.app.ui.media.PhotoBubble
+import org.example.app.ui.media.VoiceBubble
 import org.example.app.ui.previewText
 
 /** What a message in the chat needs from outside: who is "you", who it replies to, and the download rule. */
@@ -186,11 +187,7 @@ private fun LinkedText(text: String) {
 private fun Body(message: Message, isOwn: Boolean, autoDownloads: (MediaKind) -> Boolean, onDownload: () -> Unit, media: MediaHost?) {
     when (val c = message.content) {
         is MessageContent.Text -> LinkedText(c.text)
-        is MessageContent.Voice -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            // Voice messages download by themselves on every network, so there is no download button.
-            Icon(painterResource(R.drawable.ic_play), contentDescription = stringResource(R.string.play_voice))
-            Text((message.preview as? MessagePreview.Resource)?.args?.firstOrNull().orEmpty())
-        }
+        is MessageContent.Voice -> VoiceBubble(message, c.duration, isOwn, media, onDownload)
         is MessageContent.Photo -> PhotoBubble(
             message = message,
             title = stringResource(R.string.photo_with_size, dataSizeText(DataFormat.size(c.bytes))),
