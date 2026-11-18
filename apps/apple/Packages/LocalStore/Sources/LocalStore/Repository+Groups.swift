@@ -11,6 +11,14 @@ public enum GroupLimits {
     public static let maxConversationIDLength = 128
     /// The profile-photo limit also holds for a group photo.
     public static let maxPhoto = 24_576
+    /// The smallest group photo a client stores or sends (a JPEG header alone is longer).
+    public static let minPhoto = 4
+
+    /// A conversation ID a group chat may be made from: 1 to 128 characters of A-Z, a-z, 0-9, `-` and `_`.
+    public static func isValidConversationID(_ id: String) -> Bool {
+        !id.isEmpty && id.count <= maxConversationIDLength
+            && id.utf8.allSatisfy { ($0 >= 0x30 && $0 <= 0x39) || ($0 >= 0x41 && $0 <= 0x5A) || ($0 >= 0x61 && $0 <= 0x7A) || $0 == 0x2D || $0 == 0x5F }
+    }
 }
 
 extension Repository {
@@ -24,9 +32,7 @@ extension Repository {
     /// of either kind, is left exactly as it is. Returns the chat ID, or `nil` for a conversation ID outside [A-Za-z0-9_-] or too long, and for a title the group name rule would change.
     @discardableResult
     public func upsertGroup(conversationID: String, title: String?, photo: Data?, at: Date) throws -> String? {
-        guard !conversationID.isEmpty, conversationID.count <= GroupLimits.maxConversationIDLength,
-              conversationID.utf8.allSatisfy({ ($0 >= 0x30 && $0 <= 0x39) || ($0 >= 0x41 && $0 <= 0x5A) || ($0 >= 0x61 && $0 <= 0x7A) || $0 == 0x2D || $0 == 0x5F })
-        else { return nil }
+        guard GroupLimits.isValidConversationID(conversationID) else { return nil }
         // A title is kept only as the group name rule would write it.
         if let title, GroupNameRule.clean(title) != title { return nil }
         let id = "g:" + conversationID
@@ -34,7 +40,7 @@ extension Repository {
             INSERT INTO chats(id, is_request, unread, muted, last_activity, kind, conversation_id, title, photo)
             VALUES (?,0,0,0,?,'group',?,?,?) ON CONFLICT(id) DO NOTHING
             """, [.text(id), .int(millis(at)), .text(conversationID), title.map { .text($0) } ?? .null,
-                  (photo.flatMap { $0.count <= GroupLimits.maxPhoto ? $0 : nil }).map { .blob($0) } ?? .null])
+                  (photo.flatMap { $0.count >= GroupLimits.minPhoto && $0.count <= GroupLimits.maxPhoto ? $0 : nil }).map { .blob($0) } ?? .null])
         return id
     }
 
@@ -73,10 +79,10 @@ extension Repository {
     }
 
     /// Sets the name and photo of a group chat when `ver` is at least 1 and higher than the stored `group_ver`. A photo
-    /// over 24,576 bytes is refused whole. `false` when nothing changed.
+    /// under 4 or over 24,576 bytes is refused whole. `false` when nothing changed.
     @discardableResult
     public func setGroupInfo(chatID: String, title: String, photo: Data?, ver: Int) throws -> Bool {
-        guard ver >= 1, (photo?.count ?? 0) <= GroupLimits.maxPhoto else { return false }
+        guard ver >= 1, photo.map({ $0.count >= GroupLimits.minPhoto && $0.count <= GroupLimits.maxPhoto }) ?? true else { return false }
         return try db.run("""
             UPDATE chats SET title=?, photo=?, group_ver=? WHERE id=? AND kind='group' AND (group_ver IS NULL OR group_ver < ?)
             """, [.text(title), photo.map { .blob($0) } ?? .null, .int(Int64(ver)), .text(chatID), .int(Int64(ver))]) > 0
