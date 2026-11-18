@@ -59,6 +59,16 @@ interface ChatStore {
     fun send(content: MessageContent, chatId: String, replyTo: String? = null)
     fun sendAttachment(path: String, kind: MediaKind, chatId: String)
     /**
+     * The fraction (0.0 to 1.0) uploaded of each outgoing attachment that is still uploading, by message id. A message
+     * is in the map from the moment it shows as sending until it is queued, failed or cancelled.
+     */
+    val uploadProgress: StateFlow<Map<String, Double>> get() = NO_UPLOADS
+    /**
+     * Cancel on an outgoing attachment: while it is queued or uploading it stops, and the message, its staged files and
+     * any encrypted copy are removed (the other side never sees it). Once it is sent this does nothing.
+     */
+    fun cancelUpload(messageId: String) {}
+    /**
      * The last attachment in [chatId] that was dropped (too big, unreadable) and not yet shown, or null. It is kept until
      * the chat screen has shown it and calls [takeSendProblem], so leaving the chat early loses nothing. A message that
      * failed but is kept shows as [DeliveryStatus.Failed] instead.
@@ -104,6 +114,8 @@ interface ChatStore {
     fun deleteFolder(id: String)
     fun moveFolder(id: String, toCustomIndex: Int)
 }
+
+private val NO_UPLOADS: StateFlow<Map<String, Double>> = kotlinx.coroutines.flow.MutableStateFlow(emptyMap())
 
 /** An attachment in [chatId] that was dropped, and why. */
 data class SendProblem(val chatId: String, val reason: Reason) {

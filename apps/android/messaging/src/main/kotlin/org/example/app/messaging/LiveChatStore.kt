@@ -9,7 +9,11 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
+import org.example.app.core.chats.UploadCancel
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -152,6 +156,46 @@ class LiveChatStore(
     private val tempDir = dirs.tempDir
     /** Ids of the attachment messages this process is preparing or uploading; a "sending" row not in here was cut off. */
     private val uploading = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    /** The running upload job of each message in [uploading], so Cancel can stop it; and the ones Cancel was pressed for. */
+    private val uploadJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
+    private val cancelled = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val progress = MutableStateFlow<Map<String, Double>>(emptyMap())
+    override val uploadProgress: StateFlow<Map<String, Double>> = progress.asStateFlow()
+
+    private fun setProgress(id: String, fraction: Double) {
+        // Whole percents are enough for a ring; the stream reports on every read.
+        progress.update { if (fraction >= 1.0 || (it[id] ?: -1.0) + 0.01 <= fraction) it + (id to fraction) else it }
+    }
+
+    override fun cancelUpload(messageId: String) = write {
+        val pending = repo.get(PENDING_UPLOAD_PREFIX + messageId)?.isNotEmpty() == true
+        if (UploadCancel.onCancel(if (pending) UploadCancel.Phase.Uploading else UploadCancel.Phase.Sent) == UploadCancel.Action.Keep) return@write
+        val job = uploadJobs[messageId]
+        if (job != null) {
+            // The job removes everything itself when it sees the cancellation.
+            cancelled += messageId
+            job.cancel()
+        } else {
+            removeUnsent(messageId)
+        }
+    }
+
+    /**
+     * Cancel: removes the message, its pending key, its kept and staged files, in one transaction for the rows. Does
+     * nothing when the message was queued meanwhile (its pending key is already empty): it is sent then.
+     */
+    private fun removeUnsent(id: String) {
+        val raw = try {
+            repo.transaction {
+                val value = repo.get(PENDING_UPLOAD_PREFIX + id)
+                if (value == null || value.isEmpty() || !repo.deleteUnsentMessage(id, device.accountId)) null
+                else value.also { repo.set(PENDING_UPLOAD_PREFIX + id, ByteArray(0)) }
+            }
+        } catch (_: Exception) { null } ?: return
+        val pending = runCatching { Json.decodeFromString(PendingUpload.serializer(), raw.decodeToString()) }.getOrNull()
+        discardPending(id, pending?.prepared?.takeIf { it.isNotEmpty() }?.let(::File), pending?.path)
+        reload()
+    }
 
     private val _contacts = MutableStateFlow<List<Contact>>(emptyList())
     private val _folders = MutableStateFlow(listOf(ChatFolder.All, ChatFolder.Unread))
@@ -530,6 +574,7 @@ class LiveChatStore(
         scope.launch {
             val id = freshId()
             var stored = false
+            kotlin.coroutines.coroutineContext[Job]?.let { uploadJobs[id] = it }
             try {
                 if (!ensureChatRow(chatId)) return@launch
                 uploading += id
@@ -552,12 +597,16 @@ class LiveChatStore(
                 reload()
                 upload(id, at, pending)
             } catch (e: CancellationException) {
+                if (id in cancelled) withContext(NonCancellable) { removeUnsent(id) }
                 throw e
             } catch (_: Exception) {
                 if (stored) failUpload(id)
             } finally {
                 if (!stored) pendingDir(id).deleteRecursively()
                 uploading -= id
+                uploadJobs -= id
+                cancelled -= id
+                progress.update { it - id }
                 reload()
                 inFlight.update { it - 1 }
             }
@@ -629,15 +678,20 @@ class LiveChatStore(
         repo.updateStatus(listOf(messageId), "sending")
         inFlight.update { it + 1 }
         scope.launch {
+            kotlin.coroutines.coroutineContext[Job]?.let { uploadJobs[messageId] = it }
             try {
                 reload()
                 upload(messageId, row.sentAt, pending)
             } catch (e: CancellationException) {
+                if (messageId in cancelled) withContext(NonCancellable) { removeUnsent(messageId) }
                 throw e
             } catch (_: Exception) {
                 failUpload(messageId)
             } finally {
                 uploading -= messageId
+                uploadJobs -= messageId
+                cancelled -= messageId
+                progress.update { it - messageId }
                 reload()
                 inFlight.update { it - 1 }
             }
@@ -684,7 +738,7 @@ class LiveChatStore(
         }
         // The ciphertext waits in the temp folder until the message is stored, so no blob is ever left without a record.
         val uploaded = try {
-            uploader.uploadKeeping(prepared.file)
+            uploader.uploadKeeping(prepared.file) { setProgress(id, it) }
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {

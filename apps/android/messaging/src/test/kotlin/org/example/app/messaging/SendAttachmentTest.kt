@@ -433,6 +433,84 @@ class SendAttachmentTest {
     }
 
     @Test
+    fun cancelWhileUploadingLeavesNoMessageNoBlobAndSendsNothing() = runBlocking<Unit> {
+        val f = fixture()
+        val s = session(f)
+        val gate = CompletableDeferred<Unit>()
+        s.api.gate = gate
+        val file = staged(f)
+        s.store.sendAttachment(file.path, MediaKind.File, "acc-ana")
+        waitUntil("the upload to start") { s.api.attempts.get() == 1 }
+        val id = sentId(f)
+        waitUntil("the progress to reach the end of the file") { s.store.uploadProgress.value[id] == 1.0 }
+        s.store.cancelUpload(id)
+        s.store.awaitWrites()
+        s.store.settle()
+        f.rig.ana1.processor.sync()
+        assertNull(f.d.repo.message(id), "the row is gone, not marked deleted")
+        assertEquals(emptyList(), s.store.chat("acc-ana")!!.messages.filter { it.id == id })
+        assertNull(f.rig.ana1.repo.message(id), "the peer never gets it")
+        assertEquals(0, s.api.posts.get(), "nothing was sent")
+        assertEquals(emptyList(), f.d.repo.dueOutbox(Long.MAX_VALUE))
+        assertNull(f.d.repo.attachmentForMessage(id))
+        assertEquals(emptyList(), f.dirs.blobDir.list().orEmpty().toList(), "no blob")
+        assertEquals(emptyList(), f.dirs.tempDir.walkTopDown().filter { it.isFile }.toList(), "no staged or encrypted file in the temp folder")
+        assertFalse(file.exists(), "the staged copy is removed")
+        assertFalse(pendingDir(f, id).exists())
+        assertFalse(pendingKey(f, id))
+        assertNull(s.store.uploadProgress.value[id])
+        gate.complete(Unit)
+        s.store.settle()
+        assertEquals(1, s.api.attempts.get(), "no retry")
+        assertEquals(0, s.api.posts.get())
+    }
+
+    @Test
+    fun cancelAfterTheMessageWasSentChangesNothing() = runBlocking<Unit> {
+        val f = fixture()
+        val s = session(f)
+        s.store.sendAttachment(staged(f).path, MediaKind.File, "acc-ana")
+        s.store.settle()
+        val id = sentId(f)
+        s.store.cancelUpload(id)
+        s.store.awaitWrites()
+        s.store.settle()
+        assertNotNull(f.d.repo.message(id))
+        assertNotNull(f.d.repo.attachmentForMessage(id))
+        assertIs<ContentEnvelope.File>(peerGot(f, id))
+    }
+
+    @Test
+    fun cancelOfAFailedAttachmentRemovesItAndItsKeptFiles() = runBlocking<Unit> {
+        val f = fixture()
+        val s = session(f)
+        s.api.failUploads = true
+        s.store.sendAttachment(staged(f).path, MediaKind.File, "acc-ana")
+        s.store.settle()
+        val id = sentId(f)
+        s.store.cancelUpload(id)
+        s.store.awaitWrites()
+        assertNull(f.d.repo.message(id))
+        assertFalse(pendingDir(f, id).exists())
+        assertFalse(pendingKey(f, id))
+    }
+
+    @Test
+    fun theUploadFractionIsReportedWhileItRunsAndForgottenAfter() = runBlocking<Unit> {
+        val f = fixture()
+        val s = session(f)
+        val gate = CompletableDeferred<Unit>()
+        s.api.gate = gate
+        s.store.sendAttachment(staged(f).path, MediaKind.File, "acc-ana")
+        waitUntil("the upload to start") { s.api.attempts.get() == 1 }
+        val id = sentId(f)
+        waitUntil("the fraction") { s.store.uploadProgress.value[id] == 1.0 }
+        gate.complete(Unit)
+        s.store.settle()
+        assertNull(s.store.uploadProgress.value[id])
+    }
+
+    @Test
     fun openingNeverDownloadsAndDoesNothingAfterClose() = runBlocking<Unit> {
         val f = fixture()
         val s = session(f)
