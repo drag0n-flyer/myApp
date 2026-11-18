@@ -18,6 +18,15 @@ class SampleChatStore(
     override val myStoredName: String get() = me.displayName
     override fun setMyDisplayName(name: String) { meFlow.value = meFlow.value.copy(displayName = name) }
 
+    private val _profiles = MutableStateFlow<Map<String, org.example.app.core.people.Profile>>(emptyMap())
+    override val profiles: StateFlow<Map<String, org.example.app.core.people.Profile>> = _profiles.asStateFlow()
+    /** Gives a sample person a profile (a photo for the tiles). Sample data only. */
+    fun putProfile(profile: org.example.app.core.people.Profile) { _profiles.value = _profiles.value + (profile.accountId to profile) }
+    override fun setMyPhoto(photo: ByteArray?) {
+        _profiles.value = if (photo == null) _profiles.value - me.id
+        else _profiles.value + (me.id to org.example.app.core.people.Profile(me.id, me.displayName, photo, 1))
+    }
+
     private val lock = Any()
     private var allChats: List<Chat> = data.chats
     private val directory: Map<String, String> = data.directory

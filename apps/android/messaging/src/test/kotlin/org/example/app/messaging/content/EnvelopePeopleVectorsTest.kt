@@ -108,7 +108,7 @@ class EnvelopePeopleVectorsTest {
             ContentEnvelope.Typing("i", 1, true),
             ContentEnvelope.Presence("i", 1, "away"),
             ContentEnvelope.Timer("i", 1, 604_800),
-            ContentEnvelope.Profile("i", 1, "Ann", byteArrayOf(-1, -40, 1), 3),
+            ContentEnvelope.Profile("i", 1, "Ann", org.example.app.messaging.TestJpeg.of(), 3),
             ContentEnvelope.Text("i", 1, "see https://a.example/x", ttl = 60, lp = LinkPreview("https://a.example/x", "T", "D", byteArrayOf(-1, -40, 2))),
         )
         for (env in sample) {
@@ -138,8 +138,9 @@ class EnvelopePeopleVectorsTest {
     }
 
     @Test fun photoAndPreviewImageAcceptPaddedAndUnpaddedBase64AndEncodeWithPadding() {
-        val jpeg = byteArrayOf(-1, -40, 1, 2) // base64 "/9gBAg==" padded, "/9gBAg" unpadded
-        for (b64 in listOf("/9gBAg==", "/9gBAg")) {
+        val jpeg = org.example.app.messaging.TestJpeg.of(size = 16) // 16 bytes: base64 ends in "AA==" padded, "AA" unpadded
+        val padded = Base64.getEncoder().encodeToString(jpeg)
+        for (b64 in listOf(padded, padded.trimEnd('='))) {
             val prof = ContentCodec.decode("""{"v":1,"id":"p","at":1,"k":"profile","name":"Ann","photo":"$b64","ver":1}""".encodeToByteArray())
             assertEquals(jpeg.toList(), assertIs<ContentEnvelope.Profile>(prof).photo?.toList(), b64)
             val text = ContentCodec.decode(
@@ -148,6 +149,6 @@ class EnvelopePeopleVectorsTest {
             assertEquals(jpeg.toList(), assertIs<ContentEnvelope.Text>(text).lp?.img?.toList(), b64)
         }
         val out = String(ContentCodec.encode(ContentEnvelope.Profile("p", 1, "Ann", jpeg, 1)))
-        assertTrue(out.contains("\"/9gBAg==\""), out)
+        assertTrue(out.contains("\"$padded\""), out)
     }
 }

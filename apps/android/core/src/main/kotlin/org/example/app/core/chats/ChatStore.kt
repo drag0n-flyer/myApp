@@ -134,6 +134,16 @@ interface ChatStore {
     /** Keeps the profile only when [ver] is higher than the stored one; returns whether it was kept. */
     fun saveProfile(accountId: String, name: String, photo: ByteArray?, ver: Int): Boolean = false
 
+    /**
+     * Every profile this device shows, by account ID: each contact's newest, and the person's own photo (name as stored).
+     * One helper reads it for tiles; a screen never reads the profile table itself.
+     */
+    val profiles: StateFlow<Map<String, org.example.app.core.people.Profile>> get() = NO_PROFILES
+    /** Sets or removes (null) the person's own photo, a JPEG that passes `ProfilePhotoRule`, and tells the contacts. */
+    fun setMyPhoto(photo: ByteArray?) {}
+    /** Tells the contacts the person's name and photo when they differ from what was last announced. */
+    fun announceProfile() {}
+
     /** Custom folders only; All and Unread are fixed. */
     fun addFolder(name: String, chatIds: Set<String>): ChatFolder
     fun renameFolder(id: String, name: String)
@@ -142,6 +152,7 @@ interface ChatStore {
 }
 
 private val NO_UPLOADS: StateFlow<Map<String, Double>> = kotlinx.coroutines.flow.MutableStateFlow(emptyMap())
+private val NO_PROFILES: StateFlow<Map<String, org.example.app.core.people.Profile>> = kotlinx.coroutines.flow.MutableStateFlow(emptyMap())
 
 /** An attachment in [chatId] that was dropped, and why. */
 data class SendProblem(val chatId: String, val reason: Reason) {

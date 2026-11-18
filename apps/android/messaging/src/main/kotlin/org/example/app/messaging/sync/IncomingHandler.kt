@@ -34,6 +34,8 @@ class IncomingHandler(
     private val clock: Clock,
     private val fold: (String) -> String = { it.lowercase(Locale.ROOT) },
     private val log: (String) -> Unit = { System.err.println(it) },
+    /** True when the bytes of a received profile photo decode as an image. The app passes its image decoder; the default accepts. */
+    private val photoDecodable: (ByteArray) -> Boolean = { true },
 ) {
     /**
      * Design 17: my own accepted commit comes back as an inbox item. When the stored epoch is already past it there
@@ -212,8 +214,18 @@ class IncomingHandler(
             // Typing and presence travel only in the ephemeral frame. One that arrives as a stored message is dropped.
             is ContentEnvelope.Typing, is ContentEnvelope.Presence -> AppliedResult.Ignored
             is ContentEnvelope.Profile -> {
-                // My own profile is kept in the settings; the sender is the MLS credential, never a field of the message.
-                if (account != me.accountId) repo.saveProfile(account, envelope.name, envelope.photo, envelope.ver)
+                // The sender is the MLS credential, never a field of the message. A photo is checked (JPEG, size, declared
+                // pixel size from the frame header, then the platform decoder) before anything is stored; whole or not at all.
+                val photoOk = envelope.photo.let { it == null || (org.example.app.core.people.ProfilePhotoRule.isAcceptable(it) && photoDecodable(it)) }
+                if (photoOk) {
+                    if (account == me.accountId) {
+                        // From another device of my own account: a higher version replaces my stored profile.
+                        org.example.app.messaging.send.ProfileSender.adopt(repo, me.accountId, envelope.name, envelope.photo, envelope.ver)
+                    } else if (account == chatId && !repo.isBlocked(account)) {
+                        // Applied only for the chat's own peer, and never for a blocked account.
+                        repo.saveProfile(account, envelope.name, envelope.photo, envelope.ver)
+                    }
+                }
                 AppliedResult.Ignored
             }
             is ContentEnvelope.Timer -> {

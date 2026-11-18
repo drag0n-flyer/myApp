@@ -333,7 +333,11 @@ fun AppRoot(
             }
             return@AppTheme
         }
-        CompositionLocalProvider(LocalExpectReturn provides graph.appLock::expectReturn, LocalLinkPreviews provides graph.linkPreviewSupport) {
+        CompositionLocalProvider(
+            LocalExpectReturn provides graph.appLock::expectReturn,
+            LocalLinkPreviews provides graph.linkPreviewSupport,
+            org.example.app.profile.LocalProfilePhotos provides graph.chatStore.profiles,
+        ) {
         Box {
         NavHost(nav, startDestination = MAIN) {
             composable(LINK_SCAN) {
@@ -526,7 +530,7 @@ fun AppRoot(
                 )
             }
             composable(PROFILE) {
-                val vm = viewModel<ProfileViewModel>(factory = factory { ProfileViewModel(graph.accountActions) })
+                val vm = viewModel<ProfileViewModel>(factory = factory { ProfileViewModel(graph.accountActions) { graph.chatStore.setMyPhoto(it) } })
                 val me = graph.chatStore.meState.collectAsStateWithLifecycle().value
                 ProfileScreen(me, vm, onBack = { nav.popBackStack() }, storedName = graph.chatStore.myStoredName, onMyQr = { nav.navigate(MY_QR) })
             }

@@ -216,6 +216,14 @@ class LiveChatStore(
     private val _chats = MutableStateFlow<List<Chat>>(emptyList())
     private val _requests = MutableStateFlow<List<Chat>>(emptyList())
     private val _muted = MutableStateFlow<Set<String>>(emptySet())
+    private val profilesFlow = MutableStateFlow<Map<String, org.example.app.core.people.Profile>>(emptyMap())
+    override val profiles: StateFlow<Map<String, org.example.app.core.people.Profile>> = profilesFlow.asStateFlow()
+    @Volatile private var profileNames: Map<String, String> = emptyMap()
+
+    private val profileSender = org.example.app.messaging.send.ProfileSender(repo, device.accountId, { runCatching { repo.contact(device.accountId)?.displayName }.getOrNull().orEmpty() }) { chatId, name, photo, ver ->
+        outbox.enqueueControl(chatId) { id, at -> ContentEnvelope.Profile(id, at, name, photo, ver) }
+    }
+
     private val _blocked = MutableStateFlow<Set<String>>(emptySet())
     private val _reported = MutableStateFlow<Set<String>>(emptySet())
     override val contacts: StateFlow<List<Contact>> = _contacts.asStateFlow()
@@ -328,6 +336,7 @@ class LiveChatStore(
     private fun reload() = synchronized(reloadLock) {
         val rows = runCatching { repo.contacts() }.getOrDefault(emptyList())
         contactRows = rows.associateBy { it.accountId }
+        loadProfiles()
         contactRows[device.accountId]?.let { meFlow.value = Contact(it.accountId, org.example.app.core.profile.DisplayNameRule.forDisplay(it.displayName, "").ifEmpty { "You" }, it.username) }
         _contacts.value = rows.filter { it.isContact }.sortedWith(compareBy({ it.displayName }, { it.accountId })).map(::contactOf)
 
@@ -375,6 +384,7 @@ class LiveChatStore(
         _muted.value = records.filter { it.muted }.map { it.id }.toSet()
         _requests.value = built.filter { it.isRequest }
         _blocked.value = runCatching { repo.blockedIds().toSet() }.getOrDefault(emptySet())
+        if (!closed.get() && runCatching { profileSender.hasPending() }.getOrDefault(false)) write(reload = false) { profileSender.sync(); requestFlush() }
         _reported.value = runCatching { repo.entries(REPORTED_PREFIX).filterValues { it.isNotEmpty() }.keys.map { it.removePrefix(REPORTED_PREFIX) }.toSet() }
             .getOrDefault(emptySet())
     }
@@ -397,8 +407,34 @@ class LiveChatStore(
     private fun nameOf(row: ContactRecord?): String? {
         if (row == null) return null
         // Names come from the server and from other people's devices: cleaned for every screen and notification.
-        return org.example.app.core.profile.DisplayNameRule.forDisplay(row.displayName, row.username).ifEmpty { null }
+        // A contact's own profile name comes first; the lookup name is the fallback.
+        val profileName = if (row.accountId == device.accountId) null else profileNames[row.accountId]
+        return org.example.app.core.people.ContactDisplay.name(null, profileName, row.displayName, row.username).ifEmpty { null }
     }
+
+    // Profiles: contacts' newest, and the person's own, kept for the tile and name helpers.
+
+    private fun loadProfiles() {
+        val loaded = HashMap<String, org.example.app.core.people.Profile>()
+        // A profile from a blocked account is never shown, and one from a message request waits until it is accepted.
+        val hidden = runCatching { repo.blockedIds().toSet() + repo.chats().filter { it.isRequest }.map { it.id } }.getOrDefault(emptySet())
+        for (id in contactRows.keys) {
+            if (id == device.accountId || id in hidden) continue
+            runCatching { repo.profile(id) }.getOrNull()?.let { loaded[id] = org.example.app.core.people.Profile(it.accountId, it.name, it.photo, it.ver) }
+        }
+        runCatching { profileSender.photo() }.getOrNull()?.let {
+            loaded[device.accountId] = org.example.app.core.people.Profile(device.accountId, myStoredName, it, runCatching { profileSender.ver() }.getOrDefault(0))
+        }
+        profileNames = loaded.filterKeys { it != device.accountId }.mapValues { it.value.name }
+        profilesFlow.value = loaded
+    }
+
+    override fun setMyPhoto(photo: ByteArray?) {
+        if (photo != null && !org.example.app.core.people.ProfilePhotoRule.isAcceptable(photo)) return
+        write { profileSender.setPhoto(photo); requestFlush() }
+    }
+
+    override fun announceProfile() = write { profileSender.announce(); requestFlush() }
 
     private fun contactOf(row: ContactRecord) = Contact(row.accountId, nameOf(row) ?: "Unknown", row.username)
 
@@ -1364,7 +1400,7 @@ class LiveChatStore(
     override fun saveProfile(accountId: String, name: String, photo: ByteArray?, ver: Int): Boolean {
         // The same rules as the wire: a name that fails the display-name rule, or an oversized photo, is not kept.
         if (org.example.app.core.profile.DisplayNameRule.clean(name) != name) return false
-        if (photo != null && photo.size > 24_576) return false
+        if (photo != null && !org.example.app.core.people.ProfilePhotoRule.isAcceptable(photo)) return false
         val saved = repo.saveProfile(accountId, name, photo, ver)
         if (saved) reload()
         return saved

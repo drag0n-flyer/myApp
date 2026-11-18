@@ -32,7 +32,9 @@ class TestDevice(val server: FakeDeliveryServer, account: String, device: String
     var readReceiptsSwitch: () -> Boolean = { true }
     val membership = Membership(me, mls, realMemberKeys = false, clock = clock)
     val logs = mutableListOf<String>()
-    val handler = IncomingHandler(me, clock, log = { logs += it })
+    /** What the handler asks about a received profile photo; a test makes it refuse. */
+    var photoDecodes: (ByteArray) -> Boolean = { true }
+    val handler = IncomingHandler(me, clock, log = { logs += it }, photoDecodable = { photoDecodes(it) })
     val hpke = SoftwareHpke()
     val escrow = escrowKey?.let { key -> Escrow.sealer(me.accountId, hpke, EscrowKeySource { key }) }
     val ownDeviceNotices = mutableListOf<Pair<String, String>>()

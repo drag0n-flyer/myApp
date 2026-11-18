@@ -188,11 +188,16 @@ object ContentCodec {
 
     // Lengths: title and description count code points; a caption uses the same grapheme limit as a text message
     // ([TextLimit], applied by `caption` on receive and refused over it on send).
-    private const val PHOTO_MAX = 24_576
     private const val PREVIEW_IMAGE_MAX = 8_192
     private const val PREVIEW_IMAGE_SIDE = 1_024
     private const val TITLE_MAX = 200
     private const val DESC_MAX = 300
+
+    /** A profile photo: base64 of bytes that pass the profile-photo rule (JPEG, 4..24,576 bytes, frame header 1..1024 per side). */
+    private fun photo(b64: String): ByteArray? {
+        val bytes = try { Base64.getDecoder().decode(b64) } catch (_: IllegalArgumentException) { return null }
+        return bytes.takeIf { org.example.app.core.people.ProfilePhotoRule.isAcceptable(it) }
+    }
 
     private fun jpeg(b64: String, max: Int): ByteArray? {
         val bytes = try { Base64.getDecoder().decode(b64) } catch (_: IllegalArgumentException) { return null }
@@ -214,7 +219,7 @@ object ContentCodec {
         val name = o["name"].str()?.takeIf { DisplayNameRule.clean(it) == it } ?: return null
         val ver = o["ver"].int()?.takeIf { it >= 1 } ?: return null
         val photoEl = o["photo"]
-        val photo = if (photoEl == null || photoEl is JsonNull) null else jpeg(photoEl.str() ?: return null, PHOTO_MAX) ?: return null
+        val photo = if (photoEl == null || photoEl is JsonNull) null else photo(photoEl.str() ?: return null) ?: return null
         return ContentEnvelope.Profile(id, at, name, photo, ver)
     }
 

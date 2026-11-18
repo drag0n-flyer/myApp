@@ -373,6 +373,11 @@
     <string name="settings_calls_audio">Calls &amp; Audio</string>
     <string name="settings_profile">Profile</string>
     <string name="profile_edit_name">Edit name</string>
+    <string name="profile_change_photo">Change photo</string>
+    <string name="profile_remove_photo">Remove photo</string>
+    <string name="profile_photo_choose">Choose a photo</string>
+    <string name="profile_photo_take">Take a photo</string>
+    <string name="profile_photo_error">Couldn\'t use that photo. Try a different one.</string>
     <string name="profile_name_error">Couldn\'t save your name. Try again.</string>
     <string name="profile_sign_out">Sign out</string>
     <string name="profile_sign_out_confirm">Sign out of this device? Your messages on this device will be removed.</string>
