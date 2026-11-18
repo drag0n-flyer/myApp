@@ -243,13 +243,13 @@ object ContentCodec {
     /**
      * The whole `group` envelope is invalid (null) when the name, photo or version is: the name is 1 to 50 code points
      * under the display-name character rules and must already be clean (as a profile name must); the photo is a JPEG
-     * of at most 24,576 bytes (the profile-photo rule's frame-header size check is not in this build yet).
+     * that passes the profile-photo rule (frame-header size included).
      */
     private fun group(o: JsonObject, id: String, at: Long): ContentEnvelope? {
         val name = o["name"].str()?.takeIf { GroupNameRule.clean(it) == it } ?: return null
         val ver = o["ver"].int()?.takeIf { it >= 1 } ?: return null
         val photoEl = o["photo"]
-        val photo = if (photoEl == null || photoEl is JsonNull) null else jpeg(photoEl.str() ?: return null, PHOTO_MAX) ?: return null
+        val photo = if (photoEl == null || photoEl is JsonNull) null else photo(photoEl.str() ?: return null) ?: return null
         return ContentEnvelope.Group(id, at, name, photo, ver)
     }
 

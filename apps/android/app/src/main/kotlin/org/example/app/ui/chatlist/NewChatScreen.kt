@@ -39,6 +39,8 @@ fun NewChatScreen(
     onAddContact: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Shows a "New group" row when given. */
+    onNewGroup: (() -> Unit)? = null,
 ) {
     val contacts by store.contacts.collectAsStateWithLifecycle()
     val locale = LocalLocale.current.platformLocale
@@ -58,6 +60,15 @@ fun NewChatScreen(
         },
     ) { padding ->
         LazyColumn(Modifier.padding(padding)) {
+            if (onNewGroup != null) {
+                item {
+                    ListItem(
+                        modifier = Modifier.clickable(role = Role.Button, onClick = onNewGroup),
+                        leadingContent = { Icon(painterResource(R.drawable.ic_contacts), contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                        headlineContent = { Text(stringResource(R.string.group_new), color = MaterialTheme.colorScheme.primary) },
+                    )
+                }
+            }
             item {
                 ListItem(
                     modifier = Modifier.clickable(role = Role.Button, onClick = onAddContact),

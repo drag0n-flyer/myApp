@@ -32,7 +32,7 @@ class InMemoryGroupStoreTest {
     }
 
     @Test fun infoAndStateAreValidated() {
-        assertTrue(repo.setGroupInfo("g:c1", "New", byteArrayOf(-1, -40, 1), 2))
+        assertTrue(repo.setGroupInfo("g:c1", "New", byteArrayOf(-1, -40, -1, -64, 0, 11, 8, 1, 0, 1, 0, 1, 1, 17, 0), 2))
         assertFalse(repo.setGroupInfo("g:c1", "Again", null, 2))
         assertFailsWith<IllegalArgumentException> { repo.setGroupInfo("g:c1", "", null, 3) }
         assertFailsWith<IllegalArgumentException> { repo.setGroupInfo("g:c1", "Ok", byteArrayOf(1, 2, 3), 3) }

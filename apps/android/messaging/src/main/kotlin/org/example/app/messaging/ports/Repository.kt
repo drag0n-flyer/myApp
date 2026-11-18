@@ -65,6 +65,8 @@ data class ReceiptRecord(val messageId: String, val accountId: String, val kind:
 object GroupStoreRules {
     const val MAX_MEMBERS = 100
     const val PHOTO_MAX = 24_576
+    /** A JPEG frame header alone is longer than this. */
+    const val PHOTO_MIN = 4
     val receiptKinds = setOf("delivered", "read")
 
     /** Throws [IllegalArgumentException] for a list that is too long, has a repeated or empty account ID, or an unknown role. */
@@ -89,7 +91,7 @@ object GroupStoreRules {
     /** The name must pass the group name rule as it is; a photo is a JPEG of at most 24,576 bytes. */
     fun requireInfo(title: String, photo: ByteArray?) {
         require(org.example.app.core.groups.GroupNameRule.clean(title) == title) { "Bad group name" }
-        if (photo != null) require(photo.size in 2..PHOTO_MAX && photo[0] == 0xFF.toByte() && photo[1] == 0xD8.toByte()) { "Bad group photo" }
+        if (photo != null) require(org.example.app.core.people.ProfilePhotoRule.isAcceptable(photo)) { "Bad group photo" }
     }
 }
 
@@ -306,7 +308,7 @@ interface Repository {
     /**
      * Makes the group chat [chatId] (`g:<conversationID>`) for [conversationId] when there is none: not a request, nothing
      * unread, activity [now]. An existing group chat keeps everything (a pin, mute or title) and only gets the conversation ID.
-     * @throws IllegalArgumentException when [chatId] is an existing one-to-one chat. A second chat for one conversation fails.
+     * @throws IllegalArgumentException when [chatId] is an existing one-to-one chat, or another chat already holds [conversationId].
      */
     fun upsertGroup(chatId: String, conversationId: String, title: String?, now: Long)
     /**
