@@ -218,22 +218,23 @@ class CaptionsTest {
     @Test fun myEditOfACaptionChangesMyRowAndSendsAnEdit() = runTest {
         val s = setup()
         val me = s.ana.me.accountId
-        val env = photo("p9", "old")
         s.ana.repo.insertMessage(
             MessageRecord(
                 id = "p9", chatId = "acc-bob", conversationId = null, senderAccount = me, senderDevice = s.ana.me.deviceId,
-                sentAt = NOW, receivedAt = NOW, envelope = ContentCodec.encode(env), status = "sent", folded = "old", caption = "old",
+                sentAt = NOW, receivedAt = NOW, envelope = ContentCodec.encode(photo("p9", "old")), status = "sent", folded = "old", caption = "old",
             ),
         )
+        val queuedBefore = s.rig.server.pending("acc-bob/bob1").size
         val anaStore = store(s.ana)
         anaStore.edit("p9", "acc-bob", "fresh")
-        anaStore.awaitWrites()
+        // settle, not awaitWrites: the Edit is queued by the write and sent by a flush that runs after it.
+        anaStore.settle()
         val row = s.ana.repo.message("p9")!!
         assertEquals("fresh", (ContentCodec.decode(row.envelope) as ContentEnvelope.Photo).c)
         assertEquals("fresh", row.caption)
         assertTrue(row.folded.contains("fresh"))
-        val sent = s.ana.repo.dueOutbox(Long.MAX_VALUE).map { ContentCodec.decode(it.envelope) }
-        assertTrue(sent.any { it is ContentEnvelope.Edit && it.target == "p9" && it.t == "fresh" })
+        // The Edit went out (the flush that sends it is done after settle): one more message waits for Bob.
+        assertEquals(queuedBefore + 1, s.rig.server.pending("acc-bob/bob1").size)
     }
 
     // Link previews on text
