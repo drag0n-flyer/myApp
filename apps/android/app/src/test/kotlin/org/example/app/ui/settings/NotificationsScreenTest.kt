@@ -1,14 +1,11 @@
 package org.example.app.ui.settings
 
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertIsOn
-import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import kotlin.test.assertEquals
-import kotlin.test.assertTrue
-import org.example.app.ui.allLabels
+import org.example.app.push.PushTransport
 import org.example.app.ui.theme.AppTheme
 import org.junit.Rule
 import org.junit.Test
@@ -20,26 +17,28 @@ import org.robolectric.annotation.Config
 @Config(sdk = [35], qualifiers = "w411dp-h2000dp")
 class NotificationsScreenTest {
     @get:Rule val rule = createComposeRule()
-    private var delivery = NotificationDelivery.Google
     private var opened = 0
 
-    private fun launch(canFullScreen: Boolean) = rule.setContent {
+    private fun launch(canFullScreen: Boolean, transport: PushTransport = PushTransport.Fcm) = rule.setContent {
         AppTheme {
-            NotificationsScreen(
-                delivery = delivery, onDeliveryChange = { delivery = it },
-                canUseFullScreenIntent = canFullScreen, onOpenFullScreenSettings = { opened++ }, onBack = {},
-            )
+            NotificationsScreen(transport = transport, canUseFullScreenIntent = canFullScreen, onOpenFullScreenSettings = { opened++ }, onBack = {})
         }
     }
 
     @Test
-    fun showsDeliveryChoices() {
-        launch(true)
+    fun namesTheTransportInUseAndOffersNoChoice() {
+        launch(true, PushTransport.UnifiedPush)
         rule.onNodeWithText("Notification delivery").assertIsDisplayed()
-        rule.onNodeWithText("Google").assertIsSelected()
+        rule.onNodeWithText("Delivered through").assertIsDisplayed()
         rule.onNodeWithText("UnifiedPush").assertIsDisplayed()
-        rule.onNodeWithText("UnifiedPush").performClick()
-        assertEquals(NotificationDelivery.UnifiedPush, delivery)
+        rule.onNodeWithText("Google").assertDoesNotExist()
+        rule.onNodeWithText("UnifiedPush").performClick() // a read-only row: nothing to select, nothing happens
+    }
+
+    @Test
+    fun saysSoWhenNoPushServiceIsSetUp() {
+        launch(true, PushTransport.None)
+        rule.onNodeWithText("No push service set up").assertIsDisplayed()
     }
 
     @Test

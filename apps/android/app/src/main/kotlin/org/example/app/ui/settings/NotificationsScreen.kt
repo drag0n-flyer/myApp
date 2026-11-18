@@ -1,19 +1,22 @@
 package org.example.app.ui.settings
 
-import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.clickable
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import org.example.app.R
+import org.example.app.push.PushTransport
 
-/** [canUseFullScreenIntent] is `NotificationManager.canUseFullScreenIntent()` on Android 14 and later, true before. */
+/**
+ * [transport] is how push reaches this phone now: read only, it follows what the phone has, not a choice made here.
+ * [canUseFullScreenIntent] is `NotificationManager.canUseFullScreenIntent()` on Android 14 and later, true before.
+ */
 @Composable
 fun NotificationsScreen(
-    delivery: NotificationDelivery,
-    onDeliveryChange: (NotificationDelivery) -> Unit,
+    transport: PushTransport,
     canUseFullScreenIntent: Boolean,
     onOpenFullScreenSettings: () -> Unit,
     onBack: () -> Unit,
@@ -22,15 +25,17 @@ fun NotificationsScreen(
     SettingsPage(stringResource(R.string.settings_notifications), onBack, modifier) {
         item { SectionHeader(stringResource(R.string.notif_delivery)) }
         item {
-            RadioRow(stringResource(R.string.notif_google), stringResource(R.string.notif_google_subtitle), delivery == NotificationDelivery.Google) {
-                onDeliveryChange(NotificationDelivery.Google)
-            }
-        }
-        item {
-            RadioRow(
-                stringResource(R.string.notif_unifiedpush), stringResource(R.string.notif_unifiedpush_subtitle),
-                delivery == NotificationDelivery.UnifiedPush,
-            ) { onDeliveryChange(NotificationDelivery.UnifiedPush) }
+            val name = stringResource(
+                when (transport) {
+                    PushTransport.Fcm -> R.string.notif_google
+                    PushTransport.UnifiedPush -> R.string.notif_unifiedpush
+                    PushTransport.None -> R.string.notif_none
+                },
+            )
+            ListItem(
+                headlineContent = { Text(stringResource(R.string.notif_delivered_through)) },
+                trailingContent = { Text(name) },
+            )
         }
         if (!canUseFullScreenIntent) {
             item {

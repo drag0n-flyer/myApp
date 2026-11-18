@@ -24,6 +24,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import org.example.app.R
+import org.example.app.core.account.ConnectionStatus
 import org.example.app.core.chats.Contact
 import org.example.app.ui.usernameText
 import org.example.app.ui.Avatar
@@ -47,6 +48,7 @@ fun SettingsScreen(
     serverHost: String,
     linkedDevices: Int,
     onOpen: (SettingsPage) -> Unit,
+    onOpenProfile: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
@@ -56,7 +58,9 @@ fun SettingsScreen(
     ) { padding ->
         LazyColumn(Modifier.padding(padding)) {
             item {
+                val profile = stringResource(R.string.settings_profile)
                 ListItem(
+                    modifier = Modifier.fillMaxWidth().clickable(onClickLabel = profile, role = Role.Button, onClick = onOpenProfile),
                     leadingContent = { Avatar(me.displayName, size = 56.dp) },
                     headlineContent = { Text(me.displayName, style = MaterialTheme.typography.titleMedium) },
                     supportingContent = { Text(usernameText(me.username)) },
@@ -81,13 +85,20 @@ fun SettingsScreen(
 }
 
 @Composable
-fun ServerScreen(host: String, onBack: () -> Unit, modifier: Modifier = Modifier) {
+fun ServerScreen(host: String, onBack: () -> Unit, modifier: Modifier = Modifier, status: ConnectionStatus = ConnectionStatus.Connected) {
     SettingsPage(stringResource(R.string.settings_server), onBack, modifier) {
         item {
             ListItem(headlineContent = { Text(stringResource(R.string.server_address)) }, trailingContent = { Text(host) })
         }
         item {
-            ListItem(headlineContent = { Text(stringResource(R.string.server_status)) }, trailingContent = { Text(stringResource(R.string.server_connected)) })
+            val text = stringResource(
+                when (status) {
+                    ConnectionStatus.Connected -> R.string.server_connected
+                    ConnectionStatus.Connecting -> R.string.status_connecting
+                    ConnectionStatus.Offline -> R.string.status_offline
+                },
+            )
+            ListItem(headlineContent = { Text(stringResource(R.string.server_status)) }, trailingContent = { Text(text) })
         }
         item { FooterText(stringResource(R.string.server_footer)) }
     }

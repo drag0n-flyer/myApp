@@ -41,7 +41,7 @@ class ChatListScreenTest {
     private fun launch(store: SampleChatStore, network: NetworkType = NetworkType.Wifi) {
         val vm = ChatListViewModel(store, server, kotlinx.coroutines.flow.MutableStateFlow(org.example.app.core.settings.UserSettings()), network)
         rule.setContent {
-            AppTheme { ChatListScreen(vm, onOpenChat = { opened += it }, onOpenRequests = {}, onNewChat = {}) }
+            AppTheme { ChatListScreen(vm, onOpenChat = { opened += it }, onOpenRequests = {}, onNewChat = {}, onSearch = {}) }
         }
     }
 

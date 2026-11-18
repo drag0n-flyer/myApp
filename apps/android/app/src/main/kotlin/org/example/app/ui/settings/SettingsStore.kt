@@ -1,22 +1,86 @@
 package org.example.app.ui.settings
 
+import android.content.SharedPreferences
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
+import org.example.app.core.calls.DataMode
+import org.example.app.core.calls.ModePreference
+import org.example.app.core.settings.AutoDownloadSettings
+import org.example.app.core.settings.CallSettings
+import org.example.app.core.settings.DownloadScope
+import org.example.app.core.settings.IPHiding
+import org.example.app.core.settings.NoiseSuppression
 import org.example.app.core.settings.UserSettings
+import org.json.JSONObject
 
-/** Holds the user's settings in memory until the synced store exists. */
-class SettingsStore(initial: UserSettings = UserSettings()) {
-    private val state = MutableStateFlow(initial)
+/**
+ * The user's settings: loaded from [prefs] when made and saved on every [update], so they survive a restart. Stored
+ * data is read field by field: a missing key or a value this version does not know gives that field's value from
+ * [initial] and keeps the rest. Data that is not JSON at all gives [initial]. Without [prefs] (sample data, tests)
+ * the settings live in memory only.
+ */
+class SettingsStore(private val prefs: SharedPreferences? = null, initial: UserSettings = UserSettings()) {
+    private val state = MutableStateFlow(prefs?.let { load(it, initial) } ?: initial)
     val settings: StateFlow<UserSettings> = state.asStateFlow()
-    fun update(change: (UserSettings) -> UserSettings) = state.update(change)
 
-    private val deliveryState = MutableStateFlow(NotificationDelivery.Google)
-    /** Sample choice until the push settings are wired (the live push choice lives in :push). */
-    val delivery: StateFlow<NotificationDelivery> = deliveryState.asStateFlow()
-    fun setDelivery(value: NotificationDelivery) { deliveryState.value = value }
+    @Synchronized
+    fun update(change: (UserSettings) -> UserSettings) {
+        val next = change(state.value)
+        state.value = next
+        prefs?.let { save(it, next) }
+    }
+
+    /** Forgets everything stored and starts again from [initial]: the next account must not inherit these settings. */
+    @Synchronized
+    fun reset(initial: UserSettings) {
+        state.value = initial
+        prefs?.edit()?.remove(KEY)?.commit()
+    }
+
+    private companion object {
+        const val KEY = "settings"
+
+        fun load(prefs: SharedPreferences, initial: UserSettings): UserSettings? = try {
+            prefs.getString(KEY, null)?.let { decode(JSONObject(it), initial) }
+        } catch (_: Exception) {
+            null // not JSON, or the wrong type under the key
+        }
+
+        fun save(prefs: SharedPreferences, s: UserSettings) {
+            prefs.edit().putString(KEY, encode(s).toString()).apply()
+        }
+
+        fun encode(s: UserSettings) = JSONObject()
+            .put("callDataMode", when (val m = s.call.callDataMode) { ModePreference.Auto -> "Auto"; is ModePreference.Fixed -> m.mode.name })
+            .put("mobileDataLimit", s.call.mobileDataLimit.name)
+            .put("videoOffOnMobile", s.call.videoOffOnMobile)
+            .put("onWiFi", s.autoDownload.onWiFi.name)
+            .put("onMobile", s.autoDownload.onMobile.name)
+            .put("voiceAlways", s.autoDownload.voiceAlways)
+            .put("ipHiding", s.ipHiding.name)
+            .put("findByEmail", s.findByEmail)
+            .put("readReceipts", s.readReceipts)
+            .put("noiseSuppression", s.noiseSuppression.name)
+
+        fun decode(o: JSONObject, d: UserSettings): UserSettings {
+            fun bool(key: String, default: Boolean): Boolean = (if (o.has(key)) o.opt(key) else null) as? Boolean ?: default
+            fun text(key: String): String? = (if (o.has(key)) o.opt(key) else null) as? String
+            fun scope(key: String, default: DownloadScope) = text(key)?.let { v -> DownloadScope.entries.firstOrNull { it.name == v } } ?: default
+            fun mode(key: String, default: DataMode) = text(key)?.let { v -> DataMode.entries.firstOrNull { it.name == v } } ?: default
+            val callMode = text("callDataMode")?.let { v ->
+                if (v == "Auto") ModePreference.Auto else DataMode.entries.firstOrNull { it.name == v }?.let { ModePreference.Fixed(it) }
+            } ?: d.call.callDataMode
+            return d.copy(
+                call = CallSettings(callMode, mode("mobileDataLimit", d.call.mobileDataLimit), bool("videoOffOnMobile", d.call.videoOffOnMobile)),
+                autoDownload = AutoDownloadSettings(
+                    scope("onWiFi", d.autoDownload.onWiFi), scope("onMobile", d.autoDownload.onMobile), bool("voiceAlways", d.autoDownload.voiceAlways),
+                ),
+                ipHiding = text("ipHiding")?.let { v -> IPHiding.entries.firstOrNull { it.name == v } } ?: d.ipHiding,
+                findByEmail = bool("findByEmail", d.findByEmail),
+                readReceipts = bool("readReceipts", d.readReceipts),
+                noiseSuppression = text("noiseSuppression")?.let { v -> NoiseSuppression.entries.firstOrNull { it.name == v } } ?: d.noiseSuppression,
+            )
+        }
+    }
 }
-
-/** How push messages reach this phone. */
-enum class NotificationDelivery { Google, UnifiedPush }

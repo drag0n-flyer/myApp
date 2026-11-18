@@ -71,7 +71,13 @@
     <string name="more_options">More options</string>
     <string name="mark_all_read">Mark all as read</string>
     <string name="unread_badge">%1$d unread</string>
-    <string name="chat_list_empty">No chats here yet</string>
+    <string name="chat_list_empty">No chats yet</string>
+    <string name="status_connecting">Connecting…</string>
+    <string name="status_offline">No connection</string>
+    <string name="status_connected_to">Connected to %1$s</string>
+    <string name="search_action">Search</string>
+    <string name="search_hint">Search</string>
+    <string name="search_no_results">No results</string>
 
     <!-- Chat screen -->
     <string name="back">Back</string>
@@ -105,8 +111,6 @@
     <string name="info_title">Info</string>
     <string name="info_audio">Audio</string>
     <string name="info_video">Video</string>
-    <string name="info_mute">Mute</string>
-    <string name="info_unmute">Unmute</string>
     <string name="info_search">Search</string>
     <string name="info_media_files_links">Media, files and links</string>
     <string name="info_mismatch">The server\'s settings for this chat don\'t match the ones it started with. Sending is paused to keep your messages private.</string>
@@ -115,8 +119,6 @@
     <string name="info_members_unreadable">Can\'t check the devices in this chat right now, so the safety number is hidden.</string>
     <string name="verify_explainer">Compare these numbers with %1$s in person or over a call. If they match, mark the chat as verified.</string>
     <string name="verify_mark">Mark as verified</string>
-    <string name="info_disappearing">Disappearing messages</string>
-    <string name="info_off">Off</string>
     <string name="info_report">Report</string>
     <string name="info_block">Block %1$s</string>
     <string name="report_title">Report this chat?</string>
@@ -315,6 +317,15 @@
     <string name="settings_notifications">Notifications</string>
     <string name="settings_folders">Chat folders</string>
     <string name="settings_calls_audio">Calls &amp; Audio</string>
+    <string name="settings_profile">Profile</string>
+    <string name="profile_sign_out">Sign out</string>
+    <string name="profile_sign_out_confirm">Sign out of this device? Your messages on this device will be removed.</string>
+    <string name="profile_signing_out">Signing out</string>
+    <string name="profile_deleting">Deleting account</string>
+    <string name="profile_delete">Delete account</string>
+    <string name="profile_delete_title">Delete your account?</string>
+    <string name="profile_delete_confirm">Delete your account? Your messages on this device are erased and can\'t be recovered.</string>
+    <string name="profile_delete_footer">Deletes your account and your messages on this server. This can\'t be undone.</string>
     <string name="settings_licenses">Open-source licenses</string>
     <string name="licenses_title">Open-source licenses</string>
     <string name="licenses_load_failed">Couldn\'t load the licenses.</string>
@@ -324,15 +335,13 @@
     <!-- Privacy -->
     <string name="privacy_ip_title">Hide my IP address in calls</string>
     <string name="privacy_find_title">Who can find me</string>
-    <string name="privacy_find_username">By username</string>
     <string name="privacy_find_email">By email</string>
     <string name="privacy_messages">Messages</string>
     <string name="privacy_read_receipts">Read receipts</string>
     <string name="privacy_blocked">Blocked</string>
     <string name="privacy_blocked_empty">No one blocked</string>
-    <string name="disappear_1_day">1 day</string>
-    <string name="disappear_1_week">1 week</string>
-    <string name="disappear_4_weeks">4 weeks</string>
+    <string name="blocked_unblock">Unblock</string>
+    <string name="blocked_unblock_label">Unblock %1$s</string>
 
     <!-- Data and storage -->
     <string name="data_calls">Calls</string>
@@ -356,10 +365,10 @@
 
     <!-- Notifications -->
     <string name="notif_delivery">Notification delivery</string>
+    <string name="notif_delivered_through">Delivered through</string>
+    <string name="notif_none">No push service set up</string>
     <string name="notif_google">Google</string>
-    <string name="notif_google_subtitle">Works when Google Play services are on this phone</string>
     <string name="notif_unifiedpush">UnifiedPush</string>
-    <string name="notif_unifiedpush_subtitle">Use a push app you choose, no Google needed</string>
     <string name="notif_full_screen">Show incoming calls over the lock screen</string>
     <string name="notif_full_screen_subtitle">Allow it in your phone\'s settings so calls can fill the screen</string>
 

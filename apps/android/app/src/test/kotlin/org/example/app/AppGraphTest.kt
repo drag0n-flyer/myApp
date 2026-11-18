@@ -44,6 +44,7 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
@@ -72,7 +73,9 @@ import org.example.app.contracts.FakeMlsEngine
 import org.example.app.contracts.LiveSocket
 import org.example.app.contracts.SecretNames
 import org.example.app.contracts.ServerEvent
+import org.example.app.core.account.AccountError
 import org.example.app.core.account.AccountState
+import org.example.app.core.account.ConnectionStatus
 import org.example.app.core.account.SampleAccountService
 import org.example.app.core.chats.SampleChatStore
 import org.example.app.live.LivePlatform
@@ -458,6 +461,185 @@ class AppGraphTest {
         assertTrue(socket.running, "visible after the call")
         graph.setVisible(false)
         assertFalse(socket.running, "background after the call")
+    }
+
+    // ---- Connection status, account actions, settings (usable-app Task 4)
+
+    @Test
+    fun connectionStatusFollowsTheSocketAndTheNetwork() {
+        val (graph, _) = opened()
+        val wifi = Any()
+        assertEquals(ConnectionStatus.Connecting, graph.connectionStatus.value)
+        socket.states.value = ConnectionState.Connected
+        assertEquals(ConnectionStatus.Connected, graph.connectionStatus.value)
+        graph.onNetworkAvailable(wifi)
+        graph.onNetworkLost(wifi)
+        assertEquals(ConnectionStatus.Offline, graph.connectionStatus.value)
+        graph.onNetworkAvailable(wifi)
+        assertEquals(ConnectionStatus.Connected, graph.connectionStatus.value)
+        socket.states.value = ConnectionState.Disconnected
+        assertEquals(ConnectionStatus.Connecting, graph.connectionStatus.value)
+    }
+
+    @Test
+    fun switchingNetworksDoesNotFlipToNoConnection() {
+        val (graph, _) = opened()
+        val wifi = Any()
+        val mobile = Any()
+        socket.states.value = ConnectionState.Connected
+        graph.onNetworkAvailable(wifi)
+        graph.onNetworkAvailable(mobile) // mobile becomes the default first...
+        graph.onNetworkLost(wifi) // ...then the old one is reported lost
+        assertEquals(ConnectionStatus.Connected, graph.connectionStatus.value)
+        graph.onNetworkLost(mobile)
+        assertEquals(ConnectionStatus.Offline, graph.connectionStatus.value)
+    }
+
+    @Test
+    fun aReplacedOrEndedSessionIsOfflineNotConnectingForever() {
+        assertEquals(ConnectionStatus.Offline, statusOf(ConnectionState.Replaced, sessionGone = false, networkUp = true))
+        assertEquals(ConnectionStatus.Offline, statusOf(ConnectionState.Revoked, sessionGone = false, networkUp = true))
+        assertEquals(ConnectionStatus.Offline, statusOf(null, sessionGone = true, networkUp = true))
+        assertEquals(ConnectionStatus.Connecting, statusOf(ConnectionState.Disconnected, sessionGone = false, networkUp = true))
+        assertEquals(ConnectionStatus.Connecting, statusOf(null, sessionGone = false, networkUp = true), "still opening")
+        assertEquals(ConnectionStatus.Connected, statusOf(ConnectionState.Connected, sessionGone = false, networkUp = true))
+    }
+
+    @Test
+    fun anEndedSessionShowsOffline() = runBlocking {
+        val (graph, _) = opened()
+        socket.states.value = ConnectionState.Connected
+        graph.wipeAfterRevocation()
+        assertEquals(ConnectionStatus.Offline, graph.connectionStatus.value)
+    }
+
+    @Test
+    fun sampleDataIsAlwaysConnected() {
+        val graph = AppGraph(context, sampleData = true, scope = scope, platform = platform())
+        assertEquals(ConnectionStatus.Connected, graph.connectionStatus.value)
+        val n = Any()
+        graph.onNetworkAvailable(n)
+        graph.onNetworkLost(n)
+        assertEquals(ConnectionStatus.Connected, graph.connectionStatus.value)
+    }
+
+    @Test
+    fun aFullWipeResetsTheSettingsForTheNextAccount() = runBlocking {
+        val (graph, _) = opened()
+        graph.settingsStore.update { it.copy(readReceipts = false, findByEmail = true) }
+        val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+        assertEquals(false, org.example.app.ui.settings.SettingsStore(prefs).settings.value.readReceipts, "saved")
+        graph.wipeAfterRevocation()
+        assertEquals(true, graph.settingsStore.settings.value.readReceipts)
+        assertEquals(false, graph.settingsStore.settings.value.findByEmail)
+        assertEquals(org.example.app.core.settings.UserSettings(), org.example.app.ui.settings.SettingsStore(prefs).settings.value)
+    }
+
+    @Test
+    fun settingsAreResetOnSignOutAndDeleteToo() = runBlocking {
+        val (graph, _) = opened()
+        graph.settingsStore.update { it.copy(readReceipts = false) }
+        answer = { r -> if (r.method == "DELETE" && r.url.encodedPath == "/v1/me") 204 to "" else null }
+        graph.deleteAccount()
+        assertEquals(true, graph.settingsStore.settings.value.readReceipts)
+        val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+        assertEquals(null, prefs.getString("settings", null))
+    }
+
+    @Test
+    fun aNotificationForAChatThatDoesNotExistIsDropped() {
+        val graph = AppGraph(context, sampleData = true, scope = scope, platform = platform())
+        assertEquals("chat-riya", graph.openableChat("chat-riya"))
+        assertNull(graph.openableChat("someone-elses-id"))
+        assertNull(graph.openableChat(""))
+        assertNull(graph.openableChat(null))
+    }
+
+    @Test
+    fun aNotificationForAMessageRequestOpens() {
+        val graph = AppGraph(context, sampleData = true, scope = scope, platform = platform())
+        val request = graph.chatStore.requests.value.first().id
+        assertEquals(request, graph.openableChat(request))
+    }
+
+    @Test
+    fun signOutWithNoConnectionSaysSoAndKeepsEverything() = runBlocking {
+        val (graph, session) = opened() // every request fails: offline
+        val ends = graph.sessionEnds.value
+        assertFailsWith<AccountError.Network> { graph.signOut() }
+        assertTrue(db.exists(), "database kept")
+        assertTrue(File(root, "mls/state").exists())
+        assertTrue(File(root, "media/blob.enc").exists())
+        assertTrue(vault.key != null, "Keystore key kept")
+        assertFalse(marker.exists(), "no wipe was started")
+        assertSame(session, graph.liveSession)
+        assertEquals(AccountState.SignedIn, graph.accountState)
+        assertEquals(ends, graph.sessionEnds.value, "no return to onboarding")
+    }
+
+    @Test
+    fun deleteAccountWithNoConnectionSaysSoAndKeepsEverything() = runBlocking {
+        val (graph, session) = opened()
+        val ends = graph.sessionEnds.value
+        assertFailsWith<AccountError.Network> { graph.deleteAccount() }
+        assertTrue(db.exists())
+        assertTrue(vault.key != null)
+        assertFalse(marker.exists())
+        assertSame(session, graph.liveSession)
+        assertEquals(AccountState.SignedIn, graph.accountState)
+        assertEquals(ends, graph.sessionEnds.value)
+    }
+
+    @Test
+    fun aServerErrorOnSignOutKeepsEverythingToo() = runBlocking {
+        val (graph, _) = opened()
+        answer = { r -> if (r.url.encodedPath == "/v1/devices") 500 to """{"error":{"code":"internal"}}""" else null }
+        assertFailsWith<AccountError.Server> { graph.signOut() }
+        assertTrue(db.exists())
+        assertTrue(vault.key != null)
+    }
+
+    @Test
+    fun signOutRevokesThisDeviceThenWipesAndReturnsToOnboarding() = runBlocking {
+        val (graph, _) = opened()
+        val ends = graph.sessionEnds.value
+        val seen = mutableListOf<String>()
+        answer = { r ->
+            seen += "${r.method} ${r.url.encodedPath}"
+            when {
+                r.method == "GET" && r.url.encodedPath == "/v1/devices" -> 200 to
+                    """{"devices":[{"id":"dev-0","name":"Other","platform":"ios","createdAt":"2026-01-01T00:00:00Z","current":false},""" +
+                    """{"id":"dev-1","name":"Test phone","platform":"android","createdAt":"2026-01-01T00:00:00Z","current":true}]}"""
+                r.method == "DELETE" && r.url.encodedPath == "/v1/devices/dev-1" -> 204 to ""
+                else -> null
+            }
+        }
+        graph.signOut()
+        assertEquals(listOf("GET /v1/devices", "DELETE /v1/devices/dev-1"), seen.filter { "/v1/devices" in it })
+        assertAllGone()
+        assertEquals(AccountState.SignedOut, graph.accountState)
+        assertTrue(graph.sessionEnds.value > ends)
+    }
+
+    @Test
+    fun deleteAccountWipesOnlyAfterTheServerDeletedIt() = runBlocking {
+        val (graph, _) = opened()
+        val ends = graph.sessionEnds.value
+        answer = { r -> if (r.method == "DELETE" && r.url.encodedPath == "/v1/me") 204 to "" else null }
+        graph.deleteAccount()
+        assertAllGone()
+        assertEquals(AccountState.SignedOut, graph.accountState)
+        assertTrue(graph.sessionEnds.value > ends)
+    }
+
+    @Test
+    fun liveSettingsSurviveARestart() {
+        context.getSharedPreferences("settings", Context.MODE_PRIVATE).edit().clear().commit()
+        val store = AppGraph(context, sampleData = false, scope = scope, platform = platform()).settingsStore
+        store.update { it.copy(readReceipts = false) }
+        assertEquals(false, AppGraph(context, sampleData = false, scope = scope, platform = platform()).settingsStore.settings.value.readReceipts)
+        assertEquals(true, AppGraph(context, sampleData = true, scope = scope, platform = platform()).settingsStore.settings.value.readReceipts, "sample data stays in memory")
+        context.getSharedPreferences("settings", Context.MODE_PRIVATE).edit().clear().commit()
     }
 
     // ---- Calls end with the session (sign-out, wipe)
