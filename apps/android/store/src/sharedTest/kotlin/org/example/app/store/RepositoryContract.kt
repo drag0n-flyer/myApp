@@ -171,6 +171,14 @@ abstract class RepositoryContract {
         assertTrue(repo.search("charlie", 10).isEmpty())
     }
 
+    @Test fun r1AnEditAddsChangesAndRemovesACaption() {
+        repo.insertMessage(message("m1", "").copy(caption = null))
+        assertTrue(repo.applyEdit("m1", "alice", byteArrayOf(1), "added", 5, "added", null))
+        assertEquals("added", repo.message("m1")!!.caption)
+        assertTrue(repo.applyEdit("m1", "alice", byteArrayOf(2), "", 6, null, null))
+        assertEquals(null, repo.message("m1")!!.caption)
+    }
+
     @Test fun anUnsentEnvelopeCanBeReplacedButASentOneCannot() {
         repo.insertMessage(message("m1", "x").copy(status = "sending"))
         assertTrue(repo.replaceUnsentEnvelope("m1", "alice", byteArrayOf(7), "f", 5))

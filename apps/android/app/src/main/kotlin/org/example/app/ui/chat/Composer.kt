@@ -78,6 +78,8 @@ fun Composer(
     /** The preview made for the first link of the text, shown above the field with a remove control. */
     preview: org.example.app.core.chats.LinkPreviewCard? = null,
     onRemovePreview: () -> Unit = {},
+    /** True while a photo's or file's caption is being edited: sending nothing then removes the caption. */
+    allowBlankSend: Boolean = false,
 ) {
     val haptic = LocalHapticFeedback.current
     val recordingPhase = (voice.state as? CaptureState.Recording)?.phase
@@ -151,7 +153,7 @@ fun Composer(
                     modifier = Modifier.weight(1f),
                 )
             }
-            if (text.isNotBlank()) {
+            if (text.isNotBlank() || allowBlankSend) {
                 IconButton(onClick = { onSend(text) }, enabled = enabled) {
                     Icon(painterResource(R.drawable.ic_send), contentDescription = stringResource(R.string.send))
                 }

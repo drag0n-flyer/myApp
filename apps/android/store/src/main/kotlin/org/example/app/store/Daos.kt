@@ -96,8 +96,8 @@ interface MessageDao {
     @Query("UPDATE messages SET status = :status WHERE id IN (:ids)") fun forceStatus(ids: List<String>, status: String)
     @Query(
         "UPDATE messages SET envelope = :envelope, folded = :folded, edited_at = :at, " +
-            "caption = CASE WHEN caption IS NULL THEN NULL ELSE :caption END, " +
-            "link_preview = CASE WHEN link_preview IS NULL THEN NULL ELSE :linkPreview END " +
+            "caption = :caption, " +
+            "link_preview = :linkPreview " +
             "WHERE id = :id AND sender_account = :sender AND deleted = 0",
     )
     fun applyEdit(id: String, sender: String, envelope: ByteArray, folded: String, at: Long, caption: String?, linkPreview: String?): Int

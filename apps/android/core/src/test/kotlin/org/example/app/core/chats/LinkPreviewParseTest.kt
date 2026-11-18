@@ -55,8 +55,19 @@ class LinkPreviewParseTest {
         assertEquals("abcde", parse("<meta property=\"og:title\" content=\"a‮b​c\u0007d⁦e\">")!!.title)
     }
 
-    @Test fun lineAndParagraphSeparatorsBecomeASpace() {
-        assertEquals("a b c", parse("<title>a b c</title>")!!.title)
+    @Test fun emojiJoinersAreKept() {
+        val family = "\uD83D\uDC68\u200D\uD83D\uDC69\u200D\uD83D\uDC67"
+        assertEquals(family, LinkPreviewParse.sanitize(family, 200))
+        assertEquals("\u0645\u200C\u0645", LinkPreviewParse.sanitize("\u0645\u200C\u0645", 200))
+    }
+
+    @Test fun r6LineSeparatorsAndBlankLookingCharactersAreStripped() {
+        assertEquals("abc", parse("<title>a\u2028b\u2029c</title>")!!.title)
+        for (blank in listOf("\u2028", "\u2029", "\u3164", "\u115F", "\u1160", "\uFFA0", "\u2800")) {
+            assertEquals("ab", LinkPreviewParse.sanitize("a${blank}b", 200), blank)
+            assertNull(LinkPreviewParse.sanitize(blank + blank, 200), blank)
+            assertNull(parse("<title>$blank</title>"), "a title blank after cleaning gives no preview: $blank")
+        }
     }
 
     @Test fun aTitleOf500CharactersIsCutTo200CodePoints() {

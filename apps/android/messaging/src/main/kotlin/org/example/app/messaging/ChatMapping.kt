@@ -75,9 +75,9 @@ internal object ChatMapping {
         }
         val content = when (val e = ContentCodec.decode(record.envelope)) {
             is ContentEnvelope.Text -> MessageContent.Text(e.t, e.lp?.let { LinkPreviewCard(it.url, it.title, it.desc, it.img) })
-            is ContentEnvelope.Photo -> MessageContent.Photo(e.a.sz, e.c)
+            is ContentEnvelope.Photo -> MessageContent.Photo(e.a.sz, e.c?.takeIf { it.isNotEmpty() })
             is ContentEnvelope.Voice -> MessageContent.Voice(e.dur)
-            is ContentEnvelope.File -> MessageContent.File(e.name, e.a.sz, e.mime, e.c)
+            is ContentEnvelope.File -> MessageContent.File(e.name, e.a.sz, e.mime, e.c?.takeIf { it.isNotEmpty() })
             else -> MessageContent.Unsupported // control kinds are never stored as messages
         }
         message = message.copy(content = content)

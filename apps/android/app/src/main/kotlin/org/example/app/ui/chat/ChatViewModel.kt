@@ -267,8 +267,16 @@ class ChatViewModel(
         val m = current(messageId) ?: return false
         if (!MessageActions.stillApplies(MessageAction.Edit, m, mine(m))) return false
         val clean = TextLimit.truncate(text).trim()
-        if (clean.isEmpty()) return false
-        if ((m.content as? MessageContent.Text)?.text == clean) return true
+        val attachment = m.content is MessageContent.Photo || m.content is MessageContent.File
+        // A text message cannot be edited to nothing; an attachment's blank edit removes its caption.
+        if (clean.isEmpty() && !attachment) return false
+        val unchanged = when (val c = m.content) {
+            is MessageContent.Text -> c.text == clean
+            is MessageContent.Photo -> c.caption.orEmpty() == clean
+            is MessageContent.File -> c.caption.orEmpty() == clean
+            else -> false
+        }
+        if (unchanged) return true
         store.edit(messageId, chatId, clean)
         reloadAfterWrite(messageId)
         return true

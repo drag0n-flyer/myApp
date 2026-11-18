@@ -65,6 +65,7 @@ class LinkPreviewRuleTest {
             "127.0.0.1", "10.0.0.1", "169.254.169.254", "8.8.8.8", "[::1]", "::1", "[2606:2800:220:1::1]",
             "2130706433", "0x7f.0.0.1", "127.1", "1.2.3", "01.2.3.4",
             "localhost", "foo.localhost", "printer.local", "db.internal", "a.b.internal", "LOCALHOST", "nas.local.",
+            "router.home.arpa", "home.arpa", "x.y.home.arpa.", "host.localdomain",
             "", ".", "example", "-a.example", "a-.example", "a..example", "exa mple.org", "exämple.org", "a_b.example",
             "a".repeat(64) + ".example", ("a.".repeat(130)) + "example",
         )
@@ -99,6 +100,7 @@ class LinkPreviewRuleTest {
             "2002:7f00:1::1", "2002:c0a8:101::1", // 6to4 carrying a refused IPv4
             "::7f00:1", // IPv4-compatible
             "2001:db8::1", "2001::1",
+            "64:ff9b:1::1", "64:ff9b:1:ffff::1", "100::1", "100::ffff", "::2",
         )
         for (a in refused) assertFalse(LinkPreviewRule.allowedHost("example.org", listOf(ip(a))), a)
     }
@@ -200,5 +202,28 @@ class LinkPreviewRuleTest {
         assertNull(LinkPreviewRule.cardFor(text, LinkPreviewCard(text, emoji.repeat(201))))
         assertNull(LinkPreviewRule.cardFor(text, LinkPreviewCard(text, "T", emoji.repeat(301))))
         assertEquals(true, LinkPreviewRule.cardFor(text, LinkPreviewCard(text, "T", null, ByteArray(8_192).also { it[0] = -1; it[1] = -40 })) != null)
+    }
+
+    @Test fun r5OnlyTheGlobalUnicastBlockIsPublicForIPv6() {
+        for (a in listOf("2000::1", "2a00:1450:4001:81b::200e", "3ffe::1")) assertTrue(LinkPreviewRule.allowedHost("example.org", listOf(ip(a))), a)
+        for (a in listOf("1000::1", "4000::1", "8000::1", "c000::1", "e000::1", "0100::1", "0200::1", "6000::1")) {
+            assertFalse(LinkPreviewRule.allowedHost("example.org", listOf(ip(a))), a)
+        }
+    }
+
+    @Test fun r5HostCharsetIsLowerCaseLettersDigitsDotsAndHyphensOnly() {
+        for (h in listOf("a_b.example", "ex\u00E4mple.org", "\u4F8B\u3048.jp", "a b.example", "a%41.example", "a@b.example", "a:b.example", "a/b.example", "a\\b.example")) {
+            assertFalse(LinkPreviewRule.hostNameAllowed(h), h)
+        }
+        assertTrue(LinkPreviewRule.hostNameAllowed("MiXeD-Case.Example.ORG"))
+    }
+
+    @Test fun r6ACardWhoseTitleIsInvisibleAfterCleaningIsRefused() {
+        val url = "https://example.org/a"
+        for (title in listOf("\u3164", "\u115F\u1160", "\uFFA0", "\u2800", "\u2028\u2029", "\u200B\u202E")) {
+            assertNull(LinkPreviewRule.cardFor(url, LinkPreviewCard(url, title)), title)
+        }
+        assertNull(LinkPreviewRule.cardFor(url, LinkPreviewCard(url, "T\u202E")), "a title that cleaning would change is refused")
+        assertNull(LinkPreviewRule.cardFor(url, LinkPreviewCard(url, "T", "d\u2800")))
     }
 }

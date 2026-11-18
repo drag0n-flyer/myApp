@@ -15,8 +15,7 @@ import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import org.example.app.contracts.CallSignalPayload
 import org.example.app.core.chats.LinkPreviewParse
-import org.example.app.core.chats.LinkPreviewRule
-import org.example.app.core.chats.LinkPreviewParse
+import org.example.app.core.chats.ImageHeader
 import org.example.app.core.chats.LinkPreviewRule
 import org.example.app.core.people.Expiry
 import org.example.app.core.people.TimerChoice
@@ -182,18 +181,29 @@ object ContentCodec {
     private fun ttl(o: JsonObject): Int? = o["ttl"].long()?.takeIf { it in 1..Expiry.MAX_TTL_SECONDS }?.toInt()
 
     /** A caption longer than a text message is cut to the same limit. */
-    private fun caption(o: JsonObject): String? = o["c"].str()?.let { TextLimit.truncate(it) }
+    private fun caption(o: JsonObject): String? = o["c"].str()?.let { TextLimit.truncate(it) }?.takeIf { it.isNotBlank() }
 
     // Lengths: title and description count code points; a caption uses the same grapheme limit as a text message
     // ([TextLimit], applied by `caption` on receive and refused over it on send).
     private const val PHOTO_MAX = 24_576
     private const val PREVIEW_IMAGE_MAX = 8_192
+    private const val PREVIEW_IMAGE_SIDE = 1_024
     private const val TITLE_MAX = 200
     private const val DESC_MAX = 300
 
     private fun jpeg(b64: String, max: Int): ByteArray? {
         val bytes = try { Base64.getDecoder().decode(b64) } catch (_: IllegalArgumentException) { return null }
         return bytes.takeIf { it.size in 2..max && it[0] == 0xFF.toByte() && it[1] == 0xD8.toByte() }
+    }
+
+    /**
+     * A received preview picture: a JPEG of at most 8 KiB. When its header declares a size, that is at most 1,024 x 1,024
+     * (read before any decode); one whose size cannot be read is kept as bytes but the screen never decodes it.
+     */
+    private fun previewJpeg(b64: String): ByteArray? {
+        val bytes = jpeg(b64, PREVIEW_IMAGE_MAX) ?: return null
+        val info = ImageHeader.read(bytes) ?: return bytes
+        return bytes.takeIf { info.format == ImageHeader.Format.Jpeg && info.width <= PREVIEW_IMAGE_SIDE && info.height <= PREVIEW_IMAGE_SIDE }
     }
 
     /** The whole profile is invalid (null) when the name, photo or version is. */
@@ -219,7 +229,7 @@ object ContentCodec {
             LinkPreviewParse.sanitize(raw, DESC_MAX)
         }
         val imgEl = o["img"]
-        val img = if (imgEl == null || imgEl is JsonNull) null else jpeg(imgEl.str() ?: return null, PREVIEW_IMAGE_MAX) ?: return null
+        val img = if (imgEl == null || imgEl is JsonNull) null else previewJpeg(imgEl.str() ?: return null) ?: return null
         return LinkPreview(url, title, desc, img)
     }
 

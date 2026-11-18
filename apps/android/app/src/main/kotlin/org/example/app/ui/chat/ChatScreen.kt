@@ -316,8 +316,9 @@ fun ChatScreen(
         if (m == null || !MessageActions.stillApplies(action, m, m.senderId == myId)) return
         val body = when (val c = m.content) {
             is MessageContent.Text -> c.text
-            is MessageContent.Photo -> c.caption
-            is MessageContent.File -> c.caption
+            // An attachment with no caption still edits (to add one): the field starts empty.
+            is MessageContent.Photo -> c.caption.orEmpty()
+            is MessageContent.File -> c.caption.orEmpty()
             else -> null
         }
         when (action) {
@@ -387,6 +388,7 @@ fun ChatScreen(
                     enabled = !state.sendingPaused,
                     preview = composerPreview.card,
                     onRemovePreview = composerPreview::remove,
+                    allowBlankSend = editing?.let { id -> byId[id]?.content.let { it is MessageContent.Photo || it is MessageContent.File } } == true,
                     text = text,
                     onTextChange = { text = it; if (editing == null) viewModel.setDraft(it) },
                     onSend = { sent ->

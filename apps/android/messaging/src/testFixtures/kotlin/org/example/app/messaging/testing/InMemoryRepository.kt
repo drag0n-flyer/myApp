@@ -241,7 +241,7 @@ class InMemoryRepository : Repository {
         else {
             s.messages[id] = m.copy(
                 envelope = envelope, folded = folded, editedAt = at,
-                caption = if (m.caption == null) null else caption, linkPreview = if (m.linkPreview == null) null else linkPreview,
+                caption = caption, linkPreview = linkPreview,
             )
             true
         }

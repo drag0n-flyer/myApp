@@ -10,6 +10,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.example.app.core.chats.LinkPreviewCard
 import org.example.app.core.chats.LinkPreviewRule
@@ -21,7 +22,11 @@ class LinkPreviewFetcherTest {
     private val jpeg = byteArrayOf(-1, -40, 9, 9)
 
     private fun html(body: ByteArray = page) = PreviewResponse(200, null, "text/html; charset=utf-8", body.size.toLong(), body, false)
-    private fun image() = PreviewResponse(200, null, "image/png", 5, byteArrayOf(1, 2, 3, 4, 5), false)
+    private val pngBytes = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0, 0, 0, 16, 0, 0, 0, 16, 8, 6, 0, 0, 0)
+    private fun pngOf(w: Int, h: Int) = pngBytes.copyOf().also {
+        for (k in 0..3) { it[16 + k] = (w shr (24 - 8 * k)).toByte(); it[20 + k] = (h shr (24 - 8 * k)).toByte() }
+    }
+    private fun image() = PreviewResponse(200, null, "image/png", pngBytes.size.toLong(), pngBytes, false)
     private fun redirect(to: String, status: Int = 302) = PreviewResponse(status, to, null, null, null, false)
 
     private class Rig(val handler: (String) -> PreviewResponse) {
@@ -72,7 +77,7 @@ class LinkPreviewFetcherTest {
         assertContentEquals(byteArrayOf(-1, -40, 9, 9), card.image)
         assertEquals(listOf("https://example.org/a", "https://cdn.example.net/i.png"), rig.requests)
         assertEquals(listOf(listOf("93.184.216.34"), listOf("93.184.216.40")), rig.pinned, "it connects only to the addresses it checked")
-        assertContentEquals(byteArrayOf(1, 2, 3, 4, 5), rig.shrinkInputs.single())
+        assertContentEquals(pngBytes, rig.shrinkInputs.single())
     }
 
     // Refused before any request: nothing is sent
@@ -242,6 +247,8 @@ class LinkPreviewFetcherTest {
             PreviewResponse(200, null, "image/png", 10_000_000, null, true),
             PreviewResponse(200, null, "text/html", 5, byteArrayOf(1), false),
             PreviewResponse(200, null, null, 5, byteArrayOf(1), false),
+            PreviewResponse(200, null, "image/png", 60, "<svg xmlns='http://www.w3.org/2000/svg' width='9' height='9'/>".encodeToByteArray(), false),
+            PreviewResponse(200, null, "image/png", 12, "<html></html>".encodeToByteArray(), false),
             PreviewResponse(404, null, "image/png", 5, byteArrayOf(1), false),
             PreviewResponse(200, null, "image/png", 600_000, byteArrayOf(1), false),
         )) {
@@ -298,8 +305,8 @@ class LinkPreviewFetcherTest {
         } finally {
             executor.shutdown()
         }
-        assertEquals(listOf("caller-main"), callers)
-        assertTrue(others.any { it.startsWith("shrink:") } && others.none { it.endsWith("caller-main") }, others.toString())
+        assertTrue(callers.single().startsWith("caller-main"))
+        assertTrue(others.any { it.startsWith("shrink:") } && others.none { it.contains("caller-main") }, others.toString())
     }
 
     @Test fun aLookupThatBlocksIsAbandonedAtTheDeadline() {
@@ -317,5 +324,48 @@ class LinkPreviewFetcherTest {
             release.countDown()
         }
         assertTrue((System.nanoTime() - started) / 1_000_000 < 3_000, "returned at the deadline, not when the lookup ended")
+    }
+
+    @Test fun r4AnImageIsDecidedFromItsBytesNotItsContentType() {
+        // PNG bytes under an odd or missing type are still a PNG; HTML or SVG bytes under an image type are not.
+        for (type in listOf("application/octet-stream", null, "text/plain")) {
+            val rig = Rig { url -> if (url.endsWith("/i.png")) PreviewResponse(200, null, type, pngBytes.size.toLong(), pngBytes, false) else html() }
+            assertNotNull(assertNotNull(rig.fetch("https://example.org/a")).image, type.toString())
+        }
+    }
+
+    @Test fun r4ADeclaredSizeOverFourMillionPixelsIsDroppedBeforeTheShrinkerSeesIt() {
+        for ((w, h, ok) in listOf(Triple(2_000, 2_000, true), Triple(2_001, 2_000, false), Triple(65_535, 65_535, false), Triple(1, 4_000_000, true), Triple(1, 4_000_001, false))) {
+            val body = pngOf(w, h)
+            val rig = Rig { url -> if (url.endsWith("/i.png")) PreviewResponse(200, null, "image/png", body.size.toLong(), body, false) else html() }
+            val card = assertNotNull(rig.fetch("https://example.org/a"))
+            assertEquals(ok, card.image != null, "${w}x$h")
+            assertEquals(if (ok) 1 else 0, rig.shrinkInputs.size, "${w}x$h")
+        }
+    }
+
+    @Test fun r8AFetchInFlightIsCancelledWhenItsCallerIsCancelled() {
+        val started = java.util.concurrent.CountDownLatch(1)
+        val cancelled = java.util.concurrent.CountDownLatch(1)
+        val fetcher = LinkPreviewFetcher(
+            resolver = { listOf(InetAddress.getByName("93.184.216.34")) },
+            transport = { _, _, _, _, _, _ ->
+                started.countDown()
+                try { kotlinx.coroutines.awaitCancellation() } finally { cancelled.countDown() }
+            },
+            shrinker = { null },
+        )
+        runBlocking {
+            val job = launch(kotlinx.coroutines.Dispatchers.Default) { fetcher.fetch("https://example.org/a") }
+            assertTrue(started.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            job.cancel()
+            job.join()
+        }
+        assertTrue(cancelled.await(5, java.util.concurrent.TimeUnit.SECONDS), "the request was cancelled with its caller")
+    }
+
+    @Test fun r5APageWithoutAContentTypeIsRefused() {
+        assertNull(Rig { PreviewResponse(200, null, null, 10, page, false) }.fetch("https://example.org/a"))
+        assertNull(Rig { PreviewResponse(200, null, "", 10, page, false) }.fetch("https://example.org/a"))
     }
 }

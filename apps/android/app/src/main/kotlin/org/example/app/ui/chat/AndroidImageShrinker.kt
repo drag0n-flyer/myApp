@@ -13,19 +13,11 @@ import org.example.app.net.preview.ImageShrinker
 class AndroidImageShrinker : ImageShrinker {
     companion object {
         const val MAX_BYTES = 8_192
-        /**
-         * Declared size above which a picture is not decoded at all. JPEG is decoded at a reduced size (`inSampleSize`)
-         * without building the whole picture, so it may declare up to 25 million pixels; every other format (PNG, WebP,
-         * GIF) is decoded in full first, so it is held to 4 million.
-         */
-        private const val MAX_JPEG_PIXELS = 25_000_000L
-        private const val MAX_OTHER_PIXELS = 4_000_000L
+        /** Declared size above which a picture is not decoded at all, for every format. */
+        private const val MAX_PIXELS = 4_000_000L
 
-        internal fun pixelsAllowed(mime: String?, width: Int, height: Int): Boolean {
-            if (width <= 0 || height <= 0) return false
-            val cap = if (mime.equals("image/jpeg", ignoreCase = true)) MAX_JPEG_PIXELS else MAX_OTHER_PIXELS
-            return width.toLong() * height <= cap
-        }
+        internal fun pixelsAllowed(@Suppress("UNUSED_PARAMETER") mime: String?, width: Int, height: Int): Boolean =
+            width > 0 && height > 0 && width.toLong() * height <= MAX_PIXELS
         private const val DECODE_SIDE = 512
         private val SIDES = listOf(128, 96, 64, 48)
         private val QUALITIES = listOf(70, 55, 40, 25)

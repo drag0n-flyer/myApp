@@ -28,6 +28,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalUriHandler
@@ -42,6 +43,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import org.example.app.R
+import org.example.app.core.chats.ImageHeader
 import org.example.app.core.chats.LinkPreviewCard
 import org.example.app.core.chats.LinkPreviewMaker
 import org.example.app.core.chats.LinkPreviewRule
@@ -144,11 +146,22 @@ fun LinkPreviewCardView(card: LinkPreviewCard, modifier: Modifier = Modifier, on
     }
 }
 
-/** A preview picture is at most 8 KiB, but a hostile one could declare a huge size: anything over 1024 pixels a side is not decoded. */
-private fun decodeSmallJpeg(bytes: ByteArray) = try {
-    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-    if (bounds.outWidth in 1..1024 && bounds.outHeight in 1..1024) BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() else null
-} catch (_: Throwable) {
-    null
+/** Decoded once per picture, however often a bubble is composed. */
+private val decodedPictures = PreviewImageCache<ImageBitmap>(32)
+
+/**
+ * A preview picture is a JPEG of at most 8 KiB. Its declared size is read from its own header first; anything over
+ * 1,024 x 1,024 (or not a JPEG at all) is never handed to the decoder.
+ */
+private fun decodeSmallJpeg(bytes: ByteArray): ImageBitmap? = decodedPictures.get(bytes) { b ->
+    try {
+        val info = ImageHeader.read(b)
+        if (info != null && info.format == ImageHeader.Format.Jpeg && info.width <= 1024 && info.height <= 1024) {
+            BitmapFactory.decodeByteArray(b, 0, b.size)?.asImageBitmap()
+        } else {
+            null
+        }
+    } catch (_: Throwable) {
+        null
+    }
 }

@@ -167,4 +167,27 @@ class LinkPreviewUiTest {
         rule.setContent { AppTheme { ChatScreen(vm, myId = "me", onBack = {}, onOpenInfo = {}, onCall = null) } }
         rule.onNodeWithText("Harbour guide").assertIsDisplayed()
     }
+
+    @Test fun r8AFetchInFlightIsCancelledWhenTheChatScreenLeavesComposition() {
+        val started = java.util.concurrent.CountDownLatch(1)
+        var cancelled = false
+        val maker = LinkPreviewMaker {
+            started.countDown()
+            try { kotlinx.coroutines.awaitCancellation() } finally { cancelled = true }
+        }
+        val shown = androidx.compose.runtime.mutableStateOf(true)
+        rule.setContent {
+            CompositionLocalProvider(LocalLinkPreviews provides support(maker, on = true)) {
+                if (shown.value) rememberComposerPreview("see https://example.org/harbour", editing = false)
+            }
+        }
+        rule.mainClock.advanceTimeBy(2_000)
+        rule.waitForIdle()
+        assertTrue(started.await(5, java.util.concurrent.TimeUnit.SECONDS))
+        // The screen goes away (back, or the app-lock cover replaces the navigation host).
+        shown.value = false
+        rule.waitForIdle()
+        rule.waitUntil(5_000) { cancelled }
+        assertTrue(cancelled)
+    }
 }

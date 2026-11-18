@@ -27,8 +27,21 @@ class MessageActionsTest {
         assertEquals(listOf(Reply, React, Copy, Edit, Delete), MessageActions.available(m(file), isMine = true))
     }
 
-    @Test fun aPhotoWithoutACaptionHasNoCopyOrEdit() =
-        assertEquals(listOf(Reply, React, Delete), MessageActions.available(m(photo), isMine = true))
+    @Test fun r1APhotoWithoutACaptionOffersEditToItsSenderToAddOneButNoCopy() {
+        assertEquals(listOf(Reply, React, Edit, Delete), MessageActions.available(m(photo), isMine = true))
+        assertEquals(listOf(Reply, React), MessageActions.available(m(photo), isMine = false))
+        val file = MessageContent.File("a.pdf", 5, "application/pdf")
+        assertEquals(listOf(Reply, React, Edit, Delete), MessageActions.available(m(file), isMine = true))
+    }
+
+    @Test fun r1AnEmptyCaptionIsNoCaption() {
+        val empty = MessageContent.Photo(1000, "")
+        assertEquals(listOf(Reply, React, Edit, Delete), MessageActions.available(m(empty), isMine = true))
+        assertEquals(listOf(Reply, React), MessageActions.available(m(empty), isMine = false))
+    }
+
+    @Test fun aVoiceMessageIsNeverEditable() =
+        assertEquals(listOf(Reply, React, Delete), MessageActions.available(m(MessageContent.Voice(3.0)), isMine = true))
 
     @Test fun ownTextHasEverything() =
         assertEquals(listOf(Reply, React, Copy, Forward, Edit, Delete), MessageActions.available(m(text), isMine = true))
@@ -36,7 +49,6 @@ class MessageActionsTest {
     @Test fun othersTextCannotBeEditedOrDeleted() =
         assertEquals(listOf(Reply, React, Copy, Forward), MessageActions.available(m(text), isMine = false))
 
-    @Test fun ownPhoto() = assertEquals(listOf(Reply, React, Delete), MessageActions.available(m(photo), isMine = true))
 
     @Test fun othersPhoto() = assertEquals(listOf(Reply, React), MessageActions.available(m(photo), isMine = false))
 

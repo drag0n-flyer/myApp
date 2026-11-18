@@ -42,6 +42,9 @@ object LinkPreviewRule {
      */
     fun cardFor(text: String, card: LinkPreviewCard): LinkPreviewCard? {
         if (checkUrl(card.url) == null || card.url !in text) return null
+        // A card the cleaner would change, or whose title is nothing after cleaning, is hostile or broken: refuse it.
+        if (LinkPreviewParse.sanitize(card.title, TITLE_MAX) != card.title) return null
+        if (card.desc != null && LinkPreviewParse.sanitize(card.desc, DESC_MAX) != card.desc) return null
         if (card.title.isBlank() || card.title.codePointCount(0, card.title.length) > TITLE_MAX) return null
         if (card.desc != null && card.desc.codePointCount(0, card.desc.length) > DESC_MAX) return null
         val img = card.image
@@ -71,10 +74,12 @@ object LinkPreviewRule {
         val last = labels.last()
         // Every notation of an IPv4 address ends in a number: 127.1, 2130706433, 0x7f.1, 1.2.3.4.
         if (last.all { it in '0'..'9' } || last.startsWith("0x")) return false
+        if (host == HOME_ARPA || host.endsWith(".$HOME_ARPA")) return false
         return last !in LOCAL_SUFFIXES
     }
 
     private val LOCAL_SUFFIXES = setOf("local", "internal", "localhost", "localdomain")
+    private const val HOME_ARPA = "home.arpa"
 
     /** A public, routable address. Refused: unspecified, loopback, private, link-local, unique-local, CGNAT, multicast, reserved, documentation. */
     fun addressAllowed(b: ByteArray): Boolean = when (b.size) {
@@ -254,8 +259,8 @@ object LinkPreviewParse {
     private fun clean(raw: String?, max: Int): String? = if (raw == null) null else sanitize(decodeEntities(raw), max)
 
     /**
-     * [text] as it may be shown: white space collapsed to single spaces, control, format (direction marks, zero width),
-     * private-use and unassigned characters removed, trimmed, cut to [max] code points. Null when nothing visible is left.
+     * [text] as it may be shown: white space collapsed to single spaces, control characters, direction marks and
+     * zero-width characters removed (emoji joiners stay), trimmed, cut to [max] code points. Null when nothing visible is left.
      * No entities are decoded. The receiver of a preview runs this on the title and description it gets.
      */
     fun sanitize(text: String, max: Int): String? {
@@ -267,18 +272,24 @@ object LinkPreviewParse {
             val cp = text.codePointAt(i)
             i += Character.charCount(cp)
             val type = Character.getType(cp)
-            val space = Character.isWhitespace(cp) || Character.isSpaceChar(cp) ||
-                type == Character.LINE_SEPARATOR.toInt() || type == Character.PARAGRAPH_SEPARATOR.toInt()
+            if (invisible(cp)) continue
+            val space = Character.isWhitespace(cp) || Character.isSpaceChar(cp)
             if (space) { pendingSpace = sb.isNotEmpty(); continue }
-            if (type == Character.CONTROL.toInt() || type == Character.FORMAT.toInt() || type == Character.SURROGATE.toInt() ||
-                type == Character.UNASSIGNED.toInt() || type == Character.PRIVATE_USE.toInt()
-            ) continue
+            if (type == Character.CONTROL.toInt() || type == Character.SURROGATE.toInt() || invisible(cp)) continue
             if (pendingSpace) { sb.append(' '); pendingSpace = false; count++; if (count >= max) break }
             sb.appendCodePoint(cp)
             count++
         }
         return sb.toString().trim().ifEmpty { null }
     }
+
+    /**
+     * Direction controls and zero-width characters that change how text reads or hide it. The joiner (U+200D) and
+     * non-joiner (U+200C) stay: emoji sequences and several scripts need them.
+     */
+    private fun invisible(cp: Int) = cp == 0x200B || cp == 0x200E || cp == 0x200F || cp == 0x061C || cp in 0x202A..0x202E ||
+        cp in 0x2060..0x2064 || cp in 0x2066..0x2069 || cp == 0xFEFF ||
+        cp == 0x2028 || cp == 0x2029 || cp == 0x3164 || cp == 0x115F || cp == 0x1160 || cp == 0xFFA0 || cp == 0x2800
 
     private val NAMED = mapOf("amp" to "&", "lt" to "<", "gt" to ">", "quot" to "\"", "apos" to "'", "nbsp" to " ")
 

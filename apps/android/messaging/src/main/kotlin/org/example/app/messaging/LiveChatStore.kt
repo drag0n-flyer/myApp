@@ -836,7 +836,8 @@ class LiveChatStore(
         val queued = try {
             repo.transaction {
                 // The caption is read again from the row now: an edit made while the upload ran is the one that is sent.
-                val finalCaption = captionOf(repo.message(id)?.envelope) ?: caption
+                val row = repo.message(id)
+                val finalCaption = if (row != null) captionOf(row.envelope) else caption
                 val envelope = envelopeFor(kind, id, at, att, prepared, ttl, finalCaption)
                 // False when the message was deleted while it uploaded: then nothing is queued and no record is written.
                 if (!repo.replaceUnsentEnvelope(id, device.accountId, ContentCodec.encode(envelope), foldedFor(prepared.name.takeIf { kind == MediaKind.File || kind == MediaKind.Video }, finalCaption), nowMs())) {
@@ -1065,18 +1066,23 @@ class LiveChatStore(
 
     override fun edit(messageId: String, chatId: String, text: String) = write {
         val newText = TextLimit.truncate(text)
-        if (newText.isBlank()) return@write
-        val record = repo.message(messageId) ?: return@write
-        if (record.chatId != chatId || record.senderAccount != device.accountId || record.deleted) return@write
-        val result = EditRule.apply(ContentCodec.decode(record.envelope), newText, fold) ?: return@write
-        // The edit and the look at the pending-upload marker are one step, so an upload cannot commit between them unseen.
-        val uploadStillPending = repo.transaction {
+        // Reading the row, applying the edit and looking at the pending-upload marker are ONE transaction, so an upload
+        // cannot commit between them unseen: either the edit lands first and the upload carries the edited caption, or
+        // the upload has committed (its marker is gone) and the Edit control goes behind the message in the queue.
+        class Outcome(val isText: Boolean, val uploadStillPending: Boolean, val wire: String)
+        val outcome = repo.transaction {
+            val record = repo.message(messageId) ?: return@transaction null
+            if (record.chatId != chatId || record.senderAccount != device.accountId || record.deleted) return@transaction null
+            val old = ContentCodec.decode(record.envelope)
+            val isText = old is ContentEnvelope.Text
+            // A text message cannot be edited to nothing; an attachment's caption can (that removes it).
+            if (isText && newText.isBlank()) return@transaction null
+            val result = EditRule.apply(old, newText, fold) ?: return@transaction null
             if (!repo.applyEdit(messageId, device.accountId, ContentCodec.encode(result.envelope), result.folded, nowMs(), result.caption, result.linkPreview)) return@transaction null
-            repo.get(PENDING_UPLOAD_PREFIX + messageId)?.isNotEmpty() == true
+            Outcome(isText, repo.get(PENDING_UPLOAD_PREFIX + messageId)?.isNotEmpty() == true, if (isText) newText else result.caption.orEmpty())
         } ?: return@write
-        // While the upload has not committed, it reads the edited caption from this row and carries it itself. Once it has
-        // (even if not yet posted) the Edit control goes behind the message in the queue.
-        if (result.envelope is ContentEnvelope.Text || !uploadStillPending) sendControl(chatId) { id, at -> ContentEnvelope.Edit(id, at, messageId, newText) }
+        // While the upload has not committed, it reads the edited caption from this row and carries it itself.
+        if (outcome.isText || !outcome.uploadStillPending) sendControl(chatId) { id, at -> ContentEnvelope.Edit(id, at, messageId, outcome.wire) }
     }
 
     override fun delete(messageId: String, chatId: String) = write {

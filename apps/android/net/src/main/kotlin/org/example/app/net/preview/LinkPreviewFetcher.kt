@@ -9,6 +9,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import org.example.app.core.chats.ImageHeader
 import org.example.app.core.chats.LinkPreviewCard
 import org.example.app.core.chats.LinkPreviewParse
 import org.example.app.core.chats.LinkPreviewRule
@@ -57,7 +58,8 @@ class LinkPreviewFetcher(
         const val IMAGE_MAX = 8_192
         private val REDIRECTS = setOf(301, 302, 303, 307, 308)
         private val PAGE_TYPES = setOf("text/html", "application/xhtml+xml")
-        private val IMAGE_TYPES = setOf("image/jpeg", "image/png", "image/webp", "image/gif")
+        /** The most pixels a fetched picture may declare, read from its own header before any decoder sees it. */
+        const val MAX_IMAGE_PIXELS = 4_000_000L
     }
 
     private val lookupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -88,8 +90,12 @@ class LinkPreviewFetcher(
         try {
             val url = try { URI(pageUrl).resolve(address).toString() } catch (_: Exception) { return null }
             if (deadline - nowMs() <= 0) return null
-            val loaded = load(url, "image/jpeg,image/png,image/webp,image/gif", deadline, IMAGE_TYPES) ?: return null
-            val jpeg = shrinker.toJpeg(loaded.response.body ?: return null) ?: return null
+            // Not trusted by its Content-Type: only the bytes decide (JPEG, PNG, WebP or GIF, at most 4,000,000 pixels declared).
+            val loaded = load(url, "image/jpeg,image/png,image/webp,image/gif", deadline, null) ?: return null
+            val body = loaded.response.body ?: return null
+            val header = ImageHeader.read(body) ?: return null
+            if (header.pixels > MAX_IMAGE_PIXELS) return null
+            val jpeg = shrinker.toJpeg(body) ?: return null
             return jpeg.takeIf { it.size in 2..IMAGE_MAX && it[0] == 0xFF.toByte() && it[1] == 0xD8.toByte() }
         } catch (e: CancellationException) {
             throw e
@@ -104,12 +110,14 @@ class LinkPreviewFetcher(
      */
     private suspend fun lookup(host: String, timeoutMs: Long): List<InetAddress>? {
         val job = lookupScope.async { resolver.resolve(host) }
-        val found = withTimeoutOrNull(timeoutMs) { job.await() }
-        if (found == null) job.cancel()
-        return found
+        try {
+            return withTimeoutOrNull(timeoutMs) { job.await() }
+        } finally {
+            if (!job.isCompleted) job.cancel() // abandoned at the deadline, or the caller went away
+        }
     }
 
-    private suspend fun load(start: String, accept: String, deadline: Long, types: Set<String>): Loaded? {
+    private suspend fun load(start: String, accept: String, deadline: Long, types: Set<String>?): Loaded? {
         var current = start
         for (hop in 0..MAX_REDIRECTS) {
             val host = LinkPreviewRule.checkUrl(current) ?: return null
@@ -126,8 +134,10 @@ class LinkPreviewFetcher(
             }
             if (response.status != 200 || response.tooLarge) return null
             if ((response.contentLength ?: 0L) > MAX_BODY) return null
-            val type = response.contentType?.substringBefore(';')?.trim()?.lowercase() ?: return null
-            if (type !in types) return null
+            if (types != null) {
+                val type = response.contentType?.substringBefore(';')?.trim()?.lowercase() ?: return null
+                if (type !in types) return null
+            }
             val body = response.body ?: return null
             if (body.isEmpty() || body.size > MAX_BODY) return null
             return Loaded(current, response)
