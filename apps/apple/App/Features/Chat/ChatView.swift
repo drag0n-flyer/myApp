@@ -69,6 +69,7 @@ struct ChatView: View {
     @State private var jump: JumpRequest?
     @State private var replyingTo: Message?
     @State private var editing: Message?
+    @State private var previews = LinkPreviewComposerModel()
     @State private var deleteTarget: Message?
     @State private var forwardItem: ForwardItem?
     @State private var searching = false
@@ -90,6 +91,7 @@ struct ChatView: View {
                         if chat.isRequest {
                             RequestActionsBar(chat: chat, model: model)
                         } else {
+                            ComposerWithPreview(previews: previews) {
                             ComposerView(text: $draft, send: { send(chat) }, sendSample: sendSample,
                                          sendAttachment: { model.sendAttachment($0, in: chatID) },
                                          sendMedia: { model.sendMedia($0, caption: $1, in: chatID) },
@@ -101,6 +103,7 @@ struct ChatView: View {
                                          cancelBar: cancelBar,
                                          sampleMode: model.isSampleData,
                                          callActive: model.activeCall?.isEnded == false)
+                            }
                         }
                     }
             } else {
@@ -149,9 +152,17 @@ struct ChatView: View {
         .onChange(of: model.activeCall?.isEnded == false) { _, inCall in voice.callStateChanged(inCall: inCall) }
         .onDisappear { voice.stop(); preview.close(); model.flushDrafts(); model.chatDisappeared(chatID) }
         .onChange(of: scenePhase) { _, phase in if phase != .active { voice.stop(); model.flushDrafts() } }
+        // Nothing is fetched while the app is not in front (so never behind the lock cover).
+        .onChange(of: scenePhase) { _, phase in if phase != .active { previews.reset() } }
+        .onDisappear { previews.reset() }
+        // The lock cover: a fetch in flight is cancelled and nothing new starts while it is up.
+        .onChange(of: model.lock.coversContent || model.lock.showsPrivacyCover) { _, covered in if covered { previews.reset() } }
         .mediaPreview(preview)
         .mediaViewer($viewer)
         .onChange(of: searchRequest) { _, _ in openSearchIfRequested() }
+        .onChange(of: draft) { _, text in
+            previews.draftChanged(text, enabled: model.settings.linkPreviews && editing == nil && !model.lock.coversContent, fetcher: model.linkPreviewFetcher)
+        }
         .onChange(of: draft) { _, text in
             // The clearing after a send is the store's job (it clears the draft only once the message is queued).
             if sentClear { sentClear = false; return }
@@ -468,7 +479,7 @@ struct ChatView: View {
         case .react:
             break
         case .copy:
-            if case .text(let text) = current.content { copy(text) }
+            if case .text(let text) = current.content { copy(text) } else if let caption = current.caption { copy(caption) }
         case .forward:
             if case .text(let text) = current.content { forwardItem = ForwardItem(text: text) }
         case .edit:
@@ -488,7 +499,12 @@ struct ChatView: View {
     }
 
     private func beginEdit(_ message: Message) {
-        guard case .text(let text) = message.content else { return }
+        let text: String
+        switch message.content {
+        case .text(let own): text = own
+        case .photo, .file: text = message.caption ?? ""
+        default: return
+        }
         if editing == nil { draftBeforeEdit = draft }
         replyingTo = nil
         editing = message
@@ -532,7 +548,12 @@ struct ChatView: View {
 
     private func send(_ chat: Chat) {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        var editsAttachment = false
+        switch editing?.content {
+        case .photo?, .file?: editsAttachment = true   // an empty caption removes it
+        default: break
+        }
+        guard !text.isEmpty || editsAttachment else { return }
         if let editing {
             // If the message changed under the edit, the edit is dropped; the bar closes either way.
             needsOlderRefresh = true
@@ -542,7 +563,8 @@ struct ChatView: View {
         }
         // Your own message always scrolls into view.
         tracker.setAtBottom(true, newestID: history.messages(newest: chat.messages).last?.id)
-        model.send(.text(text), in: chatID, replyTo: replyingTo?.id)
+        model.send(.text(text), in: chatID, replyTo: replyingTo?.id, preview: previews.cardToSend(for: text))
+        previews.reset()
         model.composerSent(chatID: chatID)
         replyingTo = nil
         sentClear = true

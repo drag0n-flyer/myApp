@@ -17,6 +17,8 @@ private final class UploadGate: HTTPTransport, @unchecked Sendable {
     private var held = false
     private var waiting: [CheckedContinuation<Void, Never>] = []
     private var failures = 0
+    private var postsHeld = false
+    private var postWaiting: [CheckedContinuation<Void, Never>] = []
     private var sizeRefused = false
     private var reportFraction: Double?
     private var _uploads = 0
@@ -24,6 +26,16 @@ private final class UploadGate: HTTPTransport, @unchecked Sendable {
 
     var uploads: Int { lock.withLock { _uploads } }
     func hold() { lock.withLock { held = true } }
+    /// Holds every message POST (not uploads) until `releasePosts`.
+    func holdPosts() { lock.withLock { postsHeld = true } }
+    func releasePosts() {
+        let waiting = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+            postsHeld = false
+            defer { postWaiting = [] }
+            return postWaiting
+        }
+        waiting.forEach { $0.resume() }
+    }
     func failNext(_ count: Int = 1) { lock.withLock { failures = count } }
     /// Answers uploads with 413 too_large.
     func refuseForSize() { lock.withLock { sizeRefused = true } }
@@ -44,6 +56,15 @@ private final class UploadGate: HTTPTransport, @unchecked Sendable {
     }
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        if request.httpMethod == "POST", request.url?.path.hasSuffix("/messages") == true {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                let resumeNow = lock.withLock { () -> Bool in
+                    if postsHeld { postWaiting.append(continuation); return false }
+                    return true
+                }
+                if resumeNow { continuation.resume() }
+            }
+        }
         guard request.httpMethod == "POST", request.url?.path == "/v1/attachments" else { return try await inner.send(request) }
         lock.withLock { _uploads += 1 }
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
@@ -443,22 +464,139 @@ private struct Rig {
         #expect(rig.bob.store.chat(id: "acc-ana")?.messages.count == 1)
     }
 
-    @Test func aBatchSendsPhotoCaptionThenTheRestInOrder() async throws {
+    @Test func aBatchCarriesTheCaptionInTheFirstItemAndSendsNoText() async throws {
         let rig = try await Rig.make()
         let urls = try (0..<3).map { try rig.file(named: "p\($0).bin", size: 2_000) }
-        rig.ana.store.sendMedia(urls.map { OutgoingMedia(url: $0, kind: .file) }, caption: "hi", in: "acc-bob")
-        for _ in 0..<500 where (rig.ana.store.chat(id: "acc-bob")?.messages.count ?? 0) < 4 {
+        rig.ana.store.sendMedia(urls.map { OutgoingMedia(url: $0, kind: .file) }, caption: "hi *there*", in: "acc-bob")
+        for _ in 0..<500 where (rig.ana.store.chat(id: "acc-bob")?.messages.count ?? 0) < 3 {
             try await Task.sleep(for: .milliseconds(10))
         }
         await rig.ana.store.settle()
-        let kinds = (rig.ana.store.chat(id: "acc-bob")?.messages ?? []).map { message -> String in
-            switch message.content {
-            case .file(let name, _): name
-            case .text(let text): text
-            default: "?"
-            }
+        let mine = rig.ana.store.chat(id: "acc-bob")?.messages ?? []
+        #expect(mine.map(\.content) == [.file(name: "p0.bin", bytes: 2_000), .file(name: "p1.bin", bytes: 2_000), .file(name: "p2.bin", bytes: 2_000)])
+        #expect(mine.map(\.caption) == ["hi *there*", nil, nil])
+        await rig.bob.store.syncInbox()
+        await rig.bob.store.settle()
+        let theirs = rig.bob.store.chat(id: "acc-ana")?.messages ?? []
+        #expect(theirs.map(\.caption) == ["hi *there*", nil, nil], "the caption arrives in the first item, no text message")
+        #expect(theirs.count == 3)
+        // Search finds the caption.
+        #expect(rig.bob.store.searchMessages("there", in: "acc-ana", limit: 10).count == 1)
+        #expect(rig.ana.store.searchMessages("there", limit: 10).count == 1)
+    }
+
+    @Test func aCaptionIsCutToFourThousandNinetySixCharactersOnSend() async throws {
+        let rig = try await Rig.make()
+        rig.ana.store.sendMedia([OutgoingMedia(url: try rig.file(named: "a.bin", size: 2_000), kind: .file)],
+                                caption: String(repeating: "y", count: 5_000), in: "acc-bob")
+        for _ in 0..<500 where (rig.ana.store.chat(id: "acc-bob")?.messages.count ?? 0) < 1 { try await Task.sleep(for: .milliseconds(10)) }
+        await rig.ana.store.settle()
+        #expect(rig.ana.store.chat(id: "acc-bob")?.messages.last?.caption?.count == 4_096)
+    }
+
+    @Test func editingACaptionEditsItOnBothSidesAndAnEmptyOneRemovesIt() async throws {
+        let rig = try await Rig.make()
+        rig.ana.store.sendMedia([OutgoingMedia(url: try rig.file(named: "a.bin", size: 2_000), kind: .file)], caption: "first", in: "acc-bob")
+        for _ in 0..<500 where (rig.ana.store.chat(id: "acc-bob")?.messages.count ?? 0) < 1 { try await Task.sleep(for: .milliseconds(10)) }
+        await rig.ana.store.settle()
+        let id = try #require(rig.last?.id)
+        rig.ana.store.edit(messageID: id, in: "acc-bob", text: "second")
+        await rig.ana.store.settle()
+        #expect(rig.last?.caption == "second" && rig.last?.editedAt != nil)
+        #expect(rig.last?.content == .file(name: "a.bin", bytes: 2_000), "the attachment is untouched")
+        var peer = try #require(await rig.bobReceives())
+        #expect(peer.caption == "second" && peer.editedAt != nil)
+        #expect(rig.bob.store.searchMessages("second", in: "acc-ana", limit: 10).count == 1)
+        #expect(rig.bob.store.searchMessages("first", in: "acc-ana", limit: 10).isEmpty)
+        rig.ana.store.edit(messageID: id, in: "acc-bob", text: "  ")
+        await rig.ana.store.settle()
+        #expect(rig.last?.caption == nil)
+        peer = try #require(await rig.bobReceives())
+        #expect(peer.caption == nil)
+    }
+
+    @Test func aCaptionEditedWhileTheUploadRunsIsNotLost() async throws {
+        let rig = try await Rig.make()
+        rig.gate.hold()
+        rig.ana.store.sendMedia([OutgoingMedia(url: try rig.file(named: "a.bin", size: 2_000), kind: .file)], caption: "before", in: "acc-bob")
+        for _ in 0..<500 where (rig.ana.store.chat(id: "acc-bob")?.messages.count ?? 0) < 1 { try await Task.sleep(for: .milliseconds(10)) }
+        await rig.gate.waitForUploads(1)
+        let id = try #require(rig.last?.id)
+        rig.ana.store.edit(messageID: id, in: "acc-bob", text: "after")
+        #expect(rig.last?.caption == "after")
+        rig.gate.release()
+        await rig.ana.store.settle()
+        #expect(rig.last?.caption == "after" && rig.last?.status == .sent)
+        let peer = try #require(await rig.bobReceives())
+        #expect(peer.caption == "after", "the receiver gets the edited caption: \(String(describing: peer.caption))")
+    }
+
+    @Test func anEditAfterTheUploadCommittedButBeforeThePostStillReachesTheReceiver() async throws {
+        let rig = try await Rig.make()
+        rig.gate.holdPosts()
+        rig.ana.store.sendMedia([OutgoingMedia(url: try rig.file(named: "a.bin", size: 2_000), kind: .file)], caption: "old", in: "acc-bob")
+        for _ in 0..<500 where (rig.ana.store.chat(id: "acc-bob")?.messages.count ?? 0) < 1 { try await Task.sleep(for: .milliseconds(10)) }
+        let id = try #require(rig.last?.id)
+        // Wait until the upload has committed: the row now holds the real attachment and is queued.
+        for _ in 0..<500 {
+            let queued = ((try? rig.ana.repo.dueOutbox(at: .distantFuture)) ?? []).contains { $0.messageID == id }
+            if queued { break }
+            try await Task.sleep(for: .milliseconds(10))
         }
-        #expect(kinds == ["p0.bin", "hi", "p1.bin", "p2.bin"])
+        #expect(try rig.ana.repo.dueOutbox(at: .distantFuture).contains { $0.messageID == id }, "committed, queued, not posted")
+        rig.ana.store.edit(messageID: id, in: "acc-bob", text: "new")
+        rig.gate.releasePosts()
+        await rig.ana.store.settle()
+        let peer = try #require(await rig.bobReceives())
+        #expect(peer.caption == "new" && peer.editedAt != nil, "the edit control was queued after the commit: \(String(describing: peer.caption))")
+    }
+
+    @Test func aFailedUploadAndItsRetryKeepTheCaption() async throws {
+        let rig = try await Rig.make()
+        rig.gate.failNext()
+        rig.ana.store.sendMedia([OutgoingMedia(url: try rig.file(named: "a.bin", size: 2_000), kind: .file)], caption: "keep me", in: "acc-bob")
+        for _ in 0..<500 where rig.last?.status != .failed { try await Task.sleep(for: .milliseconds(10)) }
+        await rig.ana.store.settle()
+        #expect(rig.last?.status == .failed && rig.last?.caption == "keep me")
+        let id = try #require(rig.last?.id)
+        rig.ana.store.retrySend(messageID: id)
+        await rig.ana.store.settle()
+        #expect(rig.last?.status == .sent && rig.last?.caption == "keep me")
+        #expect(try #require(await rig.bobReceives()).caption == "keep me")
+    }
+
+    @Test func aTextWithAPreviewSendsItAndTheReceiverShowsIt() async throws {
+        let rig = try await Rig.make()
+        let card = LinkPreviewCard(url: "https://example.com/a", title: "Example", desc: "About", image: Data([0xFF, 0xD8, 0x01]))
+        rig.ana.store.send(.text("look https://example.com/a"), in: "acc-bob", replyTo: nil, preview: card)
+        await rig.ana.store.settle()
+        #expect(rig.last?.linkPreview == card)
+        let peer = try #require(await rig.bobReceives())
+        #expect(peer.linkPreview == card)
+        // The receiver shows what the message carries and fetches nothing: every request went to the server's own API.
+        #expect(await rig.server.requests().allSatisfy { $0.contains(" /v1/") })
+        // A preview whose address is not in the text is dropped.
+        rig.ana.store.send(.text("no link"), in: "acc-bob", replyTo: nil, preview: card)
+        await rig.ana.store.settle()
+        #expect(rig.last?.linkPreview == nil)
+    }
+
+    @Test func editingATextKeepsItsPreviewOnlyWhileTheLinkIsStillThere() async throws {
+        let rig = try await Rig.make()
+        let card = LinkPreviewCard(url: "https://example.com/a", title: "Example")
+        rig.ana.store.send(.text("look https://example.com/a"), in: "acc-bob", replyTo: nil, preview: card)
+        await rig.ana.store.settle()
+        let id = try #require(rig.last?.id)
+        rig.ana.store.edit(messageID: id, in: "acc-bob", text: "look again https://example.com/a")
+        await rig.ana.store.settle()
+        #expect(rig.last?.linkPreview == card)
+        var peer = try #require(await rig.bobReceives())
+        #expect(peer.linkPreview == card)
+        rig.ana.store.edit(messageID: id, in: "acc-bob", text: "no link now")
+        await rig.ana.store.settle()
+        #expect(rig.last?.linkPreview == nil)
+        peer = try #require(await rig.bobReceives())
+        #expect(peer.linkPreview == nil)
     }
 
     @Test func theRingFollowsTheRequestsByteProgress() async throws {

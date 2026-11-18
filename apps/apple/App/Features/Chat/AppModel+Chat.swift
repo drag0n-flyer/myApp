@@ -88,8 +88,8 @@ extension AppModel {
         chatStore.messages(in: chatID, before: messageID, limit: limit)
     }
 
-    func send(_ content: MessageContent, in chatID: String, replyTo: String?) {
-        chatStore.send(content, in: chatID, replyTo: replyTo)
+    func send(_ content: MessageContent, in chatID: String, replyTo: String?, preview: LinkPreviewCard? = nil) {
+        chatStore.send(content, in: chatID, replyTo: replyTo, preview: preview)
     }
 
     /// Reacts, unless the message vanished or was deleted, or this is a quick repeat. The store toggles.
@@ -105,8 +105,12 @@ extension AppModel {
     func edit(messageID: String, in chatID: String, text: String, followedBy nextID: String? = nil) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let current = currentMessage(id: messageID, in: chatID, followedBy: nextID),
-              MessageActions.isStillApplicable(.edit, current: current, isMine: isMine(current)),
-              !trimmed.isEmpty else { return false }
+              MessageActions.isStillApplicable(.edit, current: current, isMine: isMine(current)) else { return false }
+        // A text keeps today's rule (a blank edit is refused); a photo or file may lose its caption.
+        switch current.content {
+        case .photo, .file: break
+        default: if trimmed.isEmpty { return false }
+        }
         chatStore.edit(messageID: messageID, in: chatID, text: trimmed)
         return true
     }

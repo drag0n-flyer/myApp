@@ -106,6 +106,13 @@ struct PrivacyView: View {
             } footer: {
                 Text("Others can see when you were last in the app. If you turn this off, you won't see it for others either.")
             }
+
+            Section {
+                Toggle("Link previews", isOn: $model.settings.linkPreviews)
+                    .accessibilityIdentifier("privacy.linkpreviews")
+            } footer: {
+                Text("To make a preview, your device contacts the website, which learns your IP address.")
+            }
         }
         .formStyle(.grouped)
         .navigationTitle("Privacy")

@@ -124,6 +124,22 @@ public enum SendFailure: Hashable, Codable, Sendable {
     case tooBig
 }
 
+/// A link preview as a message carries it: shown from the message only, never fetched by the reader.
+public struct LinkPreviewCard: Hashable, Codable, Sendable {
+    public var url: String
+    public var title: String
+    public var desc: String?
+    /// A small JPEG.
+    public var image: Data?
+
+    public init(url: String, title: String, desc: String? = nil, image: Data? = nil) {
+        self.url = url
+        self.title = title
+        self.desc = desc
+        self.image = image
+    }
+}
+
 public struct Message: Identifiable, Hashable, Codable, Sendable {
     public var id: String
     public var senderID: String
@@ -139,6 +155,10 @@ public struct Message: Identifiable, Hashable, Codable, Sendable {
     public var uploadProgress: Double?
     /// Why a failed send will not work again as it is (kept while the app runs; a restart shows plain "Not sent").
     public var sendFailure: SendFailure?
+    /// The caption of a photo or file, as sent.
+    public var caption: String?
+    /// The preview of the first link of a text.
+    public var linkPreview: LinkPreviewCard?
     /// When the message disappears (`sentAt + ttl`); `nil` when it never does.
     public var expiresAt: Date?
 
@@ -147,7 +167,9 @@ public struct Message: Identifiable, Hashable, Codable, Sendable {
 
     public init(id: String, senderID: String, sentAt: Date, content: MessageContent, status: DeliveryStatus, replyToID: String?, reactions: [String],
                 editedAt: Date? = nil, media: MediaState? = nil, undecryptable: Bool = false, uploadProgress: Double? = nil,
-                sendFailure: SendFailure? = nil, expiresAt: Date? = nil) {
+                sendFailure: SendFailure? = nil, expiresAt: Date? = nil, caption: String? = nil, linkPreview: LinkPreviewCard? = nil) {
+        self.caption = caption
+        self.linkPreview = linkPreview
         self.expiresAt = expiresAt
         self.uploadProgress = uploadProgress
         self.sendFailure = sendFailure

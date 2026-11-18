@@ -12,18 +12,18 @@ public struct PickedMedia: Equatable, Sendable {
     }
 }
 
-/// What to send after the preview screen's Send: the picked items in order, then the caption as an ordinary
-/// text message after the first item (spec 6.2). Pure, so Android and Apple share one test table.
+/// What to send after the preview screen's Send: the picked items in order, the trimmed caption travelling in the
+/// first one (spec 6.3; no text message follows it). Pure, so Android and Apple share one test table.
 public enum SendPlan {
     public static let maxItems = 10
+    /// A caption follows the text rules: at most 4,096 characters (graphemes).
+    public static let maxCaption = 4_096
     /// The attachment size limit when the server has not told the app a different one (100 MiB).
     public static let defaultLimitBytes: Int64 = 104_857_600
 
     public enum Step: Equatable, Sendable {
-        /// The picked item at this index.
-        case attachment(Int)
-        /// The caption, trimmed.
-        case text(String)
+        /// The picked item at this index, with its caption (only the first item has one).
+        case attachment(Int, caption: String?)
     }
 
     public enum Refusal: Equatable, Sendable { case tooMany, videoTooBig }
@@ -34,16 +34,14 @@ public enum SendPlan {
     }
 
     /// `tooMany` over 10 items; `videoTooBig` when a video is larger than `limitBytes`. Otherwise the attachments in
-    /// order, with the trimmed caption (omitted when blank) right after the first one.
+    /// order; the first carries the trimmed caption (`nil` when blank), cut to `maxCaption` characters.
     public static func plan(items: [PickedMedia], caption: String, limitBytes: Int64) -> Result {
         guard items.count <= maxItems else { return .refused(.tooMany) }
         if items.contains(where: { $0.kind == .video && $0.bytes > limitBytes }) { return .refused(.videoTooBig) }
         var steps: [Step] = []
-        let text = caption.trimmingCharacters(in: .whitespacesAndNewlines)
-        for index in items.indices {
-            steps.append(.attachment(index))
-            if index == 0, !text.isEmpty { steps.append(.text(text)) }
-        }
+        let trimmed = caption.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = trimmed.isEmpty ? nil : String(trimmed.prefix(maxCaption))
+        for index in items.indices { steps.append(.attachment(index, caption: index == 0 ? text : nil)) }
         return .send(steps)
     }
 }

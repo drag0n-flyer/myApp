@@ -163,19 +163,23 @@ public actor AttachmentService {
         case "voice": body = .voice(att, duration: meta.duration, replyTo: nil)
         default: body = .file(att, name: meta.name, mime: meta.mime, replyTo: nil)
         }
-        // The placeholder was made when the file was picked, with the timer of that moment: its life is kept.
-        let envelope = ContentEnvelope(
-            id: messageID, at: Int64((record.sentAt.timeIntervalSince1970 * 1000).rounded()), body: body,
-            ttl: ContentEnvelope.decode(record.envelope).ttl)
         let ext = Self.fileExtension(kind: meta.kind, name: prepared ? nil : meta.name)
         let local = deps.mediaDirectory.appendingPathComponent("\(att.id).\(ext)")
-        let data = envelope.encoded()
         let repo = deps.repo
         let me = deps.me.accountID
         let now = deps.now()
         let committed = try repo.transaction { () -> Bool in
+            // The row is read again here: a caption edited while the upload ran is the one that goes out. The
+            // placeholder was made when the file was picked, with the timer of that moment: its life is kept.
+            guard let current = try repo.message(id: messageID), !current.deleted else { return false }
+            let placeholder = ContentEnvelope.decode(current.envelope)
+            let envelope = ContentEnvelope(
+                id: messageID, at: Int64((record.sentAt.timeIntervalSince1970 * 1000).rounded()), body: body,
+                ttl: placeholder.ttl, caption: placeholder.caption)
+            let data = envelope.encoded()
             guard try repo.replaceUnsentEnvelope(
-                id: messageID, sender: me, envelope: data, folded: meta.kind == "file" ? fold(meta.name) : "") else { return false }
+                id: messageID, sender: me, envelope: data,
+                folded: fold([meta.kind == "file" ? meta.name : "", envelope.caption ?? ""].filter { !$0.isEmpty }.joined(separator: " "))) else { return false }
             try repo.enqueue(OutboxRecord(messageID: messageID, chatID: meta.chatID, envelope: data, attempts: 0, nextAttemptAt: now))
             try repo.deleteAttachment(id: Self.placeholderAttachmentID(messageID))
             try repo.upsertAttachment(AttachmentRecord(

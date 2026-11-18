@@ -59,6 +59,13 @@ struct ComposerView: View {
     #endif
 
     private var isEmpty: Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    /// Editing a photo or file: an empty field is allowed, it removes the caption.
+    private var editsAttachment: Bool {
+        switch editing?.content {
+        case .photo?, .file?: true
+        default: false
+        }
+    }
 
     var body: some View {
         VStack(spacing: 6) {
@@ -195,7 +202,7 @@ struct ComposerView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Send voice message")
                 .accessibilityIdentifier("chat.voice.send")
-            } else if isEmpty || session?.isActive == true {
+            } else if (isEmpty && !editsAttachment) || session?.isActive == true {
                 micButton
             } else {
                 Button(action: send) {
