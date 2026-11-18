@@ -8,6 +8,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.example.app.contracts.CommitBundle
 import org.example.app.contracts.DeliveryApi
+import org.example.app.contracts.Encrypted
 import org.example.app.contracts.GroupId
 import org.example.app.contracts.MemberKey
 import org.example.app.contracts.MlsEngine
@@ -288,17 +289,54 @@ class ConversationManager(
     /** Sends `mode(innerMode)` in [conversation] (after any add commit). */
     suspend fun announceMode(conversation: ConversationRecord) {
         val inner = conversation.innerMode ?: throw SyncException.ModeUnknown
-        val envelope = ContentEnvelope.Mode(UUID.randomUUID().toString().lowercase(), clock.now(), inner)
+        // A post that failed is retried by the next send, so the envelope ID and time are kept with the ciphertext:
+        // the same bytes go out again in the same epoch (no new generation), and a fresh ciphertext of the same
+        // envelope after an epoch change still deduplicates on the server.
+        val saved = loadAnnounce(conversation.serverId)
+        val envelope = ContentEnvelope.Mode(saved?.id ?: UUID.randomUUID().toString().lowercase(), saved?.at ?: clock.now(), inner)
         val plaintext = ContentCodec.encode(envelope)
         // Design 18: escrow only when both the creator's mode and the server's say server_readable. Checked before
         // encrypting, so a missing sealer does not advance the ratchet.
         val needsEscrow = inner == ConversationMode.SERVER_READABLE && conversation.mode == ConversationMode.SERVER_READABLE
         val sealer = if (needsEscrow) escrow ?: throw SyncException.EscrowKeyUnavailable else null
         // Encrypting advances the ratchet, so it is under the lock; the post is not.
-        val encrypted = critical { mls.encrypt(plaintext, GroupId(conversation.groupId)) }
+        val group = GroupId(conversation.groupId)
+        val encrypted = critical {
+            saved?.takeIf { it.epoch == mls.epoch(group) }?.let { Encrypted(it.ciphertext, it.epoch) }
+                ?: mls.encrypt(plaintext, group).also { saveAnnounce(conversation.serverId, envelope, it) }
+        }
         val escrowCopy = sealer?.seal(plaintext, envelope.at, conversation.serverId)
         server.postMessage(conversation.serverId, encrypted.epoch, encrypted.ciphertext, escrowCopy, envelope.id)
         ModePin.setPending(repo, conversation.serverId, false)
+        repo.set(announceKey(conversation.serverId), ByteArray(0))
+    }
+
+    private class SavedAnnounce(val id: String, val at: Long, val epoch: Long, val ciphertext: ByteArray)
+
+    private fun announceKey(serverId: String) = "mode-announce:$serverId"
+
+    private fun saveAnnounce(serverId: String, envelope: ContentEnvelope.Mode, encrypted: Encrypted) {
+        val bytes = java.io.ByteArrayOutputStream()
+        java.io.DataOutputStream(bytes).use {
+            it.writeUTF(envelope.id); it.writeLong(envelope.at); it.writeLong(encrypted.epoch)
+            it.writeInt(encrypted.ciphertext.size); it.write(encrypted.ciphertext)
+        }
+        repo.set(announceKey(serverId), bytes.toByteArray())
+    }
+
+    /** What an earlier failed announce kept; null when there is none (or it cannot be read, which only costs one encrypt). */
+    private fun loadAnnounce(serverId: String): SavedAnnounce? {
+        val raw = repo.get(announceKey(serverId))?.takeIf { it.isNotEmpty() } ?: return null
+        return try {
+            java.io.DataInputStream(raw.inputStream()).use {
+                val id = it.readUTF(); val at = it.readLong(); val epoch = it.readLong()
+                val size = it.readInt()
+                if (size < 0 || size > raw.size) return null
+                SavedAnnounce(id, at, epoch, ByteArray(size).also { b -> it.readFully(b) })
+            }
+        } catch (_: java.io.IOException) {
+            null
+        }
     }
 
     // Commit with the epoch-conflict retry
