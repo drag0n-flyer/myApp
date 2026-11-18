@@ -69,10 +69,12 @@ class CallHistoryViewModel(private val store: ChatStore) : ViewModel() {
 
     private fun read(chats: List<Chat>): List<CallRecord> =
         chats.flatMap { chat ->
-            val name = store.contact(chat.contactId)?.displayName ?: chat.contactId
+            // A group chat has no calls: it has no one person to call back.
+            val contactId = chat.contactId ?: return@flatMap emptyList()
+            val name = store.contact(contactId)?.displayName ?: contactId
             chat.messages.mapNotNull { message ->
                 val content = message.content as? MessageContent.Call ?: return@mapNotNull null
-                CallRecord(message.id, chat.contactId, name, content.summary, message.sentAt, message.senderId == store.me.id)
+                CallRecord(message.id, contactId, name, content.summary, message.sentAt, message.senderId == store.me.id)
             }
         }.sortedByDescending { it.at }
 }

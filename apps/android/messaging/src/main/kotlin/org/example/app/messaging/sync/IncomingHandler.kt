@@ -215,6 +215,8 @@ class IncomingHandler(
                 if (account != me.accountId) repo.saveProfile(account, envelope.name, envelope.photo, envelope.ver)
                 AppliedResult.Ignored
             }
+            // Applied to a group chat by a later task (from an owner or admin only); never a chat row, valid or not.
+            is ContentEnvelope.Group -> AppliedResult.Ignored
             is ContentEnvelope.Timer -> {
                 applyTimer(envelope, account, chatId, repo)
                 AppliedResult.Ignored
@@ -275,7 +277,7 @@ class IncomingHandler(
 
 
 /** Envelope kinds that are never a chat row, valid or not. */
-private val PEOPLE_KINDS = setOf("typing", "presence", "timer", "profile")
+private val PEOPLE_KINDS = setOf("typing", "presence", "timer", "profile", "group")
 
 /** How far ahead of this device's clock a timer message's own time may claim to be. */
 private const val MAX_TIMER_SKEW_MS = 5 * 60_000L

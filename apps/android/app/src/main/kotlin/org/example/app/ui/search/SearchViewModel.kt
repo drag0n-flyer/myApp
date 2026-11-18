@@ -66,7 +66,7 @@ class SearchViewModel(
                 it.displayName.contains(query, ignoreCase = true) || it.username.contains(query, ignoreCase = true)
             }
             val messages = runCatching { store.searchMessages(query, messageLimit) }.getOrDefault(emptyList()).map { hit ->
-                MessageResult(hit, store.chat(hit.chatId)?.let { store.contact(it.contactId)?.displayName } ?: hit.chatId, store.chat(hit.chatId)?.contactId)
+                MessageResult(hit, store.chat(hit.chatId)?.let { it.title ?: it.contactId?.let { id -> store.contact(id)?.displayName } } ?: hit.chatId, store.chat(hit.chatId)?.contactId)
             }
             // A newer query cancelled this one while the database call was running: its results are stale.
             ensureActive()

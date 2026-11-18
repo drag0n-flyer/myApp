@@ -39,7 +39,7 @@ internal fun decodeFrame(text: String): IncomingFrame? {
         when (type) {
             "inbox" -> event(data?.let { d ->
                 val w = ServerJson.json.decodeFromJsonElement(InboxItemWire.serializer(), d)
-                ServerEvent.Inbox(InboxItem(w.cursor, w.kind, w.conversationID, w.seq, w.epoch, w.senderAccountID, w.senderDeviceID, w.payload, w.sentAt))
+                ServerEvent.Inbox(InboxItem(w.cursor, w.kind, w.conversationID, w.seq, w.epoch, w.senderAccountID, w.senderDeviceID, w.payload, w.sentAt, w.membersVersion))
             })
             "device.revoked" -> event(data?.str("deviceID")?.let { ServerEvent.DeviceRevoked(it) })
             "conv.ephemeral" -> event(data?.let { d ->

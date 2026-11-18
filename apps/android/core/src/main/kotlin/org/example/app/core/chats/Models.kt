@@ -137,7 +137,8 @@ data class Message(
 
 data class Chat(
     val id: String,
-    val contactId: String,
+    /** The other person's account ID in a one-to-one chat (equal to [id]); null in a group chat. */
+    val contactId: String?,
     val encryption: ChatEncryption,
     val folderIds: Set<String>,
     val unreadCount: Int,
@@ -151,6 +152,11 @@ data class Chat(
     val archived: Boolean = false,
     /** Unsent composer text saved for this chat; null when there is none. */
     val draft: String? = null,
+    /** A group chat's name; null for a one-to-one chat (and for a group that has none yet). */
+    val title: String? = null,
 ) {
+    /** True for a group chat (`g:<conversationID>`). */
+    val isGroup: Boolean get() = org.example.app.core.groups.ChatID.isGroup(id)
+
     val lastMessage: Message? get() = messages.lastOrNull()
 }

@@ -79,8 +79,9 @@ class ChatListViewModel(
     private fun rowOf(chat: Chat): ChatRowModel {
         val last = chat.lastMessage
         return ChatRowModel(
-            chat.id, store.contact(chat.contactId)?.displayName ?: chat.contactId, last?.preview, last?.sentAt, chat.unreadCount,
-            colorKey = chat.contactId,
+            chat.id, chat.title ?: chat.contactId?.let { store.contact(it)?.displayName } ?: chat.contactId ?: chat.id,
+            last?.preview, last?.sentAt, chat.unreadCount,
+            colorKey = chat.contactId ?: chat.id,
             pinned = chat.pinnedAt != null, muted = chat.muted, draft = chat.draft,
         )
     }

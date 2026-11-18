@@ -361,8 +361,10 @@ fun ChatScreen(
                     },
                     actions = {
                         IconButton(onClick = ::openSearch) { Icon(painterResource(R.drawable.ic_search), contentDescription = stringResource(R.string.chat_search)) }
-                        if (onCall != null) IconButton(onClick = { onCall(false) }) { Icon(painterResource(R.drawable.ic_call), contentDescription = stringResource(R.string.call_audio)) }
-                        if (onCall != null) IconButton(onClick = { onCall(true) }) { Icon(painterResource(R.drawable.ic_videocam), contentDescription = stringResource(R.string.call_video)) }
+                        // No calls in a group chat.
+                        val callable = onCall != null && state.chat?.isGroup != true
+                        if (callable) IconButton(onClick = { onCall!!(false) }) { Icon(painterResource(R.drawable.ic_call), contentDescription = stringResource(R.string.call_audio)) }
+                        if (callable) IconButton(onClick = { onCall!!(true) }) { Icon(painterResource(R.drawable.ic_videocam), contentDescription = stringResource(R.string.call_video)) }
                     },
                 )
             }
