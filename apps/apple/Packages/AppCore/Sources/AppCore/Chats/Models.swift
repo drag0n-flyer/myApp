@@ -120,9 +120,12 @@ public struct Message: Identifiable, Hashable, Codable, Sendable {
     public var editedAt: Date?
     public var media: MediaState?
     public var undecryptable: Bool
+    /// How much of an outgoing attachment has been prepared and uploaded (0...1); `nil` when nothing is uploading.
+    public var uploadProgress: Double?
 
     public init(id: String, senderID: String, sentAt: Date, content: MessageContent, status: DeliveryStatus, replyToID: String?, reactions: [String],
-                editedAt: Date? = nil, media: MediaState? = nil, undecryptable: Bool = false) {
+                editedAt: Date? = nil, media: MediaState? = nil, undecryptable: Bool = false, uploadProgress: Double? = nil) {
+        self.uploadProgress = uploadProgress
         self.id = id
         self.senderID = senderID
         self.sentAt = sentAt

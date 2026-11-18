@@ -368,6 +368,84 @@ private struct Rig {
         #expect(await rig.bobReceives() == nil)
     }
 
+    @Test func cancelDuringAHeldUploadLeavesNoMessageNoBlobAndDeliversNothing() async throws {
+        let rig = try await Rig.make()
+        rig.gate.hold()
+        try await rig.send()
+        let id = try #require(rig.last?.id)
+        await rig.gate.waitForUploads(1)
+        #expect(rig.last?.uploadProgress != nil, "an uploading row shows its fraction")
+        rig.ana.store.cancelUpload(messageID: id, in: "acc-bob")
+        #expect(rig.ana.store.chat(id: "acc-bob")?.messages.isEmpty == true, "the row is gone at once")
+        rig.gate.release()
+        await rig.ana.store.settle()
+        #expect(rig.ana.store.chat(id: "acc-bob")?.messages.isEmpty == true)
+        #expect(try rig.ana.repo.message(id: id) == nil)
+        #expect(try rig.ana.repo.attachment(messageID: id) == nil)
+        #expect(try rig.ana.repo.dueOutbox(at: .distantFuture).isEmpty)
+        #expect(await rig.messagePosts() == 0, "nothing was delivered")
+        #expect(rig.files(in: rig.ana.pending).isEmpty)
+        #expect(rig.files(in: rig.ana.media).isEmpty, "no staged or encrypted file left: \(rig.files(in: rig.ana.media))")
+        #expect(await rig.bobReceives() == nil)
+    }
+
+    @Test func cancelOfAFailedUploadRemovesItToo() async throws {
+        let rig = try await Rig.make()
+        rig.gate.failNext()
+        try await rig.send()
+        let id = try #require(rig.last?.id)
+        await rig.ana.store.settle()
+        #expect(rig.last?.status == .failed)
+        rig.ana.store.cancelUpload(messageID: id, in: "acc-bob")
+        #expect(try rig.ana.repo.message(id: id) == nil)
+        #expect(rig.files(in: rig.ana.pending).isEmpty)
+        #expect(rig.files(in: rig.ana.media).isEmpty)
+    }
+
+    @Test func cancelAfterTheSendChangesNothing() async throws {
+        let rig = try await Rig.make()
+        try await rig.send()
+        let id = try #require(rig.last?.id)
+        await rig.ana.store.settle()
+        #expect(rig.last?.status == .sent)
+        #expect(rig.last?.uploadProgress == nil)
+        let before = try #require(try rig.ana.repo.attachment(messageID: id))
+        rig.ana.store.cancelUpload(messageID: id, in: "acc-bob")
+        await rig.ana.store.settle()
+        #expect(rig.last?.status == .sent, "the message stays")
+        let after = try #require(try rig.ana.repo.attachment(messageID: id))
+        #expect(after == before)
+        #expect(FileManager.default.fileExists(atPath: try #require(after.localPath)))
+        #expect(await rig.bobReceives() != nil)
+    }
+
+    @Test func cancelOfSomeoneElsesMessageDoesNothing() async throws {
+        let rig = try await Rig.make()
+        try await rig.send()
+        await rig.ana.store.settle()
+        let peer = try #require(await rig.bobReceives())
+        rig.bob.store.cancelUpload(messageID: peer.id, in: "acc-ana")
+        #expect(rig.bob.store.chat(id: "acc-ana")?.messages.count == 1)
+    }
+
+    @Test func aBatchSendsPhotoCaptionThenTheRestInOrder() async throws {
+        let rig = try await Rig.make()
+        let urls = try (0..<3).map { try rig.file(named: "p\($0).bin", size: 2_000) }
+        rig.ana.store.sendMedia(urls.map { OutgoingMedia(url: $0, kind: .file) }, caption: "hi", in: "acc-bob")
+        for _ in 0..<500 where (rig.ana.store.chat(id: "acc-bob")?.messages.count ?? 0) < 4 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        await rig.ana.store.settle()
+        let kinds = (rig.ana.store.chat(id: "acc-bob")?.messages ?? []).map { message -> String in
+            switch message.content {
+            case .file(let name, _): name
+            case .text(let text): text
+            default: "?"
+            }
+        }
+        #expect(kinds == ["p0.bin", "hi", "p1.bin", "p2.bin"])
+    }
+
     @Test func aPlaceholderIsNeverQueued() async throws {
         let rig = try await Rig.make()
         let placeholder = ContentEnvelope(id: "p1", at: 1_700_000_000_000, body: .file(

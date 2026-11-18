@@ -39,6 +39,11 @@ public protocol ChatStore: AnyObject {
     func searchMessages(_ query: String, in chatID: String, limit: Int) -> [MessageHit]
     func send(_ content: MessageContent, in chatID: String, replyTo: String?)
     func sendAttachment(_ fileURL: URL, kind: MediaKind, in chatID: String)
+    /// Photos and videos from the preview screen, in order, with the caption sent as a text message after the first.
+    func sendMedia(_ items: [OutgoingMedia], caption: String, in chatID: String)
+    /// Stops an upload that has not finished and removes its message, its queue entry and its files. After the
+    /// message is sent it does nothing.
+    func cancelUpload(messageID: String, in chatID: String)
     /// A recorded voice note of `duration` seconds.
     func sendVoice(_ fileURL: URL, duration: Double, in chatID: String)
     /// Sends a message that gave up (`DeliveryStatus.failed`) again.
@@ -87,7 +92,29 @@ public protocol ChatStore: AnyObject {
     func moveFolder(id: String, toCustomIndex index: Int)
 }
 
+/// A photo or video picked for sending: a file the engine may copy.
+public struct OutgoingMedia: Equatable, Sendable {
+    public var url: URL
+    public var kind: MediaKind
+
+    public init(url: URL, kind: MediaKind) {
+        self.url = url
+        self.kind = kind
+    }
+}
+
 extension ChatStore {
+    /// One after the other, the caption after the first item.
+    public func sendMedia(_ items: [OutgoingMedia], caption: String, in chatID: String) {
+        let text = caption.trimmingCharacters(in: .whitespacesAndNewlines)
+        for (index, item) in items.enumerated() {
+            sendAttachment(item.url, kind: item.kind, in: chatID)
+            if index == 0, !text.isEmpty { send(.text(text), in: chatID, replyTo: nil) }
+        }
+    }
+
+    public func cancelUpload(messageID: String, in chatID: String) {}
+
     public func draft(for chatID: String) -> String { chat(id: chatID)?.draft ?? "" }
 
     public func flushDrafts() {}
