@@ -2,8 +2,8 @@ import Foundation
 import Testing
 @testable import AppCore
 
-private func member(_ id: String, _ name: String, _ role: GroupRole, me: Bool = false, contact: Bool = true) -> GroupMemberInfo {
-    GroupMemberInfo(accountID: id, name: name, role: role, isMe: me, isContact: contact)
+private func member(_ id: String, _ name: String, _ role: GroupRole, me: Bool = false, contact: Bool = true) -> GroupMemberRow {
+    GroupMemberRow(accountID: id, name: name, role: role, isMe: me, isContact: contact)
 }
 
 @Test func membersAreSortedOwnerThenAdminsThenMembersByName() {

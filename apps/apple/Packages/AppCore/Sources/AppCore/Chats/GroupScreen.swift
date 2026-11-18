@@ -10,7 +10,7 @@ public enum GroupMyState: String, Sendable {
 
 /// One row of the member list in group info. `name` is what to draw: the contact's name, else the name from the
 /// person's profile, else "" (the screen then says "Someone").
-public struct GroupMemberInfo: Hashable, Sendable {
+public struct GroupMemberRow: Hashable, Sendable {
     public var accountID: String
     public var name: String
     public var role: GroupRole
@@ -30,12 +30,12 @@ public struct GroupInfo: Equatable, Sendable {
     public var name: String?
     /// The stored photo, which the screen draws only after `GroupScreenRules.displayablePhoto`.
     public var photo: Data?
-    public var members: [GroupMemberInfo]
+    public var members: [GroupMemberRow]
     /// The person's own role in the list; `nil` when the list has no entry for them.
     public var myRole: GroupRole?
     public var myState: GroupMyState
 
-    public init(chatID: String, name: String?, photo: Data?, members: [GroupMemberInfo], myRole: GroupRole?, myState: GroupMyState) {
+    public init(chatID: String, name: String?, photo: Data?, members: [GroupMemberRow], myRole: GroupRole?, myState: GroupMyState) {
         self.chatID = chatID; self.name = name; self.photo = photo; self.members = members; self.myRole = myRole; self.myState = myState
     }
 }
@@ -84,7 +84,7 @@ public enum GroupMemberAction: Hashable, Sendable {
 /// The decisions of the group screens, as pure functions (the server enforces the same rules again).
 public enum GroupScreenRules {
     /// Owner, then admins, then members; each by name (case-insensitive), equal names by account ID.
-    public static func sorted(_ members: [GroupMemberInfo]) -> [GroupMemberInfo] {
+    public static func sorted(_ members: [GroupMemberRow]) -> [GroupMemberRow] {
         func rank(_ role: GroupRole) -> Int {
             switch role {
             case .owner: 0
@@ -122,7 +122,7 @@ public enum GroupScreenRules {
     /// The menu of one member row, in a fixed order. Nothing on the person's own row or once they are out of the
     /// group (Message and the safety number stay: they belong to the one-to-one chat). Roles are set by the owner only;
     /// the owner is never removed or made owner again.
-    public static func actions(myRole: GroupRole?, myState: GroupMyState, target: GroupMemberInfo) -> [GroupMemberAction] {
+    public static func actions(myRole: GroupRole?, myState: GroupMyState, target: GroupMemberRow) -> [GroupMemberAction] {
         guard !target.isMe, myState == .member else { return [] }
         var list: [GroupMemberAction] = []
         if target.isContact { list += [.message, .viewSafetyNumber] }
@@ -138,7 +138,7 @@ public enum GroupScreenRules {
     }
 
     /// Contacts that may be offered under "Add members": not already in the group, each once, in the given order.
-    public static func addCandidates(contactIDs: [String], members: [GroupMemberInfo]) -> [String] {
+    public static func addCandidates(contactIDs: [String], members: [GroupMemberRow]) -> [String] {
         var taken = Set(members.map(\.accountID))
         var result: [String] = []
         for id in contactIDs where !taken.contains(id) {
