@@ -70,6 +70,8 @@ import org.example.app.live.LivePlatform
 import org.example.app.live.LocalData
 import org.example.app.live.WipeFirst
 import org.example.app.live.LiveSession
+import org.example.app.ui.media.AttachmentOpener
+import org.example.app.ui.media.asOpenedMedia
 import org.example.app.messaging.sync.DeviceSync
 import org.example.app.messaging.sync.LocalDevice
 import org.example.app.messaging.sync.OwnDeviceWatcher
@@ -323,6 +325,9 @@ class AppGraph(
     private val guardedAccount: AccountService by lazy { WipeFirst(liveAccount) { finishPendingWipe(); accountActions.clearError() /* a sign-in starts clean */ } }
     private val sampleAccount by lazy { SampleAccountService() }
     private val sampleChats by lazy { SampleChatStore() }
+
+    /** Decrypts a downloaded attachment for the chat screen. Nothing with sample data or while signed out. */
+    val attachmentOpener = AttachmentOpener { messageId -> liveSession?.chatStore?.openAttachment(messageId)?.asOpenedMedia() }
 
     /** Sample accounts, or the live ones; a live sign-in first finishes any pending wipe. */
     val accountService: AccountService get() = if (sampleData) sampleAccount else guardedAccount

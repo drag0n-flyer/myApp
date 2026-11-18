@@ -56,6 +56,8 @@ import org.example.app.core.chats.MessageContent
 import org.example.app.core.chats.MessagePreview
 import org.example.app.core.settings.MediaKind
 import org.example.app.ui.dataSizeText
+import org.example.app.ui.media.MediaHost
+import org.example.app.ui.media.PhotoBubble
 import org.example.app.ui.previewText
 
 /** What a message in the chat needs from outside: who is "you", who it replies to, and the download rule. */
@@ -78,6 +80,8 @@ fun MessageBubble(
     onRetry: () -> Unit = {},
     /** Briefly true after a jump to this message. */
     highlighted: Boolean = false,
+    /** What photo, file and voice bubbles need from the screen; null shows them without opening anything. */
+    media: MediaHost? = null,
 ) {
     val content = message.content
     if (content is MessageContent.System) {
@@ -102,7 +106,7 @@ fun MessageBubble(
             Surface(shape = shape, color = fill, border = outline, modifier = Modifier.widthIn(max = 300.dp).then(press)) {
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     if (message.replyToId != null) ReplyQuote(replyTo, replyAuthor, onQuoteClick)
-                    Body(message, autoDownloads, onDownload)
+                    Body(message, isOwn, autoDownloads, onDownload, media)
                     if (message.reactions.isNotEmpty()) Text(message.reactions.joinToString(" "))
                     Row(Modifier.align(Alignment.End), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         if (message.editedAt != null) Text(stringResource(R.string.edited), style = MaterialTheme.typography.labelSmall)
@@ -183,7 +187,7 @@ private fun LinkedText(text: String) {
 }
 
 @Composable
-private fun Body(message: Message, autoDownloads: (MediaKind) -> Boolean, onDownload: () -> Unit) {
+private fun Body(message: Message, isOwn: Boolean, autoDownloads: (MediaKind) -> Boolean, onDownload: () -> Unit, media: MediaHost?) {
     when (val c = message.content) {
         is MessageContent.Text -> LinkedText(c.text)
         is MessageContent.Voice -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -191,11 +195,12 @@ private fun Body(message: Message, autoDownloads: (MediaKind) -> Boolean, onDown
             Icon(painterResource(R.drawable.ic_play), contentDescription = stringResource(R.string.play_voice))
             Text((message.preview as? MessagePreview.Resource)?.args?.firstOrNull().orEmpty())
         }
-        is MessageContent.Photo -> MediaTile(
+        is MessageContent.Photo -> PhotoBubble(
+            message = message,
             title = stringResource(R.string.photo_with_size, dataSizeText(DataFormat.size(c.bytes))),
-            media = message.media,
+            isOwn = isOwn,
             wait = !autoDownloads(MediaKind.Photo),
-            blurred = true,
+            host = media,
             onDownload = onDownload,
         )
         is MessageContent.File -> MediaTile(
