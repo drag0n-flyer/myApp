@@ -8,6 +8,8 @@ import kotlinx.coroutines.flow.asSharedFlow
 import org.example.app.contracts.ServerEvent
 import org.example.app.messaging.content.ContentCodec
 import org.example.app.messaging.content.ContentEnvelope
+import org.example.app.core.groups.ChatID
+import org.example.app.messaging.ports.MyState
 import org.example.app.messaging.ports.Repository
 import org.example.app.messaging.sync.LocalDevice
 
@@ -75,11 +77,24 @@ class EphemeralChannel(
         if (frame.ciphertext.size > MAX_BYTES) return null
         if (frame.fromAccountId == me.accountId) return null
         val conversation = repo.conversation(frame.conversationId) ?: return null
+        if (ChatID.isGroup(conversation.chatId)) return openGroup(frame, conversation.chatId, conversation.active)
         // In a one-to-one chat the chat ID is the other person's account.
         if (!conversation.active || frame.fromAccountId != conversation.chatId || repo.isBlocked(frame.fromAccountId)) return null
         val body = ContentCodec.decode(frame.ciphertext)
         if (body !is ContentEnvelope.Typing && body !is ContentEnvelope.Presence) return null
         return EphemeralEvent(conversation.chatId, frame.fromAccountId, body)
+    }
+
+    /**
+     * A group takes `typing` only (no presence in a group), from an account in the stored member list that is not this
+     * account and not blocked, while this account is still a member. The sender is the frame's, which the server fills in.
+     */
+    private fun openGroup(frame: ServerEvent.ConvEphemeral, chatId: String, active: Boolean): EphemeralEvent? {
+        if (!active || repo.chat(chatId)?.myState != MyState.MEMBER || repo.isBlocked(frame.fromAccountId)) return null
+        if (repo.groupMembers(chatId).none { it.accountId == frame.fromAccountId }) return null
+        val body = ContentCodec.decode(frame.ciphertext)
+        if (body !is ContentEnvelope.Typing) return null
+        return EphemeralEvent(chatId, frame.fromAccountId, body)
     }
 
     private companion object {

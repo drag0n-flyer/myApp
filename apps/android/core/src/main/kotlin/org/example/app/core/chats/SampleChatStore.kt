@@ -283,6 +283,39 @@ class SampleChatStore(
         return GroupCreated(id, emptyList())
     }
 
+    private val sampleReceipts = HashMap<String, List<MessageReceipt>>()
+
+    override fun messageReceipts(messageId: String): List<MessageReceipt> = synchronized(lock) { sampleReceipts[messageId].orEmpty() }
+
+    /**
+     * Adds the group "Weekend plans" with Riya and Arjun and a few messages (two senders, one of mine that Riya read and
+     * Arjun got), for demos and sample-mode UI tests. It is not in [SampleData.default]. Returns the chat ID.
+     */
+    fun addSampleGroup(): String {
+        var id = ""
+        mutate {
+            nextId += 1
+            id = org.example.app.core.groups.ChatID.group("sample-weekend-$nextId")
+            val now = clock()
+            fun at(minutesAgo: Long) = now.minusSeconds(minutesAgo * 60)
+            fun msg(key: String, sender: String, minutes: Long, text: String, status: DeliveryStatus = DeliveryStatus.Delivered) =
+                Message("$id-$key", sender, at(minutes), MessageContent.Text(text), status, null, emptyList())
+            val mine = msg("m3", me.id, 5, "I can bring the drinks", DeliveryStatus.Read)
+            sampleReceipts[mine.id] = listOf(
+                MessageReceipt("riya", at(4), at(3)),
+                MessageReceipt("arjun", at(4), null),
+            )
+            val messages = listOf(
+                msg("m1", "riya", 9, "Who is bringing snacks on Saturday?"),
+                msg("m2", "riya", 8, "I can do the cake"),
+                msg("m4", "arjun", 6, "Count me in for the snacks"),
+                mine,
+            )
+            allChats = allChats + Chat(id, null, ChatEncryption.EndToEnd, emptySet(), 0, messages, isRequest = false, title = "Weekend plans")
+        }
+        return id
+    }
+
     override fun addFolder(name: String, chatIds: Set<String>): ChatFolder {
         lateinit var folder: ChatFolder
         mutate {
