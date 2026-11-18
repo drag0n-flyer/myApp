@@ -59,6 +59,7 @@ internal class MessageBody(
     @SerialName("ciphertext") @Serializable(with = Base64UrlSerializer::class) val ciphertext: ByteArray,
     @SerialName("escrow") @Serializable(with = Base64UrlSerializer::class) val escrow: ByteArray? = null,
     @SerialName("clientMsgID") val clientMsgID: String,
+    @SerialName("expiresAt") val expiresAt: String? = null,
 )
 
 @Serializable

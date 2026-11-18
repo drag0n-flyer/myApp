@@ -30,6 +30,10 @@ sealed interface ServerEvent {
     class CallAnswered(val callId: String, val deviceId: String, val payload: ByteArray) : ServerEvent
     class CallSignal(val callId: String, val fromDeviceId: String, val payload: ByteArray) : ServerEvent
     class CallEnded(val callId: String, val reason: String) : ServerEvent
+    /** A typing or presence signal: an MLS application message the server cannot read, never stored. */
+    class ConvEphemeral(
+        val conversationId: String, val epoch: Long, val fromAccountId: String, val fromDeviceId: String, val ciphertext: ByteArray,
+    ) : ServerEvent
 }
 
 enum class ConnectionState { Connecting, Connected, Disconnected, Revoked, Replaced }
@@ -40,6 +44,21 @@ interface LiveSocket {
 
     /** Returns the ack data. */
     suspend fun send(type: String, data: JsonObject): JsonObject?
+}
+
+/**
+ * Sends a `conv.ephemeral` frame (design 7.3): [ciphertext] is base64url without padding, at most 4 KiB decoded. The
+ * server answers with an ack, or `bad_request`, or `not_found` for a conversation the sender is not a member of.
+ */
+suspend fun LiveSocket.sendEphemeral(conversationId: String, epoch: Long, ciphertext: ByteArray) {
+    send(
+        "conv.ephemeral",
+        kotlinx.serialization.json.buildJsonObject {
+            put("conversationID", kotlinx.serialization.json.JsonPrimitive(conversationId))
+            put("epoch", kotlinx.serialization.json.JsonPrimitive(epoch))
+            put("ciphertext", kotlinx.serialization.json.JsonPrimitive(java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(ciphertext)))
+        },
+    )
 }
 
 /** Implemented by `:net`, used by `:messaging`. */

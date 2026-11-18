@@ -38,7 +38,7 @@ class LiveCallSignaling(
             is ServerEvent.CallAnswered -> CallServerEvent.Answered(e.callId, e.deviceId, e.payload)
             is ServerEvent.CallSignal -> CallServerEvent.Signal(e.callId, e.fromDeviceId, e.payload)
             is ServerEvent.CallEnded -> CallServerEvent.Ended(e.callId, e.reason)
-            is ServerEvent.Inbox, is ServerEvent.DeviceRevoked -> null
+            is ServerEvent.Inbox, is ServerEvent.DeviceRevoked, is ServerEvent.ConvEphemeral -> null
         }
     }
 
