@@ -314,7 +314,7 @@ Besides the codes of section 7, the gateway also answers `conflict` (409, a repl
 |---|---|---|
 | `GET /v1/users/{username}` | ✓ | exact match only → `{accountID, username, displayName}`; `not_found`. 60 per hour per account |
 | `POST /v1/discover/email` | ✓ | `{email}` → the same shape, only if that account has `findByEmail` on; otherwise `not_found`. 20 per day per account |
-| `PATCH /v1/me/settings` | ✓ | `{displayName?, findByEmail?}` → `204`. The display name is at most 64 characters with no control characters |
+| `PATCH /v1/me/settings` | ✓ | `{displayName?, findByEmail?}` → `204`. The display name is 1 to 40 code points after trimming, with at least one visible character, and no control, line-break, direction or other format characters (U+200C, U+200D and the emoji tag characters are allowed); unassigned code points count as visible. The same rule runs on the server and both apps (`server/internal/vectors/display_names.json`) |
 | `PUT /v1/blocks/{accountID}` / `DELETE …` | ✓ | → `204` |
 | `GET /v1/blocks` | ✓ | → `{accountIDs:[…]}` |
 | `POST /v1/reports` | ✓ | `{accountID, conversationID?, reason:"spam"\|"abuse"\|"other", messages:[{sentAt, text}] (≤50, shared with the user's consent), note?}` → `202`. Emailed to `abuseContact` if one is set. CLI: `appserver reports list` |
