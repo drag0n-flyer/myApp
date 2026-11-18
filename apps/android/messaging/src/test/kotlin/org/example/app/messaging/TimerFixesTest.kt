@@ -180,8 +180,8 @@ class TimerFixesTest {
         val rig = rig()
         val st = store(rig.bob1)
         val open = File(mediaRoot, "open").also { it.mkdirs() }
-        val mine = File(open, "att-gone-aabb-ccdd").also { it.writeText("plain") }
-        val other = File(open, "att-keep-aabb-ccdd").also { it.writeText("plain") }
+        val mine = File(open, org.example.app.messaging.media.Downloader.openName("att-gone", ByteArray(1), ByteArray(1))).also { it.writeText("plain") }
+        val other = File(open, org.example.app.messaging.media.Downloader.openName("att-keep", ByteArray(1), ByteArray(1))).also { it.writeText("plain") }
         rig.bob1.repo.insertMessage(ownText("g1", ContentEnvelope.Text("g1", NOW, "photo", ttl = 60), expiresAt = NOW + 60_000))
         rig.bob1.repo.insertMessage(ownText("k1", ContentEnvelope.Text("k1", NOW, "photo", ttl = 600), expiresAt = NOW + 600_000))
         rig.bob1.repo.upsertAttachment(org.example.app.messaging.ports.AttachmentRecord("att-gone", "g1", "photo", ByteArray(1), ByteArray(1), 1, 1, "remote", 0, null))
