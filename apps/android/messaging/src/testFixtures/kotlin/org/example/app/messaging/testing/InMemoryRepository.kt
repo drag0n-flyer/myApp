@@ -120,6 +120,10 @@ class InMemoryRepository : Repository {
     }
     override fun setTimer(chatId: String, seconds: Int) = tx { s.chats[chatId]?.let { s.chats[chatId] = it.copy(timerSeconds = seconds) }; Unit }
     override fun timerSeconds(chatId: String) = tx { s.chats[chatId]?.timerSeconds ?: 0 }
+    override fun expiredUnread(now: Long, ownAccount: String): Map<String, Int> =
+        s.messages.values.filter {
+            it.expiresAt != null && it.expiresAt <= now && it.senderAccount != ownAccount && it.senderAccount != "system" && it.status != "read"
+        }.groupingBy { it.chatId }.eachCount()
     override fun sweepExpired(now: Long, ownAccount: String): List<String> {
         val paths = ArrayList<String>()
         val removed = tx {

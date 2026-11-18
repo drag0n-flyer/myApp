@@ -19,7 +19,7 @@ private func populatedV2() throws -> Database {
 @Test func testMigrationToV3KeepsOldRowsAndAddsPeopleColumnsAndTable() throws {
     let db = try populatedV2()
     try migrate(db)
-    #expect(try db.query("PRAGMA user_version") { $0.int(0) } == [3])
+    #expect(try db.query("PRAGMA user_version") { $0.int(0) } == [latestSchemaVersion])
     #expect(try db.query("SELECT id, status, folded, expires_at IS NULL, caption IS NULL, link_preview IS NULL FROM messages") {
         [$0.text(0), $0.text(1), $0.text(2), String($0.int(3)), String($0.int(4)), String($0.int(5))]
     } == [["m1", "delivered", "hi there", "1", "1", "1"]])
@@ -29,7 +29,7 @@ private func populatedV2() throws -> Database {
     #expect(try db.query("PRAGMA foreign_key_check") { $0.int(0) }.isEmpty)
     #expect(try db.query("PRAGMA integrity_check") { $0.text(0) } == ["ok"])
     try migrate(db)
-    #expect(try db.query("PRAGMA user_version") { $0.int(0) } == [3])
+    #expect(try db.query("PRAGMA user_version") { $0.int(0) } == [latestSchemaVersion])
     // The old message is still found by search.
     let repo = Repository(db: db, now: { t(1000) })
     #expect(try repo.search("there", limit: 5).map(\.messageID) == ["m1"])
