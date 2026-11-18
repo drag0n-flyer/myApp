@@ -11,6 +11,7 @@ public final class SpyMLSEngine: MLSEngine, @unchecked Sendable {
     private var _rejected = 0
     private var membersFailures: (count: Int, error: MLSError) = (0, .busy)
     private var _addCount = 0
+    private var _encrypted: [Data] = []
     private var signatureKeys: [String: Data] = [:]
     private var holds: [Data: (entered: AsyncStream<Void>.Continuation, release: AsyncStream<Void>)] = [:]
 
@@ -73,7 +74,15 @@ public final class SpyMLSEngine: MLSEngine, @unchecked Sendable {
         lock.withLock { _rejected += 1 }
         try await inner.commitRejected(group)
     }
-    public func encrypt(_ plaintext: Data, in group: GroupID) async throws -> (ciphertext: Data, epoch: UInt64) { try await inner.encrypt(plaintext, in: group) }
+    /// Every ciphertext `encrypt` made, in order. Each one advanced the sender's generation.
+    public var encrypted: [Data] { lock.withLock { _encrypted } }
+    /// How many times `encrypt` succeeded.
+    public var encryptCount: Int { lock.withLock { _encrypted.count } }
+    public func encrypt(_ plaintext: Data, in group: GroupID) async throws -> (ciphertext: Data, epoch: UInt64) {
+        let result = try await inner.encrypt(plaintext, in: group)
+        lock.withLock { _encrypted.append(result.ciphertext) }
+        return result
+    }
     public func epoch(of group: GroupID) async throws -> UInt64 { try await inner.epoch(of: group) }
     public func exportSecret(group: GroupID, label: String, length: Int) async throws -> Data { try await inner.exportSecret(group: group, label: label, length: length) }
     public func memberKeys(of group: GroupID) async throws -> [MemberKey] {
