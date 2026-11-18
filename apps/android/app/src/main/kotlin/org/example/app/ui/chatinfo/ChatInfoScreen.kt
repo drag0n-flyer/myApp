@@ -214,3 +214,24 @@ fun ChatInfoScreen(
         }
     }
 }
+
+/**
+ * The encryption line of a chat (or, when the server and the conversation disagree, the paused-sending line). The group
+ * info page uses it too: chat info stays the only place that names an encryption type.
+ */
+@Composable
+internal fun EncryptionInfoRows(chat: org.example.app.core.chats.Chat) {
+    if (chat.modeMismatch) {
+        ListItem(
+            leadingContent = { Icon(painterResource(R.drawable.ic_lock), contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+            headlineContent = { Text(stringResource(R.string.info_mismatch), color = MaterialTheme.colorScheme.error) },
+        )
+    } else {
+        val line = keyString(chat.encryption.infoKey)
+        ListItem(
+            modifier = Modifier.semantics(mergeDescendants = true) { contentDescription = line },
+            leadingContent = { Icon(painterResource(R.drawable.ic_lock), contentDescription = null) },
+            headlineContent = { Text(line) },
+        )
+    }
+}

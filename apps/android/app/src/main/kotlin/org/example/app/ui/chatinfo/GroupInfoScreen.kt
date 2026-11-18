@@ -66,7 +66,6 @@ import org.example.app.core.groups.MemberActions
 import org.example.app.core.groups.MemberOrder
 import org.example.app.core.groups.MyGroupState
 import org.example.app.ui.Avatar
-import org.example.app.ui.keyString
 import org.example.app.ui.usernameText
 
 /**
@@ -123,7 +122,7 @@ fun GroupInfoScreen(
     }
 
     if (info == null) {
-        Scaffold(modifier = modifier, topBar = { InfoBar(onBack) }) { }
+        Scaffold(modifier = modifier, topBar = { InfoBar(onBack) }) { padding -> Column(Modifier.padding(padding)) {} }
         return
     }
     val inGroup = info.myState == MyGroupState.Member
@@ -269,19 +268,7 @@ fun GroupInfoScreen(
                     trailingContent = { Switch(checked = isMuted, onCheckedChange = null) },
                 )
                 HorizontalDivider()
-                if (chat.modeMismatch) {
-                    ListItem(
-                        leadingContent = { Icon(painterResource(R.drawable.ic_lock), contentDescription = null, tint = MaterialTheme.colorScheme.error) },
-                        headlineContent = { Text(stringResource(R.string.info_mismatch), color = MaterialTheme.colorScheme.error) },
-                    )
-                } else {
-                    val line = keyString(chat.encryption.infoKey)
-                    ListItem(
-                        modifier = Modifier.semantics(mergeDescendants = true) { contentDescription = line },
-                        leadingContent = { Icon(painterResource(R.drawable.ic_lock), contentDescription = null) },
-                        headlineContent = { Text(line) },
-                    )
-                }
+                EncryptionInfoRows(chat)
                 HorizontalDivider()
                 if (inGroup) {
                     ListItem(
