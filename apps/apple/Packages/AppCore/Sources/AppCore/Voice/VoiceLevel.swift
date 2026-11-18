@@ -21,12 +21,19 @@ public final class SampleVoiceCapture: VoiceCapture {
     public var permission: VoicePermission { .granted }
     public func requestPermission() async -> Bool { true }
     public var level: Float { Float(0.5 + 0.4 * sin(Date().timeIntervalSince(startedAt) * 6)) }
-    public var elapsed: Double { currentURL == nil ? 0 : Date().timeIntervalSince(startedAt) + Self.headStart }
+    public var elapsed: Double {
+        currentURL == nil ? 0 : Date().timeIntervalSince(startedAt) + (locked ? Self.headStart : 0)
+    }
+    private var locked = false
+
+    /// Only a locked note gets the head start, so a hold and release in sample mode follows the real clock.
+    public func recordingLocked() { locked = true }
 
     public func start() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("voice-sample-\(UUID().uuidString.lowercased()).ogg")
         try Data([0]).write(to: url)
         currentURL = url
+        locked = false
         startedAt = Date()
     }
 

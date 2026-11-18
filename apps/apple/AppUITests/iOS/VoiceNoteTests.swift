@@ -56,7 +56,7 @@ final class VoiceNoteTests: XCTestCase {
     func testAPlainTapShowsTheHintAndSendsNothing() {
         let app = openChat()
         let before = voiceMessageCount(app)
-        app.element("chat.composer.mic").tap()
+        app.element("chat.composer.mic").press(forDuration: 0.05)
         XCTAssertTrue(app.element("chat.voice.hint").waitToExist())
         XCTAssertFalse(app.element("chat.voice.bar").exists)
         XCTAssertEqual(voiceMessageCount(app), before)

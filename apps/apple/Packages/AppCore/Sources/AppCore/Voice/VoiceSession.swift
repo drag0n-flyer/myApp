@@ -18,6 +18,12 @@ public protocol VoiceCapture: AnyObject {
     func stop() throws -> (url: URL, duration: Double)
     /// Stops and deletes the file.
     func cancel()
+    /// The recording just became locked (the finger is up).
+    func recordingLocked()
+}
+
+extension VoiceCapture {
+    public func recordingLocked() {}
 }
 
 /// Runs a voice note from the first touch to send, cancel or preview. `VoiceGesture` decides; this class
@@ -111,6 +117,17 @@ public final class VoiceSession {
         startTicker()
     }
 
+    /// The touch ended without a release (the system cancelled it: a permission alert, a call, the scene going
+    /// inactive). A recording with no finger down is kept as a preview; a press still waiting is dropped.
+    public func touchEndedWithoutRelease() {
+        switch state {
+        case .pending, .recording, .willCancel, .willLock:
+            startTask?.cancel()
+            apply(.interrupted)
+        default: break
+        }
+    }
+
     public func stop() { apply(.stop) }
     public func delete() { apply(.delete) }
     public func send() { apply(.sendTapped) }
@@ -170,6 +187,8 @@ public final class VoiceSession {
             reset()
         case .send:
             if let file = old == .preview ? currentPreview() : finishRecording() { deliver(file) } else { reset() }
+        case .locked where old != .locked:
+            capture.recordingLocked()
         case .preview where old != .preview:
             if let file = finishRecording() {
                 previewURL = file.url

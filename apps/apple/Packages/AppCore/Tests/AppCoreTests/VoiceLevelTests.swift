@@ -16,10 +16,20 @@ final class VoiceLevelTests: XCTestCase {
         XCTAssertEqual(VoiceLevel.normalized(decibels: .nan), 0)
     }
 
-    func testSampleCaptureWritesAFileAndReportsAtLeastASecond() throws {
+    func testSampleCaptureFollowsTheRealClockUntilLocked() throws {
+        let capture = SampleVoiceCapture()
+        try capture.start()
+        XCTAssertLessThan(capture.elapsed, 1, "a hold and release in sample mode is as short as it really was")
+        capture.recordingLocked()
+        XCTAssertGreaterThanOrEqual(capture.elapsed, 2)
+        capture.cancel()
+    }
+
+    func testSampleCaptureWritesAFileAndReportsAtLeastASecondOnceLocked() throws {
         let capture = SampleVoiceCapture()
         XCTAssertEqual(capture.permission, .granted)
         try capture.start()
+        capture.recordingLocked()
         let result = try capture.stop()
         XCTAssertGreaterThanOrEqual(result.duration, 2)
         XCTAssertTrue(FileManager.default.fileExists(atPath: result.url.path))

@@ -10,6 +10,8 @@ private final class FakeCapture: VoiceCapture {
     var startCount = 0
     var cancelCount = 0
     var stopCount = 0
+    var lockedCount = 0
+    func recordingLocked() { lockedCount += 1 }
     var folder: URL
     var current: URL?
 
@@ -220,6 +222,45 @@ final class VoiceSessionTests: XCTestCase {
         await hold()
         session.drag(dx: 110, dy: 0)
         XCTAssertEqual(session.state, .willCancel)
+    }
+
+    func testACancelledTouchWhileRecordingKeepsAPreviewAndSendsNothing() async {
+        await hold()
+        capture.elapsed = 5
+        session.touchEndedWithoutRelease()
+        XCTAssertEqual(session.state, .preview)
+        XCTAssertTrue(sent.isEmpty)
+        XCTAssertEqual(files(), ["voice-1.ogg"])
+        session.delete()
+    }
+
+    func testACancelledTouchBeforeRecordingStartsReturnsToIdleAndAllowsAnotherPress() async {
+        session.press()
+        session.touchEndedWithoutRelease()
+        XCTAssertEqual(session.state, .idle)
+        await hold()
+        XCTAssertEqual(session.state, .recording, "the next touch works")
+    }
+
+    func testACancelledTouchLeavesLockedAndPreviewAlone() async {
+        await session.activateAccessible()
+        session.touchEndedWithoutRelease()
+        XCTAssertEqual(session.state, .locked)
+        capture.elapsed = 2
+        session.stop()
+        session.touchEndedWithoutRelease()
+        XCTAssertEqual(session.state, .preview)
+    }
+
+    func testTheCaptureIsToldWhenTheRecordingLocks() async {
+        await hold()
+        capture.elapsed = 3
+        session.drag(dx: 0, dy: -80)
+        session.release()
+        XCTAssertEqual(capture.lockedCount, 1)
+        session.delete()
+        await session.activateAccessible()
+        XCTAssertEqual(capture.lockedCount, 2)
     }
 
     func testOrphanRecordingsAreRemovedAtStart() throws {

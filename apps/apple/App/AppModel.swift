@@ -561,6 +561,7 @@ final class AppModel {
         settings.lockAfterSeconds = AppLockPolicy.defaultSeconds
         // Decoded pictures and plaintext copies made for previews and sends belong to it too.
         MediaPreview.removeTemporaryFolders()
+        VoiceSession.removeOrphans()
         Task { await ThumbnailLoader.shared.clear() }
         MediaFileCheck.shared.clear()
         // The live store belongs to the signed-out account. An empty store stands in until the next sign-in.

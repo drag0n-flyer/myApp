@@ -30,7 +30,9 @@ struct ComposerView: View {
     @State private var session: VoiceSession?
     /// The finger is down on the microphone (iPhone).
     #if os(iOS)
-    @State private var touching = false
+    @GestureState private var touching = false
+    @State private var pressSent = false
+    @State private var touchReleased = false
     #endif
     @State private var previewPlayer = VoicePlayer()
     @Environment(\.scenePhase) private var scenePhase
@@ -220,6 +222,8 @@ struct ComposerView: View {
         let made = VoiceSession(capture: capture, rtl: layoutDirection == .rightToLeft) { [sendAttachment, sendSample] url, seconds in
             if let sendAttachment {
                 sendAttachment(.voice(url, duration: seconds))
+                // The store has copied it into its own folder; the plaintext recording does not stay in temp.
+                try? FileManager.default.removeItem(at: url)
             } else {
                 try? FileManager.default.removeItem(at: url)
                 sendSample(.voice(duration: seconds))
@@ -354,14 +358,26 @@ struct ComposerView: View {
             .contentShape(Circle())
             .gesture(
                 DragGesture(minimumDistance: 0)
+                    // A GestureState goes back to false when the system cancels the touch (a permission alert,
+                    // a call, the scene going inactive), which `onEnded` never reports.
+                    .updating($touching) { _, state, _ in state = true }
                     .onChanged { value in
-                        if !touching { touching = true; session?.press() }
+                        if !pressSent { pressSent = true; session?.press() }
                         session?.drag(dx: value.translation.width, dy: value.translation.height)
                     }
                     .onEnded { _ in
-                        touching = false
+                        touchReleased = true
                         session?.release()
                     })
+            .onChange(of: touching) { _, down in
+                guard !down else { return }
+                // Let `onEnded` of the same touch run first, then treat a touch that never released as interrupted.
+                Task { @MainActor in
+                    if !touchReleased { session?.touchEndedWithoutRelease() }
+                    touchReleased = false
+                    pressSent = false
+                }
+            }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Record voice message")
             .accessibilityAddTraits(.isButton)
