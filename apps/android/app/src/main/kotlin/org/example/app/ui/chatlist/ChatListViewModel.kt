@@ -33,6 +33,8 @@ data class ChatRowModel(
     val draft: String? = null,
     /** The other person's account ID, which picks the colour of the letter tile. */
     val colorKey: String? = null,
+    /** The other person is typing: the row shows "typing…" in place of the preview. */
+    val typing: Boolean = false,
 )
 
 data class ChatListState(
@@ -56,6 +58,8 @@ class ChatListViewModel(
     private val network: NetworkType,
     /** The live connection (`AppGraph.connectionStatus`); sample data and tests are connected. */
     private val status: StateFlow<ConnectionStatus> = MutableStateFlow(ConnectionStatus.Connected),
+    /** Typing signals for the rows; null shows none. */
+    signals: org.example.app.core.people.PeopleSignals? = null,
 ) : ViewModel() {
     private val selected = MutableStateFlow(ChatFolder.All.id)
 
@@ -74,6 +78,13 @@ class ChatListViewModel(
                 modeKey = DataModePolicy.stripLabelKey(server, user.call, network),
             )
         }.combine(status) { state, connection -> state.copy(status = connection) }
+            .combine(signals?.views ?: MutableStateFlow<Map<String, org.example.app.core.people.PeerView>>(emptyMap())) { state, views ->
+                if (views.values.none { it.typing }) state
+                else state.copy(
+                    rows = state.rows.map { it.copy(typing = views[it.chatId]?.typing == true) },
+                    archivedRows = state.archivedRows.map { it.copy(typing = views[it.chatId]?.typing == true) },
+                )
+            }
             .stateIn(viewModelScope, SharingStarted.Eagerly, initial().copy(status = status.value))
 
     private fun rowOf(chat: Chat): ChatRowModel {

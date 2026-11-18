@@ -291,7 +291,7 @@ fun AppRoot(
                 MainTabs(modifier = paneModifier, tabs = if (graph.callsAvailable) MainTab.entries else MainTab.entries - MainTab.Calls) { tab ->
                     if (tab == MainTab.Chats) {
                         val vm = viewModel<ChatListViewModel>(
-                            factory = factory { ChatListViewModel(graph.chatStore, graph.serverPolicy, graph.settingsStore.settings, graph.network, graph.connectionStatus) },
+                            factory = factory { ChatListViewModel(graph.chatStore, graph.serverPolicy, graph.settingsStore.settings, graph.network, graph.connectionStatus, graph.signals) },
                         )
                         ChatListScreen(
                             vm, onOpenChat = { openChat.value(it, null) }, onOpenRequests = { nav.navigate(REQUESTS) },
@@ -351,7 +351,7 @@ fun AppRoot(
                                     val vm = viewModel<ChatViewModel>(
                                         viewModelStoreOwner = pane.owner,
                                         key = "chat-$id",
-                                        factory = factory { ChatViewModel(graph.chatStore, id, graph.network) { graph.settingsStore.settings.value.autoDownload } },
+                                        factory = factory { ChatViewModel(graph.chatStore, id, graph.network, signals = graph.signals) { graph.settingsStore.settings.value.autoDownload } },
                                     )
                                     ChatScreen(
                                         vm, myId = graph.chatStore.me.id,
@@ -373,7 +373,7 @@ fun AppRoot(
             }
             composable(ARCHIVE) {
                 val vm = viewModel<ChatListViewModel>(
-                    factory = factory { ChatListViewModel(graph.chatStore, graph.serverPolicy, graph.settingsStore.settings, graph.network, graph.connectionStatus) },
+                    factory = factory { ChatListViewModel(graph.chatStore, graph.serverPolicy, graph.settingsStore.settings, graph.network, graph.connectionStatus, graph.signals) },
                 )
                 ArchiveScreen(vm, onOpenChat = { openChat.value(it, null) }, onBack = { nav.popBackStack() })
             }
@@ -434,7 +434,7 @@ fun AppRoot(
                 val id = entry.arguments!!.getString("id")!!
                 val vm = viewModel<ChatViewModel>(
                     key = "chat-$id",
-                    factory = factory { ChatViewModel(graph.chatStore, id, graph.network) { graph.settingsStore.settings.value.autoDownload } },
+                    factory = factory { ChatViewModel(graph.chatStore, id, graph.network, signals = graph.signals) { graph.settingsStore.settings.value.autoDownload } },
                 )
                 ChatScreen(
                     vm, myId = graph.chatStore.me.id,

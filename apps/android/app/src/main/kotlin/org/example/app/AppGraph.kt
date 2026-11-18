@@ -64,6 +64,13 @@ import org.example.app.calls.android.CallMedia
 import org.example.app.live.SessionCallEngine
 import org.example.app.core.chats.ChatStore
 import org.example.app.core.chats.SampleChatStore
+import org.example.app.core.people.NoWitnessStore
+import org.example.app.core.people.PeopleSignals
+import org.example.app.core.people.ScriptedSignals
+import org.example.app.core.people.SignalChannel
+import org.example.app.core.people.WitnessStore
+import org.example.app.live.EphemeralSignalChannel
+import org.example.app.live.KvWitnessStore
 import org.example.app.core.settings.IPHiding
 import org.example.app.core.settings.ServerPolicy
 import org.example.app.core.settings.UserSettings
@@ -378,6 +385,32 @@ class AppGraph(
     val chatStore: ChatStore
         get() = if (sampleData) sampleChats else liveSession?.chatStore ?: EmptyChatStore
 
+    /**
+     * Typing and presence for the screens (design 6.1). Sample data: a scripted channel ([sampleSignalChannel]). Live: the
+     * open session's `conv.ephemeral` channel. Before sign-in, an idle one that shows and sends nothing.
+     */
+    val signals: PeopleSignals
+        get() = if (sampleData) sampleSignals else liveSignals ?: idleSignals
+
+    /** The scripted channel behind sample data: tests and demos push signals into it. */
+    val sampleSignalChannel: ScriptedSignals by lazy { ScriptedSignals() }
+
+    @Volatile private var liveSignals: PeopleSignals? = null
+
+    private val sampleSignals: PeopleSignals by lazy { makeSignals(scope, sampleSignalChannel, sampleChats, NoWitnessStore) }
+    private val idleSignals: PeopleSignals by lazy { makeSignals(scope, ScriptedSignals(), EmptyChatStore, NoWitnessStore) }
+
+    private fun makeSignals(into: CoroutineScope, channel: SignalChannel, store: ChatStore, witnesses: WitnessStore): PeopleSignals =
+        PeopleSignals(
+            scope = into, channel = channel,
+            typingEnabled = { settingsStore.settings.value.typingIndicator },
+            presenceEnabled = { settingsStore.settings.value.onlineAndLastSeen },
+            // Never to or for a blocked contact, nor a chat that is not known or is still a message request.
+            blocked = { id -> store.chat(id).let { it == null || it.isRequest || it.contactId in store.blockedIds.value } },
+            presenceTargets = { store.chats.value.filter { !it.isRequest }.map { it.id } },
+            witnesses = witnesses, nowMs = System::currentTimeMillis,
+        ).also { it.watchMessages(store.chats, store.me.id) }
+
     @Volatile private var wipeRunning = false
 
     /** Counts revocation wipes (guarded by `this`): an open that saw a stored session aborts if one started since. */
@@ -447,6 +480,8 @@ class AppGraph(
                 callSealer = callSealer,
             )
             liveSession = session
+            liveSignals = makeSignals(sessionScope, EphemeralSignalChannel(session.ephemeral), session.chatStore, KvWitnessStore(session.repo))
+                .also { it.setForeground(visible) }
             (callEngine as? SessionCallEngine)?.use(session.calls)
             start(session)
             session
@@ -501,6 +536,7 @@ class AppGraph(
         liveSession.also {
             liveSession = null
             if (it != null) (callEngine as? SessionCallEngine)?.use(null)
+            if (it != null) liveSignals = null
         }.also {
             socketState.value = null
             if (it != null) sessionGone.value = true
@@ -705,7 +741,12 @@ class AppGraph(
     private var inCall = false
 
     /** The app came to the foreground or left it. */
-    fun setVisible(value: Boolean) = synchronized(this) { visible = value; updateSocket() }
+    fun setVisible(value: Boolean) = synchronized(this) {
+        visible = value
+        // `online` goes out before the socket is stopped on leaving: the frame is queued first.
+        (if (sampleData) sampleSignals else liveSignals)?.setForeground(value)
+        updateSocket()
+    }
 
     /** A call started or ended. */
     fun setInCall(value: Boolean) = synchronized(this) { inCall = value; updateSocket() }

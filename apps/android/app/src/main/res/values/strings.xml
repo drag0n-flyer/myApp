@@ -357,6 +357,13 @@
     <string name="privacy_find_email">By email</string>
     <string name="privacy_messages">Messages</string>
     <string name="privacy_read_receipts">Read receipts</string>
+    <string name="privacy_typing">Typing indicator</string>
+    <string name="privacy_typing_footer">Others can see when you are typing. If you turn this off, you won\'t see it for others either.</string>
+    <string name="privacy_online">Online and last seen</string>
+    <string name="privacy_online_footer">Others can see when you were last in the app. If you turn this off, you won\'t see it for others either.</string>
+    <string name="signal_typing">typing…</string>
+    <string name="signal_online">online</string>
+    <string name="signal_last_seen">last seen %1$s</string>
     <string name="privacy_blocked">Blocked</string>
     <string name="privacy_blocked_empty">No one blocked</string>
     <string name="blocked_unblock">Unblock</string>
