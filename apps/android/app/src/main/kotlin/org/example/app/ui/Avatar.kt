@@ -22,7 +22,7 @@ import org.example.app.ui.theme.isDarkTheme
  * letter is white; without one it is the neutral tonal circle. Decorative: the name next to it is the label.
  */
 @Composable
-fun Avatar(name: String, size: Dp = 40.dp, modifier: Modifier = Modifier, colorKey: String? = null) {
+fun Avatar(name: String, size: Dp = 40.dp, modifier: Modifier = Modifier, colorKey: String?) {
     val initial = name.trim().codePoints().findFirst().let { if (it.isPresent) String(Character.toChars(it.asInt)) else "" }
     val tile = AvatarTiles.tileFor(colorKey, isDarkTheme())
     Box(

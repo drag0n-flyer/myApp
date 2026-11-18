@@ -447,6 +447,7 @@ class AppGraph(
     private fun start(session: LiveSession) {
         session.scope.launch {
             quietly("start") { session.start() }
+            if (seedNameOnOpen) quietly("own name") { seedOwnName(session) }
             quietly("push") { org.example.app.live.PushWiring.registerAfterSignIn(appContext, session.client) }
         }
         val live = session.socket.socket
@@ -553,7 +554,7 @@ class AppGraph(
         val store = chatStore
         scope.async {
             fun current() = settingsStore.generation == generation && chatStore === store
-            val previous = store.me.displayName
+            val previous = store.myStoredName // "" when none is known: never the fallback "You"
             if (current()) store.setMyDisplayName(clean)
             try {
                 val client = openSession()?.client ?: throw AccountError.Server
@@ -571,7 +572,23 @@ class AppGraph(
     }
 
     /** Reads the person's name from the server (`GET /v1/me`) into an own contact row that has none. */
+    /** Tests turn this off to drive [seedOwnName] themselves. */
+    internal var seedNameOnOpen = true
+
     suspend fun seedOwnName(session: org.example.app.live.LiveSession) {
+        val store = session.chatStore
+        if (store.myStoredName.isNotEmpty()) return
+        val generation = settingsStore.generation
+        val name = try {
+            IdentityApi(session.client).me().displayName
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            return // silent: the next open tries again
+        }
+        val clean = org.example.app.core.profile.DisplayNameRule.forDisplay(name, "")
+        // Same guard as a save: a sign-out or another session while the read was out means this name is not ours to store.
+        if (clean.isEmpty() || settingsStore.generation != generation || liveSession !== session || chatStore !== store) return
+        if (store.myStoredName.isEmpty()) store.setMyDisplayName(clean)
     }
 
     private val findByEmailLock = Mutex()

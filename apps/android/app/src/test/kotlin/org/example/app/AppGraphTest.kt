@@ -735,11 +735,20 @@ class AppGraphTest {
         assertEquals("Asha", session.chatStore.me.displayName)
     }
 
+    /** A signed-in graph whose session is open but whose own name is not read by itself, so the test decides when. */
+    private fun openedWithoutSeeding(): Pair<AppGraph, org.example.app.live.LiveSession> = runBlocking {
+        val graph = signedIn()
+        graph.seedNameOnOpen = false
+        val session = assertNotNull(graph.openSession())
+        session.chatStore.settle()
+        graph to session
+    }
+
     private val meJson = """{"accountID":"acc","username":"ana","email":"a@b.c","displayName":"Asha Rao","findByEmail":false}"""
 
     @Test
     fun seedingFillsAnOwnNameThatIsMissing() = runBlocking {
-        val (graph, session) = opened()
+        val (graph, session) = openedWithoutSeeding()
         answer = { r -> if (r.method == "GET" && r.url.encodedPath == "/v1/me") 200 to meJson else null }
         graph.seedOwnName(session)
         assertEquals("Asha Rao", session.chatStore.myStoredName)
@@ -748,7 +757,7 @@ class AppGraphTest {
 
     @Test
     fun seedingNeverOverwritesANameThatIsAlreadyStored() = runBlocking {
-        val (graph, session) = opened()
+        val (graph, session) = openedWithoutSeeding()
         session.chatStore.setMyDisplayName("Local")
         answer = { r -> if (r.method == "GET" && r.url.encodedPath == "/v1/me") 200 to meJson else null }
         graph.seedOwnName(session)
@@ -757,7 +766,7 @@ class AppGraphTest {
 
     @Test
     fun seedingThatCannotReachTheServerIsSilent() = runBlocking {
-        val (graph, session) = opened()
+        val (graph, session) = openedWithoutSeeding()
         answer = { r -> if (r.url.encodedPath == "/v1/me") 500 to """{"error":{"code":"internal"}}""" else null }
         graph.seedOwnName(session)
         assertEquals("", session.chatStore.myStoredName)
@@ -765,7 +774,7 @@ class AppGraphTest {
 
     @Test
     fun seedingCleansAnUntidyServerName() = runBlocking {
-        val (graph, session) = opened()
+        val (graph, session) = openedWithoutSeeding()
         answer = { r -> if (r.url.encodedPath == "/v1/me") 200 to meJson.replace("Asha Rao", "Asha\u202E Rao") else null }
         graph.seedOwnName(session)
         assertEquals("Asha Rao", session.chatStore.myStoredName)
@@ -773,7 +782,7 @@ class AppGraphTest {
 
     @Test
     fun seedingThatFinishesAfterTheAccountWasWipedChangesNothing() = runBlocking {
-        val (graph, session) = opened()
+        val (graph, session) = openedWithoutSeeding()
         val old = session.chatStore
         val gate = java.util.concurrent.CountDownLatch(1)
         val seen = AtomicInteger(0)

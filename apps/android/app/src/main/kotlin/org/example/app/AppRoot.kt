@@ -229,7 +229,8 @@ fun AppRoot(
             }
             composable(PROFILE) {
                 val vm = viewModel<ProfileViewModel>(factory = factory { ProfileViewModel(graph.accountActions) })
-                ProfileScreen(graph.chatStore.meState.collectAsStateWithLifecycle().value, vm, onBack = { nav.popBackStack() })
+                val me = graph.chatStore.meState.collectAsStateWithLifecycle().value
+                ProfileScreen(me, vm, onBack = { nav.popBackStack() }, storedName = graph.chatStore.myStoredName)
             }
             composable(SettingsPage.Server.route) {
                 val status by graph.connectionStatus.collectAsStateWithLifecycle()

@@ -83,12 +83,16 @@ class AccountActions(
 /** Shows [AccountActions] to the profile screen: its state is the graph's running action and the failure to show. */
 class ProfileViewModel(private val actions: AccountActions) : ViewModel() {
     private val shownError = MutableStateFlow<Int?>(null)
+    private val editing = MutableStateFlow(false)
 
-    val state: StateFlow<ProfileState> = combine(actions.running, shownError) { busy, error -> ProfileState(busy, error) }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, ProfileState(actions.running.value, null))
+    val state: StateFlow<ProfileState> = combine(actions.running, shownError, editing) { busy, error, edit ->
+        ProfileState(busy, error, editingName = edit && busy == null)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, ProfileState(actions.running.value, null))
 
     init {
         // A failure that happened while no screen was there, or happens while this one is.
+        // The editor never outlives the start of sign-out, delete or a save, and does not come back when it ends.
+        viewModelScope.launch { actions.running.collect { if (it != null) editing.value = false } }
         viewModelScope.launch { actions.error.collect { if (it != null) actions.takeError()?.let { e -> shownError.value = e } } }
     }
 
@@ -96,11 +100,16 @@ class ProfileViewModel(private val actions: AccountActions) : ViewModel() {
     fun saveName(input: String) {
         val name = DisplayNameRule.clean(input) ?: return
         shownError.value = null
+        editing.value = false
         actions.saveName(name)
     }
 
-    fun openNameEditor() {}
-    fun closeNameEditor() {}
+    /** Opens "Edit name", unless an action is running. */
+    fun openNameEditor() {
+        if (actions.running.value == null) editing.value = true
+    }
+
+    fun closeNameEditor() { editing.value = false }
 
     fun signOut() = run(ProfileAction.SigningOut)
     fun deleteAccount() = run(ProfileAction.Deleting)

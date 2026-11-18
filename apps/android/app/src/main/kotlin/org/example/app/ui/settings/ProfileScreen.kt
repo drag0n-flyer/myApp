@@ -9,6 +9,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.ui.res.painterResource
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -38,6 +40,8 @@ fun ProfileScreen(
     viewModel: ProfileViewModel,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    /** What the account has stored as its name ("" when unknown): "Edit name" starts from it, never from the fallback "You". */
+    storedName: String = me.displayName,
 ) {
     var confirm by rememberSaveable { mutableStateOf<String?>(null) }
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -47,10 +51,11 @@ fun ProfileScreen(
         item {
             val editLabel = stringResource(R.string.profile_edit_name)
             ListItem(
-                modifier = Modifier.clickable(enabled = !busy, onClickLabel = editLabel, role = Role.Button) { confirm = EDIT },
+                modifier = Modifier.clickable(enabled = !busy, onClickLabel = editLabel, role = Role.Button) { viewModel.openNameEditor() },
                 leadingContent = { Avatar(me.displayName, size = 56.dp, colorKey = me.id) },
                 headlineContent = { Text(me.displayName, style = MaterialTheme.typography.titleMedium) },
                 supportingContent = { Text(usernameText(me.username)) },
+                trailingContent = { Icon(painterResource(R.drawable.ic_edit), contentDescription = null) },
             )
             HorizontalDivider()
         }
@@ -78,12 +83,9 @@ fun ProfileScreen(
         state.error?.let { message -> item { FooterText(stringResource(message), error = true) } }
     }
 
+    if (state.editingName) EditNameDialog(storedName, onSave = viewModel::saveName, onCancel = viewModel::closeNameEditor)
+
     when (confirm) {
-        EDIT -> EditNameDialog(
-            current = me.displayName,
-            onSave = { confirm = null; viewModel.saveName(it) },
-            onCancel = { confirm = null },
-        )
         SIGN_OUT -> AlertDialog(
             onDismissRequest = { confirm = null },
             text = { Text(stringResource(R.string.profile_sign_out_confirm)) },
@@ -102,4 +104,3 @@ fun ProfileScreen(
 
 private const val SIGN_OUT = "signOut"
 private const val DELETE = "delete"
-private const val EDIT = "edit"
