@@ -102,6 +102,38 @@ private final class Rig {
         #expect(sent.isEmpty)
     }
 
+    @Test func typingGoesAheadOfPresenceInTheQueue() async {
+        let rig = Rig()
+        rig.signals.foreground()   // online to bob and cy, not yet sent
+        rig.signals.composerChanged(chatID: "acc-bob", isEmpty: false)
+        rig.signals.composerSent(chatID: "acc-bob")
+        let sent = await rig.sentBodies()
+        #expect(sent.map(\.body) == [.typing(on: true), .typing(on: false), .presence(.online), .presence(.online)])
+    }
+
+    @Test func aFullQueueDropsPresenceAndNeverTyping() async {
+        let rig = Rig()
+        rig.targets = (0..<(PeopleSignals.maxQueued + 6)).map { "c\($0)" }
+        rig.signals.foreground()   // more presence than the queue holds
+        rig.signals.composerChanged(chatID: "acc-bob", isEmpty: false)
+        rig.signals.composerSent(chatID: "acc-bob")
+        let sent = await rig.sentBodies()
+        #expect(sent.count == PeopleSignals.maxQueued)
+        #expect(sent.prefix(2).map(\.body) == [.typing(on: true), .typing(on: false)])
+        // The oldest presence signals were the ones dropped.
+        #expect(sent.last?.chatID == "c\(PeopleSignals.maxQueued + 5)")
+    }
+
+    @Test func onlyTypingIsDroppedWhenTheQueueHoldsNothingElse() async {
+        let rig = Rig()
+        for i in 0..<(PeopleSignals.maxQueued + 3) {
+            rig.signals.composerChanged(chatID: "t\(i)", isEmpty: false)
+        }
+        let sent = await rig.sentBodies()
+        #expect(sent.count == PeopleSignals.maxQueued)
+        #expect(sent.last?.chatID == "t\(PeopleSignals.maxQueued + 2)")
+    }
+
     @Test func aSignalQueuedBeforeABlockOrSwitchOffIsNotSent() async {
         let rig = Rig()
         rig.signals.composerChanged(chatID: "acc-bob", isEmpty: false)

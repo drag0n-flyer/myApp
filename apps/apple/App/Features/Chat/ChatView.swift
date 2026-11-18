@@ -32,6 +32,8 @@ struct ChatView: View {
     @Bindable var model: AppModel
     let open: (ChatRoute) -> Void
     @State private var draft = ""
+    /// Tells the person's typing from text the screen sets itself (a saved draft, an edit): only typing is signalled.
+    @State private var editTracker = ComposerEditTracker()
     /// The draft set aside while the edit bar fills the composer.
     @State private var draftBeforeEdit = ""
     /// Set while the composer is emptied by a send: that change is not saved as a new draft.
@@ -128,7 +130,7 @@ struct ChatView: View {
         #endif
         .onAppear {
             // Also for a chat that has no row yet: its pending text is in the store.
-            if !capturedUnread { draft = model.draft(for: chatID) }
+            if !capturedUnread { setDraftFromCode(model.draft(for: chatID)) }
             if !capturedUnread, let chat {
                 // Before markRead clears the count.
                 capturedUnread = true
@@ -156,8 +158,8 @@ struct ChatView: View {
             if editing == nil { model.setDraft(text, for: chatID) }
         }
         .onChange(of: draft) { _, text in
-            // Typing signals (spec 6.1); an edit fills the composer without being typing.
-            if editing == nil { model.composerChanged(chatID: chatID, isEmpty: text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
+            // Typing signals (spec 6.1): only the person's own edits, not a draft or an edit put there by the screen.
+            if editTracker.isUserEdit(newText: text), editing == nil { model.composerChanged(chatID: chatID, isEmpty: text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
         }
         .onDisappear { model.composerSent(chatID: chatID) }
         .onChange(of: chat?.messages) { _, _ in
@@ -490,13 +492,19 @@ struct ChatView: View {
         if editing == nil { draftBeforeEdit = draft }
         replyingTo = nil
         editing = message
+        setDraftFromCode(text)
+    }
+
+    /// Puts text in the composer that the person did not type (no typing signal follows).
+    private func setDraftFromCode(_ text: String) {
+        editTracker.willAssign(text, current: draft)
         draft = text
     }
 
     private func closeEditBar() {
         guard editing != nil else { return }
         editing = nil
-        draft = draftBeforeEdit
+        setDraftFromCode(draftBeforeEdit)
         draftBeforeEdit = ""
     }
 
@@ -538,7 +546,7 @@ struct ChatView: View {
         model.composerSent(chatID: chatID)
         replyingTo = nil
         sentClear = true
-        draft = ""
+        setDraftFromCode("")
     }
 
     private func sendSample(_ content: MessageContent) {

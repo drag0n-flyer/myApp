@@ -34,7 +34,7 @@ final class TypingPresenceTests: XCTestCase {
         app.element("settings.privacy").tap()
         for id in ["privacy.typing", "privacy.presence"] {
             let toggle = app.switches[id]
-            XCTAssertTrue(toggle.waitToExist(), id)
+            XCTAssertTrue(toggle.scrollToExist(in: app), id)
             XCTAssertEqual(toggle.value as? String, "1", id)
             // The switch sits at the trailing edge of its row.
             toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()

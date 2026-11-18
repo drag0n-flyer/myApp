@@ -97,8 +97,11 @@ final class AppModel {
     var server: ServerPolicy {
         didSet { syncCalls() }
     }
+    /// Where the three privacy switches are kept (the app lock's defaults); `nil` in sample mode, which keeps nothing.
+    private let privacyStore: PrivacySwitchesStore?
     var settings: UserSettings {
         didSet {
+            savePrivacySwitches(oldValue)
             syncCalls()
             messaging?.autoDownload.value = settings.autoDownload
             if settings.readReceipts != oldValue.readReceipts, let messaging {
@@ -205,6 +208,14 @@ final class AppModel {
         let lock = AppModel.makeLock(sampleData: sampleData, launch: launch)
         settings.appLock = lock.appLockOn
         settings.lockAfterSeconds = lock.lockAfterSeconds
+        // The privacy switches are read before anything is sent or shown, so an Off survives a relaunch.
+        let privacyStore = sampleData ? nil : PrivacySwitchesStore(defaults: AppModel.lockDefaults())
+        if let loaded = privacyStore?.load() {
+            settings.typingIndicator = loaded.typingIndicator
+            settings.onlineAndLastSeen = loaded.onlineAndLastSeen
+            settings.readReceipts = loaded.readReceipts
+        }
+        self.privacyStore = privacyStore
         self.account = account
         self.live = live
         self.linkSnapshots = bridge
@@ -273,6 +284,23 @@ final class AppModel {
     /// The sample fake and its in-memory settings exist only in sample-data mode (`-sampleData`, never a live account);
     /// a live session always gets the system prompt and the app group's defaults (the notification extension reads the
     /// switch there).
+    /// The app group's defaults when there is one (the notification extension reads the lock switch there).
+    private static func lockDefaults() -> UserDefaults {
+        let group = (Bundle.main.object(forInfoDictionaryKey: "AppGroupID") as? String)?.trimmingCharacters(in: .whitespaces)
+        return group.flatMap { $0.isEmpty ? nil : UserDefaults(suiteName: $0) } ?? .standard
+    }
+
+    private func savePrivacySwitches(_ old: UserSettings) {
+        guard let privacyStore, settings.typingIndicator != old.typingIndicator
+                || settings.onlineAndLastSeen != old.onlineAndLastSeen || settings.readReceipts != old.readReceipts else { return }
+        privacyStore.save(PrivacySwitches(
+            typingIndicator: settings.typingIndicator, onlineAndLastSeen: settings.onlineAndLastSeen,
+            readReceipts: settings.readReceipts))
+    }
+
+    /// For the extension files: `revision` can only be written here.
+    func bumpRevision() { revision += 1 }
+
     private static func makeLock(sampleData: Bool, launch: LaunchOptions) -> AppLock {
         #if os(iOS)
         let phone = true
@@ -283,9 +311,7 @@ final class AppModel {
             let auth = SampleDeviceAuth(results: launch.fakeAuthResults)
             return AppLock(store: MemoryLockSettingsStore(), auth: auth, coversWhenInactive: phone, inactiveCountsAsLeaving: !phone)
         }
-        let group = (Bundle.main.object(forInfoDictionaryKey: "AppGroupID") as? String)?.trimmingCharacters(in: .whitespaces)
-        let defaults = group.flatMap { $0.isEmpty ? nil : UserDefaults(suiteName: $0) } ?? .standard
-        return AppLock(store: DefaultsLockSettingsStore(defaults: defaults), auth: SystemDeviceAuth(),
+        return AppLock(store: DefaultsLockSettingsStore(defaults: lockDefaults()), auth: SystemDeviceAuth(),
                        coversWhenInactive: phone, inactiveCountsAsLeaving: !phone)
     }
 

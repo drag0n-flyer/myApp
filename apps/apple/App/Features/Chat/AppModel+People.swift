@@ -29,7 +29,11 @@ extension AppModel {
             return self.chatStore.blockedIDs.contains(self.chatStore.chat(id: chatID)?.contactID ?? chatID)
         }
         let targets: @MainActor () -> [String] = { [weak self] in
-            self?.chatStore.chats(in: .all).filter { !$0.isRequest }.map(\.id) ?? []
+            // Only chats with a message in the last 7 days, 30 at most, most recent first.
+            let chats = self?.chatStore.chats(in: .all).filter { !$0.isRequest } ?? []
+            return PresenceFanOut.targets(
+                chats.map { PresenceFanOut.Candidate(id: $0.id, lastMessageMs: $0.lastMessage.map { Int64($0.sentAt.timeIntervalSince1970 * 1000) }) },
+                nowMs: now())
         }
         let made: PeopleSignals
         if let repo {
@@ -41,7 +45,7 @@ extension AppModel {
                                  isBlocked: blocked, presenceTargets: targets,
                                  loadSeen: { seen[$0] }, saveSeen: { seen[$0] = $1 })
         }
-        made.onChange = { [weak self] in self?.revision += 1 }
+        made.onChange = { [weak self] in self?.bumpRevision() }
         people = made
         if peopleActive { made.foreground() }
 
@@ -67,7 +71,8 @@ extension AppModel {
 
     private func observeIncomingMessages(_ people: PeopleSignals) {
         let me = chatStore.me.id
-        for chat in chatStore.chats(in: .all) where !chat.isRequest {
+        // Archived chats too: a message there also ends "typing…".
+        for chat in chatStore.chats(in: .all) + chatStore.archivedChats where !chat.isRequest {
             if let last = chat.messages.last(where: { $0.senderID != me }) { people.incomingMessage(chatID: chat.id, id: last.id) }
         }
     }
@@ -81,6 +86,12 @@ extension AppModel {
         case .background:
             peopleActive = false
             people?.background()
+        #if os(macOS)
+        case .inactive:
+            // On the Mac the app that is not frontmost counts as away; the iPhone keeps `.background` only.
+            peopleActive = false
+            people?.background()
+        #endif
         default: break
         }
     }

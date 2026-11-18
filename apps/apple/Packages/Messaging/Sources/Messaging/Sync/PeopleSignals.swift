@@ -134,8 +134,20 @@ public final class PeopleSignals {
     }
 
     private func enqueue(_ chatID: String, _ body: ContentEnvelope.Body) {
-        queue.append((chatID, body))
-        if queue.count > Self.maxQueued { queue.removeFirst(queue.count - Self.maxQueued) }
+        func isPresence(_ item: (chatID: String, body: ContentEnvelope.Body)) -> Bool {
+            if case .presence = item.body { return true }
+            return false
+        }
+        if case .typing = body {
+            // Typing goes ahead of presence, behind earlier typing.
+            queue.insert((chatID, body), at: queue.firstIndex(where: isPresence) ?? queue.endIndex)
+        } else {
+            queue.append((chatID, body))
+        }
+        // A full queue loses its oldest presence first; typing only when nothing else is left.
+        while queue.count > Self.maxQueued {
+            queue.remove(at: queue.firstIndex(where: isPresence) ?? 0)
+        }
         guard pump == nil else { return }
         pump = Task { @MainActor [weak self] in
             while let self, !self.queue.isEmpty {
