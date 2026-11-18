@@ -86,6 +86,22 @@ class FileBubbleTest {
         assertEquals(emptyList(), opened)
     }
 
+    private fun named(name: String) =
+        Message("m1", "riya", Instant.now(), MessageContent.File(name, 12_000), DeliveryStatus.Read, null, emptyList(), media = ready)
+
+    @Test fun aDirectionOverrideNameIsShownAsItWillBeOpened() {
+        show(named("report\u202Efdp.html"))
+        rule.onNode(hasText("reportfdp.html", substring = true)).assertIsDisplayed()
+        rule.onNode(hasText("reportfdp.html", substring = true) and hasClickAction()).performClick()
+        assertEquals(listOf("m1" to "reportfdp.html"), opened)
+    }
+
+    @Test fun anEndlessNameIsShownShortened() {
+        show(named("y".repeat(5_000) + ".pdf"))
+        rule.onNode(hasText(".pdf", substring = true)).assertIsDisplayed()
+        rule.onNode(hasText("y".repeat(200), substring = true)).assertDoesNotExist()
+    }
+
     @Test fun myOwnSentFileHasNothingToDownloadOrOpen() {
         show(file(null, sender = "me"), wait = true)
         rule.onNodeWithText("report.pdf", substring = true).assertIsDisplayed()

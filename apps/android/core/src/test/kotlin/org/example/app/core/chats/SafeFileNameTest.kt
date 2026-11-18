@@ -1,4 +1,4 @@
-package org.example.app.ui.media
+package org.example.app.core.chats
 
 import kotlin.test.Test
 import kotlin.test.assertEquals

@@ -13,6 +13,7 @@ import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import org.example.app.core.chats.SafeFileName
 import org.example.app.media.MediaCache
 
 /**

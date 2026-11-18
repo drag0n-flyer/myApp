@@ -47,6 +47,7 @@ import org.example.app.core.calls.DataFormat
 import org.example.app.core.chats.DeliveryStatus
 import org.example.app.core.chats.LinkFinder
 import org.example.app.core.chats.Message
+import org.example.app.core.chats.SafeFileName
 import org.example.app.core.chats.MessageContent
 import org.example.app.core.chats.MessagePreview
 import org.example.app.core.settings.MediaKind
@@ -207,10 +208,11 @@ private fun Body(message: Message, isOwn: Boolean, autoDownloads: (MediaKind) ->
             host = media,
             onDownload = onDownload,
         )
+        // The sender's name is never shown raw: what is shown is what open and share use.
         is MessageContent.File -> FileBubble(
             message = message,
-            name = c.name,
-            title = stringResource(R.string.file_with_size, c.name, dataSizeText(DataFormat.size(c.bytes))),
+            name = SafeFileName.of(c.name, "file"),
+            title = stringResource(R.string.file_with_size, SafeFileName.of(c.name, "file"), dataSizeText(DataFormat.size(c.bytes))),
             isOwn = isOwn,
             wait = !autoDownloads(MediaKind.File),
             host = media,

@@ -1,4 +1,4 @@
-package org.example.app.ui.media
+package org.example.app.core.chats
 
 /**
  * Turns a name that came from another app (the document picker) or from a received message into one plain file name.
