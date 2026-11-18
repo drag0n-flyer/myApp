@@ -48,11 +48,14 @@ class TestDevice(val server: FakeDeliveryServer, account: String, device: String
         private set
     var deviceSync: DeviceSync = makeDeviceSync()
         private set
+    var groups: GroupCreator = makeGroups()
+        private set
     var wipes = mutableListOf<String>()
 
     private fun makeManager() = ConversationManager(me, mls, api, repo, lock, clock, membership, escrow, syncOnce = { syncs += 1; processor.sync() }, log = { logs += it })
     private fun makeProcessor() = InboxProcessor(mls, api, repo, lock, clock, manager, handler, membership, OwnDeviceNotices(repo, api, notifier))
     private fun makeOutbox() = Outbox(me, mls, api, repo, lock, clock, manager, escrow, syncOnce = { processor.sync() }, readReceiptsEnabled = { readReceiptsSwitch() })
+    private fun makeGroups() = GroupCreator(manager, repo, outbox)
     private fun makeDeviceSync() = DeviceSync(
         me, mls, api, repo, lock, clock, manager, KeyPackagePool(mls, api, repo, lock, clock),
         wipeMls = { wipes += "mls" }, deleteSigningKey = { wipes += "signingKey" },
@@ -65,6 +68,7 @@ class TestDevice(val server: FakeDeliveryServer, account: String, device: String
         outbox = makeOutbox()
         receipts = Receipts(outbox) { readReceiptsSwitch() }
         deviceSync = makeDeviceSync()
+        groups = makeGroups()
     }
 
     /** Sends a content envelope in [conversation] the way the outbox does: encrypt under the lock, post outside it. */

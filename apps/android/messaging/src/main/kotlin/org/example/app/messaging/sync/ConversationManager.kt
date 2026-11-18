@@ -39,11 +39,11 @@ import org.example.app.messaging.ports.Repository
  */
 class ConversationManager(
     private val me: LocalDevice,
-    private val mls: MlsEngine,
-    private val server: DeliveryApi,
+    internal val mls: MlsEngine,
+    internal val server: DeliveryApi,
     private val repo: Repository,
     private val lock: MlsLock,
-    private val clock: Clock,
+    internal val clock: Clock,
     private val membership: Membership,
     private val escrow: EscrowSealer? = null,
     private val syncOnce: suspend () -> Unit,
@@ -51,15 +51,21 @@ class ConversationManager(
 ) {
     /** This device's account. */
     val localAccountId: String get() = me.accountId
+    val localDeviceId: String get() = me.deviceId
 
     /** Serialises creates (and their recovery) for all contacts, not only per contact: creates are rare. */
-    private val creating = Mutex()
+    internal val creating = Mutex()
 
-    private suspend fun <T> critical(block: suspend () -> T): T = lock.withLock { withContext(NonCancellable) { block() } }
+    internal suspend fun <T> critical(block: suspend () -> T): T = lock.withLock { withContext(NonCancellable) { block() } }
 
     /** The active conversation with the smallest server ID, created when there is none. Sends a pending `mode` envelope first. */
     suspend fun preferredConversation(contactId: String): ConversationRecord {
-        if (ChatID.isGroup(contactId)) throw SyncException.NoPeer // a group chat has no peer to make a one-to-one conversation with
+        // A group chat has no peer to make a one-to-one conversation with: only its own active conversation is used.
+        if (ChatID.isGroup(contactId)) {
+            val own = repo.preferredConversation(contactId) ?: throw SyncException.NoPeer
+            ensureModeAnnounced(own)
+            return own
+        }
         repo.preferredConversation(contactId)?.let { ensureModeAnnounced(it); return it }
         // A second caller waits for the first create instead of starting another.
         return creating.withLock {
@@ -156,7 +162,7 @@ class ConversationManager(
      * - The engine lost the commit although the server applied it: logged and abandoned (`CreateLost`).
      * - An unknown outcome: read the inbox; still pending means the error is thrown and the create stays pending.
      */
-    private suspend fun finishCreate(serverId: String, resumed: Boolean): ConversationRecord {
+    internal suspend fun finishCreate(serverId: String, resumed: Boolean): ConversationRecord {
         if (resumed) {
             readInboxAfterUnknownOutcome()
             activeOrNull(serverId)?.let { return announced(it) }

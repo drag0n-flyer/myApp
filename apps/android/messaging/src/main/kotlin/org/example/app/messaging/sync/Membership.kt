@@ -98,15 +98,17 @@ class Membership(
 
             // No stored rows yet: the commit or Welcome that creates the conversation. Store, no lines.
             val change = if (stored.isEmpty()) MembershipChange() else diff(me, stored, keys)
+            // A group's lines come from the server's member list (a later task), not from device changes.
+            val isGroup = org.example.app.core.groups.ChatID.isGroup(current.chatId)
             fun name(identity: String) = identity.substringBefore('/').takeIf { it != me.accountId }
-            change.added.forEach { lines += "add-$it" to lineEnvelope("deviceAdded", name(it)) }
-            change.removed.forEach { lines += "remove-$it" to lineEnvelope("deviceRemoved", name(it)) }
+            if (!isGroup) change.added.forEach { lines += "add-$it" to lineEnvelope("deviceAdded", name(it)) }
+            if (!isGroup) change.removed.forEach { lines += "remove-$it" to lineEnvelope("deviceRemoved", name(it)) }
 
             val fresh = keys.map { MemberRecord(it.identity, it.signatureKey) }
             if (stored != fresh) repo.replaceMembers(current.serverId, fresh)
 
             // The chat's number follows its preferred conversation. An oversized identity or key gives no number.
-            if (repo.preferredConversation(current.chatId)?.serverId == current.serverId) {
+            if (!isGroup && repo.preferredConversation(current.chatId)?.serverId == current.serverId) {
                 val number = runCatching { SafetyNumber.compute(keys, me.accountId, current.chatId).joinToString("") }.getOrNull()
                 val previous = repo.safety(current.chatId)?.current
                 if (number != null && previous != number) {

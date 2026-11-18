@@ -6,6 +6,7 @@ import org.example.app.contracts.AttachmentRef
 import org.example.app.contracts.ConversationInfo
 import org.example.app.contracts.DeliveryApi
 import org.example.app.contracts.DeviceRecord
+import org.example.app.contracts.GroupMemberInfo
 import org.example.app.contracts.InboxItem
 import org.example.app.contracts.InboxPage
 import org.example.app.contracts.ServerException
@@ -19,7 +20,14 @@ import org.example.app.contracts.ServerException
  * creation order.
  */
 class FakeDeliveryServer(var defaultMode: String = "e2ee") {
-    class Conversation(val id: String, var mode: String, var epoch: Long, val members: java.util.TreeSet<String>)
+    /**
+     * [members] are device identities. A group has [kind] `group`, its accounts with their roles in [accounts] (the
+     * creator is `owner`) and a member list version in [membersVersion].
+     */
+    class Conversation(
+        val id: String, var mode: String, var epoch: Long, val members: java.util.TreeSet<String>,
+        val kind: String = "direct", val accounts: java.util.TreeMap<String, String> = java.util.TreeMap(), var membersVersion: Long = 0,
+    )
 
     class Posted(val conversationId: String, val epoch: Long, val payload: ByteArray, val escrow: ByteArray?, val clientMsgId: String, val sender: String, val expiresAtMs: Long? = null)
 
@@ -81,6 +89,17 @@ class FakeDeliveryServer(var defaultMode: String = "e2ee") {
 
     fun conversation(id: String): Conversation? = synchronized(lock) { conversations[id] }
 
+    /** Accounts the server skips silently when a group is created (they blocked the creator). */
+    var groupSkipAccounts: Set<String> = emptySet()
+
+    /** The server's member list of a group changes (an account leaves or is removed): the version rises by one. */
+    fun removeGroupAccount(id: String, account: String) = synchronized(lock) {
+        val c = conversations.getValue(id)
+        c.accounts.remove(account)
+        c.members.removeAll { it.startsWith("$account/") }
+        c.membersVersion += 1
+    }
+
     fun conversationIds(): List<String> = synchronized(lock) { conversations.keys.sorted() }
 
     fun pending(identity: String): List<InboxItem> = synchronized(lock) { inboxes[identity].orEmpty().toList() }
@@ -139,6 +158,8 @@ class FakeDeliveryServer(var defaultMode: String = "e2ee") {
         if (epoch != c.epoch) throw ServerException(409, "stale_epoch", null, null)
         val before = c.members.toList()
         val added = addDevices.map { "${accountOf(it)}/$it" }
+        // A group: devices of current member accounts only.
+        if (c.kind == "group" && added.any { it.substringBefore('/') !in c.accounts }) throw ServerException(403, "forbidden", null, null)
         val removed = c.members.filter { m -> removeDevices.any { m.endsWith("/$it") } }
         before.forEach { deliver(it, "commit", id, epoch, identity, commit) }
         c.members.removeAll(removed.toSet())
@@ -192,12 +213,30 @@ class FakeDeliveryServer(var defaultMode: String = "e2ee") {
             }
         }
 
+        override suspend fun createGroup(accounts: List<String>): ConversationInfo {
+            call("createGroup")
+            return synchronized(lock) {
+                if (accounts.isEmpty() || accounts.size > 99 || accounts.toSet().size != accounts.size || account in accounts) {
+                    throw ServerException(400, "bad_request", null, null)
+                }
+                if (accounts.any { it !in keyPackages }) throw ServerException(404, "not_found", null, null)
+                conversationCounter += 1
+                val id = "conv-%04d".format(conversationCounter)
+                val kept = accounts.filter { it !in groupSkipAccounts }
+                val roles = java.util.TreeMap<String, String>().apply { put(account, "owner"); kept.forEach { put(it, "member") } }
+                conversations[id] = Conversation(id, defaultMode, 0, java.util.TreeSet(listOf(identity)), "group", roles)
+                ConversationInfo(id, defaultMode, 0, "group")
+            }
+        }
+
         override suspend fun conversation(id: String): ConversationInfo {
             call("conversation")
             failConversationLookup?.let { throw it }
             return synchronized(lock) {
                 val c = conversations[id] ?: throw ServerException(404, "not_found", null, null)
-                ConversationInfo(c.id, c.mode, c.epoch)
+                if (c.kind != "group") return@synchronized ConversationInfo(c.id, c.mode, c.epoch)
+                if (account !in c.accounts) throw ServerException(404, "not_found", null, null)
+                ConversationInfo(c.id, c.mode, c.epoch, "group", c.accounts.map { (a, r) -> GroupMemberInfo(a, r) }, c.membersVersion)
             }
         }
 
