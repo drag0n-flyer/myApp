@@ -213,6 +213,12 @@ interface Repository {
      */
     fun sweepExpired(now: Long, ownAccount: String): List<String>
 
+    /**
+     * Per chat, how many unread incoming messages (not from [ownAccount] or `system`, not `read`) have already
+     * expired at [now] but are not swept yet; the chat list subtracts them from the stored unread count.
+     */
+    fun expiredUnread(now: Long, ownAccount: String): Map<String, Int>
+
     // profiles
     fun profile(accountId: String): ProfileRecord?
     /** Saves only when [ver] is strictly higher than the stored one (`ProfileMerge`). Returns whether it saved. */

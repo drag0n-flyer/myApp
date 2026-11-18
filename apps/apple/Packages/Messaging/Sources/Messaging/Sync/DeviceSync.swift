@@ -204,6 +204,7 @@ public actor DeviceSync {
         // The committer sends the mode again (Design 18). The marker makes a failed send retry on the next send.
         guard let fresh = try deps.repo.conversation(serverID: serverID), fresh.innerMode != nil else { return }
         try deps.repo.set(await conversations.pendingKey(serverID), Data([1]))
+        try deps.repo.set(await conversations.sealedModeKey(serverID), Data())   // a new announcement, a new encrypt
         try await conversations.announceMode(fresh)
     }
 
