@@ -23,6 +23,8 @@ data class ProfileState(
     /** The action running now; both rows are off while it runs. */
     val busy: ProfileAction? = null,
     @StringRes val error: Int? = null,
+    /** The "Edit name" dialog is open. */
+    val editingName: Boolean = false,
 )
 
 /**
@@ -96,6 +98,9 @@ class ProfileViewModel(private val actions: AccountActions) : ViewModel() {
         shownError.value = null
         actions.saveName(name)
     }
+
+    fun openNameEditor() {}
+    fun closeNameEditor() {}
 
     fun signOut() = run(ProfileAction.SigningOut)
     fun deleteAccount() = run(ProfileAction.Deleting)

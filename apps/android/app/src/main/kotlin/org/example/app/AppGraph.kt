@@ -570,6 +570,10 @@ class AppGraph(
         }.await()
     }
 
+    /** Reads the person's name from the server (`GET /v1/me`) into an own contact row that has none. */
+    suspend fun seedOwnName(session: org.example.app.live.LiveSession) {
+    }
+
     private val findByEmailLock = Mutex()
 
     /**

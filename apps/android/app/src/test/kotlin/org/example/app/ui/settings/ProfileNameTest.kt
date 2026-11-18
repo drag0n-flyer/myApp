@@ -62,7 +62,68 @@ class ProfileNameTest {
         for (bad in listOf("", "   ", "a".repeat(41), "Ana\nMaria", "Asha‮", "A⁦B", "A‏B", "A؜B")) vm.saveName(bad)
         idle()
         assertEquals(emptyList(), saved)
-        assertEquals(null, vm.state.value.busy)
+        // Nothing is stuck: a good name goes straight through afterwards.
+        vm.saveName("Asha")
+        idle()
+        assertEquals(listOf("Asha"), saved)
+    }
+
+    @Test fun theEditorClosesWhenSignOutStartsAndCannotOpenWhileItRuns() {
+        val held = CompletableDeferred<Unit>()
+        val busy = AccountActions(
+            CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
+            signOut = { held.await() }, deleteAccount = {}, saveName = { saved += it },
+        )
+        val model = ProfileViewModel(busy)
+        model.openNameEditor()
+        idle()
+        assertEquals(true, model.state.value.editingName)
+        model.signOut()
+        idle()
+        assertEquals(false, model.state.value.editingName, "closed when sign-out started")
+        model.openNameEditor()
+        idle()
+        assertEquals(false, model.state.value.editingName, "cannot open while it runs")
+        held.complete(Unit)
+        idle()
+        assertEquals(false, model.state.value.editingName, "does not come back by itself")
+        model.openNameEditor()
+        idle()
+        assertEquals(true, model.state.value.editingName)
+        model.closeNameEditor()
+        idle()
+        assertEquals(false, model.state.value.editingName)
+    }
+
+    @Test fun savingClosesTheEditor() {
+        vm.openNameEditor()
+        idle()
+        vm.saveName("Asha")
+        idle()
+        assertEquals(false, vm.state.value.editingName)
+    }
+
+    @Test fun anUnacceptableNameKeepsTheEditorOpen() {
+        vm.openNameEditor()
+        idle()
+        vm.saveName("   ")
+        idle()
+        assertEquals(true, vm.state.value.editingName)
+    }
+
+    @Test fun theFormShowsTheCountOfTheTrimmedText() {
+        rule.setContent { AppTheme { EditNameForm("  Asha ", onSave = {}, onCancel = {}) } }
+        rule.onNodeWithText("4/40").assertIsDisplayed()
+    }
+
+    @Test fun anEmptyStartLeavesSaveOffUntilSomethingValidIsTyped() {
+        rule.setContent { AppTheme { EditNameForm("", onSave = {}, onCancel = {}) } }
+        rule.onNodeWithText("0/40").assertIsDisplayed()
+        rule.onNodeWithText("Save").assertIsNotEnabled()
+        rule.onNodeWithText("Name").performTextInput("\u200B")
+        rule.onNodeWithText("Save").assertIsNotEnabled()
+        rule.onNodeWithText("Name").performTextReplacement("Asha")
+        rule.onNodeWithText("Save").assertIsEnabled()
     }
 
     @Test fun aFailureSaysTheExactTextWhateverWentWrong() {

@@ -158,6 +158,7 @@ class LiveChatStore(
     @Volatile private var contactRows: Map<String, ContactRecord> = emptyMap()
     override val me: Contact get() = meContact
     override val meState: StateFlow<Contact> = meFlow.asStateFlow()
+    override val myStoredName: String get() = meContact.displayName // stub
 
     private val reloadLock = Any()
     private val writes = Channel<() -> Unit>(Channel.UNLIMITED)

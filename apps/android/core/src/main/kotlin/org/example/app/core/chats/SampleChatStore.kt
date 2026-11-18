@@ -15,6 +15,7 @@ class SampleChatStore(
     override val me: Contact get() = meFlow.value
     override val meState: StateFlow<Contact> = meFlow.asStateFlow()
 
+    override val myStoredName: String get() = me.displayName
     override fun setMyDisplayName(name: String) { meFlow.value = meFlow.value.copy(displayName = name) }
 
     private val lock = Any()
