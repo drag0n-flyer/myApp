@@ -132,7 +132,7 @@ func (m *Module) exportEscrow(ctx context.Context, args []string, out io.Writer)
 		return errors.New("escrow export: no such conversation")
 	}
 	rows, err := m.d.DB.Query(ctx,
-		`select seq, sender_account::text, created_at, data from escrow where conversation_id = $1 order by seq`, id)
+		`select seq, sender_account::text, created_at, data from escrow where conversation_id = $1 and (expires_at is null or expires_at > $2) order by seq`, id, m.d.Now())
 	if err != nil {
 		return err
 	}

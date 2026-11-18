@@ -39,8 +39,9 @@ func (m *Module) getInbox(w http.ResponseWriter, r *http.Request) error {
 
 	rows, err := m.d.DB.Query(r.Context(),
 		`select cursor, kind, conversation_id::text, seq, epoch, sender_account::text, sender_device::text, payload, sent_at
-		 from inbox where device_id = $1 and cursor > $2 order by cursor limit $3`,
-		p.DeviceID, after, limit+1)
+		 from inbox where device_id = $1 and cursor > $2 and (expires_at is null or expires_at > $4)
+		 order by cursor limit $3`,
+		p.DeviceID, after, limit+1, m.d.Now())
 	if err != nil {
 		return err
 	}

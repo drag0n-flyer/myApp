@@ -24,6 +24,9 @@ type InboxItem struct {
 	SentAt          time.Time `json:"sentAt"`
 	// MembersVersion is set on kind "members" items only; their payload is empty.
 	MembersVersion *int64 `json:"membersVersion,omitempty"`
+	// ExpiresAt, when set, is when the server drops an undelivered copy. It is
+	// not sent to clients: they count the timer from SentAt themselves.
+	ExpiresAt *time.Time `json:"-"`
 }
 
 // MarshalJSON writes Payload as base64url without padding.
@@ -91,9 +94,9 @@ func (m *Module) deliverPush(ctx context.Context, tx pgx.Tx, deviceIDs []string,
 			payload = []byte(fmt.Sprintf(`{"membersVersion":%d}`, *it.MembersVersion))
 		}
 		err := tx.QueryRow(ctx,
-			`insert into inbox (device_id, kind, conversation_id, seq, epoch, sender_account, sender_device, payload, sent_at)
-			 values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning cursor`,
-			dev, it.Kind, it.ConversationID, it.Seq, it.Epoch, it.SenderAccountID, it.SenderDeviceID, payload, it.SentAt,
+			`insert into inbox (device_id, kind, conversation_id, seq, epoch, sender_account, sender_device, payload, sent_at, expires_at)
+			 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) returning cursor`,
+			dev, it.Kind, it.ConversationID, it.Seq, it.Epoch, it.SenderAccountID, it.SenderDeviceID, payload, it.SentAt, it.ExpiresAt,
 		).Scan(&it.Cursor)
 		if err != nil {
 			return err

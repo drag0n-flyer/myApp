@@ -77,6 +77,11 @@ func lockGroup(ctx context.Context, tx pgx.Tx, id, callerAccount string) (groupC
 // item to recipient (device IDs, chosen by the caller before it changed
 // conversation_devices). The caller's own device gets the item without a push.
 func (m *Module) bumpAndNotify(ctx context.Context, tx pgx.Tx, g groupCtx, callerAccount, callerDevice string, recipients []string) (int64, error) {
+	// Every device this change delivers to, locked once, sorted, before any
+	// insert or later lock: the global order that commits and messages use.
+	if err := lockDevices(ctx, tx, recipients); err != nil {
+		return 0, err
+	}
 	var v int64
 	if err := tx.QueryRow(ctx, `update conversations set members_version = members_version + 1 where id = $1 returning members_version`, g.id).Scan(&v); err != nil {
 		return 0, err
@@ -109,6 +114,14 @@ func (m *Module) blockersIn(ctx context.Context, kind string, devs []devAcct, se
 		return map[string]bool{}, nil
 	}
 	return m.blockers(ctx, devs, sender)
+}
+
+// lockAccounts takes a key-share lock on the named account rows, sorted, and
+// returns how many exist. A transaction that deletes one of them (FOR UPDATE)
+// serialises with it.
+func lockAccounts(ctx context.Context, tx pgx.Tx, ids []string) (int, error) {
+	got, err := queryStrings(ctx, tx, `select id::text from accounts where id = any($1::uuid[]) order by id for key share`, ids)
+	return len(got), err
 }
 
 // takeTokens charges n tokens to key and refuses with rate_limited (and a
@@ -187,7 +200,9 @@ func (m *Module) LeaveAllGroups(ctx context.Context, tx pgx.Tx, accountID string
 	if err != nil {
 		return announce, err
 	}
-	ownDevice := accountID
+	// senderDeviceID of the items is the all-zero UUID when the account has
+	// no device (the column is a non-null uuid).
+	ownDevice := "00000000-0000-0000-0000-000000000000"
 	if len(lock) > 0 {
 		ownDevice = lock[0]
 	}
@@ -276,7 +291,24 @@ func (m *Module) addAccounts(w http.ResponseWriter, r *http.Request) error {
 		return httpx.Err("not_found", "no such conversation")
 	}
 	var out versionResponse
+	// Tokens spent by a request that then fails are given back.
+	charged := 0
+	defer func() {
+		if charged > 0 {
+			m.groupAddLimit.Refund(p.AccountID, charged)
+		}
+	}()
+	listed, listErr := parseAccountList(in.Accounts, p.AccountID)
 	err := m.inTx(r.Context(), func(ctx context.Context, tx pgx.Tx) error {
+		// Pin the named accounts before the conversation row (lock order:
+		// accounts, conversation, devices). A concurrent deletion of one of
+		// them either finished first (not_found below) or waits until this
+		// commits and then removes it as a proper leave.
+		if listErr == nil {
+			if _, err := lockAccounts(ctx, tx, listed); err != nil {
+				return err
+			}
+		}
 		g, err := lockGroup(ctx, tx, id, p.AccountID)
 		if err != nil {
 			return err
@@ -285,7 +317,7 @@ func (m *Module) addAccounts(w http.ResponseWriter, r *http.Request) error {
 		if g.role != "owner" && g.role != "admin" {
 			return httpx.Err("forbidden", "only an owner or admin may add accounts")
 		}
-		accts, err := parseAccountList(in.Accounts, p.AccountID)
+		accts, err := listed, listErr
 		if err != nil {
 			return err
 		}
@@ -297,6 +329,7 @@ func (m *Module) addAccounts(w http.ResponseWriter, r *http.Request) error {
 		if err := takeTokens(w, m.groupAddLimit, p.AccountID, len(accts)); err != nil {
 			return err
 		}
+		charged = len(accts)
 		var found int
 		if err := tx.QueryRow(ctx, `select count(*) from accounts where id = any($1::uuid[])`, accts).Scan(&found); err != nil {
 			return err
@@ -329,7 +362,7 @@ func (m *Module) addAccounts(w http.ResponseWriter, r *http.Request) error {
 			`insert into conversation_accounts (conversation_id, account_id) select $1, unnest($2::uuid[]) on conflict do nothing`, id, accts); err != nil {
 			return err
 		}
-		recipients, err := m.memberDevices(ctx, tx, id)
+		recipients, err := m.memberDeviceIDs(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -339,12 +372,13 @@ func (m *Module) addAccounts(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	charged = 0
 	httpx.JSON(w, http.StatusOK, out)
 	return nil
 }
 
-// memberDevices returns the devices in the conversation, sorted.
-func (m *Module) memberDevices(ctx context.Context, tx pgx.Tx, id string) ([]string, error) {
+// memberDeviceIDs returns the devices in the conversation, sorted.
+func (m *Module) memberDeviceIDs(ctx context.Context, tx pgx.Tx, id string) ([]string, error) {
 	return queryStrings(ctx, tx, `select device_id::text from conversation_devices where conversation_id = $1 order by device_id`, id)
 }
 
@@ -401,7 +435,7 @@ func (m *Module) removeAccount(w http.ResponseWriter, r *http.Request) error {
 		}
 		// Notify everyone who is a member device now, the removed account's
 		// devices included, then take that account's devices out of delivery.
-		recipients, err := m.memberDevices(ctx, tx, id)
+		recipients, err := m.memberDeviceIDs(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -478,7 +512,7 @@ func (m *Module) setRole(w http.ResponseWriter, r *http.Request) error {
 		if _, err := tx.Exec(ctx, `update conversation_accounts set role = $3 where conversation_id = $1 and account_id = $2`, id, target, in.Role); err != nil {
 			return err
 		}
-		recipients, err := m.memberDevices(ctx, tx, id)
+		recipients, err := m.memberDeviceIDs(ctx, tx, id)
 		if err != nil {
 			return err
 		}

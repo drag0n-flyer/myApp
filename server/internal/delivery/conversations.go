@@ -77,24 +77,35 @@ func (m *Module) createConversation(w http.ResponseWriter, r *http.Request) erro
 	default:
 		return httpx.Err("bad_request", "kind must be direct or group")
 	}
-	var found int
-	if err := m.d.DB.QueryRow(ctx, `select count(*) from accounts where id = any($1::uuid[])`, others).Scan(&found); err != nil {
-		return err
-	}
-	if found != len(others) {
-		return httpx.Err("not_found", "no such account")
-	}
-	if kind == "group" {
-		// An account that blocked the caller is left out without a word.
-		var err error
-		if others, err = m.dropBlockers(ctx, others, p.AccountID); err != nil {
-			return err
+	// A token spent on a request that then fails is given back.
+	charged := kind == "group"
+	done := false
+	defer func() {
+		if charged && !done {
+			m.groupCreateLimit.Refund(p.AccountID, 1)
 		}
-	}
+	}()
 
 	id := core.NewID()
 	mode := m.d.Policy.Encryption.NewConversations
 	err := pgx.BeginFunc(ctx, m.d.DB, func(tx pgx.Tx) error {
+		// Pin every account named (and the creator) before anything refers to
+		// it: a concurrent account deletion either finishes first, and this
+		// answers not_found, or waits for this transaction and then removes
+		// the new member as a proper leave. Never a foreign-key error.
+		pinned, err := lockAccounts(ctx, tx, append(append([]string{}, others...), strings.ToLower(p.AccountID)))
+		if err != nil {
+			return err
+		}
+		if pinned != len(others)+1 {
+			return httpx.Err("not_found", "no such account")
+		}
+		if kind == "group" {
+			// An account that blocked the caller is left out without a word.
+			if others, err = m.dropBlockers(ctx, others, p.AccountID); err != nil {
+				return err
+			}
+		}
 		if _, err := tx.Exec(ctx, `insert into conversations (id, mode, kind, created_at) values ($1, $2, $3, $4)`, id, mode, kind, m.d.Now()); err != nil {
 			return err
 		}
@@ -108,12 +119,13 @@ func (m *Module) createConversation(w http.ResponseWriter, r *http.Request) erro
 		if _, err := tx.Exec(ctx, `insert into conversation_accounts (conversation_id, account_id) select $1, unnest($2::uuid[])`, id, others); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `insert into conversation_devices (conversation_id, device_id) values ($1, $2)`, id, p.DeviceID)
+		_, err = tx.Exec(ctx, `insert into conversation_devices (conversation_id, device_id) values ($1, $2)`, id, p.DeviceID)
 		return err
 	})
 	if err != nil {
 		return err
 	}
+	done = true
 	httpx.JSON(w, http.StatusOK, conversationResponse{id, mode, 0, kind})
 	return nil
 }

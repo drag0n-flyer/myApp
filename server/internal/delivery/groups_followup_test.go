@@ -116,33 +116,33 @@ func TestGroupCreateRateLimit(t *testing.T) {
 func TestGroupAddRateLimit(t *testing.T) {
 	w := newGroupWorld(t)
 	id := w.group(t)
-	ghosts := func() []string {
-		out := []string{}
-		for i := 0; i < 99; i++ {
-			out = append(out, core.NewID())
-		}
-		return out
+	// 99 accounts that blocked ana: adding them succeeds without adding anyone,
+	// and costs 99 tokens each time (the charge is the request size).
+	blockers := []string{}
+	for i := 0; i < 99; i++ {
+		a := testkit.Account(t, w.d, fmt.Sprintf("blk%d", i))
+		w.f.Blocks.Block(a.AccountID, w.ana1.AccountID)
+		blockers = append(blockers, a.AccountID)
 	}
-	// Two requests of 99 take 198 of the 200 tokens (they fail on unknown accounts).
 	for i := 0; i < 2; i++ {
-		if r := w.addAccts(t, w.ana1, id, ghosts()...); r.Status != 404 {
-			t.Fatalf("ghosts %d: %s", i, r)
+		if r := w.addAccts(t, w.ana1, id, blockers...); r.Status != 200 {
+			t.Fatalf("batch %d: %s", i, r)
 		}
 	}
-	r := w.addAccts(t, w.ana1, id, ghosts()...)
-	if r.Status != 429 || r.Code() != "rate_limited" {
+	r := w.addAccts(t, w.ana1, id, blockers...)
+	if r.Status != 429 || r.Code() != "rate_limited" || r.Header.Get("Retry-After") == "" {
 		t.Fatalf("over: %s", r)
 	}
 	// Two tokens remain.
 	if r := w.addAccts(t, w.ana1, id, w.eve.AccountID); r.Status != 200 {
 		t.Fatalf("within: %s", r)
 	}
-	// Limits are per account: bob (admin) still has his own.
-	if r := w.addAccts(t, w.bob1, id, ghosts()...); r.Status != 404 {
+	// Limits are per account: bob (admin) has his own.
+	if r := w.addAccts(t, w.bob1, id, blockers[:50]...); r.Status != 200 {
 		t.Fatalf("bob: %s", r)
 	}
 	w.f.Clock.Advance(time.Hour)
-	if r := w.addAccts(t, w.ana1, id, ghosts()...); r.Status != 404 {
+	if r := w.addAccts(t, w.ana1, id, blockers...); r.Status != 200 {
 		t.Fatalf("after an hour: %s", r)
 	}
 }
