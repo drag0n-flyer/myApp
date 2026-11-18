@@ -3,20 +3,20 @@ import XCTest
 
 @MainActor
 final class VoiceLevelTests: XCTestCase {
-    func testDecibelsMapToZeroToOne() {
+    func testDecibelsMapToZeroToOne() async {
         XCTAssertEqual(VoiceLevel.normalized(decibels: 0), 1, accuracy: 0.001)
         XCTAssertEqual(VoiceLevel.normalized(decibels: -25), 0.5, accuracy: 0.001)
         XCTAssertEqual(VoiceLevel.normalized(decibels: -50), 0, accuracy: 0.001)
     }
 
-    func testOutOfRangeAndSilenceAreClamped() {
+    func testOutOfRangeAndSilenceAreClamped() async {
         XCTAssertEqual(VoiceLevel.normalized(decibels: -160), 0)
         XCTAssertEqual(VoiceLevel.normalized(decibels: 6), 1)
         XCTAssertEqual(VoiceLevel.normalized(decibels: -.infinity), 0)
         XCTAssertEqual(VoiceLevel.normalized(decibels: .nan), 0)
     }
 
-    func testSampleCaptureFollowsTheRealClockUntilLocked() throws {
+    func testSampleCaptureFollowsTheRealClockUntilLocked() async throws {
         let capture = SampleVoiceCapture()
         try capture.start()
         XCTAssertLessThan(capture.elapsed, 1, "a hold and release in sample mode is as short as it really was")
@@ -25,7 +25,7 @@ final class VoiceLevelTests: XCTestCase {
         capture.cancel()
     }
 
-    func testSampleCaptureWritesAFileAndReportsAtLeastASecondOnceLocked() throws {
+    func testSampleCaptureWritesAFileAndReportsAtLeastASecondOnceLocked() async throws {
         let capture = SampleVoiceCapture()
         XCTAssertEqual(capture.permission, .granted)
         try capture.start()
@@ -36,7 +36,7 @@ final class VoiceLevelTests: XCTestCase {
         try FileManager.default.removeItem(at: result.url)
     }
 
-    func testSampleCaptureCancelDeletesTheFile() throws {
+    func testSampleCaptureCancelDeletesTheFile() async throws {
         let capture = SampleVoiceCapture()
         try capture.start()
         let url = try XCTUnwrap(capture.currentURL)
