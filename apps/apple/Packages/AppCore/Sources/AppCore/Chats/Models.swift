@@ -159,12 +159,18 @@ public struct Message: Identifiable, Hashable, Codable, Sendable {
     public var caption: String?
     /// The preview of the first link of a text.
     public var linkPreview: LinkPreviewCard?
+    /// When the message disappears (`sentAt + ttl`); `nil` when it never does.
+    public var expiresAt: Date?
+
+    /// True while a timer applies to this message: the bubble shows the timer glyph.
+    public var disappears: Bool { expiresAt != nil }
 
     public init(id: String, senderID: String, sentAt: Date, content: MessageContent, status: DeliveryStatus, replyToID: String?, reactions: [String],
                 editedAt: Date? = nil, media: MediaState? = nil, undecryptable: Bool = false, uploadProgress: Double? = nil,
-                sendFailure: SendFailure? = nil, caption: String? = nil, linkPreview: LinkPreviewCard? = nil) {
+                sendFailure: SendFailure? = nil, expiresAt: Date? = nil, caption: String? = nil, linkPreview: LinkPreviewCard? = nil) {
         self.caption = caption
         self.linkPreview = linkPreview
+        self.expiresAt = expiresAt
         self.uploadProgress = uploadProgress
         self.sendFailure = sendFailure
         self.id = id

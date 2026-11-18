@@ -213,8 +213,41 @@ struct SystemEventText: View {
         case .deviceRemoved(nil): Text("You removed a device")
         case .safetyNumberChanged: Text("Safety number changed")
         case .messagesPaused: Text("Messages in this chat are paused. Open chat info for details.")
-        // Placeholder wording until the disappearing-messages screens (P3) add the catalog strings.
-        case .timer: Text(verbatim: event.text)
+        case .timer: TimerLineText(event: event)
+        }
+    }
+}
+
+/// "You set messages to disappear after 7 days", "Ana set …", or "… turned off disappearing messages".
+/// Each duration is its own catalog string so every language can word the plural itself.
+struct TimerLineText: View {
+    let event: SystemEvent
+
+    var body: some View {
+        if let line = event.timerLine {
+            if let name = line.name { other(line.choice, name) } else { own(line.choice) }
+        } else {
+            Text(verbatim: event.text)
+        }
+    }
+
+    @ViewBuilder
+    private func own(_ choice: TimerChoice) -> some View {
+        switch choice {
+        case .off: Text("You turned off disappearing messages")
+        case .day: Text("You set messages to disappear after 1 day")
+        case .week: Text("You set messages to disappear after 7 days")
+        case .quarter: Text("You set messages to disappear after 90 days")
+        }
+    }
+
+    @ViewBuilder
+    private func other(_ choice: TimerChoice, _ name: String) -> some View {
+        switch choice {
+        case .off: Text("\(name) turned off disappearing messages")
+        case .day: Text("\(name) set messages to disappear after 1 day")
+        case .week: Text("\(name) set messages to disappear after 7 days")
+        case .quarter: Text("\(name) set messages to disappear after 90 days")
         }
     }
 }
@@ -239,6 +272,11 @@ private struct MetaLine: View {
             }
             if isMine, message.status == .sending { Text("Sending…") }
             if message.editedAt != nil { Text("edited") }
+            if message.disappears {
+                Image(systemName: "timer")
+                    .accessibilityLabel(Text("Disappearing message"))
+                    .accessibilityIdentifier("chat.timer.\(message.id)")
+            }
             Text(message.sentAt, format: .dateTime.hour().minute())
             if isMine, message.status != .failed {
                 Image(systemName: statusSymbol)
