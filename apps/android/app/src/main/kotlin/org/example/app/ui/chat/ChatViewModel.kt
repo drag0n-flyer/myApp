@@ -30,6 +30,7 @@ import org.example.app.core.chats.MessageAction
 import org.example.app.core.chats.MessageActions
 import org.example.app.core.chats.MessageContent
 import org.example.app.core.chats.MessageHit
+import org.example.app.core.chats.SendProblem
 import org.example.app.core.settings.AutoDownloadPolicy
 import org.example.app.core.settings.AutoDownloadSettings
 import org.example.app.core.settings.MediaKind
@@ -364,6 +365,12 @@ class ChatViewModel(
 
     /** Sends a picked, photographed or recorded file; [path] is a file the sender can read, or a `content:` URI for a photo. */
     fun sendAttachment(path: String, kind: MediaKind) = store.sendAttachment(path, kind, chatId)
+
+    /** Why the last attachment sent from this chat was dropped (too big, unreadable), until it has been shown; null when none. */
+    val sendProblem: kotlinx.coroutines.flow.Flow<SendProblem.Reason?> = store.sendProblem(chatId)
+
+    /** The notice has been shown: the store forgets the problem, so it is shown once. */
+    fun sendProblemShown() = store.takeSendProblem(chatId)
 
     /** Photos and files wait for a tap when the rules say not to download on this network. */
     fun autoDownloads(kind: MediaKind): Boolean = AutoDownloadPolicy.shouldDownload(kind, network, autoDownload())

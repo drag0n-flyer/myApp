@@ -11,6 +11,7 @@ import org.example.app.ui.msg
 import org.example.app.ui.storeWith
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
@@ -70,5 +71,23 @@ class ChatViewModelTest {
         val vm = ChatViewModel(store, "chat-riya", NetworkType.Mobile) { AutoDownloadSettings() }
         vm.requestAutoDownload("1", MediaKind.Photo)
         assertEquals(emptyList(), downloads)
+    }
+
+    @Test
+    fun aSendProblemIsHandedToTheChatOnceShownAndForgotten() {
+        val inner = storeWith(listOf(msg("1", "riya", MessageContent.Text("hi"))))
+        val kept = kotlinx.coroutines.flow.MutableStateFlow<org.example.app.core.chats.SendProblem.Reason?>(org.example.app.core.chats.SendProblem.Reason.TooBig)
+        val taken = mutableListOf<String>()
+        val store = object : ChatStore by inner {
+            override fun sendProblem(chatId: String) = if (chatId == "chat-riya") kept else kotlinx.coroutines.flow.flowOf(null)
+            override fun takeSendProblem(chatId: String) { taken += chatId; kept.value = null }
+        }
+        val vm = ChatViewModel(store, "chat-riya", NetworkType.Wifi) { AutoDownloadSettings() }
+        val seen = mutableListOf<org.example.app.core.chats.SendProblem.Reason?>()
+        val job = kotlinx.coroutines.CoroutineScope(Dispatchers.Main).launch { vm.sendProblem.collect { seen += it } }
+        vm.sendProblemShown()
+        job.cancel()
+        assertEquals(listOf(org.example.app.core.chats.SendProblem.Reason.TooBig, null), seen)
+        assertEquals(listOf("chat-riya"), taken)
     }
 }
