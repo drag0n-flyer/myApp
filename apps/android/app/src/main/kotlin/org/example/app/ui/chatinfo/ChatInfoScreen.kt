@@ -90,7 +90,7 @@ fun ChatInfoScreen(
         val verified = store.supportsSafetyNumbers && !unreadable && store.safetyNumber(chatId)?.isVerified == true
         Column(Modifier.padding(padding).verticalScroll(rememberScrollState())) {
             Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Avatar(contact.displayName, size = 84.dp)
+                Avatar(contact.displayName, size = 84.dp, colorKey = contact.id)
                 Text(contact.displayName, style = MaterialTheme.typography.titleLarge)
                 Text(usernameText(contact.username), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

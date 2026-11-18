@@ -46,7 +46,7 @@ fun ProfileScreen(
     SettingsPage(stringResource(R.string.settings_profile), onBack, modifier) {
         item {
             ListItem(
-                leadingContent = { Avatar(me.displayName, size = 56.dp) },
+                leadingContent = { Avatar(me.displayName, size = 56.dp, colorKey = me.id) },
                 headlineContent = { Text(me.displayName, style = MaterialTheme.typography.titleMedium) },
                 supportingContent = { Text(usernameText(me.username)) },
             )

@@ -14,15 +14,25 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.example.app.ui.theme.AvatarTiles
+import org.example.app.ui.theme.isDarkTheme
 
-/** Initial in a tonal circle. Decorative: the name next to it is the label. */
+/**
+ * Initial in a circle. With [colorKey] (the person's account ID) the circle is one of 8 colours chosen from it and the
+ * letter is white; without one it is the neutral tonal circle. Decorative: the name next to it is the label.
+ */
 @Composable
-fun Avatar(name: String, size: Dp = 40.dp, modifier: Modifier = Modifier) {
+fun Avatar(name: String, size: Dp = 40.dp, modifier: Modifier = Modifier, colorKey: String? = null) {
     val initial = name.trim().codePoints().findFirst().let { if (it.isPresent) String(Character.toChars(it.asInt)) else "" }
+    val tile = AvatarTiles.tileFor(colorKey, isDarkTheme())
     Box(
-        modifier.size(size).clip(CircleShape).background(MaterialTheme.colorScheme.secondaryContainer).clearAndSetSemantics {},
+        modifier.size(size).clip(CircleShape).background(tile ?: MaterialTheme.colorScheme.secondaryContainer).clearAndSetSemantics {},
         contentAlignment = Alignment.Center,
     ) {
-        Text(initial.uppercase(), color = MaterialTheme.colorScheme.onSecondaryContainer, fontSize = (size.value / 2.4f).sp)
+        Text(
+            initial.uppercase(),
+            color = if (tile != null) AvatarTiles.onTile else MaterialTheme.colorScheme.onSecondaryContainer,
+            fontSize = (size.value / 2.4f).sp,
+        )
     }
 }

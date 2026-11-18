@@ -49,7 +49,7 @@ fun MessageRequestsScreen(store: ChatStore, onOpenChat: (chatId: String) -> Unit
             LazyColumn(Modifier.padding(padding)) {
                 items(requests, key = { it.id }) { chat ->
                     val last = chat.lastMessage
-                    val row = ChatRowModel(chat.id, store.contact(chat.contactId)?.displayName ?: chat.contactId, last?.preview, last?.sentAt, chat.unreadCount)
+                    val row = ChatRowModel(chat.id, store.contact(chat.contactId)?.displayName ?: chat.contactId, last?.preview, last?.sentAt, chat.unreadCount, chat.contactId)
                     ChatRow(row, onClick = { onOpenChat(chat.id) })
                 }
                 item {

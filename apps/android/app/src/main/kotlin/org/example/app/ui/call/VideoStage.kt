@@ -40,6 +40,7 @@ fun VideoStage(
     egl: EglBase.Context? = null,
     remoteVideoOn: Boolean = remote != null,
     mirrorLocal: Boolean = true,
+    avatarKey: String? = null,
 ) {
     val remoteLabel = stringResource(R.string.call_remote_video)
     val selfLabel = stringResource(R.string.call_self_video)
@@ -47,7 +48,7 @@ fun VideoStage(
         if (remote != null && egl != null && remoteVideoOn) {
             FeedView(remote, egl, mirror = false, overlay = false, Modifier.fillMaxSize().semantics { contentDescription = remoteLabel })
         } else {
-            Avatar(avatarName, size = 160.dp, modifier = Modifier.align(Alignment.Center))
+            Avatar(avatarName, size = 160.dp, modifier = Modifier.align(Alignment.Center), colorKey = avatarKey)
         }
         Box(
             Modifier.align(Alignment.TopEnd).padding(top = 48.dp).size(width = 84.dp, height = 120.dp)

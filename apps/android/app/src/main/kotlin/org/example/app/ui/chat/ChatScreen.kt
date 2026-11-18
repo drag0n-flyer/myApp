@@ -278,7 +278,7 @@ fun ChatScreen(
                     },
                     title = {
                         Row(Modifier.clickable(role = Role.Button, onClick = onOpenInfo), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Avatar(state.contactName, size = 36.dp)
+                            Avatar(state.contactName, size = 36.dp, colorKey = state.chat?.contactId)
                             Text(state.contactName, maxLines = 1)
                         }
                     },

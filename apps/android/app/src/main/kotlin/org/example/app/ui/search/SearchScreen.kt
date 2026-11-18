@@ -95,13 +95,13 @@ fun SearchScreen(
                     when (row) {
                         is SearchRow.Contact -> ListItem(
                             modifier = Modifier.clickable(role = Role.Button) { onOpenContact(row.contact.id) },
-                            leadingContent = { Avatar(row.contact.displayName) },
+                            leadingContent = { Avatar(row.contact.displayName, colorKey = row.contact.id) },
                             headlineContent = { Text(row.contact.displayName, maxLines = 1) },
                             supportingContent = { Text(usernameText(row.contact.username)) },
                         )
                         is SearchRow.Message -> ListItem(
                             modifier = Modifier.clickable(role = Role.Button) { onOpenMessage(row.result.hit.chatId, row.result.hit.messageId) },
-                            leadingContent = { Avatar(row.result.chatName) },
+                            leadingContent = { Avatar(row.result.chatName, colorKey = row.result.colorKey) },
                             headlineContent = { Text(row.result.chatName, maxLines = 1) },
                             supportingContent = { Text(row.result.hit.preview, maxLines = 2) },
                         )

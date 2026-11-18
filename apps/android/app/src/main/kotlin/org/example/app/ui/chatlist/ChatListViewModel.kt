@@ -25,6 +25,8 @@ data class ChatRowModel(
     val preview: MessagePreview?,
     val time: Instant?,
     val unreadCount: Int,
+    /** The other person's account ID, which picks the colour of the letter tile. */
+    val colorKey: String? = null,
 )
 
 data class ChatListState(
@@ -57,7 +59,7 @@ class ChatListViewModel(
                 requestCount = requests.size,
                 rows = store.chats(folder).map { chat ->
                     val last = chat.lastMessage
-                    ChatRowModel(chat.id, store.contact(chat.contactId)?.displayName ?: chat.contactId, last?.preview, last?.sentAt, chat.unreadCount)
+                    ChatRowModel(chat.id, store.contact(chat.contactId)?.displayName ?: chat.contactId, last?.preview, last?.sentAt, chat.unreadCount, chat.contactId)
                 },
                 serverHost = server.host,
                 modeKey = DataModePolicy.stripLabelKey(server, user.call, network),

@@ -26,7 +26,7 @@ fun ChatRow(row: ChatRowModel, onClick: () -> Unit, modifier: Modifier = Modifie
     val preview = row.preview?.let { previewText(it) }.orEmpty()
     ListItem(
         modifier = modifier.clickable(role = Role.Button, onClick = onClick),
-        leadingContent = { Avatar(row.name) },
+        leadingContent = { Avatar(row.name, colorKey = row.colorKey) },
         headlineContent = { Text(row.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         supportingContent = { Text(preview, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         trailingContent = {
