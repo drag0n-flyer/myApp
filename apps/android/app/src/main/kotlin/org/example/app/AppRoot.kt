@@ -137,7 +137,8 @@ fun AppRoot(
             onboarding = true
         }
         if (onboarding) {
-            graph.requestedChat.value = null // a notification tapped while signed out opens nothing later
+            // A notification tapped while signed out opens nothing later.
+            LaunchedEffect(graph) { graph.requestedChat.collect { if (it != null) graph.requestedChat.value = null } }
             val vm = viewModel<OnboardingViewModel>(
                 key = "onboarding-$sessionEnds",
                 factory = viewModelFactory { initializer { OnboardingViewModel(graph.accountService, saved = createSavedStateHandle()) } },

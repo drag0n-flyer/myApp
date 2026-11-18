@@ -28,13 +28,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
-import java.util.Locale
 import org.example.app.R
 import org.example.app.core.chats.ChatTimeline
 import org.example.app.core.chats.Contact
@@ -47,7 +47,7 @@ internal fun DateChip(day: LocalDate, today: LocalDate = LocalDate.now(), modifi
     val label = when (ChatTimeline.dayLabel(day, today)) {
         DayLabel.Today -> stringResource(R.string.chat_today)
         DayLabel.Yesterday -> stringResource(R.string.chat_yesterday)
-        DayLabel.Date -> DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).withLocale(Locale.getDefault()).format(day)
+        DayLabel.Date -> DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).withLocale(LocalConfiguration.current.locales[0]).format(day)
     }
     Box(modifier.fillMaxWidth().padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
         Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {

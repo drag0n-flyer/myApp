@@ -172,12 +172,13 @@ class AppGraphTest {
     /** A signed-in graph with its session open and some data on disk. */
     private fun opened(): Pair<AppGraph, org.example.app.live.LiveSession> = runBlocking {
         val graph = signedIn()
-        val session = assertNotNull(graph.openSession())
+        val session = assertNotNull(graph.openSession(), "the session opened (marker=${marker.exists()})")
         session.chatStore.settle()
         File(root, "media").apply { mkdirs() }.resolve("blob.enc").writeText("x")
-        assertTrue(db.exists())
-        assertTrue(File(root, "mls/state").exists())
-        assertTrue(File(root, "secrets/${SecretNames.DB_KEY}").exists())
+        // Each says what is missing, so a failure on a slow machine names the file instead of only "AssertionError".
+        assertTrue(db.exists(), "database exists after open: ${db.absolutePath}")
+        assertTrue(File(root, "mls/state").exists(), "mls/state exists after open; root has ${root.list()?.sorted()}")
+        assertTrue(File(root, "secrets/${SecretNames.DB_KEY}").exists(), "database key exists after open; secrets has ${File(root, "secrets").list()?.sorted()}")
         graph to session
     }
 
