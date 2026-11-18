@@ -45,6 +45,7 @@ object EmptyChatStore : ChatStore {
     override fun receive(content: MessageContent, from: Contact) = Unit
     override fun accept(requestId: String) = Unit
     override fun block(contactId: String) = Unit
+    override fun unblock(contactId: String) = Unit
     override fun report(chatId: String) = Unit
     override fun markRead(chatId: String) = Unit
     override fun incomingCall(fromAccountId: String, video: Boolean) = IncomingCallDecision.SilentMissed

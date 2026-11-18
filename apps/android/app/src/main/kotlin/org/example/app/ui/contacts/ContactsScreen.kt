@@ -69,6 +69,13 @@ fun ContactsScreen(
                     headlineContent = { Text(stringResource(R.string.contacts_add), color = MaterialTheme.colorScheme.primary) },
                 )
             }
+            if (sections.isEmpty()) item(key = "empty") {
+                Text(
+                    stringResource(R.string.contacts_empty),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(16.dp),
+                )
+            }
             for ((letter, people) in sections) {
                 item(key = "h-$letter") {
                     Text(letter, modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp).semantics { heading() }, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)

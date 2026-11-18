@@ -7,6 +7,7 @@ import androidx.fragment.app.FragmentActivity
 import java.io.File
 import java.security.MessageDigest
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -16,6 +17,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -24,6 +28,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.example.app.contracts.ConnectionState
 import org.example.app.contracts.LiveSocket
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -35,7 +40,9 @@ import org.example.app.contracts.ServerEvent
 import org.example.app.contracts.SnapshotSource
 import org.example.app.contracts.X25519KeyPair
 import org.example.app.core.account.AccountService
+import org.example.app.core.account.AccountError
 import org.example.app.core.account.AccountState
+import org.example.app.core.account.ConnectionStatus
 import org.example.app.core.account.SampleAccountService
 import org.example.app.core.calls.DataMode
 import org.example.app.core.calls.ModePreference
@@ -66,6 +73,9 @@ import org.example.app.messaging.sync.DeviceSync
 import org.example.app.messaging.sync.LocalDevice
 import org.example.app.messaging.sync.OwnDeviceWatcher
 import org.example.app.net.ServerClient
+import org.example.app.contracts.ServerException
+import org.example.app.net.api.IdentityApi
+import org.example.app.net.api.SocialApi
 import org.example.app.net.SessionStore
 import org.example.app.net.SignOutReason
 import org.example.app.net.account.ApprovalConfirmer
@@ -73,10 +83,24 @@ import org.example.app.net.account.ApprovalOutcome
 import org.example.app.net.account.LiveAccountService
 import org.example.app.net.account.PasskeySupportCheck
 import org.example.app.net.account.Passkeys
+import org.example.app.push.FirebaseInit
+import org.example.app.push.PlayServices
+import org.example.app.push.PushTransport
+import org.example.app.push.UnifiedPushSetup
 import org.example.app.ui.settings.SettingsStore
 
 private const val TAG = "AppGraph"
 private const val SHUTDOWN_MS = 10_000L
+/**
+ * The status from the socket state, whether the session is gone and the network. A replaced or revoked socket, or a
+ * session that ended, will not reconnect by itself: that is Offline, not "Connecting…" forever.
+ */
+internal fun statusOf(socket: ConnectionState?, sessionGone: Boolean, networkUp: Boolean): ConnectionStatus = when {
+    sessionGone || socket == ConnectionState.Replaced || socket == ConnectionState.Revoked -> ConnectionStatus.Offline
+    else -> ConnectionStatus.from(socketConnected = socket == ConnectionState.Connected, hasNetwork = networkUp)
+}
+
+private const val SETTINGS_PREFS = "settings"
 
 /** Sample data only. */
 private val SAMPLE_POLICY = ServerPolicy(ModePreference.Auto, DataMode.High, IPHiding.NonContacts, true, "home.example.org")
@@ -112,10 +136,81 @@ class AppGraph(
             ?: liveAccount.defaultServer
 
     /** The single source of truth for the user's settings; consumers read it as a flow. */
-    val settingsStore: SettingsStore by lazy { SettingsStore(if (sampleData) UserSettings() else UserSettings.initial(serverPolicy)) }
+    val settingsStore: SettingsStore by lazy {
+        // Live settings are kept on the device and survive a restart; sample data keeps them in memory.
+        if (sampleData) SettingsStore()
+        else SettingsStore(appContext.getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE), UserSettings.initial(serverPolicy))
+    }
 
     /** The network the device is on now (always Wi-Fi with sample data). */
     val network: NetworkType get() = if (sampleData) NetworkType.Wifi else platform.network()
+
+    /** A chat a notification tap asked to open; `AppRoot` opens it once the chats show, then clears it. */
+    val requestedChat = MutableStateFlow<String?>(null)
+
+    // ---- Connection status
+
+    private val networkUp = MutableStateFlow(sampleData || platform.network() != NetworkType.Offline)
+    /** The current session's socket state; null while no session has opened. */
+    private val socketState = MutableStateFlow<ConnectionState?>(null)
+    /** True once the session that was open has ended (sign-out, revocation): nothing will reconnect. */
+    private val sessionGone = MutableStateFlow(false)
+    /** The system's current default network (any object: the callbacks' `Network`, or a test's stand-in). */
+    private var defaultNetwork: Any? = null
+
+    /**
+     * What the chat list strip and Settings > Server show: the live socket and the device's connectivity together,
+     * derived from both flows so a stale write cannot win ([statusOf]). Sample data is always connected.
+     */
+    val connectionStatus: StateFlow<ConnectionStatus> =
+        if (sampleData) MutableStateFlow(ConnectionStatus.Connected)
+        else combine(socketState, sessionGone, networkUp, ::statusOf)
+            .stateIn(scope, SharingStarted.Eagerly, statusOf(null, false, networkUp.value))
+
+    /** The system reports a default network. Also the test seam. */
+    @Synchronized internal fun onNetworkAvailable(network: Any) {
+        defaultNetwork = network
+        networkUp.value = true
+    }
+
+    /** A network went away; only the current default's loss counts (Wi-Fi to mobile reports the old one lost after the new is up). */
+    @Synchronized internal fun onNetworkLost(network: Any) {
+        if (network != defaultNetwork) return
+        defaultNetwork = null
+        networkUp.value = false
+    }
+
+    private fun watchConnectivity() {
+        if (sampleData) return
+        try {
+            appContext.getSystemService(android.net.ConnectivityManager::class.java)?.registerDefaultNetworkCallback(
+                object : android.net.ConnectivityManager.NetworkCallback() {
+                    override fun onAvailable(network: android.net.Network) = onNetworkAvailable(network)
+                    override fun onLost(network: android.net.Network) = onNetworkLost(network)
+                },
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "connectivity callback failed: ${e.javaClass.simpleName}")
+        }
+    }
+
+    /**
+     * How push reaches this phone, for the read-only row in Settings > Notifications. The same rule as the
+     * registration (`PushTransport.choose`), but Firebase is only checked for a complete configuration, never
+     * initialised here. The registered transport is not recorded anywhere, so this is the rule's answer.
+     */
+    fun pushTransport(): PushTransport {
+        if (sampleData) return PushTransport.None
+        return try {
+            val up = UnifiedPushSetup(appContext)
+            PushTransport.choose(
+                playServices = PlayServices.available(appContext), distributorCount = up.distributors().size,
+                distributorChosen = up.distributorChosen(), fcmConfigured = FirebaseInit.buildConfigOptions().complete,
+            )
+        } catch (_: Exception) {
+            PushTransport.None
+        }
+    }
 
     /** Calls show in both builds: the simulated engine with sample data, `LiveCallEngine` live. */
     val callsAvailable: Boolean get() = true
@@ -320,6 +415,8 @@ class AppGraph(
             quietly("push") { org.example.app.live.PushWiring.registerAfterSignIn(appContext, session.client) }
         }
         val live = session.socket.socket
+        sessionGone.value = false
+        session.scope.launch { live.states.collect { socketState.value = it } }
         // The socket's events have one collector: the watcher. A pushed inbox item is read on the way through.
         // Call frames go on to the session's `LiveCallEngine`.
         val events = live.events.onEach {
@@ -357,6 +454,9 @@ class AppGraph(
         liveSession.also {
             liveSession = null
             if (it != null) (callEngine as? SessionCallEngine)?.use(null)
+        }.also {
+            socketState.value = null
+            if (it != null) sessionGone.value = true
         }
     }
 
@@ -379,6 +479,84 @@ class AppGraph(
     }
 
     private val wiping = Mutex()
+
+    /**
+     * Signs out of this device: removes it from the account on the server (the revoke call Linked devices uses), then
+     * wipes everything local and returns to onboarding. Throws [AccountError] (`Network` with no connection) and
+     * wipes nothing when the server was not reached, so the person can try again. Sample data just goes back.
+     */
+    suspend fun signOut() {
+        if (sampleData) { _sessionEnds.value += 1; return }
+        // In the graph's scope: leaving the screen or a rotation must not stop it between the revoke and the wipe.
+        scope.async {
+            val own = accountService.devices().firstOrNull { it.isThisDevice }
+            // A device the server does not list is already gone from the account: nothing to revoke, the wipe is all that is left.
+            own?.let { accountService.removeDevice(it.id) }
+            wipeAfterRevocation()
+        }.await()
+    }
+
+    /** Sign-out and delete, one at a time for the whole app, run in this graph's scope (the profile screen only shows them). */
+    val accountActions: org.example.app.ui.settings.AccountActions by lazy {
+        org.example.app.ui.settings.AccountActions(scope, signOut = ::signOut, deleteAccount = ::deleteAccount)
+    }
+
+    private val findByEmailLock = Mutex()
+
+    /**
+     * Sets "find me by email" (`PATCH /v1/me/settings`) and keeps the local value matching the server. The local value
+     * changes first; if the server did not take it the value goes back to what it was when this save's turn came and this throws [AccountError] for the screen to
+     * show. It runs in the graph's scope, so leaving the screen mid-save still ends with the two matching. Saves run
+     * one at a time. Sample data has no server.
+     */
+    suspend fun saveFindByEmail(value: Boolean) {
+        if (sampleData) { settingsStore.update { it.copy(findByEmail = value) }; return }
+        // Read before anything waits: a sign-out while this is queued or in flight makes both updates below no-ops.
+        val generation = settingsStore.generation
+        scope.async {
+            findByEmailLock.withLock {
+                // The value the server has: the last save that finished (a failed one went back), read when it is our turn.
+                val previous = settingsStore.settings.value.findByEmail
+                settingsStore.update(generation) { it.copy(findByEmail = value) }
+                try {
+                    val client = openSession()?.client ?: throw AccountError.Server
+                    SocialApi(client).updateSettings(null, value)
+                } catch (e: Exception) {
+                    settingsStore.update(generation) { it.copy(findByEmail = previous) }
+                    if (e is CancellationException) throw e
+                    throw when {
+                        e is AccountError -> e
+                        e is ServerException && e.code == "network" -> AccountError.Network
+                        else -> AccountError.Server
+                    }
+                }
+            }
+        }.await()
+    }
+
+    /** The server's "find me by email", or null when it cannot be read now (offline, sample data). */
+    suspend fun loadFindByEmail(): Boolean? {
+        if (sampleData) return null
+        return try {
+            IdentityApi(openSession()?.client ?: return null).me().findByEmail
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** Deletes the account on the server, then wipes everything local. Same failure rule as [signOut]. */
+    suspend fun deleteAccount() {
+        if (sampleData) { _sessionEnds.value += 1; return }
+        scope.async {
+            accountService.deleteAccount()
+            wipeAfterRevocation()
+        }.await()
+    }
+
+    /** The chat to open for a notification tap: [id] if this account has that chat (or request), else null. */
+    fun openableChat(id: String?): String? = id?.takeIf { it.isNotBlank() && chatStore.chat(it) != null }
 
     /**
      * This device was revoked (a 4003 close or a confirmed 401; never `device.revoked` alone): signs out, then deletes
@@ -406,6 +584,9 @@ class AppGraph(
                 step { local.markWipePending(kind) } // durable first
                 if (kind == LocalData.FULL) step { liveAccount.signOutLocally() } // no session can open from here on
                 detachSession()?.let { stop(it, step, wipeRows = true) }
+                // The next account starts from its own defaults, not this one's settings. Before the delete: the delete
+                // removes the marker last, so a kill after it must not leave the old settings behind.
+                if (kind == LocalData.FULL) step { settingsStore.reset(UserSettings.initial(serverPolicy)) }
                 local.deleteAll(kind)?.let { failure = failure ?: it }
             } finally {
                 synchronized(this@AppGraph) { wipeRunning = false }
@@ -463,5 +644,9 @@ class AppGraph(
     private class PasskeysBridge(private val inner: org.example.app.auth.Passkeys) : Passkeys {
         override suspend fun create(optionsJson: String) = inner.create(optionsJson)
         override suspend fun get(optionsJson: String) = inner.get(optionsJson)
+    }
+
+    init {
+        watchConnectivity()
     }
 }

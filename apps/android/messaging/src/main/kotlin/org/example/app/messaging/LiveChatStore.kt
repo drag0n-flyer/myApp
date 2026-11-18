@@ -66,6 +66,7 @@ interface SocialPort {
     /** Null when there is no such user. */
     suspend fun lookUpUser(username: String): FoundUser?
     suspend fun block(accountId: String)
+    suspend fun unblock(accountId: String)
     suspend fun report(accountId: String, conversationId: String?, messages: List<ReportedLine>)
 }
 
@@ -552,6 +553,17 @@ class LiveChatStore(
             repo.deleteChat(contactId)
             repo.contact(contactId)?.let { repo.upsertContact(it.copy(isContact = false)) }
             repo.set(BLOCK_PREFIX + contactId, byteArrayOf(1))
+            repo.set(UNBLOCK_PREFIX + contactId, ByteArray(0))
+        }
+        kickPending()
+    }
+
+    /** Local first, like [block]: the server call is kept in `kv` and retried until it is accepted. */
+    override fun unblock(contactId: String) = write {
+        repo.transaction {
+            repo.unblock(contactId)
+            repo.set(BLOCK_PREFIX + contactId, ByteArray(0)) // a block the server never got is dropped
+            repo.set(UNBLOCK_PREFIX + contactId, byteArrayOf(1))
         }
         kickPending()
     }
@@ -667,6 +679,10 @@ class LiveChatStore(
             try { social.block(key.removePrefix(BLOCK_PREFIX)) } catch (e: CancellationException) { throw e } catch (_: Exception) { continue }
             repo.set(key, ByteArray(0))
         }
+        for ((key, _) in repo.entries(UNBLOCK_PREFIX).filterValues { it.isNotEmpty() }.toSortedMap()) {
+            try { social.unblock(key.removePrefix(UNBLOCK_PREFIX)) } catch (e: CancellationException) { throw e } catch (_: Exception) { continue }
+            repo.set(key, ByteArray(0))
+        }
         for ((key, value) in repo.entries(PENDING_REPORT_PREFIX).filterValues { it.isNotEmpty() }.toSortedMap()) {
             val report = runCatching { Json.decodeFromString(PendingReport.serializer(), value.decodeToString()) }.getOrNull()
             if (report == null) { repo.set(key, ByteArray(0)); continue }
@@ -684,6 +700,7 @@ class LiveChatStore(
         const val CACHED_MESSAGES = 50
         private const val REPORTED_MESSAGES = 10
         const val BLOCK_PREFIX = "pending.block."
+        const val UNBLOCK_PREFIX = "pending.unblock."
         const val PENDING_REPORT_PREFIX = "pending.report."
         private const val REPORTED_PREFIX = "reported."
     }

@@ -143,6 +143,8 @@ class SampleChatStore(
         requestSenders.remove(contactId)
     }
 
+    override fun unblock(contactId: String) = mutate { _blocked.value = _blocked.value - contactId }
+
     override fun report(chatId: String) = mutate { _reported.value = _reported.value + chatId }
 
     override fun markRead(chatId: String) = mutate { change(chatId) { it.copy(unreadCount = 0) } }

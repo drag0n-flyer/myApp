@@ -40,7 +40,7 @@ import org.example.app.ui.settings.CallsAudioScreen
 import org.example.app.ui.settings.ChatFoldersScreen
 import org.example.app.ui.settings.DataStorageScreen
 import org.example.app.ui.settings.LinkedDevicesScreen
-import org.example.app.ui.settings.NotificationDelivery
+import org.example.app.push.PushTransport
 import org.example.app.ui.settings.NotificationsScreen
 import org.example.app.ui.settings.ServerScreen
 import java.time.Instant
@@ -131,7 +131,7 @@ class AccessibilityTest {
 
     @Test fun chatList() {
         val vm = ChatListViewModel(store(), server, MutableStateFlow(UserSettings()), NetworkType.Wifi)
-        screen { ChatListScreen(vm, onOpenChat = {}, onOpenRequests = {}, onNewChat = {}) }
+        screen { ChatListScreen(vm, onOpenChat = {}, onOpenRequests = {}, onNewChat = {}, onSearch = {}) }
     }
 
     @Test fun chat() {
@@ -152,9 +152,9 @@ class AccessibilityTest {
         screen { CallHistoryScreen(vm, onCall = { _, _ -> }) }
     }
 
-    @Test fun settings() = screen { SettingsScreen(Contact("me", "Me", "me"), "home.example.org", linkedDevices = 2, onOpen = {}) }
+    @Test fun settings() = screen { SettingsScreen(Contact("me", "Me", "me"), "home.example.org", linkedDevices = 2, onOpen = {}, onOpenProfile = {}) }
 
-    @Test fun privacy() = screen { PrivacyScreen(SettingsStore(), SampleChatStore(), onBack = {}) }
+    @Test fun privacy() = screen { PrivacyScreen(SettingsStore(), SampleChatStore(), saveFindByEmail = {}, loadFindByEmail = { null }, onBack = {}) }
 
     @Test fun welcome() = screen { WelcomeScreen(canCreateAccount = true, onGetStarted = {}, onHaveAccount = {}) }
 
@@ -196,9 +196,9 @@ class AccessibilityTest {
 
     @Test fun serverPage() = screen { ServerScreen("home.example.org", onBack = {}) }
 
-    @Test fun notifications() = screen { NotificationsScreen(NotificationDelivery.Google, {}, canUseFullScreenIntent = true, onOpenFullScreenSettings = {}, onBack = {}) }
+    @Test fun notifications() = screen { NotificationsScreen(PushTransport.Fcm, canUseFullScreenIntent = true, onOpenFullScreenSettings = {}, onBack = {}) }
 
-    @Test fun notificationsWithTheLockScreenRow() = screen { NotificationsScreen(NotificationDelivery.UnifiedPush, {}, canUseFullScreenIntent = false, onOpenFullScreenSettings = {}, onBack = {}) }
+    @Test fun notificationsWithTheLockScreenRow() = screen { NotificationsScreen(PushTransport.UnifiedPush, canUseFullScreenIntent = false, onOpenFullScreenSettings = {}, onBack = {}) }
 
     @Test fun incomingCall() { val vm = callVm(incoming = true); screen(withLifecycle { org.example.app.ui.call.IncomingCallScreen(vm) }) }
 
@@ -245,7 +245,7 @@ class AccessibilityTest {
 
     @Test fun chatListMenu() {
         val vm = ChatListViewModel(store(), server, MutableStateFlow(UserSettings()), NetworkType.Wifi)
-        open({ ChatListScreen(vm, onOpenChat = {}, onOpenRequests = {}, onNewChat = {}) }) {
+        open({ ChatListScreen(vm, onOpenChat = {}, onOpenRequests = {}, onNewChat = {}, onSearch = {}) }) {
             onNodeWithContentDescription("More options").performClick()
             onNodeWithText("Mark all as read").assertIsDisplayed()
         }

@@ -44,6 +44,13 @@ import org.example.app.ui.chat.ChatViewModel
 import org.example.app.ui.chatinfo.ChatInfoScreen
 import org.example.app.ui.chatlist.ChatListScreen
 import org.example.app.ui.chatlist.ChatListViewModel
+import org.example.app.ui.chatlist.NewChatScreen
+import org.example.app.ui.search.SearchScreen
+import org.example.app.ui.search.SearchViewModel
+import org.example.app.push.PushTransport
+import androidx.compose.runtime.produceState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.example.app.ui.nav.MainTab
 import org.example.app.ui.nav.MainTabs
 import org.example.app.ui.nav.TabPlaceholder
@@ -59,12 +66,16 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 
 private const val MAIN = "main"
-private const val CHAT = "chat/{id}"
+/** `highlight` is a message ID to scroll to and flash (a search hit); the chat screen reads it as `highlightMessageId`. */
+private const val CHAT = "chat/{id}?highlight={highlight}"
 private const val INFO = "chatinfo/{id}"
 /** The approving phone scans a new device's code (opened from Linked devices). */
 const val LINK_SCAN = "linkscan"
 private const val REQUESTS = "requests"
 private const val ADD_CONTACT = "addcontact"
+private const val NEW_CHAT = "newchat"
+private const val SEARCH = "search"
+private const val PROFILE = "settings/profile"
 
 private fun shareInvite(context: Context, url: String) {
     val send = Intent(Intent.ACTION_SEND).setType("text/plain")
@@ -112,6 +123,7 @@ fun AppRoot(
             onboarding = true
         }
         if (onboarding) {
+            graph.requestedChat.value = null // a notification tapped while signed out opens nothing later
             val vm = viewModel<OnboardingViewModel>(
                 key = "onboarding-$sessionEnds",
                 factory = viewModelFactory { initializer { OnboardingViewModel(graph.accountService, saved = createSavedStateHandle()) } },
@@ -130,6 +142,16 @@ fun AppRoot(
         }
         val nav = rememberNavController()
         val idArg = listOf(navArgument("id") { type = NavType.StringType })
+        val chatArgs = idArg + navArgument("highlight") { type = NavType.StringType; nullable = true; defaultValue = null }
+        // A message notification was tapped (also while the app was running): open that chat.
+        val requestedChat by graph.requestedChat.collectAsStateWithLifecycle()
+        LaunchedEffect(requestedChat) {
+            requestedChat?.let { id ->
+                // Only a chat this account has: another app could send any ID.
+                graph.openableChat(id)?.let { nav.navigate("chat/${Uri.encode(it)}") }
+                graph.requestedChat.value = null
+            }
+        }
         val context = LocalContext.current
         val debuggable = (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
         // One per session: a call view model never outlives the account it was made for.
@@ -153,9 +175,12 @@ fun AppRoot(
                 MainTabs(tabs = if (graph.callsAvailable) MainTab.entries else MainTab.entries - MainTab.Calls) { tab ->
                     if (tab == MainTab.Chats) {
                         val vm = viewModel<ChatListViewModel>(
-                            factory = factory { ChatListViewModel(graph.chatStore, graph.serverPolicy, graph.settingsStore.settings, graph.network) },
+                            factory = factory { ChatListViewModel(graph.chatStore, graph.serverPolicy, graph.settingsStore.settings, graph.network, graph.connectionStatus) },
                         )
-                        ChatListScreen(vm, onOpenChat = { nav.navigate("chat/$it") }, onOpenRequests = { nav.navigate(REQUESTS) }, onNewChat = {})
+                        ChatListScreen(
+                            vm, onOpenChat = { nav.navigate("chat/$it") }, onOpenRequests = { nav.navigate(REQUESTS) },
+                            onNewChat = { nav.navigate(NEW_CHAT) }, onSearch = { nav.navigate(SEARCH) },
+                        )
                     } else if (tab == MainTab.Calls) {
                         val vm = viewModel<CallHistoryViewModel>(factory = factory { CallHistoryViewModel(graph.chatStore) })
                         CallHistoryScreen(vm, onCall = callVm::start)
@@ -170,7 +195,7 @@ fun AppRoot(
                     } else if (tab == MainTab.Settings) {
                         var devices by remember { mutableIntStateOf(0) }
                         LaunchedEffect(Unit) { devices = runCatching { graph.accountService.devices().size }.getOrDefault(0) }
-                        SettingsScreen(graph.chatStore.me, graph.serverPolicy.host, devices, onOpen = { nav.navigate(it.route) })
+                        SettingsScreen(graph.chatStore.me, graph.serverPolicy.host, devices, onOpen = { nav.navigate(it.route) }, onOpenProfile = { nav.navigate(PROFILE) })
                     } else {
                         TabPlaceholder(tab)
                     }
@@ -182,25 +207,52 @@ fun AppRoot(
             composable(ADD_CONTACT) {
                 AddContactScreen(graph.chatStore, onBack = { nav.popBackStack() }, onAdded = { nav.popBackStack() })
             }
-            composable(SettingsPage.Server.route) { ServerScreen(graph.serverPolicy.host, onBack = { nav.popBackStack() }) }
+            composable(NEW_CHAT) {
+                NewChatScreen(
+                    graph.chatStore,
+                    onChoose = { contactId ->
+                        val chatId = graph.chatStore.ensureChat(contactId)
+                        nav.navigate("chat/${Uri.encode(chatId)}") { popUpTo(NEW_CHAT) { inclusive = true } }
+                    },
+                    onAddContact = { nav.navigate(ADD_CONTACT) },
+                    onBack = { nav.popBackStack() },
+                )
+            }
+            composable(SEARCH) {
+                val vm = viewModel<SearchViewModel>(factory = factory { SearchViewModel(graph.chatStore) })
+                SearchScreen(
+                    vm,
+                    onOpenContact = { contactId -> nav.navigate("chat/${Uri.encode(graph.chatStore.ensureChat(contactId))}") },
+                    onOpenMessage = { chatId, messageId -> nav.navigate("chat/${Uri.encode(chatId)}?highlight=${Uri.encode(messageId)}") },
+                    onBack = { nav.popBackStack() },
+                )
+            }
+            composable(PROFILE) {
+                val vm = viewModel<ProfileViewModel>(factory = factory { ProfileViewModel(graph.accountActions) })
+                ProfileScreen(graph.chatStore.me, vm, onBack = { nav.popBackStack() })
+            }
+            composable(SettingsPage.Server.route) {
+                val status by graph.connectionStatus.collectAsStateWithLifecycle()
+                ServerScreen(graph.serverPolicy.host, onBack = { nav.popBackStack() }, status = status)
+            }
             composable(SettingsPage.LinkedDevices.route) { LinkedDevicesScreen(graph.accountService, onBack = { nav.popBackStack() }, onLinkDevice = { nav.navigate(LINK_SCAN) }, refreshes = graph.deviceListChanged) }
-            composable(SettingsPage.Privacy.route) { PrivacyScreen(graph.settingsStore, graph.chatStore, onBack = { nav.popBackStack() }) }
+            composable(SettingsPage.Privacy.route) { PrivacyScreen(graph.settingsStore, graph.chatStore, saveFindByEmail = graph::saveFindByEmail, loadFindByEmail = graph::loadFindByEmail, onBack = { nav.popBackStack() }) }
             composable(SettingsPage.DataStorage.route) { DataStorageScreen(graph.settingsStore, graph.serverPolicy, onBack = { nav.popBackStack() }) }
             composable(SettingsPage.ChatFolders.route) { ChatFoldersScreen(graph.chatStore, onBack = { nav.popBackStack() }) }
             composable(SettingsPage.CallsAudio.route) { CallsAudioScreen(graph.settingsStore, onBack = { nav.popBackStack() }) }
             composable(SettingsPage.Licenses.route) { LicensesScreen(onBack = { nav.popBackStack() }) }
             composable(SettingsPage.Notifications.route) {
                 val context = LocalContext.current
-                val delivery by graph.settingsStore.delivery.collectAsStateWithLifecycle()
+                val transport by produceState(PushTransport.None) { value = withContext(Dispatchers.IO) { graph.pushTransport() } }
                 val fullScreenAllowed by rememberRefreshedOnResume { canUseFullScreenIntent(context) }
                 NotificationsScreen(
-                    delivery, graph.settingsStore::setDelivery,
+                    transport,
                     canUseFullScreenIntent = fullScreenAllowed,
                     onOpenFullScreenSettings = { openFullScreenSettings(context) },
                     onBack = { nav.popBackStack() },
                 )
             }
-            composable(CHAT, idArg) { entry ->
+            composable(CHAT, chatArgs) { entry ->
                 val id = entry.arguments!!.getString("id")!!
                 val vm = viewModel<ChatViewModel>(
                     key = "chat-$id",
@@ -217,7 +269,7 @@ fun AppRoot(
                         nav.popBackStack(MAIN, inclusive = false)
                     },
                     onReport = { graph.chatStore.report(id) },
-                    onForward = { target -> if (target != id) nav.navigate("chat/$target") },
+                    onForward = { target -> if (target != id) nav.navigate("chat/${Uri.encode(target)}") },
                     // Set by a search hit in the chat list; absent from routes that do not declare it.
                     highlightMessageId = entry.arguments?.getString("highlight")?.takeIf { it.isNotBlank() },
                 )

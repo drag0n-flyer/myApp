@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import org.example.app.core.account.ConnectionStatus
 import org.example.app.core.calls.DataModePolicy
 import org.example.app.core.calls.NetworkType
 import org.example.app.core.chats.ChatFolder
@@ -34,6 +35,7 @@ data class ChatListState(
     val rows: List<ChatRowModel>,
     val serverHost: String,
     val modeKey: String,
+    val status: ConnectionStatus = ConnectionStatus.Connected,
 )
 
 class ChatListViewModel(
@@ -41,6 +43,8 @@ class ChatListViewModel(
     private val server: ServerPolicy,
     private val settings: StateFlow<UserSettings>,
     private val network: NetworkType,
+    /** The live connection (`AppGraph.connectionStatus`); sample data and tests are connected. */
+    private val status: StateFlow<ConnectionStatus> = MutableStateFlow(ConnectionStatus.Connected),
 ) : ViewModel() {
     private val selected = MutableStateFlow(ChatFolder.All.id)
 
@@ -58,7 +62,8 @@ class ChatListViewModel(
                 serverHost = server.host,
                 modeKey = DataModePolicy.stripLabelKey(server, user.call, network),
             )
-        }.stateIn(viewModelScope, SharingStarted.Eagerly, initial())
+        }.combine(status) { state, connection -> state.copy(status = connection) }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, initial().copy(status = status.value))
 
     private fun initial() = ChatListState(emptyList(), ChatFolder.All.id, 0, emptyList(), server.host, DataModePolicy.stripLabelKey(server, settings.value.call, network))
 

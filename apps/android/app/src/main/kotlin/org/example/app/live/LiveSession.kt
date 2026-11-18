@@ -194,6 +194,7 @@ class LiveSession(
         }
 
         override suspend fun block(accountId: String) = api.block(accountId)
+        override suspend fun unblock(accountId: String) = api.unblock(accountId)
 
         override suspend fun report(accountId: String, conversationId: String?, messages: List<ReportedLine>) =
             api.report(accountId, conversationId, "other", messages.map { ReportedMessage(Instant.ofEpochMilli(it.sentAt), it.text) }, null)

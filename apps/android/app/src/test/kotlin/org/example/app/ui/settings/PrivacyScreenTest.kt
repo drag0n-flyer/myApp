@@ -6,6 +6,8 @@ import org.example.app.core.chats.SampleChatStore
 import org.example.app.core.settings.IPHiding
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
@@ -25,8 +27,22 @@ import org.robolectric.annotation.Config
 class PrivacyScreenTest {
     @get:Rule val rule = createAndroidComposeRule<ComponentActivity>()
     private val settings = SettingsStore()
+    private var saveEmail: suspend (Boolean) -> Unit = {}
+    private var serverEmail: Boolean? = null
+    private var loadGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+    private val saved = mutableListOf<Boolean>()
 
-    private fun launch() = rule.setContent { AppTheme { PrivacyScreen(settings, SampleChatStore(), onBack = {}) } }
+    /** What the graph does: change the setting, ask the server, put it back if the server did not take it. */
+    private suspend fun saveLikeTheGraph(value: Boolean) {
+        val previous = settings.settings.value.findByEmail
+        saved += value
+        settings.update { it.copy(findByEmail = value) }
+        try { saveEmail(value) } catch (e: Exception) { settings.update { it.copy(findByEmail = previous) }; throw e }
+    }
+
+    private fun launch(store: SampleChatStore = SampleChatStore()) = rule.setContent {
+        AppTheme { PrivacyScreen(settings, store, saveFindByEmail = ::saveLikeTheGraph, loadFindByEmail = { loadGate?.await(); serverEmail }, onBack = {}) }
+    }
 
     @Test
     fun hideIpOffersThreeChoicesWithRecommendedSelected() {
@@ -49,10 +65,101 @@ class PrivacyScreenTest {
     }
 
     @Test
-    fun findByEmailIsOffByDefault() {
+    fun findByEmailIsOffByDefaultAndThereIsNoUsernameSwitch() {
         launch()
-        rule.onNodeWithText("By email").assertIsDisplayed()
-        rule.onNodeWithText("By username").assertIsOn()
+        rule.onNodeWithText("By email").assertIsDisplayed().assertIsOff()
+        rule.onNodeWithText("By username").assertDoesNotExist()
+        rule.onNodeWithText("Disappearing messages").assertDoesNotExist()
+    }
+
+    @Test
+    fun findByEmailIsSentToTheServerAndKept() {
+        launch()
+        rule.onNodeWithText("By email").performClick()
+        rule.waitForIdle()
+        assertEquals(listOf(true), saved)
+        rule.onNodeWithText("By email").assertIsOn()
+        assertTrue(settings.settings.value.findByEmail)
+    }
+
+    @Test
+    fun findByEmailRevertsWithAnErrorWhenTheServerFails() {
+        saveEmail = { throw org.example.app.core.account.AccountError.Server }
+        launch()
+        rule.onNodeWithText("By email").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithText("By email").assertIsOff()
+        assertEquals(false, settings.settings.value.findByEmail)
+        rule.onNodeWithText("Something went wrong on the server. Try again later.").assertIsDisplayed()
+    }
+
+    @Test
+    fun findByEmailRevertsWithNoConnectionMessage() {
+        saveEmail = { throw org.example.app.core.account.AccountError.Network }
+        launch()
+        rule.onNodeWithText("By email").performClick()
+        rule.waitForIdle()
+        assertEquals(false, settings.settings.value.findByEmail)
+        rule.onNodeWithText("Can't reach the server. Check your connection and try again.").assertIsDisplayed()
+    }
+
+    @Test
+    fun theServersValueIsShownWhenTheScreenOpens() {
+        serverEmail = true
+        launch()
+        rule.waitForIdle()
+        rule.onNodeWithText("By email").assertIsOn()
+        assertTrue(settings.settings.value.findByEmail)
+    }
+
+    @Test
+    fun theServersValueDoesNotOverwriteAChangeMadeWhileItLoaded() {
+        serverEmail = false
+        loadGate = kotlinx.coroutines.CompletableDeferred()
+        launch()
+        rule.onNodeWithText("By email").performClick()
+        rule.waitForIdle()
+        loadGate!!.complete(Unit)
+        rule.waitForIdle()
+        rule.onNodeWithText("By email").assertIsOn()
+    }
+
+    @Test
+    fun aToggleWhileASaveIsInFlightIsIgnored() {
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        saveEmail = { gate.await() }
+        launch()
+        rule.onNodeWithText("By email").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithText("By email").performClick()
+        rule.waitForIdle()
+        assertEquals(listOf(true), saved)
+        gate.complete(Unit)
+        rule.waitForIdle()
+        rule.onNodeWithText("By email").performClick()
+        rule.waitForIdle()
+        assertEquals(listOf(true, false), saved)
+    }
+
+    @Test
+    fun blockedListShowsNamesAndUnblocks() {
+        val store = SampleChatStore()
+        store.block("sam")
+        launch(store)
+        rule.onNodeWithText("Blocked").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithContentDescription("Unblock sam").assertIsDisplayed()
+        rule.onNodeWithContentDescription("Unblock sam").performClick()
+        rule.waitForIdle()
+        assertTrue("sam" !in store.blockedIds.value)
+        rule.onNodeWithText("No one blocked").assertIsDisplayed()
+    }
+
+    @Test
+    fun aBlockedPersonWithoutANameShowsTheUsernameThenTheId() {
+        val store = SampleChatStore()
+        assertEquals("Riya", blockedName(store, "riya"))
+        assertEquals("unknown-id", blockedName(store, "unknown-id"))
     }
 
     @Test
@@ -65,7 +172,7 @@ class PrivacyScreenTest {
     @Test
     fun systemBackInBlockedListReturnsToPrivacyPage() {
         var leftPrivacy = false
-        rule.setContent { AppTheme { PrivacyScreen(settings, SampleChatStore(), onBack = { leftPrivacy = true }) } }
+        rule.setContent { AppTheme { PrivacyScreen(settings, SampleChatStore(), saveFindByEmail = {}, loadFindByEmail = { null }, onBack = { leftPrivacy = true }) } }
         rule.onNodeWithText("Blocked").performClick()
         rule.waitForIdle()
         rule.onNodeWithText("Hide my IP address in calls").assertDoesNotExist()

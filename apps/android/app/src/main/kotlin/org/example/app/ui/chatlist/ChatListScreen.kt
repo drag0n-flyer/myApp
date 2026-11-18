@@ -7,7 +7,11 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material3.Button
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -42,6 +46,7 @@ fun ChatListScreen(
     onOpenChat: (String) -> Unit,
     onOpenRequests: () -> Unit,
     onNewChat: () -> Unit,
+    onSearch: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -53,6 +58,9 @@ fun ChatListScreen(
             LargeTopAppBar(
                 title = { Text(stringResource(R.string.tab_chats)) },
                 actions = {
+                    IconButton(onClick = onSearch) {
+                        Icon(painterResource(R.drawable.ic_search), contentDescription = stringResource(R.string.search_action))
+                    }
                     Box {
                         IconButton(onClick = { menuOpen = true }) {
                             Icon(painterResource(R.drawable.ic_more), contentDescription = stringResource(R.string.more_options))
@@ -77,7 +85,14 @@ fun ChatListScreen(
     ) { padding ->
         Column(Modifier.padding(padding)) {
             FolderChips(state.folders, state.selectedFolderId, viewModel::select)
-            StatusStrip(state.serverHost, state.modeKey, Modifier.padding(top = 8.dp))
+            StatusStrip(state.serverHost, state.modeKey, state.status, Modifier.padding(top = 8.dp))
+            if (state.rows.isEmpty() && state.requestCount == 0) {
+                Column(Modifier.weight(1f).fillMaxWidth().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                    Text(stringResource(R.string.chat_list_empty), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Button(onClick = onNewChat, modifier = Modifier.padding(top = 16.dp)) { Text(stringResource(R.string.new_chat)) }
+                }
+                return@Column
+            }
             LazyColumn(Modifier.weight(1f)) {
                 if (state.requestCount > 0) {
                     item(key = "requests") {

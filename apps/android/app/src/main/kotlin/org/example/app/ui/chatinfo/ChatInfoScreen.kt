@@ -69,7 +69,6 @@ fun ChatInfoScreen(
     // Read again after the lists change or the verified flag is toggled.
     val chat = remember(chats, requests, revision) { store.chat(chatId) }
     val contact = chat?.let { store.contact(it.contactId) }
-    var muted by rememberSaveable { mutableStateOf(false) }
     var showVerify by rememberSaveable { mutableStateOf(false) }
     var confirmReport by rememberSaveable { mutableStateOf(false) }
     var confirmBlock by rememberSaveable { mutableStateOf(false) }
@@ -97,7 +96,6 @@ fun ChatInfoScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (onCall != null) TextButton(onClick = { onCall(false) }) { Text(stringResource(R.string.info_audio)) }
                     if (onCall != null) TextButton(onClick = { onCall(true) }) { Text(stringResource(R.string.info_video)) }
-                    TextButton(onClick = { muted = !muted }) { Text(stringResource(if (muted) R.string.info_unmute else R.string.info_mute)) }
                     // The chat underneath opens its search field when it is back on top.
                     TextButton(onClick = { ChatSearchRequests.request(chatId); onBack() }) { Text(stringResource(R.string.info_search)) }
                 }
@@ -140,11 +138,6 @@ fun ChatInfoScreen(
                     headlineContent = { Text(stringResource(R.string.info_verify)) },
                 )
             }
-            HorizontalDivider()
-            ListItem(
-                headlineContent = { Text(stringResource(R.string.info_disappearing)) },
-                trailingContent = { Text(stringResource(R.string.info_off)) },
-            )
             HorizontalDivider()
             ListItem(
                 modifier = Modifier.clickable(role = Role.Button) { confirmReport = true },
