@@ -42,8 +42,13 @@ public protocol ChatStore: PeopleStore {
     /// Hits inside one chat.
     func searchMessages(_ query: String, in chatID: String, limit: Int) -> [MessageHit]
     func send(_ content: MessageContent, in chatID: String, replyTo: String?)
+    /// A text with the preview of its first link (made by this device, with the person's agreement). A store that
+    /// cannot carry previews sends the text alone.
+    func send(_ content: MessageContent, in chatID: String, replyTo: String?, preview: LinkPreviewCard?)
     func sendAttachment(_ fileURL: URL, kind: MediaKind, in chatID: String)
-    /// Photos and videos from the preview screen, in order, with the caption sent as a text message after the first.
+    /// The same with a caption (a photo or file only; at most `SendPlan.maxCaption` characters).
+    func sendAttachment(_ fileURL: URL, kind: MediaKind, caption: String?, in chatID: String)
+    /// Photos and videos from the preview screen, in order; the caption travels in the first item.
     func sendMedia(_ items: [OutgoingMedia], caption: String, in chatID: String)
     /// Stops an upload that has not finished and removes its message, its queue entry and its files. After the
     /// message is sent it does nothing.
@@ -170,14 +175,23 @@ extension ChatStore {
         }
     }
 
-    /// One after the other, the caption after the first item.
+    /// One after the other, the caption on the first item.
     public func sendMedia(_ items: [OutgoingMedia], caption: String, in chatID: String) {
-        let text = caption.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = caption.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = trimmed.isEmpty ? nil : String(trimmed.prefix(SendPlan.maxCaption))
         for (index, item) in items.enumerated() {
-            sendAttachment(item.url, kind: item.kind, in: chatID)
+            sendAttachment(item.url, kind: item.kind, caption: index == 0 ? text : nil, in: chatID)
             if item.deleteAfterStaging { try? FileManager.default.removeItem(at: item.url) }
-            if index == 0, !text.isEmpty { send(.text(text), in: chatID, replyTo: nil) }
         }
+    }
+
+    /// A store that keeps no captions sends the file alone.
+    public func sendAttachment(_ fileURL: URL, kind: MediaKind, caption: String?, in chatID: String) {
+        sendAttachment(fileURL, kind: kind, in: chatID)
+    }
+
+    public func send(_ content: MessageContent, in chatID: String, replyTo: String?, preview: LinkPreviewCard?) {
+        send(content, in: chatID, replyTo: replyTo)
     }
 
     public func cancelUpload(messageID: String, in chatID: String) {}

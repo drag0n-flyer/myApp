@@ -68,15 +68,24 @@ public final class SampleChatStore: ChatStore {
     }
 
     public func send(_ content: MessageContent, in chatID: String, replyTo: String?) {
+        send(content, in: chatID, replyTo: replyTo, preview: nil)
+    }
+
+    public func send(_ content: MessageContent, in chatID: String, replyTo: String?, preview: LinkPreviewCard?) {
         defer { onChange?() }
         if case .text = content, let i = index(of: chatID) { allChats[i].draft = nil }
-        append(Message(id: makeID(), senderID: me.id, sentAt: Date(), content: content, status: .sent, replyToID: replyTo, reactions: []), to: chatID)
+        append(Message(id: makeID(), senderID: me.id, sentAt: Date(), content: content, status: .sent, replyToID: replyTo, reactions: [],
+                       linkPreview: preview), to: chatID)
     }
 
     /// How long a sample upload stays "uploading" (with its Cancel control) before it counts as sent.
     public var sampleUploadDuration: Duration = .seconds(6)
 
     public func sendAttachment(_ fileURL: URL, kind: MediaKind, in chatID: String) {
+        sendAttachment(fileURL, kind: kind, caption: nil, in: chatID)
+    }
+
+    public func sendAttachment(_ fileURL: URL, kind: MediaKind, caption: String?, in chatID: String) {
         let bytes = Int64((try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
         let content: MessageContent = switch kind {
         case .photo: .photo(bytes: bytes)
@@ -87,7 +96,7 @@ public final class SampleChatStore: ChatStore {
         // Like a real upload: the row is "sending" with a fraction and a Cancel, then becomes sent.
         let id = makeID()
         append(Message(id: id, senderID: me.id, sentAt: Date(), content: content, status: .sending, replyToID: nil, reactions: [],
-                       uploadProgress: 0.4), to: chatID)
+                       uploadProgress: 0.4, caption: caption), to: chatID)
         onChange?()
         let wait = sampleUploadDuration
         Task { [weak self] in
@@ -124,8 +133,16 @@ public final class SampleChatStore: ChatStore {
 
     public func edit(messageID: String, in chatID: String, text: String) {
         updateMessage(messageID, in: chatID) { message in
-            guard message.senderID == me.id, case .text = message.content else { return }
-            message.content = .text(text)
+            guard message.senderID == me.id else { return }
+            switch message.content {
+            case .text:
+                message.content = .text(text)
+                if let url = message.linkPreview?.url, !text.contains(url) { message.linkPreview = nil }
+            case .photo, .file:
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                message.caption = trimmed.isEmpty ? nil : String(trimmed.prefix(SendPlan.maxCaption))
+            default: return
+            }
             message.editedAt = Date()
         }
     }

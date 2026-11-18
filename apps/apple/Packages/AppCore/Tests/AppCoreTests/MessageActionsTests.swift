@@ -21,6 +21,18 @@ final class MessageActionsTests: XCTestCase {
         XCTAssertEqual(MessageActions.available(for: message(.photo(bytes: 10)), isMine: false), [.reply, .react])
     }
 
+    func testOnlyACaptionedOwnPhotoOrFileCanBeEdited() {
+        var photo = message(.photo(bytes: 10))
+        photo.caption = "hi"
+        XCTAssertEqual(MessageActions.available(for: photo, isMine: true), [.reply, .react, .edit, .delete])
+        XCTAssertEqual(MessageActions.available(for: photo, isMine: false), [.reply, .react])
+        var file = message(.file(name: "a.pdf", bytes: 10))
+        file.caption = "hi"
+        XCTAssertTrue(MessageActions.available(for: file, isMine: true).contains(.edit))
+        photo.status = .failed
+        XCTAssertEqual(MessageActions.available(for: photo, isMine: true), [.delete])
+    }
+
     func testNothingForDeletedSystemCallUnsupported() {
         let contents: [MessageContent] = [.deleted, .system(.safetyNumberChanged), .call(.missedAudio), .unsupported]
         for content in contents {

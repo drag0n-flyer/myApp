@@ -62,8 +62,11 @@ enum ChatMapping {
             return message
         }
 
-        switch ContentEnvelope.decode(record.envelope).body {
-        case .text(let text, _): message.content = .text(text)
+        let envelope = ContentEnvelope.decode(record.envelope)
+        switch envelope.body {
+        case .text(let text, _):
+            message.content = .text(text)
+            message.linkPreview = envelope.preview.map { LinkPreviewCard(url: $0.url, title: $0.title, desc: $0.desc, image: $0.img) }
         case .photo(let att, _, _, _, _): message.content = .photo(bytes: att.sz)
         case .voice(_, let duration, _): message.content = .voice(duration: duration)
         case .file(let att, let name, _, _): message.content = .file(name: name, bytes: att.sz)
@@ -71,6 +74,10 @@ enum ChatMapping {
         }
         switch message.content {
         case .photo, .voice, .file: message.media = attachment.map(mediaState)
+        default: break
+        }
+        switch message.content {
+        case .photo, .file: message.caption = envelope.caption
         default: break
         }
         return message

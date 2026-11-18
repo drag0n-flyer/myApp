@@ -5,14 +5,29 @@ import Testing
 @Suite struct SendPlanTests {
     private let photo = PickedMedia(kind: .photo, bytes: 1_000)
 
-    @Test func captionGoesAfterTheFirstItemTrimmed() {
+    @Test func captionTravelsWithTheFirstItemTrimmed() {
         let result = SendPlan.plan(items: [photo, photo, photo], caption: " hi ", limitBytes: 10_000)
-        #expect(result == .send([.attachment(0), .text("hi"), .attachment(1), .attachment(2)]))
+        #expect(result == .send([.attachment(0, caption: "hi"), .attachment(1, caption: nil), .attachment(2, caption: nil)]))
     }
 
-    @Test func aBlankCaptionAddsNoText() {
-        #expect(SendPlan.plan(items: [photo, photo], caption: " \n ", limitBytes: 10_000) == .send([.attachment(0), .attachment(1)]))
-        #expect(SendPlan.plan(items: [photo], caption: "", limitBytes: 10_000) == .send([.attachment(0)]))
+    @Test func noTextMessageFollowsTheFirstItem() {
+        guard case .send(let steps) = SendPlan.plan(items: [photo, photo], caption: "hi", limitBytes: 10_000) else { Issue.record("refused"); return }
+        #expect(steps.count == 2)
+    }
+
+    @Test func aCaptionIsCutToFourThousandNinetySixGraphemes() {
+        // An accented letter made of two code points counts once.
+        let long = String(repeating: "e\u{301}", count: 4_100)
+        guard case .send(let steps) = SendPlan.plan(items: [photo], caption: long, limitBytes: 10_000),
+              case .attachment(_, let caption?) = steps[0] else { Issue.record("no caption"); return }
+        #expect(caption.count == SendPlan.maxCaption && SendPlan.maxCaption == 4_096)
+        let exact = String(repeating: "x", count: 4_096)
+        #expect(SendPlan.plan(items: [photo], caption: exact, limitBytes: 10_000) == .send([.attachment(0, caption: exact)]))
+    }
+
+    @Test func aBlankCaptionAddsNoCaption() {
+        #expect(SendPlan.plan(items: [photo, photo], caption: " \n ", limitBytes: 10_000) == .send([.attachment(0, caption: nil), .attachment(1, caption: nil)]))
+        #expect(SendPlan.plan(items: [photo], caption: "", limitBytes: 10_000) == .send([.attachment(0, caption: nil)]))
     }
 
     @Test func elevenItemsAreTooMany() {
@@ -24,9 +39,9 @@ import Testing
     @Test func aVideoOneByteOverTheLimitIsRefused() {
         let limit: Int64 = 5_000
         #expect(SendPlan.plan(items: [PickedMedia(kind: .video, bytes: limit + 1)], caption: "x", limitBytes: limit) == .refused(.videoTooBig))
-        #expect(SendPlan.plan(items: [PickedMedia(kind: .video, bytes: limit)], caption: "", limitBytes: limit) == .send([.attachment(0)]))
+        #expect(SendPlan.plan(items: [PickedMedia(kind: .video, bytes: limit)], caption: "", limitBytes: limit) == .send([.attachment(0, caption: nil)]))
         // Photos are re-encoded, so only videos are checked here.
-        #expect(SendPlan.plan(items: [PickedMedia(kind: .photo, bytes: limit + 1)], caption: "", limitBytes: limit) == .send([.attachment(0)]))
+        #expect(SendPlan.plan(items: [PickedMedia(kind: .photo, bytes: limit + 1)], caption: "", limitBytes: limit) == .send([.attachment(0, caption: nil)]))
     }
 
     @Test func tooManyWinsOverTooBig() {

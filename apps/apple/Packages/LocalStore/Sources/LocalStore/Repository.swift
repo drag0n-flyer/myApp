@@ -431,9 +431,10 @@ public final class Repository: @unchecked Sendable {
 
     /// Replaces the envelope and folded text and sets `edited_at`, only when `sender` is the message's sender.
     @discardableResult
-    public func applyEdit(id: String, sender: String, envelope: Data, folded: String, at: Date) throws -> Bool {
-        try db.run("UPDATE messages SET envelope=?, folded=?, edited_at=? WHERE id=? AND sender_account=? AND deleted=0",
-                   [.blob(envelope), .text(folded), .int(ms(at)), .text(id), .text(sender)]) > 0
+    public func applyEdit(id: String, sender: String, envelope: Data, folded: String, at: Date,
+                          caption: String? = nil, linkPreview: String? = nil) throws -> Bool {
+        try db.run("UPDATE messages SET envelope=?, folded=?, edited_at=?, caption=?, link_preview=? WHERE id=? AND sender_account=? AND deleted=0",
+                   [.blob(envelope), .text(folded), .int(ms(at)), opt(caption), opt(linkPreview), .text(id), .text(sender)]) > 0
     }
 
     /// Marks the message deleted and drops its content (envelope and search text), only when `sender` matches.

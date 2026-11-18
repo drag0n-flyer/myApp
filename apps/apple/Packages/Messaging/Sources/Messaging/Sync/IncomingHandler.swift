@@ -209,13 +209,12 @@ public struct IncomingHandler: Sendable {
             return try store()
         case .edit(let target, let text):
             guard let message = try db.message(id: target), message.chatID == chatID, !message.deleted,
-                  case .text(_, let reply) = ContentEnvelope.decode(message.envelope).body else { return .ignored }
-            let old = ContentEnvelope.decode(message.envelope)
-            let edited = ContentEnvelope(id: old.id, at: old.at, body: .text(text, replyTo: reply), ttl: old.ttl).encoded()
+                  let result = ContentEnvelope.decode(message.envelope).edited(text: text, fold: fold) else { return .ignored }
             // The sender check is in the SQL, so an edit by anyone else changes nothing.
             try db.applyEdit(
-                id: target, sender: account, envelope: edited, folded: fold(text),
-                at: Date(timeIntervalSince1970: Double(envelope.at) / 1000))
+                id: target, sender: account, envelope: result.envelope.encoded(), folded: result.folded,
+                at: Date(timeIntervalSince1970: Double(envelope.at) / 1000),
+                caption: result.envelope.caption, linkPreview: result.envelope.preview?.json)
             return .ignored
         case .delete(let target):
             guard let message = try db.message(id: target), message.chatID == chatID else { return .ignored }

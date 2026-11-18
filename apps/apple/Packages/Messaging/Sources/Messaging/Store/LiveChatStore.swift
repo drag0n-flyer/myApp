@@ -332,17 +332,24 @@ public final class LiveChatStore: ChatStore {
     // MARK: - Sending
 
     public func send(_ content: MessageContent, in chatID: String, replyTo: String?) {
+        send(content, in: chatID, replyTo: replyTo, preview: nil)
+    }
+
+    /// The preview goes along only when it is valid for this text (an https link found in the text, a title, a small
+    /// JPEG); otherwise the text is sent alone.
+    public func send(_ content: MessageContent, in chatID: String, replyTo: String?, preview card: LinkPreviewCard?) {
         guard case .text(let raw) = content else { return }
         let text = String(raw.prefix(Self.maxTextLength))
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        enqueue(.text(text, replyTo: replyTo), chatID: chatID)
+        let preview = card.map { LinkPreview(url: $0.url, title: $0.title, desc: $0.desc, img: $0.image) }.flatMap { $0.wire.valid(in: text) ? $0 : nil }
+        enqueue(.text(text, replyTo: replyTo), chatID: chatID, preview: preview)
     }
 
-    private func enqueue(_ body: ContentEnvelope.Body, chatID: String) {
+    private func enqueue(_ body: ContentEnvelope.Body, chatID: String, preview: LinkPreview? = nil) {
         guard ensureChatRow(chatID) != nil else { return }
         let at = stamp()
         let envelope = ContentEnvelope(
-            id: freshID(), at: Int64((at.timeIntervalSince1970 * 1000).rounded()), body: body, ttl: currentTTL(chatID))
+            id: freshID(), at: Int64((at.timeIntervalSince1970 * 1000).rounded()), body: body, ttl: currentTTL(chatID), preview: preview)
         do {
             try outbox.enqueue(envelope, chatID: chatID)
             bumpActivity(chatID, at: at)
@@ -381,6 +388,16 @@ public final class LiveChatStore: ChatStore {
         sendMedia(fileURL, kind: kind, duration: 0, chatID: chatID)
     }
 
+    public func sendAttachment(_ fileURL: URL, kind: MediaKind, caption: String?, in chatID: String) {
+        sendMedia(fileURL, kind: kind, duration: 0, chatID: chatID, caption: Self.cleanCaption(caption))
+    }
+
+    /// Trimmed, cut to 4,096 characters, `nil` when blank.
+    static func cleanCaption(_ raw: String?) -> String? {
+        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
+        return String(trimmed.prefix(ContentEnvelope.maxCaptionLength))
+    }
+
     public func sendVoice(_ fileURL: URL, duration: Double, in chatID: String) {
         sendMedia(fileURL, kind: .voice, duration: duration, chatID: chatID)
     }
@@ -395,7 +412,8 @@ public final class LiveChatStore: ChatStore {
     /// `media/pending/<id>/` with a small description, and the row gets a placeholder envelope (no attachment ID yet)
     /// that is never queued. The upload then runs in the background (`AttachmentService.uploadPending`): a failure
     /// makes the row "failed" with the files kept, and "Try again" really uploads again.
-    private func sendMedia(_ fileURL: URL, kind: MediaKind, duration: Double, chatID: String, then: (@MainActor (_ staged: Bool) -> Void)? = nil) {
+    private func sendMedia(_ fileURL: URL, kind: MediaKind, duration: Double, chatID: String, caption: String? = nil,
+                           then: (@MainActor (_ staged: Bool) -> Void)? = nil) {
         guard attachments != nil, !closed, ensureChatRow(chatID) != nil else { then?(false); return }
         let id = freshID()
         guard let folder = pendingFolder(id) else { then?(false); return }
@@ -425,7 +443,7 @@ public final class LiveChatStore: ChatStore {
                 await self?.stagingDone(then, staged: false)
                 return
             }
-            let ok = await self?.stagedForUpload(id: id, meta: meta, size: size, staged: staged, folder: folder) ?? false
+            let ok = await self?.stagedForUpload(id: id, meta: meta, size: size, staged: staged, folder: folder, caption: caption) ?? false
             await self?.stagingDone(then, staged: ok)
         }
     }
@@ -434,7 +452,7 @@ public final class LiveChatStore: ChatStore {
 
     /// The picked file is staged: the message shows as "sending" with its real name and size, and the upload starts.
     /// True when the row is in and the upload started.
-    private func stagedForUpload(id: String, meta: PendingUpload, size: Int64, staged: URL, folder: URL) -> Bool {
+    private func stagedForUpload(id: String, meta: PendingUpload, size: Int64, staged: URL, folder: URL, caption: String? = nil) -> Bool {
         guard !closed else { PendingUpload.removeFolder(folder); return false }
         let placeholder = Att(id: "", key: Data(), dg: Data(), sz: size, csz: size)
         let body: ContentEnvelope.Body
@@ -445,12 +463,14 @@ public final class LiveChatStore: ChatStore {
         }
         let at = stamp()
         let envelope = ContentEnvelope(
-            id: id, at: Int64((at.timeIntervalSince1970 * 1000).rounded()), body: body, ttl: currentTTL(meta.chatID))
+            id: id, at: Int64((at.timeIntervalSince1970 * 1000).rounded()), body: body, ttl: currentTTL(meta.chatID),
+            caption: meta.kind == "voice" ? nil : caption)
         let record = MessageRecord(
             id: id, chatID: meta.chatID, conversationID: nil, senderAccount: deps.me.accountID, senderDevice: deps.me.deviceID,
             sentAt: at, receivedAt: at, envelope: envelope.encoded(), status: "sending", replyTo: nil, editedAt: nil,
-            deleted: false, undecryptable: false, folded: meta.kind == "file" ? fold(meta.name) : "",
-            expiresAt: Outbox.expiry(of: envelope))
+            deleted: false, undecryptable: false,
+            folded: fold([meta.kind == "file" ? meta.name : "", envelope.caption ?? ""].filter { !$0.isEmpty }.joined(separator: " ")),
+            expiresAt: Outbox.expiry(of: envelope), caption: envelope.caption)
         do {
             try repo.transaction {
                 guard try repo.insertMessage(record) else { throw AttachmentServiceError.pendingMissing }
@@ -617,17 +637,14 @@ public final class LiveChatStore: ChatStore {
         }
     }
 
-    /// Several photos or videos from the preview screen: each row shows in order, and the caption is sent as a text
-    /// message once the first one is staged, so it follows the first item.
+    /// Several photos or videos from the preview screen: each row shows in order, and the caption travels in the
+    /// first item (`c`), so no text message follows it. A first item that cannot be staged takes the caption with it.
     public func sendMedia(_ items: [OutgoingMedia], caption: String, in chatID: String) {
-        let text = caption.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = Self.cleanCaption(caption)
         func step(_ index: Int) {
             guard index < items.count, !closed else { return }
-            sendMedia(items[index].url, kind: items[index].kind, duration: 0, chatID: chatID) { [weak self] staged in
+            sendMedia(items[index].url, kind: items[index].kind, duration: 0, chatID: chatID, caption: index == 0 ? text : nil) { staged in
                 if items[index].deleteAfterStaging { try? FileManager.default.removeItem(at: items[index].url) }
-                // The caption belongs to the first item: no caption when that item could not be staged. If the item
-                // is cancelled or fails later, the caption already sent stays.
-                if index == 0, staged, !text.isEmpty { self?.send(.text(text), in: chatID, replyTo: nil) }
                 step(index + 1)
             }
         }
@@ -669,16 +686,16 @@ public final class LiveChatStore: ChatStore {
 
     public func edit(messageID: String, in chatID: String, text: String) {
         let newText = String(text.prefix(Self.maxTextLength))
-        guard !newText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              let record = (try? repo.message(id: messageID)) ?? nil, record.chatID == chatID,
-              record.senderAccount == deps.me.accountID, !record.deleted,
-              case .text(_, let reply) = ContentEnvelope.decode(record.envelope).body else { return }
+        guard let record = (try? repo.message(id: messageID)) ?? nil, record.chatID == chatID,
+              record.senderAccount == deps.me.accountID, !record.deleted else { return }
         let old = ContentEnvelope.decode(record.envelope)
-        let edited = ContentEnvelope(id: old.id, at: old.at, body: .text(newText, replyTo: reply), ttl: old.ttl).encoded()
-        guard (try? repo.applyEdit(id: messageID, sender: deps.me.accountID, envelope: edited, folded: fold(newText), at: deps.now())) == true
+        // Text and caption edits follow one rule, shared with the receiver (`ContentEnvelope.edited`).
+        guard let result = old.edited(text: newText, fold: fold) else { return }
+        guard (try? repo.applyEdit(id: messageID, sender: deps.me.accountID, envelope: result.envelope.encoded(), folded: result.folded,
+                                   at: deps.now(), caption: result.envelope.caption, linkPreview: result.envelope.preview?.json)) == true
         else { return }
         refresh()
-        sendControl(.edit(target: messageID, text: newText), chatID: chatID)
+        sendControl(.edit(target: messageID, text: result.wireText), chatID: chatID)
     }
 
     public func delete(messageID: String, in chatID: String) {

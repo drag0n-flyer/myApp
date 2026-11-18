@@ -10,17 +10,19 @@ public enum MessageActions {
     /// Which menu items apply to `message`, in the spec 5.2 order.
     public static func available(for message: Message, isMine: Bool) -> [MessageAction] {
         let isText: Bool
+        var canEdit = false
         switch message.content {
         case .deleted, .system, .call, .unsupported: return []
-        case .text: isText = true
-        case .voice, .photo, .file: isText = false
+        case .text: isText = true; canEdit = true
+        case .photo, .file: isText = false; canEdit = message.caption != nil
+        case .voice: isText = false
         }
         if isMine, message.status == .failed {
             return isText ? [.copy, .delete] : [.delete]
         }
         var actions: [MessageAction] = [.reply, .react]
         if isText { actions += [.copy, .forward] }
-        if isMine, isText { actions.append(.edit) }
+        if isMine, canEdit { actions.append(.edit) }
         if isMine { actions.append(.delete) }
         return actions
     }
