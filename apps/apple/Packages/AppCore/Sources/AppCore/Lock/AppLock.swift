@@ -26,7 +26,7 @@ public enum LockSwitchOutcome: Equatable, Sendable {
 /// Decisions: `AppLockPolicy` (the delay, on a monotonic clock) and this type (what is covered, which prompt results
 /// count). It starts locked when the setting is on, and also when the setting could not be read (unknown = locked).
 /// Only a success from `DeviceAuth` unlocks; every other result, error or cancel leaves the cover. The one exception
-/// is a device that cannot ask (no passcode, or the system cannot show the prompt): the person is let in. Holds no secret.
+/// is a device with no passcode any more (`DeviceAuthAvailability.passcodeNotSet`, and nothing else). Holds no secret.
 @MainActor
 @Observable
 public final class AppLock {
@@ -44,6 +44,8 @@ public final class AppLock {
     /// Counts the times the cover should open the prompt by itself: at start, and on each return while locked.
     public private(set) var promptRequests: Int
     public private(set) var promptOpen = false
+    /// The last Unlock found the system unable to check (not "no passcode"): the cover says so.
+    public private(set) var cannotCheck = false
     /// A chat from a notification tap, kept until unlock.
     @ObservationIgnored private var heldChatID: String?
     @ObservationIgnored private var promptsAnswered = 0
@@ -176,10 +178,12 @@ public final class AppLock {
         guard isLocked, activePrompt == nil, phase == .active else { return }
         switch auth.availability() {
         case .passcodeNotSet:
+            cannotCheck = false
             unlock()   // nothing protects the device any more: let the person in
         case .unavailable:
-            unlock()   // the system cannot ask: treated like no screen lock, the person is let in
+            cannotCheck = true   // fails closed: the cover stays, and Unlock can be tried again
         case .ready:
+            cannotCheck = false
             let id = beginPrompt()
             let result = await auth.authenticate(reason: reason)
             guard activePrompt == id else { return }   // signed out meanwhile
@@ -214,8 +218,10 @@ public final class AppLock {
         guard activePrompt == nil else { return .busy }
         let startEpoch = epoch
         switch auth.availability() {
-        case .unavailable, .passcodeNotSet:
-            // No screen lock to ask with: it cannot be turned on; turning it off needs no prompt.
+        case .unavailable:
+            return .unavailable   // fails closed, on or off
+        case .passcodeNotSet:
+            // Only this exact case: nothing to protect; it cannot be turned on, and turning it off needs no prompt.
             if on { return .unavailable }
         case .ready:
             let id = beginPrompt()

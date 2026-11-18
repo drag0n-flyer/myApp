@@ -32,6 +32,7 @@ struct RootView: View {
             }
         }
         .environment(\.expectReturn, { [lock = model.lock] in lock.expectReturn() })
+        .environment(\.cancelExpectReturn, { [lock = model.lock] in lock.cancelExpectedReturn() })
         .preferredColorScheme(AppearanceChoice(rawValue: appearance)?.colorScheme)
         .alert("This device was removed from your account.", isPresented: $model.deviceRemovedAlert) {
             Button("OK", role: .cancel) {}

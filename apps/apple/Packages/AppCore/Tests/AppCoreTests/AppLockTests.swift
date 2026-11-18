@@ -63,11 +63,14 @@ private func make(enabled: Bool = true, delay: Int = 60, stored: LockSettings?? 
     #expect(!lock.isLocked && !lock.coversContent)
 }
 
-@MainActor @Test func appLockWhenTheDeviceCannotAskItIsTreatedLikeNoScreenLock() async {
+@MainActor @Test func appLockWhenTheSystemCannotCheckTheCoverStaysAndSaysSoUntilRetried() async {
     let auth = SampleDeviceAuth(state: .unavailable)
     let (lock, _, _) = make(auth: auth)
     await lock.unlockWithPrompt(reason: "x")
-    #expect(!lock.isLocked && auth.requests == 0)
+    #expect(lock.isLocked && auth.requests == 0 && lock.cannotCheck)
+    auth.state = .ready
+    await lock.unlockWithPrompt(reason: "x")   // Unlock stays tappable: a retry works
+    #expect(!lock.isLocked && !lock.cannotCheck)
 }
 
 @MainActor @Test func appLockNoPasscodeLetsThePersonIn() async {
@@ -230,15 +233,15 @@ private func make(enabled: Bool = true, delay: Int = 60, stored: LockSettings?? 
     }
 }
 
-@MainActor @Test func appLockSwitchOffWithoutAScreenLockNeedsNoPrompt() async {
+@MainActor @Test func appLockSwitchOffWithoutAPasscodeNeedsNoPromptButAnUnavailableSystemDoesNot() async {
     let none = SampleDeviceAuth(state: .passcodeNotSet)
     let (a, _, _) = make(auth: none)
     #expect(await a.requestSetEnabled(false, reason: "x") == .changed)
     #expect(!a.appLockOn && none.requests == 0)
     let other = SampleDeviceAuth(state: .unavailable)
     let (b, _, _) = make(auth: other)
-    #expect(await b.requestSetEnabled(false, reason: "x") == .changed)   // like no screen lock: no prompt can be shown
-    #expect(!b.appLockOn && other.requests == 0)
+    #expect(await b.requestSetEnabled(false, reason: "x") == .unavailable)   // fails closed: still on
+    #expect(b.appLockOn && other.requests == 0)
 }
 
 @MainActor @Test func appLockAPromptAnsweredAfterSignOutChangesNothing() async {

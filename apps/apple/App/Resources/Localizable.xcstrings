@@ -145,13 +145,24 @@
         }
       }
     },
-    "Ask for your fingerprint, face or screen lock to open %@" : {
+    "Ask for Face ID, Touch ID or your passcode to open %@" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ask for your fingerprint, face or screen lock to open %@"
+            "value" : "Ask for Face ID, Touch ID or your passcode to open %@"
+          }
+        }
+      }
+    },
+    "Ask for Touch ID or your password to open %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ask for Touch ID or your password to open %@"
           }
         }
       }
@@ -196,6 +207,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Camera access is off"
+          }
+        }
+      }
+    },
+    "Can't check right now. Try again." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Can't check right now. Try again."
           }
         }
       }
@@ -1223,13 +1245,24 @@
         }
       }
     },
-    "Set a screen lock in your phone's settings first." : {
+    "Set a passcode in Settings first." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Set a screen lock in your phone's settings first."
+            "value" : "Set a passcode in Settings first."
+          }
+        }
+      }
+    },
+    "Set a password in System Settings first." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Set a password in System Settings first."
           }
         }
       }

@@ -16,11 +16,12 @@ struct SystemDeviceAuth: DeviceAuth {
 
     func authenticate(reason: String) async -> AuthResult {
         let context = LAContext()
-        return await withCheckedContinuation { (continuation: CheckedContinuation<AuthResult, Never>) in
-            context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) { success, _ in
-                // Every error (cancel, lockout, the app left the screen, ...) is "not passed".
-                continuation.resume(returning: success ? .success : .cancelled)
-            }
+        do {
+            // The async API: no closure of ours is handed to LocalAuthentication, which calls back on its own queue.
+            return try await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) ? .success : .cancelled
+        } catch {
+            // Every error (cancel, lockout, the app left the screen, ...) is "not passed".
+            return .cancelled
         }
     }
 }

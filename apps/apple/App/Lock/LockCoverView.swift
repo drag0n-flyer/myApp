@@ -24,6 +24,12 @@ struct LockCoverView: View {
                 .controlSize(.large)
                 .accessibilityLabel(Text("Unlock \(AppBrand.name)"))
                 .accessibilityIdentifier("lock.unlock")
+                if lock.cannotCheck {
+                    Text("Can't check right now. Try again.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("lock.cannotcheck")
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

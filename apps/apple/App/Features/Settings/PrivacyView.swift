@@ -54,16 +54,23 @@ struct PrivacyView: View {
                         Text("App lock")
                         Group {
                             if available || model.lock.appLockOn {
-                                Text("Ask for your fingerprint, face or screen lock to open \(AppBrand.name)")
+                                #if os(iOS)
+                                Text("Ask for Face ID, Touch ID or your passcode to open \(AppBrand.name)")
+                                #else
+                                Text("Ask for Touch ID or your password to open \(AppBrand.name)")
+                                #endif
                             } else {
-                                Text("Set a screen lock in your phone's settings first.")
+                                #if os(iOS)
+                                Text("Set a passcode in Settings first.")
+                                #else
+                                Text("Set a password in System Settings first.")
+                                #endif
                             }
                         }
                         .font(.caption).foregroundStyle(.secondary)
                     }
                 }
                 .disabled(!available && !model.lock.appLockOn)
-                .accessibilityLabel("App lock")
                 .accessibilityIdentifier("privacy.applock")
                 if model.lock.appLockOn {
                     Picker("Lock after", selection: Binding(
