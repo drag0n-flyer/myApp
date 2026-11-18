@@ -250,6 +250,20 @@ class SampleChatStore(
         return id
     }
 
+    override suspend fun createGroup(contactIds: List<String>, name: String, photo: ByteArray?): GroupCreated {
+        val title = org.example.app.core.groups.GroupNameRule.clean(name)
+        if (contactIds.size !in 2..99 || contactIds.toSet().size != contactIds.size || title == null) {
+            throw GroupCreateFailed(GroupCreateFailed.Reason.Other)
+        }
+        var id = ""
+        mutate {
+            nextId += 1
+            id = org.example.app.core.groups.ChatID.group("sample-$nextId")
+            allChats = allChats + Chat(id, null, ChatEncryption.EndToEnd, emptySet(), 0, emptyList(), isRequest = false, title = title)
+        }
+        return GroupCreated(id, emptyList())
+    }
+
     override fun addFolder(name: String, chatIds: Set<String>): ChatFolder {
         lateinit var folder: ChatFolder
         mutate {

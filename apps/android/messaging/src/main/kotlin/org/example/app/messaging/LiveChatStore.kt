@@ -38,6 +38,8 @@ import org.example.app.core.chats.Chat
 import org.example.app.core.chats.ChatFolder
 import org.example.app.core.chats.ChatListOrder
 import org.example.app.core.chats.ChatStore
+import org.example.app.core.chats.GroupCreateFailed
+import org.example.app.core.chats.GroupCreated
 import org.example.app.core.chats.Contact
 import org.example.app.core.chats.IncomingCallDecision
 import org.example.app.core.chats.Message
@@ -1250,6 +1252,33 @@ class LiveChatStore(
         repo.upsertContact(row)
         reload()
         return contactOf(row)
+    }
+
+    private val groupCreator = org.example.app.messaging.sync.GroupCreator(conversations, repo, outbox)
+
+    override suspend fun createGroup(contactIds: List<String>, name: String, photo: ByteArray?): GroupCreated {
+        if (closed.get()) throw GroupCreateFailed(GroupCreateFailed.Reason.Other)
+        try {
+            val made = groupCreator.create(contactIds, name, photo)
+            reload()
+            requestFlush()
+            return GroupCreated(made.chatId, made.notAdded)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: org.example.app.contracts.ServerException) {
+            throw GroupCreateFailed(
+                when (e.code) {
+                    "not_found" -> GroupCreateFailed.Reason.NotFound
+                    "group_full" -> GroupCreateFailed.Reason.Full
+                    else -> GroupCreateFailed.Reason.Other
+                },
+                e,
+            )
+        } catch (e: org.example.app.messaging.sync.SyncException.NoKeyPackages) {
+            throw GroupCreateFailed(GroupCreateFailed.Reason.NobodyReachable, e)
+        } catch (e: Exception) {
+            throw GroupCreateFailed(GroupCreateFailed.Reason.Other, e)
+        }
     }
 
     override fun ensureChat(contactId: String): String {
