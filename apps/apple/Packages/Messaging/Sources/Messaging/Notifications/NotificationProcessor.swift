@@ -65,6 +65,8 @@ public struct NotificationStrings: Sendable, Equatable {
     public var unsupported: String
     public var fallbackTitle: String        // the generic notice when nothing could be decrypted
     public var fallbackBody: String
+    public var groupBodyFormat: String      // "%1$@: %2$@": the sender's name, then the text
+    public var unknownMember: String        // a group member with no known name
 
     public init(brand: String = "[App]") {
         requestTitle = "Message request"
@@ -80,6 +82,8 @@ public struct NotificationStrings: Sendable, Equatable {
         unsupported = "Update \(brand) to see this message"
         fallbackTitle = brand
         fallbackBody = "New message"
+        groupBodyFormat = "%1$@: %2$@"
+        unknownMember = "Someone"
     }
 }
 
@@ -243,6 +247,9 @@ public struct NotificationProcessor: Sendable {
             guard account != deps.me.accountID else { return .drop }
             let chatID = try deps.repo.conversation(groupID: group.raw)?.chatID ?? account
             guard try shouldNotify(chatID: chatID, sender: account) else { return .drop }
+            if ChatID.isGroup(chatID) {
+                return try groupOutcome(chatID: chatID, sender: account, body: String(format: strings.reactedFormat, emoji))
+            }
             let name = try deps.repo.contact(id: account).flatMap { $0.isContact ? ContactNames.display($0, repo: deps.repo) : nil }
             guard let name else { return requestOutcome(chatID: chatID) }
             return .show(title: name, body: String(format: strings.reactedFormat, emoji), threadID: chatID)
@@ -253,10 +260,23 @@ public struct NotificationProcessor: Sendable {
         guard message.senderAccount != deps.me.accountID, message.senderAccount != "system", !message.deleted
         else { return .drop }
         guard try shouldNotify(chatID: message.chatID, sender: message.senderAccount) else { return .drop }
+        if ChatID.isGroup(message.chatID) {
+            return try groupOutcome(chatID: message.chatID, sender: message.senderAccount, body: preview(message), messageID: message.id)
+        }
         guard let contact = try deps.repo.contact(id: message.senderAccount), contact.isContact else {
             return requestOutcome(chatID: message.chatID, messageID: message.id)
         }
         return .show(title: ContactNames.display(contact, repo: deps.repo), body: preview(message), threadID: message.chatID, messageID: message.id)
+    }
+
+    /// A group's notification: the group's name as the title, "Name: text" as the body. A member who is not a contact is
+    /// still a member (never a message request); a name this device does not know is "Someone".
+    private func groupOutcome(chatID: String, sender: String, body: String, messageID: String? = nil) throws -> NotificationOutcome {
+        let title = ((try deps.repo.chat(id: chatID))?.title).map { DisplayNameRule.forDisplay($0, fallback: "") } ?? ""
+        let name = try ContactNames.groupMember(account: sender, repo: deps.repo, unknown: strings.unknownMember)
+        return .show(
+            title: title.isEmpty ? strings.fallbackTitle : title, body: String(format: strings.groupBodyFormat, name, body),
+            threadID: chatID, messageID: messageID)
     }
 
     private func requestOutcome(chatID: String, messageID: String? = nil) -> NotificationOutcome {
