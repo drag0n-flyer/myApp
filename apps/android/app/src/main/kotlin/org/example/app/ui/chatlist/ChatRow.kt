@@ -67,7 +67,13 @@ fun ChatRow(
     /** Null: no selection state (one pane). True or false: the two-pane list, where the open chat's row is selected. */
     selected: Boolean? = null,
 ) {
-    val preview = row.preview?.let { previewText(it) }.orEmpty()
+    val plainPreview = row.preview?.let { previewText(it) }.orEmpty()
+    // A group's last message says who wrote it: "Name: text", or "You: text" for mine.
+    val preview = when {
+        row.previewFromMe -> stringResource(R.string.group_you_preview, plainPreview)
+        row.previewSender != null -> stringResource(R.string.group_sender_preview, row.previewSender.ifEmpty { stringResource(R.string.group_someone) }, plainPreview)
+        else -> plainPreview
+    }
     val clickable = if (onLongClick == null) {
         modifier.combinedClickable(role = Role.Button, onClick = onClick)
     } else {
@@ -81,7 +87,12 @@ fun ChatRow(
         supportingContent = {
             val draft = row.draft
             if (row.typing) {
-                Text(stringResource(R.string.signal_typing), maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.primary)
+                val typingText = when {
+                    row.typers.size == 1 -> stringResource(R.string.group_typing_one, row.typers[0] ?: stringResource(R.string.group_someone))
+                    row.typers.size > 1 -> stringResource(R.string.group_typing_many, row.typers.size)
+                    else -> stringResource(R.string.signal_typing)
+                }
+                Text(typingText, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.primary)
             } else if (draft != null) {
                 val label = stringResource(R.string.chat_draft_label)
                 val red = MaterialTheme.colorScheme.error

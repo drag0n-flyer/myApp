@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import org.example.app.core.chats.Chat
+import org.example.app.core.groups.ChatID
 
 /** A typing or presence signal. */
 sealed interface Signal {
@@ -21,7 +22,8 @@ sealed interface Signal {
     data class Presence(val online: Boolean) : Signal
 }
 
-class IncomingSignal(val chatId: String, val signal: Signal)
+/** [from] is the account that sent it: needed in a group chat, where several people can be typing; null in a one-to-one chat. */
+class IncomingSignal(val chatId: String, val signal: Signal, val from: String? = null)
 
 /** Where signals go and come from: `:app` wires it to the `conv.ephemeral` channel; sample data and tests use [ScriptedSignals]. */
 interface SignalChannel {
@@ -43,7 +45,11 @@ object NoWitnessStore : WitnessStore {
 }
 
 /** What the screens show for one chat. */
-data class PeerView(val typing: Boolean, val presence: PresenceLine.Result)
+data class PeerView(
+    val typing: Boolean, val presence: PresenceLine.Result,
+    /** In a group chat, the accounts typing now, the one who started first at the front; empty in a one-to-one chat. */
+    val typers: List<String> = emptyList(),
+)
 
 /**
  * Typing and presence for the chat screens (design 6.1). Sends and shows nothing for a switched-off signal or a blocked
@@ -60,11 +66,15 @@ class PeopleSignals(
     /** True for a chat whose contact is blocked (or that is not known): nothing is sent to it or shown for it. */
     private val blocked: (chatId: String) -> Boolean,
     private val presenceTargets: () -> List<String>,
+    /** True for a group member this device has blocked: their typing is never shown. */
+    private val blockedAccount: (accountId: String) -> Boolean = { false },
     private val witnesses: WitnessStore = NoWitnessStore,
     private val nowMs: () -> Long,
 ) {
     private val lock = Any()
     private val typingOn = HashMap<String, Long>()
+    /** Group chats: who is typing, and since when their last `on` came (in the order they started). */
+    private val groupTyping = HashMap<String, LinkedHashMap<String, Long>>()
     private val lastOnline = HashMap<String, Long>()
     private val witnessed = HashMap<String, Long>()
     private val persisted = HashMap<String, Long>()
@@ -124,9 +134,21 @@ class PeopleSignals(
         synchronized(lock) {
             val next = HashMap<String, PeerView>()
             var deadline: Long? = null
-            val chats = typingOn.keys + lastOnline.keys + witnessed.keys
+            val chats = typingOn.keys + lastOnline.keys + witnessed.keys + groupTyping.keys
             for (chat in chats) {
                 if (blocked(chat)) continue
+                if (ChatID.isGroup(chat)) {
+                    // No presence and no "last seen" in a group: only who is typing, each for 10 s after their last `on`.
+                    val people = groupTyping[chat] ?: continue
+                    people.entries.removeAll { !TypingShown.isTyping(it.value, now) }
+                    val typers = if (typingOk) people.filter { !blockedAccount(it.key) }.keys.toList() else emptyList()
+                    if (typers.isNotEmpty()) {
+                        next[chat] = PeerView(true, PresenceLine.Result.None, typers)
+                        deadline = minOf(deadline ?: Long.MAX_VALUE, people.filter { it.key in typers }.values.minOf { it + TypingShown.SHOWN_MS })
+                    }
+                    if (people.isEmpty()) groupTyping.remove(chat)
+                    continue
+                }
                 val typing = typingOk && TypingShown.isTyping(typingOn[chat], now)
                 val line = if (presenceOk) PresenceLine.text(lastOnline[chat], witnessed[chat], now) else PresenceLine.Result.None
                 if (typing || line != PresenceLine.Result.None) next[chat] = PeerView(typing, line)
@@ -155,6 +177,18 @@ class PeopleSignals(
         val chat = event.chatId
         if (blocked(chat)) return
         val now = nowMs()
+        if (ChatID.isGroup(chat)) {
+            // Only typing, only from a named member that is not blocked.
+            val from = event.from
+            val s = event.signal
+            if (s !is Signal.Typing || from == null || blockedAccount(from) || !typingEnabled()) return
+            synchronized(lock) {
+                val people = groupTyping.getOrPut(chat) { LinkedHashMap() }
+                if (s.on) people[from] = now else { people.remove(from); if (people.isEmpty()) groupTyping.remove(chat) }
+            }
+            refresh()
+            return
+        }
         when (val s = event.signal) {
             is Signal.Typing -> {
                 if (!typingEnabled()) return
@@ -171,8 +205,14 @@ class PeopleSignals(
     }
 
     /** A message from the contact arrived: the typing line goes at once and the contact counts as seen now. */
-    fun messageArrived(chatId: String) {
+    fun messageArrived(chatId: String, from: String? = null) {
         if (blocked(chatId)) return
+        if (ChatID.isGroup(chatId)) {
+            // In a group only that member's typing ends, and nobody is "seen".
+            if (from != null) synchronized(lock) { groupTyping[chatId]?.remove(from) }
+            refresh()
+            return
+        }
         val now = nowMs()
         synchronized(lock) { typingOn.remove(chatId) }
         if (presenceEnabled()) witness(chatId, now, force = false)
@@ -180,7 +220,7 @@ class PeopleSignals(
     }
 
     private fun witness(chat: String, now: Long, force: Boolean) {
-        if (!presenceEnabled()) return
+        if (!presenceEnabled() || ChatID.isGroup(chat)) return
         val save: Boolean
         synchronized(lock) {
             witnessed[chat] = now
@@ -199,11 +239,12 @@ class PeopleSignals(
         var first = true
         chats.collect { list ->
             for (chat in list) {
-                val incoming = chat.messages.lastOrNull { it.senderId != myId }?.sentAt?.toEpochMilli()
+                val last = chat.messages.lastOrNull { it.senderId != myId }
+                val incoming = last?.sentAt?.toEpochMilli()
                 val seen = newest[chat.id]
                 if (incoming != null && (seen == null || incoming > seen)) {
                     newest[chat.id] = incoming
-                    if (!first) messageArrived(chat.id)
+                    if (!first) messageArrived(chat.id, last.senderId)
                 }
             }
             first = false
@@ -312,7 +353,8 @@ class PeopleSignals(
     private fun sendPresence(online: Boolean) {
         if (!presenceEnabled()) return
         for (chat in presenceTargets()) {
-            if (!blocked(chat)) enqueue(chat to Signal.Presence(online))
+            // Never in a group, whatever the target list says.
+            if (!blocked(chat) && !ChatID.isGroup(chat)) enqueue(chat to Signal.Presence(online))
         }
     }
 
@@ -329,7 +371,7 @@ object PresenceTargets {
     const val WINDOW_MS = 7 * 86_400_000L
 
     fun pick(chats: List<Chat>, nowMs: Long): List<String> = chats
-        .filter { !it.isRequest }
+        .filter { !it.isRequest && !it.isGroup }
         .mapNotNull { chat -> chat.lastMessage?.sentAt?.toEpochMilli()?.takeIf { nowMs - it < WINDOW_MS }?.let { chat.id to it } }
         .sortedByDescending { it.second }
         .take(MAX_CHATS)
@@ -354,7 +396,7 @@ class ScriptedSignals : SignalChannel {
         return true
     }
 
-    fun emit(chatId: String, signal: Signal) { flow.tryEmit(IncomingSignal(chatId, signal)) }
+    fun emit(chatId: String, signal: Signal, from: String? = null) { flow.tryEmit(IncomingSignal(chatId, signal, from)) }
 
     /** Plays [steps] in order on [scope]: wait [Step.afterMs], then emit. */
     fun play(scope: CoroutineScope, steps: List<Step>): Job = scope.launch {

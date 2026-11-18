@@ -71,6 +71,7 @@ import org.example.app.core.chats.MessageAction
 import org.example.app.core.chats.MessageActions
 import org.example.app.core.chats.MessageContent
 import org.example.app.core.chats.SendProblem
+import org.example.app.core.groups.GroupRuns
 import org.example.app.core.settings.MediaKind
 import org.example.app.ui.Avatar
 import org.example.app.ui.lock.LocalExpectReturn
@@ -130,6 +131,16 @@ fun ChatScreen(
     val byId = remember(messages) { messages.associateBy { it.id } }
     val byIdRef by rememberUpdatedState(byId)
     val newest = messages.lastOrNull()
+
+    // Group chat: who is who. The profiles flow is read so a name or photo that arrives redraws the sender lines.
+    val isGroup = state.chat?.isGroup == true
+    @Suppress("UNUSED_VARIABLE") val profilesNow by viewModel.profiles.collectAsStateWithLifecycle()
+    val blockedNow by viewModel.blockedIds.collectAsStateWithLifecycle()
+    val someone = stringResource(R.string.group_someone)
+    fun nameOfMember(id: String) = viewModel.senderName(id) ?: someone
+    val senderLines = remember(rowsNewestFirst, isGroup) { if (isGroup) GroupRuns.senderLineIds(rowsNewestFirst.asReversed(), myId) else emptySet() }
+    var shownBlocked by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
+    var infoFor by rememberSaveable { mutableStateOf<String?>(null) }
 
     var replying by rememberSaveable { mutableStateOf<String?>(null) }
     var editing by rememberSaveable { mutableStateOf<String?>(null) }
@@ -337,7 +348,10 @@ fun ChatScreen(
     val bar: ComposerBar? = when {
         editing != null -> ComposerBar.Editing
         replying != null -> byId[replying]?.let { m ->
-            ComposerBar.Replying(if (m.senderId == myId) stringResource(R.string.you) else state.contactName, previewText(m.preview))
+            ComposerBar.Replying(
+                if (m.senderId == myId) stringResource(R.string.you) else if (isGroup) nameOfMember(m.senderId) else state.contactName,
+                previewText(m.preview),
+            )
         }
         else -> null
     }
@@ -368,7 +382,7 @@ fun ChatScreen(
                             Avatar(state.contactName, size = 36.dp, colorKey = state.chat?.contactId)
                             Column {
                                 Text(state.contactName, maxLines = 1)
-                                peerLineText(peer)?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1) }
+                                peerLineText(peer, nameOf = viewModel::senderName)?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1) }
                             }
                         }
                     },
@@ -465,7 +479,10 @@ fun ChatScreen(
                                 message = message,
                                 isOwn = own,
                                 replyTo = reply,
-                                replyAuthor = reply?.let { if (it.senderId == myId) null else state.contactName },
+                                replyAuthor = reply?.let { if (it.senderId == myId) null else if (isGroup) nameOfMember(it.senderId) else state.contactName },
+                                senderName = if (message.id in senderLines) nameOfMember(message.senderId) else null,
+                                collapsed = isGroup && message.senderId in blockedNow && message.id !in shownBlocked,
+                                onShowCollapsed = { shownBlocked = shownBlocked + message.id },
                                 autoDownloads = viewModel::autoDownloads,
                                 onDownload = { viewModel.download(message.id) },
                                 onLongPress = if (actions.isEmpty()) null else ({ menuFor = message.id }),
@@ -476,6 +493,8 @@ fun ChatScreen(
                                             onDismiss = { menuFor = null },
                                             onReact = { emoji -> menuFor = null; viewModel.react(emoji, message.id) },
                                             onAction = { action -> menuFor = null; perform(action, message.id) },
+                                            // Who got and read it: my own message in a group.
+                                            onInfo = if (isGroup && own) ({ menuFor = null; infoFor = message.id }) else null,
                                         )
                                     }
                                 },
@@ -530,6 +549,11 @@ fun ChatScreen(
                 },
             )
         }
+        infoFor?.let { id ->
+            // Read again when the message's tick changes, so a receipt that arrives while the sheet is open shows.
+            val receipts by produceState<List<org.example.app.core.chats.MessageReceipt>?>(null, id, byId[id]?.status) { value = viewModel.receiptsFor(id) }
+            MessageInfoSheet(receipts, nameOf = ::nameOfMember, onDismiss = { infoFor = null })
+        }
         confirmDelete?.let { id ->
             DeleteDialog(onConfirm = { confirmDelete = null; viewModel.delete(id) }, onDismiss = { confirmDelete = null })
         }
@@ -555,6 +579,8 @@ private fun MessageMenu(
     onDismiss: () -> Unit,
     onReact: (String) -> Unit,
     onAction: (MessageAction) -> Unit,
+    /** "Message info" for my message in a group; null for no such item. */
+    onInfo: (() -> Unit)? = null,
 ) {
     DropdownMenu(expanded = true, onDismissRequest = onDismiss) {
         if (MessageAction.React in actions) {
@@ -576,6 +602,7 @@ private fun MessageMenu(
             } ?: continue
             DropdownMenuItem(text = { Text(stringResource(label)) }, onClick = { onAction(action) })
         }
+        if (onInfo != null) DropdownMenuItem(text = { Text(stringResource(R.string.message_info)) }, onClick = onInfo)
     }
 }
 

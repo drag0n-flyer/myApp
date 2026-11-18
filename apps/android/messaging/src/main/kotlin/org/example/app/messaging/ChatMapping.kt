@@ -56,11 +56,13 @@ internal object ChatMapping {
 
     fun message(
         record: MessageRecord, attachment: AttachmentRecord?, reactions: List<ReactionRecord>, showRead: Boolean,
+        /** The tick of my message in a group (worked out from the members' receipts); null keeps the stored status. */
+        groupStatus: DeliveryStatus? = null,
         displayName: (String) -> String?,
     ): Message {
         var message = Message(
             id = record.id, senderId = record.senderAccount, sentAt = Instant.ofEpochMilli(record.sentAt),
-            content = MessageContent.Unsupported, status = status(record.status, showRead), replyToId = record.replyTo,
+            content = MessageContent.Unsupported, status = groupStatus ?: status(record.status, showRead), replyToId = record.replyTo,
             reactions = reactions.map { it.emoji }, editedAt = record.editedAt?.let(Instant::ofEpochMilli),
             media = null, undecryptable = record.undecryptable, expiresAt = record.expiresAt?.let(Instant::ofEpochMilli),
         )

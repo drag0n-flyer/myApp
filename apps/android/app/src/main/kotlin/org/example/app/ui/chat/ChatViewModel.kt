@@ -122,6 +122,18 @@ class ChatViewModel(
 
     private val myId: String get() = store.me.id
 
+    /** Accounts this device has blocked: a group message from one is collapsed until shown. */
+    val blockedIds: StateFlow<Set<String>> get() = store.blockedIds
+
+    /** Names and photos of the people the screen shows; a change redraws the sender lines. */
+    val profiles: StateFlow<Map<String, org.example.app.core.people.Profile>> get() = store.profiles
+
+    /** A group member's name, or null when nothing is known about them. */
+    fun senderName(accountId: String): String? = store.personName(accountId)?.takeIf { it.isNotEmpty() }
+
+    /** Who got and read my message in a group, for Message info. Reads storage, off the main thread. */
+    suspend fun receiptsFor(messageId: String): List<org.example.app.core.chats.MessageReceipt> = withContext(io) { store.messageReceipts(messageId) }
+
     /** What the header shows under the name: typing, online or last seen. Nothing for a message request. */
     val peer: StateFlow<org.example.app.core.people.PeerView?> =
         (signals?.views ?: MutableStateFlow<Map<String, org.example.app.core.people.PeerView>>(emptyMap()))

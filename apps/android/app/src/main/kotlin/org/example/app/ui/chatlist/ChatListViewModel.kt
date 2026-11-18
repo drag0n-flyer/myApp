@@ -35,6 +35,12 @@ data class ChatRowModel(
     val colorKey: String? = null,
     /** The other person is typing: the row shows "typing…" in place of the preview. */
     val typing: Boolean = false,
+    /** In a group, the names of the people typing (null for one whose name is not known); empty in a one-to-one chat. */
+    val typers: List<String?> = emptyList(),
+    /** In a group, who sent the last message when it is not me: the row shows "Name: text". */
+    val previewSender: String? = null,
+    /** In a group, the last message is mine: the row shows "You: text". */
+    val previewFromMe: Boolean = false,
 )
 
 data class ChatListState(
@@ -81,20 +87,30 @@ class ChatListViewModel(
             .combine(signals?.views ?: MutableStateFlow<Map<String, org.example.app.core.people.PeerView>>(emptyMap())) { state, views ->
                 if (views.values.none { it.typing }) state
                 else state.copy(
-                    rows = state.rows.map { it.copy(typing = views[it.chatId]?.typing == true) },
-                    archivedRows = state.archivedRows.map { it.copy(typing = views[it.chatId]?.typing == true) },
+                    rows = state.rows.map { withTyping(it, views[it.chatId]) },
+                    archivedRows = state.archivedRows.map { withTyping(it, views[it.chatId]) },
                 )
             }
             .stateIn(viewModelScope, SharingStarted.Eagerly, initial().copy(status = status.value))
 
+    private fun withTyping(row: ChatRowModel, view: org.example.app.core.people.PeerView?): ChatRowModel = row.copy(
+        typing = view?.typing == true,
+        typers = view?.typers.orEmpty().map { store.personName(it)?.takeIf { n -> n.isNotEmpty() } },
+    )
+
     private fun rowOf(chat: Chat): ChatRowModel {
         val last = chat.lastMessage
+        // In a group the preview says who wrote it, except for a line of the chat itself (an added or removed member).
+        val named = chat.isGroup && last != null && last.content !is org.example.app.core.chats.MessageContent.System && last.senderId != "system"
+        val fromMe = named && last!!.senderId == store.me.id
         return ChatRowModel(
             // A group that has no name yet shows an empty name, which the row replaces with a word.
             chat.id, if (chat.isGroup) chat.title.orEmpty() else chat.contactId?.let { store.contact(it)?.displayName } ?: chat.contactId ?: chat.id,
             last?.preview, last?.sentAt, chat.unreadCount,
             colorKey = chat.contactId ?: chat.id,
             pinned = chat.pinnedAt != null, muted = chat.muted, draft = chat.draft,
+            previewSender = if (named && !fromMe) store.personName(last!!.senderId)?.takeIf { it.isNotEmpty() } ?: "" else null,
+            previewFromMe = fromMe,
         )
     }
 

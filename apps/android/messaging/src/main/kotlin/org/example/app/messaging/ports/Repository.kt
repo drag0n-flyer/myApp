@@ -335,6 +335,9 @@ interface Repository {
     fun addReceipt(messageId: String, accountId: String, kind: String, at: Long): Boolean
     fun receipts(messageId: String): List<ReceiptRecord>
 
+    /** The receipts of all these messages, in one query where the store can. */
+    fun receiptsFor(messageIds: List<String>): List<ReceiptRecord> = messageIds.flatMap { receipts(it) }
+
     // conversations
     /** @throws IllegalArgumentException when `mode` or `innerMode` is not a [ConversationMode] value. */
     fun upsertConversation(c: ConversationRecord)

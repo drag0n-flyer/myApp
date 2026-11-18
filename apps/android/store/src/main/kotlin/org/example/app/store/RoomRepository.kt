@@ -189,6 +189,11 @@ class RoomRepository(
         }
     }
 
+    override fun receiptsFor(messageIds: List<String>): List<ReceiptRecord> =
+        // Chunked under SQLite's variable limit.
+        messageIds.distinct().chunked(500).flatMap { chunk -> chats.receiptsForMessages(chunk) }
+            .map { ReceiptRecord(it.messageId, it.accountId, it.kind, it.at) }
+
     override fun receipts(messageId: String) = chats.receipts(messageId).map { ReceiptRecord(it.messageId, it.accountId, it.kind, it.at) }
 
     // conversations

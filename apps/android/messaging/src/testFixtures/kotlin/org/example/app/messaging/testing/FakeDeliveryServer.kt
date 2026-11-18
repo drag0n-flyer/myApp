@@ -105,6 +105,9 @@ class FakeDeliveryServer(var defaultMode: String = "e2ee") {
         c.membersVersion += 1
     }
 
+    /** Raises a group's member list version without changing it (a change another client made; the list is what it was). */
+    fun touchGroupVersion(id: String, by: Long = 1) = synchronized(lock) { conversations.getValue(id).membersVersion += by }
+
     fun conversationIds(): List<String> = synchronized(lock) { conversations.keys.sorted() }
 
     fun pending(identity: String): List<InboxItem> = synchronized(lock) { inboxes[identity].orEmpty().toList() }

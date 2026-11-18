@@ -91,6 +91,9 @@ fun DeliveryStatus.reaches(wanted: DeliveryStatus): Boolean {
     return have >= need
 }
 
+/** When one group member's device got ([deliveredAt]) and read ([readAt]) one of my messages; null for what has not happened. */
+data class MessageReceipt(val accountId: String, val deliveredAt: Instant?, val readAt: Instant?)
+
 /** A one-line summary of a message: literal text, or a string resource key with its arguments. */
 sealed interface MessagePreview {
     data class Text(val text: String) : MessagePreview

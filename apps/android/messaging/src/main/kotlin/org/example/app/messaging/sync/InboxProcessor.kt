@@ -17,6 +17,8 @@ import org.example.app.contracts.MlsException
 import org.example.app.contracts.ServerException
 import org.example.app.messaging.ports.Clock
 import org.example.app.messaging.ports.ConversationMode
+import org.example.app.messaging.ports.GroupMemberRecord
+import org.example.app.messaging.ports.GroupStoreRules
 import org.example.app.messaging.ports.MlsLock
 import org.example.app.messaging.ports.PayloadHash
 import org.example.app.messaging.ports.RawInboxRecord
@@ -223,7 +225,16 @@ class InboxProcessor(
                 }
             }
 
-            val applied = lock.withLock { withContext(NonCancellable) { processLocked(raw, hash, serverMode, group) } }
+            val applied = try {
+                lock.withLock { withContext(NonCancellable) { processLocked(raw, hash, serverMode, group) } }
+            } catch (need: ListNeeded) {
+                // A group message from a sender the stored list does not have: ask the server for the list, once, with the
+                // lock released. The decrypted result is kept in [accepted]; a failed lookup leaves the raw row for the next drain.
+                if (!fetchList(need.conversationId)) return Step.Stop
+                listChecked += raw.cursor
+                lock.withLock { withContext(NonCancellable) { processLocked(raw, hash, serverMode, group) } }
+            }
+            listChecked.remove(raw.cursor)
             return Step.Done(applied)
         } catch (e: CancellationException) {
             throw e
@@ -259,6 +270,7 @@ class InboxProcessor(
             return null
         }
         accepted[raw.cursor] = incoming
+        if (raw.cursor !in listChecked) handler.unlistedGroupConversation(incoming, repo)?.let { throw ListNeeded(it) }
 
         val result: AppliedResult?
         if (incoming is Incoming.Joined) {
@@ -315,6 +327,39 @@ class InboxProcessor(
         accepted.remove(raw.cursor)
         confirm(incoming)
         return result
+    }
+
+    /** Thrown before any row is written: the sender of a group message is not in the stored list. */
+    private class ListNeeded(val conversationId: String) : Exception()
+
+    /** Cursors whose sender lookup is done (guarded by [drainSection]); a sender still unlisted after it is dropped. */
+    private val listChecked = HashSet<Long>()
+
+    /**
+     * `GET /v1/conversations/{id}` for the members of a group, handed to the handler for a minute (not stored: the group
+     * sync writes the list, and the system lines from its difference). False only when the lookup failed for a reason
+     * that may pass (the item is tried again); a list that cannot be true, or a refusal, counts as an answer.
+     */
+    private suspend fun fetchList(conversationId: String): Boolean {
+        try {
+            val info = server.conversation(conversationId)
+            if (info.kind == "group") {
+                val members = info.members.map { GroupMemberRecord(it.account, it.role) }
+                try {
+                    GroupStoreRules.requireMembers(members, info.membersVersion ?: -1)
+                    handler.noteFetchedMembers(conversationId, members.map { it.accountId }.toSet(), clock.now())
+                } catch (_: IllegalArgumentException) {
+                    // A list that cannot be true is no answer: the sender stays unlisted.
+                }
+            }
+            return true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: ServerException) {
+            return ConversationManager.isDefiniteRejection(e.status)
+        } catch (_: Exception) {
+            return false
+        }
     }
 
     private fun failKey(cursor: Long) = "$FAIL_PREFIX$cursor"
