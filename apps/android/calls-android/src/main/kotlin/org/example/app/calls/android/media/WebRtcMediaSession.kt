@@ -1,6 +1,9 @@
 package org.example.app.calls.android.media
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CoroutineScope
@@ -10,6 +13,9 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -48,6 +54,7 @@ import org.webrtc.RtpTransceiver
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
 import org.webrtc.SurfaceTextureHelper
+import org.webrtc.VideoSink
 import org.webrtc.VideoSource
 import org.webrtc.VideoTrack
 import org.webrtc.audio.JavaAudioDeviceModule
@@ -112,6 +119,10 @@ class WebRtcMediaSession(context: Context, private val settings: UserSettings) :
     private var videoSource: VideoSource? = null
     private var videoTrack: VideoTrack? = null
     private var videoSender: RtpSender? = null
+    private var remoteTrack: VideoTrack? = null
+    private val remoteSinks = SinkSet<VideoSink>()
+    private val localSinks = SinkSet<VideoSink>()
+    private var pendingTier: VideoTier? = null // video wanted while the camera permission was missing
     private var capturer: CameraVideoCapturer? = null
     private var textureHelper: SurfaceTextureHelper? = null
     private var capturing: VideoTier? = null
@@ -122,6 +133,39 @@ class WebRtcMediaSession(context: Context, private val settings: UserSettings) :
     private var bweMax: Int? = null // the ceiling last applied
     private var closed = false
     private val aggregator = MediaStatsAggregator()
+
+    private val remoteOn = MutableStateFlow(false)
+    private val front = MutableStateFlow(true)
+    private val cameraFailed = MutableStateFlow(false)
+    private var cameras = 0
+
+    /** What the call screen draws and controls; published while the call has video. */
+    private val surface = object : CallVideoSurface {
+        override val eglContext: EglBase.Context? get() = WebRtcFactory.eglContext()
+        override val remote = feed(remoteSinks) { remoteTrack }
+        override val local = feed(localSinks) { videoTrack }
+        override val remoteVideoOn: StateFlow<Boolean> = remoteOn.asStateFlow()
+        override val cameraCount: Int get() = cameras
+        override val frontCamera: StateFlow<Boolean> = front.asStateFlow()
+        override val cameraProblem: StateFlow<Boolean> = cameraFailed.asStateFlow()
+        override fun flipCamera() = flip()
+        override fun cameraPermissionGranted() = retryCapture()
+    }
+
+    private fun feed(sinks: SinkSet<VideoSink>, track: () -> VideoTrack?) = object : VideoFeed {
+        override fun attach(sink: VideoSink): Boolean = synchronized(lock) {
+            val t = track()
+            if (closed || t == null || !sinks.add(sink)) return false
+            t.addSink(sink)
+            true
+        }
+
+        override fun detach(sink: VideoSink) {
+            synchronized(lock) {
+                if (sinks.remove(sink)) track()?.removeSink(sink)
+            }
+        }
+    }
 
     /** Test hooks: the last audio source made, and a step that runs just before the audio transceiver is added. */
     internal var audioSourceForTesting: AudioSource? = null
@@ -165,7 +209,11 @@ class WebRtcMediaSession(context: Context, private val settings: UserSettings) :
             peer.dispose()
             throw e
         }
-        if (video) startRemoteVideoMonitor()
+        if (video) {
+            cameras = try { Camera2Enumerator(appContext).deviceNames.size } catch (_: Exception) { 0 }
+            startRemoteVideoMonitor()
+            CallVideo.publish(surface)
+        }
     }
 
     private fun attach(f: PeerConnectionFactory, peer: PeerConnection, video: Boolean) {
@@ -178,6 +226,7 @@ class WebRtcMediaSession(context: Context, private val settings: UserSettings) :
         var vSource: VideoSource? = null
         var vTrack: VideoTrack? = null
         var vSender: RtpSender? = null
+        var vRemote: VideoTrack? = null
         try {
             aTrack = f.createAudioTrack("audio0", aSource)
             beforeAudioTransceiverForTesting?.invoke()
@@ -187,6 +236,7 @@ class WebRtcMediaSession(context: Context, private val settings: UserSettings) :
                 vTrack = f.createVideoTrack("video0", vSource).apply { setEnabled(false) } // off until setVideo(tier)
                 val transceiver = peer.addTransceiver(vTrack, transceiverInit())
                 vSender = transceiver.sender
+                vRemote = transceiver.receiver.track() as? VideoTrack
                 preferH264(f, transceiver)
             }
             synchronized(lock) {
@@ -198,6 +248,7 @@ class WebRtcMediaSession(context: Context, private val settings: UserSettings) :
                 videoSource = vSource
                 videoTrack = vTrack
                 videoSender = vSender
+                remoteTrack = vRemote
             }
         } catch (e: Exception) {
             // A track a transceiver took is disposed with the peer connection (the caller disposes it); the rest here.
@@ -272,6 +323,8 @@ class WebRtcMediaSession(context: Context, private val settings: UserSettings) :
             val sender = videoSender ?: return
             if (effective == null) {
                 track.setEnabled(false)
+                pendingTier = null
+                cameraFailed.value = false
                 stopCapture()
                 bweVideoBitrate = 0
                 return@synchronized
@@ -307,9 +360,14 @@ class WebRtcMediaSession(context: Context, private val settings: UserSettings) :
 
     override suspend fun close() {
         val peer: PeerConnection?
+        CallVideo.clear(surface) // the screen lets go of its renderers first
         synchronized(lock) {
             if (closed) return
             closed = true
+            // Renderers come off the tracks before the peer connection disposes them.
+            remoteSinks.closeAll { remoteTrack?.removeSink(it) }
+            localSinks.closeAll { videoTrack?.removeSink(it) }
+            remoteTrack = null
             stopCapture()
             peer = pc
             pc = null
@@ -374,23 +432,55 @@ class WebRtcMediaSession(context: Context, private val settings: UserSettings) :
         transceiver.setCodecPreferences(VideoCodecOrder.order(codecs) { VideoCodec(it.name, it.parameters ?: emptyMap()) })
     }
 
-    // Behind `lock`.
+    // Behind `lock`. Without the camera permission nothing starts: the call goes on as audio and the screen is told.
     private fun startCapture(tier: VideoTier) {
         val source = videoSource ?: return
+        if (ContextCompat.checkSelfPermission(appContext, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            pendingTier = tier
+            cameraFailed.value = true
+            return
+        }
+        pendingTier = null
         val spec = VideoLadder.spec(tier)
         val cam = capturer ?: run {
             val enumerator = Camera2Enumerator(appContext)
             val name = enumerator.deviceNames.firstOrNull { enumerator.isFrontFacing(it) }
-                ?: enumerator.deviceNames.firstOrNull() ?: return
+                ?: enumerator.deviceNames.firstOrNull() ?: run { cameraFailed.value = true; return }
             val helper = SurfaceTextureHelper.create("CallCamera", WebRtcFactory.eglContext())
-            enumerator.createCapturer(name, null).also {
+            front.value = enumerator.isFrontFacing(name)
+            enumerator.createCapturer(name, object : CameraVideoCapturer.CameraEventsHandler {
+                override fun onCameraError(errorDescription: String) { cameraFailed.value = true }
+                override fun onCameraDisconnected() { cameraFailed.value = true }
+                override fun onCameraFreezed(errorDescription: String) = Unit
+                override fun onCameraOpening(cameraName: String) = Unit
+                override fun onFirstFrameAvailable() { cameraFailed.value = false }
+                override fun onCameraClosed() = Unit
+            }).also {
                 it.initialize(helper, appContext, source.capturerObserver)
                 textureHelper = helper
                 capturer = it
             }
         }
+        cameraFailed.value = false
         if (capturing == null) cam.startCapture(spec.width, spec.height, spec.fps) else cam.changeCaptureFormat(spec.width, spec.height, spec.fps)
         capturing = tier
+    }
+
+    /** The permission arrived after video was asked for: starts the camera at the tier that was waiting. */
+    private fun retryCapture() {
+        synchronized(lock) {
+            if (closed) return
+            val tier = pendingTier ?: return
+            startCapture(tier)
+        }
+    }
+
+    private fun flip() {
+        val cam = synchronized(lock) { if (closed || capturing == null) null else capturer } ?: return
+        cam.switchCamera(object : CameraVideoCapturer.CameraSwitchHandler {
+            override fun onCameraSwitchDone(isFrontCamera: Boolean) { front.value = isFrontCamera }
+            override fun onCameraSwitchError(errorDescription: String) = Unit
+        })
     }
 
     // Behind `lock`.
@@ -422,7 +512,10 @@ class WebRtcMediaSession(context: Context, private val settings: UserSettings) :
             while (isActive) {
                 delay(1_000)
                 val frames = rawStats().firstOrNull { it.type == "inbound-rtp" && it.strings["kind"] == "video" }?.numbers?.get("framesDecoded")
-                detector.sample(frames)?.let { channel.trySend(MediaEvent.RemoteVideo(it)) }
+                detector.sample(frames)?.let {
+                    remoteOn.value = it
+                    channel.trySend(MediaEvent.RemoteVideo(it))
+                }
             }
         }
     }
