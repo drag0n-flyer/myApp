@@ -45,7 +45,7 @@ One Go module in `server/` produces two binaries.
 | `pushgw` | The push gateway: server registry, request signatures, sealed handles, APNs | D |
 | `social` | User lookup, email discovery, profile settings, blocks, reports | E |
 | `attachments` | Encrypted blob upload, download and expiry | E |
-| `serverinfo` | `GET /v1/server`, `/invite/{code}` page, apple-app-site-association, assetlinks.json | E |
+| `serverinfo` | `GET /v1/server`, `/invite/{code}`, `/u/{username}` and `/c/{token}` pages, apple-app-site-association, assetlinks.json | E |
 
 Binaries: `server/cmd/appserver` and `server/cmd/pushgw`. Deployment files go in `deploy/`.
 
@@ -159,6 +159,7 @@ JSON in and out. Authenticated endpoints need `Authorization: Bearer <session to
 | `too_large` | 413 | `rate_limited` | 429 |
 | `escrow_required` | 400 | `escrow_forbidden` | 400 |
 | `calls_disabled` | 503 | `internal` | 500 |
+| `too_many` | 429 | `own_link` | 409 |
 
 `conflict` (409) is the admin API's answer when a change would break a rule, such as removing the last enabled admin.
 
@@ -319,8 +320,12 @@ Besides the codes of section 7, the gateway also answers `conflict` (409, a repl
 | `POST /v1/attachments` | ✓ | raw body (already encrypted by the client), `Content-Length` required → `{id, expiresAt}`; `too_large` |
 | `GET /v1/attachments/{id}` | ✓ | → bytes, with HTTP Range support. The ID is 128 random bits and works as the access key |
 | `GET /v1/server` | – | the server info document below |
+| `POST /v1/contact-links` | ✓ | → `{token, expiresAt}`: a one-time contact link good for 7 days (`https://<host>/c/<token>`). The token is 16 random bytes, base64url (22 characters), stored only as its SHA-256 in `contact_links`. At most 20 unused, unexpired links per account, then `too_many` (429) |
+| `POST /v1/contact-links/redeem` | ✓ | `{token}` → `{accountID, username, displayName}`, once (a single `UPDATE … WHERE used_at IS NULL … RETURNING`, so concurrent redeems have one winner). Own live link → `own_link` (409, the link is not used up). Unknown, malformed, expired, used, owner deleted, or owner has blocked the caller → `expired` (410), the same status, body and queries in every case. Shares the username-lookup limit (60 per hour per account): `rate_limited`. Expired links are removed by the hourly prune |
 | `GET /invite/{code}` | – | small HTML page: "Open this invite in [App]" (target of the universal link) |
-| `GET /.well-known/apple-app-site-association` | – | `applinks` for `/invite/*` and `/link/*`, plus `webcredentials`, for `APP_APPLE_APP_IDS` |
+| `GET /u/{username}` | – | fixed HTML page "Open this contact in [App]" (target of the profile QR code). No account data, and the path is not echoed: the page is identical for any username |
+| `GET /c/{token}` | – | fixed HTML page "Open this contact link in [App]". Does not echo or check the token |
+| `GET /.well-known/apple-app-site-association` | – | `applinks` for `/invite/*`, `/link/*`, `/u/*` and `/c/*`, plus `webcredentials`, for `APP_APPLE_APP_IDS` |
 | `GET /.well-known/assetlinks.json` | – | Digital Asset Links for `APP_ANDROID_APPS`: one entry per package with relations `delegate_permission/common.get_login_creds` and `delegate_permission/common.handle_all_urls` and the fingerprints as upper-case colon hex; `[]` when unset |
 
 Server info document:
