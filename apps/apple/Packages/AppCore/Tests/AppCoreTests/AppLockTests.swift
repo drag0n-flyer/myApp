@@ -414,3 +414,39 @@ private func make(enabled: Bool = true, delay: Int = 60, stored: LockSettings?? 
     lock.phaseChanged(.inactive)
     #expect(!lock.isLocked)
 }
+
+@MainActor @Test func lockNowLocksAnUnlockedAppWhenTheLockIsOn() async {
+    let (lock, _, _) = make()
+    await lock.unlockWithPrompt(reason: "x")
+    #expect(!lock.coversContent)
+    let before = lock.promptRequests
+    lock.lockNow()
+    #expect(lock.isLocked && lock.coversContent)
+    #expect(lock.promptRequests == before + 1)
+    await lock.unlockWithPrompt(reason: "x")
+    #expect(!lock.coversContent)
+}
+
+@MainActor @Test func lockNowDoesNothingWhenTheLockIsOff() {
+    let (lock, _, _) = make(enabled: false)
+    lock.lockNow()
+    #expect(!lock.isLocked && !lock.coversContent)
+}
+
+@MainActor @Test func lockNowWhileLockedChangesNothing() {
+    let (lock, _, _) = make()
+    let before = lock.promptRequests
+    lock.lockNow()
+    #expect(lock.isLocked && lock.promptRequests == before)
+}
+
+@MainActor @Test func lockNowSurvivesAReturnAndNeedsAPrompt() async {
+    let (lock, _, clock) = make(delay: 60)
+    await lock.unlockWithPrompt(reason: "x")
+    lock.lockNow()
+    lock.phaseChanged(.background)
+    clock.advance(1)
+    lock.phaseChanged(.inactive)
+    lock.phaseChanged(.active)
+    #expect(lock.coversContent)
+}

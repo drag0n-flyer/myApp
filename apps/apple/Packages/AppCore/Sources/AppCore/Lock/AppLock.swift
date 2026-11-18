@@ -171,6 +171,14 @@ public final class AppLock {
         if policy.locked { isLocked = true }
     }
 
+    /// "Lock Now": covers the content at once and asks for the prompt. Only when the lock is on; already locked: nothing.
+    public func lockNow() {
+        guard appLockOn, !isLocked else { return }
+        policy.lockNow()
+        isLocked = true
+        promptRequests += 1
+    }
+
     // MARK: - Unlocking
 
     /// The cover's automatic prompt: once per request, only while the scene is active. A cancel leaves the cover.
