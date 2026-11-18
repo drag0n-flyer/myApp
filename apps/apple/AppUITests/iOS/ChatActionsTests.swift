@@ -18,7 +18,8 @@ final class ChatActionsTests: XCTestCase {
 
     func testLongPressShowsReplyAndCopy() {
         let app = openRiya()
-        let bubble = app.staticTexts["Are you coming tonight?"]
+        // Unique text: "Are you coming tonight?" also appears as the quote inside a later reply.
+        let bubble = app.staticTexts["See you at 6, call me when you leave"]
         XCTAssertTrue(bubble.waitToExist())
         bubble.press(forDuration: 1.0)
         XCTAssertTrue(app.buttons["Reply"].waitToExist())

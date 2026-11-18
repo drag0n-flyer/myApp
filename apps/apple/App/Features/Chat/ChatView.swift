@@ -160,7 +160,9 @@ struct ChatView: View {
                 if !tracker.atBottom, let newestID {
                     scrollButton(count: tracker.unseenCount(in: all)) {
                         tracker.setAtBottom(true, newestID: newestID)
-                        withAnimation { proxy.scrollTo(newestID, anchor: .bottom) }
+                        // After this update has laid out, as the follow-new-messages scroll does; an animated
+                        // scroll started inside the same update did not reach the bottom in CI.
+                        Task { @MainActor in proxy.scrollTo(newestID, anchor: .bottom) }
                     }
                 }
             }
