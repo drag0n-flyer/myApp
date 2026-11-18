@@ -1,3 +1,4 @@
+import AppCore
 import Foundation
 import LocalStore
 import ServerKit
@@ -56,7 +57,8 @@ public final class EphemeralChannel: Sendable {
     /// body and `.noConversation` when the chat has none; a failed send throws what the transport threw.
     public func send(chatID: String, body: ContentEnvelope.Body) async throws {
         switch body {
-        case .typing, .presence: break
+        case .typing: break
+        case .presence where !ChatID.isGroup(chatID): break   // no presence in a group
         default: throw EphemeralError.refused
         }
         guard let conversation = try repo.preferredConversation(chatID: chatID) else { throw EphemeralError.noConversation }
@@ -71,9 +73,16 @@ public final class EphemeralChannel: Sendable {
         guard case .conversationEphemeral(let conversationID, _, let from, _, let payload) = event,
               payload.count <= Self.maxPayload, from != me,
               let conversation = (try? repo.conversation(serverID: conversationID)) ?? nil,
-              conversation.chatID == from,
               (try? repo.isBlocked(from)) == false else { return }
         let body = ContentEnvelope.decode(payload).body
+        if ChatID.isGroup(conversation.chatID) {
+            // In a group the sender is one of the stored members while this device is in the group; only typing counts.
+            guard case .typing = body, let chat = (try? repo.chat(id: conversation.chatID)) ?? nil, chat.myState == "member",
+                  ((try? repo.groupMembers(chatID: chat.id)) ?? []).contains(where: { $0.accountID == from }) else { return }
+            continuation.yield(EphemeralSignal(chatID: conversation.chatID, accountID: from, body: body))
+            return
+        }
+        guard conversation.chatID == from else { return }
         switch body {
         case .typing, .presence: continuation.yield(EphemeralSignal(chatID: conversation.chatID, accountID: from, body: body))
         default: return

@@ -29,8 +29,17 @@ public final class PeopleSignals {
     /// Called when something a screen shows may have changed.
     public var onChange: (@MainActor () -> Void)?
 
+    /// The accounts in a group chat's member list now, and the accounts this device has blocked: a group shows typing
+    /// only for a member who is not blocked. Set by the app; the defaults show nobody.
+    public var groupMembers: @MainActor (String) -> Set<String> = { _ in [] }
+    public var blockedAccounts: @MainActor () -> Set<String> = { [] }
+    /// This device's own account: never shown as typing.
+    public var myAccount = ""
+
     private var composers: [String: TypingSender.State] = [:]
     private var typingOn: [String: Int64] = [:]
+    /// Group chats: the time of the last `typing on` of each account.
+    private var groupTyping: [String: [String: Int64]] = [:]
     private var lastOnline: [String: Int64] = [:]
     private var witnessed: [String: Int64] = [:]
     private var lastIncoming: [String: String] = [:]
@@ -40,7 +49,7 @@ public final class PeopleSignals {
     private var queue: [(chatID: String, body: ContentEnvelope.Body)] = []
     private var pump: Task<Void, Never>?
 
-    private struct Shown: Equatable { var typing: Bool; var line: Int }
+    private struct Shown: Equatable { var typing: Bool; var line: Int; var typers = 0 }
 
     /// - Parameters:
     ///   - now: milliseconds since 1970.
@@ -182,9 +191,14 @@ public final class PeopleSignals {
         switch signal.body {
         case .typing(let on):
             guard typingEnabled() else { return }
-            if on { typingOn[chatID] = nowMs } else { typingOn[chatID] = nil }
+            if ChatID.isGroup(chatID) {
+                // Each member on their own; only a member who is not blocked.
+                guard signal.accountID != myAccount, groupMembers(chatID).contains(signal.accountID), !blockedAccounts().contains(signal.accountID) else { return }
+                groupTyping[chatID, default: [:]][signal.accountID] = on ? nowMs : nil
+            } else if on { typingOn[chatID] = nowMs } else { typingOn[chatID] = nil }
         case .presence(let state):
-            guard presenceEnabled() else { return }
+            // No presence and no "last seen" in a group.
+            guard presenceEnabled(), !ChatID.isGroup(chatID) else { return }
             switch state {
             case .online: lastOnline[chatID] = nowMs; witness(chatID, nowMs)
             case .away:
@@ -200,10 +214,16 @@ public final class PeopleSignals {
     /// The newest incoming message of a chat, as seen on every refresh of the chat list. A message that is new since
     /// the last look ends "typing…" and counts as a sign of life now. The first look at a chat only records it, so old
     /// history is not taken for a recent visit.
-    public func incomingMessage(chatID: String, id: String) {
+    /// In a group only the sender's own typing ends (`from`), and nothing counts as a sign of life.
+    public func incomingMessage(chatID: String, id: String, from account: String? = nil) {
         guard let known = lastIncoming[chatID] else { lastIncoming[chatID] = id; return }
         guard known != id else { return }
         lastIncoming[chatID] = id
+        if ChatID.isGroup(chatID) {
+            if let account { groupTyping[chatID]?[account] = nil }
+            refreshShown()
+            return
+        }
         typingOn[chatID] = nil
         if !isBlocked(chatID) { witness(chatID, now()) }
         refreshShown()
@@ -219,13 +239,21 @@ public final class PeopleSignals {
 
     /// Whether the chat shows "typing…".
     public func isTyping(chatID: String) -> Bool {
+        if ChatID.isGroup(chatID) { return !typingAccounts(chatID: chatID).isEmpty }
         guard typingEnabled(), !isBlocked(chatID) else { return false }
         return TypingShown.isTyping(lastOnMs: typingOn[chatID], nowMs: now())
     }
 
+    /// The members typing in a group chat now, sorted by account ID. Nobody while the switch is off.
+    public func typingAccounts(chatID: String) -> [String] {
+        guard typingEnabled(), ChatID.isGroup(chatID) else { return [] }
+        return GroupTyping.typingNow(
+            lastOnMs: groupTyping[chatID] ?? [:], members: groupMembers(chatID), me: myAccount, blocked: blockedAccounts(), nowMs: now())
+    }
+
     /// The presence line under the name in the chat header.
     public func presence(chatID: String) -> PresenceLine.Line {
-        guard presenceEnabled(), !isBlocked(chatID) else { return .none }
+        guard presenceEnabled(), !isBlocked(chatID), !ChatID.isGroup(chatID) else { return .none }
         return PresenceLine.text(
             lastOnlineMs: lastOnline[chatID], lastWitnessedMs: witnessed[chatID] ?? loadSeen(chatID), nowMs: now())
     }
@@ -233,14 +261,14 @@ public final class PeopleSignals {
     /// Tells the screens when the time alone changed what a chat shows.
     private func refreshShown() {
         var next: [String: Shown] = [:]
-        for chatID in Set(typingOn.keys).union(lastOnline.keys) {
+        for chatID in Set(typingOn.keys).union(lastOnline.keys).union(groupTyping.keys) {
             let line: Int
             switch presence(chatID: chatID) {
             case .online: line = 1
             case .lastSeen(let ms): line = Int(truncatingIfNeeded: ms) &+ 2
             case .none: line = 0
             }
-            next[chatID] = Shown(typing: isTyping(chatID: chatID), line: line)
+            next[chatID] = Shown(typing: isTyping(chatID: chatID), line: line, typers: typingAccounts(chatID: chatID).count)
         }
         guard next != shown else { return }
         shown = next
