@@ -48,4 +48,10 @@ final class ChatListOrderTests: XCTestCase {
         let list = [chat("a", unread: 2, archived: true), chat("b", unread: 5), chat("c", unread: 1, archived: true)]
         XCTAssertEqual(ChatListOrder.archivedUnread(list), 3)
     }
+
+    func testPinnedFirstKeepsTheOrderOfTheRest() {
+        // The input is already in the store's activity order; only the pins move to the front.
+        let list = [chat("c"), chat("a", pinnedAt: 5), chat("b"), chat("d", pinnedAt: 9)]
+        XCTAssertEqual(ChatListOrder.pinnedFirst(list).map(\.id), ["d", "a", "c", "b"])
+    }
 }

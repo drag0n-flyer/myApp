@@ -201,3 +201,31 @@ func msg(_ c: MessageContent) -> Message {
     s.send(.text("a"), in: "chat-riya")
     #expect(n == 1)
 }
+
+@MainActor @Test func samplePinMuteArchiveAndTheLimit() {
+    let s = SampleChatStore()
+    let ids = s.chats(in: .all).map(\.id)
+    #expect(ids.count >= 6)
+    for id in ids.prefix(5) { #expect(s.setPinned(id, true)) }
+    #expect(s.setPinned(ids[5], true) == false)
+    #expect(Array(s.chats(in: .all).prefix(5).map(\.id)).sorted() == Array(ids.prefix(5)).sorted())
+    s.setMuted(ids[0], true)
+    #expect(s.mutedChatIDs == [ids[0]])
+    s.setArchived(ids[0], true)
+    #expect(!s.chats(in: .all).contains { $0.id == ids[0] })
+    #expect(s.archivedChats.map(\.id) == [ids[0]])
+    #expect(s.chat(id: ids[0])?.pinnedAt == nil)
+    #expect(s.setPinned(ids[0], true) == false)
+    #expect(s.setPinned(ids[5], true))   // archiving made room
+    s.setArchived(ids[0], false)
+    #expect(s.archivedChats.isEmpty && s.chats(in: .all).contains { $0.id == ids[0] })
+}
+
+@MainActor @Test func sampleDraftsShowAndBlankClears() {
+    let s = SampleChatStore()
+    let id = s.chats(in: .all)[0].id
+    s.setDraft(id, "half a thought")
+    #expect(s.chat(id: id)?.draft == "half a thought")
+    s.setDraft(id, "  \n ")
+    #expect(s.chat(id: id)?.draft == nil)
+}

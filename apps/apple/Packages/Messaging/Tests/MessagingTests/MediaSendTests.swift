@@ -151,6 +151,17 @@ private struct Rig {
 }
 
 @Suite("TestMediaSend") @MainActor struct TestMediaSend {
+    @Test func aMediaSendLeavesPinAndMuteAlone() async throws {
+        let rig = try await Rig.make()
+        #expect(rig.ana.store.setPinned("acc-bob", true))
+        rig.ana.store.setMuted("acc-bob", true)
+        try await rig.send()
+        await rig.ana.store.settle()
+        let chat = try #require(rig.ana.store.chat(id: "acc-bob"))
+        #expect(chat.pinnedAt != nil && chat.muted && !chat.archived)
+        #expect(rig.last?.status == .sent)
+    }
+
     @Test func theRowIsSendingBeforeTheUploadFinishesWithRealNameAndSize() async throws {
         let rig = try await Rig.make()
         rig.gate.hold()

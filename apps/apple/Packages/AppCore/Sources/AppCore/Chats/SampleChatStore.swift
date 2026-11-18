@@ -24,8 +24,8 @@ public final class SampleChatStore: ChatStore {
     }
 
     public func chats(in folder: ChatFolder) -> [Chat] {
-        allChats
-            .filter { !$0.isRequest }
+        ChatListOrder.sorted(allChats
+            .filter { !$0.isRequest && !$0.archived }
             .filter { chat in
                 switch folder.kind {
                 case .all: true
@@ -33,8 +33,14 @@ public final class SampleChatStore: ChatStore {
                 case .custom: chat.folderIDs.contains(folder.id)
                 }
             }
-            .sorted { ($0.lastMessage?.sentAt ?? .distantPast) > ($1.lastMessage?.sentAt ?? .distantPast) }
+        )
     }
+
+    public var archivedChats: [Chat] {
+        ChatListOrder.sorted(allChats.filter { !$0.isRequest && $0.archived })
+    }
+
+    public var mutedChatIDs: Set<String> { Set(allChats.filter(\.muted).map(\.id)) }
 
     public func folderChipTitle(_ folder: ChatFolder) -> String {
         guard folder.kind == .unread else { return folder.name }
@@ -186,6 +192,37 @@ public final class SampleChatStore: ChatStore {
     public func markRead(chatID: String) {
         defer { onChange?() }
         if let i = index(of: chatID) { allChats[i].unreadCount = 0 }
+    }
+
+    @discardableResult
+    public func setPinned(_ chatID: String, _ pinned: Bool) -> Bool {
+        guard let i = index(of: chatID) else { return false }
+        if !pinned {
+            allChats[i].pinnedAt = nil
+        } else if allChats[i].pinnedAt == nil {
+            guard !allChats[i].archived, allChats.filter({ $0.pinnedAt != nil }).count < ChatListOrder.maxPins else { return false }
+            allChats[i].pinnedAt = Date()
+        }
+        onChange?()
+        return true
+    }
+
+    public func setMuted(_ chatID: String, _ muted: Bool) {
+        defer { onChange?() }
+        if let i = index(of: chatID) { allChats[i].muted = muted }
+    }
+
+    public func setArchived(_ chatID: String, _ archived: Bool) {
+        defer { onChange?() }
+        guard let i = index(of: chatID) else { return }
+        allChats[i].archived = archived
+        if archived { allChats[i].pinnedAt = nil }
+    }
+
+    public func setDraft(_ chatID: String, _ text: String) {
+        defer { onChange?() }
+        guard let i = index(of: chatID) else { return }
+        allChats[i].draft = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
     }
 
     public func incomingCall(from caller: Contact, video: Bool) -> IncomingCallDecision {

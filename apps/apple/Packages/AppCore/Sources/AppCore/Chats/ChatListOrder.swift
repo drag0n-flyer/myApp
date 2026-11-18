@@ -8,17 +8,20 @@ public enum ChatListOrder {
     /// Pinned chats first, the newest pin on top; then the rest by last message, newest first.
     /// Equal times keep a stable order by chat ID.
     public static func sorted(_ chats: [Chat]) -> [Chat] {
-        let pinned = chats.filter { $0.pinnedAt != nil }
-        let rest = chats.filter { $0.pinnedAt == nil }
-        let byPin = pinned.sorted {
+        pinnedFirst(chats.sorted {
+            let a = $0.lastMessage?.sentAt ?? .distantPast, b = $1.lastMessage?.sentAt ?? .distantPast
+            return a != b ? a > b : $0.id < $1.id
+        })
+    }
+
+    /// Moves the pinned chats to the front, newest pin first; the others keep the order they came in. For a store
+    /// whose list is already in its own activity order.
+    public static func pinnedFirst(_ chats: [Chat]) -> [Chat] {
+        let pinned = chats.filter { $0.pinnedAt != nil }.sorted {
             let a = $0.pinnedAt ?? .distantPast, b = $1.pinnedAt ?? .distantPast
             return a != b ? a > b : $0.id < $1.id
         }
-        let byRecency = rest.sorted {
-            let a = $0.lastMessage?.sentAt ?? .distantPast, b = $1.lastMessage?.sentAt ?? .distantPast
-            return a != b ? a > b : $0.id < $1.id
-        }
-        return byPin + byRecency
+        return pinned + chats.filter { $0.pinnedAt == nil }
     }
 
     /// The main list (`archive == false`) or the archive (`archive == true`).

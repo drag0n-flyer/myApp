@@ -663,3 +663,169 @@ private func text(_ message: Message?) -> String? {
         #expect(await rig.server.conversationIDs() == [serverID])
     }
 }
+
+@MainActor
+@Suite("TestLiveChatStoreListActions") struct TestLiveChatStoreListActions {
+    /// Ana writes to bob, bob syncs: bob has a chat with ana holding one unread message.
+    private func bobHasChatWithAna(_ rig: Rig) async throws {
+        try await rig.anaChatsWithBob()
+        rig.clock.advance()
+        rig.ana.store.send(.text("first"), in: "acc-bob")
+        await rig.ana.store.settle()
+        await rig.bob.store.syncInbox()
+        await rig.bob.store.settle()
+    }
+
+    private func anaSendsAgain(_ rig: Rig) async {
+        rig.clock.advance()
+        rig.ana.store.send(.text("again"), in: "acc-bob")
+        await rig.ana.store.settle()
+        await rig.bob.store.syncInbox()
+        await rig.bob.store.settle()
+    }
+
+    private func addContacts(_ rig: Rig, _ ids: [String]) throws {
+        for id in ids {
+            rig.clock.advance()
+            try rig.ana.repo.upsertContact(ContactRecord(accountID: id, username: id, displayName: id, isContact: true, addedAt: rig.clock.now()))
+            _ = rig.ana.store.ensureChat(with: id)
+        }
+    }
+
+    @Test func anIncomingMessageLeavesPinMuteAndArchiveAlone() async throws {
+        let rig = try await Rig.make()
+        try await bobHasChatWithAna(rig)
+        let bob = rig.bob.store
+        #expect(bob.setPinned("acc-ana", true))
+        bob.setMuted("acc-ana", true)
+        await anaSendsAgain(rig)
+        let chat = try #require(bob.chat(id: "acc-ana"))
+        #expect(chat.pinnedAt != nil && chat.muted && !chat.archived)
+        #expect(chat.unreadCount == 2)
+        #expect(bob.mutedChatIDs == ["acc-ana"])
+
+        bob.setArchived("acc-ana", true)
+        await anaSendsAgain(rig)
+        let archived = try #require(bob.chat(id: "acc-ana"))
+        #expect(archived.archived && archived.muted && archived.pinnedAt == nil && archived.unreadCount == 3)
+    }
+
+    @Test func aSendAndACallRecordLeavePinMuteAndArchiveAlone() async throws {
+        let rig = try await Rig.make()
+        try await rig.anaChatsWithBob()
+        let ana = rig.ana.store
+        #expect(ana.setPinned("acc-bob", true))
+        ana.setMuted("acc-bob", true)
+        rig.clock.advance()
+        ana.send(.text("hello"), in: "acc-bob")
+        rig.clock.advance()
+        ana.recordCall(.missedAudio, contactID: "acc-bob", outgoing: false, at: rig.clock.now())
+        await ana.settle()
+        var chat = try #require(ana.chat(id: "acc-bob"))
+        #expect(chat.pinnedAt != nil && chat.muted && !chat.archived)
+
+        ana.setArchived("acc-bob", true)
+        rig.clock.advance()
+        ana.recordCall(.missedVideo, contactID: "acc-bob", outgoing: false, at: rig.clock.now())
+        ana.send(.text("more"), in: "acc-bob")
+        await ana.settle()
+        chat = try #require(ana.chat(id: "acc-bob"))
+        #expect(chat.archived && chat.muted && chat.pinnedAt == nil)
+    }
+
+    @Test func pinnedChatsListFirstAndArchivedChatsLeaveTheMainList() async throws {
+        let rig = try await Rig.make()
+        let store = rig.ana.store
+        try addContacts(rig, ["acc-x", "acc-y", "acc-z"])
+        #expect(store.chats(in: .all).map(\.id) == ["acc-z", "acc-y", "acc-x"])
+        rig.clock.advance()
+        #expect(store.setPinned("acc-x", true))
+        rig.clock.advance()
+        #expect(store.setPinned("acc-y", true))
+        #expect(store.chats(in: .all).map(\.id) == ["acc-y", "acc-x", "acc-z"])
+        store.setArchived("acc-y", true)
+        #expect(store.chats(in: .all).map(\.id) == ["acc-x", "acc-z"])
+        #expect(store.archivedChats.map(\.id) == ["acc-y"])
+        #expect(store.chat(id: "acc-y")?.pinnedAt == nil)
+        // An archived chat cannot be pinned.
+        #expect(store.setPinned("acc-y", true) == false)
+        store.setArchived("acc-y", false)
+        #expect(store.archivedChats.isEmpty)
+        #expect(store.chat(id: "acc-y")?.pinnedAt == nil)
+    }
+
+    @Test func theSixthPinIsRefused() async throws {
+        let rig = try await Rig.make()
+        let store = rig.ana.store
+        let ids = (1...6).map { "acc-p\($0)" }
+        try addContacts(rig, ids)
+        for id in ids.prefix(5) { #expect(store.setPinned(id, true)) }
+        #expect(store.setPinned(ids[5], true) == false)
+        #expect(store.chat(id: ids[5])?.pinnedAt == nil)
+        store.setPinned(ids[0], false)
+        #expect(store.setPinned(ids[5], true))
+    }
+
+    @Test func draftsAreSavedShownAndClearedWhenBlank() async throws {
+        let rig = try await Rig.make()
+        try await rig.anaChatsWithBob()
+        let store = rig.ana.store
+        var changes = 0
+        store.onChange = { changes += 1 }
+        store.setDraft("acc-bob", "half a thought")
+        #expect(store.chat(id: "acc-bob")?.draft == "half a thought")
+        #expect(try rig.ana.repo.drafts() == ["acc-bob": "half a thought"])
+        #expect(changes > 0)
+        store.setDraft("acc-bob", "half a thought, longer")
+        #expect(try rig.ana.repo.drafts() == ["acc-bob": "half a thought, longer"])
+        store.refresh()
+        #expect(store.chat(id: "acc-bob")?.draft == "half a thought, longer")
+        store.setDraft("acc-bob", "  \n")
+        #expect(store.chat(id: "acc-bob")?.draft == nil)
+        #expect(try rig.ana.repo.drafts().isEmpty)
+    }
+
+    @Test func aDraftTypedBeforeTheChatRowExistsIsWrittenWhenTheRowAppears() async throws {
+        let rig = try await Rig.make()
+        let store = rig.ana.store
+        store.setDraft("acc-new", "typed first")
+        #expect(try rig.ana.repo.drafts().isEmpty)
+        try addContacts(rig, ["acc-new"])
+        #expect(store.chat(id: "acc-new")?.draft == "typed first")
+        #expect(try rig.ana.repo.drafts() == ["acc-new": "typed first"])
+    }
+
+    @Test func aDraftSetBeforeAReloadIsNotReplacedByAnOlderOne() async throws {
+        let rig = try await Rig.make()
+        try await rig.anaChatsWithBob()
+        let store = rig.ana.store
+        store.setDraft("acc-bob", "old")
+        store.setDraft("acc-bob", "newer")
+        store.refresh()
+        store.refresh()
+        #expect(store.chat(id: "acc-bob")?.draft == "newer")
+    }
+
+    @Test func aDraftSurvivesARestartAndGoesWithTheChat() async throws {
+        let rig = try await Rig.make()
+        try await rig.anaChatsWithBob()
+        rig.ana.store.setDraft("acc-bob", "keep me")
+        let again = Side(rig.ana.device)
+        #expect(again.store.chat(id: "acc-bob")?.draft == "keep me")
+        try rig.ana.repo.deleteChat(id: "acc-bob")
+        #expect(try rig.ana.repo.drafts().isEmpty)
+    }
+
+    @Test func sendingClearsTheDraftOnlyWhenTheMessageWasQueued() async throws {
+        let rig = try await Rig.make()
+        try await rig.anaChatsWithBob()
+        let store = rig.ana.store
+        store.setDraft("acc-bob", "hello bob")
+        store.send(.text("   "), in: "acc-bob")   // blank: refused, nothing queued
+        #expect(store.chat(id: "acc-bob")?.draft == "hello bob")
+        store.send(.text("hello bob"), in: "acc-bob")
+        #expect(store.chat(id: "acc-bob")?.draft == nil)
+        #expect(try rig.ana.repo.drafts().isEmpty)
+        await store.settle()
+    }
+}

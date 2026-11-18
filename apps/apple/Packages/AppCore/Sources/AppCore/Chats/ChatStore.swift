@@ -19,6 +19,10 @@ public protocol ChatStore: AnyObject {
     var messageRequestsRowTitle: String? { get }
     /// Account IDs this device has blocked (Settings > Privacy).
     var blockedIDs: Set<String> { get }
+    /// Chats this device archived, in list order. They are left out of `chats(in:)`.
+    var archivedChats: [Chat] { get }
+    /// Chats this device muted: their notifications are silent and their unread count is neutral.
+    var mutedChatIDs: Set<String> { get }
     func chat(id: String) -> Chat?
     func contact(id: String) -> Contact?
     /// Called after any change to the store's data.
@@ -54,6 +58,13 @@ public protocol ChatStore: AnyObject {
     func unblock(contactID: String)
     func report(chatID: String)
     func markRead(chatID: String)
+    /// Pins or unpins on this device. False when 5 chats are already pinned or the chat is archived.
+    @discardableResult func setPinned(_ chatID: String, _ pinned: Bool) -> Bool
+    func setMuted(_ chatID: String, _ muted: Bool)
+    /// Archiving also unpins; unarchiving does not pin again.
+    func setArchived(_ chatID: String, _ archived: Bool)
+    /// The unsent text of a chat, kept on this device. Blank text removes it.
+    func setDraft(_ chatID: String, _ text: String)
     func incomingCall(from contact: Contact, video: Bool) -> IncomingCallDecision
     func addContact(username: String) async -> Contact?
     /// The chat with this contact, created empty if there is none yet.
