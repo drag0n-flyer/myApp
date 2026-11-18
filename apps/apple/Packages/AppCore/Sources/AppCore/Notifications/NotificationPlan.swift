@@ -64,7 +64,7 @@ public enum NotificationPlan {
                 category: lockedCategory, silent: silent, hidesContent: true, bodyNeedsTranslation: true)
         }
         return PlannedNotification(
-            title: sender, body: missedCall ? missedCallText : text, threadIdentifier: chatID,
+            title: sender, body: missedCall ? missedCallText : MessageFormat.plain(text), threadIdentifier: chatID,
             category: isRequest ? lockedCategory : messageCategory, silent: silent, hidesContent: false,
             bodyNeedsTranslation: missedCall)
     }
