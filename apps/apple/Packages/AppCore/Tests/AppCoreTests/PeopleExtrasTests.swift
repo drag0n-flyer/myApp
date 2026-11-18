@@ -7,32 +7,32 @@ import Testing
 @Test func aChangeTheProgramSetIsNotAUserEdit() {
     var tracker = ComposerEditTracker()
     tracker.willAssign("saved draft", current: "")
-    #expect(!tracker.isUserEdit(newText: "saved draft"))
+    do { let user = tracker.isUserEdit(newText: "saved draft"); #expect(!user) }
     // The next change is the person's.
-    #expect(tracker.isUserEdit(newText: "saved draft!"))
+    do { let user = tracker.isUserEdit(newText: "saved draft!"); #expect(user) }
 }
 
 @Test func anAssignmentThatChangesNothingDoesNotHideTheNextKeystroke() {
     var tracker = ComposerEditTracker()
     tracker.willAssign("", current: "")   // no change event will come
-    #expect(tracker.isUserEdit(newText: "h"))
+    do { let user = tracker.isUserEdit(newText: "h"); #expect(user) }
     tracker.willAssign("same", current: "same")
-    #expect(tracker.isUserEdit(newText: "same"))
+    do { let user = tracker.isUserEdit(newText: "same"); #expect(user) }
 }
 
 @Test func twoProgrammaticChangesInARowAreBothSkippedInOrder() {
     var tracker = ComposerEditTracker()
     tracker.willAssign("edit text", current: "draft")
-    #expect(!tracker.isUserEdit(newText: "edit text"))
+    do { let user = tracker.isUserEdit(newText: "edit text"); #expect(!user) }
     tracker.willAssign("draft", current: "edit text")
-    #expect(!tracker.isUserEdit(newText: "draft"))
-    #expect(tracker.isUserEdit(newText: "draf"))
+    do { let user = tracker.isUserEdit(newText: "draft"); #expect(!user) }
+    do { let user = tracker.isUserEdit(newText: "draf"); #expect(user) }
 }
 
 @Test func aDifferentTextThanTheOneSetIsAUserEdit() {
     var tracker = ComposerEditTracker()
     tracker.willAssign("a", current: "")
-    #expect(tracker.isUserEdit(newText: "ab"))
+    do { let user = tracker.isUserEdit(newText: "ab"); #expect(user) }
 }
 
 // MARK: Privacy switches
