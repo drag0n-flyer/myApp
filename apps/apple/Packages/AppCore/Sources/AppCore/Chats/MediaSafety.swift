@@ -34,10 +34,11 @@ public enum MediaFileName {
 
 /// Media files live only inside the app's own directories.
 public enum MediaPathGuard {
-    /// True when `url` is a file strictly inside `directory` once `.` and `..` are resolved.
+    /// True when `url` is strictly inside `directory` once `.`, `..` and symbolic links are resolved.
     public static func isInside(_ url: URL, directory: URL) -> Bool {
-        let base = directory.standardizedFileURL.pathComponents
-        let target = url.standardizedFileURL.pathComponents
+        // Symlinks are resolved on both sides, so a link inside the folder that points outside is refused.
+        let base = directory.resolvingSymlinksInPath().standardizedFileURL.pathComponents
+        let target = url.resolvingSymlinksInPath().standardizedFileURL.pathComponents
         guard target.count > base.count, !target.contains("..") else { return false }
         return Array(target.prefix(base.count)) == base
     }
@@ -49,37 +50,58 @@ public enum MediaPathGuard {
     }
 }
 
-/// A small least-recently-used cache.
+/// A least-recently-used cache bounded by total cost (bytes, for pictures), not by item count.
 public struct BoundedCache<Key: Hashable, Value> {
     private let capacity: Int
-    private var values: [Key: Value] = [:]
+    private var values: [Key: (value: Value, cost: Int)] = [:]
     private var order: [Key] = []
+    public private(set) var totalCost = 0
 
+    /// `capacity` is the largest total cost kept (with the default cost of 1, the largest number of items).
     public init(capacity: Int) { self.capacity = max(capacity, 1) }
 
     public var count: Int { values.count }
 
     public mutating func get(_ key: Key) -> Value? {
-        guard let value = values[key] else { return nil }
+        guard let entry = values[key] else { return nil }
         touch(key)
-        return value
+        return entry.value
     }
 
-    public mutating func set(_ key: Key, _ value: Value) {
-        values[key] = value
+    /// An item that costs more than the whole cache is not kept.
+    public mutating func set(_ key: Key, _ value: Value, cost: Int = 1) {
+        remove(key)
+        let cost = max(cost, 0)
+        guard cost <= capacity else { return }
+        values[key] = (value, cost)
+        totalCost += cost
         touch(key)
-        while order.count > capacity { values[order.removeFirst()] = nil }
+        while totalCost > capacity, let oldest = order.first { remove(oldest) }
     }
 
     public mutating func removeAll() {
         values = [:]
         order = []
+        totalCost = 0
+    }
+
+    private mutating func remove(_ key: Key) {
+        guard let entry = values.removeValue(forKey: key) else { return }
+        totalCost -= entry.cost
+        if let i = order.firstIndex(of: key) { order.remove(at: i) }
     }
 
     private mutating func touch(_ key: Key) {
         if let i = order.firstIndex(of: key) { order.remove(at: i) }
         order.append(key)
     }
+}
+
+/// While a call is on, a call owns the audio: voice messages do not play and the audio session is left alone.
+public enum VoicePlaybackPolicy {
+    public static func canPlay(isInCall: Bool) -> Bool { !isInCall }
+    /// A call that starts stops a voice message that is playing.
+    public static func shouldStop(isInCall: Bool, isPlaying: Bool) -> Bool { isInCall && isPlaying }
 }
 
 /// Files handed to the engine (photos picked, taken or imported) are plaintext copies in a staging folder.

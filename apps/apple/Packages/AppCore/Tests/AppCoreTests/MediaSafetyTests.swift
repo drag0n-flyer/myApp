@@ -59,6 +59,22 @@ import Testing
         #expect(!MediaPathGuard.isInside(dir, directory: dir))
     }
 
+    @Test func aSymlinkInsideThatPointsOutsideIsRefused() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("guard-\(UUID().uuidString)")
+        let media = root.appendingPathComponent("media"), outside = root.appendingPathComponent("outside")
+        try fm.createDirectory(at: media, withIntermediateDirectories: true)
+        try fm.createDirectory(at: outside, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: root) }
+        try Data("secret".utf8).write(to: outside.appendingPathComponent("secret.txt"))
+        try Data("mine".utf8).write(to: media.appendingPathComponent("ok.txt"))
+        try fm.createSymbolicLink(at: media.appendingPathComponent("link.txt"), withDestinationURL: outside.appendingPathComponent("secret.txt"))
+        try fm.createSymbolicLink(at: media.appendingPathComponent("dir"), withDestinationURL: outside)
+        #expect(MediaPathGuard.isInside(media.appendingPathComponent("ok.txt"), directory: media))
+        #expect(!MediaPathGuard.isInside(media.appendingPathComponent("link.txt"), directory: media))
+        #expect(!MediaPathGuard.isInside(media.appendingPathComponent("dir/secret.txt"), directory: media))
+    }
+
     @Test func safeComponentRejectsSeparatorsAndDots() {
         #expect(MediaPathGuard.isSafeComponent("0f3a-bc"))
         #expect(!MediaPathGuard.isSafeComponent("../x"))
@@ -88,6 +104,20 @@ import Testing
         cache.set("a", 5)
         #expect(cache.count == 1)
         #expect(cache.get("a") == 5)
+    }
+
+    @Test func costBoundsTheTotalNotTheCount() {
+        var cache = BoundedCache<String, Int>(capacity: 10)
+        cache.set("a", 1, cost: 6)
+        cache.set("b", 2, cost: 3)
+        #expect(cache.count == 2 && cache.totalCost == 9)
+        cache.set("c", 3, cost: 4)          // 13 > 10: the least recently used goes
+        #expect(cache.get("a") == nil && cache.get("b") == 2 && cache.get("c") == 3)
+        #expect(cache.totalCost == 7)
+        cache.set("huge", 9, cost: 11)      // larger than the whole cache: not kept, nothing else is lost
+        #expect(cache.get("huge") == nil && cache.count == 2)
+        cache.set("b", 5, cost: 1)          // replacing updates the cost
+        #expect(cache.totalCost == 5)
     }
 
     @Test func removeAllEmpties() {
@@ -196,5 +226,18 @@ import Testing
         let hits = store.searchMessages("e", limit: 50)
         #expect(!hits.isEmpty)
         #expect(hits.allSatisfy { $0.sentAt != .distantPast })
+    }
+}
+
+@Suite struct VoicePlaybackPolicyTests {
+    @Test func noPlaybackDuringACall() {
+        #expect(VoicePlaybackPolicy.canPlay(isInCall: false))
+        #expect(!VoicePlaybackPolicy.canPlay(isInCall: true))
+    }
+
+    @Test func aCallStartingStopsWhatPlays() {
+        #expect(VoicePlaybackPolicy.shouldStop(isInCall: true, isPlaying: true))
+        #expect(!VoicePlaybackPolicy.shouldStop(isInCall: true, isPlaying: false))
+        #expect(!VoicePlaybackPolicy.shouldStop(isInCall: false, isPlaying: true))
     }
 }
