@@ -34,19 +34,28 @@ public final class SampleChatStore: ChatStore {
     public private(set) var folders: [ChatFolder]
     public private(set) var blockedIDs: Set<String> = []
     public private(set) var reportedChatIDs: Set<String> = []
-    private var allChats: [Chat]
+    var allChats: [Chat]
     /// Message info of the sample groups' own messages, by message ID.
     private var sampleReceipts: [String: MessageReceiptLists] = [:]
     private let directory: [String: String]
     private var nextID = 0
 
-    public init(data: SampleData = .default) {
+    /// What the sample store keeps of a group besides its chat row (see `SampleChatStore+Groups`).
+    struct SampleGroup {
+        var members: [GroupMember]
+        var photo: Data?
+        var myState: GroupMyState = .member
+    }
+    var sampleGroups: [String: SampleGroup] = [:]
+
+    public init(data: SampleData = .default, memberGroup: Bool = false) {
         me = data.me
         contacts = data.contacts
         folders = data.folders
         allChats = data.chats
         directory = data.directory
         for sender in data.requestSenders { requestSenders[sender.id] = sender }
+        if memberGroup { seedMemberGroup() }
     }
 
     public func chats(in folder: ChatFolder) -> [Chat] {
@@ -385,6 +394,9 @@ public final class SampleChatStore: ChatStore {
         }
         allChats.append(Chat(id: id, contactID: nil, encryption: .endToEnd, folderIDs: [], unreadCount: 0, messages: seeded,
                              isRequest: false, title: title))
+        sampleGroups[id] = SampleGroup(
+            members: [GroupMember(accountID: me.id, role: .owner)] + others.sorted().map { GroupMember(accountID: $0, role: .member) },
+            photo: photo.flatMap(GroupScreenRules.displayablePhoto))
         return .created(chatID: id, notAdded: [])
     }
 

@@ -168,6 +168,29 @@
         }
       }
     },
+    "%lld members" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld member"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld members"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "%lld of %lld" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -322,6 +345,17 @@
         }
       }
     },
+    "Add members" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add members"
+          }
+        }
+      }
+    },
     "Add people" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -329,6 +363,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Add people"
+          }
+        }
+      }
+    },
+    "Admin" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Admin"
           }
         }
       }
@@ -619,6 +664,17 @@
         }
       }
     },
+    "Choose a new owner before you leave." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose a new owner before you leave."
+          }
+        }
+      }
+    },
     "Choose at least 2 people" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -747,6 +803,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Copy"
+          }
+        }
+      }
+    },
+    "Couldn't change the group. Check your connection and try again." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't change the group. Check your connection and try again."
           }
         }
       }
@@ -938,6 +1005,17 @@
         }
       }
     },
+    "Delete chat" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete chat"
+          }
+        }
+      }
+    },
     "Delete recording" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -945,6 +1023,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Delete recording"
+          }
+        }
+      }
+    },
+    "Delete this chat?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete this chat?"
           }
         }
       }
@@ -1180,6 +1269,17 @@
         }
       }
     },
+    "Everyone you know is already here" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Everyone you know is already here"
+          }
+        }
+      }
+    },
     "Files" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1257,6 +1357,17 @@
         }
       }
     },
+    "Group photo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Group photo"
+          }
+        }
+      }
+    },
     "Hold to record, release to send" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1323,6 +1434,17 @@
         }
       }
     },
+    "Info" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Info"
+          }
+        }
+      }
+    },
     "Invite with a link" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1356,6 +1478,17 @@
         }
       }
     },
+    "Its messages and files are removed from this device." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Its messages and files are removed from this device."
+          }
+        }
+      }
+    },
     "last seen %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1363,6 +1496,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "last seen %@"
+          }
+        }
+      }
+    },
+    "Leave group" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Leave group"
+          }
+        }
+      }
+    },
+    "Leave this group?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Leave this group?"
           }
         }
       }
@@ -1455,6 +1610,39 @@
         }
       }
     },
+    "Make %@ the owner?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Make %@ the owner?"
+          }
+        }
+      }
+    },
+    "Make admin" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Make admin"
+          }
+        }
+      }
+    },
+    "Make owner" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Make owner"
+          }
+        }
+      }
+    },
     "Mark as read" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1495,6 +1683,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Media and files"
+          }
+        }
+      }
+    },
+    "Member" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Member"
+          }
+        }
+      }
+    },
+    "Members" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Members"
           }
         }
       }
@@ -1950,6 +2160,17 @@
         }
       }
     },
+    "Owner" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Owner"
+          }
+        }
+      }
+    },
     "Passkeys aren't available on this server. Use an email code instead." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2199,6 +2420,39 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Recording locked"
+          }
+        }
+      }
+    },
+    "Remove %@ from this group?" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove %@ from this group?"
+          }
+        }
+      }
+    },
+    "Remove as admin" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove as admin"
+          }
+        }
+      }
+    },
+    "Remove from group" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove from group"
           }
         }
       }
@@ -2863,6 +3117,17 @@
         }
       }
     },
+    "This group or person could not be found." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This group or person could not be found."
+          }
+        }
+      }
+    },
     "This is your own link." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3248,6 +3513,17 @@
         }
       }
     },
+    "View safety number" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "View safety number"
+          }
+        }
+      }
+    },
     "Voice message, %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3325,6 +3601,17 @@
         }
       }
     },
+    "You can't do that in this group." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You can't do that in this group."
+          }
+        }
+      }
+    },
     "You have too many unused links. Wait for one to expire." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3398,6 +3685,39 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "You were added"
+          }
+        }
+      }
+    },
+    "You will become an admin." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You will become an admin."
+          }
+        }
+      }
+    },
+    "You will stop getting its messages. Its history stays on this device until you delete the chat." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You will stop getting its messages. Its history stays on this device until you delete the chat."
+          }
+        }
+      }
+    },
+    "You're no longer in this group" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You're no longer in this group"
           }
         }
       }
