@@ -7,6 +7,9 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.example.app.AppGraph
 import org.example.app.contracts.NotificationOutcome
+import org.example.app.core.chats.ChatStore
+import org.example.app.core.notify.NotificationPlan
+import org.example.app.push.MessageNotifier
 import org.example.app.contracts.PushPayloadHandler
 import org.example.app.contracts.RingOutcome
 import org.example.app.net.ServerClient
@@ -53,6 +56,9 @@ object PushWiring {
                 graph().openSession()?.chatStore?.recordStrangerMissedCall(callId, fromAccountId)
             }
         }
+        // The two switches the notifications read. Wired here and nowhere else: N4 (mute) and N6 (app lock) replace these lines.
+        PushRuntime.mutedChatIds = { emptySet() }
+        PushRuntime.appLockOn = { false }
         PushRuntime.dispatcher = PushDispatcher(handler, ring, AndroidPushEffects(app, missed))
         PushRuntime.inboxFetcher = object : InboxFetcher {
             override suspend fun fetch(): List<NotificationOutcome> = graph().openSession()?.notifications?.fetchOutcomes() ?: emptyList()
@@ -66,6 +72,17 @@ object PushWiring {
             override suspend fun onFcmToken(token: String) {
                 registrar(graph())?.register(PushTransport.Fcm, PushRegistration.Fcm(token))
             }
+        }
+    }
+
+    /** A chat whose unread count falls to zero was read (in the app or from its notification): its notification goes. */
+    suspend fun cancelReadChats(context: Context, store: ChatStore) {
+        val notifier = MessageNotifier(context.applicationContext)
+        var before = emptyMap<String, Int>()
+        store.chats.collect { chats ->
+            val after = chats.associate { it.id to it.unreadCount }
+            NotificationPlan.readChats(before, after).forEach(notifier::cancelChat)
+            before = after
         }
     }
 
