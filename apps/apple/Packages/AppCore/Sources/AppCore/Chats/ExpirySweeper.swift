@@ -7,6 +7,9 @@ public enum ExpiryPlan {
     /// The shortest wait, so a clock that is a hair behind never makes the loop spin.
     public static let shortestWait: TimeInterval = 0.05
 
+    /// The wait when something is due but the sweep removed nothing (a delete keeps failing): not a spin.
+    public static let stuckWait: TimeInterval = 5
+
     /// The time until `next`, kept between `shortestWait` and `longestWait`; `longestWait` when nothing will expire.
     public static func delay(next: Date?, now: Date) -> TimeInterval {
         guard let next else { return longestWait }
@@ -41,7 +44,9 @@ public final class ExpirySweeper {
         let current = now()
         let removed = store.sweepExpired(now: current)
         if !removed.isEmpty { removeNotifications(removed) }
-        return ExpiryPlan.delay(next: store.nextExpiry(), now: current)
+        let next = store.nextExpiry()
+        if removed.isEmpty, let next, next <= current { return ExpiryPlan.stuckWait }
+        return ExpiryPlan.delay(next: next, now: current)
     }
 
     /// Sweeps, waits for the next expiry, and repeats until `sleep` throws.

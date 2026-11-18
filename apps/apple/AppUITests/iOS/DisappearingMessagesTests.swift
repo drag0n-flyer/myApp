@@ -13,7 +13,7 @@ final class DisappearingMessagesTests: XCTestCase {
 
         let row = app.element("chatinfo.timer")
         XCTAssertTrue(row.waitToExist())
-        XCTAssertTrue(row.label.contains("Off"))
+        XCTAssertTrue("\(row.label) \(row.value as? String ?? "")".contains("Off"))
         row.tap()
 
         let day = app.element("chatinfo.timer.86400")
@@ -24,7 +24,7 @@ final class DisappearingMessagesTests: XCTestCase {
         app.navigationBars.buttons.element(boundBy: 0).tap()
         let updated = app.element("chatinfo.timer")
         XCTAssertTrue(updated.waitToExist())
-        XCTAssertTrue(updated.label.contains("1 day"))
+        XCTAssertTrue("\(updated.label) \(updated.value as? String ?? "")".contains("1 day"))
 
         app.navigationBars.buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.staticTexts["You set messages to disappear after 1 day"].waitToExist())

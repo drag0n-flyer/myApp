@@ -13,6 +13,14 @@ private final class FakeStore: PeopleStore {
     func nextExpiry() -> Date? { due.values.min() }
 }
 
+/// A store whose sweep removes nothing although a message is due (a delete that keeps failing).
+@MainActor
+private final class StuckStore: PeopleStore {
+    var next: Date?
+    func sweepExpired(now: Date) -> [String] { [] }
+    func nextExpiry() -> Date? { next }
+}
+
 @MainActor
 private final class Clock {
     var now: Date
@@ -81,6 +89,23 @@ private final class Clock {
         let clock = Clock(1_000)
         let sweeper = ExpirySweeper(store: store, now: { clock.now }, sleep: { _ in }, removeNotifications: { _ in })
         #expect(sweeper.tick() == 30)
+    }
+
+    @Test func aSweepThatKeepsFailingWaitsFiveSecondsNotSpins() {
+        let store = StuckStore()
+        store.next = Date(timeIntervalSince1970: 1_000)
+        let clock = Clock(1_000)
+        var removed = 0
+        let sweeper = ExpirySweeper(store: store, now: { clock.now }, sleep: { _ in }, removeNotifications: { _ in removed += 1 })
+        #expect(sweeper.tick() == 5)
+        store.next = Date(timeIntervalSince1970: 900)
+        #expect(sweeper.tick() == 5)
+        #expect(removed == 0)
+        // Something due later is still waited for exactly, and nothing at all is the usual minute.
+        store.next = Date(timeIntervalSince1970: 1_010)
+        #expect(sweeper.tick() == 10)
+        store.next = nil
+        #expect(sweeper.tick() == 60)
     }
 
     private struct Stop: Error {}
