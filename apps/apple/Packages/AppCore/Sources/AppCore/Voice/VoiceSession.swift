@@ -39,11 +39,11 @@ public final class VoiceSession {
     public private(set) var dragOffset: (dx: Double, dy: Double) = (0, 0)
 
     private let capture: VoiceCapture
-    private let rtl: Bool
+    public var rtl: Bool
     private let startDelay: Duration
     private let hintDuration: Duration
     private let maxDuration: Double
-    private let onSend: (URL, Double) -> Void
+    public var onSend: (URL, Double) -> Void
     private var startTask: Task<Void, Never>?
     private var ticker: Task<Void, Never>?
     private var hintTask: Task<Void, Never>?
@@ -116,6 +116,13 @@ public final class VoiceSession {
     public func send() { apply(.sendTapped) }
     /// A call began or the app went to the background.
     public func interrupted() { apply(.interrupted) }
+
+    /// The composer is going away: drop whatever is recording or waiting, sending nothing.
+    public func discard() {
+        guard state != .idle else { return }
+        discardRecording()
+        reset()
+    }
 
     public func dismissDenied() { denied = false }
 

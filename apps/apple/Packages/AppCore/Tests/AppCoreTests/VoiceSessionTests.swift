@@ -200,6 +200,28 @@ final class VoiceSessionTests: XCTestCase {
         XCTAssertTrue(session.denied)
     }
 
+    func testDiscardRemovesARecordingAndAPreview() async {
+        await hold()
+        session.discard()
+        XCTAssertEqual(files(), [])
+        XCTAssertEqual(session.state, .idle)
+
+        await hold()
+        session.interrupted()
+        XCTAssertEqual(session.state, .preview)
+        session.discard()
+        XCTAssertEqual(files(), [])
+        XCTAssertNil(session.previewURL)
+        XCTAssertTrue(sent.isEmpty)
+    }
+
+    func testRightToLeftSessionCancelsTowardTheTrailingSideOfLTR() async {
+        session.rtl = true
+        await hold()
+        session.drag(dx: 110, dy: 0)
+        XCTAssertEqual(session.state, .willCancel)
+    }
+
     func testOrphanRecordingsAreRemovedAtStart() throws {
         for name in ["voice-a.caf", "voice-b.ogg", "keep.txt"] {
             try Data([1]).write(to: folder.appendingPathComponent(name))
