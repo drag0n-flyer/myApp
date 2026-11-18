@@ -146,6 +146,12 @@ class LiveCallEngine(
     override fun setVideo(on: Boolean) = submit(CallEvent.SetVideo(on))
 
     override fun setNetwork(type: NetworkType) = enqueue {
+        // The network the call already runs on (from its context until the first report): a repeat changes nothing,
+        // and must not restart the media path again.
+        if (type == (network ?: callContext(isContact).network)) {
+            network = type
+            return@enqueue
+        }
         network = type
         run(machine.handle(CallEvent.ContextChanged(callContext(isContact))))
         if (live) run(machine.handle(CallEvent.PathChanged))

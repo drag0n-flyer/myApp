@@ -100,7 +100,8 @@ class LiveCallEngineTest {
         @Volatile var closeDelayMs = 0L
         @Volatile var configured = false
         override suspend fun configure(iceServers: List<IceServer>, policy: IceTransportPolicy, video: Boolean) { configured = true }
-        override suspend fun makeOffer(receive: AudioProfile, iceRestart: Boolean) = SDP
+        val offers = mutableListOf<Boolean>()
+        override suspend fun makeOffer(receive: AudioProfile, iceRestart: Boolean): String { offers += iceRestart; return SDP }
         override suspend fun acceptOffer(sdp: String, send: AudioProfile, receive: AudioProfile) = SDP
         override suspend fun acceptAnswer(sdp: String, send: AudioProfile) = Unit
         override suspend fun rollback() = Unit
@@ -463,6 +464,22 @@ class LiveCallEngineTest {
         h.signaling.events.emit(CallServerEvent.Ring("c1", "bob", "d1", false, sealer.from("bob", "d1", p)))
         runCurrent()
         assertEquals(listOf("incoming:c1"), h.controller.log)
+    }
+
+    @Test
+    fun aBurstOfTheSameNetworkDoesNotRestartTheCall() = runTest(UnconfinedTestDispatcher()) {
+        val h = harness()
+        h.engine.start("bob", video = false)
+        runCurrent()
+        val before = h.session.offers.count { it }
+        // The call began on Wi-Fi (the context): twenty Wi-Fi reports are not a change.
+        repeat(20) { h.engine.setNetwork(NetworkType.Wifi) }
+        runCurrent()
+        assertEquals(before, h.session.offers.count { it })
+        // A real change is acted on at most once, however often it is repeated (a call still connecting has nothing to restart).
+        repeat(20) { h.engine.setNetwork(NetworkType.Mobile) }
+        runCurrent()
+        assertTrue(h.session.offers.count { it } <= before + 1)
     }
 
     @Test
