@@ -248,6 +248,16 @@ abstract class RepositoryContract {
         assertEquals(listOf("m2"), repo.dueOutboxHeads(200).map { it.messageId })
     }
 
+    @Test fun aSecondRetryOfAFailedMessageEnqueuesNothing() {
+        repo.enqueueSend(message("m1", status = "sending"), OutboxRecord("m1", "chat1", byteArrayOf(1), 0, 100))
+        repo.completeSend("m1", "failed")
+        assertTrue(repo.requeueSend("m1", 200))
+        // Two quick taps on "Try again": the second finds the message already sending.
+        assertFalse(repo.requeueSend("m1", 201))
+        assertEquals(1, repo.dueOutbox(Long.MAX_VALUE).count { it.messageId == "m1" })
+        assertFalse(repo.requeueSend("unknown", 202))
+    }
+
     @Test fun deletingChatCascades() {
         repo.insertMessage(message("m1", "hello world"))
         repo.enqueue(OutboxRecord("m1", "chat1", byteArrayOf(1), 0, 1))

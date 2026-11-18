@@ -150,6 +150,8 @@ class LiveChatStore(
     private val reloadLock = Any()
     private val writes = Channel<() -> Unit>(Channel.UNLIMITED)
     private val inFlight = MutableStateFlow(0)
+    /** Only the queued writes (not sends or syncs): what [awaitWrites] waits for. */
+    private val writesInFlight = MutableStateFlow(0)
     private val flushRunning = AtomicBoolean(false)
     private val flushWanted = AtomicBoolean(false)
     private val pendingRunning = AtomicBoolean(false)
@@ -163,6 +165,7 @@ class LiveChatStore(
             for (job in writes) {
                 try { job() } catch (e: CancellationException) { throw e } catch (_: Exception) { }
                 reload()
+                writesInFlight.update { it - 1 }
                 inFlight.update { it - 1 }
             }
         }
@@ -178,6 +181,10 @@ class LiveChatStore(
         inFlight.first { it == 0 }
     }
 
+    override suspend fun awaitWrites() {
+        writesInFlight.first { it == 0 }
+    }
+
     /** Stops the store before its data is wiped (sign-out): later work does nothing. */
     suspend fun shutdown() {
         closed.set(true)
@@ -187,7 +194,8 @@ class LiveChatStore(
     private fun write(job: () -> Unit) {
         if (closed.get()) return
         inFlight.update { it + 1 }
-        if (writes.trySend(job).isFailure) inFlight.update { it - 1 }
+        writesInFlight.update { it + 1 }
+        if (writes.trySend(job).isFailure) { writesInFlight.update { it - 1 }; inFlight.update { it - 1 } }
     }
 
     private fun requestFlush() {
@@ -299,7 +307,7 @@ class LiveChatStore(
                 is MessagePreview.Text -> p.text
                 is MessagePreview.Resource -> ""
             }
-            MessageHit(hit.chatId, hit.messageId, text)
+            MessageHit(hit.chatId, hit.messageId, text, Instant.ofEpochMilli(record.sentAt))
         }
     }
 
@@ -317,11 +325,11 @@ class LiveChatStore(
         }
     }
 
-    /** Messages that gave up sending. `:core` has no failed status, so they show as sending; the UI offers [retrySend]. */
+    /** Messages that gave up sending (they show as [DeliveryStatus.Failed]; the UI offers [retrySend]). */
     fun failedMessageIds(chatId: String): Set<String> =
         repo.messages(chatId, null, 200).filter { it.status == "failed" && it.senderAccount == device.accountId }.map { it.id }.toSet()
 
-    fun retrySend(messageId: String) = write { if (outbox.retry(messageId)) requestFlush() }
+    override fun retrySend(messageId: String) = write { if (outbox.retry(messageId)) requestFlush() }
 
     /** [path] is the picked or recorded file; [MediaPreparer] turns it into the upload. */
     override fun sendAttachment(path: String, kind: MediaKind, chatId: String) {

@@ -263,6 +263,15 @@ fun AppRoot(
                     onBack = { nav.popBackStack() },
                     onOpenInfo = { nav.navigate("chatinfo/$id") },
                     onCall = if (graph.callsAvailable) { video -> callVm.start(id, video) } else null,
+                    onAccept = { graph.chatStore.accept(id) },
+                    onBlock = { contactId ->
+                        graph.chatStore.block(contactId)
+                        nav.popBackStack(MAIN, inclusive = false)
+                    },
+                    onReport = { graph.chatStore.report(id) },
+                    onForward = { target -> if (target != id) nav.navigate("chat/${Uri.encode(target)}") },
+                    // Set by a search hit in the chat list; absent from routes that do not declare it.
+                    highlightMessageId = entry.arguments?.getString("highlight")?.takeIf { it.isNotBlank() },
                 )
             }
             composable(INFO, idArg) { entry ->

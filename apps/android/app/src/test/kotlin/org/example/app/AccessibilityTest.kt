@@ -251,7 +251,7 @@ class AccessibilityTest {
         }
     }
 
-    @Test fun attachSheet() = open({ Composer(enabled = true, onSend = {}, onAttach = {}, onRecordVoice = {}) }) {
+    @Test fun attachSheet() = open({ Composer(enabled = true, text = "", onTextChange = {}, onSend = {}, onAttach = {}, onRecordVoice = {}) }) {
         onNodeWithContentDescription("Attach").performClick()
         onNodeWithText("Photo").assertIsDisplayed()
     }
@@ -368,7 +368,7 @@ class AccessibilityTest {
         var dir by androidx.compose.runtime.mutableStateOf(LayoutDirection.Ltr)
         rule.setContent {
             CompositionLocalProvider(LocalLayoutDirection provides dir) {
-                AppTheme { Composer(enabled = true, onSend = {}, onAttach = {}, onRecordVoice = {}) }
+                AppTheme { Composer(enabled = true, text = "", onTextChange = {}, onSend = {}, onAttach = {}, onRecordVoice = {}) }
             }
         }
         fun attachLeft() = rule.onNodeWithContentDescription("Attach").fetchSemanticsNode().boundsInRoot.left

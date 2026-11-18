@@ -64,10 +64,13 @@ class LocalData(private val context: Context, private val platform: LivePlatform
             step { secrets().delete(SecretNames.DB_KEY) }
             step { secrets().delete(SecretNames.MLS_SIGNING) }
         }
-        val left = databaseFile().exists() || dirs().any { it.exists() } ||
-            (kind == FULL && !platform.secretsDir.listFiles().isNullOrEmpty())
-        if (failure == null && !left) step { if (!marker.delete() && marker.exists()) error("marker not deleted") }
-        else if (failure == null) failure = IllegalStateException("data left after the wipe")
+        val left = buildList {
+            if (databaseFile().exists()) add("database")
+            dirs().filter { it.exists() }.forEach { add(it.name) }
+            if (kind == FULL && !platform.secretsDir.listFiles().isNullOrEmpty()) add("secrets")
+        }
+        if (failure == null && left.isEmpty()) step { if (!marker.delete() && marker.exists()) error("marker not deleted") }
+        else if (failure == null) failure = IllegalStateException("data left after the wipe: ${left.joinToString()}") // names only
         return failure
     }
 

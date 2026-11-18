@@ -11,7 +11,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.job
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -484,7 +485,9 @@ class AppGraph(
         step { session.calls.shutdown() }
         step { session.socket.stop() }
         step { withTimeoutOrNull(SHUTDOWN_MS) { session.chatStore.shutdown() } }
-        step { session.scope.cancel() }
+        // Wait for the session's jobs to end: a download or upload in a blocking write must not re-create a folder the wipe
+        // is about to delete.
+        step { withTimeoutOrNull(SHUTDOWN_MS) { session.scope.coroutineContext.job.cancelAndJoin() } }
         if (wipeRows) step { session.deviceSync.wipeLocalData() }
         step { session.database.close() }
     }

@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import org.example.app.R
 import org.example.app.core.chats.ChatStore
 import org.example.app.core.chats.MessageContent
+import org.example.app.ui.chat.ChatSearchRequests
 import org.example.app.ui.usernameText
 import org.example.app.ui.Avatar
 import org.example.app.ui.keyString
@@ -57,6 +58,7 @@ fun ChatInfoScreen(
     onBack: () -> Unit,
     /** Null hides the call buttons (no live calls before E6). */
     onCall: ((video: Boolean) -> Unit)?,
+    /** Not used any more: Search goes back to the chat through [ChatSearchRequests]. Kept so the call site compiles. */
     onSearch: (name: String) -> Unit,
     onBlocked: () -> Unit,
     modifier: Modifier = Modifier,
@@ -94,7 +96,8 @@ fun ChatInfoScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (onCall != null) TextButton(onClick = { onCall(false) }) { Text(stringResource(R.string.info_audio)) }
                     if (onCall != null) TextButton(onClick = { onCall(true) }) { Text(stringResource(R.string.info_video)) }
-                    TextButton(onClick = { onSearch(contact.displayName) }) { Text(stringResource(R.string.info_search)) }
+                    // The chat underneath opens its search field when it is back on top.
+                    TextButton(onClick = { ChatSearchRequests.request(chatId); onBack() }) { Text(stringResource(R.string.info_search)) }
                 }
             }
             HorizontalDivider()
@@ -168,6 +171,7 @@ fun ChatInfoScreen(
             AlertDialog(
                 onDismissRequest = { confirmReport = false },
                 title = { Text(stringResource(R.string.report_title)) },
+                text = { Text(stringResource(R.string.report_body)) },
                 confirmButton = { TextButton(onClick = { confirmReport = false; store.report(chatId) }) { Text(stringResource(R.string.info_report)) } },
                 dismissButton = { TextButton(onClick = { confirmReport = false }) { Text(stringResource(R.string.cancel)) } },
             )

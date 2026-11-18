@@ -50,12 +50,29 @@ data class MediaState(val attachmentId: String, val phase: Phase) {
     }
 }
 
-data class MessageHit(val chatId: String, val messageId: String, val preview: String)
+data class MessageHit(val chatId: String, val messageId: String, val preview: String, val sentAt: Instant? = null)
 
 /** 12 groups of 5 digits, shown 3 per row in the Verify screen. */
 data class SafetyNumber(val groups: List<String>, val isVerified: Boolean)
 
-enum class DeliveryStatus { Sending, Sent, Delivered, Read }
+/** `Failed`: the outbox gave up; the bubble offers "Try again". */
+enum class DeliveryStatus { Sending, Sent, Delivered, Read, Failed }
+
+/** Position on the way to read: Sending 0, Sent 1, Delivered 2, Read 3. `Failed` is not on that road and has no rank. */
+fun DeliveryStatus.rank(): Int? = when (this) {
+    DeliveryStatus.Sending -> 0
+    DeliveryStatus.Sent -> 1
+    DeliveryStatus.Delivered -> 2
+    DeliveryStatus.Read -> 3
+    DeliveryStatus.Failed -> null
+}
+
+/** True when this status is at least [wanted] on that road. A failed message reaches nothing. */
+fun DeliveryStatus.reaches(wanted: DeliveryStatus): Boolean {
+    val have = rank() ?: return false
+    val need = wanted.rank() ?: return false
+    return have >= need
+}
 
 /** A one-line summary of a message: literal text, or a string resource key with its arguments. */
 sealed interface MessagePreview {

@@ -411,4 +411,34 @@
     <string name="server_footer">Switching to another server doesn\'t move your contacts or chats.</string>
     <string name="account_unavailable_message">Can\'t open your account right now</string>
     <string name="account_unavailable_retry">Try again</string>
+
+    <!-- Chat screen: message actions, history, search, request bar (spec 5.2, 5.3) -->
+    <string name="chat_action_reply">Reply</string>
+    <string name="chat_action_copy">Copy</string>
+    <string name="chat_action_forward">Forward</string>
+    <string name="chat_action_edit">Edit</string>
+    <string name="chat_action_delete">Delete</string>
+    <string name="chat_message_options">Message options</string>
+    <string name="chat_react_with">React with %1$s</string>
+    <string name="chat_editing">Editing</string>
+    <string name="chat_replying_to">Replying to %1$s</string>
+    <string name="chat_bar_close">Close</string>
+    <string name="chat_delete_confirm">Delete this message for everyone?</string>
+    <string name="chat_not_sent">Not sent</string>
+    <string name="chat_try_again">Try again</string>
+    <string name="chat_today">Today</string>
+    <string name="chat_yesterday">Yesterday</string>
+    <string name="chat_unread_messages">Unread messages</string>
+    <string name="chat_scroll_to_newest">Scroll to newest</string>
+    <string name="chat_scroll_to_newest_count">Scroll to newest, %1$d new</string>
+    <string name="chat_search">Search in chat</string>
+    <string name="chat_search_no_results">No results</string>
+    <string name="chat_empty">No messages yet</string>
+    <string name="chat_forward_to">Forward to…</string>
+    <string name="chat_original_message">Original message</string>
+    <string name="chat_request_accept">Accept</string>
+    <string name="chat_request_block">Block</string>
+    <string name="chat_request_report">Report</string>
+    <string name="chat_request_explainer">This person isn\'t in your contacts. Their calls won\'t ring until you accept.</string>
+    <string name="report_body">The last 10 messages will be sent to the server admin.</string>
 </resources>

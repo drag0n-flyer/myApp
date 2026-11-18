@@ -50,6 +50,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
@@ -249,6 +250,39 @@ class AppGraphTest {
         assertEquals(AccountState.SignedOut, graph.accountState)
         assertNull(graph.liveSession)
         assertFalse(socket.running)
+    }
+
+    /**
+     * A download or upload in a blocking write is still running when the wipe starts. The wipe waits for it to end, so
+     * its folder is not re-created after the delete. (Without the wait the write lands 1 s later, after the wipe's deletes, and
+     * the test fails; with the wait it passes whatever the timing.)
+     */
+    @Test
+    fun aBlockingWriteInTheSessionCannotRecreateAFolderAfterTheWipe() = runBlocking {
+        val (graph, session) = opened()
+        val started = java.util.concurrent.CountDownLatch(1)
+        val writing = session.scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            started.countDown()
+            Thread.sleep(1_000) // a blocking write cannot be cancelled; it ends on its own
+            File(root, "media/blobs").apply { mkdirs() }.resolve("late").writeText("x")
+        }
+        assertTrue(started.await(5, java.util.concurrent.TimeUnit.SECONDS))
+        graph.wipeAfterRevocation()
+        writing.join() // let a write that outlived the wipe land before looking
+        assertAllGone()
+        assertFalse(marker.exists(), "marker cleared")
+    }
+
+    @Test
+    fun aWipeThatLeavesDataSaysWhatWasLeftByNameOnly() {
+        val kept = object : org.example.app.contracts.SecretStore by org.example.app.contracts.MemorySecretStore() {
+            override fun wipeAll() {} // the secrets stay
+        }
+        File(root, "secrets").apply { mkdirs() }.resolve("session").writeText("TOPSECRET")
+        val failure = org.example.app.live.LocalData(context, platform()) { kept }.deleteAll(org.example.app.live.LocalData.FULL)
+        val message = assertNotNull(failure).message.orEmpty()
+        assertTrue("secrets" in message, message)
+        assertFalse("TOPSECRET" in message, message)
     }
 
     /** A kill after the marker: the next launch finishes the wipe before any data or key is opened. */
@@ -620,7 +654,7 @@ class AppGraphTest {
         val a = async(Dispatchers.IO) { runCatching { graph.saveFindByEmail(first) } }
         while (seen.get() == 0) Thread.sleep(10)
         val b = async(Dispatchers.IO) { runCatching { graph.saveFindByEmail(second) } }
-        Thread.sleep(300) // the second save is waiting for the first one's turn
+        Thread.sleep(1_000) // the second save is waiting for the first one's turn
         gate.countDown()
         val results = a.await() to b.await()
         lastFindByEmail = graph.settingsStore.settings.value.findByEmail
