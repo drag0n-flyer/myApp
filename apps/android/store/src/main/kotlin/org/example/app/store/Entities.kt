@@ -136,6 +136,9 @@ data class OutboxEntity(
     val envelope: ByteArray,
     val attempts: Int,
     @ColumnInfo(name = "next_attempt_at") val nextAttemptAt: Long,
+    /** MLS ciphertext made for [envelope] and the epoch it was made in; null until the first encrypt. Added in version 3. */
+    val ciphertext: ByteArray? = null,
+    @ColumnInfo(name = "cipher_epoch") val cipherEpoch: Long? = null,
 )
 
 @Entity(tableName = "inbox_raw")

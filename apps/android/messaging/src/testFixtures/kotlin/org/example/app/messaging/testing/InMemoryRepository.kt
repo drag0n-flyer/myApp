@@ -195,7 +195,11 @@ class InMemoryRepository : Repository {
     override fun replaceUnsentEnvelope(id: String, sender: String, envelope: ByteArray, folded: String, receivedAt: Long): Boolean = tx {
         val m = s.messages[id]
         if (m == null || m.senderAccount != sender || m.deleted || (m.status != "sending" && m.status != "failed")) false
-        else { s.messages[id] = m.copy(envelope = envelope, folded = folded, receivedAt = receivedAt); true }
+        else {
+            s.messages[id] = m.copy(envelope = envelope, folded = folded, receivedAt = receivedAt)
+            s.outbox[id]?.let { s.outbox[id] = it.copy(ciphertext = null, cipherEpoch = null) }
+            true
+        }
     }
     override fun applyEdit(id: String, sender: String, envelope: ByteArray, folded: String, at: Long): Boolean = tx {
         val m = s.messages[id]
@@ -246,6 +250,9 @@ class InMemoryRepository : Repository {
     }
     override fun bumpOutbox(id: String, nextAttemptAt: Long) = tx { s.outbox[id]?.let { s.outbox[id] = it.copy(attempts = it.attempts + 1, nextAttemptAt = nextAttemptAt) }; Unit }
     override fun removeOutbox(id: String) = tx { s.outbox.remove(id); Unit }
+    override fun storeCiphertext(id: String, epoch: Long, ciphertext: ByteArray) = tx {
+        s.outbox[id]?.let { s.outbox[id] = it.copy(ciphertext = ciphertext, cipherEpoch = epoch) }; Unit
+    }
 
     // raw inbox and processed hashes
     override fun insertRaw(items: List<RawInboxRecord>) = tx {

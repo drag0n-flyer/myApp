@@ -5,6 +5,7 @@ import androidx.sqlite.db.SupportSQLiteOpenHelper
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
@@ -160,7 +161,16 @@ abstract class MigrationContract {
             }
             raw.query("PRAGMA foreign_key_check").use { assertFalse(it.moveToFirst(), "foreign key violation after migration") }
             raw.query("PRAGMA integrity_check").use { it.moveToFirst(); assertEquals("ok", it.getString(0)) }
-            assertEquals(3, RoomRepository(db, allowLikeFallback = !hasFts).chats().size)
+            val repo = RoomRepository(db, allowLikeFallback = !hasFts)
+            assertEquals(3, repo.chats().size)
+            // The new columns work on a migrated row, and leave the rest of it alone.
+            repo.storeCiphertext("outbox-1", 7, byteArrayOf(1, 2, 3))
+            val row = repo.dueOutbox(Long.MAX_VALUE).single { it.messageId == "outbox-1" }
+            assertContentEquals(byteArrayOf(1, 2, 3), row.ciphertext)
+            assertEquals(7L, row.cipherEpoch)
+            assertContentEquals(byteArrayOf(7, 8), row.envelope)
+            assertEquals(2, row.attempts)
+            assertNull(repo.dueOutbox(Long.MAX_VALUE).single { it.messageId == "outbox-2" }.ciphertext)
         } finally {
             db.close()
         }

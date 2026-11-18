@@ -135,8 +135,12 @@ class RoomRepository(private val db: AppDatabase, allowLikeFallback: Boolean = f
         if (removed) outbox.remove(id)
         removed
     }
-    override fun replaceUnsentEnvelope(id: String, sender: String, envelope: ByteArray, folded: String, receivedAt: Long) =
-        messages.replaceUnsentEnvelope(id, sender, envelope, folded, receivedAt) > 0
+    override fun replaceUnsentEnvelope(id: String, sender: String, envelope: ByteArray, folded: String, receivedAt: Long) = transaction {
+        val replaced = messages.replaceUnsentEnvelope(id, sender, envelope, folded, receivedAt) > 0
+        // A ciphertext made for the old envelope must never go out for the new one.
+        if (replaced) outbox.clearCiphertext(id)
+        replaced
+    }
     override fun applyEdit(id: String, sender: String, envelope: ByteArray, folded: String, at: Long) =
         messages.applyEdit(id, sender, envelope, folded, at) > 0
     override fun markDeleted(id: String, sender: String) = messages.markDeleted(id, sender) > 0
@@ -199,6 +203,7 @@ class RoomRepository(private val db: AppDatabase, allowLikeFallback: Boolean = f
     }
     override fun bumpOutbox(id: String, nextAttemptAt: Long) = outbox.bump(id, nextAttemptAt)
     override fun removeOutbox(id: String) = outbox.remove(id)
+    override fun storeCiphertext(id: String, epoch: Long, ciphertext: ByteArray) = outbox.storeCiphertext(id, epoch, ciphertext)
 
     // raw inbox and processed hashes
     override fun insertRaw(items: List<RawInboxRecord>) = outbox.insertRaw(items.map { it.toEntity() })
@@ -279,7 +284,7 @@ private fun MessageEntity.toRecord() = MessageRecord(
     deleted, undecryptable, folded,
 )
 private fun AttachmentEntity.toRecord() = AttachmentRecord(id, messageId, kind, key, digest, size, cipherSize, state, downloaded, localPath)
-private fun OutboxRecord.toEntity() = OutboxEntity(messageId, chatId, envelope, attempts, nextAttemptAt)
-private fun OutboxEntity.toRecord() = OutboxRecord(messageId, chatId, envelope, attempts, nextAttemptAt)
+private fun OutboxRecord.toEntity() = OutboxEntity(messageId, chatId, envelope, attempts, nextAttemptAt, ciphertext, cipherEpoch)
+private fun OutboxEntity.toRecord() = OutboxRecord(messageId, chatId, envelope, attempts, nextAttemptAt, ciphertext, cipherEpoch)
 private fun RawInboxRecord.toEntity() = InboxRawEntity(cursor, kind, conversationId, seq, epoch, senderAccount, senderDevice, payload, sentAt)
 private fun InboxRawEntity.toRecord() = RawInboxRecord(cursor, kind, conversationId, seq, epoch, senderAccount, senderDevice, payload, sentAt)

@@ -18,7 +18,7 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
         ProcessedEntity::class, FolderEntity::class, FolderChatEntity::class, BlockedEntity::class, CallEntity::class,
         KvEntity::class, DraftEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -32,7 +32,7 @@ abstract class AppDatabase : RoomDatabase() {
 
     companion object {
         /** Every schema upgrade, in order. There is no destructive fallback: a gap here fails the open instead of erasing messages. */
-        val MIGRATIONS = arrayOf(Migration1To2)
+        val MIGRATIONS = arrayOf(Migration1To2, MigrationOutboxCiphertext)
 
         const val FILE_NAME = "messages.db"
         private const val FTS_TABLE = "messages_fts"

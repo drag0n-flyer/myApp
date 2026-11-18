@@ -249,6 +249,8 @@ interface Repository {
     fun requeueSend(id: String, now: Long): Boolean
     fun bumpOutbox(id: String, nextAttemptAt: Long)
     fun removeOutbox(id: String)
+    /** Keeps the ciphertext made for the outbox row [id] and its epoch. Does nothing when the row is gone. */
+    fun storeCiphertext(id: String, epoch: Long, ciphertext: ByteArray)
 
     // raw inbox and processed hashes
     fun insertRaw(items: List<RawInboxRecord>)
