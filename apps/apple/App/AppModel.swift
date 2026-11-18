@@ -375,7 +375,7 @@ final class AppModel {
         // Message matches come from the store's search (the whole history), not only the loaded messages.
         let messageChatIDs = Set(chatStore.searchMessages(query, limit: 200).map(\.chatID))
         return chats.filter { chat in
-            let name = chat.contactID.flatMap { chatStore.contact(id: $0) }?.displayName ?? ""
+            let name = chat.title ?? chat.contactID.flatMap { chatStore.contact(id: $0) }?.displayName ?? ""
             return name.localizedCaseInsensitiveContains(query) || messageChatIDs.contains(chat.id)
         }
     }
@@ -434,6 +434,20 @@ final class AppModel {
     func openChat(with contactID: String) -> String {
         defer { revision += 1 }
         return chatStore.ensureChat(with: contactID)
+    }
+
+    /// Makes a group chat (New chat > New group).
+    func createGroup(accounts: [String], name: String, photo: Data?) async -> GroupCreateOutcome {
+        defer { revision += 1 }
+        return await chatStore.createGroup(accounts: accounts, name: name, photo: photo)
+    }
+
+    /// What a chat is called: a group's name, else its contact's name. A group whose name has not arrived yet is "Group".
+    func chatName(_ chat: Chat) -> String {
+        _ = revision
+        if let title = chat.title { return title }
+        if let name = contact(id: chat.contactID)?.displayName { return name }
+        return ChatID.isGroup(chat.id) ? String(localized: "Group") : ""
     }
 
     func chatID(for contactID: String) -> String? {

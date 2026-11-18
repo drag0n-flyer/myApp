@@ -823,6 +823,20 @@ public final class LiveChatStore: ChatStore {
         return true
     }
 
+    /// Makes a group chat. The outbox then sends what the create queued (the `group` envelope, the own `profile`).
+    public func createGroup(accounts: [String], name: String, photo: Data?) async -> GroupCreateOutcome {
+        guard !closed else { return .failed(.other) }
+        defer { refresh() }
+        do {
+            let made = try await conversations.createGroup(accounts: accounts, name: name, photo: photo)
+            let outbox = outbox
+            background { try? await outbox.flush() }
+            return .created(chatID: made.chatID, notAdded: made.notAdded)
+        } catch {
+            return .failed(GroupCreateFailure(error: error))
+        }
+    }
+
     func sendControl(_ body: ContentEnvelope.Body, chatID: String, id: String? = nil) {
         guard (try? outbox.enqueueControl(body, chatID: chatID, id: id)) != nil else { return }
         flushOutboxSoon()

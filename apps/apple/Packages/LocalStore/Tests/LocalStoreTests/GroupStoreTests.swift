@@ -131,7 +131,7 @@ private func member(_ id: String, _ role: String = "member") -> GroupMemberRecor
 
 @Test func testSetGroupInfoKeepsOnlyAHigherVersion() throws {
     let repo = try groupRepo()
-    let photo = Data([0xFF, 0xD8, 1])
+    let photo = Data([0xFF, 0xD8, 1, 2])
     #expect(try repo.setGroupInfo(chatID: chatID, title: "Club", photo: photo, ver: 1))
     var row = try #require(try repo.chat(id: chatID))
     #expect(row.title == "Club" && row.photo == photo && row.groupVer == 1)
@@ -149,6 +149,8 @@ private func member(_ id: String, _ role: String = "member") -> GroupMemberRecor
 @Test func testSetGroupInfoRefusesAnOversizedPhotoAndADirectChat() throws {
     let repo = try groupRepo()
     #expect(try !repo.setGroupInfo(chatID: chatID, title: "Club", photo: Data(repeating: 0xFF, count: 24_577), ver: 1))
+    // A photo under 4 bytes is refused whole too.
+    #expect(try !repo.setGroupInfo(chatID: chatID, title: "Club", photo: Data([0xFF, 0xD8, 1]), ver: 1))
     #expect(try repo.chat(id: chatID)?.groupVer == nil)
     #expect(try repo.setGroupInfo(chatID: chatID, title: "Club", photo: Data(repeating: 0xFF, count: 24_576), ver: 1))
     try repo.upsertChat(chat("bob"))

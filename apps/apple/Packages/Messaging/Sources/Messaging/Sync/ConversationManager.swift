@@ -24,6 +24,8 @@ public enum SyncError: Error, Equatable, Sendable {
     /// The server applied my add commit for a new conversation, but the engine no longer holds it (it never
     /// merged it). The create is abandoned; a new one may start.
     case createLost
+    /// A Welcome for a group whose server list does not name this account, or names it in a list that cannot be used.
+    case notInGroup
 }
 
 /// Creates and joins 1:1 conversations (Design 1, 18). Lane A's other tasks (inbox processor,
@@ -32,12 +34,12 @@ public actor ConversationManager: ConversationManaging {
     /// One try plus this many retries after a `stale_epoch`.
     static let maxStaleRetries = 3
 
-    private let deps: MessagingDeps
+    let deps: MessagingDeps
     private let escrowKey: @Sendable () async throws -> Data
     private let syncOnce: @Sendable () async throws -> Void
     private let lockTimeout: Duration
     private let log: @Sendable (String) -> Void
-    private var creating: [String: Task<ConversationRecord, Error>] = [:]
+    var creating: [String: Task<ConversationRecord, Error>] = [:]
 
     /// - Parameters:
     ///   - escrowKey: the server's escrow public key, needed only to seal the `mode` envelope's
@@ -64,7 +66,7 @@ public actor ConversationManager: ConversationManaging {
         try await deps.lock.withAsyncLock(timeout: lockTimeout, body)
     }
 
-    private var membership: Membership { Membership(deps: deps) }
+    var membership: Membership { Membership(deps: deps) }
 
     // MARK: ConversationManaging
 
@@ -208,7 +210,7 @@ public actor ConversationManager: ConversationManaging {
     ///   (`commitRejected`; the row stays inactive and is never used). On the epoch check only a `404` abandons.
     /// - The engine lost the commit although the server applied it: logged and abandoned (`createLost`).
     /// - An unknown outcome: read the inbox; still pending means the error is thrown and the create stays pending.
-    private func finishCreate(serverID: String, resumed: Bool) async throws -> ConversationRecord {
+    func finishCreate(serverID: String, resumed: Bool) async throws -> ConversationRecord {
         if resumed {
             await readInboxAfterUnknownOutcome()
             if let active = try activeOrNil(serverID) { return try await announced(active) }
@@ -262,7 +264,7 @@ public actor ConversationManager: ConversationManaging {
         }
     }
 
-    private func activeOrNil(_ serverID: String) throws -> ConversationRecord? {
+    func activeOrNil(_ serverID: String) throws -> ConversationRecord? {
         guard let record = try deps.repo.conversation(serverID: serverID), record.active,
               try !PendingCreate.isPending(serverID: serverID, db: deps.repo) else { return nil }
         return record
@@ -308,6 +310,7 @@ public actor ConversationManager: ConversationManaging {
     /// stays and `preferredConversation` retries it before returning the conversation.
     private func announced(_ record: ConversationRecord) async throws -> ConversationRecord {
         try await ensureModeAnnounced(record)
+        try ensureGroupAnnounced(record)
         return record
     }
 
@@ -328,13 +331,13 @@ public actor ConversationManager: ConversationManaging {
     /// Called by the inbox processor after `mls.process` returned `.joined`.
     public func joined(group: GroupID, serverConversationID: String) async throws {
         let info = try await deps.server.conversation(id: serverConversationID)
-        try await joined(group: group, serverConversationID: serverConversationID, serverMode: info.mode)
+        try await joined(group: group, serverConversationID: serverConversationID, serverMode: info.mode, info: info)
     }
 
     /// The local part of `joined`, with the server's mode already fetched. The inbox processor fetches it
     /// before it takes the process lock, so no network call happens under the lock.
-    func joined(group: GroupID, serverConversationID: String, serverMode: String) async throws {
-        let plan = try await planJoin(group: group, serverConversationID: serverConversationID, serverMode: serverMode)
+    func joined(group: GroupID, serverConversationID: String, serverMode: String, info: NewConversation? = nil, adder: String? = nil) async throws {
+        let plan = try await planJoin(group: group, serverConversationID: serverConversationID, serverMode: serverMode, info: info, adder: adder)
         try deps.repo.transaction {
             try plan.store(in: deps.repo)
             _ = try membership.apply(keys: plan.keys, conversation: plan.conversation, db: deps.repo)
@@ -348,15 +351,66 @@ public actor ConversationManager: ConversationManaging {
         let conversation: ConversationRecord
         /// The group's members, stored by `IncomingHandler.apply(memberKeys:)` or `joined`.
         let keys: [MemberKey]
+        /// Set for a group chat: the server's member list and what the first line needs.
+        var group: GroupJoin?
 
         /// The chat is only created when it does not exist yet.
         func store(in repo: Repository) throws {
+            if let group {
+                try group.store(chat: chat, conversation: conversation, in: repo)
+                return
+            }
             if try repo.chat(id: chat.id) == nil { try repo.upsertChat(chat) }
             try repo.upsertConversation(conversation)
         }
     }
 
-    func planJoin(group: GroupID, serverConversationID: String, serverMode: String) async throws -> JoinPlan {
+    /// A group chat made from a Welcome. The member list is the server's answer (`GET /v1/conversations/{id}`), never
+    /// the MLS list or anything a message says.
+    struct GroupJoin: Sendable {
+        let conversationID: String
+        let members: [GroupMemberRecord]
+        let version: Int64
+        /// The account the server names as the sender of the Welcome; `nil` when it is this account.
+        let addedBy: String?
+        /// True when this account added itself (another device of mine): no line.
+        var ownAdd = false
+        let at: Date
+
+        func store(chat: ChatRecord, conversation: ConversationRecord, in repo: Repository) throws {
+            let isNew = try repo.chat(id: chat.id) == nil
+            guard try repo.upsertGroup(conversationID: conversationID, title: nil, photo: nil, at: at) == chat.id else {
+                throw SyncError.notInGroup
+            }
+            _ = try repo.setGroupMembers(chatID: chat.id, members, version: version)
+            try repo.upsertConversation(conversation)
+            // A Welcome for a chat I was removed from or left: I am in it again.
+            _ = try repo.setMyState(chatID: chat.id, "member")
+            // One line, once: it is written only when the chat is new, with an ID that cannot repeat.
+            if isNew, !ownAdd {
+                let envelope = (try? JSONEncoder().encode(SystemEvent.addedYou(by: addedBy))) ?? Data()
+                _ = try repo.insertMessage(MessageRecord(
+                    id: "sys-\(conversationID)-addedYou", chatID: chat.id, conversationID: conversationID, senderAccount: "system",
+                    senderDevice: nil, sentAt: at, receivedAt: at, envelope: envelope, status: "sent", replyTo: nil,
+                    editedAt: nil, deleted: false, undecryptable: false, folded: ""))
+            }
+        }
+    }
+
+    /// Why a group Welcome must not be joined, judged on the server's answer alone: this account is not in the list
+    /// (`group_not_member`), or the list is not usable (`group_bad_list`: no version or a negative one, more than 100
+    /// accounts, an account twice, an ID a chat cannot be made from). `nil` when it can be joined.
+    static func groupJoinRefusal(_ info: NewConversation, me: String) -> String? {
+        guard GroupLimits.isValidConversationID(info.conversationID), let version = info.membersVersion, version >= 0,
+              info.members.count <= GroupLimits.maxMembers,
+              Set(info.members.map(\.account)).count == info.members.count,
+              !info.members.contains(where: { $0.account.isEmpty }) else { return "group_bad_list" }
+        return info.members.contains { $0.account == me } ? nil : "group_not_member"
+    }
+
+    func planJoin(
+        group: GroupID, serverConversationID: String, serverMode: String, info: NewConversation? = nil, adder: String? = nil
+    ) async throws -> JoinPlan {
         // A server ID already bound to another group is never rebound (it would move that chat's messages), and a
         // group already bound to another server ID is never bound twice (`group_id` is unique: the write would fail
         // on every retry and stall the inbox).
@@ -367,6 +421,28 @@ public actor ConversationManager: ConversationManaging {
             throw SyncError.conversationRebound
         }
         let keys = try await membership.keys(of: group)
+        if let info, info.kind == "group" {
+            // The kind comes from the server, never from the Welcome. The member list is the server's too.
+            guard let version = info.membersVersion, Self.groupJoinRefusal(info, me: deps.me.accountID) == nil,
+                  info.conversationID == serverConversationID else { throw SyncError.notInGroup }
+            let chatID = ChatID.group(serverConversationID)
+            let epoch = try await deps.mls.epoch(of: group)
+            let now = deps.now()
+            return JoinPlan(
+                chat: ChatRecord(id: chatID, isRequest: false, unread: 0, muted: false, lastActivity: now, kind: "group",
+                                 conversationID: serverConversationID),
+                conversation: ConversationRecord(
+                    serverID: serverConversationID, chatID: chatID, groupID: group.raw, mode: serverMode, innerMode: nil,
+                    modeMismatch: false, epoch: Int64(epoch), active: true, createdAt: now),
+                keys: keys,
+                group: GroupJoin(
+                    conversationID: serverConversationID,
+                    members: info.members.map { GroupMemberRecord(accountID: $0.account, role: $0.role.rawValue) },
+                    version: version,
+                    // Named only when the server's list has them; otherwise "You were added".
+                    addedBy: info.members.contains { $0.account == adder } ? adder : nil,
+                    ownAdd: adder == deps.me.accountID, at: now))
+        }
         let identities = keys.map(\.identity)
         let accounts = Set(identities.map { String($0.split(separator: "/", maxSplits: 1)[0]) })
         guard let peer = accounts.subtracting([deps.me.accountID]).sorted().first else { throw SyncError.noPeer }

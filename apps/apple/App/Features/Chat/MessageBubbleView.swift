@@ -214,6 +214,8 @@ struct SystemEventText: View {
         case .safetyNumberChanged: Text("Safety number changed")
         case .messagesPaused: Text("Messages in this chat are paused. Open chat info for details.")
         case .timer: TimerLineText(event: event)
+        case .addedYou(let name?): Text("\(name) added you")
+        case .addedYou(nil): Text("You were added")
         }
     }
 }

@@ -13,7 +13,7 @@ public typealias AttachmentPager = @Sendable (_ before: String?, _ limit: Int) -
 
 /// Chats, contacts, and message requests. `SampleChatStore` now; the real MLS-backed store later.
 @MainActor
-public protocol ChatStore: PeopleStore {
+public protocol ChatStore: PeopleStore, GroupStore {
     var me: Contact { get }
     /// The own name as stored on this device, or "" when none is stored. `me.displayName` shows the placeholder
     /// "You" in that case; the placeholder is display only and is never offered, sent or stored.

@@ -94,6 +94,7 @@ enum ChatMapping {
         case .deviceAdded(let account): return .deviceAdded(name: name(account))
         case .deviceRemoved(let account): return .deviceRemoved(name: name(account))
         case .timer(let seconds, let account): return .timer(seconds: seconds, name: name(account))
+        case .addedYou(let account): return .addedYou(by: name(account))
         case .safetyNumberChanged, .messagesPaused: return event
         }
     }
@@ -112,7 +113,7 @@ enum ChatMapping {
             id: record.id, contactID: record.kind == "group" ? nil : record.id, encryption: encryption(preferred: preferred), folderIDs: folderIDs,
             unreadCount: record.unread, messages: messages, isRequest: record.isRequest,
             modeMismatch: conversations.contains { $0.modeMismatch }, pinnedAt: record.pinnedAt, muted: record.muted,
-            archived: record.archived, draft: draft)
+            archived: record.archived, draft: draft, title: record.kind == "group" ? record.title : nil)
     }
 
     /// A stored `current` number (12 groups of 5 digits, joined) split into its groups.
