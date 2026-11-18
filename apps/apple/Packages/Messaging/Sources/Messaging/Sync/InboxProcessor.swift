@@ -268,9 +268,12 @@ public actor InboxProcessor {
             // A Welcome needs the server's mode. Fetch it before the lock; a Welcome that is not processed
             // yet can be retried, one that is processed cannot.
             var serverMode: String?
+            var serverInfo: NewConversation?
             if raw.kind == "welcome" {
                 do {
-                    serverMode = try await deps.server.conversation(id: raw.conversationID).mode
+                    let info = try await deps.server.conversation(id: raw.conversationID)
+                    serverInfo = info
+                    serverMode = info.mode
                 } catch {
                     if (400..<500).contains(error.status), error.status != 408, error.status != 429 {
                         // The server will never answer for this conversation: the Welcome is recorded and skipped.
@@ -293,6 +296,18 @@ public actor InboxProcessor {
                     }
                     return (.done, nil)
                 }
+            }
+
+            // A Welcome for a group is judged on the server's list alone: one that does not name this account, or whose
+            // list cannot be used, is parked (kept, no chat, no placeholder) and never joined. The kind is the server's.
+            let isGroupWelcome = serverInfo?.kind == "group"
+            if let info = serverInfo, isGroupWelcome, let reason = ConversationManager.groupJoinRefusal(info, me: deps.me.accountID) {
+                try repo.transaction {
+                    try handler.park(raw, reason: reason, db: repo)
+                    try repo.markProcessed(hash: hash)
+                    try repo.deleteRaw(cursor: raw.cursor)
+                }
+                return (.done, nil)
             }
 
             await beforeLock?(raw)
@@ -325,7 +340,7 @@ public actor InboxProcessor {
                     } catch {
                         // Anything else the engine rejects is permanent for this payload.
                         try repo.transaction {
-                            try placeholderOrPark(raw, reason: "mls_error")
+                            try placeholderOrPark(raw, reason: "mls_error", group: isGroupWelcome)
                             try repo.markProcessed(hash: hash)
                             try repo.deleteRaw(cursor: raw.cursor)
                         }
@@ -346,7 +361,8 @@ public actor InboxProcessor {
                     if let serverMode {
                         do {
                             plan = try await conversations.planJoin(
-                                group: group, serverConversationID: raw.conversationID, serverMode: serverMode)
+                                group: group, serverConversationID: raw.conversationID, serverMode: serverMode,
+                                info: serverInfo, adder: raw.senderAccount)
                         } catch {
                             let name = Self.failureName(error)
                             if Self.isPermanentJoinFailure(error) {
@@ -368,7 +384,8 @@ public actor InboxProcessor {
                         if failed { try repo.set(failKey(raw.cursor), Data()) }
                         guard let plan else {
                             try handler.park(raw, reason: "join_failed:\(failure ?? "error")", db: repo)
-                            try handler.storeJoinFailed(for: raw, db: repo)
+                            // A group has no one person to show the failure in: nothing is made for the sender.
+                            if !isGroupWelcome { try handler.storeJoinFailed(for: raw, db: repo) }
                             return nil
                         }
                         try plan.store(in: repo)
@@ -401,10 +418,10 @@ public actor InboxProcessor {
     /// A Welcome that cannot be joined is parked with a `joinFailed` placeholder, so the user sees the chat the peer
     /// believes exists. Any other item gets an undecryptable placeholder in its conversation, or is parked when
     /// that conversation is not known. Runs inside the caller's transaction.
-    private func placeholderOrPark(_ raw: RawInboxRecord, reason: String) throws {
+    private func placeholderOrPark(_ raw: RawInboxRecord, reason: String, group: Bool = false) throws {
         if raw.kind == "welcome" {
             try handler.park(raw, reason: reason, db: deps.repo)
-            try handler.storeJoinFailed(for: raw, db: deps.repo)
+            if !group { try handler.storeJoinFailed(for: raw, db: deps.repo) }
             return
         }
         if try !handler.storePlaceholder(for: raw, db: deps.repo) { try handler.park(raw, reason: reason, db: deps.repo) }
@@ -422,7 +439,7 @@ public actor InboxProcessor {
     /// (a database error, an unknown error) is treated as temporary.
     static func isPermanentJoinFailure(_ error: Error) -> Bool {
         switch error {
-        case SyncError.noPeer, SyncError.conversationRebound: return true
+        case SyncError.noPeer, SyncError.conversationRebound, SyncError.notInGroup: return true
         case MLSError.storage, MLSError.busy: return false
         case is MLSError: return true
         default: return false

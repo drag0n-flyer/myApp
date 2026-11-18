@@ -55,6 +55,7 @@ public actor FakeServer {
     private var responseLost = false
     private var messageFailures: [Int] = []   // statuses for the next message posts
     private var counter = 0
+    private var hiddenInList: [String: String] = [:]
     private var deviceListFilter: (@Sendable ([String]) -> [String])?
     private let now: @Sendable () -> Date
 
@@ -79,6 +80,10 @@ public actor FakeServer {
         c.membersVersion += 1
         conversations[conversationID] = c
     }
+
+    /// Test hook: the member list the server answers for a group leaves `account` out although the account can still
+    /// read it (a wrong or hostile answer). `nil` gives the true list again.
+    public func hideAccountInList(_ account: String?, of conversationID: String) { hiddenInList[conversationID] = account }
 
     /// The accounts and roles the server lists for a group, sorted by account.
     public func groupMembers(of conversationID: String) -> [(account: String, role: String)] {
@@ -365,7 +370,7 @@ public actor FakeServer {
     private func groupOut(_ c: Conversation) -> ConversationOut {
         ConversationOut(
             conversationID: c.id, mode: c.mode, epoch: c.epoch, kind: "group",
-            members: c.roles.sorted { $0.key < $1.key }.map { MemberOut(account: $0.key, role: $0.value) },
+            members: c.roles.sorted { $0.key < $1.key }.filter { $0.key != hiddenInList[c.id] }.map { MemberOut(account: $0.key, role: $0.value) },
             membersVersion: c.membersVersion)
     }
 

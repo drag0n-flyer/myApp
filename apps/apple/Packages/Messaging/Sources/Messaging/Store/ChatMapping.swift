@@ -87,6 +87,7 @@ enum ChatMapping {
         case .deviceAdded(let account): return .deviceAdded(name: name(account))
         case .deviceRemoved(let account): return .deviceRemoved(name: name(account))
         case .timer(let seconds, let account): return .timer(seconds: seconds, name: name(account))
+        case .addedYou(let account): return .addedYou(by: name(account))
         case .safetyNumberChanged, .messagesPaused: return event
         }
     }

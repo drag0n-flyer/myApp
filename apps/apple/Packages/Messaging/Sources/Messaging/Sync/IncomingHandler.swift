@@ -239,8 +239,9 @@ public struct IncomingHandler: Sendable {
         case .typing, .presence:
             // Signals travel as ephemeral frames; one that arrives as a stored message is dropped.
             return .ignored
-        case .group:
-            // Applied by the group message task (from an owner or admin of the stored member list only); never a message.
+        case .group(let name, let photo, let ver):
+            // Never a message. The sender is the MLS sender's account, and counts only as an owner or admin of the stored list.
+            try applyGroup(name: name, photo: photo, ver: ver, from: account, conversation: conversation, db: db)
             return .ignored
         case .timer(let seconds):
             try applyTimer(seconds, id: envelope.id, at: envelope.at, from: account, conversation: conversation, db: db)
@@ -252,6 +253,18 @@ public struct IncomingHandler: Sendable {
             try db.saveProfile(accountID: account, name: name, photo: photo, ver: ver)
             return .ignored
         }
+    }
+
+    /// A `group` envelope sets the name and photo when an owner or admin of the stored member list sent it and its version
+    /// is higher than the stored one (`GroupMerge`). Anything else, a bad name, or a photo under 4 or over 24,576 bytes
+    /// changes nothing. A chat that is not a group this account is still in is left alone.
+    private func applyGroup(name: String, photo: Data?, ver: Int, from account: String, conversation: ConversationRecord, db: Repository) throws {
+        guard ChatID.isGroup(conversation.chatID), let chat = try db.chat(id: conversation.chatID), chat.kind == "group",
+              chat.myState == "member", GroupNameRule.clean(name) == name,
+              photo.map({ $0.count >= GroupLimits.minPhoto && $0.count <= GroupLimits.maxPhoto }) ?? true else { return }
+        let role = try db.groupMembers(chatID: chat.id).first { $0.accountID == account }.map { GroupRole(wire: $0.role) }
+        guard GroupMerge.accept(currentVer: chat.groupVer, incomingVer: ver, senderRole: role) else { return }
+        try db.setGroupInfo(chatID: chat.id, title: name, photo: photo, ver: ver)
     }
 
     static let timerSkewMs: Int64 = 5 * 60 * 1000

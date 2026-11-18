@@ -52,6 +52,8 @@ public enum SystemEvent: Hashable, Codable, Sendable {
     case messagesPaused
     /// Disappearing messages were set to `seconds` (0 = turned off) by `name` (`nil` = "You").
     case timer(seconds: Int, name: String?)
+    /// "%@ added you" when this device joined a group; `by` is the adder's account ID, or a name once shown.
+    case addedYou(by: String?)
 
     private static func timerText(seconds: Int, name: String?) -> String {
         let who = name ?? "You"
@@ -63,6 +65,8 @@ public enum SystemEvent: Hashable, Codable, Sendable {
     public var text: String {
         switch self {
         case .timer(let seconds, let name): Self.timerText(seconds: seconds, name: name)
+        case .addedYou(let name?): "\(name) added you"
+        case .addedYou(nil): "You were added"
         case .deviceAdded(let name?): "\(name) added a new device"
         case .deviceAdded(nil): "You added a new device"
         case .deviceRemoved(let name?): "\(name) removed a device"
