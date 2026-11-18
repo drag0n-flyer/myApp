@@ -447,6 +447,9 @@
     <string name="chat_scroll_to_newest_count">Scroll to newest, %1$d new</string>
     <string name="chat_search">Search in chat</string>
     <string name="chat_search_no_results">No results</string>
+    <string name="chat_search_count">%1$d of %2$d</string>
+    <string name="chat_search_previous">Previous result</string>
+    <string name="chat_search_next">Next result</string>
     <string name="chat_empty">No messages yet</string>
     <string name="chat_forward_to">Forward to…</string>
     <string name="chat_original_message">Original message</string>

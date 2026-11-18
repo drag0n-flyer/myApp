@@ -95,7 +95,7 @@ data class Message(
     /** For the chat list. */
     val preview: MessagePreview
         get() = when (val c = content) {
-            is MessageContent.Text -> MessagePreview.Text(c.text)
+            is MessageContent.Text -> MessagePreview.Text(MessageFormat.plain(c.text))
             is MessageContent.Voice -> MessagePreview.Resource("preview_voice", listOf(clock(c.duration)))
             is MessageContent.Photo -> MessagePreview.Resource("preview_photo")
             is MessageContent.File -> MessagePreview.Text(SafeFileName.of(c.name, "file"))
