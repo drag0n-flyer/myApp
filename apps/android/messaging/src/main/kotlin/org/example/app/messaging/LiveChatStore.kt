@@ -318,17 +318,21 @@ class LiveChatStore(
         inFlight.update { it + 1 }
         scope.launch {
             try {
-                while (flushWanted.getAndSet(false)) {
-                    try { outbox.flush() } catch (e: CancellationException) { throw e } catch (_: Exception) { }
-                    runPending()
-                    reload()
+                try {
+                    while (flushWanted.getAndSet(false)) {
+                        try { outbox.flush() } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+                        runPending()
+                        reload()
+                    }
+                } finally {
+                    flushRunning.set(false)
                 }
+                // A request that came in after the last check but before the flag was cleared. It is counted in
+                // flight before this run's own count is released, so settle() never sees a gap between the two.
+                if (flushWanted.get()) requestFlush()
             } finally {
-                flushRunning.set(false)
                 inFlight.update { it - 1 }
             }
-            // A request that came in after the last check but before the flag was cleared.
-            if (flushWanted.get()) requestFlush()
         }
     }
 
