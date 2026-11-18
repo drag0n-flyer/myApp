@@ -66,12 +66,18 @@ class ChatListActionsScreenTest {
     private fun name(chatId: String) = store.contact(store.chat(chatId)!!.contactId)!!.displayName
 
     @Test
-    fun longPressOpensTheMenuWithTheFourActions() {
+    fun longPressOpensTheMenuAndMarkAsReadIsOnlyOfferedForAChatWithUnreadMessages() {
         launchList()
+        assertEquals(0, store.chat("chat-sam")!!.unreadCount)
         longPress("Sam")
         rule.onNodeWithText("Pin").assertIsDisplayed()
         rule.onNodeWithText("Mute").assertIsDisplayed()
         rule.onNodeWithText("Archive").assertIsDisplayed()
+        rule.onNodeWithText("Mark as read").assertDoesNotExist()
+        rule.onNodeWithText("Pin").performClick() // closes the menu
+        rule.waitForIdle()
+        assertTrue(store.chat("chat-riya")!!.unreadCount > 0)
+        longPress("Riya")
         rule.onNodeWithText("Mark as read").assertIsDisplayed()
     }
 
@@ -132,15 +138,15 @@ class ChatListActionsScreenTest {
     @Test
     fun archivingRemovesTheRowAndAddsTheArchivedRowThatOpensTheArchive() {
         launchList()
-        rule.onNodeWithText("Archived").assertDoesNotExist()
+        rule.onNodeWithContentDescription("Archived, 1").assertDoesNotExist()
         longPress("Sam")
         rule.onNodeWithText("Archive").performClick()
         rule.waitForIdle()
         assertTrue(store.chat("chat-sam")!!.archived)
         rule.onNodeWithText("Sam").assertDoesNotExist()
-        rule.onNodeWithText("Archived").assertIsDisplayed()
-        rule.onNodeWithText("Archived").assertTextContains("1", substring = true)
-        rule.onNodeWithText("Archived").performClick()
+        // One item for a screen reader: "Archived, 1".
+        rule.onNodeWithContentDescription("Archived, 1").assertIsDisplayed()
+        rule.onNodeWithContentDescription("Archived, 1").performClick()
         assertEquals(1, archiveOpened)
     }
 
@@ -148,8 +154,42 @@ class ChatListActionsScreenTest {
     fun theArchivedRowShowsTheUnreadCountOfArchivedChats() {
         store.setArchived("chat-riya", true) // Riya has unread messages
         launchList()
-        rule.onNodeWithText("Archived").assertIsDisplayed()
-        rule.onNodeWithContentDescription("1 unread").assertIsDisplayed()
+        rule.onNodeWithContentDescription("Archived, 1").assertIsDisplayed()
+    }
+
+    @Test
+    fun markAllReadLeavesArchivedChatsUnread() {
+        store.setArchived("chat-riya", true)
+        val vm = viewModel()
+        vm.markAllRead()
+        assertTrue(store.chat("chat-riya")!!.unreadCount > 0)
+    }
+
+    @Test
+    fun archivingUnpinsTheChat() {
+        launchList()
+        longPress("Sam")
+        rule.onNodeWithText("Pin").performClick()
+        rule.waitForIdle()
+        assertNotNull(store.chat("chat-sam")!!.pinnedAt)
+        longPress("Sam")
+        rule.onNodeWithText("Archive").performClick()
+        rule.waitForIdle()
+        assertNull(store.chat("chat-sam")!!.pinnedAt)
+    }
+
+    @Test
+    fun theArchiveOffersNoPinInTheMenuOrBySwipe() {
+        store.setArchived("chat-sam", true)
+        launchArchive()
+        longPress("Sam")
+        rule.onNodeWithText("Unarchive").assertIsDisplayed()
+        rule.onNodeWithText("Pin").assertDoesNotExist()
+        rule.onNodeWithText("Mute").performClick() // closes the menu
+        rule.waitForIdle()
+        rule.onNodeWithText("Sam").performTouchInput { swipeRight() }
+        rule.waitForIdle()
+        assertNull(store.chat("chat-sam")!!.pinnedAt)
     }
 
     @Test

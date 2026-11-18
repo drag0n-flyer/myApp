@@ -107,4 +107,23 @@ class ChatListActionsTest {
         s.setMuted(id, true)
         assertEquals("keep me", s.chat(id)!!.draft)
     }
+
+    @Test fun archivingUnpinsAndUnarchivingDoesNotRepin() {
+        val s = store()
+        val id = ids(s)[2]
+        tick(); assertTrue(s.setPinned(id, true))
+        s.setArchived(id, true)
+        assertNull(s.chat(id)!!.pinnedAt)
+        s.setArchived(id, false)
+        assertNull(s.chat(id)!!.pinnedAt)
+    }
+
+    @Test fun anArchivedChatNeverCountsTowardTheFivePins() {
+        val s = store()
+        val all = ids(s)
+        for (i in 0 until ChatListOrder.MAX_PINS) { tick(); assertTrue(s.setPinned(all[i], true)) }
+        assertFalse(s.setPinned(all[5], true))
+        s.setArchived(all[0], true)
+        assertTrue(s.setPinned(all[5], true), "archiving freed a place")
+    }
 }

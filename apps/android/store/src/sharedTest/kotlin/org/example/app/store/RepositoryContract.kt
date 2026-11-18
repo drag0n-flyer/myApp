@@ -370,4 +370,47 @@ abstract class RepositoryContract {
         repo.wipe()
         assertTrue(repo.drafts().isEmpty())
     }
+
+    @Test fun bumpActivityRaisesOnlyLastActivityAndNeverUndoesPinMuteArchive() {
+        repo.setPinnedAt("chat1", 500)
+        repo.setMuted("chat1", true)
+        repo.setArchived("chat1", true)
+        repo.bumpActivity("chat1", 900)
+        val row = repo.chat("chat1")!!
+        assertEquals(900L, row.lastActivity)
+        assertEquals(500L, row.pinnedAt)
+        assertTrue(row.muted)
+        assertTrue(row.archived)
+        repo.bumpActivity("chat1", 100)
+        assertEquals(900L, repo.chat("chat1")!!.lastActivity, "an older time changes nothing")
+        repo.bumpActivity("nobody", 5) // no row, no error
+    }
+
+    @Test fun bumpChatAddsUnreadAndRaisesActivityInOneStep() {
+        repo.setPinnedAt("chat1", 500)
+        repo.setMuted("chat1", true)
+        repo.setUnread("chat1", 2)
+        repo.bumpChat("chat1", 1, 700)
+        var row = repo.chat("chat1")!!
+        assertEquals(3, row.unread)
+        assertEquals(700L, row.lastActivity)
+        assertEquals(500L, row.pinnedAt)
+        assertTrue(row.muted)
+        repo.bumpChat("chat1", 0, 10)
+        row = repo.chat("chat1")!!
+        assertEquals(3, row.unread)
+        assertEquals(700L, row.lastActivity)
+    }
+
+    @Test fun archivingAlsoUnpinsInOneWriteAndUnarchivingDoesNotRepin() {
+        repo.setPinnedAt("chat1", 500)
+        repo.setArchived("chat1", true)
+        var row = repo.chat("chat1")!!
+        assertTrue(row.archived)
+        assertNull(row.pinnedAt)
+        repo.setArchived("chat1", false)
+        row = repo.chat("chat1")!!
+        assertFalse(row.archived)
+        assertNull(row.pinnedAt)
+    }
 }

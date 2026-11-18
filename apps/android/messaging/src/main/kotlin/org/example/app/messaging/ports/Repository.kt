@@ -159,6 +159,10 @@ interface Repository {
     fun chats(): List<ChatRecord>
     fun setUnread(chatId: String, n: Int)
     fun setRequest(chatId: String, value: Boolean)
+    /** Raises `last_activity` to [at] if it is older. One column, so a pin, mute or archive made meanwhile is never undone. */
+    fun bumpActivity(chatId: String, at: Long)
+    /** An incoming message: adds [unreadDelta] to unread and raises `last_activity` to [at] if older. One statement. */
+    fun bumpChat(chatId: String, unreadDelta: Int, at: Long)
     /** Local only. Each of these changes one column and nothing else, so an incoming message cannot undo it. */
     fun setPinnedAt(chatId: String, at: Long?)
     fun setMuted(chatId: String, muted: Boolean)

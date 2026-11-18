@@ -455,4 +455,78 @@ class LiveChatStoreTest {
         assertTrue(rig.bob1.repo.drafts().isEmpty())
         assertNull(store(rig.bob1).chat("acc-ana")?.draft)
     }
+
+    @Test
+    fun archivingUnpinsAndFreesAPlaceAndUnarchivingDoesNotRepin() = runTest {
+        val (rig, s, _) = joined()
+        val others = extraChats(rig.bob1.repo, 5)
+        s.refresh()
+        assertTrue(s.setPinned("acc-ana", true))
+        others.take(4).forEach { assertTrue(s.setPinned(it, true)) }
+        s.settle()
+        assertFalse(s.setPinned(others[4], true))
+        s.setArchived("acc-ana", true) // not settled: the queued archive already counts
+        assertTrue(s.setPinned(others[4], true))
+        s.settle()
+        assertNull(rig.bob1.repo.chat("acc-ana")!!.pinnedAt)
+        assertTrue(rig.bob1.repo.chat("acc-ana")!!.archived)
+        s.setArchived("acc-ana", false); s.settle()
+        assertNull(rig.bob1.repo.chat("acc-ana")!!.pinnedAt)
+    }
+
+    private fun storeOn(d: TestDevice, repo: org.example.app.messaging.ports.Repository) = LiveChatStore(
+        device = d.me, mls = d.mls, server = d.api, repo = repo, lock = d.lock, clock = d.clock, conversations = d.manager,
+        inbox = d.processor, membership = d.membership, sealer = d.sealer(), escrow = d.escrow,
+        readReceiptsEnabled = { d.readReceiptsSwitch() }, maxAttachmentBytes = 1234L,
+        dirs = MediaDirs(tmp("blob"), tmp("open"), tmp("temp")), social = social, scope = scope,
+    )
+
+    @Test
+    fun aDraftTypedWhileAReloadIsRunningIsNotOverwrittenByIt() = runTest {
+        val (rig, _, _) = joined()
+        val real = rig.bob1.repo
+        val entered = java.util.concurrent.CountDownLatch(1)
+        val gate = java.util.concurrent.CountDownLatch(1)
+        val armed = java.util.concurrent.atomic.AtomicBoolean(false)
+        val gated = object : org.example.app.messaging.ports.Repository by real {
+            override fun preferredConversation(chatId: String): org.example.app.messaging.ports.ConversationRecord? {
+                if (armed.get()) { entered.countDown(); assertTrue(gate.await(10, java.util.concurrent.TimeUnit.SECONDS)) }
+                return real.preferredConversation(chatId)
+            }
+        }
+        val s = storeOn(rig.bob1, gated)
+        armed.set(true)
+        val reloading = kotlin.concurrent.thread { s.refresh() }
+        assertTrue(entered.await(10, java.util.concurrent.TimeUnit.SECONDS), "the reload is under way")
+        val typing = kotlin.concurrent.thread { s.setDraft("acc-ana", "new") }
+        typing.join(300) // blocked behind the reload, or already done; either way it must win
+        armed.set(false)
+        gate.countDown()
+        reloading.join(10_000)
+        typing.join(10_000)
+        s.settle()
+        assertEquals("new", s.chat("acc-ana")!!.draft)
+        assertEquals("new", real.draft("acc-ana"))
+    }
+
+    @Test
+    fun aDraftForAChatWithNoRowYetIsKeptAndStoredWhenAnIncomingMessageCreatesTheRow() = runTest {
+        val (rig, s, _) = joined()
+        s.setDraft("acc-new", "hello"); s.settle()
+        assertNull(rig.bob1.repo.draft("acc-new"))
+        rig.bob1.repo.upsertChat(ChatRecord("acc-new", isRequest = false, unread = 0, muted = false, lastActivity = NOW))
+        s.refresh()
+        assertEquals("hello", rig.bob1.repo.draft("acc-new"))
+        assertEquals("hello", s.chat("acc-new")!!.draft)
+    }
+
+    @Test
+    fun aDraftForANewChatIsStoredWhenTheChatIsCreatedByOpeningIt() = runTest {
+        val (rig, s, _) = joined()
+        s.setDraft("acc-fresh", "first words"); s.settle()
+        s.ensureChat("acc-fresh")
+        s.settle()
+        assertEquals("first words", rig.bob1.repo.draft("acc-fresh"))
+        assertEquals("first words", store(rig.bob1).chat("acc-fresh")!!.draft)
+    }
 }
