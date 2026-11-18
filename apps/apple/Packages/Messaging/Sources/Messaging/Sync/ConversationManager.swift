@@ -32,12 +32,12 @@ public actor ConversationManager: ConversationManaging {
     /// One try plus this many retries after a `stale_epoch`.
     static let maxStaleRetries = 3
 
-    private let deps: MessagingDeps
+    let deps: MessagingDeps
     private let escrowKey: @Sendable () async throws -> Data
     private let syncOnce: @Sendable () async throws -> Void
     private let lockTimeout: Duration
     private let log: @Sendable (String) -> Void
-    private var creating: [String: Task<ConversationRecord, Error>] = [:]
+    var creating: [String: Task<ConversationRecord, Error>] = [:]
 
     /// - Parameters:
     ///   - escrowKey: the server's escrow public key, needed only to seal the `mode` envelope's
@@ -64,7 +64,7 @@ public actor ConversationManager: ConversationManaging {
         try await deps.lock.withAsyncLock(timeout: lockTimeout, body)
     }
 
-    private var membership: Membership { Membership(deps: deps) }
+    var membership: Membership { Membership(deps: deps) }
 
     // MARK: ConversationManaging
 
@@ -208,7 +208,7 @@ public actor ConversationManager: ConversationManaging {
     ///   (`commitRejected`; the row stays inactive and is never used). On the epoch check only a `404` abandons.
     /// - The engine lost the commit although the server applied it: logged and abandoned (`createLost`).
     /// - An unknown outcome: read the inbox; still pending means the error is thrown and the create stays pending.
-    private func finishCreate(serverID: String, resumed: Bool) async throws -> ConversationRecord {
+    func finishCreate(serverID: String, resumed: Bool) async throws -> ConversationRecord {
         if resumed {
             await readInboxAfterUnknownOutcome()
             if let active = try activeOrNil(serverID) { return try await announced(active) }
@@ -308,6 +308,7 @@ public actor ConversationManager: ConversationManaging {
     /// stays and `preferredConversation` retries it before returning the conversation.
     private func announced(_ record: ConversationRecord) async throws -> ConversationRecord {
         try await ensureModeAnnounced(record)
+        try ensureGroupAnnounced(record)
         return record
     }
 

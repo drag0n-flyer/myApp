@@ -110,6 +110,8 @@ struct Membership: Sendable {
             try db.set(Self.unreadablePrefix + conversation.serverID, Data())
         }
         let myIdentity = "\(me.accountID)/\(me.deviceID)"
+        // A group has no single peer: no device lines (the member lines come from the server's list) and no safety number.
+        let isGroup = ChatID.isGroup(conversation.chatID)
         var change = MembershipChange()
         var lines: [(id: String, event: SystemEvent)] = []
 
@@ -124,14 +126,14 @@ struct Membership: Sendable {
             }
             for identity in new.subtracting(old).sorted() where identity != myIdentity {
                 change.added.append(identity)
-                lines.append(("add-\(identity)", event(identity, added: true)))
+                if !isGroup { lines.append(("add-\(identity)", event(identity, added: true))) }
                 if SafetyNumberCalc.isAccount(identity, me.accountID) {
                     change.ownDevicesAdded.append(String(identity.dropFirst(me.accountID.count + 1)))
                 }
             }
             for identity in old.subtracting(new).sorted() where identity != myIdentity {
                 change.removed.append(identity)
-                lines.append(("remove-\(identity)", event(identity, added: false)))
+                if !isGroup { lines.append(("remove-\(identity)", event(identity, added: false))) }
             }
         }
         // Rows stored before the real keys (`"fake-sig:<identity>"`, the old placeholder) are re-baselined once,
@@ -146,7 +148,7 @@ struct Membership: Sendable {
         }
 
         // The chat's number follows its preferred conversation.
-        if let preferred = try db.preferredConversation(chatID: conversation.chatID), preferred.serverID == conversation.serverID {
+        if !isGroup, let preferred = try db.preferredConversation(chatID: conversation.chatID), preferred.serverID == conversation.serverID {
             // An oversized identity or key gives no number (the stored one stays); never a wrapped one.
             let number = try? SafetyNumberCalc.compute(accountA: me.accountID, accountB: conversation.chatID, members: keys).joined()
             let previous = try db.safety(chatID: conversation.chatID)?.current
