@@ -71,6 +71,7 @@ import org.example.app.core.chats.MessageActions
 import org.example.app.core.chats.MessageContent
 import org.example.app.core.settings.MediaKind
 import org.example.app.ui.Avatar
+import org.example.app.ui.lock.LocalExpectReturn
 import org.example.app.ui.media.AttachmentOpener
 import org.example.app.ui.media.AudioManagerFocus
 import org.example.app.ui.media.CaptureState
@@ -144,7 +145,8 @@ fun ChatScreen(
     val photos = remember { PhotoCache() }
     DisposableEffect(photos) { onDispose { photos.clear() } }
     var viewingPhoto by rememberSaveable { mutableStateOf<String?>(null) }
-    val mediaActions = remember(context, opener) { MediaActions(context, opener, scope, notify = { notice = it }) }
+    val expectReturn by rememberUpdatedState(LocalExpectReturn.current)
+    val mediaActions = remember(context, opener) { MediaActions(context, opener, scope, notify = { notice = it }, expectReturn = { expectReturn() }) }
     val pickers = rememberAttachmentPickers(onAttachment = viewModel::sendAttachment, notify = { notice = it })
     val voiceControls = rememberVoiceControls(onNote = { viewModel.sendAttachment(it.path, MediaKind.Voice) }, notify = { notice = it })
     val capture by voiceControls.capture.state.collectAsState()

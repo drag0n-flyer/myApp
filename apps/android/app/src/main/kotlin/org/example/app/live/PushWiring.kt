@@ -11,6 +11,11 @@ import org.example.app.core.chats.ChatStore
 import org.example.app.messaging.LiveChatStore
 import org.example.app.core.notify.NotificationPlan
 import org.example.app.push.MessageNotifier
+import org.example.app.ui.lock.LockSwitch
+import org.example.app.ui.settings.SettingsStore
+import org.example.app.SETTINGS_PREFS
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.example.app.contracts.PushPayloadHandler
 import org.example.app.contracts.RingOutcome
 import org.example.app.net.ServerClient
@@ -39,14 +44,24 @@ private const val TAG = "PushWiring"
  * so a push that starts a killed process works; while signed out they show nothing and register nothing.
  */
 object PushWiring {
-    fun install(context: Context, graph: () -> AppGraph) {
+    fun install(
+        context: Context,
+        /** App lock's in-memory switch; the live settings store keeps it current. ON until loaded. */
+        lock: LockSwitch = LockSwitch.shared,
+        /** The stored setting, for a process no screen started. Reads the disk: only called off the main thread, outside any notifier lock. */
+        storedLock: () -> Boolean = { SettingsStore.storedAppLock(context.applicationContext.getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE)) },
+        graph: () -> AppGraph,
+    ) {
         val app = context.applicationContext
+        // Called by every entry point that can post a notification, before it does: a push that starts a killed process
+        // has no settings store yet, and until the lock setting is known the notifications hide their content.
+        suspend fun lockLoaded() { if (!lock.loaded) withContext(Dispatchers.IO) { lock.ensureLoaded(storedLock) } }
         val handler = object : PushPayloadHandler {
             override suspend fun onMessagePush(padded: ByteArray): NotificationOutcome =
-                graph().openSession()?.notifications?.onMessagePush(padded) ?: NotificationOutcome.Nothing
+                lockLoaded().let { graph() }.openSession()?.notifications?.onMessagePush(padded) ?: NotificationOutcome.Nothing
 
             override suspend fun onCallPush(padded: ByteArray): RingOutcome =
-                graph().openSession()?.notifications?.onCallPush(padded) ?: RingOutcome.Drop
+                lockLoaded().let { graph() }.openSession()?.notifications?.onCallPush(padded) ?: RingOutcome.Drop
         }
         // A contact's ring goes to the session's LiveCallEngine, which asks `call.status` and rings through Telecom.
         val ring = object : IncomingCallSink {
@@ -57,13 +72,16 @@ object PushWiring {
                 graph().openSession()?.chatStore?.recordStrangerMissedCall(callId, fromAccountId)
             }
         }
+        // The two switches the notifications read. Wired here and nowhere else. Both are plain in-memory reads (the notifier calls them with its lock held).
+        // App lock is ON until loaded. The mute list is the current session's, already loaded because every entry point opens the session first.
         wireSwitches { graph().chatStore }
+        PushRuntime.appLockOn = { lock.on }
         PushRuntime.notificationActions = LiveNotificationActions(
             store = { graph().openSession()?.chatStore?.let(::SessionNotificationStore) },
         )
         PushRuntime.dispatcher = PushDispatcher(handler, ring, AndroidPushEffects(app, missed))
         PushRuntime.inboxFetcher = object : InboxFetcher {
-            override suspend fun fetch(): List<NotificationOutcome> = graph().openSession()?.notifications?.fetchOutcomes() ?: emptyList()
+            override suspend fun fetch(): List<NotificationOutcome> = lockLoaded().let { graph() }.openSession()?.notifications?.fetchOutcomes() ?: emptyList()
         }
         PushRuntime.registrationSink = object : RegistrationSink {
             override suspend fun onRegistration(registration: PushRegistration) {
@@ -78,12 +96,11 @@ object PushWiring {
     }
 
     /**
-     * The two switches the notifications read. [store] is the current session's store, or an empty one while no session
-     * is open (it never opens anything). Wired here and nowhere else: N6 (app lock) replaces the second line.
+     * The mute switch. [store] is the current session's store, or an empty one while no session is open (it never opens
+     * anything and never waits). A plain in-memory read: no disk, no blocking, safe under the notifier's lock.
      */
     internal fun wireSwitches(store: () -> ChatStore) {
         PushRuntime.mutedChatIds = { emptySet() } // stub
-        PushRuntime.appLockOn = { false }
     }
 
     /**

@@ -27,6 +27,8 @@ import org.robolectric.annotation.Config
 class PrivacyScreenTest {
     @get:Rule val rule = createAndroidComposeRule<ComponentActivity>()
     private val settings = SettingsStore()
+    private val lock = org.example.app.ui.lock.AppLock({ settings.settings.value })
+    private val auth = org.example.app.ui.lock.SampleDeviceAuth()
     private var saveEmail: suspend (Boolean) -> Unit = {}
     private var serverEmail: Boolean? = null
     private var loadGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
@@ -41,7 +43,7 @@ class PrivacyScreenTest {
     }
 
     private fun launch(store: SampleChatStore = SampleChatStore()) = rule.setContent {
-        AppTheme { PrivacyScreen(settings, store, saveFindByEmail = ::saveLikeTheGraph, loadFindByEmail = { loadGate?.await(); serverEmail }, onBack = {}) }
+        AppTheme { PrivacyScreen(settings, store, lock, auth, saveFindByEmail = ::saveLikeTheGraph, loadFindByEmail = { loadGate?.await(); serverEmail }, onBack = {}) }
     }
 
     @Test
@@ -172,7 +174,7 @@ class PrivacyScreenTest {
     @Test
     fun systemBackInBlockedListReturnsToPrivacyPage() {
         var leftPrivacy = false
-        rule.setContent { AppTheme { PrivacyScreen(settings, SampleChatStore(), saveFindByEmail = {}, loadFindByEmail = { null }, onBack = { leftPrivacy = true }) } }
+        rule.setContent { AppTheme { PrivacyScreen(settings, SampleChatStore(), lock, auth, saveFindByEmail = {}, loadFindByEmail = { null }, onBack = { leftPrivacy = true }) } }
         rule.onNodeWithText("Blocked").performClick()
         rule.waitForIdle()
         rule.onNodeWithText("Hide my IP address in calls").assertDoesNotExist()

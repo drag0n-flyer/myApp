@@ -2,6 +2,7 @@ package org.example.app.core.settings
 
 import org.example.app.core.calls.DataMode
 import org.example.app.core.calls.ModePreference
+import org.example.app.core.lock.AppLockPolicy
 
 /** The user's call data settings. */
 data class CallSettings(
@@ -21,6 +22,10 @@ data class UserSettings(
     val readReceipts: Boolean = true,
     val disappearingMessages: Double? = null,
     val noiseSuppression: NoiseSuppression = NoiseSuppression.Standard,
+    /** App lock (design 6.3): the phone's own authentication in front of the screen. Only this switch and the delay are stored. */
+    val appLock: Boolean = false,
+    /** One of `AppLockPolicy.DELAYS`; 0 is "Immediately". */
+    val lockAfterSeconds: Int = AppLockPolicy.DEFAULT_SECONDS,
 ) {
     companion object {
         /** A new user's settings, taking the server administrator's defaults. */
