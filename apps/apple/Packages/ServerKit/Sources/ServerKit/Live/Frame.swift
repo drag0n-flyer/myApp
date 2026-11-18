@@ -46,6 +46,13 @@ private struct CallRing: Decodable {
 private struct CallAnswered: Decodable { var callID, deviceID: String; var payload: Base64URLData }
 private struct CallSignal: Decodable { var callID, fromDeviceID: String; var payload: Base64URLData }
 private struct CallEnded: Decodable { var callID, reason: String }
+private struct ConversationEphemeral: Decodable {
+    struct From: Decodable { var account, device: String }
+    var conversationID: String
+    var epoch: UInt64
+    var from: From
+    var ciphertext: Base64URLData
+}
 private struct ErrorData: Decodable { var code: String }
 
 /// Returns nil for unknown frame types and non-JSON text, `.malformed` for known types with bad fields.
@@ -75,6 +82,11 @@ public func decodeFrame(_ text: String) -> IncomingFrame? {
         } ?? bad
     case "call.ended":
         return body(CallEnded.self).map { .event(.callEnded(callID: $0.callID, reason: $0.reason)) } ?? bad
+    case "conv.ephemeral":
+        return body(ConversationEphemeral.self).map {
+            .event(.conversationEphemeral(conversationID: $0.conversationID, epoch: $0.epoch, fromAccountID: $0.from.account,
+                                          fromDeviceID: $0.from.device, ciphertext: $0.ciphertext.data))
+        } ?? bad
     case "ack":
         guard let id = raw.id else { return bad }
         return .ack(id: id, data: raw.data?.bytes)

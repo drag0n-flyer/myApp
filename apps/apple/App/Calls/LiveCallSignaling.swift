@@ -32,7 +32,7 @@ final class LiveCallSignaling: CallSignaling {
         case let .callAnswered(callID, device, payload): return .answered(callID: callID, deviceID: device, payload: payload)
         case let .callSignal(callID, device, payload): return .signal(callID: callID, fromDeviceID: device, payload: payload)
         case let .callEnded(callID, reason): return .ended(callID: callID, reason: reason)
-        case .inbox, .deviceRevoked: return .other
+        case .inbox, .deviceRevoked, .conversationEphemeral: return .other
         }
     }
 
