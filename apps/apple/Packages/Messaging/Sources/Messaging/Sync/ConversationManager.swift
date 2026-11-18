@@ -538,14 +538,26 @@ public actor ConversationManager: ConversationManaging {
         serverID: String, group: GroupID, addDevices: [String], removeDevices: [String],
         build: nonisolated(nonsending) () async throws -> CommitBundle
     ) async throws -> UInt64 {
+        try await postCommitWithRetry(serverID: serverID, group: group) { () async throws -> (CommitBundle, [String], [String]) in
+            (try await build(), addDevices, removeDevices)
+        }
+    }
+
+    /// Like the above, but `build` also returns the devices the commit it built adds and removes, and those are the lists
+    /// posted: after a stale epoch the rebuilt commit may use fewer than the first one did.
+    func postCommitWithRetry(
+        serverID: String, group: GroupID,
+        build: nonisolated(nonsending) () async throws -> (CommitBundle, addDevices: [String], removeDevices: [String])
+    ) async throws -> UInt64 {
         // The lock body must not touch `self`: a closure isolated to this actor that captures `build` (also isolated
         // to it) is treated as sending it, which Swift 6.2 rejects. `mls` is read here so the body is not isolated.
         let mls = deps.mls
         for attempt in 0...Self.maxStaleRetries {
-            let (bundle, epoch) = try await locked {
-                let bundle = try await build()
-                return (bundle, try await mls.epoch(of: group))
+            let (built, epoch) = try await locked {
+                let built = try await build()
+                return (built, try await mls.epoch(of: group))
             }
+            let (bundle, addDevices, removeDevices) = built
             let newEpoch: UInt64
             do {
                 newEpoch = try await deps.server.postCommit(

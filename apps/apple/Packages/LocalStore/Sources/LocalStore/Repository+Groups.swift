@@ -81,10 +81,11 @@ extension Repository {
     /// Sets the name and photo of a group chat when `ver` is at least 1 and higher than the stored `group_ver`. A photo
     /// under 4 or over 24,576 bytes is refused whole. `false` when nothing changed.
     @discardableResult
-    public func setGroupInfo(chatID: String, title: String, photo: Data?, ver: Int) throws -> Bool {
+    public func setGroupInfo(chatID: String, title: String, photo: Data?, ver: Int, orEqual: Bool = false) throws -> Bool {
         guard ver >= 1, photo.map({ ProfilePhotoRule.isAcceptable($0) }) ?? true else { return false }
+        // `orEqual`: the caller has already decided an equal version wins (`GroupMerge`, the tie rule).
         return try db.run("""
-            UPDATE chats SET title=?, photo=?, group_ver=? WHERE id=? AND kind='group' AND (group_ver IS NULL OR group_ver < ?)
+            UPDATE chats SET title=?, photo=?, group_ver=? WHERE id=? AND kind='group' AND (group_ver IS NULL OR group_ver \(orEqual ? "<=" : "<") ?)
             """, [.text(title), photo.map { .blob($0) } ?? .null, .int(Int64(ver)), .text(chatID), .int(Int64(ver))]) > 0
     }
 

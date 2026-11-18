@@ -107,14 +107,17 @@ extension ConversationManager {
                 old: old, new: records, actor: named ? actor : nil, me: me, version: version, chatID: chatID,
                 conversationID: conversationID, at: now, db: repo)
         }
-        return try await syncMLS(conversationID: conversationID, listed: Set(records.map(\.accountID)))
+        // Only an owner or admin claims packages and adds missing devices: members racing to do it would burn the new
+        // person's key packages. Anyone still commits the removal of departed devices.
+        let myRole = info.members.first { $0.account == me }?.role
+        return try await syncMLS(conversationID: conversationID, listed: Set(records.map(\.accountID)), canAdd: myRole == .owner || myRole == .admin)
     }
 
     /// The MLS side of a reconcile. Takes the devices of accounts that are not listed out of the group (a commit by any
     /// member; the first on the server wins, a loser rebuilds on the new epoch and finds nothing left to do), and adds the
-    /// devices of a listed account that has none in the group yet. A person with no KeyPackage to claim stays listed and
-    /// is returned: the next client that sees them missing adds them.
-    private func syncMLS(conversationID: String, listed: Set<String>) async throws -> [String] {
+    /// devices of a listed account that has none in the group yet (only if I am an owner or admin). A person with no KeyPackage to claim stays listed and
+    /// is returned: the next owner or admin that sees them missing adds them.
+    private func syncMLS(conversationID: String, listed: Set<String>, canAdd: Bool) async throws -> [String] {
         let repo = deps.repo, me = deps.me.accountID
         guard let conversation = try repo.conversation(serverID: conversationID), conversation.active else { return [] }
         let group = GroupID(raw: conversation.groupID)
@@ -134,7 +137,7 @@ extension ConversationManager {
             } catch is GroupAlreadyDone {
             } catch { failure = error }
         }
-        if !plan.addAccounts.isEmpty {
+        if canAdd, !plan.addAccounts.isEmpty {
             do { try await addDevices(of: plan.addAccounts, to: conversation, group: group, listed: listed) } catch { failure = failure ?? error }
         }
         if let failure { throw failure }
@@ -155,17 +158,14 @@ extension ConversationManager {
             }
         }
         guard !claimed.isEmpty else { return }
-        let packages = claimed.sorted { $0.key < $1.key }.flatMap(\.value)
         do {
-            _ = try await postCommitWithRetry(
-                serverID: serverID, group: group, addDevices: packages.map(\.deviceID), removeDevices: []
-            ) {
+            _ = try await postCommitWithRetry(serverID: serverID, group: group) {
                 // After a stale epoch the inbox has been read: another member may have added them already.
                 let present = Set(try await Membership.members(of: group, conversationID: serverID, mls: mls, db: repo)
                     .map(GroupSyncPlan.account(of:)))
                 let use = claimed.filter { !present.contains($0.key) && listed.contains($0.key) }.sorted { $0.key < $1.key }.flatMap(\.value)
                 if use.isEmpty { throw GroupAlreadyDone() }
-                return try await mls.add(keyPackages: use.map(\.keyPackage), to: group)
+                return (try await mls.add(keyPackages: use.map(\.keyPackage), to: group), use.map(\.deviceID), [])
             }
         } catch is GroupAlreadyDone {
             return

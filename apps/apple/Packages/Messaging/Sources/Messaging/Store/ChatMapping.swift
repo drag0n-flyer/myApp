@@ -37,7 +37,7 @@ enum ChatMapping {
     ///   - showRead: see `status(_:showRead:)`.
     static func message(
         _ record: MessageRecord, attachment: AttachmentRecord?, reactions: [ReactionRecord],
-        displayName: (String) -> String?, showRead: Bool = true
+        displayName: (String) -> String?, showRead: Bool = true, me: String? = nil
     ) -> Message {
         var message = Message(
             id: record.id, senderID: record.senderAccount, sentAt: record.sentAt, content: .unsupported,
@@ -54,7 +54,7 @@ enum ChatMapping {
 
         if record.senderAccount == systemSender {
             if let event = try? JSONDecoder().decode(SystemEvent.self, from: record.envelope) {
-                message.content = .system(resolve(event, displayName: displayName))
+                message.content = .system(resolve(event, displayName: displayName, me: me))
             }
             return message
         }
@@ -85,7 +85,7 @@ enum ChatMapping {
     }
 
     /// The `name` of a stored system line is an account ID (`nil` = "You"); it becomes a display name here.
-    static func resolve(_ event: SystemEvent, displayName: (String) -> String?) -> SystemEvent {
+    static func resolve(_ event: SystemEvent, displayName: (String) -> String?, me: String? = nil) -> SystemEvent {
         func name(_ account: String?) -> String? {
             guard let account else { return nil }
             return displayName(account) ?? "Someone"
@@ -95,7 +95,7 @@ enum ChatMapping {
         case .deviceRemoved(let account): return .deviceRemoved(name: name(account))
         case .timer(let seconds, let account): return .timer(seconds: seconds, name: name(account))
         case .addedYou(let account): return .addedYou(by: name(account))
-        case .group(let line): return .group(line.resolved { name($0) ?? "Someone" })
+        case .group(let line): return .group(line.resolved(me: me) { name($0) ?? "Someone" })
         case .safetyNumberChanged, .messagesPaused: return event
         }
     }

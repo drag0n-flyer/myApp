@@ -239,6 +239,11 @@ struct GroupLineText: View {
         case .nameChanged(nil, let name): Text("The group name was changed to “\(name)”")
         case .photoChanged(let by?): Text("\(by) changed the group photo")
         case .photoChanged(nil): Text("The group photo was changed")
+        case .youAdded(let who): Text("You added \(who)")
+        case .youRemoved(let who): Text("You removed \(who)")
+        case .youLeft: Text("You left")
+        case .youChangedName(let name): Text("You changed the group name to “\(name)”")
+        case .youChangedPhoto: Text("You changed the group photo")
         }
     }
 }

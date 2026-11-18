@@ -14,6 +14,11 @@ enum GroupLines {
             undecryptable: false, folded: ""))
     }
 
+    /// The key the tie rule compares: the name and the photo's SHA-256 in lowercase hex.
+    static func infoKey(name: String, photo: Data?) -> GroupInfoKey {
+        GroupInfoKey(name: name, photoHash: photo.map { PortableSHA256.hash($0).map { String(format: "%02x", $0) }.joined() })
+    }
+
     /// The part of a line's ID that says which account it is about, so two lines of one change never share an ID.
     static func key(_ line: GroupSystemLine) -> String {
         switch line {
@@ -25,6 +30,7 @@ enum GroupLines {
         case .noLongerAdmin(let who): "member-\(who)"
         case .nameChanged: "name"
         case .photoChanged: "photo"
+        case .youAdded, .youRemoved, .youLeft, .youChangedName, .youChangedPhoto: "you"   // made only when shown, never stored
         }
     }
 

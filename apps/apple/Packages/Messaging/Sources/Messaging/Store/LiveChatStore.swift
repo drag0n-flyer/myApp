@@ -244,7 +244,7 @@ public final class LiveChatStore: ChatStore {
                     let name = ProfileDisplay.name(lookup: Self.name(of: row) ?? "", profile: profileRows[id], nickname: nil)
                     return name.isEmpty ? nil : name
                 },
-                showRead: showRead || record.senderAccount != me)
+                showRead: showRead || record.senderAccount != me, me: me)
             if record.status == "failed", tooBig.contains(record.id) { message.sendFailure = .tooBig }
             if record.status == "sending", uploading.contains(record.id) { message.uploadProgress = uploadFraction[record.id] ?? 0 }
             return message

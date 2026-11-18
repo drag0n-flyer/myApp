@@ -167,20 +167,56 @@ private func started(without: Set<String> = []) async throws -> (GroupRig, Side,
         await #expect(throws: GroupAdminError.unknownMember) { try await ana.manager.setGroupRole(chatID: chatID, account: "acc-zed", role: .admin) }
     }
 
-    @Test func aPersonWithoutKeyPackagesIsListedAndTheNextClientThatSeesThemMissingAddsThem() async throws {
+    @Test func aPersonWithoutKeyPackagesIsListedAndTheNextOwnerOrAdminThatSeesThemMissingAddsThem() async throws {
         let (rig, ana, bob, _, chatID) = try await started(without: ["acc-dan"])
         let conversationID = ChatID.conversationID(chatID)!
         let notAdded = try await ana.manager.addGroupMembers(chatID: chatID, accounts: ["acc-dan"])
         #expect(notAdded == ["acc-dan"])
         #expect(try ana.repo.groupMembers(chatID: chatID).map(\.accountID).contains("acc-dan"))
         #expect(try await ana.mlsAccounts(chatID) == ["acc-ana", "acc-bob", "acc-cy"])
-        // Dan's devices get packages; bob (not the one who added) sees dan missing and adds him.
+        // Dan's devices get packages. Bob is a plain member: he sees dan missing but claims nothing and adds nothing.
         for device in rig.dan { _ = try await device.deps.server.uploadKeyPackages(try await device.deps.mls.makeKeyPackages(count: 2)) }
         try await bob.sync()
         await bob.manager.groupMembersChanged(conversationID: conversationID, actor: nil)
-        let unreached = try await bob.manager.reconcileGroup(conversationID: conversationID, actor: nil)
+        let waiting = try await bob.manager.reconcileGroup(conversationID: conversationID, actor: nil)
+        #expect(waiting == ["acc-dan"])
+        #expect(try await bob.mlsAccounts(chatID) == ["acc-ana", "acc-bob", "acc-cy"])
+        // Once bob is an admin, he does it.
+        try await ana.manager.setGroupRole(chatID: chatID, account: "acc-bob", role: .admin)
+        let unreached = try await bob.manager.reconcileGroup(conversationID: conversationID, actor: "acc-ana")
         #expect(unreached.isEmpty)
         #expect(try await bob.mlsAccounts(chatID).contains("acc-dan"))
+    }
+
+    @Test func aPlainMemberStillCommitsTheRemovalOfDepartedDevices() async throws {
+        let (_, ana, bob, _, chatID) = try await started()
+        try await ana.manager.removeGroupMember(chatID: chatID, account: "acc-cy")
+        try await bob.sync()
+        await bob.manager.groupMembersChanged(conversationID: ChatID.conversationID(chatID)!, actor: "acc-ana")
+        #expect(try await bob.mlsAccounts(chatID) == ["acc-ana", "acc-bob"])
+    }
+
+    @Test func twoAdminsRenamingAtOnceEndOnTheSameGroupWhicheverArrivesFirst() async throws {
+        let (_, ana, bob, cy, chatID) = try await started()
+        let conversationID = ChatID.conversationID(chatID)!
+        try await ana.manager.setGroupRole(chatID: chatID, account: "acc-bob", role: .admin)
+        try await ana.outbox.flush()
+        await bob.manager.groupMembersChanged(conversationID: conversationID, actor: "acc-ana")
+        await cy.manager.groupMembersChanged(conversationID: conversationID, actor: "acc-ana")
+        try await ana.manager.changeGroupInfo(chatID: chatID, name: "Alpha", photo: nil, setPhoto: false)
+        try await bob.manager.changeGroupInfo(chatID: chatID, name: "Zulu", photo: nil, setPhoto: false)
+        try await ana.outbox.flush()
+        try await bob.outbox.flush()
+        try await ana.sync()
+        try await bob.sync()
+        try await cy.sync()
+        for side in [ana, bob, cy] {
+            let chat = try #require(try side.repo.chat(id: chatID))
+            #expect(chat.title == "Zulu", "\(side.device.deps.me.accountID) has \(chat.title ?? "nil")")
+            #expect(chat.groupVer == 2)
+        }
+        // The winner's line is not lost behind the loser's on the device that had the loser first.
+        #expect(try ana.lines(chatID).contains(.nameChanged(by: "acc-bob", name: "Zulu")))
     }
 
     @Test func leavingMakesTheChatReadOnlyAndLaterItemsAreNotRead() async throws {

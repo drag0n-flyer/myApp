@@ -273,17 +273,23 @@ public struct IncomingHandler: Sendable {
               chat.myState == "member", GroupNameRule.clean(name) == name,
               photo.map({ ProfilePhotoRule.isAcceptable($0) }) ?? true else { return }
         let role = try db.groupMembers(chatID: chat.id).first { $0.accountID == account }.map { GroupRole(wire: $0.role) }
-        guard GroupMerge.accept(currentVer: chat.groupVer, incomingVer: ver, senderRole: role) else { return }
+        let currentKey = chat.title.map { GroupLines.infoKey(name: $0, photo: chat.photo) }
+        let incomingKey = GroupLines.infoKey(name: name, photo: photo)
+        guard GroupMerge.accept(currentVer: chat.groupVer, incomingVer: ver, senderRole: role, current: currentKey, incoming: incomingKey) else { return }
         let before = (title: chat.title, photo: chat.photo, ver: chat.groupVer)
-        guard try db.setGroupInfo(chatID: chat.id, title: name, photo: photo, ver: ver),
+        // Two admins who changed the group at once both sent this version: the greater info won above, and its lines get an
+        // ID of their own so they are not lost behind the loser's.
+        let tie = ver == chat.groupVer
+        let suffix = tie ? "-" + String(PortableSHA256.hash(Data((name + (incomingKey.photoHash ?? "")).utf8)).map { String(format: "%02x", $0) }.joined().prefix(10)) : ""
+        guard try db.setGroupInfo(chatID: chat.id, title: name, photo: photo, ver: ver, orEqual: tie),
               before.ver != nil, let conversationID = ChatID.conversationID(chat.id) else { return }
         // The first name and photo a group gets say nothing; a later change is one line each, once (the ID carries the version).
         if let old = before.title, old != name {
-            try GroupLines.insert(.nameChanged(by: account, name: name), id: "sys-group-name-\(conversationID)-\(ver)", chatID: chat.id,
+            try GroupLines.insert(.nameChanged(by: account, name: name), id: "sys-group-name-\(conversationID)-\(ver)\(suffix)", chatID: chat.id,
                                   conversationID: conversationID, at: now(), db: db)
         }
         if before.photo != photo {
-            try GroupLines.insert(.photoChanged(by: account), id: "sys-group-photo-\(conversationID)-\(ver)", chatID: chat.id,
+            try GroupLines.insert(.photoChanged(by: account), id: "sys-group-photo-\(conversationID)-\(ver)\(suffix)", chatID: chat.id,
                                   conversationID: conversationID, at: now().addingTimeInterval(0.001), db: db)
         }
     }

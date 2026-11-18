@@ -78,6 +78,11 @@ public enum SystemEvent: Hashable, Codable, Sendable {
         case .nameChanged(nil, let name): "The group name was changed to “\(name)”"
         case .photoChanged(let by?): "\(by) changed the group photo"
         case .photoChanged(nil): "The group photo was changed"
+        case .youAdded(let who): "You added \(who)"
+        case .youRemoved(let who): "You removed \(who)"
+        case .youLeft: "You left"
+        case .youChangedName(let name): "You changed the group name to “\(name)”"
+        case .youChangedPhoto: "You changed the group photo"
         }
     }
 
