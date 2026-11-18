@@ -537,6 +537,24 @@ class ChatViewModelActionsTest {
     }
 
     @Test
+    fun aJumpSurvivesAnotherJumpFinishingWhileItIsStillLoading() = runTest {
+        val store = windowed(1_500)
+        val vm = vm(store)
+        assertTrue(vm.ensureLoaded("m1300")) // jump A is running
+        var once = true
+        store.onRead = {
+            if (once) {
+                once = false
+                vm.finishJump() // A finishes while B is still reading pages
+            }
+        }
+        assertTrue(vm.ensureLoaded("m10")) // jump B, not finished yet: the screen is still scrolling to it
+        store.arrive(0) // the next store change must not trim B's target
+        assertTrue(nums(vm).contains(10))
+        vm.finishJump()
+    }
+
+    @Test
     fun aJumpOnOpeningSurvivesTheReadMarkEmissionDuringTheLoad() = runTest {
         val store = windowed(1_500)
         var n = 0

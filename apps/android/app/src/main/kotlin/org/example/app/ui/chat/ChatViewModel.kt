@@ -175,11 +175,11 @@ class ChatViewModel(
 
     // Set from the moment a jump starts loading pages until the screen reports it has scrolled or given up. The list is
     // still at the bottom while the pages load, so "at the bottom" alone would let a store change trim the target away.
-    private var jumping = false
+    private var jumps = 0
 
     /** The screen reports that a jump has scrolled to its target, or gave up (also if it left composition mid-jump). */
     fun finishJump() {
-        jumping = false
+        if (jumps > 0) jumps--
     }
 
     /**
@@ -198,7 +198,7 @@ class ChatViewModel(
      * jumped to an old message, would drop what they are looking at.
      */
     private suspend fun trimOlder() = loadLock.withLock {
-        if (jumping) return@withLock
+        if (jumps > 0) return@withLock
         val cacheIds = store.chat(chatId)?.messages.orEmpty().map { it.id }.toSet()
         val older = known.value.filter { it.id !in cacheIds }
         if (older.size <= MAX_OLDER) return@withLock
@@ -229,7 +229,7 @@ class ChatViewModel(
     /** Loads older pages until [messageId] is loaded. False when history ended first; the loaded messages stay loaded. */
     suspend fun ensureLoaded(messageId: String): Boolean {
         // The caller must call [finishJump] when it has scrolled or given up.
-        jumping = true
+        jumps++
         while (true) {
             if (current(messageId) != null) return true
             if (!loadOlder()) return current(messageId) != null
