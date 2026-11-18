@@ -471,8 +471,8 @@ abstract class RepositoryContract {
             repo.insertMessage(message("later", "later word", sentAt = 102).copy(expiresAt = 2_001))
             repo.insertMessage(message("forever", "forever word", sentAt = 103))
 
-            assertEquals(emptyList(), repo.sweepExpired(999))
-            assertEquals(setOf("old", "edge"), repo.sweepExpired(2_000).toSet())
+            assertEquals(emptyList(), repo.sweepExpired(999, "me"))
+            assertEquals(setOf("old", "edge"), repo.sweepExpired(2_000, "me").toSet())
 
             assertNull(repo.message("old"))
             assertNull(repo.message("edge"))
@@ -483,10 +483,27 @@ abstract class RepositoryContract {
             assertTrue(repo.search("findable", 10).isEmpty(), "the search entry is gone")
             assertEquals(listOf("later"), repo.search("later word", 10).map { it.messageId })
             assertNotNull(repo.message("forever"))
-            assertEquals(emptyList(), repo.sweepExpired(2_000))
+            assertEquals(emptyList(), repo.sweepExpired(2_000, "me"))
         } finally {
             file.delete()
         }
+    }
+
+    @Test fun sweepingAnUnreadMessageLowersTheUnreadCount() = unreadSweep()
+
+    private fun unreadSweep() {
+        repo.setUnread("chat1", 3)
+        repo.insertMessage(message("u1", "a", sentAt = 1).copy(status = "delivered", expiresAt = 10))
+        repo.insertMessage(message("r1", "b", sentAt = 2).copy(status = "read", expiresAt = 10))
+        repo.insertMessage(message("own", "c", sentAt = 3).copy(senderAccount = "me", status = "delivered", expiresAt = 10))
+        repo.insertMessage(message("sys", "d", sentAt = 4).copy(senderAccount = "system", status = "sent", expiresAt = 10))
+        repo.insertMessage(message("keep", "e", sentAt = 5).copy(status = "delivered", expiresAt = 99))
+        assertEquals(setOf("u1", "r1", "own", "sys"), repo.sweepExpired(10, "me").toSet())
+        assertEquals(2, repo.chat("chat1")!!.unread, "only the unread incoming message counted")
+        repo.setUnread("chat1", 0)
+        repo.insertMessage(message("u2", "f", sentAt = 6).copy(status = "delivered", expiresAt = 10))
+        repo.sweepExpired(10, "me")
+        assertEquals(0, repo.chat("chat1")!!.unread, "never below zero")
     }
 
     @Test fun saveProfileKeepsOnlyAStrictlyHigherVersion() {

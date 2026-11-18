@@ -198,9 +198,10 @@ interface Repository {
     /**
      * Removes every message whose `expires_at` is at or before [now], in one transaction: the row, its reactions, its
      * attachment records, its outbox row and (by trigger) its search entry; then deletes the attachment files. Returns
-     * the removed message IDs so their notifications can be cancelled.
+     * the removed message IDs so their notifications can be cancelled. A removed message that was still unread (not from
+     * [ownAccount] or `system`, not `read`) lowers its chat's unread count, never below zero.
      */
-    fun sweepExpired(now: Long): List<String>
+    fun sweepExpired(now: Long, ownAccount: String): List<String>
 
     // profiles
     fun profile(accountId: String): ProfileRecord?

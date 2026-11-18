@@ -80,6 +80,25 @@ class PeopleBaseTest {
         assertNull(s.bob.repo.message("m2")!!.expiresAt)
     }
 
+    @Test fun aSenderSuppliedFutureAtDoesNotExtendALifetime() = runTest {
+        val s = setup()
+        val future = NOW + 10 * DAY * 1000L
+        s.deliver(ContentEnvelope.Text("f1", future, "from the future", ttl = 60))
+        assertEquals(NOW + 60_000, s.bob.repo.message("f1")!!.expiresAt, "counted from the receive time, not the claimed time")
+    }
+
+    @Test fun sweepingAnUnreadMessageKeepsTheUnreadCountRight() = runTest {
+        val s = setup()
+        val st = store(s.bob)
+        s.deliver(ContentEnvelope.Text("a", NOW, "one", ttl = 100))
+        s.deliver(ContentEnvelope.Text("b", NOW, "two", ttl = 100))
+        s.deliver(ContentEnvelope.Text("c", NOW, "three"))
+        assertEquals(3, s.bob.repo.chat("acc-ana")!!.unread)
+        assertEquals(setOf("a", "b"), st.sweepExpired(NOW + 100_000).toSet())
+        assertEquals(1, s.bob.repo.chat("acc-ana")!!.unread)
+        assertEquals(1, st.chat("acc-ana")!!.unreadCount, "the cache shows it too")
+    }
+
     @Test fun aMessageAlreadyExpiredOnArrivalIsDroppedBeforeInsert() = runTest {
         val s = setup()
         s.bob.nowMs = NOW + 60_000 // the device was offline for a minute

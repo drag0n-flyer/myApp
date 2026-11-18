@@ -180,6 +180,8 @@ object ContentCodec {
     /** A caption longer than a text message is cut to the same limit. */
     private fun caption(o: JsonObject): String? = o["c"].str()?.let { TextLimit.truncate(it) }
 
+    // Lengths: title and description count code points; a caption uses the same grapheme limit as a text message
+    // ([TextLimit], applied by `caption` on receive and refused over it on send).
     private const val PHOTO_MAX = 24_576
     private const val PREVIEW_IMAGE_MAX = 8_192
     private const val TITLE_MAX = 200

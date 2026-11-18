@@ -143,7 +143,8 @@ class IncomingHandler(
         val chatId = conversation.chatId
 
         // A message whose `at + ttl` has passed (the device was offline) is dropped before anything is stored or downloaded.
-        fun expiry(ttl: Int?): Long? = Expiry.expiresAt(envelope.at, ttl?.toLong())
+        // Counted from the earlier of the claimed send time and now, so a sender's future `at` cannot lengthen a message's life.
+        fun expiry(ttl: Int?): Long? = Expiry.expiresAt(minOf(envelope.at, clock.now()), ttl?.toLong())
         fun expired(ttl: Int?) = Expiry.isExpired(expiry(ttl), clock.now())
 
         fun store(

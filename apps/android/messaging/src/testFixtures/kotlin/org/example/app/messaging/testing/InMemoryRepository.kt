@@ -120,11 +120,15 @@ class InMemoryRepository : Repository {
     }
     override fun setTimer(chatId: String, seconds: Int) = tx { s.chats[chatId]?.let { s.chats[chatId] = it.copy(timerSeconds = seconds) }; Unit }
     override fun timerSeconds(chatId: String) = tx { s.chats[chatId]?.timerSeconds ?: 0 }
-    override fun sweepExpired(now: Long): List<String> {
+    override fun sweepExpired(now: Long, ownAccount: String): List<String> {
         val paths = ArrayList<String>()
         val removed = tx {
             val ids = s.messages.values.filter { it.expiresAt != null && it.expiresAt <= now }.map { it.id }
             val set = ids.toSet()
+            s.messages.values.filter { it.id in set && it.senderAccount != ownAccount && it.senderAccount != "system" && it.status != "read" }
+                .groupBy { it.chatId }.forEach { (chat, rows) ->
+                    s.chats[chat]?.let { s.chats[chat] = it.copy(unread = maxOf(0, it.unread - rows.size)) }
+                }
             ids.forEach { s.messages.remove(it) }
             s.reactions.keys.removeAll { it.first in set }
             s.attachments.values.filter { it.messageId in set }.forEach { a -> a.localPath?.let(paths::add); s.attachments.remove(a.id) }

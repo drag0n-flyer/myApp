@@ -78,7 +78,7 @@ abstract class Migration2To3Contract {
             repo.setTimer("chat-a", 86_400)
             assertEquals(86_400, repo.timerSeconds("chat-a"))
             repo.insertMessage(repo.message("m-1")!!.copy(id = "m-new", expiresAt = 10, caption = "c", linkPreview = "{}"))
-            assertEquals(listOf("m-new"), repo.sweepExpired(10))
+            assertEquals(listOf("m-new"), repo.sweepExpired(10, "me"))
             assertEquals(3, repo.chats().size)
             assertTrue(repo.message("m-1") != null && repo.message("m-2") != null && repo.message("m-3") != null)
             assertTrue(repo.saveProfile("acc-a", "Asha", null, 1))

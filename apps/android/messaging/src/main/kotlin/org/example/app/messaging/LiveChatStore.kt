@@ -1280,7 +1280,7 @@ class LiveChatStore(
 
     override fun sweepExpired(now: Long): List<String> {
         if (closed.get()) return emptyList()
-        val removed = repo.sweepExpired(now)
+        val removed = repo.sweepExpired(now, device.accountId)
         if (removed.isNotEmpty()) reload()
         return removed
     }

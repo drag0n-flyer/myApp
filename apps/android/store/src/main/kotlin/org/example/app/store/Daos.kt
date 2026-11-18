@@ -105,6 +105,11 @@ interface MessageDao {
     @Query("UPDATE messages SET status = 'sending', received_at = :now WHERE id = :id AND status = 'failed'") fun resetForRetry(id: String, now: Long): Int
 
     @Query("SELECT id FROM messages WHERE expires_at IS NOT NULL AND expires_at <= :now") fun expiredIds(now: Long): List<String>
+    @Query(
+        "SELECT chat_id, COUNT(*) AS n FROM messages WHERE id IN (:ids) AND sender_account NOT IN (:own, 'system') " +
+            "AND status != 'read' GROUP BY chat_id",
+    )
+    fun unreadAmong(ids: List<String>, own: String): List<UnreadRow>
     @Query("SELECT local_path FROM attachments WHERE message_id IN (:ids) AND local_path IS NOT NULL") fun pathsFor(ids: List<String>): List<String>
     @Query("DELETE FROM messages WHERE id IN (:ids)") fun deleteByIds(ids: List<String>)
     @Query("SELECT * FROM profiles WHERE account_id = :id") fun profile(id: String): ProfileEntity?
@@ -124,6 +129,11 @@ interface MessageDao {
     @Query("UPDATE attachments SET state = :state, downloaded = :downloaded, local_path = :path WHERE id = :id")
     fun setAttachmentState(id: String, state: String, downloaded: Long, path: String?)
 }
+
+data class UnreadRow(
+    @androidx.room.ColumnInfo(name = "chat_id") val chatId: String,
+    @androidx.room.ColumnInfo(name = "n") val n: Int,
+)
 
 data class SearchRow(
     @androidx.room.ColumnInfo(name = "chat_id") val chatId: String,

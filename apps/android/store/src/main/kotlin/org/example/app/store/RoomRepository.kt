@@ -64,13 +64,14 @@ class RoomRepository(private val db: AppDatabase, allowLikeFallback: Boolean = f
         if (text.isNullOrBlank()) chats.deleteDraft(chatId) else chats.putDraft(chatId, text, at)
     override fun setTimer(chatId: String, seconds: Int) = chats.setTimer(chatId, seconds)
     override fun timerSeconds(chatId: String) = chats.timerSeconds(chatId) ?: 0
-    override fun sweepExpired(now: Long): List<String> {
+    override fun sweepExpired(now: Long, ownAccount: String): List<String> {
         val paths = ArrayList<String>()
         val removed = transaction {
             val ids = messages.expiredIds(now)
             // 500 at a time: SQLite caps the number of variables in one statement.
             ids.chunked(500).forEach { chunk ->
                 paths += messages.pathsFor(chunk)
+                messages.unreadAmong(chunk, ownAccount).forEach { chats.reduceUnread(it.chatId, it.n) }
                 outbox.removeAll(chunk)
                 messages.deleteByIds(chunk)
             }
