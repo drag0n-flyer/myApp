@@ -66,4 +66,10 @@ class NotificationPlanTest {
         assertFalse(NotificationPlan.needsSummary(setOf("a")))
         assertTrue(NotificationPlan.needsSummary(setOf("a", "b")))
     }
+
+    @Test fun aChatIsReadWhenItsUnreadCountFallsToZero() {
+        val before = mapOf("a" to 2, "b" to 0, "c" to 1, "d" to 3)
+        val after = mapOf("a" to 0, "b" to 0, "c" to 4) // d vanished (archived or gone): not "read"
+        assertEquals(setOf("a"), NotificationPlan.readChats(before, after))
+    }
 }

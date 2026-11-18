@@ -32,7 +32,21 @@ object NotificationPlan {
         muted: Boolean,
         appLocked: Boolean,
         describe: (MessagePreview) -> String = { if (it is MessagePreview.Text) it.text else (it as MessagePreview.Resource).key },
-    ): ChatNotification = ChatNotification(chatId, "", emptyList(), silent = false, hideContent = false)
+    ): ChatNotification {
+        if (appLocked) {
+            return ChatNotification(
+                chatId, "", listOf(Line(HIDDEN_TEXT, unread.maxOfOrNull { it.sentAt } ?: Instant.EPOCH)),
+                silent = muted, hideContent = true,
+            )
+        }
+        val lines = unread.sortedBy { it.sentAt }.takeLast(MAX_LINES).map { Line(describe(it.preview), it.sentAt) }
+        return ChatNotification(chatId, senderName, lines, silent = muted, hideContent = false)
+    }
 
-    fun needsSummary(activeChatIds: Set<String>): Boolean = false
+    /** A summary groups the chat notifications once there are two or more. */
+    fun needsSummary(activeChatIds: Set<String>): Boolean = activeChatIds.size >= 2
+
+    /** Chats whose unread count fell to zero between two looks: they were read, so their notification goes. */
+    fun readChats(before: Map<String, Int>, after: Map<String, Int>): Set<String> =
+        before.filter { (id, n) -> n > 0 && after[id] == 0 }.keys
 }
