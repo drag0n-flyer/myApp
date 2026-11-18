@@ -27,6 +27,7 @@ import org.example.app.calls.session.CallSignaling
 import org.example.app.calls.session.CallStatus
 import org.example.app.calls.session.Clock
 import org.example.app.calls.session.IceServer
+import org.example.app.calls.policy.IceState
 import org.example.app.calls.session.MediaEvent
 import org.example.app.calls.session.MediaSession
 import org.example.app.calls.session.MediaSessionFactory
@@ -43,6 +44,7 @@ import org.example.app.core.calls.ModePreference
 import org.example.app.core.calls.NetworkType
 import org.example.app.core.chats.CallSummary
 import org.example.app.core.chats.Contact
+import org.example.app.core.settings.CallSettings
 import org.example.app.core.settings.IPHiding
 import org.example.app.core.settings.NoiseSuppression
 import org.example.app.core.settings.ServerPolicy
@@ -100,7 +102,9 @@ class LiveCallEngineTest {
         @Volatile var closeDelayMs = 0L
         @Volatile var configured = false
         override suspend fun configure(iceServers: List<IceServer>, policy: IceTransportPolicy, video: Boolean) { configured = true }
-        override suspend fun makeOffer(receive: AudioProfile, iceRestart: Boolean) = SDP
+        val offers = mutableListOf<Boolean>()
+        val offerProfiles = mutableListOf<AudioProfile>()
+        override suspend fun makeOffer(receive: AudioProfile, iceRestart: Boolean): String { offers += iceRestart; offerProfiles += receive; return SDP }
         override suspend fun acceptOffer(sdp: String, send: AudioProfile, receive: AudioProfile) = SDP
         override suspend fun acceptAnswer(sdp: String, send: AudioProfile) = Unit
         override suspend fun rollback() = Unit
@@ -140,19 +144,21 @@ class LiveCallEngineTest {
         peer: CallPeer?,
         media: MediaSessionFactory?,
         sealer: CallSignalSealer,
+        mobileLimit: CoreMode = CoreMode.DataSaver,
     ) {
         val signaling = FakeSignaling()
         val controller = FakeController()
         val history = mutableListOf<Pair<CallSummary, Boolean>>()
         val strangerMissed = mutableListOf<Pair<String, String>>()
         val session = FakeMedia()
+        @Volatile var nowMs = 0L
         val engine = LiveCallEngine(
             scope = scope,
             signaling = signaling,
             sealer = sealer,
             media = media ?: MediaSessionFactory { session },
             peers = CallPeers { if (it == peer?.contact?.id) peer else null },
-            context = { isContact -> context(isContact) },
+            context = { isContact -> context(isContact, mobileLimit) },
             controller = controller,
             history = CallHistory { summary, _, outgoing -> history += summary to outgoing },
             strangers = object : MissedCallRecorder {
@@ -160,13 +166,13 @@ class LiveCallEngineTest {
                     strangerMissed += callId to fromAccountId
                 }
             },
-            clock = Clock { 0L },
+            clock = Clock { nowMs },
             newCallId = { "c1" },
         )
     }
 
-    private fun TestScope.harness(peer: CallPeer? = CallPeer(bob, isContact = true, isBlocked = false), media: MediaSessionFactory? = null): Harness {
-        return Harness(backgroundScope, peer, media, PlainSealer()).also { it.engine.attach(); runCurrent() }
+    private fun TestScope.harness(peer: CallPeer? = CallPeer(bob, isContact = true, isBlocked = false), media: MediaSessionFactory? = null, mobileLimit: CoreMode = CoreMode.DataSaver): Harness {
+        return Harness(backgroundScope, peer, media, PlainSealer(), mobileLimit).also { it.engine.attach(); runCurrent() }
     }
 
     private fun ring(video: Boolean = false) = RingOutcome.Ring("c1", "bob", "Bob", video)
@@ -465,6 +471,98 @@ class LiveCallEngineTest {
         assertEquals(listOf("incoming:c1"), h.controller.log)
     }
 
+    /** An outgoing call to Bob that is negotiated and connected, so an ICE restart can happen. */
+    private suspend fun TestScope.activeCall(mobileLimit: CoreMode = CoreMode.High): Harness {
+        val h = harness(mobileLimit = mobileLimit)
+        h.engine.start("bob", video = false)
+        runCurrent()
+        val sealer = PlainSealer()
+        // The callee's offer travels with `call.answered`.
+        val offer = CallSignalPayload(CallSignalPayload.Kind.offer, "c1", sdp = SDP, dtlsFingerprint = "sha-256 AA:BB")
+        h.signaling.events.emit(CallServerEvent.Answered("c1", "d1", sealer.from("bob", "d1", offer)))
+        runCurrent()
+        h.session.events.emit(MediaEvent.IceStateChanged(IceState.Connected))
+        runCurrent()
+        h.nowMs = 10_000 // the connection set-up is over: nothing is outstanding
+        return h
+    }
+
+    private fun Harness.restarts() = session.offers.count { it }
+
+    @Test
+    fun aBurstOfTheSameNetworkDoesNotRestartButARealChangeRestartsExactlyOnce() = runTest(UnconfinedTestDispatcher()) {
+        val h = activeCall()
+        assertEquals(0, h.restarts())
+        // The call began on Wi-Fi (the context): twenty Wi-Fi reports are not a change.
+        repeat(20) { h.engine.setNetwork(NetworkType.Wifi) }
+        runCurrent()
+        assertEquals(0, h.restarts())
+        // A real change restarts once, however often it is repeated.
+        repeat(20) { h.engine.setNetwork(NetworkType.Mobile) }
+        runCurrent()
+        assertEquals(1, h.restarts())
+    }
+
+    @Test
+    fun offlineDoesNotRestartAndTheNetworkThatReturnsDoes() = runTest(UnconfinedTestDispatcher()) {
+        val h = activeCall()
+        h.engine.setNetwork(NetworkType.Wifi)
+        h.engine.setNetwork(NetworkType.Offline)
+        runCurrent()
+        assertEquals(0, h.restarts())
+        h.engine.setNetwork(NetworkType.Mobile)
+        runCurrent()
+        assertEquals(1, h.restarts())
+    }
+
+    @Test
+    fun wifiToMobileWithDataSaverRestartsAtOnceInTheNewProfile() = runTest(UnconfinedTestDispatcher()) {
+        val h = activeCall(mobileLimit = CoreMode.DataSaver)
+        h.engine.setNetwork(NetworkType.Mobile)
+        runCurrent()
+        // One offer, at once (the clock has not moved), and it is the restart, in the Data saver profile.
+        assertEquals(listOf(true), h.session.offers)
+        assertEquals(AudioProfile.forMode(DataMode.DataSaver), h.session.offerProfiles.single())
+    }
+
+    @Test
+    fun wifiOfflineMobileWithDataSaverSendsNothingOfflineAndOneRestartOnMobile() = runTest(UnconfinedTestDispatcher()) {
+        val h = activeCall(mobileLimit = CoreMode.DataSaver)
+        h.engine.setNetwork(NetworkType.Offline)
+        runCurrent()
+        assertTrue(h.session.offers.isEmpty())
+        h.engine.setNetwork(NetworkType.Mobile)
+        runCurrent()
+        assertEquals(listOf(true), h.session.offers)
+        assertEquals(AudioProfile.forMode(DataMode.DataSaver), h.session.offerProfiles.single())
+    }
+
+    @Test
+    fun aModeChangeWithoutAPathChangeStillRenegotiates() = runTest(UnconfinedTestDispatcher()) {
+        val h = activeCall()
+        h.engine.setMode(ModePreference.Fixed(CoreMode.DataSaver))
+        runCurrent()
+        assertEquals(listOf(false), h.session.offers) // a plain offer, no ICE restart
+    }
+
+    @Test
+    fun aCallStartsOnTheCurrentNetworkNotTheLastCallsOne() = runTest(UnconfinedTestDispatcher()) {
+        val h = harness()
+        h.engine.start("bob", video = false)
+        runCurrent()
+        h.engine.setNetwork(NetworkType.Mobile)
+        runCurrent()
+        assertEquals(NetworkType.Mobile, h.engine.state.value?.network)
+        h.engine.hangUp()
+        runCurrent()
+        h.engine.reset()
+        runCurrent()
+        // The next call: the device is on Wi-Fi (the context), whatever the last call ended on.
+        h.engine.start("bob", video = false)
+        runCurrent()
+        assertEquals(NetworkType.Wifi, h.engine.state.value?.network)
+    }
+
     @Test
     fun mediaFailureEndsTheCall() = runTest(UnconfinedTestDispatcher()) {
         val h = harness(media = MediaSessionFactory { throw UnsupportedOperationException() })
@@ -484,6 +582,7 @@ class LiveCallEngineTest {
             defaultIPHiding = IPHiding.NonContacts, requiresInvite = true, host = "h",
         )
 
-        fun context(isContact: Boolean) = CallContext(server, UserSettings(ipHiding = IPHiding.NonContacts), NetworkType.Wifi, isContact)
+        fun context(isContact: Boolean, mobileLimit: CoreMode = CoreMode.DataSaver) =
+            CallContext(server, UserSettings(call = CallSettings(mobileDataLimit = mobileLimit), ipHiding = IPHiding.NonContacts), NetworkType.Wifi, isContact)
     }
 }

@@ -22,6 +22,7 @@ import androidx.core.content.ContextCompat
 class CallService : Service() {
     companion object {
         private const val ACTION_ANSWERED = "org.example.app.calls.service.ANSWERED"
+        private const val ACTION_CAMERA = "org.example.app.calls.service.CAMERA"
         private const val EXTRA_SEND_VIDEO = "org.example.app.calls.service.SEND_VIDEO"
 
         /** Android 10 has no microphone or camera foreground service types. */
@@ -37,7 +38,29 @@ class CallService : Service() {
         /** The user answered, or placed the call. [sendVideo] is whether the camera is on. */
         fun answered(context: Context, call: CallInfo, sendVideo: Boolean) = start(context, ACTION_ANSWERED, call, sendVideo)
 
+        /** The call this service is running, while it runs. */
+        @Volatile private var running: CallInfo? = null
+
+        /**
+         * The camera permission arrived mid-call: re-declares the foreground service with the camera type. Does nothing
+         * when no call service is running (it never starts one by itself).
+         */
+        fun cameraGranted(context: Context) {
+            val call = running ?: return
+            try {
+                // A plain start: the service is already in the foreground, and a stale one may stop itself at once.
+                val intent = Intent(context, CallService::class.java)
+                    .setAction(ACTION_CAMERA)
+                    .putExtras(CallExtras.bundle(call))
+                    .putExtra(EXTRA_SEND_VIDEO, true)
+                context.startService(intent)
+            } catch (_: RuntimeException) {
+                // The system refused the restart: the call goes on as it was.
+            }
+        }
+
         fun stop(context: Context) {
+            running = null // before the stop, so a camera restart racing it finds no call
             context.stopService(Intent(context, CallService::class.java))
         }
 
@@ -52,13 +75,23 @@ class CallService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    override fun onDestroy() {
+        running = null
+        super.onDestroy()
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val call = CallExtras.read(intent?.extras)
         if (call == null) {
             stopSelf()
             return START_NOT_STICKY
         }
-        if (intent?.action == ACTION_ANSWERED) {
+        if (intent?.action == ACTION_CAMERA && running == null) {
+            stopSelf() // the call ended before this start arrived: no notification for a dead call
+            return START_NOT_STICKY
+        }
+        if (intent?.action == ACTION_ANSWERED || intent?.action == ACTION_CAMERA) {
+            running = call
             val video = intent.getBooleanExtra(EXTRA_SEND_VIDEO, false)
             foreground(CallNotifications.ongoing(this, call), allowed(serviceTypes(video)))
         }
@@ -78,11 +111,16 @@ class CallService : Service() {
         ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
 
     private fun foreground(notification: android.app.Notification, types: Int) {
-        try {
-            ServiceCompat.startForeground(this, CallNotifications.ID, notification, types)
-            return
-        } catch (_: RuntimeException) {
-            // A microphone or camera type not allowed here (SecurityException): try as a phone call only.
+        // Without the camera type the call keeps its microphone; as a phone call only is the last resort.
+        @SuppressLint("InlinedApi") // the camera bit is only ever set from R on
+        val withoutCamera = types and ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA.inv()
+        for (candidate in listOf(types, withoutCamera).distinct()) {
+            try {
+                ServiceCompat.startForeground(this, CallNotifications.ID, notification, candidate)
+                return
+            } catch (_: RuntimeException) {
+                // A microphone or camera type not allowed here (SecurityException): try with less.
+            }
         }
         try {
             ServiceCompat.startForeground(this, CallNotifications.ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)

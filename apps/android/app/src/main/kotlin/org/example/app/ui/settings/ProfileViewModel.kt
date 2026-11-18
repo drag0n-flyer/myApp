@@ -58,6 +58,9 @@ class AccountActions(
         }
     }
 
+    /** Forgets a failure nobody took: a new session must not start with the last one's. */
+    fun clearError() { _error.value = null }
+
     /** Hands over the failure to show, once. */
     fun takeError(): Int? = _error.getAndUpdate { null }
 }

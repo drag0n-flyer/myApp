@@ -257,7 +257,21 @@ class AppGraph(
             }
         }
         engine.state.map { it != null && !it.isEnded }.distinctUntilChanged().onEach { setInCall(it) }.launchIn(scope)
+        if (!sampleData) watchNetworkDuringCalls(engine)
         engine
+    }
+
+    /** Live calls hear about Wi-Fi / mobile data changes at once: watched only while a call is on (NetworkWatcher dedupes repeats). */
+    private fun watchNetworkDuringCalls(engine: CallEngine) {
+        val connectivity = appContext.getSystemService(android.net.ConnectivityManager::class.java) ?: return
+        val watcher = org.example.app.calls.android.NetworkWatcher(connectivity) { engine.setNetwork(it) }
+        engine.state.map { it != null && !it.isEnded }.distinctUntilChanged().onEach { live ->
+            try {
+                if (live) watcher.start() else watcher.stop()
+            } catch (e: RuntimeException) {
+                Log.w(TAG, "network watcher: ${e.javaClass.simpleName}")
+            }
+        }.launchIn(scope)
     }
 
     private val callController: FallbackCallController by lazy { makeCallController(appContext) }
@@ -305,7 +319,7 @@ class AppGraph(
         }
     }
 
-    private val guardedAccount: AccountService by lazy { WipeFirst(liveAccount) { finishPendingWipe() } }
+    private val guardedAccount: AccountService by lazy { WipeFirst(liveAccount) { finishPendingWipe(); accountActions.clearError() /* a sign-in starts clean */ } }
     private val sampleAccount by lazy { SampleAccountService() }
     private val sampleChats by lazy { SampleChatStore() }
 
@@ -383,6 +397,8 @@ class AppGraph(
         val stored = sessions.current ?: return null
         val device = LocalDevice(stored.accountId, stored.deviceId)
         if (!local.ownedBy(device.identity)) {
+            // Another account's data goes, and so do its settings (first: a kill leaves the owner mismatch to try again).
+            quietly("other account's settings") { settingsStore.reset(UserSettings.initial(serverPolicy)) }
             quietly("other account's data") { wipe(LocalData.DATA) }
             if (local.pending != null) return null
         }
@@ -392,6 +408,7 @@ class AppGraph(
             if (wipeRunning || revocations != revoked) return null
             liveSession?.let { return it }
             local.recordOwner(device.identity)
+            accountActions.clearError() // a failure from the last account's sign-out must not show for this one
             val sessionScope = CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]))
             val session = LiveSession(
                 device, client, secrets, platform, appContext, hpke, sessionScope,
