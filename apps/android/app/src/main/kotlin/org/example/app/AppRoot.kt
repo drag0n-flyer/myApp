@@ -177,6 +177,8 @@ fun AppRoot(
         }
         // Disappearing messages: swept at start, on foreground and at each next expiry; notifications of swept chats go.
         val sweepContext = LocalContext.current
+        // With mixed lines (some expire, some stay) nothing times the notification out, so a line that expired stays
+        // visible until the next sweep in the foreground re-posts it.
         org.example.app.ui.ExpirySweepEffect(graph.chatStore) { left -> org.example.app.live.ExpiryNotifications.apply(sweepContext, graph.chatStore, left) }
         val nav = rememberNavController()
         // From 840 dp the list sits beside the open chat. The open chat, its info page and the message to flash are

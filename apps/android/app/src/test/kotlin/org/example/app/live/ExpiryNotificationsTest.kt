@@ -73,4 +73,15 @@ class ExpiryNotificationsTest {
         ExpiryNotifications.apply(context, store, emptyMap()) // my own message expired: the sweeper reports no chat
         assertEquals(listOf("one", "two"), lines())
     }
+
+    @Test fun aContactWithoutADisplayNameIsTitledByItsUsername() {
+        MessageNotifier.forgetRecent()
+        val inner = storeWith(listOf(incoming("1", "one", 1_000), incoming("2", "two", 2_000)))
+        val store = object : org.example.app.core.chats.ChatStore by inner {
+            override fun contact(id: String) = org.example.app.core.chats.Contact("riya", "", "riya_u")
+        }
+        showTwo()
+        ExpiryNotifications.apply(context, store, mapOf("chat-riya" to 1))
+        assertEquals("riya_u", nm.activeNotifications.single { it.tag == "chat:chat-riya" }.notification.extras.getString("android.title"))
+    }
 }

@@ -229,7 +229,10 @@ class MessageNotifier(
         NotificationChannels.ensure(context)
         val locked = forceLocked || appLockOn()
         val priorLines = if (locked || replace != null) emptyList() else history(chatId)
-        val priorExpires = if (replace != null) null else stateOf(chatId)?.expiresAt
+        // Was a notification showing (even one that hides its content under the app lock)? Then whatever it holds counts.
+        val prior = stateOf(chatId)
+        val showing = prior != null
+        val priorExpires = prior?.expiresAt
         val entries = when {
             locked -> listOf(added ?: Entry("", System.currentTimeMillis(), false))
             replace != null -> replace
@@ -239,10 +242,9 @@ class MessageNotifier(
         // A notification must not outlive every message in it. It times out at the latest expiry of its lines, but only
         // when each of them expires; one line that stays keeps it until read. My own reply line changes nothing.
         val expiresAt: Long? = when {
-            locked -> if (added == null) priorExpires else if (added.mine) null else addedExpiresAt
-            replace != null -> addedExpiresAt
+            replace != null -> if (locked) priorExpires else addedExpiresAt
             added == null || added.mine -> priorExpires
-            priorLines.isEmpty() -> addedExpiresAt
+            !showing -> addedExpiresAt
             priorExpires == null || addedExpiresAt == null -> null
             else -> maxOf(priorExpires, addedExpiresAt)
         }

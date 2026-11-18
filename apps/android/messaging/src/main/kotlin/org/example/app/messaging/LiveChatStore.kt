@@ -1306,10 +1306,10 @@ class LiveChatStore(
     override fun sweepExpired(now: Long): List<String> {
         if (closed.get()) return emptyList()
         // The attachments of what is about to go, to remove their decrypted copies afterwards.
-        val attachmentIds = repo.expiredMessageIds(now).mapNotNull { repo.attachmentForMessage(it)?.id }
+        val openNames = repo.expiredMessageIds(now).mapNotNull { repo.attachmentForMessage(it) }.map { Downloader.openName(it.id, it.digest, it.key) }
         val removed = repo.sweepExpired(now, device.accountId)
-        // The decrypted copy in the open folder is named "<attachment id>-<digest>-<key hash>".
-        for (attId in attachmentIds) dirs.openDir.listFiles()?.forEach { if (it.name.startsWith("$attId-")) it.delete() }
+        // The decrypted copy in the open folder, by the exact name `Downloader.open` gave it.
+        for (name in openNames) File(dirs.openDir, name).delete()
         // A failed or waiting upload that expired leaves nothing behind: its staged files and its pending key.
         for (id in removed) {
             if (pendingDir(id).exists() || repo.get(PENDING_UPLOAD_PREFIX + id)?.isNotEmpty() == true) discardPending(id)

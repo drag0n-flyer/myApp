@@ -29,7 +29,8 @@ class ExpiryNotificationTest {
         shadowOf(context as Application).grantPermissions("android.permission.POST_NOTIFICATIONS")
     }
 
-    private fun notifier() = MessageNotifier(context, mutedChatIds = { emptySet() }, appLockOn = { false })
+    private var locked = false
+    private fun notifier() = MessageNotifier(context, mutedChatIds = { emptySet() }, appLockOn = { locked })
     private fun tags() = nm.activeNotifications.mapNotNull { it.tag }.toSet()
     private fun chatNote() = nm.activeNotifications.single { it.tag == "chat:c1" }.notification
     private fun lines(n: Notification) = NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(n)!!.messages.map { it.text.toString() }
@@ -76,5 +77,34 @@ class ExpiryNotificationTest {
         notifier().show(NotificationOutcome.Message("c1", "Ana", "fades", expiresAtMs = now + 60_000))
         notifier().showSent("c1", "my reply")
         assertTrue(chatNote().timeoutAfter > 0)
+    }
+
+    @Test fun underTheAppLockAMessageThatStaysKeepsTheNotificationWithoutATimeout() {
+        val now = System.currentTimeMillis()
+        locked = true
+        notifier().show(NotificationOutcome.Message("c1", "Ana", "stays"))
+        notifier().show(NotificationOutcome.Message("c1", "Ana", "fades", expiresAtMs = now + 3_600_000))
+        assertEquals(0L, chatNote().timeoutAfter, "the hidden notification holds a message that does not expire")
+    }
+
+    @Test fun afterAHiddenNotificationUnlockedStillNoTimeout() {
+        val now = System.currentTimeMillis()
+        locked = true
+        notifier().show(NotificationOutcome.Message("c1", "Ana", "stays"))
+        locked = false
+        notifier().show(NotificationOutcome.Message("c1", "Ana", "fades", expiresAtMs = now + 3_600_000))
+        assertEquals(0L, chatNote().timeoutAfter)
+    }
+
+    @Test fun twoExpiringMessagesTimeOutAtTheLaterOne() {
+        val now = System.currentTimeMillis()
+        locked = true
+        notifier().show(NotificationOutcome.Message("c1", "Ana", "a", expiresAtMs = now + 600_000))
+        notifier().show(NotificationOutcome.Message("c1", "Ana", "b", expiresAtMs = now + 3_600_000))
+        val t = chatNote().timeoutAfter
+        assertTrue(t in 600_001..3_600_000, "the later time under the lock: $t")
+        locked = false
+        notifier().show(NotificationOutcome.Message("c1", "Ana", "c", expiresAtMs = now + 1_800_000))
+        assertTrue(chatNote().timeoutAfter in 3_000_000..3_600_000, "still the latest: ${chatNote().timeoutAfter}")
     }
 }

@@ -190,4 +190,21 @@ class TimerFixesTest {
         assertFalse(mine.exists(), "the plaintext copy of the swept message is gone")
         assertTrue(other.exists(), "another message's copy stays")
     }
+
+    @Test fun anAttachmentIdThatIsAPrefixOfAnotherLeavesTheOthersOpenCopy() = runTest {
+        val rig = rig()
+        val st = store(rig.bob1)
+        val open = File(mediaRoot, "open").also { it.mkdirs() }
+        val key = ByteArray(32) { 1 }
+        val dg = ByteArray(32) { 2 }
+        val mine = File(open, org.example.app.messaging.media.Downloader.openName("att", dg, key)).also { it.writeText("plain") }
+        val other = File(open, org.example.app.messaging.media.Downloader.openName("att-x", dg, key)).also { it.writeText("plain") }
+        rig.bob1.repo.insertMessage(ownText("g2", ContentEnvelope.Text("g2", NOW, "photo", ttl = 60), expiresAt = NOW + 60_000))
+        rig.bob1.repo.insertMessage(ownText("k2", ContentEnvelope.Text("k2", NOW, "photo", ttl = 600), expiresAt = NOW + 600_000))
+        rig.bob1.repo.upsertAttachment(org.example.app.messaging.ports.AttachmentRecord("att", "g2", "photo", key, dg, 1, 1, "remote", 0, null))
+        rig.bob1.repo.upsertAttachment(org.example.app.messaging.ports.AttachmentRecord("att-x", "k2", "photo", key, dg, 1, 1, "remote", 0, null))
+        st.sweepExpired(NOW + 60_000)
+        assertFalse(mine.exists())
+        assertTrue(other.exists(), "the longer id's copy is not matched by a prefix")
+    }
 }
