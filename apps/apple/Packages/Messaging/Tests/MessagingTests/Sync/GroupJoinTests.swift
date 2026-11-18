@@ -119,6 +119,33 @@ private let jpeg4 = Data([0xFF, 0xD8, 0xFF, 0xE0])
         try await bob.sync()
         #expect(try bob.repo.chat(id: made.chatID) == nil)
         #expect(try bob.repo.conversation(serverID: made.conversationID) == nil)
+        // Parked only: no one-to-one chat with the adder, and no placeholder.
+        #expect(try bob.repo.chat(id: "acc-ana") == nil)
+    }
+
+    @Test func aRejoinAfterBeingRemovedSetsMyStateBackToMember() async throws {
+        let (rig, _, made) = try await started()
+        let bob = GroupSide(rig.bob[0])
+        try await bob.sync()
+        try bob.repo.setMyState(chatID: made.chatID, "removed")
+        // A fresh Welcome for the same conversation on another device of bob's account is not needed: store the plan again.
+        let record = try #require(try bob.repo.conversation(serverID: made.conversationID))
+        let join = ConversationManager.GroupJoin(
+            conversationID: made.conversationID, members: [GroupMemberRecord(accountID: "acc-bob", role: "member")], version: 5,
+            addedBy: "acc-ana", at: testEpochDate)
+        try bob.repo.transaction {
+            try join.store(chat: try #require(try bob.repo.chat(id: made.chatID)), conversation: record, in: bob.repo)
+        }
+        #expect(try bob.repo.chat(id: made.chatID)?.myState == "member")
+    }
+
+    @Test func theAdderIsNamedOnlyWhenTheServerListHasThem() async throws {
+        let (rig, _, made) = try await started()
+        await rig.server.dropGroupAccount("acc-ana", from: made.conversationID)
+        let bob = GroupSide(rig.bob[0])
+        try await bob.sync()
+        let lines = try bob.repo.messages(chatID: made.chatID, before: nil, limit: 20)
+        #expect(try JSONDecoder().decode(SystemEvent.self, from: lines[0].envelope) == .addedYou(by: nil))
     }
 
     @Test func myOtherDeviceJoinsTooAndNoLineIsMadeForMyOwnAdd() async throws {

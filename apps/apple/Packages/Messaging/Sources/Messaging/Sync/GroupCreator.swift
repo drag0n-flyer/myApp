@@ -62,8 +62,10 @@ extension ConversationManager {
             }
         }
         guard !claimed.isEmpty else { throw SyncError.noKeyPackages }
-        let mine = try await deps.server.claimKeyPackages(accountID: deps.me.accountID)
-            .filter { $0.deviceID != deps.me.deviceID }
+        // By device ID, as `DeviceSync` does, so this device's own package is not claimed and wasted.
+        let ownOthers = try await deps.server.devices().map(\.id).filter { $0 != deps.me.deviceID }
+        let mine = ownOthers.isEmpty ? [] : try await deps.server.claimKeyPackages(accountID: deps.me.accountID, deviceIDs: ownOthers)
+            .filter { ownOthers.contains($0.deviceID) }
 
         // 2. The server group. Its member list is the authority for who is in.
         let created = try await deps.server.createGroup(accounts: others)

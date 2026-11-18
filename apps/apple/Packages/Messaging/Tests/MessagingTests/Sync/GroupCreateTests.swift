@@ -142,6 +142,8 @@ func queued(_ device: TestDevice, _ chatID: String) throws -> [OutboxRecord] {
         _ = try await ana2.deps.server.uploadKeyPackages(try await ana2.deps.mls.makeKeyPackages(count: 2))
         let result = try await rig.manager(rig.ana).createGroup(accounts: ["acc-bob", "acc-cy"], name: "Club", photo: nil)
         #expect(await rig.server.memberDevices(of: result.conversationID).count == 6)
+        // My current device's own package was not claimed (3 uploaded, 3 left; the other device's was used).
+        #expect(try await rig.ana.deps.server.keyPackageCount() == 3)
         #expect(try await ana2.deps.server.inbox(after: nil).items.map(\.kind).first == "welcome")
     }
 

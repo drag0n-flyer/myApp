@@ -586,6 +586,17 @@
         }
       }
     },
+    "Choose group photo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose group photo"
+          }
+        }
+      }
+    },
     "Choose photo" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1176,17 +1187,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Group name"
-          }
-        }
-      }
-    },
-    "Group photo" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Group photo"
           }
         }
       }

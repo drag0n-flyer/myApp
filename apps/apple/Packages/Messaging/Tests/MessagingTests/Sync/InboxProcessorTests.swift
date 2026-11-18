@@ -724,7 +724,7 @@ private final class LogBox: @unchecked Sendable {
         #expect(try bob.deps.repo.conversation(serverID: second.serverID) != nil)
     }
 
-    @Test func welcomeForAConversationTheServerForgotLeavesAJoinFailedPlaceholder() async throws {
+    @Test func welcomeForAConversationTheServerForgotIsParkedWithoutAPlaceholder() async throws {
         let rig = try await Rig.make()
         let (first, second) = try await twoChats(rig)
         await rig.server.removeConversation(first.serverID)
@@ -733,7 +733,7 @@ private final class LogBox: @unchecked Sendable {
         _ = try await bob.processor.syncOnce()
 
         #expect(try isParked(bob, bad.cursor))
-        #expect(try joinFailedPlaceholder(bob, bad.cursor) != nil)
+        #expect(try joinFailedPlaceholder(bob, bad.cursor) == nil)
         #expect(try bob.deps.repo.conversation(serverID: second.serverID) != nil)
     }
 }

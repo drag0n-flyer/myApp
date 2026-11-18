@@ -276,9 +276,10 @@ public actor InboxProcessor {
                     serverMode = info.mode
                 } catch {
                     if (400..<500).contains(error.status), error.status != 408, error.status != 429 {
-                        // The server will never answer for this conversation: the Welcome is recorded and skipped.
+                        // The server will never answer for this conversation (someone who added and then removed me, say):
+                        // the Welcome is parked and nothing is made for the sender, no chat and no placeholder.
                         try repo.transaction {
-                            try placeholderOrPark(raw, reason: "welcome_lookup_\(error.status)")
+                            try handler.park(raw, reason: "welcome_lookup_\(error.status)", db: repo)
                             try repo.markProcessed(hash: hash)
                             try repo.deleteRaw(cursor: raw.cursor)
                         }

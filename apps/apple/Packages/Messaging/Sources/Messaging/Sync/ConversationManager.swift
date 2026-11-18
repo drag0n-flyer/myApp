@@ -373,6 +373,8 @@ public actor ConversationManager: ConversationManaging {
         let version: Int64
         /// The account the server names as the sender of the Welcome; `nil` when it is this account.
         let addedBy: String?
+        /// True when this account added itself (another device of mine): no line.
+        var ownAdd = false
         let at: Date
 
         func store(chat: ChatRecord, conversation: ConversationRecord, in repo: Repository) throws {
@@ -382,8 +384,10 @@ public actor ConversationManager: ConversationManaging {
             }
             _ = try repo.setGroupMembers(chatID: chat.id, members, version: version)
             try repo.upsertConversation(conversation)
+            // A Welcome for a chat I was removed from or left: I am in it again.
+            _ = try repo.setMyState(chatID: chat.id, "member")
             // One line, once: it is written only when the chat is new, with an ID that cannot repeat.
-            if isNew, let addedBy {
+            if isNew, !ownAdd {
                 let envelope = (try? JSONEncoder().encode(SystemEvent.addedYou(by: addedBy))) ?? Data()
                 _ = try repo.insertMessage(MessageRecord(
                     id: "sys-\(conversationID)-addedYou", chatID: chat.id, conversationID: conversationID, senderAccount: "system",
@@ -434,7 +438,10 @@ public actor ConversationManager: ConversationManaging {
                 group: GroupJoin(
                     conversationID: serverConversationID,
                     members: info.members.map { GroupMemberRecord(accountID: $0.account, role: $0.role.rawValue) },
-                    version: version, addedBy: adder == deps.me.accountID ? nil : adder, at: now))
+                    version: version,
+                    // Named only when the server's list has them; otherwise "You were added".
+                    addedBy: info.members.contains { $0.account == adder } ? adder : nil,
+                    ownAdd: adder == deps.me.accountID, at: now))
         }
         let identities = keys.map(\.identity)
         let accounts = Set(identities.map { String($0.split(separator: "/", maxSplits: 1)[0]) })

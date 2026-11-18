@@ -97,7 +97,7 @@ struct NewGroupDetailsView: View {
                             .accessibilityHidden(true)
                     }
                     Button("Choose photo") { pickerOpen = true }
-                        .accessibilityLabel("Group photo")
+                        .accessibilityLabel("Choose group photo")
                         .accessibilityIdentifier("newgroup.photo")
                     if photo != nil {
                         Spacer(minLength: 8)
