@@ -50,6 +50,11 @@ extension Repository {
         }
     }
 
+    /// Every account that is a member of any group chat, once, sorted.
+    public func groupMemberAccounts() throws -> [String] {
+        try db.query("SELECT DISTINCT account_id FROM group_members ORDER BY account_id") { $0.text(0) }
+    }
+
     /// Replaces the member list of a group chat in one transaction, when `version` is higher than the stored one.
     /// Returns the members as they were, or `nil` when nothing changed: not a group chat, a version that is not higher
     /// (or below 0), or a list over 100 accounts. An empty account ID and a repeated account are dropped; a role this
@@ -154,5 +159,23 @@ extension Repository {
         try db.query("SELECT message_id, account_id, kind, at FROM receipts WHERE message_id=? ORDER BY account_id, kind", [.text(messageID)]) {
             ReceiptRecord(messageID: $0.text(0), accountID: $0.text(1), kind: $0.text(2), at: fromMillis($0.int(3)))
         }
+    }
+
+    /// The receipts of many messages, grouped by message: one `IN (...)` query per chunk (SQLite limits the variables).
+    public func receipts(messageIDs: [String]) throws -> [String: [ReceiptRecord]] {
+        var grouped: [String: [ReceiptRecord]] = [:]
+        var start = 0
+        while start < messageIDs.count {
+            let chunk = Array(messageIDs[start..<min(start + 500, messageIDs.count)])
+            start += 500
+            let marks = chunk.map { _ in "?" }.joined(separator: ",")
+            let rows = try db.query(
+                "SELECT message_id, account_id, kind, at FROM receipts WHERE message_id IN (\(marks)) ORDER BY message_id, account_id, kind",
+                chunk.map { .text($0) }) {
+                ReceiptRecord(messageID: $0.text(0), accountID: $0.text(1), kind: $0.text(2), at: fromMillis($0.int(3)))
+            }
+            for row in rows { grouped[row.messageID, default: []].append(row) }
+        }
+        return grouped
     }
 }

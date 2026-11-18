@@ -20,6 +20,8 @@ public enum OutboxError: Error, Equatable, Sendable {
     case rejected(String)
     /// The escrow copy could not be made.
     case escrowFailed
+    /// A group this account was removed from or left: it is read-only, nothing is sent into it.
+    case readOnlyGroup
 }
 
 /// The send queue (Design 3, 6, 18): one outbox row per stored message, retried with backoff.
@@ -61,6 +63,7 @@ public actor Outbox: ControlSender {
     /// touches the thread-safe repository), so the main-actor chat store can enqueue synchronously and show the
     /// message as `sending` at once.
     nonisolated public func enqueue(_ envelope: ContentEnvelope, chatID: String) throws {
+        try checkWritable(chatID)
         // A photo, voice or file message that has no real attachment yet (a placeholder) is never queued.
         if let att = envelope.body.attachment, !AttachmentID.isValid(att.id) { throw AttachmentServiceError.invalidAttachmentID }
         let now = deps.now()
@@ -98,6 +101,7 @@ public actor Outbox: ControlSender {
     /// messages queued before it, is retried like a message, and survives a restart. It has no message row:
     /// the outbox row's ID is the envelope ID.
     nonisolated public func enqueueControl(_ body: ContentEnvelope.Body, chatID: String, id: String? = nil) throws {
+        try checkWritable(chatID)
         let now = deps.now()
         let envelope = ContentEnvelope(
             id: id ?? UUID().uuidString.lowercased(), at: Int64((now.timeIntervalSince1970 * 1000).rounded()), body: body)
@@ -194,6 +198,7 @@ public actor Outbox: ControlSender {
 
     /// Not stored, sent now through the chat's preferred conversation. Throws on failure.
     public func sendControl(_ body: ContentEnvelope.Body, chatID: String) async throws {
+        try checkWritable(chatID)
         let envelope = ContentEnvelope(
             id: UUID().uuidString.lowercased(), at: Int64((deps.now().timeIntervalSince1970 * 1000).rounded()), body: body)
         let conversation: ConversationRecord
@@ -229,7 +234,7 @@ public actor Outbox: ControlSender {
             switch error {
             case .retryable: return .retry
             case .waitingForMode: return .waiting
-            case .modeMismatch, .rejected, .escrowFailed: return .failed
+            case .modeMismatch, .rejected, .escrowFailed, .readOnlyGroup: return .failed
             }
         } catch {
             return .retry
@@ -261,6 +266,12 @@ public actor Outbox: ControlSender {
         var conversationID: String
     }
 
+    /// A group chat this account is no longer a member of takes nothing: no message and no control envelope.
+    nonisolated func checkWritable(_ chatID: String) throws {
+        guard ChatID.isGroup(chatID), let chat = try deps.repo.chat(id: chatID) else { return }
+        if chat.kind == "group", chat.myState != "member" { throw OutboxError.readOnlyGroup }
+    }
+
     /// Encrypts, adds the escrow copy when Design 18 says so, and posts. Throws `OutboxError`.
     /// The envelope ID is the `clientMsgID`, so calling it again for the same envelope is idempotent. This entry
     /// keeps nothing: every call encrypts (a message that is not queued has nowhere to keep the ciphertext).
@@ -276,6 +287,7 @@ public actor Outbox: ControlSender {
         _ envelope: ContentEnvelope, in start: ConversationRecord, sealed stored: SealedMessage?,
         keep: (@Sendable (SealedMessage) -> Void)?, drop: (@Sendable () -> Void)?
     ) async throws {
+        try checkWritable(start.chatID)
         var sealed = stored
         var conversation = start
         var staleRetried = false

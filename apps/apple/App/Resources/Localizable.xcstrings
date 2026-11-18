@@ -100,6 +100,17 @@
         }
       }
     },
+    "%@ is typing…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ is typing…"
+          }
+        }
+      }
+    },
     "%@ left" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -222,6 +233,17 @@
         }
       }
     },
+    "%@:" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@:"
+          }
+        }
+      }
+    },
     "%lld chats" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -275,6 +297,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%lld of %lld"
+          }
+        }
+      }
+    },
+    "%lld people are typing…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld people are typing…"
           }
         }
       }
@@ -1126,6 +1159,17 @@
         }
       }
     },
+    "Delivered to" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delivered to"
+          }
+        }
+      }
+    },
     "Device" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1775,6 +1819,28 @@
         }
       }
     },
+    "Message from a blocked contact" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Message from a blocked contact"
+          }
+        }
+      }
+    },
+    "Message info" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Message info"
+          }
+        }
+      }
+    },
     "Messages in this chat are paused. Open chat info for details." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2046,6 +2112,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Not available on this device yet"
+          }
+        }
+      }
+    },
+    "Not delivered to anyone yet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not delivered to anyone yet"
           }
         }
       }
@@ -2398,6 +2475,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "React %@"
+          }
+        }
+      }
+    },
+    "Read by" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Read by"
           }
         }
       }
@@ -2761,6 +2849,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Show"
+          }
+        }
+      }
+    },
+    "Show message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show message"
           }
         }
       }

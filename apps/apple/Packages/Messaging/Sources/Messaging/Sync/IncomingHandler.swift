@@ -59,8 +59,11 @@ public struct IncomingHandler: Sendable {
     /// - Parameter memberKeys: the group's members after a `.commit` or `.joined` (`Membership.keys(of:)`, read
     ///   under the process lock before the transaction). `nil` skips the device lines and the safety number;
     ///   the next update catches up, because it compares the whole stored state.
+    ///   - knownGroupAccounts: the accounts the server's own list named (fetched before the lock) for a group message
+    ///   whose sender the stored list does not hold. Empty when there was no need to look.
     public func apply(
-        _ incoming: Incoming, raw: RawInboxRecord, db: Repository, memberKeys: [MemberKey]? = nil
+        _ incoming: Incoming, raw: RawInboxRecord, db: Repository, memberKeys: [MemberKey]? = nil,
+        knownGroupAccounts: Set<String> = []
     ) throws -> AppliedResult {
         switch incoming {
         case .joined(let group, let epoch):
@@ -92,8 +95,17 @@ public struct IncomingHandler: Sendable {
             return .commit(conversationID: conversation.serverID, newEpoch: newEpoch)
         case .application(_, let sender, let plaintext, _):
             guard let conversation = try db.conversation(serverID: raw.conversationID) else { return .ignored }
-            return try applyApplication(sender: sender, plaintext: plaintext, raw: raw, conversation: conversation, db: db)
+            return try applyApplication(
+                sender: sender, plaintext: plaintext, raw: raw, conversation: conversation, db: db, knownGroupAccounts: knownGroupAccounts)
         }
+    }
+
+    /// In a group, a message counts only while this device is still in the group and its MLS sender's account is in the
+    /// stored member list, or in the server's list fetched for this very item. Anything else is dropped whole.
+    static func groupAccepts(account: String, chatID: String, known: Set<String>, db: Repository) throws -> Bool {
+        guard let chat = try db.chat(id: chatID), chat.kind == "group", chat.myState == "member" else { return false }
+        if known.contains(account) { return true }
+        return try db.groupMembers(chatID: chatID).contains { $0.accountID == account }
     }
 
     static let pendingNoticePrefix = "notice.pending."
@@ -154,13 +166,17 @@ public struct IncomingHandler: Sendable {
     // MARK: Application messages
 
     private func applyApplication(
-        sender: String, plaintext: Data, raw: RawInboxRecord, conversation: ConversationRecord, db: Repository
+        sender: String, plaintext: Data, raw: RawInboxRecord, conversation: ConversationRecord, db: Repository,
+        knownGroupAccounts: Set<String> = []
     ) throws -> AppliedResult {
         let parts = sender.split(separator: "/", maxSplits: 1).map(String.init)
         let account = parts.first ?? raw.senderAccount
         let device = parts.count > 1 ? parts[1] : raw.senderDevice
         let envelope = ContentEnvelope.decode(plaintext)
         let chatID = conversation.chatID
+        if ChatID.isGroup(chatID), try !Self.groupAccepts(account: account, chatID: chatID, known: knownGroupAccounts, db: db) {
+            return .ignored
+        }
         // From the send time, but a sender's `at` in the future never extends the life.
         let expiresAt = Expiry.expiresAt(atMs: min(envelope.at, Self.ms(now())), ttlSeconds: envelope.ttl)
             .map { Date(timeIntervalSince1970: Double($0) / 1000) }
@@ -257,8 +273,8 @@ public struct IncomingHandler: Sendable {
                 try OwnProfile.adopt(name: name, photo: photo, ver: ver, repo: db, me: me.accountID)
                 return .ignored
             }
-            // Only the chat's own peer, and never a blocked account.
-            guard account == chatID, try !db.isBlocked(account) else { return .ignored }
+            // Only the chat's own peer (in a group: a member, which `groupAccepts` has checked), never a blocked account.
+            guard account == chatID || ChatID.isGroup(chatID), try !db.isBlocked(account) else { return .ignored }
             guard ProfileMerge.accept(current: try db.profile(for: account)?.ver, incoming: ver) else { return .ignored }
             try db.saveProfile(accountID: account, name: name, photo: photo, ver: ver)
             return .ignored
@@ -308,6 +324,11 @@ public struct IncomingHandler: Sendable {
     /// unread and nothing notifies. The line's ID comes from the envelope, so a repeat adds no second line.
     private func applyTimer(_ seconds: Int, id: String, at: Int64, from account: String, conversation: ConversationRecord, db: Repository) throws {
         let chatID = conversation.chatID
+        // In a group only an owner or admin of the stored list sets the timer.
+        if ChatID.isGroup(chatID) {
+            let role = try db.groupMembers(chatID: chatID).first { $0.accountID == account }.map { GroupRole(wire: $0.role) }
+            guard role?.canSetTimer == true else { return }
+        }
         // A change older than the last one applied for this chat is ignored (messages can arrive out of order).
         // The comparison uses `min(at, now + 5 minutes)`, so a sender's clock far in the future cannot freeze the timer.
         let effectiveAt = min(at, Self.ms(now()) + Self.timerSkewMs)
@@ -343,6 +364,12 @@ public struct IncomingHandler: Sendable {
         for id in ids {
             guard let message = try db.message(id: id), message.chatID == chatID else { continue }
             guard message.senderAccount == me.accountID || fromMe else { continue }
+            // In a group each member's receipt is kept on its own (the tick follows all of them); the stored status of my
+            // message stays what it was.
+            if ChatID.isGroup(chatID), !fromMe {
+                try db.addReceipt(messageID: id, accountID: account, kind: kind.rawValue, at: now())
+                continue
+            }
             valid.append(id)
             if fromMe, kind == .read, message.senderAccount != me.accountID, message.status != "read" { unreadCleared += 1 }
         }
@@ -364,7 +391,10 @@ public struct IncomingHandler: Sendable {
     /// An incoming message from someone else counts as unread and moves the chat up.
     private func bumpChat(_ message: MessageRecord, db: Repository) throws {
         // One statement: pin, mute and archive are never read and written back.
-        try db.bumpChat(chatID: message.chatID, unreadDelta: message.senderAccount != me.accountID ? 1 : 0,
+        // A group message from an account I have blocked is kept (collapsed) but never counted as unread.
+        var counts = message.senderAccount != me.accountID
+        if counts, ChatID.isGroup(message.chatID), try db.isBlocked(message.senderAccount) { counts = false }
+        try db.bumpChat(chatID: message.chatID, unreadDelta: counts ? 1 : 0,
                         at: min(message.sentAt, now()))
     }
 

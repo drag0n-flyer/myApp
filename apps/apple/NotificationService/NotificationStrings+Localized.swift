@@ -18,6 +18,8 @@ extension NotificationStrings {
         s.unsupported = String(localized: "Update [App] to see this message")
         s.fallbackTitle = String(localized: "[App]")
         s.fallbackBody = String(localized: "New message")
+        s.groupBodyFormat = String(localized: "%1$@: %2$@")
+        s.unknownMember = String(localized: "Someone")
         return s
     }
 }

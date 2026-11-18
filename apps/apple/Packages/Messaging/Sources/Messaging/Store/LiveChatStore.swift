@@ -36,9 +36,11 @@ public final class LiveChatStore: ChatStore {
     private var repo: Repository { deps.repo }
 
     private var meContact: Contact
-    private var contactRows: [String: ContactRecord] = [:]
+    var contactRows: [String: ContactRecord] = [:]
     /// What contacts said about themselves (`profile`), by account, read at every reload.
     var profileRows: [String: StoredProfile] = [:]
+    /// Profiles of group members, for group chats only (sender names and tiles).
+    var groupProfileRows: [String: StoredProfile] = [:]
     /// Tests only: replaces how the own profile is queued for a chat.
     var profileEnqueueOverride: ((ContentEnvelope.Body, String) throws -> Void)?
     private var allChats: [Chat] = []
@@ -192,10 +194,15 @@ public final class LiveChatStore: ChatStore {
     private func reload() {
         let rows = (try? repo.contacts()) ?? []
         contactRows = Dictionary(rows.map { ($0.accountID, $0) }, uniquingKeysWith: { $1 })
-        // A message request is not shown by its profile (name or photo) until it is accepted.
-        profileRows = Dictionary(((try? repo.profiles()) ?? []).filter { contactRows[$0.accountID]?.isContact == true }.map {
-            ($0.accountID, StoredProfile(accountID: $0.accountID, name: $0.name, photo: $0.photo, ver: $0.ver))
-        }, uniquingKeysWith: { $1 })
+        // A message request is not shown by its profile (name or photo) until it is accepted. A member of a group is
+        // shown by the profile they sent in that group's chat only (`groupProfileRows`), contact or not.
+        let all = (try? repo.profiles()) ?? []
+        func stored(_ r: ProfileRecord) -> StoredProfile { StoredProfile(accountID: r.accountID, name: r.name, photo: r.photo, ver: r.ver) }
+        profileRows = Dictionary(all.filter { contactRows[$0.accountID]?.isContact == true }.map { ($0.accountID, stored($0)) },
+                                 uniquingKeysWith: { $1 })
+        let groupAccounts = Set((try? repo.groupMemberAccounts()) ?? [])
+        groupProfileRows = Dictionary(all.filter { groupAccounts.contains($0.accountID) }.map { ($0.accountID, stored($0)) },
+                                      uniquingKeysWith: { $1 })
         if let mine = contactRows[deps.me.accountID] {
             // No stored name shows the placeholder; the placeholder itself is never stored.
             let name = DisplayNameRule.forDisplay(mine.displayName, fallback: "")
@@ -233,7 +240,21 @@ public final class LiveChatStore: ChatStore {
         // The switch is reciprocal: while it is off, others' read receipts (still stored) show as delivered.
         let showRead = outbox.readReceiptsEnabled()
         let me = deps.me.accountID
+        var groupMembersCache: [String: [String]] = [:]
+        let blockedAccounts = Set((try? repo.blockedIDs()) ?? [])
+        // One read of the receipts for every message of mine in a group that needs a tick.
+        let receiptsByMessage = (try? repo.receipts(messageIDs: records.filter {
+            $0.senderAccount == me && ChatID.isGroup($0.chatID) && ["sent", "delivered", "read"].contains($0.status)
+        }.map(\.id))) ?? [:]
         return records.map { record -> Message in
+            // My message in a group: the tick is what every other current member's receipts say.
+            var record = record
+            if record.senderAccount == me, ChatID.isGroup(record.chatID), ["sent", "delivered", "read"].contains(record.status) {
+                let members = groupMembersCache[record.chatID] ?? ((try? repo.groupMembers(chatID: record.chatID)) ?? []).map(\.accountID)
+                groupMembersCache[record.chatID] = members
+                let receipts = (receiptsByMessage[record.id] ?? []).map { GroupReceipt(accountID: $0.accountID, kind: $0.kind, at: $0.at) }
+                record.status = Self.groupStatusName(GroupTicks.state(receipts: receipts, members: members, me: me))
+            }
             let plain = record.senderAccount != ChatMapping.systemSender && !record.id.hasPrefix(ChatMapping.callPrefix)
             var message = ChatMapping.message(
                 record,
@@ -245,6 +266,9 @@ public final class LiveChatStore: ChatStore {
                     return name.isEmpty ? nil : name
                 },
                 showRead: showRead || record.senderAccount != me, me: me)
+            if ChatID.isGroup(record.chatID), record.senderAccount != me, blockedAccounts.contains(record.senderAccount) {
+                message.fromBlockedSender = true
+            }
             if record.status == "failed", tooBig.contains(record.id) { message.sendFailure = .tooBig }
             if record.status == "sending", uploading.contains(record.id) { message.uploadProgress = uploadFraction[record.id] ?? 0 }
             return message
@@ -253,10 +277,18 @@ public final class LiveChatStore: ChatStore {
         .filter { showSafety || $0.content != .system(.safetyNumberChanged) }
     }
 
+    private nonisolated static func groupStatusName(_ tick: GroupTick) -> String {
+        switch tick {
+        case .sent: "sent"
+        case .delivered: "delivered"
+        case .read: "read"
+        }
+    }
+
     /// Display only: shown while no own name is stored. Never stored, never sent.
     static let placeholderName = "You"
 
-    private nonisolated static func name(of row: ContactRecord?) -> String? {
+    nonisolated static func name(of row: ContactRecord?) -> String? {
         guard let row else { return nil }
         // Names come from the server and from other people's devices: cleaned for every screen.
         let name = DisplayNameRule.forDisplay(row.displayName, fallback: row.username)
@@ -363,7 +395,10 @@ public final class LiveChatStore: ChatStore {
             // The global search leaves message requests out; a chat the person has open is searched as asked.
             guard chatID != nil || !requests.contains(hit.chatID),
                   let record = (try? repo.message(id: hit.messageID)) ?? nil else { return nil }
-            let preview = map([record]).first?.previewText ?? ""
+            let mapped = map([record]).first
+            // A blocked member's message in a group stays collapsed, so it is not found either.
+            if mapped?.fromBlockedSender == true { return nil }
+            let preview = mapped?.previewText ?? ""
             return MessageHit(chatID: hit.chatID, messageID: hit.messageID, preview: preview, sentAt: record.sentAt)
         }
     }
@@ -789,7 +824,7 @@ public final class LiveChatStore: ChatStore {
     /// choice, and does nothing when the timer already has that value.
     public func setTimer(_ chatID: String, seconds: Int) {
         guard !closed, TimerChoice.from(seconds: seconds) != nil, ensureChatRow(chatID) != nil,
-              timerSeconds(chatID) != seconds else { return }
+              timerSeconds(chatID) != seconds, mayChangeTimer(chatID) else { return }
         let at = deps.now()
         let line = MessageRecord(
             id: "sys-timer-\(freshID())", chatID: chatID, conversationID: nil, senderAccount: ChatMapping.systemSender,

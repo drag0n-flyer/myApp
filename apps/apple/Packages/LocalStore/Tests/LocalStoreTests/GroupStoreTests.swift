@@ -248,6 +248,29 @@ private func groupMessage(_ id: String, from sender: String = "me") -> MessageRe
     #expect(try repo.upsertGroup(conversationID: "c-2", title: nil, photo: nil, at: t(1)) == "g:c-2")
 }
 
+@Test func testGroupMemberAccountsListsEveryAccountOfEveryGroupOnce() throws {
+    let repo = try groupRepo()
+    #expect(try repo.groupMemberAccounts().isEmpty)
+    _ = try repo.setGroupMembers(chatID: chatID, [member("b", "admin"), member("a", "owner")], version: 0)
+    _ = try repo.upsertGroup(conversationID: "c-2", title: "Other", photo: nil, at: t(5))
+    _ = try repo.setGroupMembers(chatID: "g:c-2", [member("b"), member("c")], version: 0)
+    #expect(try repo.groupMemberAccounts() == ["a", "b", "c"])
+}
+
+@Test func testReceiptsOfManyMessagesComeBackGroupedInChunks() throws {
+    let repo = try groupRepo()
+    let ids = (0..<1200).map { "m\($0)" }
+    for id in ids { _ = try repo.insertMessage(groupMessage(id)) }
+    _ = try repo.addReceipt(messageID: "m0", accountID: "a", kind: "read", at: t(1))
+    _ = try repo.addReceipt(messageID: "m0", accountID: "b", kind: "delivered", at: t(2))
+    _ = try repo.addReceipt(messageID: "m1199", accountID: "a", kind: "delivered", at: t(3))
+    let found = try repo.receipts(messageIDs: ids + ["nothing"])
+    #expect(found["m0"]?.map(\.accountID) == ["a", "b"])
+    #expect(found["m1199"]?.count == 1)
+    #expect(found["m5"] == nil)
+    #expect(try repo.receipts(messageIDs: []).isEmpty)
+}
+
 @Test func testDeleteConversationsOfAGroupKeepsTheChatItsMessagesAndMembers() throws {
     let repo = try groupRepo()
     try repo.upsertConversation(ConversationRecord(serverID: "c1", chatID: chatID, groupID: Data([9]), mode: "e2ee", innerMode: nil,

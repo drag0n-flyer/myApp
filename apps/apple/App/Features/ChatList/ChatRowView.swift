@@ -6,6 +6,10 @@ struct ChatRowView: View {
     let name: String
     /// The other person is typing: "typing…" takes the place of the preview.
     var isTyping = false
+    /// A group's own typing line ("Ana is typing…"); `nil` gives "typing…".
+    var typingText: String?
+    /// The name in front of a group's last message ("You", or a member's name); `nil` for none.
+    var previewSender: String?
     @Environment(\.dynamicTypeSize) private var typeSize
 
     private var time: String { chat.lastMessage.map { TimeLabel.format($0.sentAt) } ?? "" }
@@ -36,8 +40,11 @@ struct ChatRowView: View {
                 }
                 HStack(alignment: .center) {
                     if isTyping {
-                        Text("typing…").font(.subheadline).foregroundStyle(.tint)
-                            .lineLimit(1)
+                        Group {
+                            if let typingText { Text(verbatim: typingText) } else { Text("typing…") }
+                        }
+                        .font(.subheadline).foregroundStyle(.tint)
+                        .lineLimit(1)
                     } else if let draftLine {
                         HStack(spacing: 4) {
                             Text("Draft:").foregroundStyle(.red)
@@ -46,7 +53,7 @@ struct ChatRowView: View {
                         .font(.subheadline)
                         .lineLimit(typeSize.isAccessibilitySize ? 2 : 1)
                     } else {
-                        PreviewText(message: chat.lastMessage)
+                        PreviewText(message: chat.lastMessage, sender: previewSender)
                             .lineLimit(typeSize.isAccessibilitySize ? 2 : 1)
                     }
                     Spacer(minLength: 6)
@@ -72,7 +79,10 @@ struct ChatRowView: View {
         var parts = [name]
         if chat.pinnedAt != nil { parts.append(String(localized: "Pinned")) }
         if chat.muted { parts.append(String(localized: "Muted")) }
-        if isTyping { parts.append(String(localized: "typing…")) } else if let draftLine { parts.append(String(localized: "Draft:") + " " + draftLine) } else { parts.append(preview) }
+        if isTyping { parts.append(typingText ?? String(localized: "typing…")) } else if let draftLine { parts.append(String(localized: "Draft:") + " " + draftLine) } else {
+            parts.append(chat.lastMessage?.fromBlockedSender == true ? String(localized: "Message from a blocked contact")
+                         : previewSender.map { String(localized: "\($0):") + " " + preview } ?? preview)
+        }
         parts.append(time)
         if chat.unreadCount > 0 { parts.append(String(localized: "\(chat.unreadCount) unread")) }
         return Text(parts.filter { !$0.isEmpty }.joined(separator: ", "))
@@ -82,13 +92,21 @@ struct ChatRowView: View {
 /// Last-message preview with an SF Symbol for voice, media, files, and calls.
 struct PreviewText: View {
     let message: Message?
+    /// A group chat's sender name, shown before the text ("Ana: Lunch?"); `nil` for none.
+    var sender: String?
 
     var body: some View {
         HStack(spacing: 4) {
-            if let symbol {
-                Image(systemName: symbol.name).foregroundStyle(symbol.color)
+            if message?.fromBlockedSender == true {
+                // Nothing of a blocked member's message shows in the list.
+                Text("Message from a blocked contact")
+            } else {
+                if let sender { Text("\(sender):") }
+                if let symbol {
+                    Image(systemName: symbol.name).foregroundStyle(symbol.color)
+                }
+                previewLabel
             }
-            previewLabel
         }
         .font(.subheadline)
         .foregroundStyle(.secondary)

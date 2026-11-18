@@ -72,6 +72,8 @@ struct ChatView: View {
     @State private var previews = LinkPreviewComposerModel()
     @State private var deleteTarget: Message?
     @State private var forwardItem: ForwardItem?
+    /// The message of mine whose Message info is open (group chats).
+    @State private var infoTarget: Message?
     @State private var searching = false
     @State private var query = ""
     @FocusState private var searchFocused: Bool
@@ -187,6 +189,9 @@ struct ChatView: View {
                             titleVisibility: .visible) {
             Button("Delete", role: .destructive) { confirmDelete() }
             Button("Cancel", role: .cancel) { deleteTarget = nil }
+        }
+        .sheet(item: $infoTarget) { message in
+            MessageInfoView(model: model, chatID: chatID, messageID: message.id)
         }
         .sheet(item: $forwardItem) { item in
             ForwardPickerView(model: model) { contactID in
@@ -342,7 +347,11 @@ struct ChatView: View {
                 perform: { perform($0, on: message, all: all, indexByID: indexByID) },
                 react: { needsOlderRefresh = true; model.react($0, to: message.id, in: chatID, followedBy: nextID(after: message.id, all: all, indexByID: indexByID)) },
                 isHighlighted: highlightID == message.id,
-                quoteTapped: { if let id = message.replyToID { jump = JumpRequest(messageID: id) } }
+                quoteTapped: { if let id = message.replyToID { jump = JumpRequest(messageID: id) } },
+                senderName: ChatID.isGroup(chatID) && GroupLines.showsSender(at: indexByID[message.id] ?? -1, in: all, me: model.me.id)
+                    ? model.memberName(message.senderID) : nil,
+                showInfo: ChatID.isGroup(chatID) && mine && message.status != .sending && message.status != .failed
+                    ? { infoTarget = message } : nil
             )
             .onAppear {
                 if message.id == newestID {
@@ -455,7 +464,8 @@ struct ChatView: View {
     private func isMine(_ message: Message) -> Bool { message.senderID == model.me.id }
 
     private func senderName(_ id: String) -> String {
-        id == model.me.id ? String(localized: "You") : model.contact(id: id)?.displayName ?? ""
+        if id == model.me.id { return String(localized: "You") }
+        return ChatID.isGroup(chatID) ? model.memberName(id) : model.contact(id: id)?.displayName ?? ""
     }
 
     private func nextID(after id: String, all: [Message], indexByID: [String: Int]) -> String? {

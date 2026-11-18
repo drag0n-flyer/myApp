@@ -1,3 +1,4 @@
+import AppCore
 import Foundation
 import LocalStore
 import SecureMessagingCore
@@ -40,6 +41,9 @@ public actor InboxProcessor {
     /// Called for every new message from another account, after its rows are stored and outside the lock
     /// (the store starts the auto-download from here).
     private var onStored: (@Sendable (MessageRecord) async -> Void)?
+    /// The server's account list of a group, fetched during the current drain for a message whose sender the stored
+    /// list does not hold (one look serves every such message of the drain).
+    private var groupLists: [String: Set<String>] = [:]
     /// `members` items seen during a drain: (conversation, the item's sender), reported after the drain.
     private var pendingMembers: [(conversationID: String, actor: String)] = []
     private var onMembers: (@Sendable (String, String?) async -> Void)?
@@ -175,6 +179,7 @@ public actor InboxProcessor {
     /// temporary reason, so no later row is processed before it.
     public func drainRaw() async {
         await acquire(.drain)
+        groupLists = [:]
         var newMessages: [String: [String]] = [:]
         var storedFromOthers: [MessageRecord] = []
         scan: while let items = try? deps.repo.rawItems(limit: Self.pageSize), !items.isEmpty {
@@ -183,7 +188,10 @@ public actor InboxProcessor {
                 if step == .stop { break scan }
                 if case .stored(let message)? = applied, message.senderAccount != deps.me.accountID, !message.undecryptable {
                     newMessages[message.chatID, default: []].append(message.id)
-                    storedFromOthers.append(message)
+                    // Nothing is fetched on behalf of a blocked member of a group.
+                    if !(ChatID.isGroup(message.chatID) && ((try? deps.repo.isBlocked(message.senderAccount)) ?? false)) {
+                        storedFromOthers.append(message)
+                    }
                 }
             }
         }
@@ -332,6 +340,16 @@ public actor InboxProcessor {
                 return (.done, nil)
             }
 
+            // A group message from an account the stored list does not hold: look at the server's list before the lock.
+            var knownGroupAccounts: Set<String> = []
+            if raw.kind == "message" {
+                switch await lookAtGroupList(for: raw) {
+                case .notNeeded: break
+                case .fetched(let accounts): knownGroupAccounts = accounts
+                case .retryLater: return (.stop, nil)
+                }
+            }
+
             await beforeLock?(raw)
             let applied = try await deps.lock.withAsyncLock(timeout: Self.lockTimeout) { () async throws -> AppliedResult? in
                 // Another process (the notification extension) may have handled this payload since the check
@@ -424,7 +442,7 @@ public actor InboxProcessor {
                 }
                 return try repo.transaction {
                     if unreadable { try Membership.markUnreadable(conversationID: raw.conversationID, db: repo) }
-                    let result = try handler.apply(incoming, raw: raw, db: repo, memberKeys: keys)
+                    let result = try handler.apply(incoming, raw: raw, db: repo, memberKeys: keys, knownGroupAccounts: knownGroupAccounts)
                     try repo.markProcessed(hash: hash)
                     try repo.deleteRaw(cursor: raw.cursor)
                     return result
@@ -434,6 +452,30 @@ public actor InboxProcessor {
             return (.done, applied)
         } catch {
             return (.stop, nil)
+        }
+    }
+
+    private enum GroupLook { case notNeeded, fetched(Set<String>), retryLater }
+
+    /// For a message in a group whose item sender (as the server reports it) is not in the stored list: the accounts the
+    /// server's list names now, fetched once per drain. A 4xx answer (the server will not say, say because this account is
+    /// no longer in the group) gives an empty list; a temporary failure leaves the item for the next drain. Nothing is
+    /// stored here: the member list is changed only by the group sync.
+    private func lookAtGroupList(for raw: RawInboxRecord) async -> GroupLook {
+        guard let conversation = (try? deps.repo.conversation(serverID: raw.conversationID)) ?? nil,
+              ChatID.isGroup(conversation.chatID) else { return .notNeeded }
+        let stored = (try? deps.repo.groupMembers(chatID: conversation.chatID)) ?? []
+        if stored.contains(where: { $0.accountID == raw.senderAccount }) { return .notNeeded }
+        if let cached = groupLists[raw.conversationID] { return .fetched(cached) }
+        do {
+            let info = try await deps.server.conversation(id: raw.conversationID)
+            let accounts = info.members.count <= GroupLimits.maxMembers ? Set(info.members.map(\.account)) : []
+            groupLists[raw.conversationID] = accounts
+            return .fetched(accounts)
+        } catch {
+            guard (400..<500).contains(error.status), error.status != 408, error.status != 429 else { return .retryLater }
+            groupLists[raw.conversationID] = []
+            return .fetched([])
         }
     }
 
