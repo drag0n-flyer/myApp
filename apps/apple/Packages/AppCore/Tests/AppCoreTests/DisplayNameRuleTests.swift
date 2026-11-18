@@ -3,6 +3,13 @@ import Testing
 
 private func scalar(_ cp: UInt32) -> String { String(Unicode.Scalar(cp)!) }
 
+@Test func nameLengthCountsTrimmedCodePoints() {
+    #expect(DisplayNameRule.length("  Asha  ") == 4)
+    #expect(DisplayNameRule.length("😀😀") == 2)
+    #expect(DisplayNameRule.length("") == 0)
+    #expect(DisplayNameRule.length(String(repeating: "a", count: 45)) == 45)
+}
+
 @Test func nameTrims() { #expect(DisplayNameRule.clean("  Asha  ") == "Asha") }
 
 @Test func nameKeepsInnerSpacesAndUnicode() {

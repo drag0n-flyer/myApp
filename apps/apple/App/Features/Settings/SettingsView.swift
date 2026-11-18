@@ -24,6 +24,7 @@ struct SettingsView: View {
                             }
                         }
                     }
+                    .accessibilityIdentifier("settings.profile")
                 }
                 Section {
                     NavigationLink { ServerInfoView(model: model) } label: {
@@ -119,20 +120,39 @@ struct ProfileView: View {
     @State private var deleteError: AccountError?
     @State private var confirmSignOut = false
     @State private var signOutError: SignOutDecision?
+    @State private var editingName = false
+    @State private var nameSaveFailed = false
 
     var body: some View {
         Form {
             Section {
-                LabeledContent("Name", value: model.me.displayName)
+                Button { editingName = true } label: {
+                    LabeledContent("Name") {
+                        HStack(spacing: 6) {
+                            Text(model.me.displayName)
+                            Image(systemName: "pencil").foregroundStyle(.secondary).accessibilityHidden(true)
+                        }
+                    }
+                }
+                .foregroundStyle(.primary)
+                .disabled(model.accountAction != nil)
+                .accessibilityHint("Edit name")
+                .accessibilityIdentifier("profile.name")
                 LabeledContent("Username", value: "@\(model.me.username)")
+                if nameSaveFailed {
+                    Text("Couldn't save your name. Try again.")
+                        .font(.footnote).foregroundStyle(.red)
+                        .accessibilityIdentifier("profile.name.error")
+                }
             }
             Section {
                 Button("Sign out", role: .destructive) { confirmSignOut = true }
-                    .disabled(model.isSigningOut)
+                    .disabled(model.isSigningOut || model.accountAction != nil)
                     .accessibilityIdentifier("profile.signout")
             }
             Section {
                 Button("Delete account", role: .destructive) { confirmDelete = true }
+                    .disabled(model.accountAction != nil)
                     .accessibilityIdentifier("profile.delete")
             } footer: {
                 Text("Deletes your account and your messages on this server. This can't be undone.")
@@ -141,6 +161,20 @@ struct ProfileView: View {
         }
         .formStyle(.grouped)
         .navigationTitle("Account")
+        .sheet(isPresented: $editingName) {
+            EditNameView(
+                current: model.myStoredName,
+                onSave: { name in
+                    editingName = false
+                    nameSaveFailed = false
+                    Task { nameSaveFailed = await model.saveDisplayName(name) != nil }
+                },
+                onCancel: { editingName = false })
+        }
+        // The editor closes when a save, a sign-out or a delete starts.
+        .onChange(of: model.accountAction) { _, running in
+            if !AccountActionGate.keepsEditorOpen(running: running) { editingName = false }
+        }
         .confirmationDialog("Sign out?", isPresented: $confirmSignOut, titleVisibility: .visible) {
             Button("Sign out", role: .destructive) {
                 guard !model.isSigningOut else { return }

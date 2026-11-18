@@ -17,6 +17,11 @@ public enum DisplayNameRule {
         0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF, 0x3164, 0x115F, 0x1160, 0xFFA0, 0x2800, 0x034F, 0x180E, 0x17B4, 0x17B5,
     ]
 
+    /// Code points of the trimmed text: the "12/40" count in the editor.
+    public static func length(_ input: String) -> Int {
+        trimmed(Array(input.unicodeScalars)).count
+    }
+
     /// The trimmed name, or `nil` when it is not acceptable.
     public static func clean(_ input: String) -> String? {
         let name = trimmed(Array(input.unicodeScalars))

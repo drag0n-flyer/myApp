@@ -365,6 +365,17 @@
         }
       }
     },
+    "Couldn't save your name. Try again." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't save your name. Try again."
+          }
+        }
+      }
+    },
     "Couldn't sign out" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -537,6 +548,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Edit"
+          }
+        }
+      }
+    },
+    "Edit name" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Edit name"
           }
         }
       }
@@ -1065,6 +1087,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Safety number changed"
+          }
+        }
+      }
+    },
+    "Save" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Save"
           }
         }
       }
