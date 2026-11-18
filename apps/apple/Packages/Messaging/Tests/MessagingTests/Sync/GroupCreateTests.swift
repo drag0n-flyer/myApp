@@ -8,7 +8,7 @@ import Testing
 import MessagingTestKit
 
 private let escrowKey = Data(repeating: 7, count: 32)
-private let jpeg = Data([0xFF, 0xD8, 0xFF, 0xE0, 1, 2, 3])
+private let jpeg = Data([0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x00, 0x10, 0x00, 0x10, 0x01, 0x01, 0x11, 0x00]) // a 16x16 frame header: passes the profile photo rule
 
 struct GroupRig {
     let server: FakeServer

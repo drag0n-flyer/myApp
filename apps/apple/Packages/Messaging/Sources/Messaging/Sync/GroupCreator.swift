@@ -41,7 +41,7 @@ extension ConversationManager {
     /// the server is asked. A server error (`not_found`, `group_full`, `rate_limited`) is thrown as it is.
     public func createGroup(accounts requested: [String], name: String, photo: Data?) async throws -> GroupCreation {
         guard let cleanName = GroupNameRule.clean(name) else { throw GroupCreateError.invalidName }
-        if let photo, !(photo.count >= GroupLimits.minPhoto && LinkPreview.isJPEG(photo, max: ContentEnvelope.maxProfilePhoto)) {
+        if let photo, !ProfilePhotoRule.isAcceptable(photo) {
             throw GroupCreateError.invalidPhoto
         }
         var seen: Set<String> = [deps.me.accountID, ""]
