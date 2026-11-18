@@ -324,7 +324,7 @@ interface Repository {
      * changed, otherwise or for a chat that is not a group.
      * @throws IllegalArgumentException for a name or photo that fails [GroupStoreRules.requireInfo].
      */
-    fun setGroupInfo(chatId: String, title: String, photo: ByteArray?, ver: Int): Boolean
+    fun setGroupInfo(chatId: String, title: String, photo: ByteArray?, ver: Int, sameVerReplaces: Boolean = false): Boolean
     /** One column. @throws IllegalArgumentException for a value outside [MyState.all]. */
     fun setMyState(chatId: String, state: String)
     /**
@@ -341,6 +341,8 @@ interface Repository {
     // conversations
     /** @throws IllegalArgumentException when `mode` or `innerMode` is not a [ConversationMode] value. */
     fun upsertConversation(c: ConversationRecord)
+    /** Deletes the conversation row and, by cascade, its members; the chat and its messages stay. A no-op for an unknown ID. */
+    fun deleteConversation(serverId: String)
     fun conversations(chatId: String): List<ConversationRecord>
     fun conversation(serverId: String): ConversationRecord?
     fun conversationByGroup(groupId: ByteArray): ConversationRecord?

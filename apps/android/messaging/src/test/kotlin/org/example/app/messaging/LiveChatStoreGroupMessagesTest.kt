@@ -135,6 +135,25 @@ class LiveChatStoreGroupMessagesTest {
     }
 
     @Test
+    fun aGroupTakesSendsFromAMemberAndRefusesSendsAndControlsOnceIAmRemovedOrLeft() = runTest {
+        val w = joined()
+        val bob = w.device("bob1")
+        val s = store(bob)
+        val sent = s.sendReturningId("hello", chatId)
+        assertTrue(sent != null, "a member's send to a group is queued")
+        bob.repo.setMyState(chatId, org.example.app.messaging.ports.MyState.REMOVED)
+        val before = bob.repo.messages(chatId, null, 50).size
+        assertNull(s.sendReturningId("again", chatId), "a removed member sends nothing")
+        s.react("👍", sent!!, chatId)
+        s.setTimer(chatId, 86_400)
+        s.refresh()
+        assertEquals(before, bob.repo.messages(chatId, null, 50).size, "no new line, no timer line")
+        assertEquals(0, bob.repo.timerSeconds(chatId))
+        bob.repo.setMyState(chatId, org.example.app.messaging.ports.MyState.LEFT)
+        assertNull(s.sendReturningId("again", chatId), "nor one who left")
+    }
+
+    @Test
     fun aProfileNameOfSomeoneInMyRequestsShowsInTheGroupOnly() = runTest {
         val w = joined()
         val ana = w.device("ana1")

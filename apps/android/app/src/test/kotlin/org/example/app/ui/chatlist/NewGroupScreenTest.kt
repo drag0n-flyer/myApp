@@ -89,4 +89,68 @@ class NewGroupScreenTest {
         launch()
         rule.onNodeWithContentDescription("Back").assertIsDisplayed()
     }
+
+    private val jpeg = byteArrayOf(-1, -40, -1, -64, 0, 11, 8, 0, 64, 0, 64, 1, 1, 0x11, 0).copyOf(100)
+
+    private fun naming(photoStore: org.example.app.core.chats.ChatStore, choose: ByteArray?) {
+        rule.setContent {
+            AppTheme {
+                NewGroupScreen(
+                    photoStore, onCreated = { created += it }, onBack = {},
+                    // A stand-in for the system picker: "chooses" [choose] the moment it is asked to show.
+                    photoChooser = { show, dismiss, onPhoto -> if (show) { androidx.compose.runtime.LaunchedEffect(Unit) { dismiss(); choose?.let(onPhoto) } } },
+                )
+            }
+        }
+        store.contacts.value.take(2).forEach { rule.onNodeWithText(it.displayName).performClick() }
+        rule.onNodeWithText("Continue").performClick()
+    }
+
+    @Test
+    fun theNamingStepOffersAnOptionalPhotoAndPassesItToCreate() {
+        var seen: ByteArray? = null
+        val recording = object : org.example.app.core.chats.ChatStore by store {
+            override suspend fun createGroup(contactIds: List<String>, name: String, photo: ByteArray?): org.example.app.core.chats.GroupCreated {
+                seen = photo
+                return store.createGroup(contactIds, name, photo)
+            }
+        }
+        naming(recording, jpeg)
+        rule.onNodeWithText("Remove photo").assertDoesNotExist()
+        rule.onNodeWithText("Add photo").performClick()
+        rule.onNodeWithText("Remove photo").assertIsDisplayed()
+        rule.onNodeWithText("Change photo").assertIsDisplayed()
+        rule.onNodeWithText("Group name").performTextInput("Book club")
+        rule.onNodeWithText("Create").performClick()
+        rule.waitUntil(5_000) { created.isNotEmpty() }
+        assertTrue(seen contentEquals jpeg)
+    }
+
+    @Test
+    fun removePhotoGoesBackToNoPhoto() {
+        var seen: ByteArray? = byteArrayOf(1)
+        val recording = object : org.example.app.core.chats.ChatStore by store {
+            override suspend fun createGroup(contactIds: List<String>, name: String, photo: ByteArray?): org.example.app.core.chats.GroupCreated {
+                seen = photo
+                return store.createGroup(contactIds, name, photo)
+            }
+        }
+        naming(recording, jpeg)
+        rule.onNodeWithText("Add photo").performClick()
+        rule.onNodeWithText("Remove photo").performClick()
+        rule.onNodeWithText("Add photo").assertIsDisplayed()
+        rule.onNodeWithText("Group name").performTextInput("Book club")
+        rule.onNodeWithText("Create").performClick()
+        rule.waitUntil(5_000) { created.isNotEmpty() }
+        assertEquals(null, seen)
+    }
+
+    @Test
+    fun noPhotoStillCreatesTheGroup() {
+        naming(store, null)
+        rule.onNodeWithText("Group name").performTextInput("Plain")
+        rule.onNodeWithText("Create").performClick()
+        rule.waitUntil(5_000) { created.isNotEmpty() }
+        assertTrue(store.chats.value.any { it.title == "Plain" })
+    }
 }

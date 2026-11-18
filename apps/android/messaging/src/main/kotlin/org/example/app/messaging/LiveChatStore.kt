@@ -39,6 +39,7 @@ import org.example.app.core.chats.Chat
 import org.example.app.core.chats.ChatFolder
 import org.example.app.core.chats.ChatListOrder
 import org.example.app.core.chats.ChatStore
+import org.example.app.core.chats.GroupChangeFailed
 import org.example.app.core.chats.GroupCreateFailed
 import org.example.app.core.chats.GroupCreated
 import org.example.app.core.chats.Contact
@@ -64,12 +65,14 @@ import org.example.app.messaging.media.Uploader
 import org.example.app.messaging.ports.AttachmentRecord
 import org.example.app.messaging.ports.AttachmentState
 import org.example.app.messaging.ports.CallRecord
+import org.example.app.messaging.ports.ChatKind
 import org.example.app.messaging.ports.ChatRecord
 import org.example.app.messaging.ports.Clock
 import org.example.app.messaging.ports.ContactRecord
 import org.example.app.messaging.ports.FolderRecord
 import org.example.app.messaging.ports.MessageRecord
 import org.example.app.messaging.ports.MlsLock
+import org.example.app.messaging.ports.MyState
 import org.example.app.messaging.ports.Repository
 import org.example.app.messaging.send.Outbox
 import org.example.app.messaging.send.Receipts
@@ -322,6 +325,8 @@ class LiveChatStore(
         scope.launch {
             try {
                 while (flushWanted.getAndSet(false)) {
+                    // A group whose mode post failed at creation: its `group` and `profile` envelopes are queued now (a marker, retried here).
+                    groupCreator.resumeInit()
                     try { outbox.flush() } catch (e: CancellationException) { throw e } catch (_: Exception) { }
                     runPending()
                     reload()
@@ -382,7 +387,7 @@ class LiveChatStore(
                 true -> chat.pinnedAt ?: Instant.ofEpochMilli(nowMs())
                 false -> null
             }
-            chat.copy(draft = drafts[record.id], pinnedAt = pinnedAt)
+            chat.copy(draft = drafts[record.id], pinnedAt = pinnedAt, group = groupInfoOf(record))
         }
         // Pinned chats first (the newest pin on top); the rest keep their activity order.
         val (pinnedChats, otherChats) = built.filter { !it.isRequest }.partition { it.pinnedAt != null }
@@ -487,7 +492,37 @@ class LiveChatStore(
             loaded[device.accountId] = org.example.app.core.people.Profile(device.accountId, myStoredName, it, runCatching { profileSender.ver() }.getOrDefault(0))
         }
         profileNames = loaded.filterKeys { it != device.accountId }.mapValues { it.value.name }
+        // A group's photo shows under the chat ID, only when it passes the profile photo rule (a row an earlier build stored is checked again).
+        for (row in runCatching { repo.chats() }.getOrDefault(emptyList())) {
+            val photo = row.photo ?: continue
+            if (row.kind == ChatKind.GROUP && org.example.app.core.people.ProfilePhotoRule.isAcceptable(photo)) {
+                loaded[row.id] = org.example.app.core.people.Profile(row.id, row.title.orEmpty(), photo, row.groupVer ?: 0)
+            }
+        }
         profilesFlow.value = loaded
+    }
+
+    /** A group chat's member list (roles the server gave, unknown roles left out) and whether this account is still in it; null for a one-to-one chat. */
+    private fun groupInfoOf(record: ChatRecord): org.example.app.core.groups.GroupInfo? {
+        if (record.kind != ChatKind.GROUP) return null
+        val members = runCatching { repo.groupMembers(record.id) }.getOrDefault(emptyList()).mapNotNull { row ->
+            org.example.app.core.groups.GroupRole.from(row.role)?.let { org.example.app.core.groups.Member(row.accountId, it) }
+        }
+        val state = when (record.myState) {
+            MyState.REMOVED -> org.example.app.core.groups.MyGroupState.Removed
+            MyState.LEFT -> org.example.app.core.groups.MyGroupState.Left
+            else -> org.example.app.core.groups.MyGroupState.Member
+        }
+        return org.example.app.core.groups.GroupInfo(members, state)
+    }
+
+    /** Removes a group chat this account is no longer in, with its rows. A group it is still in, or a one-to-one chat, is left alone. */
+    override fun deleteChat(chatId: String) = write {
+        if (!ChatID.isGroup(chatId)) return@write
+        repo.transaction {
+            val row = repo.chat(chatId) ?: return@transaction
+            if (row.kind == ChatKind.GROUP && row.myState != MyState.MEMBER) repo.deleteChat(chatId)
+        }
     }
 
     override fun setMyPhoto(photo: ByteArray?) {
@@ -623,7 +658,7 @@ class LiveChatStore(
         // A preview a receiver would drop (link not in the text, too long, not a JPEG) is left off; the text still goes.
         val card = body.preview?.let { LinkPreviewRule.cardFor(text, it) }
         write {
-            if (!ensureChatRow(chatId)) return@write
+            if (!sendableChat(chatId)) return@write
             outbox.enqueue(
                 ContentEnvelope.Text(
                     freshId(), nowMs(), text, replyTo, ttl = ttlFor(chatId),
@@ -656,7 +691,7 @@ class LiveChatStore(
                 beforeClaimForTest()
                 if (!claimed.compareAndSet(false, true)) return@write // the caller gave up: enqueue nothing
                 afterClaimForTest()
-                if (!ensureChatRow(chatId)) return@write
+                if (!sendableChat(chatId)) return@write
                 val id = freshId()
                 outbox.enqueue(ContentEnvelope.Text(id, nowMs(), body, replyTo, ttl = ttlFor(chatId)), chatId)
                 // From here on the message is queued, whatever else fails: the caller must not send it again.
@@ -750,7 +785,7 @@ class LiveChatStore(
             var stored = false
             kotlin.coroutines.coroutineContext[Job]?.let { uploadJobs[id] = it }
             try {
-                if (!ensureChatRow(chatId)) return@launch
+                if (!sendableChat(chatId)) return@launch
                 uploading += id
                 val staged = stage(id, path, chatId) ?: return@launch
                 val at = nowMs()
@@ -1203,6 +1238,8 @@ class LiveChatStore(
     }
 
     private fun sendControl(chatId: String, make: (String, Long) -> ContentEnvelope) {
+        // A group I was removed from or left takes no control envelope either.
+        if (isReadOnlyGroup(chatId)) return
         outbox.enqueueControl(chatId, make)
         requestFlush()
     }
@@ -1384,6 +1421,58 @@ class LiveChatStore(
     }
 
     private val groupCreator = org.example.app.messaging.sync.GroupCreator(conversations, repo, outbox, ownProfile = { id, at -> profileSender.envelope(id, at) })
+    private val groupSync = org.example.app.messaging.sync.GroupSync(device, mls, server, repo, lock, clock, conversations, outbox, syncOnce = { inbox.sync() })
+    private val groupAdmin = org.example.app.messaging.sync.GroupAdmin(device, server, repo, storeClock, groupSync, outbox)
+
+    init {
+        // A `members` item is only a hint: it is stored durably, then the group's list is read from the server.
+        inbox.onMembers = { event -> if (groupSync.note(event)) scheduleGroupSync() }
+    }
+
+    private fun scheduleGroupSync() {
+        if (closed.get()) return
+        inFlight.update { it + 1 }
+        scope.launch {
+            try { runGroupSync() } finally { inFlight.update { it - 1 } }
+        }
+    }
+
+    private suspend fun runGroupSync() {
+        try { groupSync.runPending() } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+        requestFlush()
+        reload()
+    }
+
+    /**
+     * Reads the member list of every group this account is in, and follows up (devices of people who left are removed
+     * from the group, devices of people just added are added). Call it at start-up and at every reconnect.
+     */
+    suspend fun syncGroups() {
+        if (closed.get()) return
+        groupSync.noteAll()
+        runGroupSync()
+    }
+
+    private suspend fun <T> groupChange(block: suspend () -> T): T {
+        if (closed.get()) throw GroupChangeFailed(GroupChangeFailed.Reason.Other)
+        try {
+            return block().also { requestFlush(); reload() }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: GroupChangeFailed) {
+            throw e
+        } catch (e: Exception) {
+            throw GroupChangeFailed(GroupChangeFailed.Reason.Other, e)
+        }
+    }
+
+    override suspend fun addMembers(chatId: String, accounts: List<String>): List<String> = groupChange { groupAdmin.addMembers(chatId, accounts) }
+    override suspend fun removeMember(chatId: String, account: String) = groupChange { groupAdmin.removeMember(chatId, account) }
+    override suspend fun leaveGroup(chatId: String) = groupChange { groupAdmin.leave(chatId) }
+    override suspend fun setRole(chatId: String, account: String, role: org.example.app.core.groups.GroupRole) =
+        groupChange { groupAdmin.setRole(chatId, account, role) }
+    override suspend fun renameGroup(chatId: String, name: String) = groupChange { groupAdmin.rename(chatId, name) }
+    override suspend fun setGroupPhoto(chatId: String, photo: ByteArray?) = groupChange { groupAdmin.setPhoto(chatId, photo) }
 
     override suspend fun createGroup(contactIds: List<String>, name: String, photo: ByteArray?): GroupCreated {
         if (closed.get()) throw GroupCreateFailed(GroupCreateFailed.Reason.Other)
@@ -1415,6 +1504,17 @@ class LiveChatStore(
         reload()
         return contactId
     }
+
+    /** A group chat I am no longer a member of (removed or left): it shows its history and takes nothing new. */
+    private fun isReadOnlyGroup(chatId: String): Boolean {
+        if (!ChatID.isGroup(chatId)) return false
+        val row = repo.chat(chatId) ?: return true
+        return row.kind == ChatKind.GROUP && row.myState != MyState.MEMBER
+    }
+
+    /** Whether a message may be queued to [chatId]: a one-to-one chat is made on demand; a group must exist and still have me in it. */
+    private fun sendableChat(chatId: String): Boolean =
+        if (ChatID.isGroup(chatId)) repo.chat(chatId)?.kind == ChatKind.GROUP && !isReadOnlyGroup(chatId) else ensureChatRow(chatId)
 
     /** False for a group chat ID: it is no contact, so no contact row and no one-to-one chat is ever made for it. */
     private fun ensureChatRow(contactId: String): Boolean = if (ChatID.isGroup(contactId)) false else try {
@@ -1454,6 +1554,7 @@ class LiveChatStore(
         write {
             val queued = repo.transaction {
                 if (repo.chat(chatId) == null || repo.timerSeconds(chatId) == seconds) return@transaction false
+                if (isReadOnlyGroup(chatId)) return@transaction false
                 // In a group only an owner or admin sets it (the others would be ignored by every member).
                 if (ChatID.isGroup(chatId)) {
                     val mine = repo.groupMembers(chatId).firstOrNull { it.accountId == device.accountId }?.let { org.example.app.core.groups.GroupRole.from(it.role) }

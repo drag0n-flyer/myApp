@@ -64,13 +64,21 @@ fun ChatInfoScreen(
     modifier: Modifier = Modifier,
     /** Opens "Media and files" of this chat. */
     onOpenGallery: () -> Unit = {},
+    /** A group's member menu: open that person's chat ([safetyNumber] false) or its info page ([safetyNumber] true). */
+    onOpenMember: (accountId: String, safetyNumber: Boolean) -> Unit = { _, _ -> },
+    /** After "Delete chat" on a group the person left. */
+    onDeleted: () -> Unit = onBack,
 ) {
+    // A group chat has its own info page (a group chat ID never changes for a chat).
+    if (org.example.app.core.groups.ChatID.isGroup(chatId)) {
+        GroupInfoScreen(store, chatId, onBack, onOpenGallery, onOpenMember, onDeleted, modifier)
+        return
+    }
     val chats by store.chats.collectAsStateWithLifecycle()
     val requests by store.requests.collectAsStateWithLifecycle()
     var revision by remember { mutableIntStateOf(0) }
     // Read again after the lists change or the verified flag is toggled.
     val chat = remember(chats, requests, revision) { store.chat(chatId) }
-    // A group chat has no contact: the page stays empty until the group info screen exists.
     val contact = chat?.contactId?.let { store.contact(it) }
     var showVerify by rememberSaveable { mutableStateOf(false) }
     var confirmReport by rememberSaveable { mutableStateOf(false) }
@@ -204,5 +212,26 @@ fun ChatInfoScreen(
                 dismissButton = { TextButton(onClick = { confirmBlock = false }) { Text(stringResource(R.string.cancel)) } },
             )
         }
+    }
+}
+
+/**
+ * The encryption line of a chat (or, when the server and the conversation disagree, the paused-sending line). The group
+ * info page uses it too: chat info stays the only place that names an encryption type.
+ */
+@Composable
+internal fun EncryptionInfoRows(chat: org.example.app.core.chats.Chat) {
+    if (chat.modeMismatch) {
+        ListItem(
+            leadingContent = { Icon(painterResource(R.drawable.ic_lock), contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+            headlineContent = { Text(stringResource(R.string.info_mismatch), color = MaterialTheme.colorScheme.error) },
+        )
+    } else {
+        val line = keyString(chat.encryption.infoKey)
+        ListItem(
+            modifier = Modifier.semantics(mergeDescendants = true) { contentDescription = line },
+            leadingContent = { Icon(painterResource(R.drawable.ic_lock), contentDescription = null) },
+            headlineContent = { Text(line) },
+        )
     }
 }

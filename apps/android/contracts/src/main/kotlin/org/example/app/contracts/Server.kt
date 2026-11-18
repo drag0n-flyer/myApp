@@ -28,11 +28,11 @@ class InboxItem(
 )
 
 /** A group's member list changed: fetch it. [membersVersion] is the server's version after the change. */
-class MembersEvent(val conversationId: String, val membersVersion: Long)
+class MembersEvent(val conversationId: String, val membersVersion: Long, val actor: String? = null)
 
 /** The `members` event of an inbox item; null for any other kind or a `members` item without a version. */
 fun InboxItem.membersEvent(): MembersEvent? =
-    if (kind == "members" && membersVersion != null) MembersEvent(conversationId, membersVersion) else null
+    if (kind == "members" && membersVersion != null) MembersEvent(conversationId, membersVersion, senderAccountId.takeIf { it.isNotEmpty() }) else null
 
 sealed interface ServerEvent {
     class Inbox(val item: InboxItem) : ServerEvent

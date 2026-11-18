@@ -97,6 +97,16 @@ internal object ChatMapping {
         obj["deviceAdded"]?.jsonObject?.let { return SystemEvent.DeviceAdded(name(it)) }
         obj["deviceRemoved"]?.jsonObject?.let { return SystemEvent.DeviceRemoved(name(it)) }
         obj["addedYou"]?.jsonObject?.let { return SystemEvent.AddedYou(name(it)) }
+        fun acct(o: JsonObject, key: String): String? = o[key]?.jsonPrimitive?.contentOrNull?.let { displayName(it) ?: "Someone" }
+        fun byYou(o: JsonObject) = o["byYou"]?.jsonPrimitive?.contentOrNull == "true"
+        obj["groupAdded"]?.jsonObject?.let { return SystemEvent.GroupAdded(acct(it, "by"), acct(it, "who") ?: return null, byYou(it)) }
+        obj["groupRemoved"]?.jsonObject?.let { return SystemEvent.GroupRemoved(acct(it, "by"), acct(it, "who") ?: return null, byYou(it)) }
+        obj["groupLeft"]?.jsonObject?.let { return SystemEvent.GroupLeft(acct(it, "who")) }
+        if ("youWereRemoved" in obj) return SystemEvent.YouWereRemoved
+        obj["madeAdmin"]?.jsonObject?.let { return SystemEvent.MadeAdmin(acct(it, "who")) }
+        obj["noLongerAdmin"]?.jsonObject?.let { return SystemEvent.NoLongerAdmin(acct(it, "who")) }
+        obj["groupRenamed"]?.jsonObject?.let { return SystemEvent.GroupRenamed(acct(it, "by"), it["name"]?.jsonPrimitive?.contentOrNull ?: return null) }
+        obj["groupPhoto"]?.jsonObject?.let { return SystemEvent.GroupPhotoChanged(acct(it, "by")) }
         if ("safetyNumberChanged" in obj) return SystemEvent.SafetyNumberChanged
         if ("messagesPaused" in obj) return SystemEvent.MessagesPaused
         obj["timer"]?.jsonObject?.let { t ->
@@ -138,6 +148,7 @@ internal object ChatMapping {
         messages = messages, isRequest = record.isRequest, modeMismatch = conversations.any { it.modeMismatch },
         pinnedAt = record.pinnedAt?.let(java.time.Instant::ofEpochMilli), muted = record.muted, archived = record.archived,
         timerSeconds = record.timerSeconds,
+        readOnly = record.kind == ChatKind.GROUP && record.myState != org.example.app.messaging.ports.MyState.MEMBER,
     )
 
     /** A stored number (12 groups of 5 digits, joined) split into its groups. */

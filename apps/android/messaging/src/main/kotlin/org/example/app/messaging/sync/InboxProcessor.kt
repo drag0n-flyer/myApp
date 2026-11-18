@@ -180,6 +180,13 @@ class InboxProcessor(
                 drop(raw, hash)
                 return Step.Done(null)
             }
+            // A group this account left or was removed from: its later messages and commits are dropped before the
+            // engine sees them (a Welcome, which may add this account again, is not).
+            if (raw.kind != "welcome" && GroupState.droppedForGone(repo, raw.conversationId)) {
+                accepted.remove(raw.cursor)
+                drop(raw, hash)
+                return Step.Done(null)
+            }
 
             // A Welcome needs the server's mode, fetched before the lock. A failed lookup can be retried while the
             // Welcome is unprocessed; one the server will never answer drops it.
@@ -254,8 +261,12 @@ class InboxProcessor(
         } catch (e: MlsException.Storage) {
             throw e // possibly temporary (disk): the raw row stays
         } catch (_: MlsException) {
-            // Anything else the engine rejects is permanent for this payload.
-            repo.transaction { placeholderOrPark(raw, "mls_error"); markAndDelete(raw, hash) }
+            // Anything else the engine rejects is permanent for this payload. A group's Welcome is only parked: there is no
+            // one-to-one chat with its sender to show "couldn't open".
+            repo.transaction {
+                if (raw.kind == "welcome" && group != null) handler.park(raw, repo, "mls_error") else placeholderOrPark(raw, "mls_error")
+                markAndDelete(raw, hash)
+            }
             return null
         }
         accepted[raw.cursor] = incoming
@@ -292,7 +303,7 @@ class InboxProcessor(
                 repo.deleteRaw(raw.cursor)
                 if (plan == null) {
                     handler.park(raw, repo, "join_failed:$failure")
-                    handler.storeJoinFailed(raw, repo)
+                    if (group == null) handler.storeJoinFailed(raw, repo)
                     return@transaction null
                 }
                 if (failCount(raw.cursor) != 0) repo.set(failKey(raw.cursor), "0".encodeToByteArray())

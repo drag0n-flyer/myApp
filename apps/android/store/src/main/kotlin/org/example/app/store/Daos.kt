@@ -70,6 +70,7 @@ interface ConversationDao {
     @Upsert fun upsert(c: ConversationEntity)
     @Query("SELECT * FROM conversations WHERE chat_id = :chatId ORDER BY server_id") fun forChat(chatId: String): List<ConversationEntity>
     @Query("SELECT * FROM conversations WHERE server_id = :id") fun get(id: String): ConversationEntity?
+    @Query("DELETE FROM conversations WHERE server_id = :id") fun delete(id: String)
     @Query("SELECT * FROM conversations WHERE group_id = :groupId") fun byGroup(groupId: ByteArray): ConversationEntity?
     @Query("SELECT * FROM conversations WHERE chat_id = :chatId AND active = 1 ORDER BY server_id LIMIT 1")
     fun preferred(chatId: String): ConversationEntity?
