@@ -142,7 +142,7 @@ class GroupInfoScreenTest {
     fun anOwnerWhoStillHasPeopleIsToldToHandOverFirst() {
         launch()
         rule.onNodeWithText("Leave group").performClick()
-        rule.onNodeWithText("Make someone else the owner first").assertIsDisplayed()
+        rule.onNodeWithText("Choose a new owner before you leave.").assertIsDisplayed()
         rule.onNodeWithText("Leave this group?").assertDoesNotExist()
         rule.onNodeWithText("OK").performClick()
         assertEquals(org.example.app.core.groups.MyGroupState.Member, sample.chat(chatId)!!.group!!.myState)
@@ -206,6 +206,24 @@ class GroupInfoScreenTest {
         rule.onNodeWithText("Message").assertIsDisplayed()
         rule.onNodeWithText("Remove from group").assertDoesNotExist()
         rule.onNodeWithText("Make admin").assertDoesNotExist()
+    }
+
+    @Test
+    fun safetyNumberNeedsAnExistingOneToOneChat() {
+        launch()
+        rule.onNodeWithContentDescription("Actions for Arjun").performClick()
+        rule.onNodeWithText("View safety number").assertIsDisplayed()
+    }
+
+    @Test
+    fun noSafetyNumberEntryWithoutAOneToOneChatButMessageStays() {
+        val noDirect = object : ChatStore by sample {
+            override val chats = kotlinx.coroutines.flow.MutableStateFlow(sample.chats.value.filter { it.isGroup })
+        }
+        launch(noDirect)
+        rule.onNodeWithContentDescription("Actions for Arjun").performClick()
+        rule.onNodeWithText("Message").assertIsDisplayed()
+        rule.onNodeWithText("View safety number").assertDoesNotExist()
     }
 
     @Test

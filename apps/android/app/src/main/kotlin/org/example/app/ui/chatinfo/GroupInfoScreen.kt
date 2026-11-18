@@ -109,7 +109,8 @@ fun GroupInfoScreen(
     val someone = stringResource(R.string.group_someone)
     fun nameOf(id: String): String =
         if (id == store.me.id) store.me.displayName
-        else store.contact(id)?.displayName ?: profiles[id]?.name?.takeIf { it.isNotBlank() } ?: someone
+        else store.contact(id)?.displayName?.takeIf { it.isNotBlank() }
+            ?: org.example.app.core.people.ContactDisplay.name(null, profiles[id]?.name, "", "").ifEmpty { someone }
 
     /** Runs one change; a refusal or a failure says so, nothing else changes. */
     fun change(block: suspend () -> Boolean) {
@@ -228,7 +229,7 @@ fun GroupInfoScreen(
                 val isMe = member.accountId == store.me.id
                 val contact = store.contact(member.accountId)
                 val actions = MemberActions.forMember(
-                    myRole, member, isMe, canMessage = contact != null, canVerify = contact != null && store.supportsSafetyNumbers,
+                    myRole, member, isMe, canMessage = contact != null, canVerify = store.supportsSafetyNumbers && chats.any { it.contactId == member.accountId },
                 )
                 MemberRow(
                     name = nameOf(member.accountId), member = member, actions = actions,
@@ -308,7 +309,6 @@ fun GroupInfoScreen(
         AlertDialog(
             onDismissRequest = { ownerFirst = false },
             title = { Text(stringResource(R.string.group_leave_owner_title)) },
-            text = { Text(stringResource(R.string.group_leave_owner_body)) },
             confirmButton = { TextButton(onClick = { ownerFirst = false }) { Text(stringResource(R.string.group_ok)) } },
         )
     }

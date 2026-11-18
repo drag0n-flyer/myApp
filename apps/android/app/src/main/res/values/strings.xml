@@ -607,13 +607,12 @@
     <string name="group_leave">Leave group</string>
     <string name="group_leave_title">Leave this group?</string>
     <string name="group_leave_body">You will stop getting its messages. What is here stays on this device until you delete the chat.</string>
-    <string name="group_leave_owner_title">Make someone else the owner first</string>
-    <string name="group_leave_owner_body">The owner can leave once another member is the owner.</string>
+    <string name="group_leave_owner_title">Choose a new owner before you leave.</string>
     <string name="group_no_longer">You\'re no longer in this group</string>
     <string name="group_delete_chat">Delete chat</string>
     <string name="group_delete_title">Delete this chat?</string>
     <string name="group_delete_body">Its messages are removed from this device.</string>
-    <string name="group_change_failed">That didn\'t work. Try again.</string>
+    <string name="group_change_failed">Couldn\'t change the group. Check your connection and try again.</string>
     <string name="group_photo_label">Group photo</string>
     <string name="group_photo_add">Add photo</string>
 </resources>
