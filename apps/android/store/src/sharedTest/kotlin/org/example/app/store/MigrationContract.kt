@@ -11,7 +11,8 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
- * Upgrading a populated version 1 database to version 2 keeps every row and gives the new columns their defaults.
+ * Upgrading a populated version 1 database (and a populated version 2 one) to the current version keeps every row and
+ * gives the new columns their defaults.
  * The version 1 schema is written out as the SQL Room generated for it (the statements below were read from a
  * database built by the version 1 code), not derived from the current entities, so a change to the entities
  * cannot make this test agree with itself. Runs on the JVM against stock SQLite and on a device against SQLCipher.
@@ -19,7 +20,7 @@ import kotlin.test.assertTrue
 abstract class MigrationContract {
     /** Opens (creating it if needed) a version 1 database through the same kind of open helper the app uses. */
     protected abstract fun v1Helper(callback: SupportSQLiteOpenHelper.Callback): SupportSQLiteOpenHelper
-    /** Opens the file at version 2 through the app's own path, with its migrations. */
+    /** Opens the file at the current version through the app's own path, with its migrations. */
     protected abstract fun openCurrent(): AppDatabase
     protected abstract fun deleteFile()
     /** True where the SQLite build has FTS5 (the device); the version 1 database then has the search index too. */
@@ -53,7 +54,7 @@ abstract class MigrationContract {
             rows
         }
 
-    @Test fun populatedVersion1OpensAtVersion2WithEveryRowIntact() {
+    @Test fun populatedVersion1OpensAtCurrentVersionWithEveryRowIntact() {
         before = createVersion1()
         // The fixture really is populated: a vacuous pass is not possible.
         for (table in listOf("contacts", "chats", "conversations", "members", "safety", "messages", "reactions", "attachments", "outbox", "inbox_raw", "processed", "folders", "folder_chats", "blocked", "calls", "kv")) {
@@ -65,7 +66,7 @@ abstract class MigrationContract {
         val db = openCurrent()
         try {
             val raw = db.openHelper.writableDatabase
-            assertEquals(2, raw.version)
+            assertEquals(CURRENT_VERSION, raw.version)
             assertEquals(before, snapshot(raw), "a version 1 row changed or was lost")
             // Foreign keys still hold after the upgrade.
             raw.query("PRAGMA foreign_key_check").use { assertFalse(it.moveToFirst(), "foreign key violation after migration") }
@@ -107,12 +108,58 @@ abstract class MigrationContract {
         }
     }
 
-    @Test fun aDatabaseThatIsAlreadyVersion2OpensUnchanged() {
+    @Test fun aDatabaseThatIsAlreadyCurrentOpensUnchanged() {
         createVersion1()
         openCurrent().use { }
         val db = openCurrent()
         try {
-            assertEquals(2, db.openHelper.writableDatabase.version)
+            assertEquals(CURRENT_VERSION, db.openHelper.writableDatabase.version)
+            assertEquals(3, RoomRepository(db, allowLikeFallback = !hasFts).chats().size)
+        } finally {
+            db.close()
+        }
+    }
+
+    private fun createVersion2(): Unit {
+        val helper = v1Helper(object : SupportSQLiteOpenHelper.Callback(2) {
+            override fun onConfigure(db: SupportSQLiteDatabase) = db.setForeignKeyConstraintsEnabled(true)
+            override fun onCreate(db: SupportSQLiteDatabase) {
+                SchemaV1.create(db, hasFts)
+                Migration1To2.migrate(db)
+                // A queued message that was already tried twice, and a second one in another chat.
+                db.execSQL("INSERT INTO outbox VALUES ('outbox-2', 'chat-a', x'0910', 0, 9500)")
+            }
+            override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = error("not expected")
+        })
+        val db = helper.writableDatabase
+        assertEquals(2, db.version)
+        helper.close()
+    }
+
+    /** Outbox rows of a version 2 database have no stored ciphertext after the upgrade, and the new columns are usable. */
+    @Test fun populatedVersion2GetsOutboxCiphertextColumnsWithEveryOutboxRowIntact() {
+        createVersion2()
+        val db = openCurrent()
+        try {
+            val raw = db.openHelper.writableDatabase
+            assertEquals(CURRENT_VERSION, raw.version)
+            raw.query("SELECT message_id, chat_id, hex(envelope), attempts, next_attempt_at, ciphertext, cipher_epoch FROM outbox ORDER BY rowid").use { c ->
+                val rows = mutableListOf<List<String?>>()
+                while (c.moveToNext()) {
+                    rows += listOf(c.getString(0), c.getString(1), c.getString(2), c.getString(3), c.getString(4))
+                    assertTrue(c.isNull(5), "ciphertext starts empty")
+                    assertTrue(c.isNull(6), "cipher_epoch starts empty")
+                }
+                assertEquals(
+                    listOf(
+                        listOf<String?>("outbox-1", "chat-b", "0708", "2", "9000"),
+                        listOf<String?>("outbox-2", "chat-a", "0910", "0", "9500"),
+                    ),
+                    rows,
+                )
+            }
+            raw.query("PRAGMA foreign_key_check").use { assertFalse(it.moveToFirst(), "foreign key violation after migration") }
+            raw.query("PRAGMA integrity_check").use { it.moveToFirst(); assertEquals("ok", it.getString(0)) }
             assertEquals(3, RoomRepository(db, allowLikeFallback = !hasFts).chats().size)
         } finally {
             db.close()
@@ -121,6 +168,9 @@ abstract class MigrationContract {
 
     private inline fun AppDatabase.use(body: (AppDatabase) -> Unit) = try { body(this) } finally { close() }
 }
+
+/** The schema version the app is on now; the migration tests upgrade to it. */
+const val CURRENT_VERSION = 3
 
 /** The version 1 schema and a small populated data set. */
 object SchemaV1 {
