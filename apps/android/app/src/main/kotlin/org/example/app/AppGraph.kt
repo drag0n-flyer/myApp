@@ -450,6 +450,7 @@ class AppGraph(
             if (seedNameOnOpen) quietly("own name") { seedOwnName(session) }
             quietly("push") { org.example.app.live.PushWiring.registerAfterSignIn(appContext, session.client) }
         }
+        session.scope.launch { quietly("read chats") { org.example.app.live.PushWiring.cancelReadChats(appContext, session.chatStore) } }
         val live = session.socket.socket
         sessionGone.value = false
         session.scope.launch { live.states.collect { socketState.value = it } }

@@ -36,4 +36,16 @@ object PushRuntime {
     @Volatile var inboxFetcher: InboxFetcher? = null
 
     @Volatile var registrationSink: RegistrationSink? = null
+
+    /** For N6: call it when app lock is turned on. Notifications already showing lose their sender, text and Reply. */
+    fun hideShownContent(context: android.content.Context) = MessageNotifier(context.applicationContext).hideShownContent()
+
+    /** What the notification buttons do. The app sets it in `PushWiring`; null while signed out. */
+    @Volatile var notificationActions: NotificationActionSink? = null
+
+    /** The chats whose notifications are quiet. The app wires this in `PushWiring`; empty until then. Called with the notifier's lock held: it must be a non-blocking read. */
+    @Volatile var mutedChatIds: () -> Set<String> = { emptySet() }
+
+    /** True while app lock is on: notifications then show no sender or text and offer no Reply. Called with the notifier's lock held: it must be a non-blocking read. */
+    @Volatile var appLockOn: () -> Boolean = { false }
 }

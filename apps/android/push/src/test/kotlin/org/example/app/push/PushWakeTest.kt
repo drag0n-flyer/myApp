@@ -366,13 +366,16 @@ class PushWakeTest {
 
     // ---- notifications
 
+    @kotlin.test.BeforeTest
+    fun forgetEarlierNotifications() = MessageNotifier.forgetRecent()
+
     private fun active() = shadowOf(context.getSystemService(NotificationManager::class.java)).allNotifications
 
     @Test
     fun channelsExist() {
         NotificationChannels.ensure(context)
         val ids = context.getSystemService(NotificationManager::class.java).notificationChannels.map { it.id }.toSet()
-        assertEquals(setOf("messages", "requests", "calls", "devices", "service"), ids)
+        assertEquals(setOf("messages", "requests", "calls", "devices", "service", "muted"), ids)
         val nm = context.getSystemService(NotificationManager::class.java)
         assertEquals(NotificationManager.IMPORTANCE_LOW, nm.getNotificationChannel("service").importance)
         assertEquals(NotificationManager.IMPORTANCE_HIGH, nm.getNotificationChannel("messages").importance)

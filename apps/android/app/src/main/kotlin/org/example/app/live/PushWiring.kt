@@ -7,6 +7,12 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.example.app.AppGraph
 import org.example.app.contracts.NotificationOutcome
+import org.example.app.core.chats.ChatStore
+import org.example.app.messaging.LiveChatStore
+import org.example.app.core.chats.DraftKeeper
+import org.example.app.core.notify.NotificationPlan
+import org.example.app.push.MessageNotifier
+import org.example.app.ui.chat.ProcessDrafts
 import org.example.app.contracts.PushPayloadHandler
 import org.example.app.contracts.RingOutcome
 import org.example.app.net.ServerClient
@@ -53,6 +59,13 @@ object PushWiring {
                 graph().openSession()?.chatStore?.recordStrangerMissedCall(callId, fromAccountId)
             }
         }
+        // The two switches the notifications read. Wired here and nowhere else: N4 (mute) and N6 (app lock) replace these lines.
+        PushRuntime.mutedChatIds = { emptySet() }
+        PushRuntime.appLockOn = { false }
+        PushRuntime.notificationActions = LiveNotificationActions(
+            store = { graph().openSession()?.chatStore?.let(::SessionNotificationStore) },
+            drafts = { ProcessDrafts.keeperFor(it) },
+        )
         PushRuntime.dispatcher = PushDispatcher(handler, ring, AndroidPushEffects(app, missed))
         PushRuntime.inboxFetcher = object : InboxFetcher {
             override suspend fun fetch(): List<NotificationOutcome> = graph().openSession()?.notifications?.fetchOutcomes() ?: emptyList()
@@ -66,6 +79,23 @@ object PushWiring {
             override suspend fun onFcmToken(token: String) {
                 registrar(graph())?.register(PushTransport.Fcm, PushRegistration.Fcm(token))
             }
+        }
+    }
+
+    /**
+     * Cancels a chat's notifications when it was read (its unread count fell to zero, in the app or from the notification),
+     * left the chat list, or was blocked.
+     */
+    suspend fun cancelReadChats(context: Context, store: ChatStore) {
+        val notifier = MessageNotifier(context.applicationContext)
+        var before = emptyMap<String, Int>()
+        var blockedBefore = emptySet<String>()
+        kotlinx.coroutines.flow.combine(store.chats, store.blockedIds) { chats, blocked -> chats to blocked }.collect { (chats, blocked) ->
+            val after = chats.associate { it.id to it.unreadCount }
+            val gone = NotificationPlan.readChats(before, after) + NotificationPlan.leftChats(before.keys, after.keys, blockedBefore, blocked)
+            gone.forEach(notifier::cancelChat)
+            before = after
+            blockedBefore = blocked
         }
     }
 
@@ -102,4 +132,23 @@ object PushWiring {
             tokens.putPushToken("unifiedpush", buildJsonObject { put("endpoint", endpoint); put("p256dh", b64(p256dh)); put("auth", b64(auth)) })
         override suspend fun delete(kind: String) = tokens.deletePushToken(kind)
     }
+}
+
+/** Adds [text] to the chat's unsent draft, after what is already typed there, never replacing it. N4's `ChatStore.setDraft` replaces the body of this function. */
+internal fun saveReplyDraft(keeper: DraftKeeper, chatId: String, text: String) {
+    val typed = keeper.draft(chatId)
+    keeper.set(if (typed.isBlank()) text else typed + "\n" + text, chatId)
+}
+
+/** The live store as the notification buttons see it. */
+private class SessionNotificationStore(private val store: LiveChatStore) : NotificationStore {
+    override val meId: String get() = store.me.id
+    override fun chat(chatId: String) = store.chat(chatId)
+    override fun blocked(): Set<String> = store.blockedIds.value
+    override suspend fun markRead(chatId: String) {
+        store.markRead(chatId)
+        store.awaitWrites()
+    }
+    override suspend fun sendReturningId(chatId: String, text: String, waitMs: Long): String? = store.sendReturningId(text, chatId, waitMs = waitMs)
+    override suspend fun settle() = store.settle()
 }

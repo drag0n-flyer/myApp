@@ -14,6 +14,7 @@ import kotlin.test.assertTrue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import org.example.app.core.chats.CallSummary
 import org.example.app.core.chats.DeliveryStatus
@@ -347,5 +348,52 @@ class LiveChatStoreTest {
         val verified = d.repo.safety("acc-ana")?.verified
         s.setVerified(false, "acc-ana")
         assertEquals(verified, d.repo.safety("acc-ana")?.verified, "unchanged, cannot be re-verified")
+    }
+
+    @Test
+    fun sendReturningIdQueuesOnceAndReturnsTheStoredMessageId() = runTest {
+        val (rig, s, _) = joined()
+        // Real time: the wait inside is a real timeout, not a virtual one.
+        val id = kotlinx.coroutines.withContext(Dispatchers.Default) { s.sendReturningId("from a notification", "acc-ana") }
+        assertNotNull(id)
+        s.settle()
+        val rows = rig.bob1.repo.messages("acc-ana", null, 20).filter { it.senderAccount == "acc-bob" }
+        assertEquals(listOf(id), rows.map { it.id })
+        assertEquals("sent", rows.single().status)
+    }
+
+    @Test
+    fun sendReturningIdQueuesNothingForBlankOrClosedStore() = runTest {
+        val (rig, s, _) = joined()
+        assertNull(s.sendReturningId("   ", "acc-ana"))
+        s.shutdown()
+        assertNull(s.sendReturningId("late", "acc-ana"))
+        assertTrue(rig.bob1.repo.messages("acc-ana", null, 20).none { it.senderAccount == "acc-bob" })
+    }
+
+    @Test
+    fun aWriterSlowerThanTheWaitReportsNullAndNeverEnqueuesLater() = runTest {
+        val (rig, s, _) = joined()
+        val gate = java.util.concurrent.CountDownLatch(1)
+        s.beforeClaimForTest = { gate.await(5, java.util.concurrent.TimeUnit.SECONDS) }
+        val result = kotlinx.coroutines.withContext(Dispatchers.Default) { s.sendReturningId("too late", "acc-ana", waitMs = 100) }
+        assertNull(result)
+        gate.countDown() // the writer now gets to the job
+        s.settle()
+        assertTrue(rig.bob1.repo.messages("acc-ana", null, 20).none { it.senderAccount == "acc-bob" }, "nothing was queued after null")
+    }
+
+    @Test
+    fun aWriterThatClaimsJustBeforeTheWaitEndsStillReturnsTheId() = runTest {
+        val (rig, s, _) = joined()
+        val gate = java.util.concurrent.CountDownLatch(1)
+        s.afterClaimForTest = { gate.await(5, java.util.concurrent.TimeUnit.SECONDS) } // claimed, enqueue under way
+        val pending = CoroutineScope(Dispatchers.Default).async { s.sendReturningId("just in time", "acc-ana", waitMs = 100) }
+        Thread.sleep(400) // past the wait
+        gate.countDown()
+        val id = pending.await()
+        assertNotNull(id)
+        s.settle()
+        assertEquals(listOf(id), rig.bob1.repo.messages("acc-ana", null, 20).filter { it.senderAccount == "acc-bob" }.map { it.id })
     }
 }

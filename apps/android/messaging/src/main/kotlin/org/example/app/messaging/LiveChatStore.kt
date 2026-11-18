@@ -348,6 +348,45 @@ class LiveChatStore(
         }
     }
 
+    /**
+     * Like [send] for text, for a caller that must know the message was queued (a notification reply). Returns the new
+     * message's id once it is in the outbox, and null only when nothing was queued and nothing ever will be.
+     *
+     * The caller and the writer share one claim. The writer takes it before it enqueues; the caller takes it when it
+     * gives up waiting ([waitMs]). Whoever takes it first decides: if the caller does, the writer finds it taken and
+     * enqueues nothing, so "not queued" is true for good; if the writer already did, the enqueue is under way and the
+     * caller waits for its id, so "queued" is never reported as null.
+     */
+    suspend fun sendReturningId(text: String, chatId: String, replyTo: String? = null, waitMs: Long = WRITE_WAIT_MS): String? {
+        if (closed.get()) return null
+        val body = TextLimit.truncate(text)
+        if (body.isBlank()) return null
+        val queued = kotlinx.coroutines.CompletableDeferred<String?>()
+        val claimed = AtomicBoolean(false)
+        write {
+            try {
+                beforeClaimForTest()
+                if (!claimed.compareAndSet(false, true)) return@write // the caller gave up: enqueue nothing
+                afterClaimForTest()
+                if (!ensureChatRow(chatId)) return@write
+                val id = freshId()
+                outbox.enqueue(ContentEnvelope.Text(id, nowMs(), body, replyTo), chatId)
+                // From here on the message is queued, whatever else fails: the caller must not send it again.
+                queued.complete(id)
+                bumpActivity(chatId, nowMs())
+                requestFlush()
+            } finally {
+                queued.complete(null) // does nothing once the id is out
+            }
+        }
+        return kotlinx.coroutines.withTimeoutOrNull(waitMs) { queued.await() }
+            ?: if (claimed.compareAndSet(false, true)) null else queued.await()
+    }
+
+    /** Test seams for [sendReturningId]: run in the writer before and after it claims the message. */
+    internal var beforeClaimForTest: () -> Unit = {}
+    internal var afterClaimForTest: () -> Unit = {}
+
     /** Messages that gave up sending (they show as [DeliveryStatus.Failed]; the UI offers [retrySend]). */
     fun failedMessageIds(chatId: String): Set<String> =
         repo.messages(chatId, null, 200).filter { it.status == "failed" && it.senderAccount == device.accountId }.map { it.id }.toSet()
@@ -987,6 +1026,7 @@ class LiveChatStore(
 
     companion object {
         const val CACHED_MESSAGES = 50
+        private const val WRITE_WAIT_MS = 10_000L
         private const val REPORTED_MESSAGES = 10
         const val BLOCK_PREFIX = "pending.block."
         const val UNBLOCK_PREFIX = "pending.unblock."
