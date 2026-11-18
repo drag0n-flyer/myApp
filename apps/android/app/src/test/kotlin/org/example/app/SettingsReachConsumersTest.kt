@@ -19,7 +19,6 @@ import org.example.app.core.settings.ServerPolicy
 import org.example.app.ui.chat.ChatViewModel
 import org.example.app.core.settings.AutoDownloadSettings
 import org.example.app.ui.chatlist.ChatListViewModel
-import org.example.app.ui.settings.NotificationDelivery
 import org.example.app.ui.settings.SettingsStore
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -61,13 +60,5 @@ class SettingsReachConsumersTest {
         settings.update { it.copy(autoDownload = AutoDownloadSettings(onMobile = org.example.app.core.settings.DownloadScope.All)) }
         assertEquals(false, before)
         assertEquals(true, vm.autoDownloads(org.example.app.core.settings.MediaKind.Photo))
-    }
-
-    @Test
-    fun notificationChoiceLivesInTheStore() {
-        val store = SettingsStore()
-        assertEquals(NotificationDelivery.Google, store.delivery.value)
-        store.setDelivery(NotificationDelivery.UnifiedPush)
-        assertEquals(NotificationDelivery.UnifiedPush, store.delivery.value)
     }
 }

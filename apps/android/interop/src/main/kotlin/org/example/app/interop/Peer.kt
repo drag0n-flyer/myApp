@@ -147,6 +147,7 @@ class Peer(private val config: PeerConfig) {
         override suspend fun lookUpUser(username: String): FoundUser? =
             api.lookUpUser(username).let { FoundUser(it.accountID, it.username, it.displayName) }
         override suspend fun block(accountId: String) = api.block(accountId)
+        override suspend fun unblock(accountId: String) = api.unblock(accountId)
         override suspend fun report(accountId: String, conversationId: String?, messages: List<ReportedLine>) = Unit
     }
 

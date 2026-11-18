@@ -26,7 +26,7 @@ class SettingsScreenTest {
     fun listsEveryPageAndOpensIt() {
         val opened = mutableListOf<SettingsPage>()
         rule.setContent {
-            AppTheme { SettingsScreen(Contact("me", "Me", "me"), "home.example.org", linkedDevices = 2, onOpen = { opened += it }) }
+            AppTheme { SettingsScreen(Contact("me", "Me", "me"), "home.example.org", linkedDevices = 2, onOpen = { opened += it }, onOpenProfile = {}) }
         }
         for (title in listOf("Server", "Linked devices", "Privacy", "Data & Storage", "Notifications", "Chat folders", "Calls & Audio", "Open-source licenses")) {
             rule.onNodeWithText(title).assertIsDisplayed()

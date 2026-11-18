@@ -59,6 +59,8 @@ interface ChatStore {
     fun receive(content: MessageContent, from: Contact)
     fun accept(requestId: String)
     fun block(contactId: String)
+    /** Lifts a block. The contact does not come back by itself; the chat starts again when either side writes. */
+    fun unblock(contactId: String)
     fun report(chatId: String)
     fun markRead(chatId: String)
     fun incomingCall(fromAccountId: String, video: Boolean = false): IncomingCallDecision

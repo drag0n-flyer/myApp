@@ -59,11 +59,11 @@ fun SectionHeader(text: String) {
 }
 
 @Composable
-fun FooterText(text: String) {
+fun FooterText(text: String, error: Boolean = false) {
     Text(
         text,
         style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        color = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
     )
 }

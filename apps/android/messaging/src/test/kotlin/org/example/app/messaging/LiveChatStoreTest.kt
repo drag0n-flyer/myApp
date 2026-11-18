@@ -31,8 +31,11 @@ import org.example.app.messaging.sync.TestDevice
 private class FakeSocial : SocialPort {
     val blocked = mutableListOf<String>()
     var failBlock = false
+    val unblocked = mutableListOf<String>()
+    var failUnblock = false
     override suspend fun lookUpUser(username: String) = null
     override suspend fun block(accountId: String) { if (failBlock) error("offline"); blocked += accountId }
+    override suspend fun unblock(accountId: String) { if (failUnblock) error("offline"); unblocked += accountId }
     override suspend fun report(accountId: String, conversationId: String?, messages: List<ReportedLine>) = Unit
 }
 
@@ -164,6 +167,48 @@ class LiveChatStoreTest {
         social.failBlock = false
         s.syncInbox()
         assertEquals(listOf("acc-ana"), social.blocked)
+    }
+
+    @Test
+    fun unblockIsLocalFirstAndRetried() = runTest {
+        val (_, s, _) = joined()
+        s.block("acc-ana"); s.settle()
+        assertTrue("acc-ana" in s.blockedIds.value)
+        social.failUnblock = true
+        s.unblock("acc-ana"); s.settle()
+        assertFalse("acc-ana" in s.blockedIds.value)
+        assertTrue(social.unblocked.isEmpty())
+        social.failUnblock = false
+        s.syncInbox()
+        assertEquals(listOf("acc-ana"), social.unblocked)
+        s.syncInbox()
+        assertEquals(listOf("acc-ana"), social.unblocked, "sent once")
+    }
+
+    @Test
+    fun unblockDropsABlockTheServerNeverGot() = runTest {
+        val (_, s, _) = joined()
+        social.failBlock = true
+        s.block("acc-ana"); s.settle()
+        social.failBlock = false
+        s.unblock("acc-ana"); s.settle()
+        s.syncInbox()
+        assertTrue(social.blocked.isEmpty())
+        assertEquals(listOf("acc-ana"), social.unblocked)
+        assertFalse("acc-ana" in s.blockedIds.value)
+    }
+
+    @Test
+    fun blockingAgainDropsAnUnblockTheServerNeverGot() = runTest {
+        val (_, s, _) = joined()
+        s.block("acc-ana"); s.settle()
+        social.failUnblock = true
+        s.unblock("acc-ana"); s.settle()
+        s.block("acc-ana"); s.settle()
+        social.failUnblock = false
+        s.syncInbox()
+        assertTrue(social.unblocked.isEmpty())
+        assertTrue("acc-ana" in s.blockedIds.value)
     }
 
     @Test
