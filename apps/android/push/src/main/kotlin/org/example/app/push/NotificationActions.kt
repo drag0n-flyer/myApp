@@ -35,7 +35,7 @@ internal object ReplyClaims {
     private val used = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     /** True the first time a token is seen. Tokens are random and fresh on every posting, so the set stays small. */
-    fun claim(nonce: String): Boolean {
+    fun claim(nonce: String, text: String): Boolean {
         if (used.size > 256) used.clear()
         return used.add(nonce)
     }
@@ -64,7 +64,7 @@ internal class NotificationActionHandler(
             notifier.refreshChat(chatId) // ends the spinner on the Reply button
             return
         }
-        if (!ReplyClaims.claim(nonce)) return
+        if (!ReplyClaims.claim(nonce, body)) return
         val sink = sink()
         val queued = if (sink == null || appLockOn()) {
             false

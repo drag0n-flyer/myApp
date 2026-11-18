@@ -189,4 +189,25 @@ class NotificationReplyTest {
         run(sink, replyIntent("c1", null, "n5")) // no RemoteInput result
         assertTrue(sink.replies.isEmpty() && sink.drafts.isEmpty())
     }
+
+    @Test
+    fun aSecondDifferentReplyOnTheSameTokenIsSentToo() = runTest {
+        notifier().show(NotificationOutcome.Message("c1", "Ana", "hi"))
+        val nonce = nonceOf(chat()!!.notification)
+        val sink = FakeSink()
+        run(sink, replyIntent("c1", "first", nonce))
+        run(sink, replyIntent("c1", "second", nonce))
+        assertEquals(listOf("first", "second"), sink.replies.map { it.second })
+    }
+
+    @Test
+    fun theSameReplyDeliveredTwiceOnTheSameTokenIsSentOnce() = runTest {
+        notifier().show(NotificationOutcome.Message("c1", "Ana", "hi"))
+        val nonce = nonceOf(chat()!!.notification)
+        val sink = FakeSink()
+        run(sink, replyIntent("c1", "same", nonce))
+        run(sink, replyIntent("c1", "same", nonce))
+        run(sink, replyIntent("c1", "same ", nonce)) // the trimmed text is the same reply
+        assertEquals(1, sink.replies.size)
+    }
 }

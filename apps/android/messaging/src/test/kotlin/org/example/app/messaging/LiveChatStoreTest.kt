@@ -348,4 +348,24 @@ class LiveChatStoreTest {
         s.setVerified(false, "acc-ana")
         assertEquals(verified, d.repo.safety("acc-ana")?.verified, "unchanged, cannot be re-verified")
     }
+
+    @Test
+    fun sendReturningIdQueuesOnceAndReturnsTheStoredMessageId() = runTest {
+        val (rig, s, _) = joined()
+        val id = s.sendReturningId("from a notification", "acc-ana")
+        assertNotNull(id)
+        s.settle()
+        val rows = rig.bob1.repo.messages("acc-ana", null, 20).filter { it.senderAccount == "acc-bob" }
+        assertEquals(listOf(id), rows.map { it.id })
+        assertEquals("sent", rows.single().status)
+    }
+
+    @Test
+    fun sendReturningIdQueuesNothingForBlankOrClosedStore() = runTest {
+        val (rig, s, _) = joined()
+        assertNull(s.sendReturningId("   ", "acc-ana"))
+        s.shutdown()
+        assertNull(s.sendReturningId("late", "acc-ana"))
+        assertTrue(rig.bob1.repo.messages("acc-ana", null, 20).none { it.senderAccount == "acc-bob" })
+    }
 }

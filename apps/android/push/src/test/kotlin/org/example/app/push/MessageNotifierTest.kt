@@ -125,4 +125,53 @@ class MessageNotifierTest {
         notifier().cancelChat("c1")
         assertTrue(nm.activeNotifications.isEmpty())
     }
+
+    @Test
+    fun theSummaryIsRightEvenWhenTheSystemHasNotYetAppliedACancel() {
+        say("c1", "Ana", "hi")
+        say("c2", "Bo", "yo")
+        // c1 was just cancelled but the (asynchronous) system list still shows it.
+        notifier().refreshSummary(cancelled = "chat:c1")
+        assertNull(summary(), "one chat is left: no summary")
+    }
+
+    @Test
+    fun theSummaryCountsAChatThatWasJustPostedEvenIfNotYetListed() {
+        say("c1", "Ana", "hi")
+        notifier().refreshSummary(posted = "chat:c9" to false)
+        assertEquals(2, checkNotNull(summary()).notification.number)
+        notifier().refreshSummary(posted = "chat:c9" to true)
+        assertEquals(1, checkNotNull(summary()).notification.number, "a muted chat is not counted")
+    }
+
+    @Test
+    fun hidingShownContentRepostsEveryChatInItsLockedForm() {
+        say("c1", "Ana", "first secret")
+        say("c1", "Ana", "second secret")
+        say("c2", "Bo", "other secret")
+        notifier().showNotSent("c1")
+        notifier().hideShownContent()
+        val all = chatNotifications()
+        assertEquals(2, all.size)
+        for (sbn in all) {
+            val n = sbn.notification
+            assertEquals(listOf("New message"), lines(n), sbn.tag)
+            val shown = n.extras.keySet().mapNotNull { n.extras.get(it)?.toString() }.joinToString("|")
+            assertTrue(listOf("Ana", "Bo", "secret").none { shown.contains(it) }, shown)
+            assertNull(n.actions?.firstOrNull { it.title == "Reply" }, "no Reply")
+            assertNotNull(n.actions?.firstOrNull { it.title == "Mark as read" })
+        }
+        assertNotNull(summary(), "two chats: still grouped")
+        val notSent = checkNotNull(nm.activeNotifications.firstOrNull { it.tag == "notsent:c1" }).notification
+        assertNull(notSent.extras.getString("android.text"), "the Not sent notice no longer names the chat")
+    }
+
+    @Test
+    fun hidingTwiceOrWithNothingShowingIsHarmless() {
+        notifier().hideShownContent()
+        say("c1", "Ana", "x")
+        notifier().hideShownContent()
+        notifier().hideShownContent()
+        assertEquals(listOf("New message"), lines(chatNotifications().single().notification))
+    }
 }

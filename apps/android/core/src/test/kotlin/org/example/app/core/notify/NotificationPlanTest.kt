@@ -72,4 +72,22 @@ class NotificationPlanTest {
         val after = mapOf("a" to 0, "b" to 0, "c" to 4) // d vanished (archived or gone): not "read"
         assertEquals(setOf("a"), NotificationPlan.readChats(before, after))
     }
+
+    @Test fun aChatThatLeftTheListHasItsNotificationsCancelled() {
+        assertEquals(
+            setOf("b"),
+            NotificationPlan.leftChats(setOf("a", "b"), setOf("a"), emptySet(), emptySet()),
+        )
+    }
+
+    @Test fun aChatBlockedSinceTheLastLookIsCancelledButAnOldBlockIsNot() {
+        assertEquals(
+            setOf("c"),
+            NotificationPlan.leftChats(setOf("a", "c"), setOf("a", "c"), blockedBefore = setOf("a"), blockedAfter = setOf("a", "c")),
+        )
+    }
+
+    @Test fun nothingChangedCancelsNothing() {
+        assertEquals(emptySet(), NotificationPlan.leftChats(setOf("a"), setOf("a"), emptySet(), emptySet()))
+    }
 }

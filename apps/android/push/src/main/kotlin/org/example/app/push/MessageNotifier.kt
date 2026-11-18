@@ -116,6 +116,9 @@ class MessageNotifier(
         return n.extras.getString("android.title")
     }
 
+    /** App lock was just turned on: every showing chat notification is posted again in its locked form. */
+    fun hideShownContent() = Unit
+
     /** Removes the generic notice once the real notification is shown. */
     fun cancelGeneric() = NotificationManagerCompat.from(context).cancel("generic", 0)
 
@@ -191,7 +194,7 @@ class MessageNotifier(
     }
 
     /** Posts the summary while two or more chats are showing, removes it otherwise. Its number is the unmuted chats. */
-    private fun refreshSummary() {
+    internal fun refreshSummary(posted: Pair<String, Boolean>? = null, cancelled: String? = null) {
         val manager = NotificationManagerCompat.from(context)
         val chats = manager.activeNotifications.filter { it.tag?.startsWith(CHAT_TAG) == true && it.id == 0 }
         if (!NotificationPlan.needsSummary(chats.map { it.tag }.toSet())) {

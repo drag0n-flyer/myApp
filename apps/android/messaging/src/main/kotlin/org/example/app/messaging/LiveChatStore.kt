@@ -335,6 +335,12 @@ class LiveChatStore(
         }
     }
 
+    /**
+     * Like [send] for text, for a caller that must know the message was queued (a notification reply). Returns the new
+     * message's id once it is in the outbox, null when nothing was queued. Never returns null after queueing.
+     */
+    suspend fun sendReturningId(text: String, chatId: String, replyTo: String? = null): String? = null
+
     /** Messages that gave up sending (they show as [DeliveryStatus.Failed]; the UI offers [retrySend]). */
     fun failedMessageIds(chatId: String): Set<String> =
         repo.messages(chatId, null, 200).filter { it.status == "failed" && it.senderAccount == device.accountId }.map { it.id }.toSet()

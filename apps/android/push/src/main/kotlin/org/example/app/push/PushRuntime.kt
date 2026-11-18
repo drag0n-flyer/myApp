@@ -37,6 +37,9 @@ object PushRuntime {
 
     @Volatile var registrationSink: RegistrationSink? = null
 
+    /** For N6: call it when app lock is turned on. Notifications already showing lose their sender, text and Reply. */
+    fun hideShownContent(context: android.content.Context) = MessageNotifier(context.applicationContext).hideShownContent()
+
     /** What the notification buttons do. The app sets it in `PushWiring`; null while signed out. */
     @Volatile var notificationActions: NotificationActionSink? = null
 
