@@ -149,7 +149,7 @@ class NotificationProcessor(
         val contact = repo.contact(message.senderAccount)
         if (contact == null || !contact.isContact) return NotificationOutcome.Request(message.chatId)
         val name = ContactNames.shown(repo, contact)
-        return NotificationOutcome.Message(message.chatId, name, preview(message))
+        return NotificationOutcome.Message(message.chatId, name, preview(message), message.expiresAt)
     }
 
     private fun preview(message: MessageRecord): String = when (val e = ContentCodec.decode(message.envelope)) {

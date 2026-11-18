@@ -101,7 +101,10 @@ class LiveSession(
 ) {
     private val clock = Clock.System
     val database = platform.openDatabase(platform.databaseName, DbKey.loadOrCreate(secrets))
-    val repo = RoomRepository(database, allowLikeFallback = platform.likeFallback)
+    val repo = RoomRepository(
+        database, allowLikeFallback = platform.likeFallback,
+        mediaRoots = listOf(File(platform.mediaDir, "blobs"), File(platform.cacheDir, "open"), File(platform.cacheDir, "outgoing")),
+    )
     val mls = platform.mls(device.identity, platform.mlsDir, secrets)
     val api = DeliveryApiImpl(client)
     private val membership: Membership = Membership(device, mls, realMemberKeys = (mls as? LiveMlsEngine)?.providesRealMemberKeys ?: false, clock = clock)

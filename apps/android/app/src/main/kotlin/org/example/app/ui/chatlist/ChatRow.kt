@@ -80,7 +80,9 @@ fun ChatRow(
         headlineContent = { Text(row.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         supportingContent = {
             val draft = row.draft
-            if (draft != null) {
+            if (row.typing) {
+                Text(stringResource(R.string.signal_typing), maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.primary)
+            } else if (draft != null) {
                 val label = stringResource(R.string.chat_draft_label)
                 val red = MaterialTheme.colorScheme.error
                 // The word Draft in the error colour, then the text, on one line.

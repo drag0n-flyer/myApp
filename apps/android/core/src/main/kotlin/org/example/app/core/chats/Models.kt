@@ -118,13 +118,25 @@ data class Message(
                     if (e.name == null) MessagePreview.Resource("system_device_removed_you") else MessagePreview.Resource("system_device_removed", listOf(e.name))
                 SystemEvent.SafetyNumberChanged -> MessagePreview.Resource("system_safety_number_changed")
                 SystemEvent.MessagesPaused -> MessagePreview.Resource("system_messages_paused")
-                // No preview text until the disappearing-messages screens (task P3) add the strings.
-                is SystemEvent.Timer -> MessagePreview.Text("")
+                is SystemEvent.Timer -> timerLine(e)
             }
         }
     }
 
     private companion object {
+        /** "You set messages to disappear after 7 days" / "Ana set ..." / "... turned off disappearing messages". */
+        fun timerLine(e: SystemEvent.Timer): MessagePreview {
+            val who = if (e.name == null) "you" else "other"
+            val args = listOfNotNull(e.name)
+            val span = when (e.seconds) {
+                86_400 -> "day"
+                604_800 -> "week"
+                7_776_000 -> "quarter"
+                else -> return MessagePreview.Resource("system_timer_off_$who", args)
+            }
+            return MessagePreview.Resource("system_timer_set_${who}_$span", args)
+        }
+
         fun clock(seconds: Double): String {
             val s = seconds.roundToInt()
             val rest = s % 60
@@ -151,6 +163,8 @@ data class Chat(
     val archived: Boolean = false,
     /** Unsent composer text saved for this chat; null when there is none. */
     val draft: String? = null,
+    /** The chat's disappearing-message time in seconds; 0 is off. */
+    val timerSeconds: Int = 0,
 ) {
     val lastMessage: Message? get() = messages.lastOrNull()
 }
