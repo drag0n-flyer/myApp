@@ -92,10 +92,10 @@ data class Message(
     val media: MediaState? = null,
     val undecryptable: Boolean = false,
 ) {
-    /** For the chat list. */
-    val preview: MessagePreview
-        get() = when (val c = content) {
-            is MessageContent.Text -> MessagePreview.Text(c.text)
+    /** For the chat list; worked out once per message. */
+    val preview: MessagePreview by lazy(LazyThreadSafetyMode.PUBLICATION) {
+        when (val c = content) {
+            is MessageContent.Text -> MessagePreview.Text(MessageFormat.plain(c.text))
             is MessageContent.Voice -> MessagePreview.Resource("preview_voice", listOf(clock(c.duration)))
             is MessageContent.Photo -> MessagePreview.Resource("preview_photo")
             is MessageContent.File -> MessagePreview.Text(SafeFileName.of(c.name, "file"))
@@ -116,6 +116,7 @@ data class Message(
                 SystemEvent.MessagesPaused -> MessagePreview.Resource("system_messages_paused")
             }
         }
+    }
 
     private companion object {
         fun clock(seconds: Double): String {

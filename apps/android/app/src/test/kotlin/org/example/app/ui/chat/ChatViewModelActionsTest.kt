@@ -22,6 +22,7 @@ import org.example.app.core.chats.DeliveryStatus
 import org.example.app.core.chats.HistoryPager
 import org.example.app.core.chats.Message
 import org.example.app.core.chats.MessageContent
+import org.example.app.core.chats.MessagePreview
 import org.example.app.core.chats.MessageHit
 import org.example.app.core.chats.SampleChatStore
 import org.example.app.core.chats.SampleData
@@ -96,6 +97,15 @@ class ChatViewModelActionsTest {
         assertEquals(ids.sortedBy { it.removePrefix("m").toInt() }, ids)
         // Found after three pages (50 + 3 * 50 reaches m0..m9 only on the fourth), and it stops once found.
         assertEquals(3, store.pageCalls)
+    }
+
+    @Test
+    fun aJumpStopsLoadingAfterFortyPages() = runTest {
+        val all = (0 until 2_400).map { message(it) }
+        val store = PagedStore(sampleWith(all.takeLast(50)), all)
+        val vm = vm(store)
+        assertFalse(vm.ensureLoaded("m0"))
+        assertEquals(40, store.pageCalls)
     }
 
     @Test
@@ -258,6 +268,21 @@ class ChatViewModelActionsTest {
         assertTrue(vm.edit("m1", "message 1"))
         assertFalse(vm.edit("m1", "   "))
         assertEquals(listOf("edit:m1:better"), store.actions)
+    }
+
+    @Test
+    fun formattedTextIsSentEditedAndForwardedAsTyped() = runTest {
+        val typed = "say *hello* _now_"
+        val own = message(1, "me", DeliveryStatus.Sent, MessageContent.Text(typed))
+        val store = PagedStore(sampleWith(listOf(own)), listOf(own))
+        val vm = vm(store)
+        // Display is plain, but the message itself and every action keep the typed text.
+        assertEquals(MessagePreview.Text("say hello now"), own.preview)
+        assertEquals(MessageContent.Text(typed), vm.state.value.messages.single().content)
+        assertTrue(vm.send("a *b* c", null))
+        assertTrue(vm.edit("m1", "$typed!"))
+        assertEquals("chat-riya", vm.forward(typed, "riya"))
+        assertEquals(listOf("send:chat-riya:a *b* c:null", "edit:m1:$typed!", "send:chat-riya:$typed:null"), store.actions)
     }
 
     @Test

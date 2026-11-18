@@ -20,11 +20,16 @@ object LinkFinder {
         return pattern.findAll(text).mapNotNull { match ->
             val start = match.range.first
             var end = match.range.last
+            // Brackets are counted once and adjusted as characters are trimmed: linear, however many trail.
+            var open = 0; var close = 0; var openSq = 0; var closeSq = 0
+            for (i in start..end) when (text[i]) { '(' -> open++; ')' -> close++; '[' -> openSq++; ']' -> closeSq++ }
             while (end >= start) {
                 val c = text[end]
-                val unbalancedClose = (c == ')' && count(text, start, end, '(') < count(text, start, end, ')')) ||
-                    (c == ']' && count(text, start, end, '[') < count(text, start, end, ']'))
-                if (c in TRAILING || unbalancedClose) end-- else break
+                val unbalancedClose = (c == ')' && open < close) || (c == ']' && openSq < closeSq)
+                if (c in TRAILING || unbalancedClose) {
+                    when (c) { '(' -> open--; ')' -> close--; '[' -> openSq--; ']' -> closeSq-- }
+                    end--
+                } else break
             }
             val body = text.substring(start, end + 1)
             // After trimming, the scheme or "www." must still be there with something behind it.
@@ -32,11 +37,5 @@ object LinkFinder {
             if (body.length == lead.value.length) return@mapNotNull null
             Link(start..end, if (lead.value.startsWith("www.", ignoreCase = true)) "https://$body" else body)
         }.toList()
-    }
-
-    private fun count(text: String, from: Int, to: Int, c: Char): Int {
-        var n = 0
-        for (i in from..to) if (text[i] == c) n++
-        return n
     }
 }

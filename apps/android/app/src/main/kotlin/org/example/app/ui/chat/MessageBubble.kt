@@ -21,7 +21,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
@@ -31,13 +30,6 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.LinkAnnotation
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.TextLinkStyles
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.style.TextDecoration
-import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.dp
 import java.text.DateFormat
 import java.time.Instant
@@ -45,7 +37,6 @@ import java.util.Date
 import org.example.app.R
 import org.example.app.core.calls.DataFormat
 import org.example.app.core.chats.DeliveryStatus
-import org.example.app.core.chats.LinkFinder
 import org.example.app.core.chats.Message
 import org.example.app.core.chats.SafeFileName
 import org.example.app.core.chats.MessageContent
@@ -170,37 +161,12 @@ private fun Ticks(status: DeliveryStatus) {
     Icon(painterResource(icon), contentDescription = label, tint = tint, modifier = Modifier.size(14.dp))
 }
 
-/** Message text with its web links tappable; a tap opens the system browser. */
-@Composable
-private fun LinkedText(text: String) {
-    val linkColor = MaterialTheme.colorScheme.primary
-    val annotated: AnnotatedString = remember(text, linkColor) {
-        val links = LinkFinder.find(text)
-        if (links.isEmpty()) {
-            AnnotatedString(text)
-        } else {
-            buildAnnotatedString {
-                var at = 0
-                for (link in links) {
-                    append(text.substring(at, link.range.first))
-                    withLink(LinkAnnotation.Url(link.url, TextLinkStyles(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline)))) {
-                        append(text.substring(link.range))
-                    }
-                    at = link.range.last + 1
-                }
-                append(text.substring(at))
-            }
-        }
-    }
-    Text(annotated)
-}
-
 @Composable
 private fun Body(message: Message, autoDownloads: (MediaKind) -> Boolean, onDownload: () -> Unit, media: MediaHost?) {
     // A message of mine that has not uploaded has nothing to download; it shows as sending or failed with its own retry.
     val unsent = message.media == null && (message.status == DeliveryStatus.Sending || message.status == DeliveryStatus.Failed)
     when (val c = message.content) {
-        is MessageContent.Text -> LinkedText(c.text)
+        is MessageContent.Text -> FormattedText(c.text)
         is MessageContent.Voice -> VoiceBubble(message, c.duration, media, onDownload)
         is MessageContent.Photo -> PhotoBubble(
             message = message,

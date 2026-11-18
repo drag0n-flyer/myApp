@@ -16,7 +16,6 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SmallFloatingActionButton
@@ -58,13 +57,13 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.time.ZoneId
-import java.time.format.DateTimeFormatter
-import java.time.format.FormatStyle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import org.example.app.R
 import org.example.app.core.chats.ChatRow
+import org.example.app.core.chats.ChatSearch
+import org.example.app.core.chats.MessageHit
 import org.example.app.core.chats.ChatTimeline
 import org.example.app.core.chats.MediaState
 import org.example.app.core.chats.MessageAction
@@ -133,6 +132,10 @@ fun ChatScreen(
     var blockError by remember { mutableStateOf(false) }
     var searching by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
+    // Search inside this chat: the hits (newest first, null while looking), the one shown, and where the list was.
+    var results by remember { mutableStateOf<List<MessageHit>?>(null) }
+    var current by rememberSaveable { mutableStateOf<Int?>(null) }
+    var restoreTo by remember { mutableStateOf<Pair<Int, Int>?>(null) }
 
     // Media: the decoded photos live as long as this screen, and so does the one-line notice at the bottom.
     val context = LocalContext.current
@@ -234,9 +237,41 @@ fun ChatScreen(
         // Once per chat screen: coming back from chat info must not jump again.
         if (highlightMessageId != null && viewModel.takeHighlight(highlightMessageId)) jumpTo(highlightMessageId)
     }
+    fun openSearch() {
+        if (searching) return
+        restoreTo = list.firstVisibleItemIndex to list.firstVisibleItemScrollOffset
+        searching = true
+    }
+    fun closeSearch() {
+        searching = false
+        query = ""
+        results = null
+        current = null
+        // Back to where the person was before searching.
+        restoreTo?.let { (index, offset) -> scope.launch { list.scrollToItem(index, offset) } }
+        restoreTo = null
+    }
+    fun move(direction: ChatSearch.Direction) {
+        current = ChatSearch.step(results.orEmpty(), current, direction)
+    }
     // Chat info's Search button.
     LaunchedEffect(Unit) {
-        ChatSearchRequests.pending.collect { if (ChatSearchRequests.take(viewModel.chatId)) searching = true }
+        ChatSearchRequests.pending.collect { if (ChatSearchRequests.take(viewModel.chatId)) openSearch() }
+    }
+    // Look for the typed words once typing pauses; the newest hit is shown first.
+    LaunchedEffect(searching, query) {
+        results = null
+        current = null
+        if (!searching || query.isBlank()) return@LaunchedEffect
+        delay(SEARCH_DEBOUNCE_MS)
+        val found = viewModel.search(query)
+        results = found
+        current = ChatSearch.step(found, null, ChatSearch.Direction.Next)
+    }
+    // Jump to the hit that is shown, loading older pages as needed, and flash it.
+    LaunchedEffect(results, current) {
+        val hit = current?.let { results?.getOrNull(it) } ?: return@LaunchedEffect
+        jumpTo(hit.messageId)
     }
 
     // A bar or dialog tied to a message that vanished or can no longer take the action closes by itself.
@@ -283,7 +318,17 @@ fun ChatScreen(
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             if (searching) {
-                SearchBar(query, onQuery = { query = it }, onClose = { searching = false; query = "" })
+                val hits = results
+                val status = when {
+                    hits == null -> null
+                    hits.isEmpty() -> stringResource(R.string.chat_search_no_results)
+                    else -> stringResource(R.string.chat_search_count, (current ?: 0) + 1, hits.size)
+                }
+                SearchBar(
+                    query, onQuery = { query = it }, onClose = ::closeSearch,
+                    status = status, canMove = !hits.isNullOrEmpty(),
+                    onPrevious = { move(ChatSearch.Direction.Previous) }, onNext = { move(ChatSearch.Direction.Next) },
+                )
             } else {
                 TopAppBar(
                     navigationIcon = {
@@ -296,6 +341,7 @@ fun ChatScreen(
                         }
                     },
                     actions = {
+                        IconButton(onClick = ::openSearch) { Icon(painterResource(R.drawable.ic_search), contentDescription = stringResource(R.string.chat_search)) }
                         if (onCall != null) IconButton(onClick = { onCall(false) }) { Icon(painterResource(R.drawable.ic_call), contentDescription = stringResource(R.string.call_audio)) }
                         if (onCall != null) IconButton(onClick = { onCall(true) }) { Icon(painterResource(R.drawable.ic_videocam), contentDescription = stringResource(R.string.call_video)) }
                     },
@@ -345,22 +391,6 @@ fun ChatScreen(
             }
         },
     ) { padding ->
-        if (searching) {
-            SearchResults(
-                query = query,
-                modifier = Modifier.padding(padding),
-                search = { viewModel.search(it) },
-                onPick = { hit ->
-                    searching = false
-                    query = ""
-                    scope.launch {
-                        androidx.compose.runtime.withFrameNanos { }
-                        jumpTo(hit.messageId)
-                    }
-                },
-            )
-            return@Scaffold
-        }
         Box(Modifier.padding(padding)) {
             LazyColumn(Modifier, state = list, reverseLayout = true, verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 items(rowsNewestFirst, key = { it.key }, contentType = { it::class }) { row ->
@@ -486,7 +516,16 @@ private fun MessageMenu(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SearchBar(query: String, onQuery: (String) -> Unit, onClose: () -> Unit) {
+private fun SearchBar(
+    query: String,
+    onQuery: (String) -> Unit,
+    onClose: () -> Unit,
+    /** "3 of 12", "No results", or null while nothing is typed or the search is running. */
+    status: String?,
+    canMove: Boolean,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+) {
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
     TopAppBar(
@@ -508,42 +547,12 @@ private fun SearchBar(query: String, onQuery: (String) -> Unit, onClose: () -> U
                 modifier = Modifier.focusRequester(focus),
             )
         },
+        actions = {
+            if (status != null) Text(status, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            IconButton(onClick = onPrevious, enabled = canMove) { Icon(painterResource(R.drawable.ic_arrow_up), contentDescription = stringResource(R.string.chat_search_previous)) }
+            IconButton(onClick = onNext, enabled = canMove) { Icon(painterResource(R.drawable.ic_arrow_down), contentDescription = stringResource(R.string.chat_search_next)) }
+        },
     )
-}
-
-/** Matches in this chat as previews with dates; a tap scrolls to the message. */
-@Composable
-private fun SearchResults(
-    query: String,
-    modifier: Modifier,
-    search: suspend (String) -> List<org.example.app.core.chats.MessageHit>,
-    onPick: (org.example.app.core.chats.MessageHit) -> Unit,
-) {
-    var results by remember { mutableStateOf<List<org.example.app.core.chats.MessageHit>?>(null) }
-    LaunchedEffect(query) {
-        results = null
-        if (query.isNotBlank()) {
-            delay(SEARCH_DEBOUNCE_MS)
-            results = search(query)
-        }
-    }
-    val hits = results
-    val dateFormat = remember { DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT) }
-    val zone = remember { ZoneId.systemDefault() }
-    Box(modifier) {
-        if (hits != null && hits.isEmpty()) {
-            Text(stringResource(R.string.chat_search_no_results), Modifier.align(Alignment.Center), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        LazyColumn {
-            items(hits.orEmpty(), key = { it.messageId }) { hit ->
-                ListItem(
-                    modifier = Modifier.clickable(role = Role.Button) { onPick(hit) },
-                    headlineContent = { Text(hit.preview, maxLines = 2) },
-                    supportingContent = hit.sentAt?.let { at -> { Text(dateFormat.format(at.atZone(zone))) } },
-                )
-            }
-        }
-    }
 }
 
 private const val SEARCH_DEBOUNCE_MS = 300L
