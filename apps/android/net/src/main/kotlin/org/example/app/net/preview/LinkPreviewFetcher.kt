@@ -116,3 +116,13 @@ class LinkPreviewFetcher(
         return null
     }
 }
+
+/** Resolves names with the system resolver, off the calling thread. Every answer goes through the address checks before anything connects. */
+object SystemPreviewResolver : PreviewResolver {
+    override suspend fun resolve(host: String): List<InetAddress> =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { InetAddress.getAllByName(host).toList() }
+}
+
+/** The fetcher on the HTTP client in the build and the system resolver; the platform gives the image encoder. */
+fun systemLinkPreviewFetcher(shrinker: ImageShrinker): LinkPreviewFetcher =
+    LinkPreviewFetcher(SystemPreviewResolver, OkHttpPreviewTransport(), shrinker)

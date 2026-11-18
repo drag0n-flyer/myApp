@@ -94,6 +94,10 @@ import org.example.app.push.PlayServices
 import org.example.app.push.PushTransport
 import org.example.app.push.UnifiedPushSetup
 import org.example.app.ui.lock.AppLock
+import org.example.app.ui.chat.AndroidImageShrinker
+import org.example.app.ui.chat.LinkPreviewSupport
+import org.example.app.core.chats.LinkPreviewCard
+import org.example.app.core.chats.LinkPreviewMaker
 import org.example.app.ui.lock.LockSwitch
 import org.example.app.ui.settings.SettingsStore
 
@@ -148,6 +152,22 @@ class AppGraph(
         // Live settings are kept on the device and survive a restart; sample data keeps them in memory.
         if (sampleData) SettingsStore()
         else SettingsStore(appContext.getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE), UserSettings.initial(serverPolicy), LockSwitch.shared)
+    }
+
+    /**
+     * What the composer needs to make link previews: the switch (Settings > Privacy > Link previews, off by default) and
+     * the maker. The live maker contacts the website, only on the sender's device; sample data answers with a canned card.
+     */
+    val linkPreviewSupport: LinkPreviewSupport by lazy {
+        val maker = if (sampleData) {
+            LinkPreviewMaker { url -> LinkPreviewCard(url, "Harbour guide", "Where to park, eat and watch the boats.", null) }
+        } else {
+            val fetcher = org.example.app.net.preview.systemLinkPreviewFetcher(AndroidImageShrinker())
+            LinkPreviewMaker { url -> fetcher.fetch(url) }
+        }
+        val on = settingsStore.settings.map { it.linkPreviews }.distinctUntilChanged()
+            .stateIn(scope, SharingStarted.Eagerly, settingsStore.settings.value.linkPreviews)
+        LinkPreviewSupport(maker, on)
     }
 
     /** The app lock's state for the process; starts locked when the setting is on (see [AppLock]). */

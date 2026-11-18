@@ -173,7 +173,7 @@ private fun Body(message: Message, autoDownloads: (MediaKind) -> Boolean, onDown
     // A message of mine that has not uploaded has nothing to download; it shows as sending or failed with its own retry.
     val unsent = message.media == null && (message.status == DeliveryStatus.Sending || message.status == DeliveryStatus.Failed)
     when (val c = message.content) {
-        is MessageContent.Text -> FormattedText(c.text)
+        is MessageContent.Text -> { FormattedText(c.text); c.preview?.let { LinkPreviewCardView(it) } }
         is MessageContent.Voice -> VoiceBubble(message, c.duration, media, onDownload)
         is MessageContent.Photo -> { PhotoBubble(
             message = message,

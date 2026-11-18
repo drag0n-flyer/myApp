@@ -86,6 +86,7 @@ class SettingsStore(
             .put("ipHiding", s.ipHiding.name)
             .put("findByEmail", s.findByEmail)
             .put("readReceipts", s.readReceipts)
+            .put("linkPreviews", s.linkPreviews)
             .put("noiseSuppression", s.noiseSuppression.name)
             .put("appLock", s.appLock)
             .put("lockAfterSeconds", s.lockAfterSeconds)
@@ -106,6 +107,7 @@ class SettingsStore(
                 ipHiding = text("ipHiding")?.let { v -> IPHiding.entries.firstOrNull { it.name == v } } ?: d.ipHiding,
                 findByEmail = bool("findByEmail", d.findByEmail),
                 readReceipts = bool("readReceipts", d.readReceipts),
+                linkPreviews = bool("linkPreviews", d.linkPreviews),
                 noiseSuppression = text("noiseSuppression")?.let { v -> NoiseSuppression.entries.firstOrNull { it.name == v } } ?: d.noiseSuppression,
                 appLock = bool("appLock", d.appLock),
                 lockAfterSeconds = AppLockPolicy.validDelay((if (o.has("lockAfterSeconds")) o.opt("lockAfterSeconds") else null).let { (it as? Int) ?: d.lockAfterSeconds }),

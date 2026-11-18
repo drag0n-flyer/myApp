@@ -20,6 +20,8 @@ data class UserSettings(
     val findByUsername: Boolean = true,
     val findByEmail: Boolean = false,
     val readReceipts: Boolean = true,
+    /** Make a link preview for the first link of a message (the device contacts the website). Off until the person turns it on. */
+    val linkPreviews: Boolean = false,
     val disappearingMessages: Double? = null,
     val noiseSuppression: NoiseSuppression = NoiseSuppression.Standard,
     /** App lock (design 6.3): the phone's own authentication in front of the screen. Only this switch and the delay are stored. */

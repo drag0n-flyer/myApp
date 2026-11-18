@@ -68,7 +68,21 @@ data class SampleData(
                     m(sam, day + 40, MessageContent.Text("Report is uploaded")),
                 )),
                 chat(meera, setOf(personal.id), listOf(m(meera, 3 * day, MessageContent.Photo(240_000)))),
-                chat(kiran, emptySet(), listOf(m(kiran, 4 * day, MessageContent.Text("Thanks! 🙏")))),
+                chat(
+                    kiran, emptySet(),
+                    listOf(
+                        // A canned preview, as a sender's app would have made it. Built directly so the numbering of the others is unchanged.
+                        Message(
+                            "s-link-preview", kiran.id, now.minusMillis(((4 * day + 30) * 60_000).toLong()),
+                            MessageContent.Text(
+                                "Found it: https://example.org/harbour-guide",
+                                LinkPreviewCard("https://example.org/harbour-guide", "Harbour guide", "Where to park, eat and watch the boats.", null),
+                            ),
+                            DeliveryStatus.Read, null, emptyList(),
+                        ),
+                        m(kiran, 4 * day, MessageContent.Text("Thanks! 🙏")),
+                    ),
+                ),
                 chat(dev, emptySet(), listOf(m(dev, 5 * day, MessageContent.Call(CallSummary.Video(720.0))))),
                 chat(longName, setOf(work.id), listOf(m(longName, 2 * day, MessageContent.Text("Please send the signed copy before Friday.")))),
                 chat(maryam, setOf(personal.id), listOf(m(maryam, 2 * day + 10, MessageContent.Text("شكراً جزيلاً")))),

@@ -11,6 +11,11 @@ class LinkPreviewCard(val url: String, val title: String, val desc: String? = nu
     override fun hashCode() = url.hashCode() + title.hashCode()
 }
 
+/** Makes a preview for a link, on the sender's device and only when the sender turned previews on. Null: no preview. */
+fun interface LinkPreviewMaker {
+    suspend fun make(url: String): LinkPreviewCard?
+}
+
 /**
  * Which links get a preview and which addresses may be contacted to make one. Pure: no network and no name lookup
  * happens here. The fetcher resolves a name itself and asks [allowedHost] about the answer before it connects.

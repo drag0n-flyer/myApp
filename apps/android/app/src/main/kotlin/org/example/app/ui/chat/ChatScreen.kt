@@ -131,6 +131,7 @@ fun ChatScreen(
     var replying by rememberSaveable { mutableStateOf<String?>(null) }
     var editing by rememberSaveable { mutableStateOf<String?>(null) }
     var text by rememberSaveable { mutableStateOf(viewModel.draft()) }
+    val composerPreview = rememberComposerPreview(text, editing != null)
     var menuFor by remember { mutableStateOf<String?>(null) }
     var confirmDelete by rememberSaveable { mutableStateOf<String?>(null) }
     var forwardText by rememberSaveable { mutableStateOf<String?>(null) }
@@ -384,6 +385,8 @@ fun ChatScreen(
             } else {
                 Composer(
                     enabled = !state.sendingPaused,
+                    preview = composerPreview.card,
+                    onRemovePreview = composerPreview::remove,
                     text = text,
                     onTextChange = { text = it; if (editing == null) viewModel.setDraft(it) },
                     onSend = { sent ->
@@ -393,8 +396,9 @@ fun ChatScreen(
                             viewModel.edit(target, sent)
                             editing = null
                             text = viewModel.draft()
-                        } else if (viewModel.send(sent, replying)) {
+                        } else if (viewModel.send(sent, replying, composerPreview.card)) {
                             replying = null
+                            composerPreview.reset()
                             text = ""
                             viewModel.setDraft("")
                         }

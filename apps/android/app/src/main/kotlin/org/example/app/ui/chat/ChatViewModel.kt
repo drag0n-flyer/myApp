@@ -31,6 +31,8 @@ import org.example.app.core.chats.MessageActions
 import org.example.app.core.chats.MessageContent
 import org.example.app.core.chats.MessageHit
 import org.example.app.core.chats.Picked
+import org.example.app.core.chats.LinkPreviewCard
+import org.example.app.core.chats.LinkPreviewRule
 import org.example.app.core.chats.SendPlan
 import org.example.app.core.chats.SendProblem
 import org.example.app.ui.media.ChatMediaIndex
@@ -129,12 +131,12 @@ class ChatViewModel(
     private fun mine(m: Message) = m.senderId == myId
 
     /** Sends trimmed text, cut to the grapheme limit. Returns false when there was nothing to send. */
-    fun send(text: String, replyTo: String? = null): Boolean {
+    fun send(text: String, replyTo: String? = null, preview: LinkPreviewCard? = null): Boolean {
         val clean = TextLimit.truncate(text).trim()
         if (clean.isEmpty() || state.value.sendingPaused) return false
         // A reply to a message that is gone or deleted would show a dead quote; send it as a plain message.
         val target = replyTo?.takeIf { id -> current(id)?.let { MessageActions.stillApplies(MessageAction.Reply, it, mine(it)) } == true }
-        store.send(MessageContent.Text(clean), chatId, target)
+        store.send(MessageContent.Text(clean, preview?.let { LinkPreviewRule.cardFor(clean, it) }), chatId, target)
         return true
     }
 

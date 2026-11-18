@@ -28,7 +28,7 @@ class SettingsStoreTest {
         val first = SettingsStore(prefs)
         first.update {
             it.copy(
-                ipHiding = IPHiding.Always, findByEmail = true, readReceipts = false, noiseSuppression = NoiseSuppression.Off,
+                ipHiding = IPHiding.Always, findByEmail = true, readReceipts = false, linkPreviews = true, noiseSuppression = NoiseSuppression.Off,
                 call = it.call.copy(callDataMode = ModePreference.Fixed(DataMode.High), videoOffOnMobile = false),
                 autoDownload = AutoDownloadSettings(onMobile = DownloadScope.All),
             )
@@ -37,6 +37,7 @@ class SettingsStoreTest {
         assertEquals(IPHiding.Always, second.ipHiding)
         assertEquals(true, second.findByEmail)
         assertEquals(false, second.readReceipts)
+        assertEquals(true, second.linkPreviews)
         assertEquals(NoiseSuppression.Off, second.noiseSuppression)
         assertEquals(ModePreference.Fixed(DataMode.High), second.call.callDataMode)
         assertEquals(false, second.call.videoOffOnMobile)
@@ -70,6 +71,15 @@ class SettingsStoreTest {
         assertEquals(false, s.readReceipts)
         assertEquals(true, s.findByEmail)
         assertEquals(AutoDownloadSettings().onMobile, s.autoDownload.onMobile)
+    }
+
+    @Test
+    fun linkPreviewsAreOffUnlessStoredAsOn() {
+        assertEquals(false, UserSettings().linkPreviews)
+        for (junk in listOf("{}", "{\"linkPreviews\":\"yes\"}", "{\"linkPreviews\":1}")) {
+            prefs.edit().clear().putString("settings", junk).commit()
+            assertEquals(false, SettingsStore(prefs).settings.value.linkPreviews, junk)
+        }
     }
 
     @Test

@@ -75,6 +75,9 @@ fun Composer(
     showCamera: Boolean = true,
     /** The voice message in progress (hold bar, locked bar, preview) and the microphone's gesture callbacks. */
     voice: VoiceUi = VoiceUi.None,
+    /** The preview made for the first link of the text, shown above the field with a remove control. */
+    preview: org.example.app.core.chats.LinkPreviewCard? = null,
+    onRemovePreview: () -> Unit = {},
 ) {
     val haptic = LocalHapticFeedback.current
     val recordingPhase = (voice.state as? CaptureState.Recording)?.phase
@@ -112,6 +115,9 @@ fun Composer(
                     Icon(painterResource(R.drawable.ic_close), contentDescription = stringResource(R.string.chat_bar_close))
                 }
             }
+        }
+        if (preview != null) {
+            LinkPreviewCardView(preview, Modifier.padding(horizontal = 12.dp, vertical = 4.dp), onRemove = onRemovePreview)
         }
         val locked = voice.state as? CaptureState.Recording
         if (voice.hint && voice.state == CaptureState.Idle) VoiceHint()
