@@ -27,9 +27,9 @@ struct ProfilePhotoSection: View {
 
     private var pickerOpen: Bool {
         #if os(iOS)
-        showPicker || showCamera
+        return showPicker || showCamera
         #else
-        showPicker
+        return showPicker
         #endif
     }
 
