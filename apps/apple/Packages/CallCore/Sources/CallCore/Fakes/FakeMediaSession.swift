@@ -11,12 +11,16 @@ public final class FakeMediaSession: MediaSession, @unchecked Sendable {
     public var statsResult = MediaStats()
 
     public init() { (events, continuation) = AsyncStream.makeStream(of: MediaEvent.self) }
+    /// Every `makeOffer` call, in order.
+    public var offers: [(receive: AudioProfile, iceRestart: Bool)] { lock.lock(); defer { lock.unlock() }; return _offers }
+    private var _offers: [(receive: AudioProfile, iceRestart: Bool)] = []
     public var calls: [String] { lock.lock(); defer { lock.unlock() }; return _calls }
     public func emit(_ event: MediaEvent) { continuation.yield(event) }
+    private func recOffer(_ receive: AudioProfile, _ iceRestart: Bool) { lock.lock(); _offers.append((receive, iceRestart)); lock.unlock() }
     private func rec(_ s: String) { lock.lock(); _calls.append(s); lock.unlock() }
 
     public func configure(iceServers: [IceServer], policy: IceTransportPolicy, video: Bool) async throws { rec("configure") }
-    public func makeOffer(receive: AudioProfile, iceRestart: Bool) async throws -> String { rec("makeOffer"); return offerSDP }
+    public func makeOffer(receive: AudioProfile, iceRestart: Bool) async throws -> String { rec("makeOffer"); recOffer(receive, iceRestart); return offerSDP }
     public func acceptOffer(_ sdp: String, send: AudioProfile, receive: AudioProfile) async throws -> String { rec("acceptOffer"); return answerSDP }
     public func acceptAnswer(_ sdp: String, send: AudioProfile) async throws { rec("acceptAnswer") }
     public func rollback() async throws { rec("rollback") }

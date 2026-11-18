@@ -19,8 +19,8 @@ final class PathMonitor {
         started = true
         monitor.pathUpdateHandler = { [weak self] path in
             let snapshot = Self.snapshot(path)
-            // Expensive paths (cellular, personal hotspot) count as mobile data.
-            let network: NetworkType = path.isExpensive ? .mobile : .wifi
+            // No usable path is "no connection". Expensive paths (cellular, personal hotspot) count as mobile data.
+            let network: NetworkType = path.status != .satisfied ? .offline : (path.isExpensive ? .mobile : .wifi)
             Task { @MainActor in self?.apply(snapshot, network) }
         }
         monitor.start(queue: DispatchQueue(label: "app.calls.path"))

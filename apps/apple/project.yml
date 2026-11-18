@@ -17,6 +17,10 @@ packages:
     path: Packages/LocalStore
   SecureMessaging:
     path: Packages/SecureMessaging
+  CallMedia:
+    path: Packages/CallMedia
+  WebRTCBinary:
+    path: Packages/WebRTCBinary
 # APP_ID (the bundle ID, app group and keychain group root) is set only in AppID.xcconfig.
 configFiles:
   Debug: AppID.xcconfig
@@ -76,7 +80,7 @@ targets:
         INFOPLIST_KEY_UILaunchScreen_Generation: 'YES'
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: 'YES'
         INFOPLIST_KEY_NSMicrophoneUsageDescription: So people can hear you on calls and in voice messages.
-        INFOPLIST_KEY_NSCameraUsageDescription: To scan invite and device-linking QR codes, and for video calls.
+        INFOPLIST_KEY_NSCameraUsageDescription: Take photos to send, scan invite and device-linking QR codes, and make video calls.
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
     dependencies:
       - package: AppCore
@@ -89,6 +93,9 @@ targets:
         product: LocalStore
       - package: SecureMessaging
         product: SecureMessaging
+      - package: CallMedia
+      - package: WebRTCBinary
+        product: WebRTC
       - target: AppNSEiOS
   AppMac:
     type: application
@@ -129,6 +136,9 @@ targets:
         product: LocalStore
       - package: SecureMessaging
         product: SecureMessaging
+      - package: CallMedia
+      - package: WebRTCBinary
+        product: WebRTC
       - target: AppNSEMac
   AppNSEiOS:
     type: app-extension

@@ -10,13 +10,15 @@ struct CallView: View {
     @State private var sheet: CallSheet?
     @State private var voiceIsolationOn = CallView.isVoiceIsolationOn
     @Environment(\.scenePhase) private var scenePhase
+    private var video: CallVideo { CallVideo.shared }
 
     var body: some View {
         ZStack {
             if let call = model.activeCall {
                 CallBackground(isVideo: call.isVideoCall && call.isVideoOn)
                 if call.isVideoCall && call.isVideoOn {
-                    VideoStage()
+                    VideoStageView(remote: video.remoteVideoOn, local: !video.cameraDenied, avatarName: call.contact.displayName,
+                                   session: video.session)
                 } else {
                     ScrollView {
                         AudioStage(call: call, modeText: modeText(call))
@@ -29,6 +31,12 @@ struct CallView: View {
                         CallBannerView(banner: banner)
                             .padding(.top, 8)
                             .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                    if video.cameraDenied {
+                        CallPill { Text("Camera access is off. Turn it on in Settings.").multilineTextAlignment(.center) }
+                            .foregroundStyle(.white)
+                            .padding(.top, 8)
+                            .accessibilityIdentifier("call.cameraoff")
                     }
                     Spacer()
                     #if DEBUG
@@ -181,27 +189,6 @@ private struct AudioStage: View {
         .multilineTextAlignment(.center)
         .frame(maxWidth: .infinity)
         .padding(.top, 60)
-    }
-}
-
-/// Placeholder video until the WebRTC engine exists.
-private struct VideoStage: View {
-    var body: some View {
-        ZStack(alignment: .topTrailing) {
-            Image(systemName: "person.fill")
-                .font(.system(size: 160))
-                .foregroundStyle(.white.opacity(0.25))
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .accessibilityLabel("Video from the other person")
-            RoundedRectangle(cornerRadius: 16)
-                .fill(LinearGradient(colors: [.gray, .blue.opacity(0.4)], startPoint: .top, endPoint: .bottom))
-                .frame(width: 84, height: 120)
-                .overlay(alignment: .bottom) { Text("You").font(.caption2).padding(4) }
-                .overlay(RoundedRectangle(cornerRadius: 16).stroke(.white.opacity(0.3)))
-                .padding(.top, 60)
-                .padding(.trailing, 14)
-                .accessibilityLabel("Your video")
-        }
     }
 }
 

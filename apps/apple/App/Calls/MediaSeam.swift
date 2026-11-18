@@ -1,38 +1,140 @@
+import AVFoundation
 import Foundation
+import Observation
 import AppCore
 import CallCore
+import CallMedia
 
-// LANE M SEAM. Everything the call engine needs from media goes through CallCore's `MediaSession`.
-// Lane M (WebRTC build, Opus profiles, RNNoise) replaces `LiveMedia.make` with its `MediaSession` and flips
-// `MediaCapabilities.enhancedNoiseSuppression` once `RTCAudioCapturePostProcessing` exists. Nothing else changes.
+// Everything the call engine needs from media goes through CallCore's `MediaSession`;
+// the live one is CallMedia's WebRTC session, wrapped to ask for camera access first.
 
 enum MediaCapabilities {
-    /// False until plan 3 patches in the capture post-processing hook; `enhanced` then behaves like `standard`.
-    static let enhancedNoiseSuppression = false
+    /// True when the linked WebRTC build has the capture post-processing hook; otherwise `enhanced` behaves like `standard`.
+    static var enhancedNoiseSuppression: Bool { MediaFactory.captureHookAvailable }
 }
 
 enum LiveMedia {
-    @MainActor static func make() -> MediaSession { UnavailableMediaSession() }
+    @MainActor static func make() -> MediaSession {
+        let inner = WebRTCMediaSession.live()
+        let session = LiveMediaSession(inner)
+        CallVideo.shared.began(inner)
+        return session
+    }
 }
 
-/// Stands in until lane M lands: configuring it fails, so a call ends as failed instead of connecting with no audio.
-final class UnavailableMediaSession: MediaSession, @unchecked Sendable {
-    struct Unavailable: Error {}
+/// What the call screen needs to know about the live call's video. Set only by the live media session;
+/// the sample build never touches it, so the call screen shows its placeholder tiles there.
+@MainActor @Observable
+final class CallVideo {
+    static let shared = CallVideo()
+
+    /// The live call's session, for attaching video views. Nil when no live call exists.
+    private(set) var session: WebRTCMediaSession?
+    /// True once the other side's video is arriving, false when they turn it off.
+    private(set) var remoteVideoOn = false
+    /// The camera was refused (or is off in system settings), so the call continues as audio.
+    private(set) var cameraDenied = false
+    /// iPhone with a front and a back camera, during a live call. Worked out once, when the call begins.
+    private(set) var canFlip = false
+
+    func began(_ s: WebRTCMediaSession) {
+        session = s; remoteVideoOn = false; cameraDenied = false
+        canFlip = WebRTCMediaSession.canSwitchCamera
+    }
+    func ended(_ s: WebRTCMediaSession) {
+        guard session === s else { return }
+        session = nil; remoteVideoOn = false; cameraDenied = false; canFlip = false
+    }
+    func remoteVideoChanged(_ on: Bool, of s: WebRTCMediaSession) { if session === s { remoteVideoOn = on } }
+    func cameraAccess(denied: Bool, of s: WebRTCMediaSession) { if session === s { cameraDenied = denied } }
+
+    func flip() {
+        guard let session else { return }
+        Task { await session.switchCamera() }
+    }
+}
+
+enum CameraAccess {
+    /// The camera permission now, for `CameraPlan`. Never prompts.
+    static var status: CameraStatus {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized: .authorized
+        case .notDetermined: .notDetermined
+        default: .refused
+        }
+    }
+
+    /// True when the user has allowed the camera. Never prompts, so it is safe inside the call's effect queue.
+    static var isAuthorized: Bool { AVCaptureDevice.authorizationStatus(for: .video) == .authorized }
+
+    /// Asks the first time; later it only reports what the user chose. Call it on the main actor BEFORE the call
+    /// engine queues any effect (the engine does, when video is wanted): the prompt must not hold up candidates,
+    /// hang-up or close.
+    static func ensure() async -> Bool {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized: return true
+        case .notDetermined: return await AVCaptureDevice.requestAccess(for: .video)
+        default: return false
+        }
+    }
+}
+
+/// CallMedia's session plus two app duties: the camera permission (refused means the call stays audio, never an
+/// error) and telling `CallVideo` when the other side's video starts or stops.
+// @unchecked Sendable: `inner` and `events` are immutable; the forwarding task is set once in `init`.
+final class LiveMediaSession: MediaSession, @unchecked Sendable {
     let events: AsyncStream<MediaEvent>
+    private let inner: WebRTCMediaSession
     private let continuation: AsyncStream<MediaEvent>.Continuation
 
-    init() { (events, continuation) = AsyncStream.makeStream(of: MediaEvent.self) }
+    init(_ inner: WebRTCMediaSession) {
+        self.inner = inner
+        let (events, continuation) = AsyncStream.makeStream(of: MediaEvent.self)
+        self.events = events
+        self.continuation = continuation
+        Task { [inner] in
+            for await e in inner.events {
+                if case .remoteVideo(let on) = e { await CallVideo.shared.remoteVideoChanged(on, of: inner) }
+                continuation.yield(e)
+            }
+            continuation.finish()
+        }
+    }
 
-    func configure(iceServers: [IceServer], policy: IceTransportPolicy, video: Bool) async throws { throw Unavailable() }
-    func makeOffer(receive: AudioProfile, iceRestart: Bool) async throws -> String { throw Unavailable() }
-    func acceptOffer(_ sdp: String, send: AudioProfile, receive: AudioProfile) async throws -> String { throw Unavailable() }
-    func acceptAnswer(_ sdp: String, send: AudioProfile) async throws { throw Unavailable() }
-    func rollback() async throws {}
-    func add(_ candidate: IceCandidate) async throws {}
-    func setAudioMaxBitrate(_ bps: Int) async {}
-    func setVideo(_ tier: VideoTier?, ceiling: DataMode) async {}
-    func setMuted(_ on: Bool) async {}
-    func setNoiseSuppression(_ mode: NoiseSuppression) async {}
-    func stats() async -> MediaStats { MediaStats() }
-    func close() async { continuation.finish() }
+    func configure(iceServers: [IceServer], policy: IceTransportPolicy, video: Bool) async throws {
+        try await inner.configure(iceServers: iceServers, policy: policy, video: video)
+    }
+    func makeOffer(receive: AudioProfile, iceRestart: Bool) async throws -> String {
+        try await inner.makeOffer(receive: receive, iceRestart: iceRestart)
+    }
+    func acceptOffer(_ sdp: String, send: AudioProfile, receive: AudioProfile) async throws -> String {
+        try await inner.acceptOffer(sdp, send: send, receive: receive)
+    }
+    func acceptAnswer(_ sdp: String, send: AudioProfile) async throws { try await inner.acceptAnswer(sdp, send: send) }
+    func rollback() async throws { try await inner.rollback() }
+    func add(_ candidate: IceCandidate) async throws { try await inner.add(candidate) }
+    func setAudioMaxBitrate(_ bps: Int) async { await inner.setAudioMaxBitrate(bps) }
+    func setMuted(_ on: Bool) async { await inner.setMuted(on) }
+    func setNoiseSuppression(_ mode: NoiseSuppression) async { await inner.setNoiseSuppression(mode) }
+    func stats() async -> MediaStats { await inner.stats() }
+
+    func setVideo(_ tier: VideoTier?, ceiling: DataMode) async {
+        guard tier != nil else {
+            await CallVideo.shared.cameraAccess(denied: false, of: inner)
+            await inner.setVideo(nil, ceiling: ceiling)
+            return
+        }
+        guard CameraAccess.isAuthorized else {   // the engine already asked, before the call's effects were queued
+            await CallVideo.shared.cameraAccess(denied: true, of: inner)
+            await inner.setVideo(nil, ceiling: ceiling)   // the call goes on as audio
+            return
+        }
+        await CallVideo.shared.cameraAccess(denied: false, of: inner)
+        await inner.setVideo(tier, ceiling: ceiling)
+    }
+
+    func close() async {
+        await inner.close()   // finishes `inner.events`, which finishes `events`
+        await CallVideo.shared.ended(inner)
+    }
 }

@@ -134,6 +134,17 @@
         }
       }
     },
+    "Camera access is off" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Camera access is off"
+          }
+        }
+      }
+    },
     "Can't check the devices in this chat right now, so the safety number is hidden." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -321,6 +332,17 @@
         }
       }
     },
+    "Couldn't download" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't download"
+          }
+        }
+      }
+    },
     "Couldn't load the licenses." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -471,6 +493,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Done"
+          }
+        }
+      }
+    },
+    "Download" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Download"
+          }
+        }
+      }
+    },
+    "Downloads it again" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Downloads it again"
           }
         }
       }
@@ -706,6 +750,17 @@
         }
       }
     },
+    "No app can open this file." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No app can open this file."
+          }
+        }
+      }
+    },
     "No chats yet" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -816,6 +871,17 @@
         }
       }
     },
+    "Opens it" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Opens it"
+          }
+        }
+      }
+    },
     "Passkeys aren't available on this server. Use an email code instead." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -845,6 +911,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Paste code"
+          }
+        }
+      }
+    },
+    "Pause" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pause"
+          }
+        }
+      }
+    },
+    "Photo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Photo"
+          }
+        }
+      }
+    },
+    "Photo · %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Photo · %@"
+          }
+        }
+      }
+    },
+    "Play voice message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Play voice message"
           }
         }
       }
@@ -1003,6 +1113,17 @@
         }
       }
     },
+    "Sending…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sending…"
+          }
+        }
+      }
+    },
     "Sends this message again" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1021,6 +1142,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Server: %@"
+          }
+        }
+      }
+    },
+    "Settings" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Settings"
           }
         }
       }
@@ -1377,6 +1509,17 @@
         }
       }
     },
+    "Turn it on in Settings to take photos." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Turn it on in Settings to take photos."
+          }
+        }
+      }
+    },
     "Type" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1498,6 +1641,17 @@
         }
       }
     },
+    "Voice message, %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Voice message, %@"
+          }
+        }
+      }
+    },
     "Yesterday" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1516,6 +1670,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "You added a new device"
+          }
+        }
+      }
+    },
+    "You can play this after the call." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You can play this after the call."
           }
         }
       }
@@ -1571,6 +1736,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "iPhone"
+          }
+        }
+      }
+    },
+    "Camera access is off. Turn it on in Settings." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Camera access is off. Turn it on in Settings."
+          }
+        }
+      }
+    },
+    "Flip" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Flip"
+          }
+        }
+      }
+    },
+    "Video from the other person" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Video from the other person"
+          }
+        }
+      }
+    },
+    "Your video" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your video"
           }
         }
       }

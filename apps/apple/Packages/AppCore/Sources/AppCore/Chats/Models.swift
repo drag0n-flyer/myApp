@@ -82,8 +82,10 @@ public struct MessageHit: Hashable, Sendable {
     public var chatID: String
     public var messageID: String
     public var preview: String
+    public var sentAt: Date
 
-    public init(chatID: String, messageID: String, preview: String) {
+    public init(chatID: String, messageID: String, preview: String, sentAt: Date = .distantPast) {
+        self.sentAt = sentAt
         self.chatID = chatID
         self.messageID = messageID
         self.preview = preview
@@ -139,7 +141,7 @@ public struct Message: Identifiable, Hashable, Codable, Sendable {
         case .text(let text): text
         case .voice(let duration): "Voice message \(Self.clock(duration))"
         case .photo: "Photo"
-        case .file(let name, _): name
+        case .file(let name, _): MediaFileName.clean(name)
         case .call(.missedAudio): "Missed audio call"
         case .call(.missedVideo): "Missed video call"
         case .call(.audio(let duration)): "Audio call · \(Self.minutes(duration)) min"

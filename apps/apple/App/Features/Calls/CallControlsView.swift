@@ -26,8 +26,8 @@ struct CallControlsView: View {
     }
 
     @ViewBuilder private var firstRow: some View {
-        if call.isVideoCall && call.isVideoOn {
-            control("Flip", "arrow.triangle.2.circlepath.camera", id: "call.ctrl.speaker") {}
+        if call.isVideoCall && call.isVideoOn && CallVideo.shared.canFlip {
+            control("Flip", "arrow.triangle.2.circlepath.camera", id: "call.ctrl.flip") { CallVideo.shared.flip() }
         } else {
             control("Speaker", "speaker.wave.2.fill", isOn: call.isSpeakerOn, id: "call.ctrl.speaker") {
                 model.calls.setSpeaker(!call.isSpeakerOn)

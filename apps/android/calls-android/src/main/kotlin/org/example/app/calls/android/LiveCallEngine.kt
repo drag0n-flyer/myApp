@@ -159,10 +159,13 @@ class LiveCallEngine(
         // The new network may change the data-mode ceiling, which asks for a mode-change offer. On a path change that
         // offer must be the ICE restart itself (same new profile, sent at once), not a plain offer that makes the
         // restart wait for its answer.
-        val fx = machine.handle(CallEvent.ContextChanged(callContext(isContact)))
-            .map { if (it is CallEffect.CreateOffer) CallEffect.RestartIce(it.receive) else it }
+        val fx = restartOnHandover(machine.handle(CallEvent.ContextChanged(callContext(isContact))))
+        val restarted = fx.any { it is CallEffect.RestartIce }
         run(fx)
-        if (live) run(machine.handle(CallEvent.PathChanged))
+        if (live) {
+            val path = machine.handle(CallEvent.PathChanged)
+            run(if (restarted) withoutRestartRequest(path) else path)
+        }
     }
 
     override fun reset() = enqueue {
@@ -478,4 +481,20 @@ class LiveCallEngine(
     } catch (_: Exception) {
         CallEvent.LocalFailure
     }
+}
+
+/**
+ * Effects of a network change: the mode-change offer becomes the ICE restart itself. When it did, the mode-change
+ * frame goes too: the restart offer already carries the new ceiling, and a mode-change frame ahead of it makes the
+ * peer send its own plain offer, which wins the glare and drops the restart.
+ */
+internal fun restartOnHandover(effects: List<CallEffect>): List<CallEffect> {
+    val fx = effects.map { if (it is CallEffect.CreateOffer) CallEffect.RestartIce(it.receive) else it }
+    if (fx.none { it is CallEffect.RestartIce }) return fx
+    return fx.filterNot { it is CallEffect.SendFrame && it.payload?.kind == CallSignalPayload.Kind.modeChange }
+}
+
+/** After [restartOnHandover] restarted: drop the SDP-less "please restart" request, so the peer starts no competing restart. */
+internal fun withoutRestartRequest(effects: List<CallEffect>): List<CallEffect> = effects.filterNot {
+    it is CallEffect.SendFrame && it.payload?.kind == CallSignalPayload.Kind.renegotiate && it.payload?.sdp == null
 }

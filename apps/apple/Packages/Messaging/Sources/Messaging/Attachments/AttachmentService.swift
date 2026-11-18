@@ -14,6 +14,12 @@ public enum AttachmentServiceError: Error, Equatable, Sendable {
     case incomplete
     case unknownAttachment
     case unreadableResponse
+    /// An attachment ID that is not safe to use in a file path.
+    case invalidAttachmentID
+    /// A queued upload whose folder or source file is gone.
+    case pendingMissing
+    /// A photo that cannot be read as an image.
+    case cannotPrepare
 }
 
 /// Uploads, downloads and auto-downloads attachments (Design 7, 9).
@@ -63,6 +69,8 @@ public actor AttachmentService {
         defer { try? fm.removeItem(at: temp) }
         let sealed = try deps.attachments.encrypt(file: file, to: temp)
         let uploaded = try await deps.server.uploadAttachment(try Data(contentsOf: temp))
+        // The ID becomes part of a file path below: check it before anything is built from it.
+        guard AttachmentID.isValid(uploaded.id) else { throw AttachmentServiceError.invalidAttachmentID }
 
         let att = Att(id: uploaded.id, key: sealed.key, dg: sealed.digest, sz: sealed.size, csz: sealed.cipherSize)
         let fileName = name ?? file.lastPathComponent
@@ -90,6 +98,98 @@ public actor AttachmentService {
         onChange()
     }
 
+    /// The attachment row a picked file has while it waits for its upload, so the sender sees it at once.
+    public static func placeholderAttachmentID(_ messageID: String) -> String { "pending-\(messageID)" }
+
+    /// Uploads the attachment waiting in `pendingDir` for the (already stored, still unsent) message `messageID`,
+    /// then, in one transaction, puts the real envelope into the row, queues it and records the attachment. Only
+    /// after that commit does the plaintext move to its final place. If the message was deleted meanwhile,
+    /// nothing is queued and nothing is left behind.
+    /// Throws `pendingMissing` and `cannotPrepare` for failures that can never succeed; anything else may be retried.
+    public func uploadPending(messageID: String, pendingDir: URL) async throws {
+        let fm = FileManager.default
+        guard let meta = PendingUpload.read(from: pendingDir) else { throw AttachmentServiceError.pendingMissing }
+        let source = pendingDir.appendingPathComponent(meta.sourceName)
+        guard fm.fileExists(atPath: source.path) else { throw AttachmentServiceError.pendingMissing }
+        guard let record = try deps.repo.message(id: messageID), !record.deleted else {
+            discard(messageID: messageID, pendingDir: pendingDir)
+            return
+        }
+
+        var file = source
+        var width = 0, height = 0
+        var thumbnail: Data?
+        var prepared = false
+        #if canImport(ImageIO)
+        if meta.kind == "photo" {
+            let scratch = pendingDir.appendingPathComponent("prepared.jpg")
+            do {
+                let result = try MediaPreparation.preparePhoto(source, to: scratch)
+                file = scratch
+                (width, height, thumbnail) = (result.w, result.h, result.thumb)
+                prepared = true
+            } catch { throw AttachmentServiceError.cannotPrepare }
+        }
+        #endif
+        try Task.checkCancellation()
+
+        let temp = pendingDir.appendingPathComponent("upload.enc")
+        defer { try? fm.removeItem(at: temp) }
+        let sealed = try deps.attachments.encrypt(file: file, to: temp)
+        let uploaded = try await deps.server.uploadAttachment(try Data(contentsOf: temp))
+        guard AttachmentID.isValid(uploaded.id) else { throw AttachmentServiceError.invalidAttachmentID }
+        try Task.checkCancellation()
+
+        let att = Att(id: uploaded.id, key: sealed.key, dg: sealed.digest, sz: sealed.size, csz: sealed.cipherSize)
+        let body: ContentEnvelope.Body
+        switch meta.kind {
+        case "photo": body = .photo(att, w: width, h: height, thumb: thumbnail, replyTo: nil)
+        case "voice": body = .voice(att, duration: meta.duration, replyTo: nil)
+        default: body = .file(att, name: meta.name, mime: meta.mime, replyTo: nil)
+        }
+        let envelope = ContentEnvelope(
+            id: messageID, at: Int64((record.sentAt.timeIntervalSince1970 * 1000).rounded()), body: body)
+        let ext = Self.fileExtension(kind: meta.kind, name: prepared ? nil : meta.name)
+        let local = deps.mediaDirectory.appendingPathComponent("\(att.id).\(ext)")
+        let data = envelope.encoded()
+        let repo = deps.repo
+        let me = deps.me.accountID
+        let now = deps.now()
+        let committed = try repo.transaction { () -> Bool in
+            guard try repo.replaceUnsentEnvelope(
+                id: messageID, sender: me, envelope: data, folded: meta.kind == "file" ? fold(meta.name) : "") else { return false }
+            try repo.enqueue(OutboxRecord(messageID: messageID, chatID: meta.chatID, envelope: data, attempts: 0, nextAttemptAt: now))
+            try repo.deleteAttachment(id: Self.placeholderAttachmentID(messageID))
+            try repo.upsertAttachment(AttachmentRecord(
+                id: att.id, messageID: messageID, kind: meta.kind, key: att.key, digest: att.dg, size: att.sz,
+                cipherSize: att.csz, state: "local", downloaded: att.csz, localPath: local.path))
+            return true
+        }
+        guard committed else {
+            // Deleted while it was uploading: nothing is queued, no record, no file.
+            discard(messageID: messageID, pendingDir: pendingDir)
+            return
+        }
+        // Only now does the plaintext go to its final place. If that fails the download path can fetch the upload.
+        do {
+            try? fm.removeItem(at: local)
+            try fm.moveItem(at: file, to: local)
+            try applyProtection(to: local, .complete)
+        } catch {
+            try? fm.removeItem(at: local)
+            try? repo.setAttachmentState(id: att.id, state: "failed", downloaded: 0, localPath: nil)
+        }
+        PendingUpload.removeFolder(pendingDir)
+        onChange()
+    }
+
+    /// Forgets a queued upload: its placeholder attachment row and its folder.
+    public func discard(messageID: String, pendingDir: URL) {
+        try? deps.repo.deleteAttachment(id: Self.placeholderAttachmentID(messageID))
+        PendingUpload.removeFolder(pendingDir)
+        onChange()
+    }
+
     // MARK: - Download
 
     /// The phase the UI shows for a message's attachment.
@@ -113,6 +213,7 @@ public actor AttachmentService {
     /// same attachment share one download. On failure the state is `failed` and the error is thrown;
     /// calling again resumes, except after a 404 or a digest failure, which start over.
     public func download(attachmentID: String) async throws {
+        guard AttachmentID.isValid(attachmentID) else { throw AttachmentServiceError.invalidAttachmentID }
         if let running = inFlight[attachmentID] { return try await running.value }
         guard let record = try deps.repo.attachment(id: attachmentID) else { throw AttachmentServiceError.unknownAttachment }
         if record.state == "local" { return }
@@ -148,6 +249,7 @@ public actor AttachmentService {
     private func run(_ initial: AttachmentRecord) async throws {
         let fm = FileManager.default
         let id = initial.id
+        guard AttachmentID.isValid(id) else { throw AttachmentServiceError.invalidAttachmentID }
         let partURL = part(id)
         if !fm.fileExists(atPath: partURL.path) { fm.createFile(atPath: partURL.path, contents: nil) }
         var offset = (try? fm.attributesOfItem(atPath: partURL.path)[.size] as? Int64) ?? 0
@@ -182,7 +284,8 @@ public actor AttachmentService {
             let ext = Self.fileExtension(kind: initial.kind, name: fileName(messageID: initial.messageID))
             let dest = deps.mediaDirectory.appendingPathComponent("\(id).\(ext)")
             try deps.attachments.decrypt(file: partURL, to: dest, key: initial.key, digest: initial.digest)
-            try? applyProtection(to: dest, .complete)
+            // No unprotected plaintext: if the protection cannot be set, the file goes and the download fails.
+            do { try applyProtection(to: dest, .complete) } catch { try? fm.removeItem(at: dest); throw error }
             try? fm.removeItem(at: partURL)
             try deps.repo.setAttachmentState(id: id, state: "local", downloaded: initial.cipherSize, localPath: dest.path)
             onChange()
@@ -219,14 +322,62 @@ public actor AttachmentService {
         return name
     }
 
+    /// The extension of a stored file. A name's extension must be 1 to 12 lower-case letters or digits (it came from
+    /// the sender), otherwise the file gets `bin`.
     static func fileExtension(kind: String, name: String?) -> String {
-        if let name, !URL(fileURLWithPath: name).pathExtension.isEmpty {
-            return URL(fileURLWithPath: name).pathExtension.lowercased()
+        if let name, let dot = name.lastIndex(of: "."), dot != name.startIndex, name.index(after: dot) != name.endIndex {
+            return AttachmentID.safeExtension(of: name) ?? "bin"
         }
         switch kind {
         case "photo": return "jpg"
         case "voice": return MediaPlan.Voice.fileExtension
         default: return "bin"
+        }
+    }
+}
+
+/// What a picked attachment needs to be uploaded later: kept next to the staged source file in
+/// `<media>/pending/<message id>/`. The folder is removed with the rest of `media/` when signing out.
+public struct PendingUpload: Codable, Sendable, Equatable {
+    public var kind: String          // "photo", "voice" or "file"
+    public var chatID: String
+    /// The cleaned file name.
+    public var name: String
+    /// The staged source file inside the folder.
+    public var sourceName: String
+    public var mime: String
+    public var duration: Double
+
+    public static let metaFileName = "meta.json"
+
+    public init(kind: String, chatID: String, name: String, sourceName: String, mime: String, duration: Double) {
+        self.kind = kind; self.chatID = chatID; self.name = name; self.sourceName = sourceName
+        self.mime = mime; self.duration = duration
+    }
+
+    public static func root(in mediaDirectory: URL) -> URL { mediaDirectory.appendingPathComponent("pending", isDirectory: true) }
+
+    /// The folder of one message; `messageID` is one of our own IDs, still checked.
+    public static func folder(in mediaDirectory: URL, messageID: String) -> URL? {
+        AttachmentID.isValid(messageID) ? root(in: mediaDirectory).appendingPathComponent(messageID, isDirectory: true) : nil
+    }
+
+    public static func read(from folder: URL) -> PendingUpload? {
+        guard let data = try? Data(contentsOf: folder.appendingPathComponent(metaFileName)) else { return nil }
+        return try? JSONDecoder().decode(PendingUpload.self, from: data)
+    }
+
+    public func write(to folder: URL) throws {
+        try JSONEncoder().encode(self).write(to: folder.appendingPathComponent(Self.metaFileName), options: .atomic)
+    }
+
+    /// Removes the folder, and the `pending` folder above it when that is empty.
+    public static func removeFolder(_ folder: URL) {
+        let fm = FileManager.default
+        try? fm.removeItem(at: folder)
+        let parent = folder.deletingLastPathComponent()
+        if parent.lastPathComponent == "pending", ((try? fm.contentsOfDirectory(atPath: parent.path)) ?? []).isEmpty {
+            try? fm.removeItem(at: parent)
         }
     }
 }
