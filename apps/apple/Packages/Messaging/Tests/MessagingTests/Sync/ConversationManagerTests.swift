@@ -283,6 +283,40 @@ private func syncInbox(_ device: TestDevice, joinWith joiner: ConversationManage
         #expect(await rig.server.storedMessages(in: serverID).count == 2)
     }
 
+    /// Every encrypt advances the sender's generation, so a mode announcement that cannot be posted must be
+    /// encrypted once and re-posted, not encrypted on every try.
+    @Test func failedModePostsEncryptOncePerEpoch() async throws {
+        let rig = try await Rig.make()
+        let spy = SpyMLSEngine(rig.ana1.deps.mls)
+        var deps = rig.ana1.deps
+        deps.mls = spy
+        let mgr = ConversationManager(deps: deps, escrowKey: { escrowKey }, syncOnce: {})
+        await rig.server.failNextMessages(statuses: [503, 503, 503, 503])
+        await #expect(throws: (any Error).self) { try await mgr.create(with: "acc-bob") }
+        for _ in 0..<3 { _ = try? await mgr.preferredConversation(with: "acc-bob") }
+        #expect(spy.encryptCount == 1)
+        let serverID = try #require(await rig.server.conversationIDs().first)
+        #expect(await rig.server.storedMessages(in: serverID).isEmpty)
+
+        // The same bytes go out once the server answers.
+        let record = try await mgr.preferredConversation(with: "acc-bob")
+        #expect(spy.encryptCount == 1)
+        let stored = await rig.server.storedMessages(in: serverID)
+        #expect(stored.count == 1)
+        #expect(stored.first?.ciphertext == spy.encrypted[0])
+        #expect(try await mgr.isModePending(serverID) == false)
+        _ = try await mgr.preferredConversation(with: "acc-bob")
+        #expect(spy.encryptCount == 1)
+
+        // A new epoch means a new encrypt: mark the mode pending again and move the group on.
+        try deps.repo.set(await mgr.pendingKey(serverID), Data([1]))
+        let group = GroupID(raw: record.groupID)
+        _ = try await spy.add(keyPackages: try await rig.ana2.deps.mls.makeKeyPackages(count: 1), to: group)
+        try await spy.commitAccepted(group)
+        _ = try? await mgr.announceMode(record)
+        #expect(spy.encryptCount == 2)
+    }
+
     @Test func escrowSentAtIsRFC3339Milliseconds() async throws {
         let rig = try await Rig.make(mode: "server_readable")
         let record = try await manager(rig.ana1).create(with: "acc-bob")
