@@ -200,7 +200,8 @@ func (m *Module) postCommit(w http.ResponseWriter, r *http.Request) error {
 		// Lock the conversation row first: commits are serialised, and a
 		// non-member learns nothing, not even the epoch.
 		var current int64
-		err := tx.QueryRow(ctx, `select epoch from conversations where id = $1 for update`, id).Scan(&current)
+		var kind string
+		err := tx.QueryRow(ctx, `select epoch, kind from conversations where id = $1 for update`, id).Scan(&current, &kind)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return notFound
 		}
@@ -242,6 +243,22 @@ func (m *Module) postCommit(w http.ResponseWriter, r *http.Request) error {
 		// is skipped silently: no welcome and no membership.
 		var added []string
 		var allowed []string
+		if kind == "group" && len(remove) > 0 {
+			// In a group a commit may drop only the sender's own account's
+			// devices, or devices of accounts that are no longer members.
+			// Accounts are removed through the account endpoint instead.
+			var foreign bool
+			if err := tx.QueryRow(ctx,
+				`select exists (select 1 from devices d
+				 where d.id::text = any($1) and d.account_id <> $2
+				   and exists (select 1 from conversation_accounts ca where ca.conversation_id = $3 and ca.account_id = d.account_id))`,
+				remove, p.AccountID, id).Scan(&foreign); err != nil {
+				return err
+			}
+			if foreign {
+				return httpx.Err("forbidden", "a device belongs to another member of this group")
+			}
+		}
 		if len(add) > 0 {
 			ok, err := queryPairs(ctx, tx,
 				`select d.id::text, d.account_id::text from devices d
@@ -253,7 +270,7 @@ func (m *Module) postCommit(w http.ResponseWriter, r *http.Request) error {
 			if len(ok) != len(add) {
 				return httpx.Err("forbidden", "a device does not belong to this conversation's accounts")
 			}
-			blocked, err := m.blockers(ctx, ok, p.AccountID)
+			blocked, err := m.blockersIn(ctx, kind, ok, p.AccountID)
 			if err != nil {
 				return err
 			}
@@ -263,7 +280,7 @@ func (m *Module) postCommit(w http.ResponseWriter, r *http.Request) error {
 				}
 			}
 		}
-		snapBlocked, err := m.blockers(ctx, snapshot, p.AccountID)
+		snapBlocked, err := m.blockersIn(ctx, kind, snapshot, p.AccountID)
 		if err != nil {
 			return err
 		}

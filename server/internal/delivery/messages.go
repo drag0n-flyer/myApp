@@ -53,9 +53,9 @@ func (m *Module) postMessage(w http.ResponseWriter, r *http.Request) error {
 	err = m.inTx(r.Context(), func(ctx context.Context, tx pgx.Tx) error {
 		// The conversation row lock orders messages and commits, so seq
 		// order is commit order.
-		var mode string
+		var mode, kind string
 		var epoch int64
-		err := tx.QueryRow(ctx, `select mode, epoch from conversations where id = $1 for update`, id).Scan(&mode, &epoch)
+		err := tx.QueryRow(ctx, `select mode, epoch, kind from conversations where id = $1 for update`, id).Scan(&mode, &epoch, &kind)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return notFound
 		}
@@ -122,7 +122,7 @@ func (m *Module) postMessage(w http.ResponseWriter, r *http.Request) error {
 		if err != nil {
 			return err
 		}
-		blocked, err := m.blockers(ctx, members, p.AccountID)
+		blocked, err := m.blockersIn(ctx, kind, members, p.AccountID)
 		if err != nil {
 			return err
 		}

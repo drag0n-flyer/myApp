@@ -99,6 +99,15 @@ func (m *Module) bumpAndNotify(ctx context.Context, tx pgx.Tx, g groupCtx, calle
 	return v, nil
 }
 
+// blockersIn is blockers for a direct conversation. A group ignores blocks:
+// nobody is skipped, so a blocker still receives and is pushed everything.
+func (m *Module) blockersIn(ctx context.Context, kind string, devs []devAcct, sender string) (map[string]bool, error) {
+	if kind == "group" {
+		return map[string]bool{}, nil
+	}
+	return m.blockers(ctx, devs, sender)
+}
+
 func (m *Module) groupRoutes(r *httpx.Router) {
 	r.Authed("POST /v1/conversations/{id}/accounts", m.addAccounts)
 	r.Authed("DELETE /v1/conversations/{id}/accounts/{account}", m.removeAccount)
