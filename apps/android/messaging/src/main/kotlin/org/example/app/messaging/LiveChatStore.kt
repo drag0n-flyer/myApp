@@ -136,7 +136,7 @@ class LiveChatStore(
     escrow: EscrowSealer?,
     private val readReceiptsEnabled: () -> Boolean,
     val maxAttachmentBytes: Long,
-    dirs: MediaDirs,
+    private val dirs: MediaDirs,
     private val social: SocialPort,
     private val scope: CoroutineScope,
     private val fold: (String) -> String = { it.lowercase(Locale.ROOT) },
