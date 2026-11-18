@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.example.app.core.calls.DataMode
 import org.example.app.core.calls.ModePreference
+import org.example.app.core.lock.AppLockPolicy
 import org.example.app.core.settings.AutoDownloadSettings
 import org.example.app.core.settings.CallSettings
 import org.example.app.core.settings.DownloadScope
@@ -73,6 +74,8 @@ class SettingsStore(private val prefs: SharedPreferences? = null, initial: UserS
             .put("findByEmail", s.findByEmail)
             .put("readReceipts", s.readReceipts)
             .put("noiseSuppression", s.noiseSuppression.name)
+            .put("appLock", s.appLock)
+            .put("lockAfterSeconds", s.lockAfterSeconds)
 
         fun decode(o: JSONObject, d: UserSettings): UserSettings {
             fun bool(key: String, default: Boolean): Boolean = (if (o.has(key)) o.opt(key) else null) as? Boolean ?: default
@@ -91,6 +94,8 @@ class SettingsStore(private val prefs: SharedPreferences? = null, initial: UserS
                 findByEmail = bool("findByEmail", d.findByEmail),
                 readReceipts = bool("readReceipts", d.readReceipts),
                 noiseSuppression = text("noiseSuppression")?.let { v -> NoiseSuppression.entries.firstOrNull { it.name == v } } ?: d.noiseSuppression,
+                appLock = bool("appLock", d.appLock),
+                lockAfterSeconds = AppLockPolicy.validDelay((if (o.has("lockAfterSeconds")) o.opt("lockAfterSeconds") else null).let { (it as? Int) ?: d.lockAfterSeconds }),
             )
         }
     }

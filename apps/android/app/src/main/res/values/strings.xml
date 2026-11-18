@@ -345,6 +345,18 @@
     <string name="blocked_unblock">Unblock</string>
     <string name="blocked_unblock_label">Unblock %1$s</string>
 
+    <!-- App lock. Arguments: the app name (app_name). -->
+    <string name="applock_title">App lock</string>
+    <string name="applock_subtitle">Ask for your fingerprint, face or screen lock to open %1$s</string>
+    <string name="applock_needs_screen_lock">Set a screen lock in your phone\'s settings first.</string>
+    <string name="applock_after">Lock after</string>
+    <string name="applock_immediately">Immediately</string>
+    <string name="applock_1_minute">1 minute</string>
+    <string name="applock_5_minutes">5 minutes</string>
+    <string name="applock_1_hour">1 hour</string>
+    <string name="applock_unlock">Unlock</string>
+    <string name="applock_unlock_app">Unlock %1$s</string>
+
     <!-- Data and storage -->
     <string name="data_calls">Calls</string>
     <string name="data_call_mode">Call data mode</string>

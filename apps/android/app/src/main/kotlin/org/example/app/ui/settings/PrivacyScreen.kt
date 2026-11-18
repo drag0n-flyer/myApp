@@ -28,6 +28,12 @@ import org.example.app.core.account.AccountError
 import org.example.app.core.chats.ChatStore
 import org.example.app.core.settings.IPHiding
 import org.example.app.ui.keyString
+import org.example.app.ui.lock.AppLock
+import org.example.app.ui.lock.AuthResult
+import org.example.app.ui.lock.DeviceAuth
+import org.example.app.core.lock.AppLockPolicy
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material3.Switch
 
 /**
  * [saveFindByEmail] changes the setting, sends the choice to the server and, if it could not, puts the setting back and
@@ -37,6 +43,8 @@ import org.example.app.ui.keyString
 fun PrivacyScreen(
     settings: SettingsStore,
     chatStore: ChatStore,
+    appLock: AppLock,
+    deviceAuth: DeviceAuth,
     saveFindByEmail: suspend (Boolean) -> Unit,
     /** The server's current value, or null if it cannot be read now. */
     loadFindByEmail: suspend () -> Boolean?,
@@ -61,6 +69,7 @@ fun PrivacyScreen(
         return
     }
     SettingsPage(stringResource(R.string.settings_privacy), onBack, modifier) {
+        item { AppLockRows(settings, appLock, deviceAuth) }
         item { SectionHeader(stringResource(R.string.privacy_ip_title)) }
         items(IPHiding.entries.toList(), key = { it.name }) { option ->
             RadioRow(keyString(option.titleKey), keyString(option.subtitleKey), current.ipHiding == option) {
@@ -124,4 +133,55 @@ private fun BlockedList(store: ChatStore, blocked: Set<String>, onBack: () -> Un
             )
         }
     }
+}
+
+/**
+ * The app lock switch and "Lock after" (design 6.3). Turning it on or off needs one passed prompt of the phone's own
+ * authentication. Without a screen lock the switch is disabled (and a lock that is already on can be turned off: there is
+ * nothing to ask with, and the cover lets the person in, see [org.example.app.ui.lock.LockCover]). A prompt that comes back after
+ * a sign-out (the settings were reset) changes nothing.
+ */
+@Composable
+private fun AppLockRows(settings: SettingsStore, appLock: AppLock, auth: DeviceAuth) {
+    val current by settings.settings.collectAsStateWithLifecycle()
+    val secure by rememberRefreshedOnResume { auth.available }
+    val title = stringResource(R.string.applock_title)
+    val prompt = stringResource(R.string.applock_unlock_app, stringResource(R.string.app_name))
+    val on = current.appLock
+    val canChange = secure || on
+    fun change(value: Boolean) {
+        if (!canChange) return
+        val generation = settings.generation
+        fun apply() {
+            if (settings.generation != generation) return
+            settings.update(generation) { it.copy(appLock = value) }
+            appLock.setEnabled(value)
+        }
+        if (!secure) apply() // only reachable to turn it off
+        else auth.authenticate(prompt) { result -> if (result == AuthResult.Success) apply() }
+    }
+    ListItem(
+        modifier = Modifier
+            .semantics { contentDescription = title }
+            .toggleable(value = on, enabled = canChange, role = Role.Switch, onValueChange = ::change),
+        headlineContent = { Text(title) },
+        supportingContent = {
+            Text(if (secure) stringResource(R.string.applock_subtitle, stringResource(R.string.app_name)) else stringResource(R.string.applock_needs_screen_lock))
+        },
+        trailingContent = { Switch(checked = on, onCheckedChange = null, enabled = canChange) },
+    )
+    if (on) {
+        ChoiceRow(
+            stringResource(R.string.applock_after),
+            AppLockPolicy.DELAYS.map { Choice(it, stringResource(delayLabel(it))) },
+            AppLockPolicy.validDelay(current.lockAfterSeconds),
+        ) { seconds -> settings.update { it.copy(lockAfterSeconds = seconds) } }
+    }
+}
+
+private fun delayLabel(seconds: Int): Int = when (seconds) {
+    0 -> R.string.applock_immediately
+    60 -> R.string.applock_1_minute
+    300 -> R.string.applock_5_minutes
+    else -> R.string.applock_1_hour
 }

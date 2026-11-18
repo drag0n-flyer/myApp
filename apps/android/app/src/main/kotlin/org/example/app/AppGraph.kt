@@ -92,6 +92,7 @@ import org.example.app.push.FirebaseInit
 import org.example.app.push.PlayServices
 import org.example.app.push.PushTransport
 import org.example.app.push.UnifiedPushSetup
+import org.example.app.ui.lock.AppLock
 import org.example.app.ui.settings.SettingsStore
 
 private const val TAG = "AppGraph"
@@ -146,6 +147,12 @@ class AppGraph(
         if (sampleData) SettingsStore()
         else SettingsStore(appContext.getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE), UserSettings.initial(serverPolicy))
     }
+
+    /** The app lock's state for the process; starts locked when the setting is on (see [AppLock]). */
+    val appLock: AppLock by lazy { AppLock({ settingsStore.settings.value }) }
+
+    /** Whether app lock is on for this account: the one place other code (notifications) reads. */
+    val appLockOn: Boolean get() = settingsStore.settings.value.appLock
 
     /** The network the device is on now (always Wi-Fi with sample data). */
     val network: NetworkType get() = if (sampleData) NetworkType.Wifi else platform.network()
