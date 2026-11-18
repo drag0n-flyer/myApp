@@ -257,21 +257,40 @@ public final class CallRunner {
     private func startTicker() {
         guard ticker == nil else { return }
         let every = tickInterval, statsEvery = statsEveryTicks
+        // The task never holds the runner across an `await`: a strong reference parked inside `stats()` would keep a
+        // runner alive after its owner let it go, and the callbacks would then reach an owner that no longer exists.
         ticker = Task { [weak self] in
             var count = 0
             while !Task.isCancelled {
                 try? await Task.sleep(for: every)
-                guard !Task.isCancelled, let self, !self.isFinished else { return }
-                self.handle(.tick)
+                guard !Task.isCancelled else { return }
                 count += 1
-                if count % statsEvery == 0, let m = self.media {
+                switch self?.tick(statsDue: count % statsEvery == 0) ?? .stop {
+                case .stop: return
+                case .next: continue
+                case .sample(let m):
                     let s = await m.stats()
-                    guard !Task.isCancelled, !self.isFinished else { return }
-                    self.log("audio codec \(s.audioCodec ?? "unknown"), available \(Int(s.availableOutgoingBitrate ?? 0)) bps")
-                    self.onStats(s)
-                    self.handle(.stats(s))
+                    guard !Task.isCancelled else { return }
+                    self?.stats(s)
                 }
             }
         }
+    }
+
+    private enum TickResult { case stop, next, sample(MediaSession) }
+
+    /// One timer tick: feeds the machine, and says what the ticker does next.
+    private func tick(statsDue: Bool) -> TickResult {
+        guard !isFinished else { return .stop }
+        handle(.tick)
+        if statsDue, let m = media { return .sample(m) }
+        return .next
+    }
+
+    private func stats(_ s: MediaStats) {
+        guard !isFinished else { return }
+        log("audio codec \(s.audioCodec ?? "unknown"), available \(Int(s.availableOutgoingBitrate ?? 0)) bps")
+        onStats(s)
+        handle(.stats(s))
     }
 }
