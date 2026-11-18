@@ -70,14 +70,13 @@ internal fun UnreadLine(modifier: Modifier = Modifier) {
 @Composable
 internal fun RequestBar(onAccept: () -> Unit, onBlock: () -> Unit, onReport: () -> Unit, modifier: Modifier = Modifier) {
     var confirm by rememberSaveable { mutableStateOf<String?>(null) }
-    Row(
-        modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Button(onClick = onAccept, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.chat_request_accept)) }
-        OutlinedButton(onClick = { confirm = "block" }, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.chat_request_block)) }
-        OutlinedButton(onClick = { confirm = "report" }, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.chat_request_report)) }
+    Column(modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(stringResource(R.string.chat_request_explainer), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Button(onClick = onAccept, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.chat_request_accept)) }
+            OutlinedButton(onClick = { confirm = "block" }, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.chat_request_block)) }
+            OutlinedButton(onClick = { confirm = "report" }, modifier = Modifier.weight(1f)) { Text(stringResource(R.string.chat_request_report)) }
+        }
     }
     when (confirm) {
         "block" -> AlertDialog(
@@ -89,6 +88,7 @@ internal fun RequestBar(onAccept: () -> Unit, onBlock: () -> Unit, onReport: () 
         "report" -> AlertDialog(
             onDismissRequest = { confirm = null },
             title = { Text(stringResource(R.string.report_title)) },
+            text = { Text(stringResource(R.string.report_body)) },
             confirmButton = { TextButton(onClick = { confirm = null; onReport() }) { Text(stringResource(R.string.chat_request_report)) } },
             dismissButton = { TextButton(onClick = { confirm = null }) { Text(stringResource(R.string.cancel)) } },
         )

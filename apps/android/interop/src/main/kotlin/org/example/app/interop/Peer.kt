@@ -15,6 +15,7 @@ import org.example.app.contracts.MemorySecretStore
 import org.example.app.contracts.SnapshotSource
 import org.example.app.core.account.ServerAddress
 import org.example.app.core.chats.DeliveryStatus
+import org.example.app.core.chats.reaches
 import org.example.app.core.chats.Message
 import org.example.app.core.chats.MessageContent
 import org.example.app.core.settings.MediaKind
@@ -181,7 +182,7 @@ class Peer(private val config: PeerConfig) {
         settle()
         val sent = messages(peer).lastOrNull { it.senderId == me && (it.content as? MessageContent.Text)?.text == text }
             ?: throw PeerError("message not stored")
-        if (sent.status == DeliveryStatus.Sending) throw PeerError("message not sent")
+        if (sent.status == DeliveryStatus.Sending || sent.status == DeliveryStatus.Failed) throw PeerError("message not sent")
         return sent.id
     }
 
@@ -224,7 +225,7 @@ class Peer(private val config: PeerConfig) {
             "read" -> DeliveryStatus.Read
             else -> throw PeerError("unknown status $wanted")
         }
-        waitFor("status $wanted") { messages(peer).firstOrNull { it.id == messageId && it.status.ordinal >= want.ordinal } }
+        waitFor("status $wanted") { messages(peer).firstOrNull { it.id == messageId && it.status.reaches(want) } }
     }
 
     /** Answers the message ID and the SHA-256 of the bytes sent (the file as it is). */
@@ -234,7 +235,7 @@ class Peer(private val config: PeerConfig) {
         settle()
         val sent = messages(peer).lastOrNull { it.id !in before && it.senderId == me && it.content is MessageContent.Photo }
             ?: throw PeerError("photo not stored")
-        if (sent.status == DeliveryStatus.Sending) throw PeerError("photo not sent")
+        if (sent.status == DeliveryStatus.Sending || sent.status == DeliveryStatus.Failed) throw PeerError("photo not sent")
         return "${sent.id} ${sha256(File(path).readBytes())}"
     }
 

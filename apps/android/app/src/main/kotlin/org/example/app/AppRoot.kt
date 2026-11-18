@@ -212,8 +212,8 @@ fun AppRoot(
                     onOpenInfo = { nav.navigate("chatinfo/$id") },
                     onCall = if (graph.callsAvailable) { video -> callVm.start(id, video) } else null,
                     onAccept = { graph.chatStore.accept(id) },
-                    onBlock = {
-                        graph.chatStore.chat(id)?.let { graph.chatStore.block(it.contactId) }
+                    onBlock = { contactId ->
+                        graph.chatStore.block(contactId)
                         nav.popBackStack(MAIN, inclusive = false)
                     },
                     onReport = { graph.chatStore.report(id) },

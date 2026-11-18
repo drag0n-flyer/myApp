@@ -175,7 +175,8 @@ class RoomRepository(private val db: AppDatabase, allowLikeFallback: Boolean = f
     }
     override fun requeueSend(id: String, now: Long): Boolean = transaction {
         val m = messages.get(id) ?: return@transaction false
-        messages.resetForRetry(id, now)
+        // Only a message that is still failed goes back in the queue: a second quick tap changes no row and enqueues nothing.
+        if (messages.resetForRetry(id, now) == 0) return@transaction false
         enqueue(OutboxRecord(id, m.chatId, m.envelope, 0, now))
         true
     }

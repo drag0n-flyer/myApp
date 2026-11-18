@@ -458,4 +458,24 @@ class ChatScreenActionsTest {
         assertTrue(store.calls.any { it.startsWith("send:pass it on") })
         assertNotNull(forwarded)
     }
+
+    @Test
+    fun theRequestBarExplainsWhoThisIsAndWhatReportDoes() {
+        launch(sampleWith(listOf(m(1)), isRequest = true))
+        rule.onNodeWithText("This person isn't in your contacts. Their calls won't ring until you accept.").assertIsDisplayed()
+        rule.onNodeWithText("Report").performClick()
+        rule.onNodeWithText("The last 10 messages will be sent to the server admin.").assertIsDisplayed()
+    }
+
+    @Test
+    fun blockOnAChatThatCannotBeResolvedShowsTheGenericErrorAndStays() {
+        val inner = sampleWith(listOf(m(1)), isRequest = true)
+        val store = object : ChatStore by inner { override fun chat(id: String): Chat? = null }
+        launch(store)
+        rule.onNodeWithText("Block").performClick()
+        rule.onAllNodes(hasText("Block"))[1].performClick()
+        rule.onNodeWithText("Something went wrong on the server. Try again later.").assertIsDisplayed()
+        assertEquals(0, blocks)
+        rule.onNodeWithText("Accept").assertIsDisplayed()
+    }
 }

@@ -428,4 +428,6 @@
     <string name="chat_request_accept">Accept</string>
     <string name="chat_request_block">Block</string>
     <string name="chat_request_report">Report</string>
+    <string name="chat_request_explainer">This person isn\'t in your contacts. Their calls won\'t ring until you accept.</string>
+    <string name="report_body">The last 10 messages will be sent to the server admin.</string>
 </resources>

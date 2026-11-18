@@ -6,6 +6,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -312,17 +313,35 @@ class ChatViewModelActionsTest {
     private class WindowStore(inner: SampleChatStore, val all: MutableList<Message>) : ChatStore by inner {
         private val base = inner.chat("chat-riya")!!
         private val flow = MutableStateFlow(listOf(base.copy(messages = all.takeLast(50))))
+        var reads = 0
         override val chats: StateFlow<List<Chat>> get() = flow
         override fun chat(id: String): Chat? = flow.value.firstOrNull { it.id == id }
         override fun messages(chatId: String, before: String?, limit: Int): List<Message> {
+            reads++
             val end = if (before == null) all.size else all.indexOfFirst { it.id == before }.let { if (it < 0) return emptyList() else it }
             return all.subList(maxOf(0, end - limit), end).toList()
         }
         fun publish() { flow.value = listOf(base.copy(messages = all.takeLast(50))) }
+        /** The chat changes but its messages do not (an unread count, say). */
+        fun publishUnread(n: Int) { flow.value = listOf(base.copy(messages = all.takeLast(50), unreadCount = n)) }
+
+        // Like the real store: a change to a message outside the cached page does not make the chat flow emit.
+        private fun change(id: String, f: (Message) -> Message) {
+            val i = all.indexOfFirst { it.id == id }
+            if (i >= 0) all[i] = f(all[i])
+            if (all.takeLast(50).any { it.id == id }) publish()
+        }
+        override fun react(emoji: String, messageId: String, chatId: String) = change(messageId) {
+            it.copy(reactions = if (emoji in it.reactions) it.reactions - emoji else it.reactions + emoji)
+        }
+        override fun edit(messageId: String, chatId: String, text: String) = change(messageId) {
+            it.copy(content = MessageContent.Text(text), editedAt = Instant.now())
+        }
+        override fun delete(messageId: String, chatId: String) = change(messageId) { it.copy(content = MessageContent.Deleted, reactions = emptyList()) }
     }
 
-    private fun windowed(count: Int): WindowStore {
-        val all = (0 until count).map { message(it) }.toMutableList()
+    private fun windowed(count: Int, sender: String = "riya"): WindowStore {
+        val all = (0 until count).map { message(it, sender = sender) }.toMutableList()
         return WindowStore(sampleWith(all.takeLast(50)), all)
     }
 
@@ -380,5 +399,170 @@ class ChatViewModelActionsTest {
             override fun searchMessages(query: String, limit: Int) = everything.take(limit)
         }
         assertEquals(listOf("r0", "r1", "r2"), vm(store).search("needle").map { it.messageId })
+    }
+
+    // Own actions on a message outside the cached page show at once, though the chat flow does not emit.
+
+    @Test
+    fun deletingAnOldMessageShowsAtOnce() = runTest {
+        val store = windowed(180, sender = "me")
+        val vm = vm(store)
+        vm.loadOlder()
+        assertTrue(vm.delete("m100"))
+        assertEquals(MessageContent.Deleted, vm.state.value.messages.single { it.id == "m100" }.content)
+    }
+
+    @Test
+    fun reactingToAnOldMessageShowsAtOnceAndASecondTapTakesItBack() = runTest {
+        val store = windowed(180)
+        var now = 0L
+        val vm = vm(store, now = { now })
+        vm.loadOlder()
+        assertTrue(vm.react("❤️", "m100"))
+        assertEquals(listOf("❤️"), vm.state.value.messages.single { it.id == "m100" }.reactions)
+        now += 1_000
+        assertTrue(vm.react("❤️", "m100"))
+        assertEquals(emptyList(), vm.state.value.messages.single { it.id == "m100" }.reactions)
+    }
+
+    @Test
+    fun editingAnOldMessageShowsAtOnce() = runTest {
+        val store = windowed(180, sender = "me")
+        val vm = vm(store)
+        vm.loadOlder()
+        assertTrue(vm.edit("m100", "better words"))
+        val m = vm.state.value.messages.single { it.id == "m100" }
+        assertEquals(MessageContent.Text("better words"), m.content)
+        assertTrue(m.editedAt != null)
+    }
+
+    @Test
+    fun theReReadWaitsForTheStoresWritesToLand() = runTest {
+        val order = mutableListOf<String>()
+        val inner = windowed(180, sender = "me")
+        val store = object : ChatStore by inner {
+            override fun delete(messageId: String, chatId: String) { order += "delete"; inner.delete(messageId, chatId) }
+            override suspend fun awaitWrites() { order += "await" }
+            override fun messages(chatId: String, before: String?, limit: Int): List<Message> { order += "read"; return inner.messages(chatId, before, limit) }
+        }
+        val vm = vm(store)
+        vm.loadOlder()
+        order.clear()
+        vm.delete("m100")
+        assertEquals(listOf("delete", "await", "read"), order)
+    }
+
+    // Refreshing the loaded older range
+
+    @Test
+    fun tenEmissionsWithUnchangedMessagesDoNoReads() = runTest {
+        val store = windowed(180)
+        val vm = vm(store)
+        vm.loadOlder()
+        val before = store.reads
+        repeat(10) { store.publishUnread(it + 1) }
+        assertEquals(before, store.reads)
+        store.arrive(0)
+        assertEquals(before + 1, store.reads)
+        assertEquals(181 - 80, vm.state.value.messages.size)
+    }
+
+    @Test
+    fun theLoadedOlderRangeIsTrimmedToTheNewest500AndReloadsOnDemand() = runTest {
+        val store = windowed(1_500)
+        val vm = vm(store)
+        repeat(20) { vm.loadOlder() }
+        assertEquals(50 + 1_000, vm.state.value.messages.size)
+        vm.loadOlder()
+        val ids = vm.state.value.messages.map { it.id.removePrefix("m").toInt() }
+        assertEquals(50 + 500, ids.size)
+        assertEquals((950 until 1_500).toList(), ids)
+        // The trimmed pages come back on demand.
+        vm.loadOlder()
+        assertEquals((900 until 1_500).toList(), vm.state.value.messages.map { it.id.removePrefix("m").toInt() })
+    }
+
+    @Test
+    fun aJumpIsNotTrimmedWhileItLoads() = runTest {
+        val store = windowed(1_500)
+        val vm = vm(store)
+        assertTrue(vm.ensureLoaded("m3"))
+        assertTrue(vm.state.value.messages.size > 1_400)
+    }
+
+    // Search
+
+    private class CountingSearch(val perPass: (Int) -> Int, inner: SampleChatStore) : ChatStore by inner {
+        val limits = mutableListOf<Int>()
+        override fun searchMessages(query: String, limit: Int): List<MessageHit> {
+            limits += limit
+            return (0 until perPass(limit)).map { MessageHit("chat-other", "o$it", "x", null) }
+        }
+    }
+
+    @Test
+    fun searchStopsWideningWhenAPassReturnsFewerHitsThanItsLimit() = runTest {
+        val store = CountingSearch({ 10 }, sampleWith(listOf(message(1))))
+        vm(store).search("x")
+        assertEquals(listOf(200), store.limits)
+    }
+
+    @Test
+    fun searchNeverAsksForMoreThan1000() = runTest {
+        val store = CountingSearch({ it }, sampleWith(listOf(message(1))))
+        vm(store).search("x")
+        assertEquals(listOf(200, 1_000), store.limits)
+    }
+
+    @Test
+    fun searchesRunOneAtATime() {
+        val active = java.util.concurrent.atomic.AtomicInteger()
+        val most = java.util.concurrent.atomic.AtomicInteger()
+        val inner = sampleWith(listOf(message(1)))
+        val store = object : ChatStore by inner {
+            override fun searchMessages(query: String, limit: Int): List<MessageHit> {
+                most.accumulateAndGet(active.incrementAndGet()) { a, b -> maxOf(a, b) }
+                Thread.sleep(60)
+                active.decrementAndGet()
+                return emptyList()
+            }
+        }
+        val vm = ChatViewModel(store, "chat-riya", NetworkType.Wifi, DraftKeeper(), Dispatchers.Default, { 0L }) { AutoDownloadSettings() }
+        kotlinx.coroutines.runBlocking {
+            (1..4).map { n -> this.async { vm.search("q$n") } }.forEach { it.await() }
+        }
+        assertEquals(1, most.get())
+    }
+
+    // Highlight, request bar, drafts
+
+    @Test
+    fun aHighlightIsConsumedOnce() = runTest {
+        val vm = vm(pagedChat())
+        assertTrue(vm.takeHighlight("m1"))
+        assertFalse(vm.takeHighlight("m1"))
+        assertTrue(vm.takeHighlight("m2"))
+    }
+
+    @Test
+    fun blockTargetIsNullWhenTheChatCannotBeResolved() = runTest {
+        val inner = sampleWith(listOf(message(1)))
+        assertEquals("riya", vm(inner).blockTarget())
+        val gone = object : ChatStore by inner { override fun chat(id: String): Chat? = null }
+        assertNull(vm(gone).blockTarget())
+    }
+
+    @Test
+    fun draftsAreKeyedBySignedInAccountThroughTheDefaultWiring() {
+        fun store(account: String): ChatStore {
+            val inner = sampleWith(listOf(message(1)))
+            return object : ChatStore by inner { override val me = org.example.app.core.chats.Contact(account, account, account) }
+        }
+        fun open(account: String) = ChatViewModel(store(account), "chat-riya", NetworkType.Wifi) { AutoDownloadSettings() }
+        open("acc-draft-a").setDraft("secret")
+        assertEquals("secret", open("acc-draft-a").draft())
+        assertEquals("", open("acc-draft-b").draft())
+        // The first account's drafts are gone for good once another signed in.
+        assertEquals("", open("acc-draft-a").draft())
     }
 }

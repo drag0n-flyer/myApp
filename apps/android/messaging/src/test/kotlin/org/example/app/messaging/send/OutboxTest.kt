@@ -2,6 +2,7 @@ package org.example.app.messaging.send
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -144,6 +145,16 @@ class OutboxTest {
         // Same instant for both rows: the order is the queue's, and the retried message is behind m-2.
         assertEquals("m-2", rig.ana1.repo.dueOutboxHeads(NOW).single().messageId)
         assertEquals("sending", rig.ana1.repo.message("m-1")?.status)
+    }
+
+    @Test
+    fun twoQuickRetriesEnqueueOnce() = runTest {
+        val (rig, _) = joined()
+        rig.ana1.outbox.enqueue(text("m-1"), "acc-bob")
+        rig.ana1.repo.completeSend("m-1", "failed")
+        assertTrue(rig.ana1.outbox.retry("m-1"))
+        assertFalse(rig.ana1.outbox.retry("m-1"))
+        assertEquals(1, rig.ana1.repo.dueOutbox(Long.MAX_VALUE).count { it.messageId == "m-1" })
     }
 
     @Test

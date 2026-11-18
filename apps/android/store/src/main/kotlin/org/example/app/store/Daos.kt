@@ -76,7 +76,7 @@ interface MessageDao {
     fun applyEdit(id: String, sender: String, envelope: ByteArray, folded: String, at: Long): Int
     @Query("UPDATE messages SET deleted = 1, envelope = x'', folded = '' WHERE id = :id AND sender_account = :sender")
     fun markDeleted(id: String, sender: String): Int
-    @Query("UPDATE messages SET status = 'sending', received_at = :now WHERE id = :id") fun resetForRetry(id: String, now: Long)
+    @Query("UPDATE messages SET status = 'sending', received_at = :now WHERE id = :id AND status = 'failed'") fun resetForRetry(id: String, now: Long): Int
 
     @Insert(onConflict = OnConflictStrategy.REPLACE) fun setReaction(r: ReactionEntity)
     @Query("DELETE FROM reactions WHERE message_id = :messageId AND account_id = :accountId") fun removeReaction(messageId: String, accountId: String)

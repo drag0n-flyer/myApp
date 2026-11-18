@@ -27,6 +27,20 @@ class LinkFinderTest {
         assertEquals(emptyList(), urls("go https://example.org/\u2066x"))
     }
 
+    @Test fun anyDirectionFormatCharacterInTheMessageMeansNoLinksAtAll() {
+        for (c in listOf('\u202A', '\u202E', '\u2066', '\u2069', '\u200E', '\u200F', '\u061C')) {
+            assertEquals(emptyList(), urls("$c see https://example.org and www.example.org"), "U+%04X".format(c.code))
+        }
+    }
+
+    @Test fun uppercaseWwwIsALink() {
+        assertEquals(listOf("WWW.EXAMPLE.ORG" to "https://WWW.EXAMPLE.ORG"), urls("go WWW.EXAMPLE.ORG now"))
+    }
+
+    @Test fun wwwFollowedOnlyByPunctuationIsNotALink() {
+        assertEquals(emptyList(), urls("see www.. or www.! or www.,"))
+    }
+
     @Test fun plainTextAndOtherSchemesHaveNoLinks() {
         assertEquals(emptyList(), urls("hello there, file:///etc/passwd javascript:alert(1) a.b"))
     }

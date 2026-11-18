@@ -80,7 +80,8 @@ fun ChatScreen(
     onRecordVoice: () -> Unit = {},
     /** Message request bar. */
     onAccept: () -> Unit = {},
-    onBlock: () -> Unit = {},
+    /** Called with the contact to block; the screen shows an error instead when the chat cannot be resolved. */
+    onBlock: (contactId: String) -> Unit = {},
     onReport: () -> Unit = {},
     /** A text was forwarded: open the chat it went to. */
     onForward: (chatId: String) -> Unit = {},
@@ -108,6 +109,7 @@ fun ChatScreen(
     var confirmDelete by rememberSaveable { mutableStateOf<String?>(null) }
     var forwardText by rememberSaveable { mutableStateOf<String?>(null) }
     var highlighted by remember { mutableStateOf<String?>(null) }
+    var blockError by remember { mutableStateOf(false) }
     var searching by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
 
@@ -160,7 +162,8 @@ fun ChatScreen(
     }
 
     LaunchedEffect(highlightMessageId) {
-        if (highlightMessageId != null) jumpTo(highlightMessageId)
+        // Once per chat screen: coming back from chat info must not jump again.
+        if (highlightMessageId != null && viewModel.takeHighlight(highlightMessageId)) jumpTo(highlightMessageId)
     }
     // Chat info's Search button.
     LaunchedEffect(Unit) {
@@ -233,7 +236,11 @@ fun ChatScreen(
             if (searching) {
                 // The search field is the only input while searching.
             } else if (state.isRequest) {
-                RequestBar(onAccept = onAccept, onBlock = onBlock, onReport = onReport)
+                RequestBar(
+                    onAccept = onAccept,
+                    onBlock = { viewModel.blockTarget()?.let(onBlock) ?: run { blockError = true } },
+                    onReport = onReport,
+                )
             } else {
                 Composer(
                     enabled = !state.sendingPaused,
@@ -341,6 +348,13 @@ fun ChatScreen(
                     }
                 }
             }
+        }
+        if (blockError) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { blockError = false },
+                title = { Text(stringResource(R.string.err_server)) },
+                confirmButton = { TextButton(onClick = { blockError = false }) { Text(stringResource(R.string.close)) } },
+            )
         }
         confirmDelete?.let { id ->
             DeleteDialog(onConfirm = { confirmDelete = null; viewModel.delete(id) }, onDismiss = { confirmDelete = null })

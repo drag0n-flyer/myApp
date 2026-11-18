@@ -3,6 +3,8 @@ package org.example.app.ui.chat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -64,6 +66,11 @@ class ChatViewModel(
     // Messages that fall out of the store's cache while the chat is open stay on screen. The store's copy always wins.
     private val known = MutableStateFlow(store.chat(chatId)?.messages.orEmpty())
     private val loadLock = Mutex()
+    private val searchLock = Mutex()
+    private val pager = HistoryPager()
+    private var refreshJob: Job? = null
+    private var refreshAgain = false
+    private var refreshOldest: String? = null
 
     // Only this chat matters: other chats changing must not recompute anything.
     private val chatFlow = combine(store.chats, store.requests) { chats, requests ->
@@ -82,10 +89,13 @@ class ChatViewModel(
         firstUnreadId = chat?.let { ChatTimeline.firstUnreadId(it.messages, it.unreadCount, store.me.id) }
         store.markRead(chatId)
         viewModelScope.launch {
+            var seen: List<Message>? = null
             chatFlow.collect { chat ->
                 if (chat != null) {
                     known.update { ChatTimeline.merge(it, chat.messages) }
-                    refreshLoadedOlder(chat.messages.firstOrNull()?.id)
+                    // Only a change in this chat's messages is worth re-reading the older range for.
+                    if (chat.messages != seen) requestRefresh(chat.messages.firstOrNull()?.id)
+                    seen = chat.messages
                 }
             }
         }
@@ -127,6 +137,22 @@ class ChatViewModel(
      * Messages older than the store's cached page are copies from when they were loaded. After any change in the chat
      * (a reaction, edit or delete, ours or remote) read that range again so a deleted message does not keep its text.
      */
+
+    /** At most one refresh runs and one more waits: a burst of changes costs two reads, not one per change. */
+    private fun requestRefresh(cacheOldestId: String?) {
+        refreshOldest = cacheOldestId
+        if (refreshJob?.isActive == true) {
+            refreshAgain = true
+            return
+        }
+        refreshJob = viewModelScope.launch {
+            do {
+                refreshAgain = false
+                refreshLoadedOlder(refreshOldest)
+            } while (refreshAgain)
+        }
+    }
+
     private suspend fun refreshLoadedOlder(cacheOldestId: String?) {
         if (cacheOldestId == null) return
         loadLock.withLock {
@@ -138,15 +164,30 @@ class ChatViewModel(
         }
     }
 
-    private val pager = HistoryPager()
 
     /** The screen's oldest visible row, counted from the oldest loaded message; asks for a page when it is near the start. */
     fun maybeLoadOlder(oldestVisibleIndex: Int) {
         if (pager.shouldLoad(oldestVisibleIndex)) viewModelScope.launch { loadOlder() }
     }
 
-    /** Loads one older page. False when history has ended (nothing more can be loaded). Safe to call from several places. */
-    suspend fun loadOlder(): Boolean = loadLock.withLock {
+    /**
+     * Above [MAX_OLDER] loaded older messages, keep the newest [KEEP_OLDER] and let the pager ask for the trimmed ones
+     * again when the user scrolls back up to them. Bounds memory and the refresh above.
+     */
+    private fun trimOlder() {
+        val cacheIds = store.chat(chatId)?.messages.orEmpty().map { it.id }.toSet()
+        val older = known.value.filter { it.id !in cacheIds }
+        if (older.size <= MAX_OLDER) return
+        val keep = older.takeLast(KEEP_OLDER).map { it.id }.toSet()
+        known.update { all -> all.filter { it.id in cacheIds || it.id in keep } }
+        pager.reset()
+    }
+
+    /**
+     * Loads one older page. False when history has ended (nothing more can be loaded). Safe to call from several places.
+     * [trim] is off while a jump loads pages, which must keep what it loads.
+     */
+    suspend fun loadOlder(trim: Boolean = true): Boolean = loadLock.withLock {
         if (!pager.begin()) return@withLock false
         try {
             val before = snapshot()
@@ -155,6 +196,7 @@ class ChatViewModel(
             // A page that adds nothing new is the end, however long it is: never loop on a store that repeats itself.
             val grew = snapshot().size > before.size
             pager.finish(if (grew) page.size else 0)
+            if (trim) trimOlder()
             true
         } catch (e: Exception) {
             pager.abort()
@@ -166,7 +208,7 @@ class ChatViewModel(
     suspend fun ensureLoaded(messageId: String): Boolean {
         while (true) {
             if (current(messageId) != null) return true
-            if (!loadOlder()) return current(messageId) != null
+            if (!loadOlder(trim = false)) return current(messageId) != null
         }
     }
 
@@ -182,6 +224,7 @@ class ChatViewModel(
         lastReaction?.let { (id, at) -> if (id == messageId && now - at < REACTION_REPEAT_MS) return false }
         lastReaction = messageId to now
         store.react(emoji, messageId, chatId)
+        reloadAfterWrite(messageId)
         return true
     }
 
@@ -193,6 +236,7 @@ class ChatViewModel(
         if (clean.isEmpty()) return false
         if ((m.content as? MessageContent.Text)?.text == clean) return true
         store.edit(messageId, chatId, clean)
+        reloadAfterWrite(messageId)
         return true
     }
 
@@ -200,7 +244,26 @@ class ChatViewModel(
         val m = current(messageId) ?: return false
         if (!MessageActions.stillApplies(MessageAction.Delete, m, mine(m))) return false
         store.delete(messageId, chatId)
+        reloadAfterWrite(messageId)
         return true
+    }
+
+    /**
+     * A change to a message outside the store's cached page does not make the chat flow emit, so it would not show until
+     * some other change. Once the store says its writes have landed, read that one message again and replace it.
+     */
+    private fun reloadAfterWrite(messageId: String) {
+        viewModelScope.launch {
+            store.awaitWrites()
+            val loaded = known.value
+            val index = loaded.indexOfFirst { it.id == messageId }
+            if (index < 0) return@launch
+            if (store.chat(chatId)?.messages.orEmpty().any { it.id == messageId }) return@launch // the flow carries it
+            // The message right before the next newer one is this message.
+            val next = loaded.getOrNull(index + 1) ?: return@launch
+            val page = withContext(io) { store.messages(chatId, next.id, 1) }
+            page.firstOrNull { it.id == messageId }?.let { fresh -> known.update { ChatTimeline.merge(it, listOf(fresh)) } }
+        }
     }
 
     /** "Try again" on a message that was not sent. */
@@ -228,19 +291,38 @@ class ChatViewModel(
         if (query.isBlank()) return emptyList()
         // The store searches every chat, so a small limit can be filled by other chats' hits: widen it until this chat's
         // hits are enough or the store has nothing more.
-        return withContext(io) {
-            var limit = SEARCH_LIMIT
-            var mine: List<MessageHit>
-            var done: Boolean
-            do {
-                val all = store.searchMessages(query, limit)
-                mine = all.filter { it.chatId == chatId }
-                done = mine.size >= SEARCH_WANTED || all.size < limit || limit >= SEARCH_MAX
-                limit *= 5
-            } while (!done)
-            mine
+        // One search at a time: a run that was abandoned for a newer query finishes its pass, then the next one starts.
+        return searchLock.withLock {
+            withContext(io) {
+                var limit = SEARCH_LIMIT
+                var mine: List<MessageHit>
+                var done: Boolean
+                do {
+                    ensureActive()
+                    val all = store.searchMessages(query, limit)
+                    mine = all.filter { it.chatId == chatId }
+                    // A pass that returned fewer hits than it asked for has seen everything.
+                    done = mine.size >= SEARCH_WANTED || all.size < limit || limit >= SEARCH_MAX
+                    limit = minOf(limit * 5, SEARCH_MAX)
+                } while (!done)
+                mine
+            }
         }
     }
+
+
+    // Highlight from a search hit in the chat list: consumed once, so returning from chat info does not jump again.
+
+    private var handledHighlight: String? = null
+
+    fun takeHighlight(messageId: String): Boolean {
+        if (handledHighlight == messageId) return false
+        handledHighlight = messageId
+        return true
+    }
+
+    /** The contact to block from the request bar, read fresh; null when the chat cannot be resolved any more. */
+    fun blockTarget(): String? = store.chat(chatId)?.contactId
 
     // Drafts
 
@@ -268,7 +350,9 @@ class ChatViewModel(
         const val REACTION_REPEAT_MS = 500L
         const val SEARCH_LIMIT = 200
         const val SEARCH_WANTED = 50
-        const val SEARCH_MAX = 5_000
+        const val SEARCH_MAX = 1_000
         const val MAX_REFRESH = 1_000
+        const val MAX_OLDER = 1_000
+        const val KEEP_OLDER = 500
     }
 }

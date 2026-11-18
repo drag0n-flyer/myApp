@@ -30,6 +30,12 @@ class HistoryPager {
         if (loadedCount == 0) reachedStart = true
     }
 
+    /** Back to the state of a fresh pager: used after trimmed pages must be loaded again. */
+    fun reset() {
+        reachedStart = false
+        isLoading = false
+    }
+
     /** A load that failed or was cancelled: it may be tried again. */
     fun abort() {
         isLoading = false

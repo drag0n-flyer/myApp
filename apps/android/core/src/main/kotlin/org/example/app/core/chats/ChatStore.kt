@@ -47,6 +47,8 @@ interface ChatStore {
     fun download(messageId: String, chatId: String)
     /** Puts a message that failed to send back in the queue (`DeliveryStatus.Failed`). Same message, same wire format. */
     fun retrySend(messageId: String) {}
+    /** Suspends until every write (react, edit, delete, retry) started so far has landed in the database. Default: nothing to wait for. */
+    suspend fun awaitWrites() {}
     fun recordCall(summary: CallSummary, contactId: String, outgoing: Boolean, at: java.time.Instant)
 
     /** False while the engine cannot give real member keys: the Verify screen and the Verified seal stay hidden. */

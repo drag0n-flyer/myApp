@@ -178,6 +178,7 @@ fun ChatInfoScreen(
             AlertDialog(
                 onDismissRequest = { confirmReport = false },
                 title = { Text(stringResource(R.string.report_title)) },
+                text = { Text(stringResource(R.string.report_body)) },
                 confirmButton = { TextButton(onClick = { confirmReport = false; store.report(chatId) }) { Text(stringResource(R.string.info_report)) } },
                 dismissButton = { TextButton(onClick = { confirmReport = false }) { Text(stringResource(R.string.cancel)) } },
             )
