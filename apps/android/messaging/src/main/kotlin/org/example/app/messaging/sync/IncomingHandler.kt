@@ -3,6 +3,8 @@ package org.example.app.messaging.sync
 import java.util.Locale
 import org.example.app.contracts.Incoming
 import org.example.app.contracts.MemberKey
+import org.example.app.core.groups.GroupMerge
+import org.example.app.core.groups.GroupRole
 import org.example.app.core.people.Expiry
 import org.example.app.messaging.ChatMapping
 import org.example.app.messaging.content.Att
@@ -11,6 +13,7 @@ import org.example.app.messaging.content.ContentEnvelope
 import org.example.app.messaging.content.ReceiptKind
 import org.example.app.messaging.ports.AttachmentRecord
 import org.example.app.messaging.ports.AttachmentState
+import org.example.app.messaging.ports.ChatKind
 import org.example.app.messaging.ports.ChatRecord
 import org.example.app.messaging.ports.Clock
 import org.example.app.messaging.ports.ConversationRecord
@@ -215,8 +218,12 @@ class IncomingHandler(
                 if (account != me.accountId) repo.saveProfile(account, envelope.name, envelope.photo, envelope.ver)
                 AppliedResult.Ignored
             }
-            // Applied to a group chat by a later task (from an owner or admin only); never a chat row, valid or not.
-            is ContentEnvelope.Group -> AppliedResult.Ignored
+            // Never a chat row, valid or not. Name and photo are kept only from an owner or admin of this group, by the
+            // server's member list and the MLS sender (never a field of the message), and only with a higher `ver`.
+            is ContentEnvelope.Group -> {
+                applyGroupInfo(envelope, account, chatId, repo)
+                AppliedResult.Ignored
+            }
             is ContentEnvelope.Timer -> {
                 applyTimer(envelope, account, chatId, repo)
                 AppliedResult.Ignored
@@ -227,6 +234,14 @@ class IncomingHandler(
                 AppliedResult.Ignored
             }
         }
+    }
+
+    private fun applyGroupInfo(group: ContentEnvelope.Group, account: String, chatId: String, repo: Repository) {
+        val chat = repo.chat(chatId)?.takeIf { it.kind == ChatKind.GROUP } ?: return
+        val role = repo.groupMembers(chatId).firstOrNull { it.accountId == account }?.let { GroupRole.from(it.role) }
+        if (!GroupMerge.accept(chat.groupVer, group.ver, role)) return
+        // The decoder already checked the name and photo; a store that refuses them must not stall the inbox.
+        runCatching { repo.setGroupInfo(chatId, group.name, group.photo, group.ver) }
     }
 
     /**

@@ -35,6 +35,7 @@ class FakeDeliveryServer(var defaultMode: String = "e2ee") {
     private val keyPackages = HashMap<String, LinkedHashMap<String, ArrayDeque<ByteArray>>>() // account -> device -> packages
     private val conversations = LinkedHashMap<String, Conversation>()
     private val inboxes = HashMap<String, MutableList<InboxItem>>() // identity -> items
+    private val lastWelcome = HashMap<String, ByteArray>()
     private var cursor = 0L
     private var conversationCounter = 0
 
@@ -83,6 +84,9 @@ class FakeDeliveryServer(var defaultMode: String = "e2ee") {
     var deviceListOverride: ((List<DeviceRecord>) -> List<DeviceRecord>)? = null
     var failNextInboxReads = 0
     var failConversationLookup: ServerException? = null
+
+    /** Rewrites what `GET /v1/conversations/{id}` answers for a group (a server that lies about the list). */
+    var groupInfoOverride: ((ConversationInfo) -> ConversationInfo)? = null
 
     /** Runs on every call, before it is served (lock checks, blocking). */
     var onCall: (suspend (identity: String, call: String) -> Unit)? = null
@@ -133,6 +137,12 @@ class FakeDeliveryServer(var defaultMode: String = "e2ee") {
         )
     }
 
+    /** A second, different welcome for [conversationId] (the last one with a byte appended) to [to]. */
+    fun deliverWelcomeCopy(to: String, conversationId: String, from: String = "acc-ana/ana1") = synchronized(lock) {
+        val c = conversations.getValue(conversationId)
+        deliver(to, "welcome", conversationId, c.epoch, from, (lastWelcome[conversationId] ?: ByteArray(0)) + byteArrayOf(0))
+    }
+
     fun api(accountId: String, deviceId: String): DeliveryApi = Api(accountId, deviceId)
 
     /** Lands every held commit request, in order. Returns each one's outcome: the new epoch, or the error. */
@@ -165,7 +175,7 @@ class FakeDeliveryServer(var defaultMode: String = "e2ee") {
         c.members.removeAll(removed.toSet())
         c.members.addAll(added)
         c.epoch += 1
-        if (welcome != null) added.forEach { deliver(it, "welcome", id, c.epoch, identity, welcome) }
+        if (welcome != null) { lastWelcome[id] = welcome; added.forEach { deliver(it, "welcome", id, c.epoch, identity, welcome) } }
         return c.epoch
     }
 
@@ -236,7 +246,8 @@ class FakeDeliveryServer(var defaultMode: String = "e2ee") {
                 val c = conversations[id] ?: throw ServerException(404, "not_found", null, null)
                 if (c.kind != "group") return@synchronized ConversationInfo(c.id, c.mode, c.epoch)
                 if (account !in c.accounts) throw ServerException(404, "not_found", null, null)
-                ConversationInfo(c.id, c.mode, c.epoch, "group", c.accounts.map { (a, r) -> GroupMemberInfo(a, r) }, c.membersVersion)
+                val info = ConversationInfo(c.id, c.mode, c.epoch, "group", c.accounts.map { (a, r) -> GroupMemberInfo(a, r) }, c.membersVersion)
+                groupInfoOverride?.invoke(info) ?: info
             }
         }
 

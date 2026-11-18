@@ -14,18 +14,7 @@ import org.example.app.messaging.testing.FakeDeliveryServer
 
 /** Creating a group: the one commit with every device, the group envelope after it, and what the server may refuse. */
 class GroupCreateTest {
-    private class World(devices: Map<String, List<String>>) {
-        val server = FakeDeliveryServer()
-        val all = devices.flatMap { (account, ids) -> ids.map { TestDevice(server, account, it) } }
-        fun device(id: String) = all.first { it.me.deviceId == id }
-        suspend fun start() = apply {
-            for (d in all) d.api.uploadKeyPackages(if (d.me.deviceId.startsWith("none")) emptyList() else d.mls.makeKeyPackages(3))
-        }
-    }
-
-    private suspend fun trio() = World(
-        mapOf("acc-ana" to listOf("ana1"), "acc-bob" to listOf("bob1", "bob2"), "acc-cat" to listOf("cat1", "cat2"), "acc-dan" to listOf("dan1", "dan2")),
-    ).start()
+    private suspend fun trio() = GroupWorld.trio()
 
     @Test
     fun threeMembersWithTwoDevicesEachAreAddedByOneCommitWithSixAdds() = runTest {
@@ -67,7 +56,7 @@ class GroupCreateTest {
 
     @Test
     fun aMemberWithNoKeyPackagesIsLeftOutAndNamedTheOthersAreAdded() = runTest {
-        val w = World(mapOf("acc-ana" to listOf("ana1"), "acc-bob" to listOf("bob1"), "acc-cat" to listOf("cat1"), "acc-dan" to listOf("none-dan"))).start()
+        val w = GroupWorld(mapOf("acc-ana" to listOf("ana1"), "acc-bob" to listOf("bob1"), "acc-cat" to listOf("cat1"), "acc-dan" to listOf("none-dan"))).start()
         val ana = w.device("ana1")
         val made = ana.groups.create(listOf("acc-bob", "acc-cat", "acc-dan"), "Trio", null)
         assertEquals(listOf("acc-dan"), made.notAdded)
@@ -88,7 +77,7 @@ class GroupCreateTest {
 
     @Test
     fun noOneToAddIsRefusedBeforeAnyGroupExists() = runTest {
-        val w = World(mapOf("acc-ana" to listOf("ana1"), "acc-bob" to listOf("none-bob"), "acc-cat" to listOf("none-cat"))).start()
+        val w = GroupWorld(mapOf("acc-ana" to listOf("ana1"), "acc-bob" to listOf("none-bob"), "acc-cat" to listOf("none-cat"))).start()
         val ana = w.device("ana1")
         assertFailsWith<SyncException.NoKeyPackages> { ana.groups.create(listOf("acc-bob", "acc-cat"), "Nobody", null) }
         assertTrue(w.server.conversationIds().isEmpty())

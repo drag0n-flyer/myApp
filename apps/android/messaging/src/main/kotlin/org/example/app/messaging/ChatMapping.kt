@@ -93,6 +93,7 @@ internal object ChatMapping {
         fun name(o: JsonObject): String? = o["name"]?.jsonPrimitive?.contentOrNull?.let { displayName(it) ?: "Someone" }
         obj["deviceAdded"]?.jsonObject?.let { return SystemEvent.DeviceAdded(name(it)) }
         obj["deviceRemoved"]?.jsonObject?.let { return SystemEvent.DeviceRemoved(name(it)) }
+        obj["addedYou"]?.jsonObject?.let { return SystemEvent.AddedYou(name(it) ?: "Someone") }
         if ("safetyNumberChanged" in obj) return SystemEvent.SafetyNumberChanged
         if ("messagesPaused" in obj) return SystemEvent.MessagesPaused
         obj["timer"]?.jsonObject?.let { t ->

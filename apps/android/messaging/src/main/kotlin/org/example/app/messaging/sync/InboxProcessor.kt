@@ -182,9 +182,25 @@ class InboxProcessor(
             // A Welcome needs the server's mode, fetched before the lock. A failed lookup can be retried while the
             // Welcome is unprocessed; one the server will never answer drops it.
             var serverMode: String? = null
+            var group: ConversationManager.GroupJoin? = null
             if (raw.kind == "welcome") {
                 try {
-                    serverMode = server.conversation(raw.conversationId).mode
+                    val info = server.conversation(raw.conversationId)
+                    serverMode = info.mode
+                    if (info.kind == "group") {
+                        when (val decision = GroupJoinCheck.decide(info, conversations.localAccountId, raw.senderAccount, repo)) {
+                            is GroupJoinCheck.Decision.Join -> group = decision.join
+                            is GroupJoinCheck.Decision.Drop -> {
+                                // Not a group this account is in, already joined, or a list that cannot be true: no chat, no placeholder.
+                                accepted.remove(raw.cursor)
+                                repo.transaction {
+                                    if (decision.park != null) handler.park(raw, repo, decision.park)
+                                    markAndDelete(raw, hash)
+                                }
+                                return Step.Done(null)
+                            }
+                        }
+                    }
                 } catch (e: ServerException) {
                     if (!ConversationManager.isDefiniteRejection(e.status)) return Step.Stop
                     accepted.remove(raw.cursor)
@@ -199,7 +215,7 @@ class InboxProcessor(
                 }
             }
 
-            val applied = lock.withLock { withContext(NonCancellable) { processLocked(raw, hash, serverMode) } }
+            val applied = lock.withLock { withContext(NonCancellable) { processLocked(raw, hash, serverMode, group) } }
             return Step.Done(applied)
         } catch (e: CancellationException) {
             throw e
@@ -209,7 +225,7 @@ class InboxProcessor(
     }
 
     /** The engine call and its rows. Runs under the lock and is not cancellable. */
-    private suspend fun processLocked(raw: RawInboxRecord, hash: ByteArray, serverMode: String?): AppliedResult? {
+    private suspend fun processLocked(raw: RawInboxRecord, hash: ByteArray, serverMode: String?, group: ConversationManager.GroupJoin? = null): AppliedResult? {
         // Another path (the notification processor) may have handled this payload since the check above.
         if (repo.isProcessed(hash)) {
             accepted.remove(raw.cursor)
@@ -241,7 +257,7 @@ class InboxProcessor(
             // is kept, and the next drain retries.
             var failure: String? = if (serverMode == null) "not_welcome" else null
             val plan = if (serverMode == null) null else try {
-                conversations.planJoin(incoming.group, raw.conversationId, serverMode)
+                conversations.planJoin(incoming.group, raw.conversationId, serverMode, group)
             } catch (e: Exception) {
                 val name = e.javaClass.simpleName.ifEmpty { "error" }
                 if (isPermanentJoinFailure(e)) {

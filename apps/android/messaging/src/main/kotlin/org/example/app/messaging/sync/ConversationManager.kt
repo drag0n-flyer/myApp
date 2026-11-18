@@ -21,6 +21,8 @@ import org.example.app.messaging.ports.ChatRecord
 import org.example.app.messaging.ports.Clock
 import org.example.app.messaging.ports.ConversationMode
 import org.example.app.messaging.ports.ConversationRecord
+import org.example.app.messaging.ports.GroupMemberRecord
+import org.example.app.messaging.ports.MessageRecord
 import org.example.app.messaging.ports.MlsLock
 import org.example.app.messaging.ports.Repository
 
@@ -257,11 +259,28 @@ class ConversationManager(
     // Join
 
     /** Rows a Welcome creates. Built under the lock (engine reads), written by the inbox processor's transaction. */
-    class JoinPlan(val chat: ChatRecord, val conversation: ConversationRecord, val keys: List<MemberKey>) {
+    /** A group's member list as the server gave it, and who the server says added this device (shown only if listed). */
+    class GroupJoin(val members: List<GroupMemberRecord>, val version: Long, val addedBy: String?)
+
+    class JoinPlan(val chat: ChatRecord, val conversation: ConversationRecord, val keys: List<MemberKey>, val group: GroupJoin? = null) {
         /** The chat is created only when it does not exist yet. */
         fun store(repo: Repository) {
-            if (repo.chat(chat.id) == null) repo.upsertChat(chat)
+            if (group != null) {
+                repo.upsertGroup(chat.id, conversation.serverId, null, chat.lastActivity)
+                repo.setGroupMembers(chat.id, group.members, group.version)
+            } else if (repo.chat(chat.id) == null) {
+                repo.upsertChat(chat)
+            }
             repo.upsertConversation(conversation)
+            group?.addedBy?.let { by ->
+                repo.insertMessage(
+                    MessageRecord(
+                        id = "sys-added-${conversation.serverId}", chatId = chat.id, conversationId = conversation.serverId,
+                        senderAccount = "system", senderDevice = null, sentAt = chat.lastActivity, receivedAt = chat.lastActivity,
+                        envelope = Membership.lineEnvelope("addedYou", by), status = "sent",
+                    ),
+                )
+            }
         }
     }
 
@@ -272,13 +291,25 @@ class ConversationManager(
      * @throws SyncException.ConversationRebound when [serverConversationId] is already bound to another group, or
      *   [group] to another server conversation.
      */
-    suspend fun planJoin(group: GroupId, serverConversationId: String, serverMode: String): JoinPlan {
+    suspend fun planJoin(group: GroupId, serverConversationId: String, serverMode: String, groupJoin: GroupJoin? = null): JoinPlan {
         // A server ID already bound to another group is never rebound (it would move that chat's messages), and a group
         // already bound to another server ID is never bound twice (`group_id` is unique: the write would fail on every
         // retry and stall the inbox). Anyone who shares a chat with me knows its group ID and can build such a Welcome.
         repo.conversation(serverConversationId)?.let { if (!it.groupId.contentEquals(group.raw)) throw SyncException.ConversationRebound }
         repo.conversationByGroup(group.raw)?.let { if (it.serverId != serverConversationId) throw SyncException.ConversationRebound }
         val keys = membership.keys(group)
+        if (groupJoin != null) {
+            // A group chat: `g:<conversationID>`, never a request, no peer. Its mode pin works as in a one-to-one chat.
+            val chatId = ChatID.group(serverConversationId)
+            return JoinPlan(
+                chat = ChatRecord(chatId, isRequest = false, unread = 0, muted = false, lastActivity = clock.now()),
+                conversation = ConversationRecord(
+                    serverId = serverConversationId, chatId = chatId, groupId = group.raw, mode = serverMode, innerMode = null,
+                    modeMismatch = false, epoch = mls.epoch(group), active = true, createdAt = clock.now(),
+                ),
+                keys = keys, group = groupJoin,
+            )
+        }
         val peer = keys.map { it.identity.substringBefore('/') }.toSet().minus(me.accountId).minOrNull()
             ?: throw SyncException.NoPeer
         val epoch = mls.epoch(group)
