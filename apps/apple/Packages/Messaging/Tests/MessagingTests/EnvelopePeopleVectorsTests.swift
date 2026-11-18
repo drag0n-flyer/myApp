@@ -36,7 +36,7 @@ private func fields(_ env: ContentEnvelope) -> [String: JSONValue] {
     if let ttl = env.ttl { f["ttl"] = .int(ttl) }
     func caption() {
         guard let c = env.caption else { return }
-        if c.count >= 4000 { f["cLen"] = .int(c.count) } else { f["c"] = .string(c) }
+        if c.count >= 4000 { f["cLen"] = .int(c.count); f["cScalars"] = .int(c.unicodeScalars.count) } else { f["c"] = .string(c) }
     }
     switch env.body {
     case .typing(let on): f["kind"] = .string("typing"); f["on"] = .bool(on)
