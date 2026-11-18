@@ -32,6 +32,8 @@ class FakeDeliveryServer(var defaultMode: String = "e2ee") {
 
     /** Every application message the server accepted, in order. */
     val messages = mutableListOf<Posted>()
+    /** Every `postMessage` call that reached the server, also the ones answered with an error. */
+    val postAttempts = mutableListOf<Posted>()
 
     /** Every commit post that reached the server (accepted or not), as `(identity, conversationId, epoch)`. */
     val commitPosts = mutableListOf<Triple<String, String, Long>>()
@@ -212,6 +214,7 @@ class FakeDeliveryServer(var defaultMode: String = "e2ee") {
         override suspend fun postMessage(id: String, epoch: Long, ciphertext: ByteArray, escrow: ByteArray?, clientMsgId: String): Long {
             call("postMessage")
             val seq = synchronized(lock) {
+                postAttempts += Posted(id, epoch, ciphertext, escrow, clientMsgId, identity)
                 if (failNextMessages > 0) {
                     failNextMessages -= 1
                     throw ServerException(503, "unavailable", null, null)

@@ -90,9 +90,18 @@ data class AttachmentRecord(
     override fun hashCode() = id.hashCode()
 }
 
-data class OutboxRecord(val messageId: String, val chatId: String, val envelope: ByteArray, val attempts: Int, val nextAttemptAt: Long) {
+/**
+ * One queued send. [ciphertext] and [cipherEpoch] hold the MLS ciphertext made for this row's envelope and the epoch it
+ * was made in, so a retry in the same epoch posts the same bytes instead of encrypting (and advancing the sender's
+ * generation) again. Both are null until the first encrypt; the row is replaced (so they are cleared) with its envelope.
+ */
+data class OutboxRecord(
+    val messageId: String, val chatId: String, val envelope: ByteArray, val attempts: Int, val nextAttemptAt: Long,
+    val ciphertext: ByteArray? = null, val cipherEpoch: Long? = null,
+) {
     override fun equals(other: Any?) = other is OutboxRecord && messageId == other.messageId && chatId == other.chatId &&
-        envelope.contentEquals(other.envelope) && attempts == other.attempts && nextAttemptAt == other.nextAttemptAt
+        envelope.contentEquals(other.envelope) && attempts == other.attempts && nextAttemptAt == other.nextAttemptAt &&
+        (ciphertext?.contentEquals(other.ciphertext) ?: (other.ciphertext == null)) && cipherEpoch == other.cipherEpoch
     override fun hashCode() = messageId.hashCode()
 }
 
