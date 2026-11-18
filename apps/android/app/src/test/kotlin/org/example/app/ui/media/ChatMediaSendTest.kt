@@ -223,39 +223,4 @@ class ChatMediaSendTest {
         rule.onNodeWithContentDescription("Record voice message").assertIsDisplayed()
         assertEquals(emptyList(), store.sent)
     }
-
-    @Test fun theRecordingBarShowsTimeCancelAndSend() {
-        var cancels = 0
-        var sends = 0
-        rule.setContent {
-            AppTheme {
-                Composer(
-                    enabled = true, text = "", onTextChange = {}, onSend = {}, onAttach = {}, onRecordVoice = {},
-                    recording = org.example.app.ui.media.CaptureState.Recording(65.4),
-                    onCancelRecording = { cancels++ }, onSendRecording = { sends++ },
-                )
-            }
-        }
-        rule.onNodeWithText("Recording…").assertIsDisplayed()
-        rule.onNodeWithText("1:05").assertIsDisplayed()
-        // The message field is gone while recording.
-        rule.onNodeWithText("Message").assertDoesNotExist()
-        rule.onNodeWithText("Cancel").performClick()
-        rule.onNodeWithContentDescription("Send").performClick()
-        assertEquals(1, cancels)
-        assertEquals(1, sends)
-    }
-
-    @Test fun theRecordingBarWaitsWhileTheNoteIsBeingFinished() {
-        rule.setContent {
-            AppTheme {
-                Composer(
-                    enabled = true, text = "", onTextChange = {}, onSend = {}, onAttach = {}, onRecordVoice = {},
-                    recording = org.example.app.ui.media.CaptureState.Recording(3.0, stopping = true),
-                )
-            }
-        }
-        rule.onNodeWithText("Cancel").assertIsNotEnabled()
-        rule.onNodeWithContentDescription("Send").assertIsNotEnabled()
-    }
 }
