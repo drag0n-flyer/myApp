@@ -379,15 +379,57 @@ public final class Repository: @unchecked Sendable {
     }
 
     /// Manual retry of a failed message: status back to `sending`, enqueue time reset, and a new outbox row at the
-    /// END of the chat's queue. Returns false when the message does not exist.
+    /// END of the chat's queue. Returns false when the message does not exist or is not a failed one.
     @discardableResult
     public func requeueSend(id: String) throws -> Bool {
         try db.transaction { d in
-            guard let m = try message(id: id) else { return false }
+            // Only a failed message can be tried again: a second tap on a message already queued, sent or deleted does nothing.
+            guard let m = try message(id: id), m.status == "failed", !m.deleted else { return false }
             try d.execute("UPDATE messages SET status='sending', received_at=? WHERE id=?", [.int(ms(now())), .text(id)])
             try enqueue(OutboxRecord(messageID: id, chatID: m.chatID, envelope: m.envelope, attempts: 0, nextAttemptAt: now()))
             return true
         }
+    }
+
+    // MARK: unsent messages (a picked attachment is shown while its upload is still to do)
+
+    /// Puts the real envelope into an own message that has not been sent. False when the row is gone, deleted,
+    /// someone else's, or already sent.
+    @discardableResult
+    public func replaceUnsentEnvelope(id: String, sender: String, envelope: Data, folded: String) throws -> Bool {
+        try db.run("""
+            UPDATE messages SET envelope=?, folded=? WHERE id=? AND sender_account=? AND deleted=0
+            AND status IN ('sending','failed')
+            """, [.blob(envelope), .text(folded), .text(id), .text(sender)]) > 0
+    }
+
+    /// Removes an own message that has not been sent, with its outbox row and attachment rows.
+    @discardableResult
+    public func deleteUnsentMessage(id: String, sender: String) throws -> Bool {
+        try db.transaction { d in
+            guard let m = try message(id: id), m.senderAccount == sender, m.status == "sending" || m.status == "failed" else { return false }
+            try d.execute("DELETE FROM outbox WHERE message_id=?", [.text(id)])
+            try d.execute("DELETE FROM attachments WHERE message_id=?", [.text(id)])
+            try d.execute("DELETE FROM messages WHERE id=?", [.text(id)])
+            return true
+        }
+    }
+
+    /// failed -> sending, without queueing (the upload comes first). False when it is not a failed message.
+    @discardableResult
+    public func resumeUnsent(id: String) throws -> Bool {
+        try db.run("UPDATE messages SET status='sending', received_at=? WHERE id=? AND status='failed' AND deleted=0",
+                   [.int(ms(now())), .text(id)]) > 0
+    }
+
+    /// sending -> failed. False when it is not a sending message.
+    @discardableResult
+    public func markUnsentFailed(id: String) throws -> Bool {
+        try db.run("UPDATE messages SET status='failed' WHERE id=? AND status='sending'", [.text(id)]) > 0
+    }
+
+    public func deleteAttachment(id: String) throws {
+        try db.execute("DELETE FROM attachments WHERE id=?", [.text(id)])
     }
 
     public func bumpOutbox(id: String, nextAttempt: Date) throws {
