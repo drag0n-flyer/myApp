@@ -282,7 +282,7 @@ public struct NotificationProcessor: Sendable {
 
     private func preview(_ message: MessageRecord) -> String {
         switch ContentEnvelope.decode(message.envelope).body {
-        case .text(let text, _): return String(text.prefix(Self.previewLimit))
+        case .text(let text, _): return String(MessageFormat.plain(text).prefix(Self.previewLimit))
         case .photo: return strings.photo
         case .voice: return strings.voiceMessage
         case .file(_, let name, _, _): return name.isEmpty ? strings.file : String(name.prefix(Self.previewLimit))

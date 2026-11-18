@@ -46,6 +46,67 @@ final class MessageFormatTests: XCTestCase {
         check("", plain: "")
     }
 
+    func testCrossingMarkersFirstPairToCloseWins() {
+        check("*a _b* c_", plain: "a _b c_", [(0..<4, [.bold])])
+        check("~~a~~", plain: "~~a~~")
+    }
+
+    func testRunsOfOneMarkerDoNotClose() {
+        check("*a**", plain: "*a**")
+        check("~a~~b~", plain: "a~~b", [(0..<4, [.strike])])
+        check("`a``b`", plain: "a``b", [(0..<4, [.mono])])
+    }
+
+    func testCRLFAndCRAreLineBreaks() {
+        check("*a\r\nb*", plain: "*a\r\nb*")
+        check("*a\rb*", plain: "*a\rb*")
+        check("*a*\r\n_b_", plain: "a\r\nb", [(0..<1, [.bold]), (2..<3, [.italic])])
+        check("x\r\n```\r\n*a*\r\n```\r\ny", plain: "x\r\n*a*\r\ny", [(2..<5, [.mono, .block])])
+    }
+
+    func testMonospaceIsFoundFirst() {
+        check("*a `b* c` d*", plain: "a b* c d", [(0..<8, [.bold]), (2..<6, [.mono])])
+    }
+
+    func testACloserPairsWithTheInnermostOpenMarkerOfItsKind() {
+        check("*a *b* c*", plain: "a b c", [(0..<5, [.bold]), (2..<3, [.bold])])
+    }
+
+    func testBlockOfBlankLinesIsNotABlock() {
+        check("```\n  \n```", plain: "```\n  \n```")
+    }
+
+    // MARK: Hostile input (received text is not limited by the sender's rules)
+
+    private func fast(_ text: String, file: StaticString = #filePath, line: UInt = #line) {
+        let start = Date()
+        _ = MessageFormat.parse(text)
+        _ = MessageFormat.plain(text)
+        _ = MessageFormat.attributed(text)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 1.0, "took too long for \(text.count) characters", file: file, line: line)
+    }
+
+    func testSixtyFourKilobytesOfHostileTextIsFast() {
+        for unit in [" *a", "*a* ", "*_a_* ", "`a` ", " _a", "~a~ "] {
+            fast(String(repeating: unit, count: 65_536 / unit.count))
+        }
+    }
+
+    func testTextAtTheLimitOfHostileShapesIsFast() {
+        for unit in [" *a", "*a* ", "*_a_* ", " _a", "*a _b* c_ "] {
+            fast(String(repeating: unit, count: MessageFormat.maxLength / unit.count))
+        }
+    }
+
+    func testTextOverTheLimitIsNotFormatted() {
+        let long = "*a* " + String(repeating: "b", count: MessageFormat.maxLength)
+        XCTAssertEqual(MessageFormat.plain(long), long)
+        XCTAssertTrue(MessageFormat.parse(long).isEmpty)
+        XCTAssertEqual(String(MessageFormat.attributed(long).characters), long)
+        let atLimit = "*a* " + String(repeating: "b", count: MessageFormat.maxLength - 4)
+        XCTAssertEqual(MessageFormat.parse(atLimit).count, 1)
+    }
+
     func testAttributedStyles() {
         let text = MessageFormat.attributed("*a* `b`")
         XCTAssertEqual(String(text.characters), "a b")

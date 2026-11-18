@@ -147,7 +147,11 @@ struct ChatView: View {
             if sentClear { sentClear = false; return }
             if editing == nil { model.setDraft(text, for: chatID) }
         }
-        .onChange(of: chat?.messages) { _, _ in closeBarsForChangedMessages() }
+        .onChange(of: chat?.messages) { _, _ in
+            closeBarsForChangedMessages()
+            // A message that came, went or changed while the search bar is open: read the hits again.
+            if searching, !trimmedQuery.isEmpty, searchedQuery == trimmedQuery { runSearch(trimmedQuery, jumpToFirst: false) }
+        }
         .onChange(of: model.revision) { _, _ in syncHistory() }
         .confirmationDialog("Delete this message for everyone?",
                             isPresented: Binding(get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } }),
@@ -558,6 +562,29 @@ struct ChatView: View {
         currentHit = nil
     }
 
+    /// Reads the hits for `text` and keeps the ones whose message can be reached: the pages the jump would load
+    /// are loaded here, once, after the typing pause, and a hit beyond the page cap is left out of the count.
+    /// With `jumpToFirst` false (the chat changed under the open bar) the current hit stays if it still exists.
+    private func runSearch(_ text: String, jumpToFirst: Bool) {
+        guard let chat else { return }
+        let found = model.searchMessages(text, in: chatID)
+        var trial = history
+        if let oldest = found.last {
+            _ = trial.load(until: oldest.messageID, newest: chat.messages,
+                           loader: { before, limit in model.olderMessages(in: chatID, before: before, limit: limit) })
+        }
+        let loaded = Set(trial.messages(newest: chat.messages).map(\.id))
+        let kept = currentHit.flatMap { hits.indices.contains($0) ? hits[$0].messageID : nil }
+        hits = found.filter { loaded.contains($0.messageID) }
+        searchedQuery = text
+        if !jumpToFirst, let kept, let same = hits.firstIndex(where: { $0.messageID == kept }) {
+            currentHit = same
+            return
+        }
+        currentHit = ChatSearch.step(hits, current: nil, direction: .next)
+        if jumpToFirst, let first = currentHit { jump = JumpRequest(messageID: hits[first].messageID) }
+    }
+
     private func moveSearch(_ direction: ChatSearch.Direction) {
         guard let next = ChatSearch.step(hits, current: currentHit, direction: direction) else { return }
         currentHit = next
@@ -618,11 +645,7 @@ struct ChatView: View {
             }
             try? await Task.sleep(for: .milliseconds(300))
             guard !Task.isCancelled else { return }
-            hits = model.searchMessages(text, in: chatID)
-            searchedQuery = text
-            // Start on the newest result and show it.
-            currentHit = ChatSearch.step(hits, current: nil, direction: .next)
-            if let first = currentHit { jump = JumpRequest(messageID: hits[first].messageID) }
+            runSearch(text, jumpToFirst: true)
         }
     }
 }

@@ -26,13 +26,21 @@ public enum MessageFormat {
 
     /// The plain text with its styles and its links as an `AttributedString`, for a message bubble. Styles use the
     /// system's inline intents (bold, italic, strikethrough, code), so SwiftUI draws them with the system fonts.
-    /// Links are detected on the plain text and are left out of monospace.
+    /// Links are detected on the plain text and are left out of monospace. Kept in a small cache, so a redraw does
+    /// not parse again.
     public static func attributed(_ text: String) -> AttributedString {
+        if let hit = cache.attributed(text) { return hit }
         let parsed = run(text)
         var result = LinkDetector.attributed(parsed.plain)
+        // One walk over the characters gives every offset its index, so spans do not each count from the start.
         let chars = result.characters
-        for span in parsed.spans {
-            let slice = chars.index(chars.startIndex, offsetBy: span.range.lowerBound)..<chars.index(chars.startIndex, offsetBy: span.range.upperBound)
+        var indices: [AttributedString.Index] = []
+        indices.reserveCapacity(chars.count + 1)
+        var at = chars.startIndex
+        while at < chars.endIndex { indices.append(at); at = chars.index(after: at) }
+        indices.append(chars.endIndex)
+        for span in parsed.spans where span.range.upperBound < indices.count {
+            let slice = indices[span.range.lowerBound]..<indices[span.range.upperBound]
             if span.styles.contains(.mono) { result[slice].link = nil }
             #if canImport(Darwin)
             // The inline intents exist on Apple platforms only (the Linux Foundation used by the package tests lacks them).
@@ -44,8 +52,37 @@ public enum MessageFormat {
             result[slice].inlinePresentationIntent = (result[slice].inlinePresentationIntent ?? []).union(intent)
             #endif
         }
+        cache.store(attributed: result, for: text)
         return result
     }
+
+    /// Longer text is shown as typed (the same limit as sending), so a huge received message cannot freeze the chat.
+    public static let maxLength = 4096
+
+    /// A small bounded cache of parse results and attributed text, keyed by the text itself.
+    private final class Cache: @unchecked Sendable {
+        private let lock = NSLock()
+        private var parsedByText: [String: (plain: String, spans: [Span])] = [:]
+        private var styledByText: [String: AttributedString] = [:]
+        private let limit = 256
+
+        func parsed(_ text: String) -> (plain: String, spans: [Span])? { lock.withLock { parsedByText[text] } }
+        func attributed(_ text: String) -> AttributedString? { lock.withLock { styledByText[text] } }
+        func store(parsed value: (plain: String, spans: [Span]), for text: String) {
+            lock.withLock {
+                if parsedByText.count >= limit { parsedByText.removeAll() }
+                parsedByText[text] = value
+            }
+        }
+        func store(attributed value: AttributedString, for text: String) {
+            lock.withLock {
+                if styledByText.count >= limit { styledByText.removeAll() }
+                styledByText[text] = value
+            }
+        }
+    }
+
+    private static let cache = Cache()
 
     // MARK: Parser
 
@@ -53,18 +90,37 @@ public enum MessageFormat {
     private static let fence: [Character] = ["`", "`", "`"]
 
     private static func run(_ text: String) -> (plain: String, spans: [Span]) {
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map { Array($0) }
+        // No marker character at all, or too long to be worth it: shown as typed, nothing to cache.
+        guard text.contains(where: { markers.contains($0) }), text.count <= maxLength else { return (text, []) }
+        if let hit = cache.parsed(text) { return hit }
+        let result = parseLines(text)
+        cache.store(parsed: result, for: text)
+        return result
+    }
+
+    /// "\n", "\r" and "\r\n" (one Character in Swift) end a line; the original separators are kept in the plain text.
+    private static func isLineBreak(_ ch: Character) -> Bool { ch == "\n" || ch == "\r" || ch == "\r\n" }
+
+    private static func parseLines(_ text: String) -> (plain: String, spans: [Span]) {
+        var lines: [[Character]] = [[]]
+        var separators: [Character] = []
+        for ch in text {
+            if isLineBreak(ch) {
+                separators.append(ch)
+                lines.append([])
+            } else {
+                lines[lines.count - 1].append(ch)
+            }
+        }
         var out: [Character] = []
         var spans: [Span] = []
         var i = 0
-        var first = true
         while i < lines.count {
-            if !first { out.append("\n") }
-            first = false
+            if i > 0 { out.append(separators[i - 1]) }
             if lines[i] == fence, let close = closingFence(lines, after: i) {
                 let start = out.count
                 for k in (i + 1)..<close {
-                    if k > i + 1 { out.append("\n") }
+                    if k > i + 1 { out.append(separators[k - 1]) }
                     out.append(contentsOf: lines[k])
                 }
                 spans.append(Span(range: start..<out.count, styles: [.mono, .block]))
@@ -72,7 +128,7 @@ public enum MessageFormat {
                 continue
             }
             let base = out.count
-            let result = inline(lines[i], mask: linkMask(lines[i]))
+            let result = inline(lines[i])
             out.append(contentsOf: result.plain)
             spans.append(contentsOf: result.spans.map { shifted($0, by: base) })
             i += 1
@@ -85,12 +141,12 @@ public enum MessageFormat {
         Span(range: (span.range.lowerBound + n)..<(span.range.upperBound + n), styles: span.styles)
     }
 
-    /// The line of the closing fence, when there is at least one non-empty line between the fences.
+    /// The line of the closing fence, when at least one line between the fences has something other than whitespace.
     private static func closingFence(_ lines: [[Character]], after open: Int) -> Int? {
         var k = open + 1
         while k < lines.count {
             if lines[k] == fence {
-                return lines[(open + 1)..<k].contains(where: { !$0.isEmpty }) ? k : nil
+                return lines[(open + 1)..<k].contains(where: { $0.contains(where: { !$0.isWhitespace }) }) ? k : nil
             }
             k += 1
         }
@@ -124,49 +180,106 @@ public enum MessageFormat {
         return (33...47).contains(a) || (58...64).contains(a) || (91...96).contains(a) || (123...126).contains(a)
     }
 
-    /// One line (no newline inside). Offsets in the result count the plain characters.
-    private static func inline(_ c: [Character], mask: [Bool]) -> (plain: [Character], spans: [Span]) {
-        var out: [Character] = []
-        var spans: [Span] = []
+    /// A marker may open when it is at the start or after a boundary, is followed by a non-space, and is not part of
+    /// a run of the same marker ("**", "``", three backticks on one line).
+    private static func canOpen(_ c: [Character], _ i: Int) -> Bool {
+        let m = c[i]
+        if i > 0, !isBoundary(c[i - 1]) || c[i - 1] == m { return false }
+        return i + 1 < c.count && !c[i + 1].isWhitespace && c[i + 1] != m
+    }
+
+    /// A marker may close when it follows a non-space, is at the end or before a boundary, and is not part of a run.
+    private static func canClose(_ c: [Character], _ i: Int) -> Bool {
+        let m = c[i]
+        guard i > 0, !c[i - 1].isWhitespace, c[i - 1] != m else { return false }
+        return i + 1 == c.count || (isBoundary(c[i + 1]) && c[i + 1] != m)
+    }
+
+    /// One line (no line break inside). Offsets in the result count the plain characters.
+    ///
+    /// 1. Monospace is found first, left to right: an opening backtick pairs with the next closing one, and nothing
+    ///    inside is read, so the other markers inside it never pair with markers outside it.
+    /// 2. For `*`, `_` and `~`, one left-to-right pass: a closing marker pairs with the innermost open marker of its
+    ///    kind; open markers of other kinds above it are left without a partner and stay as typed.
+    /// Both passes are linear in the length of the line.
+    private static func inline(_ c: [Character]) -> (plain: [Character], spans: [Span]) {
+        let n = c.count
+        var masked = linkMask(c)
+        // close[i] = index of the partner of the opening marker at i, or -1.
+        var close = [Int](repeating: -1, count: n)
+
+        // Next valid closing backtick at or after each index, for the monospace pass.
+        var nextTick = [Int](repeating: n, count: n + 2)
+        var j = n - 1
+        var seen = n
+        while j >= 0 {
+            if c[j] == "`", !masked[j], canClose(c, j) { seen = j }
+            nextTick[j] = seen
+            j -= 1
+        }
+        var isMono = [Bool](repeating: false, count: n)
         var i = 0
-        while i < c.count {
-            let m = c[i]
-            if markers.contains(m), !mask[i], let close = closing(c, mask, open: i) {
-                let inner = Array(c[(i + 1)..<close])
-                let start = out.count
-                if m == "`" {
-                    out.append(contentsOf: inner)
-                    spans.append(Span(range: start..<out.count, styles: [.mono]))
-                } else {
-                    let result = inline(inner, mask: Array(mask[(i + 1)..<close]))
-                    out.append(contentsOf: result.plain)
-                    let style: Style = m == "*" ? .bold : m == "_" ? .italic : .strike
-                    spans.append(Span(range: start..<out.count, styles: [style]))
-                    spans.append(contentsOf: result.spans.map { shifted($0, by: start) })
-                }
-                i = close + 1
+        while i < n {
+            if c[i] == "`", !masked[i], canOpen(c, i), nextTick[i + 2] < n {
+                let end = nextTick[i + 2]
+                close[i] = end
+                isMono[i] = true
+                for k in i...end { masked[k] = true }
+                i = end + 1
             } else {
-                out.append(m)
                 i += 1
             }
         }
+
+        // Stacks of open positions per kind, and one overall order to drop what sits above a pairing.
+        var order: [Int] = []
+        var byKind: [Character: [Int]] = ["*": [], "_": [], "~": []]
+        for k in 0..<n {
+            let m = c[k]
+            guard m == "*" || m == "_" || m == "~", !masked[k] else { continue }
+            if canClose(c, k), let open = byKind[m]!.last {
+                close[open] = k
+                // Open markers above this pairing never get a partner: forget them.
+                while let top = order.last, top >= open {
+                    order.removeLast()
+                    byKind[c[top]]!.removeLast()
+                }
+            } else if canOpen(c, k) {
+                order.append(k)
+                byKind[m]!.append(k)
+            }
+        }
+
+        var out: [Character] = []
+        var spans: [Span] = []
+        emit(c, close, isMono, 0, n, &out, &spans)
         return (out, spans)
     }
 
-    /// The index of the closing marker for the opening one at `open`, if rules 1 and 2 hold (a line has no newline).
-    private static func closing(_ c: [Character], _ mask: [Bool], open: Int) -> Int? {
-        let m = c[open]
-        if open > 0, !isBoundary(c[open - 1]) { return nil }
-        // Part of a run of one marker ("**", three backticks on one line) is never an opening.
-        if open > 0, c[open - 1] == m { return nil }
-        // Followed by a non-space; a doubled marker ("**") is not an opening, so an empty pair stays as typed.
-        guard open + 1 < c.count, !c[open + 1].isWhitespace, c[open + 1] != m else { return nil }
-        var j = open + 2
-        while j < c.count {
-            if c[j] == m, !mask[j], !c[j - 1].isWhitespace, j + 1 == c.count || isBoundary(c[j + 1]) { return j }
-            j += 1
+    /// Reads `c[lo..<hi]`, appending the plain characters to `out` and the spans (in `out` offsets) to `spans`.
+    private static func emit(_ c: [Character], _ close: [Int], _ isMono: [Bool], _ lo: Int, _ hi: Int,
+                             _ out: inout [Character], _ spans: inout [Span]) {
+        var i = lo
+        while i < hi {
+            let end = close[i]
+            guard end > i else {
+                out.append(c[i])
+                i += 1
+                continue
+            }
+            let start = out.count
+            if isMono[i] {
+                out.append(contentsOf: c[(i + 1)..<end])
+                spans.append(Span(range: start..<out.count, styles: [.mono]))
+            } else {
+                let style: Style = c[i] == "*" ? .bold : c[i] == "_" ? .italic : .strike
+                let index = spans.count
+                spans.append(Span(range: start..<start, styles: [style]))
+                emit(c, close, isMono, i + 1, end, &out, &spans)
+                spans[index].range = start..<out.count
+            }
+            i = end + 1
         }
-        return nil
     }
 }
 
