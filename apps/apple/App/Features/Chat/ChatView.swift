@@ -31,6 +31,8 @@ struct ChatView: View {
     @State private var downloading: Set<String> = []
     @State private var voice = VoicePlayer()
     @State private var preview = MediaPreview()
+    /// The photo and video viewer over this chat's media; set when a local photo or video is tapped.
+    @State private var viewer: ViewerRequest?
     @Environment(\.scenePhase) private var scenePhase
     @State private var history = ChatHistory()
     /// The store's newest messages as of the last sync, so ones that slide out of that window are kept.
@@ -76,6 +78,9 @@ struct ChatView: View {
                         } else {
                             ComposerView(text: $draft, send: { send(chat) }, sendSample: sendSample,
                                          sendAttachment: { model.sendAttachment($0, in: chatID) },
+                                         sendMedia: { model.sendMedia($0, caption: $1, in: chatID) },
+                                         attachmentLimit: model.attachmentLimitBytes,
+                                         sampleMedia: model.isSampleData,
                                          replyingTo: replyingTo,
                                          replyingToName: replyingTo.map { senderName($0.senderID) } ?? "",
                                          editing: editing,
@@ -128,6 +133,7 @@ struct ChatView: View {
         .onDisappear { voice.stop(); preview.close(); model.flushDrafts() }
         .onChange(of: scenePhase) { _, phase in if phase != .active { voice.stop(); model.flushDrafts() } }
         .mediaPreview(preview)
+        .mediaViewer($viewer)
         .onChange(of: searchRequest) { _, _ in openSearchIfRequested() }
         .onChange(of: draft) { _, text in
             // The clearing after a send is the store's job (it clears the draft only once the message is queued).
@@ -278,8 +284,13 @@ struct ChatView: View {
                 mediaState: MediaBubbleState(media: message.media, fileExists: model.mediaFileIsUsable),
                 download: { downloading.insert(message.id); model.downloadMedia(messageID: message.id, in: chatID) },
                 openMedia: { url, name, isPhoto in
-                    preview.open(source: url, mediaDirectory: model.mediaDirectory, name: name, isPhoto: isPhoto)
+                    if isPhoto || ChatMedia.isVideo(name: name ?? ""), let request = model.viewerRequest(chatID: chatID, startingAt: message.id) {
+                        viewer = request
+                    } else {
+                        preview.open(source: url, mediaDirectory: model.mediaDirectory, name: name, isPhoto: isPhoto)
+                    }
                 },
+                cancelUpload: { model.cancelUpload(messageID: message.id, in: chatID) },
                 voice: voice,
                 canDownload: !model.isSampleData,
                 retry: { model.retrySend(messageID: message.id) },

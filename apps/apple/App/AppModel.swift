@@ -341,6 +341,13 @@ final class AppModel {
 
     func send(_ content: MessageContent, in chatID: String) { chatStore.send(content, in: chatID); revision += 1 }
     func retrySend(messageID: String) { chatStore.retrySend(messageID: messageID); revision += 1 }
+    /// Cancel on an outgoing attachment that is still uploading.
+    func cancelUpload(messageID: String, in chatID: String) { chatStore.cancelUpload(messageID: messageID, in: chatID); revision += 1 }
+    /// Photos and videos from the preview screen; the caption follows the first as a text message.
+    func sendMedia(_ items: [OutgoingMedia], caption: String, in chatID: String) {
+        chatStore.sendMedia(items, caption: caption, in: chatID)
+        revision += 1
+    }
     func markRead(chatID: String) {
         chatStore.markRead(chatID: chatID)
         revision += 1
@@ -559,7 +566,7 @@ final class AppModel {
         settings.lockAfterSeconds = AppLockPolicy.defaultSeconds
         // Decoded pictures and plaintext copies made for previews and sends belong to it too.
         MediaPreview.removeTemporaryFolders()
-        Task { await ThumbnailLoader.shared.clear() }
+        Task { await ThumbnailLoader.shared.clear(); await VideoPoster.shared.clear() }
         MediaFileCheck.shared.clear()
         // The live store belongs to the signed-out account. An empty store stands in until the next sign-in.
         if !isSampleData {

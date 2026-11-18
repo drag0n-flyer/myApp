@@ -80,7 +80,8 @@ targets:
         INFOPLIST_KEY_UILaunchScreen_Generation: 'YES'
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: 'YES'
         INFOPLIST_KEY_NSMicrophoneUsageDescription: So people can hear you on calls and in voice messages.
-        INFOPLIST_KEY_NSCameraUsageDescription: Take photos to send, scan invite and device-linking QR codes, and make video calls.
+        INFOPLIST_KEY_NSCameraUsageDescription: Take photos and videos to send, scan invite and device-linking QR codes, and make video calls.
+        INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription: Save photos and videos from your chats to your library when you choose to.
         INFOPLIST_KEY_NSFaceIDUsageDescription: 'Unlock [App]'
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
     dependencies:

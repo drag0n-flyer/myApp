@@ -37,7 +37,12 @@ struct ChatInfoView: View {
                 }
 
                 Section {
-                    LabeledContent("Media, files and links", value: "\(mediaCount(chat))")
+                    NavigationLink {
+                        MediaGalleryView(chatID: chatID, model: model)
+                    } label: {
+                        LabeledContent("Media and files", value: "\(mediaCount(chat))")
+                    }
+                    .accessibilityIdentifier("chatinfo.media")
                 }
 
                 Section {
@@ -106,14 +111,8 @@ struct ChatInfoView: View {
         .foregroundStyle(.tint)
     }
 
-    private func mediaCount(_ chat: Chat) -> Int {
-        chat.messages.filter {
-            switch $0.content {
-            case .photo, .file: true
-            default: false
-            }
-        }.count
-    }
+    /// Counts the chat's photos, videos and files that this device has loaded.
+    private func mediaCount(_ chat: Chat) -> Int { ChatMedia.count(chat.messages) }
 }
 
 /// Safety number to compare in person or over a call (Messaging Design 20). It is the same on both phones.

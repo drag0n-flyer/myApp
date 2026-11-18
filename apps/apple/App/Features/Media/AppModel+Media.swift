@@ -16,6 +16,30 @@ extension AppModel {
         return MediaFileCheck.shared.isUsable(url, in: directory)
     }
 
+    /// Every photo, video and file of the chat that this device has, oldest first. Reads the store page by page, so a
+    /// long chat is covered, not only the newest messages.
+    func chatAttachmentMessages(in chatID: String) -> [Message] {
+        var all: [Message] = []
+        var before: String?
+        while all.count < 5_000 {
+            let page = chatStore.messages(in: chatID, before: before, limit: 200)
+            guard let first = page.first else { break }
+            all.insert(contentsOf: page, at: 0)
+            before = first.id
+        }
+        return all.filter { ChatMedia.kind(of: $0) != nil }
+    }
+
+    /// What the viewer shows when `messageID` is tapped: every local photo and video of the chat, in order.
+    func viewerRequest(chatID: String, startingAt messageID: String) -> ViewerRequest? {
+        let items = ChatMedia.viewerItems(chatAttachmentMessages(in: chatID), isUsable: mediaFileIsUsable)
+        guard !items.isEmpty else { return nil }
+        return ViewerRequest(items: items, start: ChatMedia.startIndex(of: messageID, in: items))
+    }
+
+    /// The size a video may have: the server's limit when known, otherwise the default.
+    var attachmentLimitBytes: Int64 { SendPlan.defaultLimitBytes }
+
     /// Starts (or restarts) a download; progress and the result arrive through the store's change callback.
     func downloadMedia(messageID: String, in chatID: String) {
         chatStore.download(messageID: messageID, in: chatID)
