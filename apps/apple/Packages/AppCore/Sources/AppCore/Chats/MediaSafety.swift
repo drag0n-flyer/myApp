@@ -4,22 +4,82 @@ import Foundation
 public enum MediaFileName {
     public static let maxLength = 100
     public static let fallback = "File"
-    public static func clean(_ raw: String) -> String { raw }
+
+    /// Drops path parts, control characters and direction overrides (such as U+202E), caps the length
+    /// (keeping a short extension) and never returns an empty or dot-only name.
+    public static func clean(_ raw: String) -> String {
+        let lastPart = raw.split(whereSeparator: { $0 == "/" || $0 == "\\" }).last.map(String.init) ?? ""
+        var scalars = String.UnicodeScalarView()
+        for scalar in lastPart.unicodeScalars where !isUnwanted(scalar) { scalars.append(scalar) }
+        let trimmed = String(scalars).trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty || trimmed.allSatisfy({ $0 == "." }) { return fallback }
+        return capped(trimmed)
+    }
+
+    private static func isUnwanted(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.properties.generalCategory {
+        case .control, .format, .lineSeparator, .paragraphSeparator, .surrogate, .privateUse, .unassigned: return true
+        default: return false
+        }
+    }
+
+    private static func capped(_ name: String) -> String {
+        guard name.count > maxLength else { return name }
+        let ext = name.lastIndex(of: ".").map { String(name[$0...]) } ?? ""
+        let keepExt = ext.count <= 12 ? ext : ""
+        let stem = String(name.dropLast(keepExt.count))
+        return String(stem.prefix(maxLength - keepExt.count)) + keepExt
+    }
 }
 
 /// Media files live only inside the app's own directories.
 public enum MediaPathGuard {
-    public static func isInside(_ url: URL, directory: URL) -> Bool { true }
-    public static func isSafeComponent(_ name: String) -> Bool { true }
+    /// True when `url` is a file strictly inside `directory` once `.` and `..` are resolved.
+    public static func isInside(_ url: URL, directory: URL) -> Bool {
+        let base = directory.standardizedFileURL.pathComponents
+        let target = url.standardizedFileURL.pathComponents
+        guard target.count > base.count, !target.contains("..") else { return false }
+        return Array(target.prefix(base.count)) == base
+    }
+
+    /// True for a name that can be one path component: no separators, no dots-only, no control characters.
+    public static func isSafeComponent(_ name: String) -> Bool {
+        guard !name.isEmpty, name != ".", name != "..", name.utf8.count <= 255 else { return false }
+        return !name.unicodeScalars.contains { $0 == "/" || $0 == "\\" || $0.properties.generalCategory == .control }
+    }
 }
 
 /// A small least-recently-used cache.
 public struct BoundedCache<Key: Hashable, Value> {
-    public init(capacity: Int) {}
-    public var count: Int { 0 }
-    public mutating func get(_ key: Key) -> Value? { nil }
-    public mutating func set(_ key: Key, _ value: Value) {}
-    public mutating func removeAll() {}
+    private let capacity: Int
+    private var values: [Key: Value] = [:]
+    private var order: [Key] = []
+
+    public init(capacity: Int) { self.capacity = max(capacity, 1) }
+
+    public var count: Int { values.count }
+
+    public mutating func get(_ key: Key) -> Value? {
+        guard let value = values[key] else { return nil }
+        touch(key)
+        return value
+    }
+
+    public mutating func set(_ key: Key, _ value: Value) {
+        values[key] = value
+        touch(key)
+        while order.count > capacity { values[order.removeFirst()] = nil }
+    }
+
+    public mutating func removeAll() {
+        values = [:]
+        order = []
+    }
+
+    private mutating func touch(_ key: Key) {
+        if let i = order.firstIndex(of: key) { order.remove(at: i) }
+        order.append(key)
+    }
 }
 
 /// Which voice message is playing; only one at a time.
@@ -27,8 +87,29 @@ public struct VoiceSelection: Equatable, Sendable {
     public enum Action: Equatable, Sendable { case play, stop }
     public private(set) var playingID: String?
     public init() {}
-    public mutating func toggle(_ id: String) -> Action { .play }
-    public mutating func finished(_ id: String) {}
-    public static func clamp(_ progress: Double) -> Double { progress }
-    public static func elapsedText(progress: Double, duration: Double) -> String { "" }
+
+    /// Tapping the playing message stops it; tapping another one switches to it.
+    public mutating func toggle(_ id: String) -> Action {
+        if playingID == id { playingID = nil; return .stop }
+        playingID = id
+        return .play
+    }
+
+    /// Playback ended or failed; only clears when it is still the current one.
+    public mutating func finished(_ id: String) {
+        if playingID == id { playingID = nil }
+    }
+
+    public mutating func stop() { playingID = nil }
+
+    public static func clamp(_ progress: Double) -> Double {
+        progress.isNaN ? 0 : min(max(progress, 0), 1)
+    }
+
+    /// "0:10"
+    public static func elapsedText(progress: Double, duration: Double) -> String {
+        let total = duration.isFinite ? max(duration, 0) : 0
+        let seconds = Int((clamp(progress) * total).rounded())
+        return "\(seconds / 60):" + (seconds % 60 < 10 ? "0" : "") + "\(seconds % 60)"
+    }
 }
