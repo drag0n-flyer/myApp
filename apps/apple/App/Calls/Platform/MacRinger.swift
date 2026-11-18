@@ -138,7 +138,9 @@ final class MacRinger: NSObject, UNUserNotificationCenterDelegate {
         guard let center else { return }
         let text = CallNotificationText.content(callerName: name, video: video, ringAge: ringAge)
         let content = UNMutableNotificationContent()
-        content.title = text.title
+        // A live ring may name the caller; a missed-call notice does not when app lock is on.
+        let title = text.isCall ? text.title : NotificationPlan.callTitle(callerName: text.title, appLockOn: NotificationHooks.appLockOn())
+        content.title = title.isEmpty ? AppBrand.name : title
         content.body = String(localized: String.LocalizationValue(text.body))
         content.userInfo = ["callID": callID, "video": video, "ringedAt": at.timeIntervalSince1970]
         if text.isCall {

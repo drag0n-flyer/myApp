@@ -18,11 +18,14 @@ final class NotificationActions: NSObject, UNUserNotificationCenterDelegate {
 
     nonisolated static let replyActionID = "REPLY"
     nonisolated static let markReadActionID = "MARK_READ"
-    nonisolated static let notSentPrefix = "not-sent-"
+    nonisolated static let notSentPrefix = NotificationPlan.notSentPrefix
 
     private(set) weak var model: AppModel?
     private var claims = ReplyClaims()
     private var syncTask: Task<Void, Never>?
+    private var syncAgain = false
+    private var lastBadge: Int?
+    private var settingsPublished = false
     private var lastUnread: [String: Int]?
     private var lastChatIDs: Set<String>?
     private var lastBlocked: Set<String> = []
@@ -119,17 +122,32 @@ final class NotificationActions: NSObject, UNUserNotificationCenterDelegate {
             isBlocked: chat.map { store.blockedIDs.contains($0.contactID) } ?? false,
             textLength: text.count, appLockOn: locked)
         var queued = false
+        var queuedID: String?
         if decision == .send, !budget.expired {
             // `send` returns nothing: the reply counts as queued only when the newest message is now this one, ours.
             let before = store.messages(in: chatID, before: nil, limit: 1).last?.id
             model.send(.text(text), in: chatID)
             if let after = store.messages(in: chatID, before: nil, limit: 1).last {
                 queued = after.id != before && after.senderID == store.me.id && after.content == .text(text)
+                if queued { queuedID = after.id }
             }
         }
+        if let queuedID { await waitForFlush(queuedID, chatID: chatID, store: store, budget: budget) }
         if ReplyDraft.outcome(decision: decision, queued: queued) == .keepDraft {
             NotificationHooks.saveReplyDraft(chatID: chatID, text: text)
             await postNotSent(chatID: chatID, contactName: locked ? nil : model.contact(id: chat?.contactID ?? chatID)?.displayName)
+        }
+    }
+
+    /// The reply is already durable in the outbox. Keep the app alive a little longer, polling every 200 ms, so the
+    /// send can leave before iOS suspends it. Stops when the message is no longer "sending", or at the bound.
+    private func waitForFlush(_ messageID: String, chatID: String, store: any ChatStore, budget: ActionBudget) async {
+        let wait = NotificationPlan.flushWait(remaining: budget.remaining)
+        let end = Date().addingTimeInterval(Double(wait.components.seconds) + Double(wait.components.attoseconds) / 1e18)
+        while Date() < end {
+            let message = store.messages(in: chatID, before: nil, limit: 20).first { $0.id == messageID }
+            if message == nil || message?.status != .sending { return }
+            try? await Task.sleep(for: .milliseconds(200))
         }
     }
 
@@ -187,16 +205,28 @@ final class NotificationActions: NSObject, UNUserNotificationCenterDelegate {
         let center = UNUserNotificationCenter.current()
         for note in await center.deliveredNotifications() {
             let old = note.request.content
-            guard old.categoryIdentifier == NotificationPlan.messageCategory,
-                  let chatID = NotificationRoute.chatID(userInfoChatID: nil, threadID: old.threadIdentifier)
-            else { continue }
-            let plan = NotificationPlan.lockedForm(chatID: chatID)
+            let rewrite = NotificationPlan.lockedRewrite(
+                identifier: note.request.identifier, category: old.categoryIdentifier,
+                threadID: old.threadIdentifier, hasCallID: old.userInfo["callID"] != nil)
             let content = UNMutableNotificationContent()
-            content.title = AppBrand.name
-            content.body = String(localized: String.LocalizationValue(plan.body))
-            content.threadIdentifier = plan.threadIdentifier
-            content.categoryIdentifier = plan.category
-            content.userInfo = ["chatID": chatID]
+            switch rewrite {
+            case .keep:
+                continue
+            case .hideMessage(let chatID):
+                let plan = NotificationPlan.lockedForm(chatID: chatID)
+                content.title = AppBrand.name
+                content.body = String(localized: String.LocalizationValue(plan.body))
+                content.threadIdentifier = plan.threadIdentifier
+                content.categoryIdentifier = plan.category
+                content.userInfo = ["chatID": chatID]
+            case .hideName:
+                // "Not sent" or a missed call: the body names nobody; only the title does.
+                content.title = AppBrand.name
+                content.body = old.body
+                content.threadIdentifier = old.threadIdentifier
+                content.categoryIdentifier = old.categoryIdentifier
+                content.userInfo = old.userInfo
+            }
             content.interruptionLevel = .passive   // replaced quietly, never alerts again
             // The same identifier replaces the delivered notification.
             try? await center.add(UNNotificationRequest(identifier: note.request.identifier, content: content, trigger: nil))
@@ -208,11 +238,14 @@ final class NotificationActions: NSObject, UNUserNotificationCenterDelegate {
     /// Called after every store change. One pass per burst: settings file, badge, and notifications of chats that were
     /// read, left the list or were blocked.
     func storeChanged() {
-        guard syncTask == nil else { return }
+        if syncTask != nil { syncAgain = true; return }   // one sync at a time; it runs once more when it finishes
         syncTask = Task { [weak self] in
-            await Task.yield()
+            repeat {
+                self?.syncAgain = false
+                await Task.yield()
+                await self?.sync()
+            } while self?.syncAgain == true
             self?.syncTask = nil
-            await self?.sync()
         }
     }
 
@@ -232,16 +265,21 @@ final class NotificationActions: NSObject, UNUserNotificationCenterDelegate {
         lastChatIDs = ids
         lastBlocked = blocked
         for chatID in gone { await Self.removeDeliveredNow(chatID: chatID) }
-        publishSettings(force: false)
+        publishSettings(force: !settingsPublished)   // the first time as soon as the store is ready
         // MERGE(A4): archived chats are already left out of `chats(in: .all)`; nothing else to pass.
         let count = NotificationPlan.badgeCount(unread: unread, muted: NotificationHooks.mutedChatIDs(), archived: [])
-        try? await UNUserNotificationCenter.current().setBadgeCount(count)
+        if count != lastBadge {
+            lastBadge = count
+            try? await UNUserNotificationCenter.current().setBadgeCount(count)
+        }
     }
 
     /// Writes the two settings the notification extension reads. Only when they changed.
     private func publishSettings(force: Bool) {
         guard let model, !model.isSampleData, !model.isUITesting, let container = LiveMessaging.container else { return }
-        let settings = NotificationSettings(mutedChatIDs: NotificationHooks.mutedChatIDs(), appLockOn: NotificationHooks.appLockOn())
+        let settings = NotificationSettings(
+            mutedChatIDs: NotificationHooks.mutedChatIDs(), appLockOn: NotificationHooks.appLockOn(),
+            requestChatIDs: Set(model.chatStore.messageRequests.map(\.id)))
         guard force || settings != lastSettings else { return }
         let url = container.appendingPathComponent(NotificationSettings.fileName)
         #if os(iOS)
@@ -249,7 +287,10 @@ final class NotificationActions: NSObject, UNUserNotificationCenterDelegate {
         #else
         let options: Data.WritingOptions = [.atomic]
         #endif
-        if (try? settings.encoded().write(to: url, options: options)) != nil { lastSettings = settings }
+        if (try? settings.encoded().write(to: url, options: options)) != nil {
+            lastSettings = settings
+            settingsPublished = true
+        }
     }
 
     /// Sign-out: nothing of the account stays in Notification Center or on the icon, and the extension reads
@@ -259,6 +300,8 @@ final class NotificationActions: NSObject, UNUserNotificationCenterDelegate {
         lastChatIDs = nil
         lastBlocked = []
         lastSettings = nil
+        settingsPublished = false
+        lastBadge = 0
         if let container = LiveMessaging.container {
             try? FileManager.default.removeItem(at: container.appendingPathComponent(NotificationSettings.fileName))
         }
@@ -286,6 +329,8 @@ private final class ActionBudget {
     #endif
 
     var expired: Bool { flag || Date() >= deadline }
+    /// What is left of the 20 seconds.
+    var remaining: Duration { flag ? .zero : .seconds(max(0, deadline.timeIntervalSinceNow)) }
 
     init() {
         #if os(iOS)

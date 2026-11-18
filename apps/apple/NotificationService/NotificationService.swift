@@ -94,7 +94,8 @@ private final class Delivery: @unchecked Sendable {
                     // A chat's message: one thread per chat, Reply only when unlocked, silent when muted.
                     let plan = NotificationPlan.content(
                         chatID: threadID, sender: title, text: body,
-                        muted: settings.mutedChatIDs.contains(threadID), appLockOn: settings.appLockOn)
+                        muted: settings.mutedChatIDs.contains(threadID), appLockOn: settings.appLockOn,
+                        isRequest: settings.requestChatIDs.contains(threadID))
                     content.title = plan.hidesContent ? strings.fallbackTitle : plan.title
                     content.body = plan.hidesContent ? strings.fallbackBody : plan.body
                     content.threadIdentifier = plan.threadIdentifier
