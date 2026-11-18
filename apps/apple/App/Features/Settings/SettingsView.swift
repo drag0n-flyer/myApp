@@ -47,7 +47,7 @@ struct SettingsView: View {
                         row("Data & Storage", "circle.lefthalf.filled", .green, value: model.stripLabel)
                     }
                     .accessibilityIdentifier("settings.data")
-                    Button(action: openNotificationSettings) {
+                    Button { openNotificationSettings() } label: {
                         row("Notification settings", "bell.badge.fill", .red) {
                             Image(systemName: "arrow.up.forward.app").foregroundStyle(.secondary).accessibilityHidden(true)
                         }
@@ -128,6 +128,7 @@ struct ProfileView: View {
             }
             Section {
                 Button("Sign out", role: .destructive) { confirmSignOut = true }
+                    .disabled(model.isSigningOut)
                     .accessibilityIdentifier("profile.signout")
             }
             Section {
@@ -142,6 +143,7 @@ struct ProfileView: View {
         .navigationTitle("Account")
         .confirmationDialog("Sign out?", isPresented: $confirmSignOut, titleVisibility: .visible) {
             Button("Sign out", role: .destructive) {
+                guard !model.isSigningOut else { return }
                 Task {
                     let result = await model.signOut()
                     signOutError = result == .wipe ? nil : result
@@ -208,7 +210,7 @@ func openNotificationSettings() {
 struct NotificationSettingsForm: View {
     var body: some View {
         Form {
-            Button("Notification settings", action: openNotificationSettings)
+            Button("Notification settings") { openNotificationSettings() }
                 .accessibilityIdentifier("settings.notifications")
         }
         .formStyle(.grouped)

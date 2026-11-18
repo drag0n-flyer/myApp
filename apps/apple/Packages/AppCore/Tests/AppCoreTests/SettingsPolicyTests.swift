@@ -32,5 +32,5 @@ import Testing
 
 @Test func syncScopes() {
     let account = Set(SettingKey.allCases.filter { $0.scope == .account })
-    #expect(account == [.chatFolders, .contacts, .blockedList, .privacy, .callDataMode, .mobileDataLimit, .readState, .disappearingMessages])
+    #expect(account == [.chatFolders, .contacts, .blockedList, .privacy, .callDataMode, .mobileDataLimit, .readState])
 }
