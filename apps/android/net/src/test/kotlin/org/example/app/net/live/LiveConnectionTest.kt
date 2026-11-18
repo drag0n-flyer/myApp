@@ -32,6 +32,7 @@ import org.example.app.contracts.ConnectionState
 import org.example.app.contracts.MemorySecretStore
 import org.example.app.contracts.ServerEvent
 import org.example.app.contracts.ServerException
+import org.example.app.contracts.sendEphemeral
 import org.example.app.net.ServerClient
 import org.example.app.net.Session
 import org.example.app.net.SessionStore
@@ -212,6 +213,39 @@ class LiveConnectionTest {
         assertEquals("ringing", first.await()!!["state"]!!.jsonPrimitive.content)
         val e = second.await().exceptionOrNull() as ServerException
         assertEquals("not_found", e.code)
+    }
+
+    @Test
+    fun decodesConvEphemeralAndDropsMalformedOnes() = runBlocking {
+        upgrade()
+        val c = connection()
+        val ev = async(Dispatchers.Default) { withTimeout(10_000) { c.events.first() } }
+        c.start()
+        val ws = eventually("server socket") { serverSockets.poll() }
+        val p = Base64Url.encode(byteArrayOf(9, 8, 7))
+        ws.send("""{"type":"conv.ephemeral","data":{"conversationID":"cv1","epoch":"x","from":{"account":"a2","device":"d2"},"ciphertext":"$p"}}""")
+        ws.send("""{"type":"conv.ephemeral","data":{"conversationID":"cv1","epoch":3,"from":{"account":"a2"},"ciphertext":"$p"}}""")
+        ws.send("""{"type":"conv.ephemeral","data":{"conversationID":"cv1","epoch":3,"from":{"account":"a2","device":"d2"},"ciphertext":"!!"}}""")
+        ws.send("""{"type":"conv.ephemeral","data":{"conversationID":"cv1","epoch":3,"from":{"account":"a2","device":"d2"},"ciphertext":"$p"}}""")
+        val e = ev.await() as ServerEvent.ConvEphemeral
+        assertEquals("cv1", e.conversationId); assertEquals(3L, e.epoch)
+        assertEquals("a2", e.fromAccountId); assertEquals("d2", e.fromDeviceId)
+        assertContentEquals(byteArrayOf(9, 8, 7), e.ciphertext)
+    }
+
+    @Test
+    fun sendEphemeralSendsTheExactFrame() = runBlocking {
+        upgrade()
+        val c = connection()
+        c.start()
+        val ws = eventually("server socket") { serverSockets.poll() }
+        awaitState(c, ConnectionState.Connected)
+        val r = async(Dispatchers.Default) { c.sendEphemeral("cv1", 4, byteArrayOf(1, 2)) }
+        val frame = ServerJsonParse(eventually("frame") { serverMessages.poll() })
+        assertEquals("conv.ephemeral", frame["type"]!!.jsonPrimitive.content)
+        assertEquals("""{"conversationID":"cv1","epoch":4,"ciphertext":"AQI"}""", frame["data"].toString())
+        ws.send("""{"type":"ack","id":"${frame["id"]!!.jsonPrimitive.content}"}""")
+        r.await()
     }
 
     @Test

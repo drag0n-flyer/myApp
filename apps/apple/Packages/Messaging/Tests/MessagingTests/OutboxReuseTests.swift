@@ -182,6 +182,31 @@ import MessagingTestKit
         #expect(rig.spy.encryptCount == 2)
     }
 
+    @Test func disappearingMessageKeepsItsExpiryOnRepostAndIsNeverPostedAfterIt() async throws {
+        let rig = try await makeRig()
+        let env = ContentEnvelope(id: "d1", at: 1_700_000_000_000, body: .text("short lived", replyTo: nil), ttl: 600)
+        try rig.outbox.enqueue(env, chatID: rig.p.chatID)
+        rig.p.probe.failNext(3)
+        try await flushAndWait(rig, rig.outbox, attempt: 0)
+        try await flushAndWait(rig, rig.outbox, attempt: 1)
+        try await flushAndWait(rig, rig.outbox, attempt: 2)
+        let posts = rig.p.messagePosts()
+        #expect(posts.count == 3)
+        #expect(Set(posts.compactMap { $0["expiresAt"] as? String }).count == 1)
+        #expect(posts.allSatisfy { $0["expiresAt"] != nil })
+        #expect(Set(postedCiphertexts(rig)).count == 1)
+        #expect(rig.spy.encryptCount == 1)
+        #expect(try storedCiphertexts(rig).count == 1)
+        // Its life passes while it waits: nothing is posted, the row and its ciphertext are gone.
+        rig.p.clock.advance(601)
+        try await rig.outbox.flush()
+        #expect(rig.p.messagePosts().count == 3)
+        #expect(try rig.repo.message(id: "d1")?.status == "failed")
+        #expect(try storedCiphertexts(rig).isEmpty)
+        #expect(try rig.database.query("SELECT COUNT(*) FROM outbox") { $0.int(0) } == [0])
+        #expect(rig.spy.encryptCount == 1)
+    }
+
     func advanceEpoch(_ rig: Rig) async throws {
         let cat = await makeDevice(rig.p.server, account: "acc-ana", username: "ana")
         let packages = try await cat.deps.mls.makeKeyPackages(count: 1)

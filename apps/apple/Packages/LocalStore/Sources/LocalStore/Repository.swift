@@ -44,10 +44,10 @@ public final class Repository: @unchecked Sendable {
 
     // MARK: chats
 
-    private let chatCols = "id, is_request, unread, muted, last_activity, pinned_at, archived"
+    private let chatCols = "id, is_request, unread, muted, last_activity, pinned_at, archived, timer_seconds"
     private func chatRow(_ r: Row) -> ChatRecord {
         ChatRecord(id: r.text(0), isRequest: r.int(1) != 0, unread: Int(r.int(2)), muted: r.int(3) != 0, lastActivity: date(r.int(4)),
-                   pinnedAt: r.isNull(5) ? nil : date(r.int(5)), archived: r.int(6) != 0)
+                   pinnedAt: r.isNull(5) ? nil : date(r.int(5)), archived: r.int(6) != 0, timerSeconds: Int(r.int(7)))
     }
 
     /// Inserts the chat, or updates `is_request`, `unread` and `last_activity` of an existing one. Pin, mute and
@@ -77,6 +77,83 @@ public final class Repository: @unchecked Sendable {
 
     public func setRequest(chatID: String, _ v: Bool) throws {
         try db.execute("UPDATE chats SET is_request=? WHERE id=?", [b(v), .text(chatID)])
+    }
+
+    // MARK: disappearing messages
+
+    /// The chat's timer in seconds (0 = off, also for an unknown chat). One column, one statement.
+    public func setTimer(chatID: String, seconds: Int) throws {
+        try db.execute("UPDATE chats SET timer_seconds=? WHERE id=?", [.int(Int64(seconds)), .text(chatID)])
+    }
+
+    public func timerSeconds(chatID: String) throws -> Int {
+        try db.query("SELECT timer_seconds FROM chats WHERE id=?", [.text(chatID)]) { Int($0.int(0)) }.first ?? 0
+    }
+
+    /// Removes every message whose `expires_at` is at or before `now`, in one transaction: the row, its attachment
+    /// rows, reactions and search entry (cascade and trigger) and any queued send. Returns what was removed, with the
+    /// attachment file paths, so the caller can delete the files and the delivered notifications.
+    /// With `me` (this account), each chat's unread count drops by the removed messages that were unread and from others.
+    public func sweepExpired(now: Date, me: String? = nil) throws -> [ExpiredMessage] {
+        try db.transaction { d in
+            if let me {
+                let counts = try d.query("""
+                    SELECT chat_id, COUNT(*) FROM messages WHERE expires_at IS NOT NULL AND expires_at <= ? AND \(Self.unreadFromOthers)
+                    GROUP BY chat_id
+                    """, [.int(ms(now)), .text(me)]) { ($0.text(0), Int($0.int(1))) }
+                for (chatID, n) in counts {
+                    try d.execute("UPDATE chats SET unread = MAX(0, unread - ?) WHERE id=?", [.int(Int64(n)), .text(chatID)])
+                }
+            }
+            let due = try d.query("SELECT id, chat_id FROM messages WHERE expires_at IS NOT NULL AND expires_at <= ? ORDER BY expires_at, id",
+                                  [.int(ms(now))]) { ($0.text(0), $0.text(1)) }
+            var removed: [ExpiredMessage] = []
+            for (id, chatID) in due {
+                let paths = try d.query("SELECT local_path FROM attachments WHERE message_id=? AND local_path IS NOT NULL", [.text(id)]) { $0.text(0) }
+                try d.execute("DELETE FROM outbox WHERE message_id=?", [.text(id)])
+                try d.execute("DELETE FROM messages WHERE id=?", [.text(id)])
+                removed.append(ExpiredMessage(id: id, chatID: chatID, localPaths: paths))
+            }
+            return removed
+        }
+    }
+
+    /// Unread messages from others (not `me`, not system lines, not read, not deleted).
+    private static let unreadFromOthers = "sender_account != ? AND sender_account != 'system' AND status != 'read' AND deleted = 0 AND undecryptable = 0"
+
+    /// Per chat, how many of its counted unread messages have expired but are not swept yet. A reader subtracts this
+    /// from `ChatRecord.unread`, so an expired message no longer counts before the sweep has run.
+    public func expiredUnreadCounts(me: String) throws -> [String: Int] {
+        let rows = try db.query("""
+            SELECT chat_id, COUNT(*) FROM messages WHERE expires_at IS NOT NULL AND expires_at <= ? AND \(Self.unreadFromOthers)
+            GROUP BY chat_id
+            """, [.int(ms(now())), .text(me)]) { ($0.text(0), Int($0.int(1))) }
+        return Dictionary(rows, uniquingKeysWith: { $1 })
+    }
+
+    /// The earliest `expires_at` of any message, for the sweep timer.
+    public func nextExpiry() throws -> Date? {
+        try db.query("SELECT MIN(expires_at) FROM messages WHERE expires_at IS NOT NULL") { $0.isNull(0) ? nil : date($0.int(0)) }.first ?? nil
+    }
+
+    // MARK: profiles
+
+    public func profile(for accountID: String) throws -> ProfileRecord? {
+        try db.query("SELECT account_id, name, photo, ver FROM profiles WHERE account_id=?", [.text(accountID)]) {
+            ProfileRecord(accountID: $0.text(0), name: $0.text(1), photo: $0.isNull(2) ? nil : $0.blob(2), ver: Int($0.int(3)))
+        }.first
+    }
+
+    /// Keeps the profile only when `ver` is at least 1 and strictly higher than the stored one; `false` otherwise,
+    /// and nothing changes.
+    @discardableResult
+    public func saveProfile(accountID: String, name: String, photo: Data?, ver: Int) throws -> Bool {
+        guard ver >= 1 else { return false }
+        return try db.run("""
+            INSERT INTO profiles(account_id, name, photo, ver) VALUES (?,?,?,?)
+            ON CONFLICT(account_id) DO UPDATE SET name=excluded.name, photo=excluded.photo, ver=excluded.ver
+            WHERE excluded.ver > profiles.ver
+            """, [.text(accountID), .text(name), photo.map { .blob($0) } ?? .null, .int(Int64(ver))]) > 0
     }
 
     // MARK: chat list actions (one column, one statement)
@@ -272,14 +349,19 @@ public final class Repository: @unchecked Sendable {
 
     private let msgCols = """
         id, chat_id, conversation_id, sender_account, sender_device, sent_at, received_at, envelope, status, reply_to, \
-        edited_at, deleted, undecryptable, folded
+        edited_at, deleted, undecryptable, folded, expires_at, caption, link_preview
         """
+
+    /// SQL that hides a message once its time has come, before the sweep has removed it.
+    private var notExpired: String { "(expires_at IS NULL OR expires_at > \(ms(now())))" }
     private func msgRow(_ r: Row) -> MessageRecord {
         MessageRecord(id: r.text(0), chatID: r.text(1), conversationID: r.isNull(2) ? nil : r.text(2),
                       senderAccount: r.text(3), senderDevice: r.isNull(4) ? nil : r.text(4),
                       sentAt: date(r.int(5)), receivedAt: date(r.int(6)), envelope: r.blob(7), status: r.text(8),
                       replyTo: r.isNull(9) ? nil : r.text(9), editedAt: r.isNull(10) ? nil : date(r.int(10)),
-                      deleted: r.int(11) != 0, undecryptable: r.int(12) != 0, folded: r.text(13))
+                      deleted: r.int(11) != 0, undecryptable: r.int(12) != 0, folded: r.text(13),
+                      expiresAt: r.isNull(14) ? nil : date(r.int(14)), caption: r.isNull(15) ? nil : r.text(15),
+                      linkPreview: r.isNull(16) ? nil : r.text(16))
     }
 
     /// Returns `true` when inserted, `false` when the ID already exists.
@@ -287,10 +369,12 @@ public final class Repository: @unchecked Sendable {
     public func insertMessage(_ m: MessageRecord) throws -> Bool {
         try db.run("""
             INSERT OR IGNORE INTO messages(id, chat_id, conversation_id, sender_account, sender_device, sent_at, received_at,
-            envelope, status, reply_to, edited_at, deleted, undecryptable, folded) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            envelope, status, reply_to, edited_at, deleted, undecryptable, folded, expires_at, caption, link_preview)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, [.text(m.id), .text(m.chatID), opt(m.conversationID), .text(m.senderAccount), opt(m.senderDevice),
                   .int(ms(m.sentAt)), .int(ms(m.receivedAt)), .blob(m.envelope), .text(m.status), opt(m.replyTo),
-                  m.editedAt.map { .int(ms($0)) } ?? .null, b(m.deleted), b(m.undecryptable), .text(m.folded)]) > 0
+                  m.editedAt.map { .int(ms($0)) } ?? .null, b(m.deleted), b(m.undecryptable), .text(m.folded),
+                  m.expiresAt.map { .int(ms($0)) } ?? .null, opt(m.caption), opt(m.linkPreview)]) > 0
     }
 
     public func message(id: String) throws -> MessageRecord? {
@@ -299,7 +383,7 @@ public final class Repository: @unchecked Sendable {
 
     /// The newest `limit` messages older than `before` (all when nil), returned oldest first.
     public func messages(chatID: String, before: MessageRecord?, limit: Int) throws -> [MessageRecord] {
-        var sql = "SELECT \(msgCols) FROM messages WHERE chat_id=?"
+        var sql = "SELECT \(msgCols) FROM messages WHERE chat_id=? AND \(notExpired)"
         var args: [SQLValue] = [.text(chatID)]
         if let before {
             sql += " AND (sent_at < ? OR (sent_at = ? AND id < ?))"
@@ -314,7 +398,7 @@ public final class Repository: @unchecked Sendable {
     /// older than `before` (all when nil). One query, so a gallery never reads the whole chat.
     public func attachmentMessages(chatID: String, before: MessageRecord?, limit: Int) throws -> [MessageRecord] {
         var sql = """
-            SELECT \(msgCols) FROM messages WHERE chat_id=? AND deleted=0
+            SELECT \(msgCols) FROM messages WHERE chat_id=? AND deleted=0 AND \(notExpired)
             AND EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = messages.id AND a.kind IN ('photo','file'))
             """
         var args: [SQLValue] = [.text(chatID)]
@@ -386,7 +470,7 @@ public final class Repository: @unchecked Sendable {
             let escaped = q.replacingOccurrences(of: "\\", with: "\\\\")
                 .replacingOccurrences(of: "%", with: "\\%").replacingOccurrences(of: "_", with: "\\_")
             return try db.query("""
-                SELECT chat_id, id FROM messages WHERE deleted=0 AND folded LIKE ? ESCAPE '\\'
+                SELECT chat_id, id FROM messages WHERE deleted=0 AND \(notExpired) AND folded LIKE ? ESCAPE '\\'
                 AND (? IS NULL OR chat_id = ?)
                 ORDER BY sent_at DESC LIMIT ?
                 """, [.text("%" + escaped + "%"), scope, scope, .int(Int64(limit))]) { (chatID: $0.text(0), messageID: $0.text(1)) }
@@ -394,7 +478,7 @@ public final class Repository: @unchecked Sendable {
         let phrase = "\"" + q.replacingOccurrences(of: "\"", with: "\"\"") + "\""
         return try db.query("""
             SELECT m.chat_id, m.id FROM message_fts JOIN messages m ON m.rowid = message_fts.rowid
-            WHERE message_fts MATCH ? AND m.deleted=0 AND (? IS NULL OR m.chat_id = ?)
+            WHERE message_fts MATCH ? AND m.deleted=0 AND (m.expires_at IS NULL OR m.expires_at > \(ms(now()))) AND (? IS NULL OR m.chat_id = ?)
             ORDER BY m.sent_at DESC LIMIT ?
             """, [.text(phrase), scope, scope, .int(Int64(limit))]) { (chatID: $0.text(0), messageID: $0.text(1)) }
     }
@@ -713,7 +797,7 @@ public final class Repository: @unchecked Sendable {
     /// Deletes every row in every table (sign-out / reset).
     public func wipe() throws {
         try db.transaction { d in
-            for table in ["messages", "drafts", "chats", "contacts", "outbox", "inbox_raw", "processed", "folders", "blocked", "kv"] {
+            for table in ["messages", "drafts", "chats", "contacts", "outbox", "inbox_raw", "processed", "folders", "blocked", "profiles", "kv"] {
                 try d.execute("DELETE FROM \(table)")
             }
         }

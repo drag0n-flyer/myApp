@@ -4,13 +4,14 @@ import Testing
 
 /// The schema version that adds `outbox.ciphertext` and `outbox.ciphertext_epoch`. Renumber here (and in
 /// `Migrations.swift`) if another branch takes this version first.
-private let ciphertextVersion: Int64 = 3
+private let ciphertextVersion: Int64 = 4
 
 /// A database as the previous build left it, with queued outbox rows.
 private func populatedBefore() throws -> Database {
     let db = try Database.inMemory()
     for s in schemaV1 { try db.execute(s) }
     for s in schemaV2 { try db.execute(s) }
+    for s in schemaV3 { try db.execute(s) }
     try db.execute("PRAGMA user_version = \(ciphertextVersion - 1)")
     try db.execute("INSERT INTO chats(id, is_request, unread, muted, last_activity) VALUES ('bob',0,0,0,500)")
     try db.execute("""

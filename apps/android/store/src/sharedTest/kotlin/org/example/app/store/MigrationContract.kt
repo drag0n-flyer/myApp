@@ -65,7 +65,7 @@ abstract class MigrationContract {
         val db = openCurrent()
         try {
             val raw = db.openHelper.writableDatabase
-            assertEquals(2, raw.version)
+            assertEquals(AppDatabase.VERSION, raw.version)
             assertEquals(before, snapshot(raw), "a version 1 row changed or was lost")
             // Foreign keys still hold after the upgrade.
             raw.query("PRAGMA foreign_key_check").use { assertFalse(it.moveToFirst(), "foreign key violation after migration") }
@@ -112,7 +112,7 @@ abstract class MigrationContract {
         openCurrent().use { }
         val db = openCurrent()
         try {
-            assertEquals(2, db.openHelper.writableDatabase.version)
+            assertEquals(AppDatabase.VERSION, db.openHelper.writableDatabase.version)
             assertEquals(3, RoomRepository(db, allowLikeFallback = !hasFts).chats().size)
         } finally {
             db.close()

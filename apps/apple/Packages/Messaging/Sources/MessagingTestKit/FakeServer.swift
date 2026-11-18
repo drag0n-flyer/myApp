@@ -76,6 +76,8 @@ public actor FakeServer {
         public let senderDeviceID: String
         public let ciphertext: Data
         public let escrow: Data?
+        /// The RFC 3339 text the sender posted as `expiresAt`, if any.
+        public let expiresAt: String?
     }
 
     /// The next `count` commit requests fail with `409 stale_epoch` (the epoch does not change).
@@ -277,6 +279,7 @@ public actor FakeServer {
         let ciphertext: Base64URLData
         let escrow: Base64URLData?
         let clientMsgID: String
+        let expiresAt: String?
     }
     private struct AckBody: Decodable { let upTo: Int64 }
 
@@ -367,7 +370,8 @@ public actor FakeServer {
         conversations[id] = c
         messageSeqs[key] = seq
         messageLog[id, default: []].append(StoredMessage(
-            seq: seq, epoch: b.epoch, senderDeviceID: me.device, ciphertext: b.ciphertext.data, escrow: b.escrow?.data))
+            seq: seq, epoch: b.epoch, senderDeviceID: me.device, ciphertext: b.ciphertext.data, escrow: b.escrow?.data,
+            expiresAt: b.expiresAt))
         for device in c.members.sorted() where device != me.device {
             guard let account = deviceAccount[device], !blocks[account, default: []].contains(me.account) else { continue }
             deliver(to: device, kind: "message", conversation: id, seq: seq, epoch: Int64(b.epoch), from: me, payload: b.ciphertext.data)

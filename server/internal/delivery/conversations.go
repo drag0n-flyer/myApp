@@ -14,6 +14,9 @@ import (
 
 var uuidRE = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
+// maxGroupMembers is the most accounts a group may hold, the owner included.
+const maxGroupMembers = 100
+
 func (m *Module) conversationRoutes(r *httpx.Router) {
 	r.Authed("POST /v1/conversations", m.createConversation)
 	r.Authed("GET /v1/conversations/{id}", m.getConversation)
@@ -24,51 +27,106 @@ type conversationResponse struct {
 	ConversationID string `json:"conversationID"`
 	Mode           string `json:"mode"`
 	Epoch          int64  `json:"epoch"`
+	Kind           string `json:"kind"`
+}
+
+type memberJSON struct {
+	Account string `json:"account"`
+	Role    string `json:"role"`
 }
 
 func (m *Module) createConversation(w http.ResponseWriter, r *http.Request) error {
 	p := httpx.PrincipalFrom(r.Context())
 	var in struct {
-		Members []string `json:"members"`
+		Kind     string   `json:"kind"`
+		Members  []string `json:"members"`
+		Accounts []string `json:"accounts"`
 	}
 	if err := httpx.Decode(r, &in); err != nil {
 		return err
 	}
-	if len(in.Members) != 1 {
-		return httpx.Err("bad_request", "members must hold exactly one other account")
-	}
-	other := strings.ToLower(in.Members[0])
-	if other == strings.ToLower(p.AccountID) {
-		return httpx.Err("bad_request", "members must hold exactly one other account")
-	}
 	ctx := r.Context()
-	if !uuidRE.MatchString(other) {
-		return httpx.Err("not_found", "no such account")
+	var kind string
+	var others []string
+	switch in.Kind {
+	case "", "direct":
+		kind = "direct"
+		if len(in.Members) != 1 {
+			return httpx.Err("bad_request", "members must hold exactly one other account")
+		}
+		other := strings.ToLower(in.Members[0])
+		if other == strings.ToLower(p.AccountID) {
+			return httpx.Err("bad_request", "members must hold exactly one other account")
+		}
+		if !uuidRE.MatchString(other) {
+			return httpx.Err("not_found", "no such account")
+		}
+		others = []string{other}
+	case "group":
+		kind = "group"
+		var err error
+		if others, err = parseAccountList(in.Accounts, p.AccountID); err != nil {
+			return err
+		}
+		if len(others) < 1 || len(others) > maxGroupMembers-1 {
+			return httpx.Err("bad_request", "accounts must hold 1 to 99 other accounts")
+		}
+		if err := takeTokens(w, m.groupCreateLimit, p.AccountID, 1); err != nil {
+			return err
+		}
+	default:
+		return httpx.Err("bad_request", "kind must be direct or group")
 	}
-	var exists bool
-	if err := m.d.DB.QueryRow(ctx, `select exists (select 1 from accounts where id = $1)`, other).Scan(&exists); err != nil {
-		return err
-	}
-	if !exists {
-		return httpx.Err("not_found", "no such account")
-	}
+	// A token spent on a request that then fails is given back.
+	charged := kind == "group"
+	done := false
+	defer func() {
+		if charged && !done {
+			m.groupCreateLimit.Refund(p.AccountID, 1)
+		}
+	}()
 
 	id := core.NewID()
 	mode := m.d.Policy.Encryption.NewConversations
 	err := pgx.BeginFunc(ctx, m.d.DB, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `insert into conversations (id, mode, created_at) values ($1, $2, $3)`, id, mode, m.d.Now()); err != nil {
+		// Pin every account named (and the creator) before anything refers to
+		// it: a concurrent account deletion either finishes first, and this
+		// answers not_found, or waits for this transaction and then removes
+		// the new member as a proper leave. Never a foreign-key error.
+		pinned, err := lockAccounts(ctx, tx, append(append([]string{}, others...), strings.ToLower(p.AccountID)))
+		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `insert into conversation_accounts (conversation_id, account_id) values ($1, $2), ($1, $3)`, id, p.AccountID, other); err != nil {
+		if pinned != len(others)+1 {
+			return httpx.Err("not_found", "no such account")
+		}
+		if kind == "group" {
+			// An account that blocked the caller is left out without a word.
+			if others, err = m.dropBlockers(ctx, others, p.AccountID); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(ctx, `insert into conversations (id, mode, kind, created_at) values ($1, $2, $3, $4)`, id, mode, kind, m.d.Now()); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `insert into conversation_devices (conversation_id, device_id) values ($1, $2)`, id, p.DeviceID)
+		creatorRole := "member"
+		if kind == "group" {
+			creatorRole = "owner"
+		}
+		if _, err := tx.Exec(ctx, `insert into conversation_accounts (conversation_id, account_id, role) values ($1, $2, $3)`, id, p.AccountID, creatorRole); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `insert into conversation_accounts (conversation_id, account_id) select $1, unnest($2::uuid[])`, id, others); err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `insert into conversation_devices (conversation_id, device_id) values ($1, $2)`, id, p.DeviceID)
 		return err
 	})
 	if err != nil {
 		return err
 	}
-	httpx.JSON(w, http.StatusOK, conversationResponse{id, mode, 0})
+	done = true
+	httpx.JSON(w, http.StatusOK, conversationResponse{id, mode, 0, kind})
 	return nil
 }
 
@@ -79,15 +137,47 @@ func (m *Module) getConversation(w http.ResponseWriter, r *http.Request) error {
 	if !uuidRE.MatchString(id) {
 		return notFound
 	}
-	var out conversationResponse
-	err := m.d.DB.QueryRow(r.Context(),
-		`select c.id::text, c.mode, c.epoch from conversations c
-		 join conversation_devices cd on cd.conversation_id = c.id
-		 where c.id = $1 and cd.device_id = $2`, id, p.DeviceID).Scan(&out.ConversationID, &out.Mode, &out.Epoch)
+	ctx := r.Context()
+	var out struct {
+		conversationResponse
+		Members        []memberJSON `json:"members"`
+		MembersVersion int64        `json:"membersVersion"`
+	}
+	// One snapshot, so the member list and its version always agree.
+	tx, err := m.d.DB.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	// A direct conversation is readable by its member devices; a group by any
+	// device of a member account (a removed account's devices are gone from
+	// both sets in the same transaction that removes it).
+	err = tx.QueryRow(ctx,
+		`select c.id::text, c.mode, c.epoch, c.kind, c.members_version from conversations c
+		 where c.id = $1 and (
+		   (c.kind = 'direct' and exists (select 1 from conversation_devices cd where cd.conversation_id = c.id and cd.device_id = $2))
+		   or (c.kind = 'group' and exists (select 1 from conversation_accounts ca where ca.conversation_id = c.id and ca.account_id = $3)))`,
+		id, p.DeviceID, p.AccountID).Scan(&out.ConversationID, &out.Mode, &out.Epoch, &out.Kind, &out.MembersVersion)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return notFound
 	}
 	if err != nil {
+		return err
+	}
+	rows, err := tx.Query(ctx, `select account_id::text, role from conversation_accounts where conversation_id = $1 order by account_id`, id)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	out.Members = []memberJSON{}
+	for rows.Next() {
+		var mm memberJSON
+		if err := rows.Scan(&mm.Account, &mm.Role); err != nil {
+			return err
+		}
+		out.Members = append(out.Members, mm)
+	}
+	if err := rows.Err(); err != nil {
 		return err
 	}
 	httpx.JSON(w, http.StatusOK, out)
@@ -132,7 +222,8 @@ func (m *Module) postCommit(w http.ResponseWriter, r *http.Request) error {
 		// Lock the conversation row first: commits are serialised, and a
 		// non-member learns nothing, not even the epoch.
 		var current int64
-		err := tx.QueryRow(ctx, `select epoch from conversations where id = $1 for update`, id).Scan(&current)
+		var kind string
+		err := tx.QueryRow(ctx, `select epoch, kind from conversations where id = $1 for update`, id).Scan(&current, &kind)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return notFound
 		}
@@ -174,6 +265,25 @@ func (m *Module) postCommit(w http.ResponseWriter, r *http.Request) error {
 		// is skipped silently: no welcome and no membership.
 		var added []string
 		var allowed []string
+		if kind == "group" && len(remove) > 0 {
+			// In a group every named device must be a device of the sender's
+			// own account, or a device of a non-member account that is still
+			// in conversation_devices. Unknown IDs and everything else are
+			// refused, so the list cannot be used to probe. Accounts are
+			// removed through the account endpoint instead.
+			var ok int
+			if err := tx.QueryRow(ctx,
+				`select count(*) from devices d
+				 where d.id::text = any($1) and (d.account_id = $2 or (
+				   not exists (select 1 from conversation_accounts ca where ca.conversation_id = $3 and ca.account_id = d.account_id)
+				   and exists (select 1 from conversation_devices cd where cd.conversation_id = $3 and cd.device_id = d.id)))`,
+				remove, p.AccountID, id).Scan(&ok); err != nil {
+				return err
+			}
+			if ok != len(remove) {
+				return httpx.Err("forbidden", "a device may not be removed by this commit")
+			}
+		}
 		if len(add) > 0 {
 			ok, err := queryPairs(ctx, tx,
 				`select d.id::text, d.account_id::text from devices d
@@ -185,7 +295,7 @@ func (m *Module) postCommit(w http.ResponseWriter, r *http.Request) error {
 			if len(ok) != len(add) {
 				return httpx.Err("forbidden", "a device does not belong to this conversation's accounts")
 			}
-			blocked, err := m.blockers(ctx, ok, p.AccountID)
+			blocked, err := m.blockersIn(ctx, kind, ok, p.AccountID)
 			if err != nil {
 				return err
 			}
@@ -195,7 +305,7 @@ func (m *Module) postCommit(w http.ResponseWriter, r *http.Request) error {
 				}
 			}
 		}
-		snapBlocked, err := m.blockers(ctx, snapshot, p.AccountID)
+		snapBlocked, err := m.blockersIn(ctx, kind, snapshot, p.AccountID)
 		if err != nil {
 			return err
 		}
@@ -208,8 +318,22 @@ func (m *Module) postCommit(w http.ResponseWriter, r *http.Request) error {
 			lockIDs = append(lockIDs, dv.device)
 		}
 		lockIDs = append(lockIDs, allowed...)
-		if err := lockDevices(ctx, tx, lockIDs); err != nil {
+		locked, err := lockDevices(ctx, tx, lockIDs)
+		if err != nil {
 			return err
+		}
+		if len(allowed) > 0 {
+			// A device deleted between the lookup above and the lock is gone:
+			// nothing is applied (the whole transaction rolls back).
+			lockedSet := make(map[string]bool, len(locked))
+			for _, id := range locked {
+				lockedSet[id] = true
+			}
+			for _, id := range allowed {
+				if !lockedSet[id] {
+					return httpx.Err("conflict", "a device no longer exists")
+				}
+			}
 		}
 		if len(allowed) > 0 {
 			added, err = queryStrings(ctx, tx,

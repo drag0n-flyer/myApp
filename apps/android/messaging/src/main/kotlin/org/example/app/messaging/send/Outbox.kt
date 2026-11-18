@@ -10,6 +10,7 @@ import org.example.app.contracts.DeliveryApi
 import org.example.app.contracts.GroupId
 import org.example.app.contracts.MlsEngine
 import org.example.app.contracts.ServerException
+import org.example.app.core.people.Expiry
 import org.example.app.messaging.content.ContentCodec
 import org.example.app.messaging.content.ContentEnvelope
 import org.example.app.messaging.content.ReceiptKind
@@ -94,17 +95,22 @@ class Outbox(
         val now = clock.now()
         val limited = if (envelope is ContentEnvelope.Text) envelope.copy(t = TextLimit.truncate(envelope.t)) else envelope
         require(!limited.isPlaceholder()) { "an attachment without an uploaded id is never queued" }
+        // A caption follows the text-message rule: too long is refused here, never cut.
+        val caption = when (limited) { is ContentEnvelope.Photo -> limited.c; is ContentEnvelope.File -> limited.c; else -> null }
+        require(caption == null || TextLimit.truncate(caption) == caption) { "caption over the text limit" }
         val data = ContentCodec.encode(limited)
         val (text, reply) = when (limited) {
             is ContentEnvelope.Text -> limited.t to limited.r
-            is ContentEnvelope.Photo -> "" to limited.r
+            is ContentEnvelope.Photo -> limited.c.orEmpty() to limited.r
             is ContentEnvelope.Voice -> "" to limited.r
-            is ContentEnvelope.File -> limited.name to limited.r
+            is ContentEnvelope.File -> listOfNotNull(limited.name, limited.c).joinToString(" ") to limited.r
             else -> "" to null
         }
         val message = MessageRecord(
             id = limited.id, chatId = chatId, conversationId = null, senderAccount = me.accountId, senderDevice = me.deviceId,
             sentAt = limited.at, receivedAt = now, envelope = data, status = "sending", replyTo = reply, folded = fold(text),
+            expiresAt = expiryOf(limited), caption = caption,
+            linkPreview = (limited as? ContentEnvelope.Text)?.lp?.let(ContentCodec::linkPreviewJson),
         )
         repo.enqueueSend(message, OutboxRecord(limited.id, chatId, data, 0, now))
     }
@@ -127,6 +133,15 @@ class Outbox(
         val stored = repo.message(messageId)?.let { ContentCodec.decode(it.envelope) }
         if (stored != null && stored.isPlaceholder()) return false
         return repo.requeueSend(messageId, clock.now())
+    }
+
+    /** `at + ttl` of a content message, null for everything else. */
+    private fun expiryOf(e: ContentEnvelope): Long? = when (e) {
+        is ContentEnvelope.Text -> Expiry.expiresAt(e.at, e.ttl?.toLong())
+        is ContentEnvelope.Photo -> Expiry.expiresAt(e.at, e.ttl?.toLong())
+        is ContentEnvelope.Voice -> Expiry.expiresAt(e.at, e.ttl?.toLong())
+        is ContentEnvelope.File -> Expiry.expiresAt(e.at, e.ttl?.toLong())
+        else -> null
     }
 
     private fun ContentEnvelope.isPlaceholder(): Boolean = when (this) {
@@ -176,6 +191,12 @@ class Outbox(
         // not held: holding it would send it later and block the chat's queue.
         if (envelope is ContentEnvelope.Receipt && envelope.s == ReceiptKind.Read && !readReceiptsEnabled()) {
             repo.removeOutbox(item.messageId)
+            return true
+        }
+        // A message that has already expired never leaves: the sweep removes its row, and the server would refuse the time.
+        if (Expiry.isExpired(expiryOf(envelope), clock.now())) {
+            repo.completeSend(item.messageId, "failed") // the row stays until the sweep removes it; the outbox entry goes
+
             return true
         }
         // A control message has no message row; its envelope time is when it was queued.
@@ -301,7 +322,11 @@ class Outbox(
             }
 
             try {
-                server.postMessage(conversation.serverId, encrypted.epoch, encrypted.ciphertext, escrowCopy, envelope.id)
+                // The server refuses an expiry over 366 days ahead: a max ttl with an `at` a little ahead is held just under it.
+                val expiresAt = expiryOf(envelope)?.let { minOf(it, clock.now() + MAX_EXPIRY_AHEAD_MS) }
+                // Without an expiry the five-argument call is used, exactly as before this existed.
+                if (expiresAt == null) server.postMessage(conversation.serverId, encrypted.epoch, encrypted.ciphertext, escrowCopy, envelope.id)
+                else server.postMessage(conversation.serverId, encrypted.epoch, encrypted.ciphertext, escrowCopy, envelope.id, expiresAt)
                 return
             } catch (e: CancellationException) {
                 throw e
@@ -364,5 +389,7 @@ class Outbox(
         /** A queued message that failed this many attempts, or sat in the queue this long, is marked `failed`. */
         const val MAX_ATTEMPTS = 10
         const val MAX_AGE_MS = 24L * 3600 * 1000
+        /** 366 days less a minute: the server's limit with room for clock drift. */
+        const val MAX_EXPIRY_AHEAD_MS = 366L * 86_400_000 - 60_000
     }
 }

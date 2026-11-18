@@ -60,9 +60,20 @@ let schemaV2: [String] = [
     "CREATE TABLE drafts(chat_id TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE, text TEXT NOT NULL, updated_at INTEGER NOT NULL) STRICT",
 ]
 
+/// People: disappearing messages (`expires_at`, `chats.timer_seconds`), captions, link previews (JSON) and the
+/// profile each contact sent (name, photo, version).
+let schemaV3: [String] = [
+    "ALTER TABLE messages ADD COLUMN expires_at INTEGER",
+    "ALTER TABLE messages ADD COLUMN caption TEXT",
+    "ALTER TABLE messages ADD COLUMN link_preview TEXT",
+    "ALTER TABLE chats ADD COLUMN timer_seconds INTEGER NOT NULL DEFAULT 0",
+    "CREATE INDEX messages_expires ON messages(expires_at) WHERE expires_at IS NOT NULL",
+    "CREATE TABLE profiles(account_id TEXT PRIMARY KEY, name TEXT NOT NULL, photo BLOB, ver INTEGER NOT NULL) STRICT",
+]
+
 /// A queued message keeps the ciphertext of its one MLS encrypt, and the conversation and epoch it was made in, so a retry posts the
 /// same bytes instead of encrypting again. Existing rows have none (they are encrypted on their next attempt).
-let schemaV3: [String] = [
+let schemaV4: [String] = [
     "ALTER TABLE outbox ADD COLUMN ciphertext BLOB",
     "ALTER TABLE outbox ADD COLUMN ciphertext_epoch INTEGER",
     "ALTER TABLE outbox ADD COLUMN ciphertext_conversation TEXT",

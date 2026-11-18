@@ -44,6 +44,7 @@ android {
 dependencies {
     api(project(":contracts"))
     api(project(":messaging"))
+    implementation(project(":core"))
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)

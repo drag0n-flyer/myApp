@@ -3,6 +3,8 @@ package delivery
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"github.com/jackc/pgx/v5"
 	"strings"
 	"time"
 
@@ -30,10 +32,21 @@ func (m *Module) HandleFrames(frames realtime.FrameRouter) {
 }
 
 // ephemeralRespectsBlocks says whether an ephemeral frame in the conversation
-// is withheld from an account that blocked the sender. For a direct
-// conversation it is (spec 6.1); every conversation is direct until group
-// conversations exist, and the group change switches this on kind.
-func ephemeralRespectsBlocks(conversationID string) bool { return true }
+// is withheld from an account that blocked the sender: only in a direct
+// conversation (spec 6.1). In a group blocks never apply, and no block query
+// runs at all.
+func (m *Module) ephemeralRespectsBlocks(ctx context.Context, id string) (bool, error) {
+	var kind string
+	err := m.d.DB.QueryRow(ctx, `select kind from conversations where id = $1`, id).Scan(&kind)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// The conversation was deleted since the membership check.
+		return false, httpx.Err("not_found", "no such conversation")
+	}
+	if err != nil {
+		return false, err
+	}
+	return kind == "direct", nil
+}
 
 // ephemeral relays conv.ephemeral {conversationID, epoch, ciphertext} to the
 // conversation's member devices that are connected right now, except the
@@ -81,7 +94,11 @@ func (m *Module) ephemeral(ctx context.Context, from core.Principal, data json.R
 	}
 
 	var blocked map[string]bool
-	if ephemeralRespectsBlocks(id) {
+	respect, err := m.ephemeralRespectsBlocks(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if respect {
 		if blocked, err = m.blockers(ctx, members, from.AccountID); err != nil {
 			return nil, err
 		}

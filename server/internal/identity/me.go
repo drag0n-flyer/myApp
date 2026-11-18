@@ -56,6 +56,25 @@ func (m *Module) deleteAccount(ctx context.Context, accountID string) error {
 		return err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
+	// Leave every group first (it locks conversations, then devices, the same
+	// order delivery uses). Direct conversations just lose the member row.
+	announce := func(context.Context) {}
+	// Pin the account row first (FOR UPDATE): a concurrent add or create that
+	// names it has either committed, and is then seen and left properly, or
+	// waits and finds the account gone. Lock order: account, conversations,
+	// devices.
+	var one int
+	switch err := tx.QueryRow(ctx, `select 1 from accounts where id = $1 for update`, accountID).Scan(&one); {
+	case errors.Is(err, pgx.ErrNoRows):
+		return core.ErrNotFound
+	case err != nil:
+		return err
+	}
+	if m.d.Groups != nil {
+		if announce, err = m.d.Groups.LeaveAllGroups(ctx, tx, accountID); err != nil {
+			return err
+		}
+	}
 	// Lock the device rows first, in id order like delivery does, so a delete
 	// cannot deadlock with a message fan-out, and a device added concurrently
 	// is either in this list (and disconnected) or waits until the account is
@@ -78,6 +97,7 @@ func (m *Module) deleteAccount(ctx context.Context, accountID string) error {
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
+	announce(ctx)
 	for _, id := range devices {
 		m.d.Live.Disconnect(id, revokedCode, "revoked")
 	}

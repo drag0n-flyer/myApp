@@ -65,9 +65,9 @@ func (m *Module) postMessage(w http.ResponseWriter, r *http.Request) error {
 	err = m.inTx(r.Context(), func(ctx context.Context, tx pgx.Tx) error {
 		// The conversation row lock orders messages and commits, so seq
 		// order is commit order.
-		var mode string
+		var mode, kind string
 		var epoch int64
-		err := tx.QueryRow(ctx, `select mode, epoch from conversations where id = $1 for update`, id).Scan(&mode, &epoch)
+		err := tx.QueryRow(ctx, `select mode, epoch, kind from conversations where id = $1 for update`, id).Scan(&mode, &epoch, &kind)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return notFound
 		}
@@ -110,6 +110,32 @@ func (m *Module) postMessage(w http.ResponseWriter, r *http.Request) error {
 			return httpx.Err("escrow_required", "this conversation needs an escrow copy")
 		}
 
+		// Every member device but the sender's, except devices of accounts
+		// that blocked the sender: those are skipped silently.
+		members, err := queryPairs(ctx, tx,
+			`select cd.device_id::text, d.account_id::text from conversation_devices cd
+			 join devices d on d.id = cd.device_id
+			 where cd.conversation_id = $1 and cd.device_id <> $2 order by cd.device_id`, id, p.DeviceID)
+		if err != nil {
+			return err
+		}
+		blocked, err := m.blockersIn(ctx, kind, members, p.AccountID)
+		if err != nil {
+			return err
+		}
+		var to []string
+		for _, dv := range members {
+			if !blocked[dv.account] {
+				to = append(to, dv.device)
+			}
+		}
+		// Lock the recipients and the sender's own device together, in one
+		// sorted statement, before anything takes a foreign-key lock on the
+		// sender's device row (the client_messages insert does): every path
+		// takes device locks in sorted order, so none can deadlock.
+		if _, err := lockDevices(ctx, tx, append(append([]string{}, to...), p.DeviceID)); err != nil {
+			return err
+		}
 		if err := tx.QueryRow(ctx,
 			`update conversations set next_seq = next_seq + 1 where id = $1 returning next_seq - 1`, id).Scan(&seq); err != nil {
 			return err
@@ -125,25 +151,6 @@ func (m *Module) postMessage(w http.ResponseWriter, r *http.Request) error {
 			}
 		}
 
-		// Every member device but the sender's, except devices of accounts
-		// that blocked the sender: those are skipped silently.
-		members, err := queryPairs(ctx, tx,
-			`select cd.device_id::text, d.account_id::text from conversation_devices cd
-			 join devices d on d.id = cd.device_id
-			 where cd.conversation_id = $1 and cd.device_id <> $2 order by cd.device_id`, id, p.DeviceID)
-		if err != nil {
-			return err
-		}
-		blocked, err := m.blockers(ctx, members, p.AccountID)
-		if err != nil {
-			return err
-		}
-		var to []string
-		for _, dv := range members {
-			if !blocked[dv.account] {
-				to = append(to, dv.device)
-			}
-		}
 		s := seq
 		return m.deliver(ctx, tx, to, InboxItem{
 			Kind: "message", ConversationID: id, Seq: &s, Epoch: *in.Epoch,

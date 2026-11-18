@@ -19,9 +19,12 @@ public struct ChatRecord: Sendable, Equatable {
     /// Local to the device; `nil` when the chat is not pinned.
     public var pinnedAt: Date?
     public var archived: Bool
-    public init(id: String, isRequest: Bool, unread: Int, muted: Bool, lastActivity: Date, pinnedAt: Date? = nil, archived: Bool = false) {
+    /// Disappearing messages: 0 = off. Written only by `setTimer`.
+    public var timerSeconds: Int
+    public init(id: String, isRequest: Bool, unread: Int, muted: Bool, lastActivity: Date, pinnedAt: Date? = nil, archived: Bool = false,
+                timerSeconds: Int = 0) {
         self.id = id; self.isRequest = isRequest; self.unread = unread; self.muted = muted; self.lastActivity = lastActivity
-        self.pinnedAt = pinnedAt; self.archived = archived
+        self.pinnedAt = pinnedAt; self.archived = archived; self.timerSeconds = timerSeconds
     }
 }
 
@@ -56,13 +59,37 @@ public struct MessageRecord: Sendable, Equatable {
     public var editedAt: Date?
     public var deleted: Bool, undecryptable: Bool
     public var folded: String
+    /// When the message disappears (`at + ttl`); `nil` = never.
+    public var expiresAt: Date?
+    public var caption: String?
+    /// The link preview as JSON; `nil` = none.
+    public var linkPreview: String?
     public init(id: String, chatID: String, conversationID: String?, senderAccount: String, senderDevice: String?,
                 sentAt: Date, receivedAt: Date, envelope: Data, status: String, replyTo: String?, editedAt: Date?,
-                deleted: Bool, undecryptable: Bool, folded: String) {
+                deleted: Bool, undecryptable: Bool, folded: String, expiresAt: Date? = nil, caption: String? = nil,
+                linkPreview: String? = nil) {
+        self.expiresAt = expiresAt; self.caption = caption; self.linkPreview = linkPreview
         self.id = id; self.chatID = chatID; self.conversationID = conversationID; self.senderAccount = senderAccount
         self.senderDevice = senderDevice; self.sentAt = sentAt; self.receivedAt = receivedAt; self.envelope = envelope
         self.status = status; self.replyTo = replyTo; self.editedAt = editedAt; self.deleted = deleted
         self.undecryptable = undecryptable; self.folded = folded
+    }
+}
+
+/// A message removed by `sweepExpired`: the caller deletes the files and any delivered notification.
+public struct ExpiredMessage: Sendable, Equatable {
+    public var id: String, chatID: String
+    public var localPaths: [String]
+    public init(id: String, chatID: String, localPaths: [String]) { self.id = id; self.chatID = chatID; self.localPaths = localPaths }
+}
+
+/// The name and photo a contact sent (`profile` envelope), with its version.
+public struct ProfileRecord: Sendable, Equatable {
+    public var accountID: String, name: String
+    public var photo: Data?
+    public var ver: Int
+    public init(accountID: String, name: String, photo: Data?, ver: Int) {
+        self.accountID = accountID; self.name = name; self.photo = photo; self.ver = ver
     }
 }
 
