@@ -46,12 +46,13 @@ object CallVideo {
     private val current = MutableStateFlow<CallVideoSurface?>(null)
     val surface: StateFlow<CallVideoSurface?> = current.asStateFlow()
 
-    internal fun publish(surface: CallVideoSurface) {
+    /** Called by the media session; tests publish a fake. */
+    fun publish(surface: CallVideoSurface) {
         current.value = surface
     }
 
     /** Only the surface that is current goes: a late close of an earlier call cannot remove the next call's. */
-    internal fun clear(surface: CallVideoSurface) {
+    fun clear(surface: CallVideoSurface) {
         current.compareAndSet(surface, null)
     }
 }
