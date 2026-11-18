@@ -200,6 +200,8 @@ final class AppModel {
         self.settings = settings
         self.network = launch.network
         self.isUITesting = launch.isUITesting
+        // A recording the app was killed in the middle of is not kept.
+        VoiceSession.removeOrphans()
         self.lock = lock
         let stores = AppStores(sampleData: sampleData, server: server, settings: settings.call, network: launch.network)
         let chatStore = stores.chatStore
@@ -559,6 +561,7 @@ final class AppModel {
         settings.lockAfterSeconds = AppLockPolicy.defaultSeconds
         // Decoded pictures and plaintext copies made for previews and sends belong to it too.
         MediaPreview.removeTemporaryFolders()
+        VoiceSession.removeOrphans()
         Task { await ThumbnailLoader.shared.clear() }
         MediaFileCheck.shared.clear()
         // The live store belongs to the signed-out account. An empty store stands in until the next sign-in.
