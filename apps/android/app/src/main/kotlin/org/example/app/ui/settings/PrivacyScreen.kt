@@ -101,6 +101,10 @@ fun PrivacyScreen(
         emailError?.let { error -> item { FooterText(stringResource(error), error = true) } }
         item { SectionHeader(stringResource(R.string.privacy_messages)) }
         item { SwitchRow(stringResource(R.string.privacy_read_receipts), current.readReceipts) { v -> settings.update { it.copy(readReceipts = v) } } }
+        item { SwitchRow(stringResource(R.string.privacy_typing), current.typingIndicator) { v -> settings.update { it.copy(typingIndicator = v) } } }
+        item { FooterText(stringResource(R.string.privacy_typing_footer)) }
+        item { SwitchRow(stringResource(R.string.privacy_online), current.onlineAndLastSeen) { v -> settings.update { it.copy(onlineAndLastSeen = v) } } }
+        item { FooterText(stringResource(R.string.privacy_online_footer)) }
         item {
             ListItem(
                 modifier = Modifier.clickable(role = Role.Button) { showBlocked = true },

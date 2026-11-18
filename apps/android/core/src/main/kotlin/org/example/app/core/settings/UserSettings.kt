@@ -20,6 +20,10 @@ data class UserSettings(
     val findByUsername: Boolean = true,
     val findByEmail: Boolean = false,
     val readReceipts: Boolean = true,
+    /** Settings > Privacy (design 6.1): off means the app neither sends nor shows typing signals. */
+    val typingIndicator: Boolean = true,
+    /** Off means the app neither sends nor shows online and last seen. */
+    val onlineAndLastSeen: Boolean = true,
     val disappearingMessages: Double? = null,
     val noiseSuppression: NoiseSuppression = NoiseSuppression.Standard,
     /** App lock (design 6.3): the phone's own authentication in front of the screen. Only this switch and the delay are stored. */
