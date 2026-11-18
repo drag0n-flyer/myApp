@@ -372,7 +372,7 @@ class PushWakeTest {
     fun channelsExist() {
         NotificationChannels.ensure(context)
         val ids = context.getSystemService(NotificationManager::class.java).notificationChannels.map { it.id }.toSet()
-        assertEquals(setOf("messages", "requests", "calls", "devices", "service"), ids)
+        assertEquals(setOf("messages", "requests", "calls", "devices", "service", "muted"), ids)
         val nm = context.getSystemService(NotificationManager::class.java)
         assertEquals(NotificationManager.IMPORTANCE_LOW, nm.getNotificationChannel("service").importance)
         assertEquals(NotificationManager.IMPORTANCE_HIGH, nm.getNotificationChannel("messages").importance)

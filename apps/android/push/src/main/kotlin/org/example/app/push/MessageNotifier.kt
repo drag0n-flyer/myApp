@@ -10,7 +10,11 @@ import org.example.app.contracts.NotificationOutcome
  * Shows what [NotificationOutcome] says. Plain words only; no mention of how a message is protected.
  * Notifications opened from here carry the extra [EXTRA_CHAT_ID] on the launch intent.
  */
-class MessageNotifier(private val context: Context) {
+class MessageNotifier(
+    private val context: Context,
+    private val mutedChatIds: () -> Set<String> = { PushRuntime.mutedChatIds() },
+    private val appLockOn: () -> Boolean = { PushRuntime.appLockOn() },
+) {
     companion object {
         const val EXTRA_CHAT_ID = "org.example.app.push.CHAT_ID"
     }
@@ -46,6 +50,9 @@ class MessageNotifier(private val context: Context) {
             NotificationChannels.REQUESTS, "request-call", appLabel(), context.getString(R.string.push_missed_call_body), null,
             quiet = true,
         )
+
+    /** The chat was read: its notification goes (and the summary, once fewer than two chats remain). */
+    fun cancelChat(chatId: String) = Unit
 
     /** Removes the generic notice once the real notification is shown. */
     fun cancelGeneric() = NotificationManagerCompat.from(context).cancel("generic", 0)

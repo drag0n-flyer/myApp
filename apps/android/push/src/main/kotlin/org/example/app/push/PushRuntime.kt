@@ -36,4 +36,10 @@ object PushRuntime {
     @Volatile var inboxFetcher: InboxFetcher? = null
 
     @Volatile var registrationSink: RegistrationSink? = null
+
+    /** The chats whose notifications are quiet. The app wires this in `PushWiring`; empty until then. */
+    @Volatile var mutedChatIds: () -> Set<String> = { emptySet() }
+
+    /** True while app lock is on: notifications then show no sender or text and offer no Reply. */
+    @Volatile var appLockOn: () -> Boolean = { false }
 }
