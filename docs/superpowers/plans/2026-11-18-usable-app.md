@@ -103,7 +103,7 @@ Tasks 1 and 4 and Tasks 2 and 5 are the same behaviour on two platforms; use the
 - [ ] **Step 8: In-chat search.** Chat info's Search opens `.searchable` over the chat with results from `searchMessages` filtered to the chat; "No results" when empty; tapping a hit jumps as in Step 7. Drafts via `model.drafts`. Commit.
 - [ ] **Step 9: UI tests on sample data:** long-press shows Reply and Copy; choosing Reply shows the reply bar and sending attaches a quote; choosing Edit on an own message shows "Editing"; the scroll button appears after scrolling up. Add `AppCore` tests for the merge-without-duplicates helper if it lives in `AppCore`. Push; require a green run.
 
-### Task 3: Apple: media (spec 5.4). Starts after Task 2 is merged.
+### Task 3: Apple: media (spec 5.4). Starts after Task 2 is merged
 
 **Files:**
 - Create: `apps/apple/Packages/AppCore/Sources/AppCore/Chats/MediaBubbleState.swift`; `apps/apple/App/Features/Media/PhotoThumbnail.swift`, `QuickLookPreview.swift`, `VoicePlayer.swift`, `CameraPicker.swift`
@@ -160,7 +160,7 @@ Tasks 1 and 4 and Tasks 2 and 5 are the same behaviour on two platforms; use the
 - [ ] **Step 7: Bubble details and jumps.** Clickable links (`LinkAnnotation` / `Linkify`), quote tap jumps to the original with paging, `highlightMessageId` from search scrolls and highlights. Request chats show the Accept / Block / Report bar instead of the composer. In-chat search from chat info. Drafts kept per chat. Commit.
 - [ ] **Step 8: Emulator tests on sample data:** long-press shows Reply and Copy; Reply shows the bar and the sent message carries a quote; Edit shows "Editing"; scrolling up shows the scroll button. Run locally; green; `./gradlew --stop`.
 
-### Task 6: Android: media (spec 5.4). Starts after Task 5 is merged.
+### Task 6: Android: media (spec 5.4). Starts after Task 5 is merged
 
 **Files:**
 - Create: `core/.../chats/MediaBubbleState.kt` and test; `app/.../ui/media/PhotoDecoder.kt`, `PhotoViewerScreen.kt`, `VoicePlayer.kt`, `AttachmentPickers.kt`; a `FileProvider` entry and `res/xml/file_paths.xml` if none exists.
