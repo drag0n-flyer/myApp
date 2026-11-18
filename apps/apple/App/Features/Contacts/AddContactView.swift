@@ -1,7 +1,7 @@
 import AppCore
 import SwiftUI
 
-/// Add a contact by username or by scanning their QR code.
+/// Add a contact by username.
 struct AddContactView: View {
     let model: AppModel
     @Environment(\.dismiss) private var dismiss
@@ -29,11 +29,6 @@ struct AddContactView: View {
                     Button("Add", action: add)
                         .disabled(username.trimmingCharacters(in: .whitespaces).isEmpty)
                         .accessibilityIdentifier("addcontact.submit")
-                    Button("Scan QR code", systemImage: "qrcode.viewfinder") {
-                        // Camera scanning comes with the real app; the sample returns a known person.
-                        username = "neha"
-                        add()
-                    }
                 }
             }
             .navigationTitle("Add contact")

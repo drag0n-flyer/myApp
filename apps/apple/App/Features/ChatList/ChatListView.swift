@@ -17,7 +17,7 @@ struct ChatListView: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            ChatListContent(model: model) { path.append($0) }
+            ChatListContent(model: model, newChat: { showingNewChat = true }) { path.append($0) }
                 .navigationTitle("Chats")
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
@@ -125,13 +125,15 @@ struct ChatDestination: View {
 struct ChatListContent: View {
     @Bindable var model: AppModel
     var selectedChatID: String?
+    /// The "New chat" button of the empty list.
+    var newChat: (() -> Void)?
     let open: (ChatRoute) -> Void
 
     var body: some View {
         List {
             VStack(alignment: .leading, spacing: 8) {
                 FolderChipsView(model: model)
-                StatusStripView(host: model.server.host, modeLabel: model.stripLabel)
+                StatusStripView(host: model.server.host, modeLabel: model.stripLabel, status: model.connectionStatus)
             }
             .listRowSeparator(.hidden)
             .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
@@ -144,6 +146,21 @@ struct ChatListContent: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("chatlist.requests")
+            }
+
+            if model.chats(in: .all).isEmpty, model.chatListQuery.isEmpty {
+                ContentUnavailableView {
+                    Label("No chats yet", systemImage: "bubble.left.and.bubble.right")
+                } actions: {
+                    if let newChat {
+                        Button("New chat", action: newChat)
+                            .buttonStyle(.borderedProminent)
+                            .accessibilityIdentifier("chatlist.empty.new")
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .listRowSeparator(.hidden)
+                .accessibilityIdentifier("chatlist.empty")
             }
 
             ForEach(model.chats(in: model.selectedFolder, matching: model.chatListQuery)) { chat in

@@ -18,6 +18,7 @@ struct MacRootView: View {
     @State private var selectedChatID: String?
     @State private var detailPath: [ChatRoute] = []
     @State private var missedOnly = false
+    @State private var showingNewChat = false
 
     var body: some View {
         NavigationSplitView {
@@ -68,6 +69,20 @@ struct MacRootView: View {
             }
         }
         .animation(.default, value: model.incomingCaller)
+        .toolbar {
+            ToolbarItem {
+                Button("New chat", systemImage: "square.and.pencil") { showingNewChat = true }
+                    .accessibilityLabel("New chat")
+                    .accessibilityIdentifier("mac.newchat")
+            }
+        }
+        .sheet(isPresented: $showingNewChat) {
+            NewChatView(model: model) { contactID in
+                showingNewChat = false
+                sidebar = .folder(ChatFolder.all.id)
+                open(.chat(id: model.openChat(with: contactID)))
+            }
+        }
         #if DEBUG
         .toolbar {
             ToolbarItem {
@@ -90,7 +105,7 @@ struct MacRootView: View {
             }
             .navigationTitle("Contacts")
         case .folder, nil:
-            ChatListContent(model: model, selectedChatID: selectedChatID, open: open)
+            ChatListContent(model: model, selectedChatID: selectedChatID, newChat: { showingNewChat = true }, open: open)
                 .navigationTitle(model.selectedFolder.name)
                 .searchable(text: $model.chatListQuery, placement: .toolbar)
         }

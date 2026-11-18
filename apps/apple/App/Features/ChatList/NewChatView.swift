@@ -6,6 +6,7 @@ struct NewChatView: View {
     let model: AppModel
     let start: (String) -> Void
     @Environment(\.dismiss) private var dismiss
+    @State private var showingAdd = false
 
     var body: some View {
         NavigationStack {
@@ -20,6 +21,18 @@ struct NewChatView: View {
                     }
                 }
             }
+            .overlay {
+                if model.contacts.isEmpty {
+                    ContentUnavailableView {
+                        Label("No contacts yet", systemImage: "person.2")
+                    } actions: {
+                        Button("Add contact") { showingAdd = true }
+                            .buttonStyle(.borderedProminent)
+                            .accessibilityIdentifier("newchat.add")
+                    }
+                }
+            }
+            .sheet(isPresented: $showingAdd) { AddContactView(model: model) }
             .navigationTitle("New chat")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }

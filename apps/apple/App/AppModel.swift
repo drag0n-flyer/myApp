@@ -67,6 +67,15 @@ final class AppModel {
     private var pathMonitor: PathMonitor?
     private var isBackground = false
     private var connectionState: ConnectionState = .idle
+    /// False when the device has no network path (`NetworkReachability`); true until the first report.
+    private var hasNetwork = true
+    private var reachability: NetworkReachability?
+    /// Set while `signOut()` runs: the server's revoke reply and the closed socket that follow are this sign-out, not a
+    /// removal by another device, so they show no "removed" alert and do not start a second reset.
+    private var signingOut = false
+    /// The server ended the session while `signOut()` was waiting on it (it was already revoked, or the revoke reply
+    /// itself closed the socket).
+    private var endedWhileSigningOut: SignOutReason?
     /// Newest stats of the running call, for the call info sheet.
     private(set) var callStats: MediaStats?
     #if os(iOS)
@@ -100,6 +109,11 @@ final class AppModel {
         sampleCalls?.server = server
         sampleCalls?.settings = settings.call
         liveCalls?.update(server: server, settings: settings)
+    }
+    /// What the chat list strip and Settings > Server show. Sample mode is always connected.
+    var connectionStatus: ConnectionStatus {
+        if isSampleData { return .connected }
+        return ConnectionStatus.from(socketConnected: connectionState == .connected, hasNetwork: hasNetwork)
     }
     var onboarding: OnboardingFlow
     var selectedTab: AppTab = .chats
@@ -338,6 +352,63 @@ final class AppModel {
         return nil
     }
 
+    /// "Sign out": removes this device from the account on the server, then wipes the local data like a deleted
+    /// account and returns to the welcome screen. With no connection (or any failure of the removal) nothing is
+    /// wiped and the person stays signed in, so they can try again; the result says which.
+    func signOut() async -> SignOutDecision {
+        guard !signingOut else { return .failed }
+        guard let live, !isSampleData else {
+            // Sample data has no server.
+            account.signOutLocally()
+            resetToWelcome()
+            return .wipe
+        }
+        guard let deviceID = sessions?.current?.deviceID ?? linkedDevices.first(where: \.isThisDevice)?.id else {
+            return .failed
+        }
+        signingOut = true
+        endedWhileSigningOut = nil
+        defer { signingOut = false; endedWhileSigningOut = nil }
+        var failure: AccountError?
+        do throws(AccountError) { try await account.removeDevice(id: deviceID) } catch { failure = error }
+        if let ended = endedWhileSigningOut {
+            // The server ended the session meanwhile: finish the sign-out it started, without the "removed" alert.
+            live.signOutLocally()
+            await stopLive()
+            resetToWelcome(revoked: ended == .revoked)
+            return .wipe
+        }
+        let decision = SignOutDecision.after(revokeError: failure)
+        guard decision == .wipe else { return decision }
+        live.signOutLocally()
+        await stopLive()
+        resetToWelcome()
+        return .wipe
+    }
+
+    /// Lifts a block: the contact can write to this person again. Local at once; the server is told in the background.
+    func unblock(contactID: String) { chatStore.unblock(contactID: contactID); revision += 1 }
+
+    /// Reads the "Find me by email" switch from the server, so the toggle shows what the server has.
+    func loadFindByEmail() async {
+        guard !isSampleData, let client = live?.client, let me = try? await client.me() else { return }
+        if settings.findByEmail != me.findByEmail { settings.findByEmail = me.findByEmail }
+    }
+
+    /// Sends "Find me by email" to the server. On failure the switch goes back and the error is returned.
+    func setFindByEmail(_ on: Bool) async -> AccountError? {
+        let previous = settings.findByEmail
+        settings.findByEmail = on
+        guard !isSampleData, let client = live?.client else { return nil }
+        do throws(ServerError) {
+            try await client.updateSettings(displayName: nil, findByEmail: on)
+            return nil
+        } catch {
+            settings.findByEmail = previous
+            return error.code == "network" ? .network : .server
+        }
+    }
+
     /// `revoked: false` (a sign-out the server did not prove a revocation, ruling 2026-10-28) stops the old graph and
     /// keeps its data when it records its device; the next sign-in, always a new device, wipes it before opening it
     /// (`LocalAccountData`). Steps and their order: `SignOutPlan`.
@@ -390,6 +461,7 @@ final class AppModel {
     /// The server ended this session. Only a proven revocation (a 4003 close, or a 401 that `GET /v1/me`
     /// confirms) wipes and says the device was removed; any other 401 only signs out (ruling 2026-10-28).
     private func serverEndedSession(_ reason: SignOutReason) {
+        if signingOut { endedWhileSigningOut = reason; return }
         Task { await stopLive() }
         resetToWelcome(revoked: reason == .revoked)
         if reason == .revoked { deviceRemovedAlert = true }
@@ -544,6 +616,10 @@ final class AppModel {
     private func setConnectionState(_ state: ConnectionState) { connectionState = state }
 
     private func startPathMonitor() {
+        let reachability = NetworkReachability()
+        reachability.onChange = { [weak self] satisfied in self?.hasNetwork = satisfied }
+        reachability.start()
+        self.reachability = reachability
         let monitor = PathMonitor()
         monitor.onChange = { [weak self] network, meaningful in
             guard let self else { return }

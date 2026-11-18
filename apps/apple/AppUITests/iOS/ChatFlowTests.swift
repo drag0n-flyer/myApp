@@ -9,6 +9,8 @@ final class ChatFlowTests: XCTestCase {
         let strip = app.element("chatlist.strip")
         XCTAssertTrue(strip.waitToExist())
         XCTAssertTrue(strip.label.contains("Data saver"))
+        // Sample mode always reports a connection.
+        XCTAssertTrue(strip.label.contains("Connected"))
         XCTAssertEqual(app.element("chatlist.requests").label, "Message requests · 1")
 
         app.element("chatlist.chip.unread").tap()
