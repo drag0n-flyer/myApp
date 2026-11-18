@@ -31,6 +31,11 @@ struct ChatView: View {
     @State private var lastNewest: [Message] = []
     /// Set when this screen reacts to, edits or deletes a message, which may be older than the newest window.
     @State private var needsOlderRefresh = false
+    @State private var scrollTarget = ScrollTarget()
+    /// Bumped after a programmatic change of `scrollTarget` so the view reads it again.
+    @State private var scrollTick = 0
+    /// How many times the scroll-to-newest button ran (shown to UI tests in debug builds only).
+    @State private var scrollTaps = 0
     @State private var hits: [MessageHit] = []
     /// The query `hits` answers; "No results" shows only once it matches what is typed.
     @State private var searchedQuery = ""
@@ -132,10 +137,21 @@ struct ChatView: View {
 
     private static let bottomID = "chat-bottom"
 
+    /// Holds the id `scrollPosition(id:)` reads and writes. A plain class, so the system writing it during
+    /// ordinary scrolling does not redraw the chat; `scrollTick` is bumped to make a programmatic change take effect.
+    private final class ScrollTarget {
+        var id: String?
+    }
+
     /// Scrolls to the end of the chat. A far-away row of a lazy stack is only sized by estimate the first time,
     /// so the scroll is repeated once it has been laid out.
     private func scrollToBottom(_ proxy: ScrollViewProxy) {
+        // Two independent mechanisms: the scroll position binding and the proxy.
+        scrollTarget.id = nil
+        scrollTick += 1
         Task { @MainActor in
+            scrollTarget.id = Self.bottomID
+            scrollTick += 1
             proxy.scrollTo(Self.bottomID, anchor: .bottom)
             try? await Task.sleep(for: .milliseconds(200))
             proxy.scrollTo(Self.bottomID, anchor: .bottom)
@@ -158,9 +174,12 @@ struct ChatView: View {
                     // Always the last child: the one target for every "go to the bottom".
                     Color.clear.frame(height: 1).id(Self.bottomID)
                 }
+                .scrollTargetLayout()
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
             }
+            .scrollPosition(id: Binding(get: { _ = scrollTick; return scrollTarget.id }, set: { scrollTarget.id = $0 }),
+                            anchor: .bottom)
             .defaultScrollAnchor(.bottom)
             .background(Color.groupedBackground)
             .overlay {
@@ -175,10 +194,22 @@ struct ChatView: View {
                     scrollButton(count: tracker.unseenCount(in: all)) {
                         // The button goes away when the newest row appears, not on tap, so a scroll that
                         // lands short leaves it there to try again.
+                        scrollTaps += 1
                         scrollToBottom(proxy)
                     }
                 }
             }
+            #if DEBUG
+            .overlay(alignment: .topLeading) {
+                // Lets UI tests see that the button's action ran. Not in release builds.
+                Color.clear
+                    .frame(width: 1, height: 1)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Scroll button taps")
+                    .accessibilityValue("\(scrollTaps)")
+                    .accessibilityIdentifier("chat.debug.scrollTaps")
+            }
+            #endif
             .onChange(of: newestID) { _, new in
                 if tracker.messagesChanged(newestID: new) {
                     scrollToBottom(proxy)
@@ -256,6 +287,7 @@ struct ChatView: View {
             Image(systemName: "chevron.down")
                 .font(.headline)
                 .frame(width: 44, height: 44)
+                .contentShape(Circle())
                 .glassBackground(in: Circle())
                 .overlay(alignment: .topTrailing) {
                     if count > 0 {
