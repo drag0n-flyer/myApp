@@ -47,6 +47,10 @@ public enum MediaFactory {
         set { state.lock.withLock { state.captureProcessor = newValue } }
     }
 
+    /// True when the linked WebRTC build has patch 0004's capture post-processing hook, so "enhanced" noise
+    /// suppression can run. A property of the binary, not of whether a processor is installed.
+    public static var captureHookAvailable: Bool { RTCPeerConnectionFactory.hasCapturePostProcessingHook }
+
     public static func shared() -> RTCPeerConnectionFactory {
         state.lock.lock(); defer { state.lock.unlock() }
         if let f = state.instance { return f }

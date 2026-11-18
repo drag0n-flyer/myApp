@@ -17,6 +17,10 @@ packages:
     path: Packages/LocalStore
   SecureMessaging:
     path: Packages/SecureMessaging
+  CallMedia:
+    path: Packages/CallMedia
+  WebRTCBinary:
+    path: Packages/WebRTCBinary
 # APP_ID (the bundle ID, app group and keychain group root) is set only in AppID.xcconfig.
 configFiles:
   Debug: AppID.xcconfig
@@ -89,6 +93,9 @@ targets:
         product: LocalStore
       - package: SecureMessaging
         product: SecureMessaging
+      - package: CallMedia
+      - package: WebRTCBinary
+        product: WebRTC
       - target: AppNSEiOS
   AppMac:
     type: application
@@ -129,6 +136,9 @@ targets:
         product: LocalStore
       - package: SecureMessaging
         product: SecureMessaging
+      - package: CallMedia
+      - package: WebRTCBinary
+        product: WebRTC
       - target: AppNSEMac
   AppNSEiOS:
     type: app-extension

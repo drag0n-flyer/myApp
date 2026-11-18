@@ -54,3 +54,29 @@ extension NoiseCaptureBridge {
         return bridge
     }
 }
+
+// One bridge and one controller for the process: the capture hook is a single slot installed before the first factory.
+private let liveSetup = LiveSetup()
+private final class LiveSetup: @unchecked Sendable {   // `controller` is created once, under `lock`
+    private let lock = NSLock()
+    private var controller: NoiseSuppressionController?
+    func controllerInstalled() -> NoiseSuppressionController {
+        lock.withLock {
+            if let controller { return controller }
+            NoiseCaptureBridge.install()
+            let c = NoiseSuppressionController()
+            controller = c
+            return c
+        }
+    }
+}
+
+extension WebRTCMediaSession {
+    /// The session the apps use: noise suppression is wired to the capture hook (installed on the first call).
+    public static func live() -> WebRTCMediaSession {
+        let controller = liveSetup.controllerInstalled()
+        let session = WebRTCMediaSession()
+        session.noiseSuppressionHandler = { controller.apply($0) }
+        return session
+    }
+}

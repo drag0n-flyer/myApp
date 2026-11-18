@@ -5,6 +5,9 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 cd "$HERE/.."
 
+# The app links CallMedia, whose RNNoise model weights are not committed.
+Packages/CallMedia/scripts/fetch-rnnoise-model.sh
+
 xcodegen generate --spec project.yml
 
 UDID=$(xcrun simctl list devices available -j | IOS_RUNTIME="${IOS_RUNTIME:-}" python3 -c '
