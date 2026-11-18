@@ -4,9 +4,12 @@ import SwiftUI
 /// Pick a contact to start a chat with.
 struct NewChatView: View {
     let model: AppModel
+    /// A link taken in Add contact; the presenter closes this sheet too, then calls `model.handle(url:)`.
+    let onLink: (URL) -> Void
     let start: (String) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var showingAdd = false
+    @State private var linkFromAdd: URL?
 
     var body: some View {
         NavigationStack {
@@ -32,10 +35,18 @@ struct NewChatView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showingAdd) { AddContactView(model: model) }
+            .sheet(isPresented: $showingAdd, onDismiss: {
+                if let url = linkFromAdd { linkFromAdd = nil; onLink(url) }
+            }) {
+                AddContactView(model: model, onLink: { linkFromAdd = $0 })
+            }
             .navigationTitle("New chat")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .primaryAction) {
+                    Button { showingAdd = true } label: { Label("Add contact", systemImage: "person.badge.plus") }
+                        .accessibilityIdentifier("newchat.addtoolbar")
+                }
             }
         }
     }
