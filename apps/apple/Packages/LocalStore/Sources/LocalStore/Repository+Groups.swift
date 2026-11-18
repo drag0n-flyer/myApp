@@ -109,6 +109,25 @@ extension Repository {
         }
     }
 
+    /// Deletes a group chat I am no longer in, with its messages, member list, queued sends and every other row under it,
+    /// in one transaction. Returns the local files of its attachments and the IDs of its messages (a queued upload keeps a
+    /// folder named after its message), so the caller deletes the files. `nil` and nothing deleted for a chat that is
+    /// not a group chat, is unknown, or is one I am still a member of.
+    public func deleteGroupChat(id chatID: String) throws -> (paths: [String], messageIDs: [String])? {
+        guard ChatID.isGroup(chatID) else { return nil }
+        return try db.transaction { d -> (paths: [String], messageIDs: [String])? in
+            let state = try d.query("SELECT my_state FROM chats WHERE id=? AND kind='group'", [.text(chatID)]) { $0.text(0) }
+            guard let state = state.first, state != "member" else { return nil }
+            let paths = try d.query("""
+                SELECT a.local_path FROM attachments a JOIN messages m ON m.id = a.message_id WHERE m.chat_id=? AND a.local_path IS NOT NULL
+                """, [.text(chatID)]) { $0.text(0) }
+            let messageIDs = try d.query("SELECT id FROM messages WHERE chat_id=?", [.text(chatID)]) { $0.text(0) }
+            try d.execute("DELETE FROM outbox WHERE chat_id=?", [.text(chatID)])
+            try d.execute("DELETE FROM chats WHERE id=?", [.text(chatID)])
+            return (paths, messageIDs)
+        }
+    }
+
     /// What is still queued for a chat can never be sent (I am out of the group): the queue rows go and the messages
     /// among them are marked `failed`, one transaction.
     public func failQueuedSends(chatID: String) throws {

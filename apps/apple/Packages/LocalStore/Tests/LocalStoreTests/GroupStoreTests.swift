@@ -272,3 +272,27 @@ private func groupMessage(_ id: String, from sender: String = "me") -> MessageRe
     #expect(try repo.message(id: "m1")?.status == "failed")
     #expect(try repo.dueOutbox(at: Date(timeIntervalSince1970: 10)).isEmpty)
 }
+
+@Test func testDeleteGroupChatRemovesRowsOnlyAfterIAmOutAndReturnsTheMessageIDs() throws {
+    let repo = try groupRepo()
+    let message = MessageRecord(id: "m1", chatID: chatID, conversationID: nil, senderAccount: "me", senderDevice: nil,
+                                sentAt: Date(timeIntervalSince1970: 1), receivedAt: Date(timeIntervalSince1970: 1), envelope: Data("{}".utf8),
+                                status: "sending", replyTo: nil, editedAt: nil, deleted: false, undecryptable: false, folded: "")
+    try repo.enqueueSend(message: message, outbox: OutboxRecord(messageID: "m1", chatID: chatID, envelope: Data("{}".utf8), attempts: 0,
+                                                                nextAttemptAt: Date(timeIntervalSince1970: 1)))
+    _ = try repo.setGroupMembers(chatID: chatID, [member("me", "owner"), member("bob")], version: 1)
+    // Still a member: nothing is deleted.
+    #expect(try repo.deleteGroupChat(id: chatID) == nil)
+    #expect(try repo.chat(id: chatID) != nil)
+    #expect(try repo.setMyState(chatID: chatID, "removed"))
+    let gone = try #require(try repo.deleteGroupChat(id: chatID))
+    #expect(gone.messageIDs == ["m1"])
+    #expect(try repo.chat(id: chatID) == nil)
+    #expect(try repo.message(id: "m1") == nil)
+    #expect(try repo.groupMembers(chatID: chatID).isEmpty)
+    #expect(try repo.dueOutbox(at: Date(timeIntervalSince1970: 10)).isEmpty)
+    // A one-to-one chat is never touched by it.
+    try repo.upsertChat(chat("bob"))
+    #expect(try repo.deleteGroupChat(id: "bob") == nil)
+    #expect(try repo.chat(id: "bob") != nil)
+}

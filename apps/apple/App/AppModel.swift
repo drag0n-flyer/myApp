@@ -233,7 +233,7 @@ final class AppModel {
         // A recording the app was killed in the middle of is not kept.
         VoiceSession.removeOrphans()
         self.lock = lock
-        let stores = AppStores(sampleData: sampleData, server: server, settings: settings.call, network: launch.network)
+        let stores = AppStores(sampleData: sampleData, server: server, settings: settings.call, network: launch.network, memberGroup: launch.memberGroup)
         let chatStore = stores.chatStore
         self.chatStore = chatStore
         self.sampleCalls = stores.sampleCalls
@@ -440,35 +440,6 @@ final class AppModel {
     func createGroup(accounts: [String], name: String, photo: Data?) async -> GroupCreateOutcome {
         defer { revision += 1 }
         return await chatStore.createGroup(accounts: accounts, name: name, photo: photo)
-    }
-
-    // MARK: Group changes (the group screens call these)
-
-    /// The member list this device holds for a group chat; the screen sorts it.
-    func groupMembers(chatID: String) -> [GroupMember] { _ = revision; return chatStore.groupMembers(chatID: chatID) }
-    func addMembers(chatID: String, accounts: [String]) async -> GroupChangeOutcome {
-        defer { revision += 1 }
-        return await chatStore.addMembers(chatID: chatID, accounts: accounts)
-    }
-    func removeMember(chatID: String, account: String) async -> GroupChangeOutcome {
-        defer { revision += 1 }
-        return await chatStore.removeMember(chatID: chatID, account: account)
-    }
-    func leaveGroup(chatID: String) async -> GroupChangeOutcome {
-        defer { revision += 1 }
-        return await chatStore.leaveGroup(chatID: chatID)
-    }
-    func setRole(chatID: String, account: String, role: GroupRole) async -> GroupChangeOutcome {
-        defer { revision += 1 }
-        return await chatStore.setRole(chatID: chatID, account: account, role: role)
-    }
-    func renameGroup(chatID: String, name: String) async -> GroupChangeOutcome {
-        defer { revision += 1 }
-        return await chatStore.renameGroup(chatID: chatID, name: name)
-    }
-    func setGroupPhoto(chatID: String, photo: Data?) async -> GroupChangeOutcome {
-        defer { revision += 1 }
-        return await chatStore.setGroupPhoto(chatID: chatID, photo: photo)
     }
 
     /// What a chat is called: a group's name, else its contact's name. A group whose name has not arrived yet is "Group".
@@ -1075,6 +1046,8 @@ struct LaunchOptions {
     var fakeAuthResults: [AuthResult] = []
     /// `-scriptedTyping`: the sample chat with Riya shows "typing…" for about ten seconds, then her message arrives.
     var scriptedTyping = false
+    /// `-sampleMemberGroup`: the sample chats include a group where the person is a plain member.
+    var memberGroup = false
 
     static var current: LaunchOptions {
         let args = ProcessInfo.processInfo.arguments
@@ -1083,6 +1056,7 @@ struct LaunchOptions {
         options.isUITesting = args.contains("-uiTesting")
         options.sampleData = args.contains("-sampleData")
         options.scriptedTyping = args.contains("-scriptedTyping")
+        options.memberGroup = args.contains("-sampleMemberGroup")
         if let i = args.firstIndex(of: "-network"), i + 1 < args.count {
             options.network = args[i + 1] == "wifi" ? .wifi : .mobile
         }

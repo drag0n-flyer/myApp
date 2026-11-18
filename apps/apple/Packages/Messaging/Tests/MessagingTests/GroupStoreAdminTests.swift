@@ -48,13 +48,20 @@ import MessagingTestKit
     }
 
     @Test func aChatIAmOutOfShowsAsReadOnly() async throws {
-        let (store, _) = try await make()
+        let (store, rig) = try await make()
         guard case .created(let chatID, _) = await store.createGroup(accounts: ["acc-bob", "acc-cy"], name: "Club", photo: nil) else {
             Issue.record("expected created"); return
         }
         #expect(store.chat(id: chatID)?.myGroupState == .member)
+        // Deleting a chat I am still in does nothing.
+        store.deleteChat(chatID: chatID)
+        #expect(store.chat(id: chatID) != nil)
         _ = await store.setRole(chatID: chatID, account: "acc-bob", role: .owner)
         _ = await store.leaveGroup(chatID: chatID)
         #expect(store.chat(id: chatID)?.myGroupState.isReadOnly == true)
+        // Once I am out, it removes the chat with its messages.
+        store.deleteChat(chatID: chatID)
+        #expect(store.chat(id: chatID) == nil)
+        #expect(try rig.ana.deps.repo.chat(id: chatID) == nil)
     }
 }

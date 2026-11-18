@@ -72,6 +72,20 @@ extension LiveChatStore {
         return await groupChange { try await manager.changeGroupInfo(chatID: chatID, name: name, photo: nil, setPhoto: false); return .done }
     }
 
+    /// Removes a group chat I am out of, with its messages and their files. Does nothing for a chat I am still in.
+    public func deleteChat(chatID: String) {
+        guard !isClosed, let gone = (try? deps.repo.deleteGroupChat(id: chatID)) ?? nil else { return }
+        let mediaDirectory = deps.mediaDirectory
+        let fm = FileManager.default
+        for path in gone.paths where MediaPathGuard.isInside(URL(fileURLWithPath: path), directory: mediaDirectory) {
+            try? fm.removeItem(at: URL(fileURLWithPath: path))
+        }
+        for id in gone.messageIDs {
+            if let folder = PendingUpload.folder(in: mediaDirectory, messageID: id) { PendingUpload.removeFolder(folder) }
+        }
+        refresh()
+    }
+
     public func setGroupPhoto(chatID: String, photo: Data?) async -> GroupChangeOutcome {
         let manager = conversations
         return await groupChange { try await manager.changeGroupInfo(chatID: chatID, name: nil, photo: photo, setPhoto: true); return .done }

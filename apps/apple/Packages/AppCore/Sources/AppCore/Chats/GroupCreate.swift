@@ -39,8 +39,27 @@ public enum GroupCreateOutcome: Equatable, Sendable {
 public protocol GroupStore: AnyObject {
     /// Makes a group of `accounts` (2 to 99 other people). `photo` is a JPEG of 4 to 24,576 bytes, or `nil`.
     func createGroup(accounts: [String], name: String, photo: Data?) async -> GroupCreateOutcome
+    /// What group info shows; `nil` for a chat that is not a group chat or is not known.
+    func groupInfo(chatID: String) -> GroupInfo?
+    func addMembers(chatID: String, accounts: [String]) async -> GroupChangeOutcome
+    func removeMember(chatID: String, account: String) async -> GroupChangeOutcome
+    func leaveGroup(chatID: String) async -> GroupChangeOutcome
+    func setRole(chatID: String, account: String, role: GroupRole) async -> GroupChangeOutcome
+    func renameGroup(chatID: String, name: String) async -> GroupChangeOutcome
+    /// `nil` removes the photo; anything else must pass `ProfilePhotoRule`.
+    func setGroupPhoto(chatID: String, photo: Data?) async -> GroupChangeOutcome
+    /// Removes a group chat the person is no longer in, with its messages and files. Does nothing for a chat they are in.
+    func deleteChat(chatID: String)
 }
 
 extension GroupStore {
     public func createGroup(accounts: [String], name: String, photo: Data?) async -> GroupCreateOutcome { .failed(.other) }
+    public func groupInfo(chatID: String) -> GroupInfo? { nil }
+    public func addMembers(chatID: String, accounts: [String]) async -> GroupChangeOutcome { .failed(.other) }
+    public func removeMember(chatID: String, account: String) async -> GroupChangeOutcome { .failed(.other) }
+    public func leaveGroup(chatID: String) async -> GroupChangeOutcome { .failed(.other) }
+    public func setRole(chatID: String, account: String, role: GroupRole) async -> GroupChangeOutcome { .failed(.other) }
+    public func renameGroup(chatID: String, name: String) async -> GroupChangeOutcome { .failed(.other) }
+    public func setGroupPhoto(chatID: String, photo: Data?) async -> GroupChangeOutcome { .failed(.other) }
+    public func deleteChat(chatID: String) {}
 }
