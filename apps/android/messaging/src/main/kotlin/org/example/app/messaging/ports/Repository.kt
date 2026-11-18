@@ -183,6 +183,11 @@ interface Repository {
     /** Never lowers a status along sending < sent < delivered < read. Other targets are set unconditionally. */
     fun updateStatus(ids: List<String>, status: String)
     fun applyEdit(id: String, sender: String, envelope: ByteArray, folded: String, at: Long): Boolean
+    /**
+     * Replaces the envelope of one's own message that has not left yet (`sending` or `failed`), without marking it edited.
+     * An attachment is stored before its upload, with what is known then; this puts in what the upload returned.
+     */
+    fun replaceUnsentEnvelope(id: String, sender: String, envelope: ByteArray, folded: String, receivedAt: Long): Boolean
     fun markDeleted(id: String, sender: String): Boolean
     fun setReaction(messageId: String, accountId: String, emoji: String)
     fun reactions(messageId: String): List<ReactionRecord>

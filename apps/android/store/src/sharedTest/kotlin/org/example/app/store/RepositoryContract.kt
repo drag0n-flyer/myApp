@@ -169,6 +169,19 @@ abstract class RepositoryContract {
         assertTrue(repo.search("charlie", 10).isEmpty())
     }
 
+    @Test fun anUnsentEnvelopeCanBeReplacedButASentOneCannot() {
+        repo.insertMessage(message("m1", "x").copy(status = "sending"))
+        assertTrue(repo.replaceUnsentEnvelope("m1", "alice", byteArrayOf(7), "f", 5))
+        assertEquals(7, repo.message("m1")!!.envelope.single().toInt())
+        assertEquals(null, repo.message("m1")!!.editedAt)
+        assertEquals(5L, repo.message("m1")!!.receivedAt)
+        assertFalse(repo.replaceUnsentEnvelope("m1", "mallory", byteArrayOf(8), "f", 5))
+        repo.updateStatus(listOf("m1"), "failed")
+        assertTrue(repo.replaceUnsentEnvelope("m1", "alice", byteArrayOf(9), "f", 5))
+        repo.updateStatus(listOf("m1"), "sent")
+        assertFalse(repo.replaceUnsentEnvelope("m1", "alice", byteArrayOf(10), "f", 5))
+    }
+
     @Test fun shortQueryUsesLike() {
         repo.insertMessage(message("m1", "東京タワー", sentAt = 1))
         repo.insertMessage(message("m2", "100% sure_ok", sentAt = 2))

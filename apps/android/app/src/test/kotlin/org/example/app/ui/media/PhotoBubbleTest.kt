@@ -148,4 +148,16 @@ class PhotoBubbleTest {
         rule.onNodeWithContentDescription("Download").assertDoesNotExist()
         assertEquals(0, downloads)
     }
+
+    @Test fun aPhotoStillBeingSentOffersNoDownload() {
+        val sending = Message("m1", "me", Instant.now(), MessageContent.Photo(0), DeliveryStatus.Sending, null, emptyList(), media = null)
+        show(sending, host(null), wait = true)
+        rule.onNodeWithContentDescription("Download").assertDoesNotExist()
+    }
+
+    @Test fun aPhotoThatFailedToSendOffersNoDownload() {
+        val failed = Message("m1", "me", Instant.now(), MessageContent.Photo(0), DeliveryStatus.Failed, null, emptyList(), media = null)
+        show(failed, host(null), wait = true)
+        rule.onNodeWithContentDescription("Download").assertDoesNotExist()
+    }
 }

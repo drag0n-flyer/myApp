@@ -120,6 +120,8 @@ class RoomRepository(private val db: AppDatabase, allowLikeFallback: Boolean = f
             }
         }
     }
+    override fun replaceUnsentEnvelope(id: String, sender: String, envelope: ByteArray, folded: String, receivedAt: Long) =
+        messages.replaceUnsentEnvelope(id, sender, envelope, folded, receivedAt) > 0
     override fun applyEdit(id: String, sender: String, envelope: ByteArray, folded: String, at: Long) =
         messages.applyEdit(id, sender, envelope, folded, at) > 0
     override fun markDeleted(id: String, sender: String) = messages.markDeleted(id, sender) > 0

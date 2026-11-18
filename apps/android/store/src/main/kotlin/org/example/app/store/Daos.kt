@@ -74,6 +74,8 @@ interface MessageDao {
     @Query("UPDATE messages SET status = :status WHERE id IN (:ids)") fun forceStatus(ids: List<String>, status: String)
     @Query("UPDATE messages SET envelope = :envelope, folded = :folded, edited_at = :at WHERE id = :id AND sender_account = :sender AND deleted = 0")
     fun applyEdit(id: String, sender: String, envelope: ByteArray, folded: String, at: Long): Int
+    @Query("UPDATE messages SET envelope = :envelope, folded = :folded, received_at = :receivedAt WHERE id = :id AND sender_account = :sender AND deleted = 0 AND status IN ('sending', 'failed')")
+    fun replaceUnsentEnvelope(id: String, sender: String, envelope: ByteArray, folded: String, receivedAt: Long): Int
     @Query("UPDATE messages SET deleted = 1, envelope = x'', folded = '' WHERE id = :id AND sender_account = :sender")
     fun markDeleted(id: String, sender: String): Int
     @Query("UPDATE messages SET status = 'sending', received_at = :now WHERE id = :id AND status = 'failed'") fun resetForRetry(id: String, now: Long): Int

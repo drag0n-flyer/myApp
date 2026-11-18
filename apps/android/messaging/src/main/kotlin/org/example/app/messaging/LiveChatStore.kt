@@ -131,6 +131,9 @@ class LiveChatStore(
     val downloader = Downloader(server, dirs.blobDir, dirs.openDir, maxAttachmentBytes)
     private val uploader = Uploader(server, dirs.tempDir, dirs.blobDir)
     private val blobDir = dirs.blobDir
+    private val tempDir = dirs.tempDir
+    /** Ids of the attachment messages this process is preparing or uploading; a "sending" row not in here was cut off. */
+    private val uploading = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     private val _contacts = MutableStateFlow<List<Contact>>(emptyList())
     private val _folders = MutableStateFlow(listOf(ChatFolder.All, ChatFolder.Unread))
@@ -331,41 +334,166 @@ class LiveChatStore(
     fun failedMessageIds(chatId: String): Set<String> =
         repo.messages(chatId, null, 200).filter { it.status == "failed" && it.senderAccount == device.accountId }.map { it.id }.toSet()
 
-    override fun retrySend(messageId: String) = write { if (outbox.retry(messageId)) requestFlush() }
+    override fun retrySend(messageId: String) = write {
+        if (repo.get(PENDING_UPLOAD_PREFIX + messageId)?.isNotEmpty() == true) retryUpload(messageId)
+        else if (outbox.retry(messageId)) requestFlush()
+    }
 
-    /** [path] is the picked or recorded file; [MediaPreparer] turns it into the upload. */
+    /**
+     * [path] is the picked or recorded file; [MediaPreparer] turns it into the upload. The message is stored as
+     * `sending` first, so it shows at once; a failed prepare or upload makes it `failed` and keeps the prepared file for
+     * "Try again" ([retryUpload]). What a retry needs (the file, and the length or size known so far) lives in the
+     * database, so a restart does not lose it.
+     */
     override fun sendAttachment(path: String, kind: MediaKind, chatId: String) {
         if (closed.get()) return
         inFlight.update { it + 1 }
         scope.launch {
+            val id = freshId()
             try {
-                val prepared = mediaPreparer.prepare(path, kind) ?: return@launch
-                val att = uploader.upload(prepared.file)
-                val id = freshId()
-                val at = nowMs()
-                val envelope = when (kind) {
-                    MediaKind.Photo, MediaKind.Video -> ContentEnvelope.Photo(id, at, att, prepared.width, prepared.height, prepared.thumbnail)
-                    MediaKind.Voice -> ContentEnvelope.Voice(id, at, att, prepared.duration)
-                    MediaKind.File -> ContentEnvelope.File(id, at, att, prepared.name, "application/octet-stream")
-                }
                 if (!ensureChatRow(chatId)) return@launch
-                // The sender's own copy: the same record a received file gets, LOCAL at the ciphertext the upload kept.
+                val at = nowMs()
+                uploading += id
+                val pending = PendingUpload(kind.name, chatId, path)
                 repo.transaction {
-                    outbox.enqueue(envelope, chatId)
-                    repo.upsertAttachment(
-                        AttachmentRecord(att.id, id, attachmentKind(kind), att.key, att.dg, att.sz, att.csz, AttachmentState.LOCAL, att.csz, Uploader.blobFile(blobDir, att).path),
+                    repo.insertMessage(
+                        MessageRecord(
+                            id = id, chatId = chatId, conversationId = null, senderAccount = device.accountId, senderDevice = device.deviceId,
+                            sentAt = at, receivedAt = at, envelope = ContentCodec.encode(envelopeFor(kind, id, at, NO_ATT, PreparedMedia(File(path)))),
+                            status = "sending", replyTo = null, folded = "",
+                        ),
                     )
+                    repo.set(PENDING_UPLOAD_PREFIX + id, Json.encodeToString(PendingUpload.serializer(), pending).encodeToByteArray())
                 }
                 bumpActivity(chatId, at)
                 reload()
-                requestFlush()
+                upload(id, at, pending)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
+                failUpload(id)
             } finally {
+                uploading -= id
                 reload()
                 inFlight.update { it - 1 }
             }
+        }
+    }
+
+    /** "Try again" on a message that never uploaded: uploads the kept file once, however many times it is tapped. */
+    private fun retryUpload(messageId: String) {
+        if (closed.get() || !uploading.add(messageId)) return
+        val row = repo.message(messageId)
+        val pending = repo.get(PENDING_UPLOAD_PREFIX + messageId)?.let {
+            runCatching { Json.decodeFromString(PendingUpload.serializer(), it.decodeToString()) }.getOrNull()
+        }
+        if (row == null || pending == null || row.deleted || row.status != "failed" || row.senderAccount != device.accountId) {
+            uploading -= messageId
+            return
+        }
+        repo.updateStatus(listOf(messageId), "sending")
+        inFlight.update { it + 1 }
+        scope.launch {
+            try {
+                reload()
+                upload(messageId, row.sentAt, pending)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                failUpload(messageId)
+            } finally {
+                uploading -= messageId
+                reload()
+                inFlight.update { it - 1 }
+            }
+        }
+    }
+
+    /**
+     * Prepares (unless a kept prepared file is there), uploads, then in one transaction: the final envelope, the outbox
+     * row and the sender's own attachment record. A failure marks the message `failed` and keeps the prepared file.
+     */
+    private suspend fun upload(id: String, at: Long, start: PendingUpload) {
+        val kind = MediaKind.valueOf(start.kind)
+        var pending = start
+        val kept = pending.prepared.takeIf { it.isNotEmpty() }?.let(::File)?.takeIf { it.isFile }
+        val prepared: PreparedMedia = if (kept != null) {
+            preparedFrom(repo.message(id)?.envelope, kept)
+        } else {
+            val fresh = mediaPreparer.prepare(pending.path, kind)
+            if (fresh == null) { failUpload(id); return }
+            pending = pending.copy(prepared = fresh.file.path)
+            repo.transaction {
+                repo.replaceUnsentEnvelope(id, device.accountId, ContentCodec.encode(envelopeFor(kind, id, at, NO_ATT, fresh)), "", nowMs())
+                repo.set(PENDING_UPLOAD_PREFIX + id, Json.encodeToString(PendingUpload.serializer(), pending).encodeToByteArray())
+            }
+            reload()
+            fresh
+        }
+        val att = try {
+            uploader.upload(prepared.file)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            failUpload(id)
+            return
+        }
+        val envelope = envelopeFor(kind, id, at, att, prepared)
+        try {
+            repo.transaction {
+                repo.replaceUnsentEnvelope(id, device.accountId, ContentCodec.encode(envelope), fold(prepared.name.takeIf { kind == MediaKind.File } ?: ""), nowMs())
+                outbox.enqueue(envelope, pending.chatId)
+                // The sender's own copy: the same record a received file gets, LOCAL at the ciphertext the upload kept.
+                repo.upsertAttachment(
+                    AttachmentRecord(att.id, id, attachmentKind(kind), att.key, att.dg, att.sz, att.csz, AttachmentState.LOCAL, att.csz, Uploader.blobFile(blobDir, att).path),
+                )
+                repo.set(PENDING_UPLOAD_PREFIX + id, ByteArray(0))
+            }
+        } catch (e: Exception) {
+            Uploader.blobFile(blobDir, att).delete()
+            throw e
+        }
+        removeStaged(prepared.file, pending.path)
+        bumpActivity(pending.chatId, at)
+        reload()
+        requestFlush()
+    }
+
+    private fun failUpload(id: String) {
+        try { repo.updateStatus(listOf(id), "failed") } catch (_: Exception) { }
+    }
+
+    /** Deletes the prepared file, and the staged copy when it is a file inside the temp folder (never a `content:` URI or a path that leaves it). */
+    private fun removeStaged(prepared: File, path: String) {
+        prepared.delete()
+        if (path.startsWith("content:") || path.startsWith("file:")) return
+        try {
+            val file = File(path).canonicalFile
+            if (file.isFile && file.toPath().startsWith(tempDir.canonicalFile.toPath())) file.delete()
+        } catch (_: java.io.IOException) {
+        }
+    }
+
+    private fun envelopeFor(kind: MediaKind, id: String, at: Long, att: Att, p: PreparedMedia): ContentEnvelope = when (kind) {
+        MediaKind.Photo, MediaKind.Video -> ContentEnvelope.Photo(id, at, att, p.width, p.height, p.thumbnail)
+        MediaKind.Voice -> ContentEnvelope.Voice(id, at, att, p.duration)
+        MediaKind.File -> ContentEnvelope.File(id, at, att, p.name, "application/octet-stream")
+    }
+
+    /** What a retry knows about the prepared file: its length, size or name, from the stored envelope. */
+    private fun preparedFrom(envelope: ByteArray?, file: File): PreparedMedia = when (val e = envelope?.let { ContentCodec.decode(it) }) {
+        is ContentEnvelope.Photo -> PreparedMedia(file, e.w, e.h, e.th)
+        is ContentEnvelope.Voice -> PreparedMedia(file, duration = e.dur)
+        is ContentEnvelope.File -> PreparedMedia(file, name = e.name)
+        else -> PreparedMedia(file)
+    }
+
+    /** Messages still `sending` whose upload died with the last process become `failed`, so "Try again" is offered. */
+    private fun failInterruptedUploads() {
+        for ((key, value) in repo.entries(PENDING_UPLOAD_PREFIX).filterValues { it.isNotEmpty() }) {
+            val id = key.removePrefix(PENDING_UPLOAD_PREFIX)
+            if (id in uploading) continue
+            if (repo.message(id)?.status == "sending") repo.updateStatus(listOf(id), "failed")
         }
     }
 
@@ -415,6 +543,8 @@ class LiveChatStore(
 
     /** Removes decrypted files and partial downloads a killed process left: `Downloader.sweepOpen`, then `MediaCache.sweep`. */
     fun sweepStartup() {
+        failInterruptedUploads()
+        reload()
         downloader.sweepOpen()
         mediaSweep()
     }
@@ -707,6 +837,8 @@ class LiveChatStore(
         }
     }
 
+    /** What "Try again" needs for an attachment that has not uploaded: the picked file, and the prepared file once there is one. */
+    @Serializable private data class PendingUpload(val kind: String, val chatId: String, val path: String, val prepared: String = "")
     @Serializable private class PendingLine(val sentAt: Long, val text: String)
     @Serializable private class PendingReport(val accountId: String, val conversationId: String?, val lines: List<PendingLine>)
 
@@ -716,6 +848,8 @@ class LiveChatStore(
         const val BLOCK_PREFIX = "pending.block."
         const val UNBLOCK_PREFIX = "pending.unblock."
         const val PENDING_REPORT_PREFIX = "pending.report."
+        private const val PENDING_UPLOAD_PREFIX = "pending.upload."
+        private val NO_ATT = Att("", ByteArray(0), ByteArray(0), 0, 0)
         private const val REPORTED_PREFIX = "reported."
     }
 }

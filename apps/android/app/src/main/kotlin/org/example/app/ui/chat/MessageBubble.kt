@@ -197,13 +197,15 @@ private fun LinkedText(text: String) {
 
 @Composable
 private fun Body(message: Message, autoDownloads: (MediaKind) -> Boolean, onDownload: () -> Unit, media: MediaHost?) {
+    // A message of mine that has not uploaded has nothing to download; it shows as sending or failed with its own retry.
+    val unsent = message.media == null && (message.status == DeliveryStatus.Sending || message.status == DeliveryStatus.Failed)
     when (val c = message.content) {
         is MessageContent.Text -> LinkedText(c.text)
         is MessageContent.Voice -> VoiceBubble(message, c.duration, media, onDownload)
         is MessageContent.Photo -> PhotoBubble(
             message = message,
             title = stringResource(R.string.photo_with_size, dataSizeText(DataFormat.size(c.bytes))),
-            wait = !autoDownloads(MediaKind.Photo),
+            wait = !autoDownloads(MediaKind.Photo) && !unsent,
             host = media,
             onDownload = onDownload,
         )
@@ -212,7 +214,7 @@ private fun Body(message: Message, autoDownloads: (MediaKind) -> Boolean, onDown
             message = message,
             name = SafeFileName.of(c.name, "file"),
             title = stringResource(R.string.file_with_size, SafeFileName.of(c.name, "file"), dataSizeText(DataFormat.size(c.bytes))),
-            wait = !autoDownloads(MediaKind.File),
+            wait = !autoDownloads(MediaKind.File) && !unsent,
             host = media,
             onDownload = onDownload,
         )
