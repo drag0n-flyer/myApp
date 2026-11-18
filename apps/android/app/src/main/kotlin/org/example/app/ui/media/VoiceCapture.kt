@@ -6,6 +6,7 @@ import kotlin.concurrent.thread
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -252,16 +253,16 @@ class VoiceCapture(
         if (current.stopping) return
         _state.value = CaptureState.Recording(recorder.capturedSeconds, stopping = true, levels = current.levels, phase = gesture)
         ticker?.cancel()
-        scope.launch {
+        // ATOMIC: the body runs even if the screen's scope is cancelled first, so the note is always sent, kept or deleted.
+        scope.launch(start = CoroutineStart.ATOMIC) {
             // The note is kept here as well: if the screen leaves now, withContext drops it and it must not stay on disk.
             val held = AtomicReference<StopResult?>(null)
             val result = try {
                 withContext(io + NonCancellable) { recorder.stop().also { held.set(it) } }
             } catch (e: CancellationException) {
                 val note = (held.get() as? StopResult.Success)?.recording
-                if (note != null) {
-                    if (!thenSend && keep != null) keep.invoke(CaptureState.Preview(note.file, note.durationSeconds)) else note.file.delete()
-                }
+                // The screen left while the note was being finished: kept as a preview, never lost (and never sent half-way).
+                if (note != null) keepOrDelete(CaptureState.Preview(note.file, note.durationSeconds))
                 throw e
             }
             when (result) {
@@ -273,7 +274,7 @@ class VoiceCapture(
                     } else {
                         _state.value = CaptureState.Idle
                         gesture = VoiceGesture.State.idle
-                        handOver(file)
+                        handOver(file, result.recording.durationSeconds)
                     }
                 }
                 // An accidental tap: nothing to send and nothing to say.
@@ -287,8 +288,20 @@ class VoiceCapture(
         }
     }
 
-    private suspend fun handOver(file: File) {
-        if (withContext(io) { check(file) }) {
+    private fun keepOrDelete(preview: CaptureState.Preview) {
+        if (keep != null) keep.invoke(preview) else deleteInBackground(preview.file)
+    }
+
+    private suspend fun handOver(file: File, seconds: Double) {
+        val ok = try {
+            withContext(io) { check(file) }
+        } catch (e: CancellationException) {
+            // Cut off before the note was handed over: kept for the next screen of the chat.
+            keepOrDelete(CaptureState.Preview(file, seconds))
+            throw e
+        }
+        // No suspension from here: the note is either sent or deleted.
+        if (ok) {
             onNote(file)
         } else {
             file.delete()
@@ -316,10 +329,11 @@ class VoiceCapture(
                 }
                 step(VoiceGesture.Event.sendTapped)
                 _state.value = current.copy(sending = true)
-                scope.launch {
+                scope.launch(start = CoroutineStart.ATOMIC) {
                     _state.value = CaptureState.Idle
                     gesture = VoiceGesture.State.idle
-                    handOver(current.file)
+                    // The screen left before the send ran: the note stays a preview for the next screen.
+                    if (released) keepOrDelete(current.copy(sending = false)) else handOver(current.file, current.seconds)
                 }
             }
             CaptureState.Idle -> Unit

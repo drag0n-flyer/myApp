@@ -498,6 +498,137 @@ class VoiceCaptureTest {
         assertEquals(1, got.size)
     }
 
+    private fun TestScope.screenScope(job: kotlinx.coroutines.Job) =
+        kotlinx.coroutines.CoroutineScope(StandardTestDispatcher(testScheduler) + job)
+
+    @Test fun aSendInFlightWhenTheScreenLeavesKeepsTheNoteAsAPreview() = runTest {
+        val file = File.createTempFile("note", ".ogg")
+        recorder.stopResult = StopResult.Success(Recording(file, 3.0))
+        val kept = mutableListOf<CaptureState.Preview>()
+        val job = kotlinx.coroutines.Job()
+        val c = VoiceCapture(screenScope(job), recorder, { notes += it }, { notices += it }, StandardTestDispatcher(testScheduler), keep = { kept += it })
+        c.activate()
+        runCurrent()
+        c.send()          // finish(thenSend = true) is queued
+        c.release()       // the screen leaves ...
+        job.cancel()      // ... and Compose cancels its scope before the queued work ran
+        runCurrent()
+        assertEquals(listOf(CaptureState.Preview(file, 3.0)), kept)
+        assertTrue(notes.isEmpty())
+        assertTrue(file.exists())
+        file.delete()
+    }
+
+    @Test fun aPreviewSendQueuedWhenTheScreenLeavesStaysAPreview() = runTest {
+        val file = File.createTempFile("note", ".ogg")
+        val kept = mutableListOf<CaptureState.Preview>()
+        val job = kotlinx.coroutines.Job()
+        val c = VoiceCapture(screenScope(job), recorder, { notes += it }, { notices += it }, StandardTestDispatcher(testScheduler), keep = { kept += it }, initial = CaptureState.Preview(file, 5.0))
+        c.send()
+        c.release()
+        job.cancel()
+        runCurrent()
+        assertEquals(listOf(CaptureState.Preview(file, 5.0)), kept)
+        assertTrue(notes.isEmpty())
+        assertTrue(file.exists())
+        file.delete()
+    }
+
+    /** The leave sequence of rememberVoiceControls: [forget] is what stops the leaving screen from receiving its own preview. */
+    private fun TestScope.leaveAndReturn(forget: Boolean): CaptureState.Preview? {
+        VoiceKeep.clear()
+        val file = File.createTempFile("note", ".ogg")
+        recorder.stopResult = StopResult.Success(Recording(file, 6.0))
+        val job = kotlinx.coroutines.Job()
+        val madeIn = VoiceKeep.currentGeneration()
+        val first = VoiceCapture(screenScope(job), recorder, { notes += it }, { notices += it }, StandardTestDispatcher(testScheduler), keep = { VoiceKeep.put("acct/chat", it, madeIn) })
+        val waiter: (CaptureState.Preview) -> Unit = { first.adopt(it) }
+        VoiceKeep.take("acct/chat", waiter)
+        first.activate()
+        runCurrent()
+        if (forget) VoiceKeep.forget("acct/chat", waiter)
+        first.release()          // onDispose
+        job.cancel()             // Compose cancels the screen's scope right after
+        runCurrent()
+        val got = java.util.concurrent.LinkedBlockingQueue<CaptureState.Preview>()
+        // The next screen of the same chat asks; the stopped recording is kept (or arrives a moment later).
+        VoiceKeep.take("acct/chat") { got.add(it) }
+        return got.poll(1, java.util.concurrent.TimeUnit.SECONDS)
+    }
+
+    @Test fun aLeavingScreenDoesNotReceiveItsOwnKeptPreview() = runTest {
+        val p = leaveAndReturn(forget = true)
+        assertTrue(p != null && p.seconds == 6.0, "the next screen gets the preview")
+        p!!.file.delete()
+        VoiceKeep.clear()
+    }
+
+    @Test fun withoutForgetTheLeavingScreenSwallowsThePreview() = runTest {
+        // Documents the bug the forget call prevents.
+        val p = leaveAndReturn(forget = false)
+        assertEquals(null, p)
+        VoiceKeep.clear()
+    }
+
+    @Test fun aKeepThatFinishesAfterTheWipeDeletesItsFile() = runTest {
+        val file = File.createTempFile("note", ".ogg")
+        val release = java.util.concurrent.CountDownLatch(1)
+        val slow = object : RecorderPort {
+            override fun start() = StartResult.Started
+            override fun stop(): StopResult { release.await(5, java.util.concurrent.TimeUnit.SECONDS); return StopResult.Success(Recording(file, 5.0)) }
+            override fun cancel() = Unit
+            override val capturedSeconds = 5.0
+        }
+        val madeIn = VoiceKeep.currentGeneration()
+        val c = VoiceCapture(backgroundScope, slow, { notes += it }, { notices += it }, StandardTestDispatcher(testScheduler), keep = { VoiceKeep.put("acct/wipe", it, madeIn) })
+        c.activate()
+        runCurrent()
+        c.release()            // keepInBackground is now blocked in stop()
+        VoiceKeep.clear()      // sign-out or the local-data wipe
+        release.countDown()
+        val end = System.currentTimeMillis() + 5_000
+        while (file.exists() && System.currentTimeMillis() < end) Thread.sleep(10)
+        assertEquals(false, file.exists())
+        val got = mutableListOf<CaptureState.Preview>()
+        VoiceKeep.take("acct/wipe") { got += it }
+        assertTrue(got.isEmpty())
+        VoiceKeep.clear()
+    }
+
+    @Test fun clearingDeletesKeptFilesAndDropsWaiters() {
+        val file = File.createTempFile("note", ".ogg")
+        VoiceKeep.put("acct/a", CaptureState.Preview(file, 3.0))
+        val got = mutableListOf<CaptureState.Preview>()
+        VoiceKeep.take("acct/waiter") { got += it }
+        VoiceKeep.clear()
+        assertEquals(false, file.exists())
+        val late = File.createTempFile("note", ".ogg")
+        VoiceKeep.put("acct/waiter", CaptureState.Preview(late, 3.0))
+        assertTrue(got.isEmpty(), "the waiter was dropped")
+        VoiceKeep.take("acct/waiter") { got += it }
+        assertEquals(listOf(CaptureState.Preview(late, 3.0)), got)
+        VoiceKeep.clear()
+    }
+
+    @Test fun aPreviewKeptByOneAccountIsNotHandedToAnotherOnTheSameChatId() {
+        val file = File("c.ogg")
+        VoiceKeep.put("alice/peer", CaptureState.Preview(file, 3.0))
+        val got = mutableListOf<CaptureState.Preview>()
+        VoiceKeep.take("bob/peer") { got += it }
+        assertTrue(got.isEmpty())
+        VoiceKeep.clear()
+    }
+
+    @Test fun aForgottenWaiterIsNotCalledBack() {
+        val got = mutableListOf<CaptureState.Preview>()
+        val waiter: (CaptureState.Preview) -> Unit = { got += it }
+        VoiceKeep.take("acct/f", waiter)
+        VoiceKeep.forget("acct/f", waiter)
+        VoiceKeep.put("acct/f", CaptureState.Preview(File("d.ogg"), 3.0))
+        assertTrue(got.isEmpty())
+        VoiceKeep.clear()
+    }
+
     @Test fun theKeepBoxCallsBackWhenThePreviewArrivesLate() {
         val got = mutableListOf<CaptureState.Preview>()
         VoiceKeep.take("chat2") { got += it }

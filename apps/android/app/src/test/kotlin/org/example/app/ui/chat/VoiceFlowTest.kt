@@ -2,6 +2,8 @@ package org.example.app.ui.chat
 
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.semantics.SemanticsActions
@@ -13,6 +15,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
 import java.io.File
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import kotlinx.coroutines.Dispatchers
 import org.example.app.media.Recording
 import org.example.app.media.StartResult
@@ -90,6 +93,60 @@ class VoiceFlowTest {
         rule.waitUntil(5_000) { rule.onAllNodesWithDescription("Record voice message") }
         rule.waitUntil(5_000) { !file.exists() }
         assertEquals(emptyList(), sent)
+    }
+
+    /** The real [rememberVoiceControls], on a fake recorder: a screen that can be shown and hidden. */
+    private var visible by androidx.compose.runtime.mutableStateOf(true)
+    private var controls: org.example.app.ui.media.VoiceControls? = null
+
+    private fun controlsHost(key: String = "me/chat-1") = rule.setContent {
+        AppTheme {
+            if (visible) {
+                val c = org.example.app.ui.media.rememberVoiceControls(key, { sent += it }, {}, { _, _, _ -> recorder }, check = { true })
+                androidx.compose.runtime.SideEffect { controls = c }
+            }
+        }
+    }
+
+    private fun stateNow() = controls!!.capture.state.value
+
+    @Test fun aRecordingLeftWithTheScreenComesBackAsAPreviewAndSendsOnce() {
+        org.example.app.ui.media.VoiceKeep.clear()
+        androidx.test.core.app.ApplicationProvider.getApplicationContext<android.app.Application>().let {
+            org.robolectric.Shadows.shadowOf(it).grantPermissions(android.Manifest.permission.RECORD_AUDIO)
+        }
+        controlsHost()
+        controls!!.activate()
+        rule.waitUntil(5_000) { stateNow() is org.example.app.ui.media.CaptureState.Recording }
+        rule.runOnIdle { visible = false }     // the screen leaves (or turns)
+        rule.waitForIdle()
+        rule.runOnIdle { visible = true }      // and comes back
+        rule.waitForIdle()
+        rule.waitUntil(5_000) { stateNow() is org.example.app.ui.media.CaptureState.Preview }
+        assertEquals(org.example.app.ui.media.CaptureState.Preview(file, 4.0), stateNow())
+        assertTrue(file.exists(), "the kept file is still there")
+        controls!!.capture.send()
+        rule.waitUntil(5_000) { sent.isNotEmpty() }
+        rule.waitForIdle()
+        assertEquals(listOf(file), sent)
+    }
+
+    @Test fun aRecordingKeptForOneAccountDoesNotAppearInAnotherAccountsChat() {
+        org.example.app.ui.media.VoiceKeep.clear()
+        org.robolectric.Shadows.shadowOf(androidx.test.core.app.ApplicationProvider.getApplicationContext<android.app.Application>())
+            .grantPermissions(android.Manifest.permission.RECORD_AUDIO)
+        controlsHost("alice/peer")
+        controls!!.activate()
+        rule.waitUntil(5_000) { stateNow() is org.example.app.ui.media.CaptureState.Recording }
+        rule.runOnIdle { visible = false }
+        rule.waitForIdle()
+        Thread.sleep(300)
+        rule.runOnIdle { org.example.app.ui.media.VoiceKeep.clear() }   // sign-out
+        rule.waitUntil(5_000) { !file.exists() }
+        rule.runOnIdle { visible = true }
+        rule.waitForIdle()
+        Thread.sleep(200)
+        assertEquals(org.example.app.ui.media.CaptureState.Idle, stateNow())
     }
 
     @Test fun deletingWhileLockedAddsNoneAndCancelsTheRecorder() {

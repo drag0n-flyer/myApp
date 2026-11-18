@@ -166,7 +166,18 @@ class VoiceControls(val capture: VoiceCapture, val press: (rtl: Boolean) -> Unit
  * comes back with the next screen of the same [chatKey]). The 30-minute limit does the same.
  */
 @Composable
-fun rememberVoiceControls(chatKey: String, onNote: (File) -> Unit, notify: (Int) -> Unit): VoiceControls {
+fun rememberVoiceControls(
+    /** "<accountId>/<chatId>": a kept recording is only ever shown again in the same chat of the same account. */
+    chatKey: String,
+    onNote: (File) -> Unit,
+    notify: (Int) -> Unit,
+    /** The recorder behind the capture; tests pass a fake. [onLimit] is called on the recording thread. */
+    recorderFor: (Context, File, onLimit: () -> Unit) -> RecorderPort = { ctx, dir, onLimit ->
+        VoiceRecorderPort(VoiceRecorder(ctx, dir) { onLimit() }, dir)
+    },
+    /** Run on a finished note before it is sent; tests pass their own. */
+    check: (File) -> Boolean = { VoicePrep.prepare(it) != null },
+): VoiceControls {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val note by rememberUpdatedState(onNote)
@@ -174,13 +185,23 @@ fun rememberVoiceControls(chatKey: String, onNote: (File) -> Unit, notify: (Int)
     val capture = remember(context, chatKey) {
         val dir = MediaCache.outgoingDir(context)
         var self: VoiceCapture? = null
-        val recorder = VoiceRecorder(context, dir) { self?.limitReached() }
+        val madeIn = VoiceKeep.currentGeneration()
         VoiceCapture(
-            scope, VoiceRecorderPort(recorder, dir), { note(it) }, { say(it) }, check = { VoicePrep.prepare(it) != null },
-            keep = { VoiceKeep.put(chatKey, it) },
-        ).also { self = it; VoiceKeep.take(chatKey) { p -> it.adopt(p) } }
+            scope, recorderFor(context, dir) { self?.limitReached() }, { note(it) }, { say(it) },
+            check = check,
+            keep = { VoiceKeep.put(chatKey, it, madeIn) },
+        ).also { self = it }
     }
-    DisposableEffect(capture) { onDispose { capture.release() } }
+    DisposableEffect(capture) {
+        // Asks for a recording kept by the previous screen of this chat. When this screen leaves it stops asking first, so
+        // its own recording is kept for the next screen and not handed to a screen that is already gone.
+        val waiter: (CaptureState.Preview) -> Unit = { capture.adopt(it) }
+        VoiceKeep.take(chatKey, waiter)
+        onDispose {
+            VoiceKeep.forget(chatKey, waiter)
+            capture.release()
+        }
+    }
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { capture.interrupted() }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (!granted) say(R.string.media_mic_off)
