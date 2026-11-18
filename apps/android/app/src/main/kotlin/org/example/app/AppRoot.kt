@@ -7,7 +7,19 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Text
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
+import org.example.app.core.layout.PaneLayout
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.fillMaxSize
@@ -156,6 +168,40 @@ fun AppRoot(
             return@AppTheme
         }
         val nav = rememberNavController()
+        // From 840 dp the list sits beside the open chat. The open chat, its info page and the message to flash are
+        // kept across rotation; below 840 dp nothing of this shows and a chat is a screen of its own.
+        val wide = PaneLayout.forWidth(LocalConfiguration.current.screenWidthDp) == PaneLayout.TwoPane
+        var paneChat by rememberSaveable { mutableStateOf<String?>(null) }
+        var paneInfo by rememberSaveable { mutableStateOf(false) }
+        var paneHighlight by rememberSaveable { mutableStateOf<String?>(null) }
+        val openChat = rememberUpdatedState<(String, String?) -> Unit> { id, highlight ->
+            if (wide) {
+                paneChat = id; paneInfo = false; paneHighlight = highlight
+                // Any full-screen page over the main screen (new chat, search, ...) closes: the chat opens beside the list.
+                if (nav.currentDestination?.route != MAIN) nav.popBackStack(MAIN, inclusive = false)
+            } else {
+                nav.navigate("chat/${Uri.encode(id)}" + if (highlight != null) "?highlight=${Uri.encode(highlight)}" else "")
+            }
+        }
+        // A rotation or resize across the threshold carries the open chat (and its info page) into the other layout.
+        LaunchedEffect(wide) {
+            val route = nav.currentBackStackEntry?.destination?.route
+            if (wide) {
+                if (route == CHAT || route == INFO) {
+                    paneChat = nav.currentBackStackEntry?.arguments?.getString("id")
+                    paneInfo = route == INFO
+                    paneHighlight = null
+                    nav.popBackStack(MAIN, inclusive = false)
+                }
+            } else {
+                paneChat?.let { id ->
+                    paneChat = null
+                    nav.navigate("chat/${Uri.encode(id)}")
+                    if (paneInfo) nav.navigate("chatinfo/${Uri.encode(id)}")
+                }
+                paneInfo = false
+            }
+        }
         val idArg = listOf(navArgument("id") { type = NavType.StringType })
         val chatArgs = idArg + navArgument("highlight") { type = NavType.StringType; nullable = true; defaultValue = null }
         // While the app lock is on and locked, only the cover (and a ringing or active call) is composed.
@@ -169,7 +215,7 @@ fun AppRoot(
             if (locked) return@LaunchedEffect
             requestedChat?.let { id ->
                 // Only a chat this account has: another app could send any ID.
-                graph.openableChat(id)?.let { nav.navigate("chat/${Uri.encode(it)}") }
+                graph.openableChat(id)?.let { openChat.value(it, null) }
                 graph.requestedChat.value = null
             }
         }
@@ -201,13 +247,14 @@ fun AppRoot(
                 LinkApprovalFlow(vm, onDone = { nav.popBackStack() })
             }
             composable(MAIN) {
-                MainTabs(tabs = if (graph.callsAvailable) MainTab.entries else MainTab.entries - MainTab.Calls) { tab ->
+                val panes: @Composable (Modifier) -> Unit = { paneModifier ->
+                MainTabs(modifier = paneModifier, tabs = if (graph.callsAvailable) MainTab.entries else MainTab.entries - MainTab.Calls) { tab ->
                     if (tab == MainTab.Chats) {
                         val vm = viewModel<ChatListViewModel>(
                             factory = factory { ChatListViewModel(graph.chatStore, graph.serverPolicy, graph.settingsStore.settings, graph.network, graph.connectionStatus) },
                         )
                         ChatListScreen(
-                            vm, onOpenChat = { nav.navigate("chat/$it") }, onOpenRequests = { nav.navigate(REQUESTS) },
+                            vm, onOpenChat = { openChat.value(it, null) }, onOpenRequests = { nav.navigate(REQUESTS) },
                             onNewChat = { nav.navigate(NEW_CHAT) }, onSearch = { nav.navigate(SEARCH) },
                             onOpenArchive = { nav.navigate(ARCHIVE) },
                         )
@@ -218,7 +265,7 @@ fun AppRoot(
                         val context = LocalContext.current
                         ContactsScreen(
                             graph.chatStore, graph.inviteUrl,
-                            onOpenChat = { nav.navigate("chat/$it") },
+                            onOpenChat = { openChat.value(it, null) },
                             onAddContact = { nav.navigate(ADD_CONTACT) },
                             onInvite = { shareInvite(context, it, graph.appLock::expectReturn) },
                         )
@@ -230,15 +277,57 @@ fun AppRoot(
                         TabPlaceholder(tab)
                     }
                 }
+                }
+                if (!wide) panes(Modifier) else {
+                    // Back closes the info page, then the chat, before it leaves the app.
+                    BackHandler(enabled = paneChat != null) { if (paneInfo) paneInfo = false else paneChat = null }
+                    Row(Modifier.fillMaxSize()) {
+                        panes(Modifier.width(PaneLayout.LIST_PANE_DP.dp))
+                        VerticalDivider()
+                        Box(Modifier.weight(1f).fillMaxSize()) {
+                            val id = paneChat
+                            if (id == null) {
+                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(stringResource(R.string.select_a_chat)) }
+                            } else key(id) {
+                                if (paneInfo) {
+                                    ChatInfoScreen(
+                                        graph.chatStore, id,
+                                        onBack = { paneInfo = false },
+                                        onCall = if (graph.callsAvailable) { video -> callVm.start(id, video) } else null,
+                                        onSearch = {},
+                                        onBlocked = { paneInfo = false; paneChat = null },
+                                    )
+                                } else {
+                                    val vm = viewModel<ChatViewModel>(
+                                        key = "chat-$id",
+                                        factory = factory { ChatViewModel(graph.chatStore, id, graph.network) { graph.settingsStore.settings.value.autoDownload } },
+                                    )
+                                    ChatScreen(
+                                        vm, myId = graph.chatStore.me.id,
+                                        onBack = { paneChat = null },
+                                        onOpenInfo = { paneInfo = true },
+                                        onCall = if (graph.callsAvailable) { video -> callVm.start(id, video) } else null,
+                                        onAccept = { graph.chatStore.accept(id) },
+                                        onBlock = { contactId -> graph.chatStore.block(contactId); paneChat = null },
+                                        onReport = { graph.chatStore.report(id) },
+                                        onForward = { target -> if (target != id) openChat.value(target, null) },
+                                        highlightMessageId = paneHighlight?.takeIf { it.isNotBlank() },
+                                        opener = graph.attachmentOpener,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
             composable(ARCHIVE) {
                 val vm = viewModel<ChatListViewModel>(
                     factory = factory { ChatListViewModel(graph.chatStore, graph.serverPolicy, graph.settingsStore.settings, graph.network, graph.connectionStatus) },
                 )
-                ArchiveScreen(vm, onOpenChat = { nav.navigate("chat/$it") }, onBack = { nav.popBackStack() })
+                ArchiveScreen(vm, onOpenChat = { openChat.value(it, null) }, onBack = { nav.popBackStack() })
             }
             composable(REQUESTS) {
-                MessageRequestsScreen(graph.chatStore, onOpenChat = { nav.navigate("chat/$it") }, onBack = { nav.popBackStack() })
+                MessageRequestsScreen(graph.chatStore, onOpenChat = { openChat.value(it, null) }, onBack = { nav.popBackStack() })
             }
             composable(ADD_CONTACT) {
                 AddContactScreen(graph.chatStore, onBack = { nav.popBackStack() }, onAdded = { nav.popBackStack() })
@@ -248,7 +337,8 @@ fun AppRoot(
                     graph.chatStore,
                     onChoose = { contactId ->
                         val chatId = graph.chatStore.ensureChat(contactId)
-                        nav.navigate("chat/${Uri.encode(chatId)}") { popUpTo(NEW_CHAT) { inclusive = true } }
+                        if (wide) openChat.value(chatId, null)
+                        else nav.navigate("chat/${Uri.encode(chatId)}") { popUpTo(NEW_CHAT) { inclusive = true } }
                     },
                     onAddContact = { nav.navigate(ADD_CONTACT) },
                     onBack = { nav.popBackStack() },
@@ -258,8 +348,8 @@ fun AppRoot(
                 val vm = viewModel<SearchViewModel>(factory = factory { SearchViewModel(graph.chatStore) })
                 SearchScreen(
                     vm,
-                    onOpenContact = { contactId -> nav.navigate("chat/${Uri.encode(graph.chatStore.ensureChat(contactId))}") },
-                    onOpenMessage = { chatId, messageId -> nav.navigate("chat/${Uri.encode(chatId)}?highlight=${Uri.encode(messageId)}") },
+                    onOpenContact = { contactId -> openChat.value(graph.chatStore.ensureChat(contactId), null) },
+                    onOpenMessage = { chatId, messageId -> openChat.value(chatId, messageId) },
                     onBack = { nav.popBackStack() },
                 )
             }
@@ -306,7 +396,7 @@ fun AppRoot(
                         nav.popBackStack(MAIN, inclusive = false)
                     },
                     onReport = { graph.chatStore.report(id) },
-                    onForward = { target -> if (target != id) nav.navigate("chat/${Uri.encode(target)}") },
+                    onForward = { target -> if (target != id) openChat.value(target, null) },
                     // Set by a search hit in the chat list; absent from routes that do not declare it.
                     highlightMessageId = entry.arguments?.getString("highlight")?.takeIf { it.isNotBlank() },
                     opener = graph.attachmentOpener,
