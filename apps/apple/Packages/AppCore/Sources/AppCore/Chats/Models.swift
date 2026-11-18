@@ -138,7 +138,7 @@ public struct Message: Identifiable, Hashable, Codable, Sendable {
     /// One-line summary for the chat list.
     public var previewText: String {
         switch content {
-        case .text(let text): text
+        case .text(let text): MessageFormat.plain(text)
         case .voice(let duration): "Voice message \(Self.clock(duration))"
         case .photo: "Photo"
         case .file(let name, _): MediaFileName.clean(name)

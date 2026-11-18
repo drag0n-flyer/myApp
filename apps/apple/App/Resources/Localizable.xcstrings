@@ -69,6 +69,17 @@
         }
       }
     },
+    "%lld of %lld" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld of %lld"
+          }
+        }
+      }
+    },
     "%lld unread" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1048,6 +1059,17 @@
         }
       }
     },
+    "Next result" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Next result"
+          }
+        }
+      }
+    },
     "No app can open this file." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1308,6 +1330,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Point your camera at the QR code on your Mac."
+          }
+        }
+      }
+    },
+    "Previous result" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Previous result"
           }
         }
       }

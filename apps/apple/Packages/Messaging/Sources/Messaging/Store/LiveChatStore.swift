@@ -22,6 +22,11 @@ public final class LiveChatStore: ChatStore {
     public static let cachedMessageCount = 50
     static let maxTextLength = 4096
     static let reportedMessageCount = 10
+    /// A report carries what was typed, not the plain display form.
+    static func storedText(_ message: Message) -> String {
+        if case .text(let text) = message.content { return text }
+        return message.previewText
+    }
 
     let deps: MessagingDeps
     private let outbox: Outbox
@@ -740,7 +745,7 @@ public final class LiveChatStore: ChatStore {
         let lines = map(records).filter { message in
             if case .system = message.content { return false }
             return true
-        }.suffix(Self.reportedMessageCount).map { ReportedMessage(sentAt: $0.sentAt, text: $0.previewText) }
+        }.suffix(Self.reportedMessageCount).map { ReportedMessage(sentAt: $0.sentAt, text: Self.storedText($0)) }
         let pending = PendingActions.Report(
             accountID: chatID, conversationID: ((try? repo.preferredConversation(chatID: chatID)) ?? nil)?.serverID,
             messages: Array(lines))
