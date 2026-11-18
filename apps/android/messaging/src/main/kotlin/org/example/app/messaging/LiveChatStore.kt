@@ -1273,11 +1273,27 @@ class LiveChatStore(
     override fun timerSeconds(chatId: String): Int = repo.timerSeconds(chatId)
 
     override fun setTimer(chatId: String, seconds: Int) {
-        if (closed.get() || org.example.app.core.people.TimerChoice.from(seconds) == null) return
-        // Remembered with the time of the choice, so an older timer from the peer cannot override it.
-        repo.set("timer-at:$chatId", nowMs().toString().encodeToByteArray())
-        repo.setTimer(chatId, seconds)
-        reload()
+        if (org.example.app.core.people.TimerChoice.from(seconds) == null) return
+        write {
+            if (repo.chat(chatId) == null) return@write
+            val changed = repo.timerSeconds(chatId) != seconds
+            // Remembered with the time of the choice, so an older timer from the peer cannot override it.
+            repo.set("timer-at:$chatId", nowMs().toString().encodeToByteArray())
+            if (!changed) return@write
+            repo.setTimer(chatId, seconds)
+            // One `timer` control through the normal send path, and the same line the peer will show, without a name.
+            var id = ""
+            var at = 0L
+            outbox.enqueueControl(chatId) { newId, now -> id = newId; at = now; ContentEnvelope.Timer(newId, now, seconds) }
+            repo.insertMessage(
+                MessageRecord(
+                    id = "sys-timer-$id", chatId = chatId, conversationId = null, senderAccount = ChatMapping.SYSTEM_SENDER,
+                    senderDevice = null, sentAt = at, receivedAt = at, envelope = "{\"timer\":{\"seconds\":$seconds}}".encodeToByteArray(),
+                    status = "sent",
+                ),
+            )
+            requestFlush()
+        }
     }
 
     override fun sweepExpired(now: Long): List<String> {

@@ -151,6 +151,8 @@ data class Chat(
     val archived: Boolean = false,
     /** Unsent composer text saved for this chat; null when there is none. */
     val draft: String? = null,
+    /** The chat's disappearing-message time in seconds; 0 is off. */
+    val timerSeconds: Int = 0,
 ) {
     val lastMessage: Message? get() = messages.lastOrNull()
 }
