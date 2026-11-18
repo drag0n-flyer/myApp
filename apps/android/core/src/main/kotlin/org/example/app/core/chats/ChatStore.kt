@@ -45,6 +45,8 @@ interface ChatStore {
     fun edit(messageId: String, chatId: String, text: String)
     fun delete(messageId: String, chatId: String)
     fun download(messageId: String, chatId: String)
+    /** Puts a message that failed to send back in the queue (`DeliveryStatus.Failed`). Same message, same wire format. */
+    fun retrySend(messageId: String) {}
     fun recordCall(summary: CallSummary, contactId: String, outgoing: Boolean, at: java.time.Instant)
 
     /** False while the engine cannot give real member keys: the Verify screen and the Verified seal stay hidden. */

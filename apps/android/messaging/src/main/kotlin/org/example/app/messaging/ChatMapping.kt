@@ -38,7 +38,7 @@ internal object ChatMapping {
         "delivered" -> DeliveryStatus.Delivered
         "read" -> DeliveryStatus.Read
         "sent" -> DeliveryStatus.Sent
-        // `failed` has no `:core` case: it shows as not yet sent. `LiveChatStore.failedMessageIds` offers the retry.
+        "failed" -> DeliveryStatus.Failed
         else -> DeliveryStatus.Sending
     }
 

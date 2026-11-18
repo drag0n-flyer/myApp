@@ -298,7 +298,7 @@ class LiveChatStore(
                 is MessagePreview.Text -> p.text
                 is MessagePreview.Resource -> ""
             }
-            MessageHit(hit.chatId, hit.messageId, text)
+            MessageHit(hit.chatId, hit.messageId, text, Instant.ofEpochMilli(record.sentAt))
         }
     }
 
@@ -316,11 +316,11 @@ class LiveChatStore(
         }
     }
 
-    /** Messages that gave up sending. `:core` has no failed status, so they show as sending; the UI offers [retrySend]. */
+    /** Messages that gave up sending (they show as [DeliveryStatus.Failed]; the UI offers [retrySend]). */
     fun failedMessageIds(chatId: String): Set<String> =
         repo.messages(chatId, null, 200).filter { it.status == "failed" && it.senderAccount == device.accountId }.map { it.id }.toSet()
 
-    fun retrySend(messageId: String) = write { if (outbox.retry(messageId)) requestFlush() }
+    override fun retrySend(messageId: String) = write { if (outbox.retry(messageId)) requestFlush() }
 
     /** [path] is the picked or recorded file; [MediaPreparer] turns it into the upload. */
     override fun sendAttachment(path: String, kind: MediaKind, chatId: String) {

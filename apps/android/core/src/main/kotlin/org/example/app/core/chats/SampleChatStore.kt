@@ -63,7 +63,7 @@ class SampleChatStore(
             for (message in chat.messages.asReversed()) {
                 val content = message.content as? MessageContent.Text ?: continue
                 if (!content.text.contains(q, ignoreCase = true)) continue
-                hits += MessageHit(chat.id, message.id, content.text)
+                hits += MessageHit(chat.id, message.id, content.text, message.sentAt)
                 if (hits.size == limit) return hits
             }
         }

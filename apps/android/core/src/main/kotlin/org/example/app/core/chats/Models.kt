@@ -50,12 +50,13 @@ data class MediaState(val attachmentId: String, val phase: Phase) {
     }
 }
 
-data class MessageHit(val chatId: String, val messageId: String, val preview: String)
+data class MessageHit(val chatId: String, val messageId: String, val preview: String, val sentAt: Instant? = null)
 
 /** 12 groups of 5 digits, shown 3 per row in the Verify screen. */
 data class SafetyNumber(val groups: List<String>, val isVerified: Boolean)
 
-enum class DeliveryStatus { Sending, Sent, Delivered, Read }
+/** `Failed`: the outbox gave up; the bubble offers "Try again". */
+enum class DeliveryStatus { Sending, Sent, Delivered, Read, Failed }
 
 /** A one-line summary of a message: literal text, or a string resource key with its arguments. */
 sealed interface MessagePreview {
