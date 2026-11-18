@@ -22,7 +22,7 @@ class DisplayNameVectorsTest {
             val c = cases[i].jsonObject
             val input = c.getValue("input").jsonPrimitive.content
             val want = c.getValue("clean").let { if (it is JsonNull) null else it.jsonPrimitive.content }
-            assertEquals(want, DisplayNameRule.clean(input), "case $i: ${input.codePoints().toArray().map { Integer.toHexString(it) }}")
+            assertEquals(want?.codePoints()?.toArray()?.toList(), DisplayNameRule.clean(input)?.codePoints()?.toArray()?.toList(), "case $i: ${input.codePoints().toArray().map { Integer.toHexString(it) }}")
         }
     }
 }
