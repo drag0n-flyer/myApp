@@ -410,6 +410,11 @@ private func text(_ message: Message?) -> String? {
         #expect(store.messages(in: "acc-bob", before: "nope", limit: 2).isEmpty)
         #expect(store.searchMessages("  CAFE ", limit: 10).map(\.messageID) == ["m3"])
         #expect(store.searchMessages("", limit: 10).isEmpty)
+        // Scoped to the chat, and carrying the message's date.
+        let scoped = store.searchMessages("cafe", in: "acc-bob", limit: 1)
+        #expect(scoped.map(\.messageID) == ["m3"])
+        #expect(scoped.first?.sentAt == store.messages(in: "acc-bob", before: "m4", limit: 2).last?.sentAt)
+        #expect(store.searchMessages("cafe", in: "acc-nobody", limit: 5).isEmpty)
 
         let work = store.addFolder(name: "Work", chatIDs: ["acc-bob"])
         let more = store.addFolder(name: "More", chatIDs: [])

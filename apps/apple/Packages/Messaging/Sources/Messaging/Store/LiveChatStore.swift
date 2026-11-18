@@ -230,14 +230,25 @@ public final class LiveChatStore: ChatStore {
     }
 
     public func searchMessages(_ query: String, limit: Int) -> [MessageHit] {
+        search(query, chatID: nil, limit: limit)
+    }
+
+    /// Searched inside the database, so a chat's hits are never crowded out by newer hits in other chats.
+    public func searchMessages(_ query: String, in chatID: String, limit: Int) -> [MessageHit] {
+        search(query, chatID: chatID, limit: limit)
+    }
+
+    private func search(_ query: String, chatID: String?, limit: Int) -> [MessageHit] {
         let folded = fold(query.trimmingCharacters(in: .whitespacesAndNewlines))
         guard !folded.isEmpty, limit > 0 else { return [] }
         let requests = Set(allChats.filter(\.isRequest).map(\.id))
-        let found = (try? repo.search(folded, limit: limit)) ?? []
+        let found = (try? repo.search(folded, chatID: chatID, limit: limit)) ?? []
         return found.compactMap { hit in
-            guard !requests.contains(hit.chatID), let record = (try? repo.message(id: hit.messageID)) ?? nil else { return nil }
+            // The global search leaves message requests out; a chat the person has open is searched as asked.
+            guard chatID != nil || !requests.contains(hit.chatID),
+                  let record = (try? repo.message(id: hit.messageID)) ?? nil else { return nil }
             let preview = map([record]).first?.previewText ?? ""
-            return MessageHit(chatID: hit.chatID, messageID: hit.messageID, preview: preview)
+            return MessageHit(chatID: hit.chatID, messageID: hit.messageID, preview: preview, sentAt: record.sentAt)
         }
     }
 

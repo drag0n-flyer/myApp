@@ -280,22 +280,26 @@ public final class Repository: @unchecked Sendable {
     // MARK: search
 
     /// Searches folded text. Queries under 3 characters use LIKE; longer ones use the trigram index.
-    public func search(_ folded: String, limit: Int) throws -> [(chatID: String, messageID: String)] {
+    /// With `chatID`, only that chat's messages are searched, so its hits are never crowded out by newer hits elsewhere.
+    public func search(_ folded: String, chatID: String? = nil, limit: Int) throws -> [(chatID: String, messageID: String)] {
         let q = fold(folded)
         guard !q.isEmpty else { return [] }
+        let scope: SQLValue = chatID.map { .text($0) } ?? .null
         if q.unicodeScalars.count < 3 {
             let escaped = q.replacingOccurrences(of: "\\", with: "\\\\")
                 .replacingOccurrences(of: "%", with: "\\%").replacingOccurrences(of: "_", with: "\\_")
             return try db.query("""
                 SELECT chat_id, id FROM messages WHERE deleted=0 AND folded LIKE ? ESCAPE '\\'
+                AND (? IS NULL OR chat_id = ?)
                 ORDER BY sent_at DESC LIMIT ?
-                """, [.text("%" + escaped + "%"), .int(Int64(limit))]) { (chatID: $0.text(0), messageID: $0.text(1)) }
+                """, [.text("%" + escaped + "%"), scope, scope, .int(Int64(limit))]) { (chatID: $0.text(0), messageID: $0.text(1)) }
         }
         let phrase = "\"" + q.replacingOccurrences(of: "\"", with: "\"\"") + "\""
         return try db.query("""
             SELECT m.chat_id, m.id FROM message_fts JOIN messages m ON m.rowid = message_fts.rowid
-            WHERE message_fts MATCH ? AND m.deleted=0 ORDER BY m.sent_at DESC LIMIT ?
-            """, [.text(phrase), .int(Int64(limit))]) { (chatID: $0.text(0), messageID: $0.text(1)) }
+            WHERE message_fts MATCH ? AND m.deleted=0 AND (? IS NULL OR m.chat_id = ?)
+            ORDER BY m.sent_at DESC LIMIT ?
+            """, [.text(phrase), scope, scope, .int(Int64(limit))]) { (chatID: $0.text(0), messageID: $0.text(1)) }
     }
 
     // MARK: attachments
