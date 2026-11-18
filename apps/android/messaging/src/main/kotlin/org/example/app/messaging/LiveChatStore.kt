@@ -23,6 +23,7 @@ import org.example.app.contracts.MlsEngine
 import org.example.app.core.chats.CallSummary
 import org.example.app.core.chats.Chat
 import org.example.app.core.chats.ChatFolder
+import org.example.app.core.chats.ChatListOrder
 import org.example.app.core.chats.ChatStore
 import org.example.app.core.chats.Contact
 import org.example.app.core.chats.IncomingCallDecision
@@ -144,6 +145,7 @@ class LiveChatStore(
     private val _folders = MutableStateFlow(listOf(ChatFolder.All, ChatFolder.Unread))
     private val _chats = MutableStateFlow<List<Chat>>(emptyList())
     private val _requests = MutableStateFlow<List<Chat>>(emptyList())
+    private val _muted = MutableStateFlow<Set<String>>(emptySet())
     private val _blocked = MutableStateFlow<Set<String>>(emptySet())
     private val _reported = MutableStateFlow<Set<String>>(emptySet())
     override val contacts: StateFlow<List<Contact>> = _contacts.asStateFlow()
@@ -152,13 +154,23 @@ class LiveChatStore(
     override val requests: StateFlow<List<Chat>> = _requests.asStateFlow()
     override val blockedIds: StateFlow<Set<String>> = _blocked.asStateFlow()
     override val reportedChatIds: StateFlow<Set<String>> = _reported.asStateFlow()
+    override val mutedChatIds: StateFlow<Set<String>> = _muted.asStateFlow()
 
     @Volatile private var meContact = Contact(device.accountId, "You", "")
     @Volatile private var contactRows: Map<String, ContactRecord> = emptyMap()
     override val me: Contact get() = meContact
 
+    // Declared before `init`, whose first reload reads them.
+    private val pinLock = Any()
+    /** Pins and unpins asked for but not yet written: true pinned, false unpinned. Counted by the limit of five. */
+    private val pinsPending = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+    /** The latest unsent text per chat that is not written yet; blank means remove. */
+    private val draftsPending = java.util.concurrent.ConcurrentHashMap<String, String>()
+
     private val reloadLock = Any()
-    private val writes = Channel<() -> Unit>(Channel.UNLIMITED)
+    /** A queued database write; [reload] false for the ones that do not change what the lists show (see [setDraft]). */
+    private class Write(val job: () -> Unit, val reload: Boolean)
+    private val writes = Channel<Write>(Channel.UNLIMITED)
     private val inFlight = MutableStateFlow(0)
     /** Only the queued writes (not sends or syncs): what [awaitWrites] waits for. */
     private val writesInFlight = MutableStateFlow(0)
@@ -172,9 +184,9 @@ class LiveChatStore(
         receipts.attach(inbox)
         reload()
         scope.launch {
-            for (job in writes) {
-                try { job() } catch (e: CancellationException) { throw e } catch (_: Exception) { }
-                reload()
+            for (item in writes) {
+                try { item.job() } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+                if (item.reload) reload()
                 writesInFlight.update { it - 1 }
                 inFlight.update { it - 1 }
             }
@@ -201,11 +213,11 @@ class LiveChatStore(
         settle()
     }
 
-    private fun write(job: () -> Unit) {
+    private fun write(reload: Boolean = true, job: () -> Unit) {
         if (closed.get()) return
         inFlight.update { it + 1 }
         writesInFlight.update { it + 1 }
-        if (writes.trySend(job).isFailure) { writesInFlight.update { it - 1 }; inFlight.update { it - 1 } }
+        if (writes.trySend(Write(job, reload)).isFailure) { writesInFlight.update { it - 1 }; inFlight.update { it - 1 } }
     }
 
     private fun requestFlush() {
@@ -247,6 +259,10 @@ class LiveChatStore(
         }
 
         val records = runCatching { repo.chats() }.getOrDefault(emptyList()).sortedByDescending { it.lastActivity }
+        // Saved drafts, with the ones still waiting to be written laid over them so a reload cannot show an older text.
+        val drafts = runCatching { repo.drafts() }.getOrDefault(emptyMap()).toMutableMap()
+        for ((chatId, text) in draftsPending) if (text.isBlank()) drafts.remove(chatId) else drafts[chatId] = text
+        val pinned = runCatching { pinsPending.toMap() }.getOrDefault(emptyMap())
         val built = records.mapNotNull { record ->
             val all = repo.conversations(record.id)
             val latest = repo.messages(record.id, null, CACHED_MESSAGES)
@@ -258,9 +274,18 @@ class LiveChatStore(
             // The preferred conversation is the active one. An inactive conversation (a create in progress, or one I
             // was removed from) says nothing about the chat itself and is never turned into a "removed" state here.
             val preferred = repo.preferredConversation(record.id) ?: all.firstOrNull()
-            ChatMapping.chat(record, all, preferred, folderIds[record.id].orEmpty(), map(latest))
+            val chat = ChatMapping.chat(record, all, preferred, folderIds[record.id].orEmpty(), map(latest))
+            val pinnedAt = when (pinned[record.id]) {
+                null -> chat.pinnedAt
+                true -> chat.pinnedAt ?: Instant.ofEpochMilli(nowMs())
+                false -> null
+            }
+            chat.copy(draft = drafts[record.id], pinnedAt = pinnedAt)
         }
-        _chats.value = built.filter { !it.isRequest }
+        // Pinned chats first (the newest pin on top); the rest keep their activity order.
+        val (pinnedChats, otherChats) = built.filter { !it.isRequest }.partition { it.pinnedAt != null }
+        _chats.value = pinnedChats.sortedWith(compareByDescending<Chat> { it.pinnedAt }.thenBy { it.id }) + otherChats
+        _muted.value = records.filter { it.muted }.map { it.id }.toSet()
         _requests.value = built.filter { it.isRequest }
         _blocked.value = runCatching { repo.blockedIds().toSet() }.getOrDefault(emptySet())
         _reported.value = runCatching { repo.entries(REPORTED_PREFIX).filterValues { it.isNotEmpty() }.keys.map { it.removePrefix(REPORTED_PREFIX) }.toSet() }
@@ -292,11 +317,49 @@ class LiveChatStore(
 
     // Reads
 
-    override val mutedChatIds: StateFlow<Set<String>> = MutableStateFlow(emptySet())
-    override fun setPinned(chatId: String, pinned: Boolean): Boolean = true
-    override fun setMuted(chatId: String, muted: Boolean) = Unit
-    override fun setArchived(chatId: String, archived: Boolean) = Unit
-    override fun setDraft(chatId: String, text: String?) = Unit
+    // Chat list actions. Pin, mute and archive are local to this device and change one column each, so an incoming
+    // message (which only touches unread and last activity) can never undo them.
+
+    override fun setPinned(chatId: String, pinned: Boolean): Boolean {
+        synchronized(pinLock) {
+            if (pinned) {
+                val shown = (_chats.value + _requests.value).filter { it.pinnedAt != null }.map { it.id }.toMutableSet()
+                for ((id, on) in pinsPending) if (on) shown += id else shown -= id
+                if (chatId !in shown && shown.size >= ChatListOrder.MAX_PINS) return false
+            }
+            pinsPending[chatId] = pinned
+        }
+        val at = nowMs()
+        write {
+            val current = repo.chat(chatId) ?: return@write
+            // Pinning an already pinned chat keeps its pin time.
+            if (pinned) { if (current.pinnedAt == null) repo.setPinnedAt(chatId, at) } else repo.setPinnedAt(chatId, null)
+        }
+        // After the write and its reload, the stored value says the same: stop overriding.
+        write(reload = false) { pinsPending.remove(chatId, pinned) }
+        return true
+    }
+
+    override fun setMuted(chatId: String, muted: Boolean) = write { repo.setMuted(chatId, muted) }
+
+    override fun setArchived(chatId: String, archived: Boolean) = write { repo.setArchived(chatId, archived) }
+
+    /**
+     * Called on every keystroke, so it shows at once (the chat list sees "Draft:" the moment the chat is left) and the
+     * write does not reload every list. Writes run in order, so the last text typed is the one stored.
+     */
+    override fun setDraft(chatId: String, text: String?) {
+        val value = text?.takeIf { it.isNotBlank() } ?: ""
+        draftsPending[chatId] = value
+        val patch = { list: List<Chat> -> list.map { if (it.id == chatId) it.copy(draft = value.ifEmpty { null }) else it } }
+        _chats.update(patch)
+        _requests.update(patch)
+        val at = nowMs()
+        write(reload = false) {
+            repo.setDraft(chatId, value.ifEmpty { null }, at)
+            draftsPending.remove(chatId, value)
+        }
+    }
 
     override fun chat(id: String): Chat? = _chats.value.firstOrNull { it.id == id } ?: _requests.value.firstOrNull { it.id == id }
 

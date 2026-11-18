@@ -19,7 +19,6 @@ import org.example.app.core.chats.Chat
 import org.example.app.core.chats.ChatEncryption
 import org.example.app.core.chats.ChatStore
 import org.example.app.core.chats.DeliveryStatus
-import org.example.app.core.chats.DraftKeeper
 import org.example.app.core.chats.HistoryPager
 import org.example.app.core.chats.Message
 import org.example.app.core.chats.MessageContent
@@ -74,8 +73,8 @@ class ChatViewModelActionsTest {
     }
 
     private fun vm(
-        store: ChatStore, drafts: DraftKeeper = DraftKeeper(), now: () -> Long = { 0L },
-    ) = ChatViewModel(store, "chat-riya", NetworkType.Wifi, drafts, Dispatchers.Unconfined, now) { AutoDownloadSettings() }
+        store: ChatStore, now: () -> Long = { 0L },
+    ) = ChatViewModel(store, "chat-riya", NetworkType.Wifi, Dispatchers.Unconfined, now) { AutoDownloadSettings() }
 
     /** 180 messages, the newest 50 cached. */
     private fun pagedChat(): PagedStore {
@@ -275,13 +274,13 @@ class ChatViewModelActionsTest {
 
     @Test
     fun aDraftSurvivesLeavingAndReturning() = runTest {
-        val keeper = DraftKeeper()
-        val first = vm(pagedChat(), keeper)
+        val store = sampleWith(listOf(message(1)))
+        val first = vm(store)
         first.setDraft("half a thought")
-        val second = vm(pagedChat(), keeper)
+        val second = vm(store)
         assertEquals("half a thought", second.draft())
         second.setDraft("")
-        assertEquals("", vm(pagedChat(), keeper).draft())
+        assertEquals("", vm(store).draft())
     }
 
     @Test
@@ -626,7 +625,7 @@ class ChatViewModelActionsTest {
                 return emptyList()
             }
         }
-        val vm = ChatViewModel(store, "chat-riya", NetworkType.Wifi, DraftKeeper(), Dispatchers.Default, { 0L }) { AutoDownloadSettings() }
+        val vm = ChatViewModel(store, "chat-riya", NetworkType.Wifi, Dispatchers.Default, { 0L }) { AutoDownloadSettings() }
         kotlinx.coroutines.runBlocking {
             (1..4).map { n -> this.async { vm.search("q$n") } }.forEach { it.await() }
         }
@@ -652,16 +651,12 @@ class ChatViewModelActionsTest {
     }
 
     @Test
-    fun draftsAreKeyedBySignedInAccountThroughTheDefaultWiring() {
-        fun store(account: String): ChatStore {
-            val inner = sampleWith(listOf(message(1)))
-            return object : ChatStore by inner { override val me = org.example.app.core.chats.Contact(account, account, account) }
-        }
-        fun open(account: String) = ChatViewModel(store(account), "chat-riya", NetworkType.Wifi) { AutoDownloadSettings() }
-        open("acc-draft-a").setDraft("secret")
-        assertEquals("secret", open("acc-draft-a").draft())
-        assertEquals("", open("acc-draft-b").draft())
-        // The first account's drafts are gone for good once another signed in.
-        assertEquals("", open("acc-draft-a").draft())
+    fun draftsBelongToTheAccountsStoreSoAnotherAccountNeverSeesThem() {
+        // Each signed-in account has its own store (and database); the draft lives there.
+        val accountA = sampleWith(listOf(message(1)))
+        val accountB = sampleWith(listOf(message(1)))
+        vm(accountA).setDraft("secret")
+        assertEquals("secret", vm(accountA).draft())
+        assertEquals("", vm(accountB).draft())
     }
 }

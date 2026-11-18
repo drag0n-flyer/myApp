@@ -15,7 +15,7 @@ interface ChatStore {
     val me: Contact
     val contacts: StateFlow<List<Contact>>
     val folders: StateFlow<List<ChatFolder>>
-    /** Chats that are not message requests, newest first. */
+    /** Chats that are not message requests, pinned first, then newest first. Archived chats are included: see [ChatListOrder.visible]. */
     val chats: StateFlow<List<Chat>>
     val requests: StateFlow<List<Chat>>
     /** Account IDs this device has blocked. */
@@ -24,7 +24,8 @@ interface ChatStore {
     /** Chats muted on this device (requests included): notifications stay quiet and the launcher badge skips them. */
     val mutedChatIds: StateFlow<Set<String>>
 
-    fun chats(folder: ChatFolder): List<Chat> = chats.value.filter { chat ->
+    /** The chats a folder shows: archived chats are in the archive, not in any folder. */
+    fun chats(folder: ChatFolder): List<Chat> = ChatListOrder.visible(chats.value, archive = false).filter { chat ->
         when (folder.kind) {
             ChatFolder.Kind.All -> true
             ChatFolder.Kind.Unread -> chat.unreadCount > 0
@@ -33,7 +34,7 @@ interface ChatStore {
     }
 
     /** Number shown on the Unread chip. */
-    fun unreadChatCount(): Int = chats.value.count { it.unreadCount > 0 }
+    fun unreadChatCount(): Int = ChatListOrder.visible(chats.value, archive = false).count { it.unreadCount > 0 }
 
     /** Pins or unpins. Returns false, changing nothing, when pinning would make more than [ChatListOrder.MAX_PINS]. */
     fun setPinned(chatId: String, pinned: Boolean): Boolean

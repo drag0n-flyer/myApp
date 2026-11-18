@@ -320,4 +320,54 @@ abstract class RepositoryContract {
         assertNull(repo.get("k"))
         assertTrue(repo.search("secret", 10).isEmpty())
     }
+
+    @Test fun pinMuteAndArchiveChangeOnlyTheirOwnColumn() {
+        repo.setUnread("chat1", 3)
+        repo.setPinnedAt("chat1", 500)
+        repo.setMuted("chat1", true)
+        repo.setArchived("chat1", true)
+        val row = repo.chat("chat1")!!
+        assertEquals(500L, row.pinnedAt)
+        assertTrue(row.muted)
+        assertTrue(row.archived)
+        assertEquals(3, row.unread)
+        // What an incoming message does: unread and last activity, written back from the row just read.
+        repo.upsertChat(row.copy(unread = row.unread + 1, lastActivity = 99))
+        val after = repo.chat("chat1")!!
+        assertEquals(4, after.unread)
+        assertEquals(500L, after.pinnedAt)
+        assertTrue(after.muted)
+        assertTrue(after.archived)
+        repo.setPinnedAt("chat1", null)
+        repo.setMuted("chat1", false)
+        repo.setArchived("chat1", false)
+        assertNull(repo.chat("chat1")!!.pinnedAt)
+        assertFalse(repo.chat("chat1")!!.muted)
+        assertFalse(repo.chat("chat1")!!.archived)
+    }
+
+    @Test fun draftsAreKeptPerChatBlankRemovesAndAMissingChatIsIgnored() {
+        repo.upsertChat(ChatRecord("chat2", isRequest = false, unread = 0, muted = false, lastActivity = 2))
+        repo.setDraft("chat1", "one", 10)
+        repo.setDraft("chat2", "two", 11)
+        assertEquals("one", repo.draft("chat1"))
+        assertEquals(mapOf("chat1" to "one", "chat2" to "two"), repo.drafts())
+        repo.setDraft("chat1", "one, edited", 12)
+        assertEquals("one, edited", repo.draft("chat1"))
+        repo.setDraft("chat1", "  \n", 13)
+        assertNull(repo.draft("chat1"))
+        repo.setDraft("nobody", "lost", 14)
+        assertNull(repo.draft("nobody"))
+        assertEquals(setOf("chat2"), repo.drafts().keys)
+    }
+
+    @Test fun deletingAChatAndWipingRemoveItsDrafts() {
+        repo.setDraft("chat1", "gone with the chat", 1)
+        repo.deleteChat("chat1")
+        assertTrue(repo.drafts().isEmpty())
+        repo.upsertChat(ChatRecord("chat1", isRequest = false, unread = 0, muted = false, lastActivity = 1))
+        repo.setDraft("chat1", "gone with the account", 2)
+        repo.wipe()
+        assertTrue(repo.drafts().isEmpty())
+    }
 }

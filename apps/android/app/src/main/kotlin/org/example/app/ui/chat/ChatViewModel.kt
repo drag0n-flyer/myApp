@@ -19,13 +19,11 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.example.app.core.calls.NetworkType
-import org.example.app.core.chats.AccountDrafts
 import org.example.app.core.chats.Chat
 import org.example.app.core.chats.ChatStore
 import org.example.app.core.chats.ChatTimeline
 import org.example.app.core.chats.Contact
 import org.example.app.core.chats.DeliveryStatus
-import org.example.app.core.chats.DraftKeeper
 import org.example.app.core.chats.HistoryPager
 import org.example.app.core.chats.Message
 import org.example.app.core.chats.MessageAction
@@ -36,12 +34,6 @@ import org.example.app.core.settings.AutoDownloadPolicy
 import org.example.app.core.settings.AutoDownloadSettings
 import org.example.app.core.settings.MediaKind
 import org.example.app.messaging.content.TextLimit
-
-/** Unsent composer text, kept for the life of the process so leaving a chat and coming back keeps it. */
-internal object ProcessDrafts {
-    private val drafts = AccountDrafts()
-    fun keeperFor(accountId: String): DraftKeeper = drafts.keeperFor(accountId)
-}
 
 data class ChatState(
     val chat: Chat?,
@@ -57,7 +49,6 @@ class ChatViewModel(
     private val store: ChatStore,
     val chatId: String,
     private val network: NetworkType,
-    private val drafts: DraftKeeper = ProcessDrafts.keeperFor(store.me.id),
     private val io: CoroutineDispatcher = Dispatchers.IO,
     private val nowMs: () -> Long = System::currentTimeMillis,
     private val autoDownload: () -> AutoDownloadSettings,
@@ -350,9 +341,13 @@ class ChatViewModel(
 
     // Drafts
 
-    fun draft(): String = drafts.draft(chatId)
+    /**
+     * The unsent text saved for this chat. It lives in the store, which belongs to the signed-in account: another
+     * account never sees it, and it goes with the account's data on sign-out.
+     */
+    fun draft(): String = store.chat(chatId)?.draft.orEmpty()
 
-    fun setDraft(text: String) = drafts.set(text, chatId)
+    fun setDraft(text: String) = store.setDraft(chatId, text)
 
     // Media (unchanged by this task)
 
