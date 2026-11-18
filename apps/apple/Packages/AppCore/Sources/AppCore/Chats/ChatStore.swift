@@ -11,6 +11,11 @@ public enum IncomingCallDecision: Equatable, Sendable {
 @MainActor
 public protocol ChatStore: AnyObject {
     var me: Contact { get }
+    /// The own name as stored on this device, or "" when none is stored. `me.displayName` shows the placeholder
+    /// "You" in that case; the placeholder is display only and is never offered, sent or stored.
+    var myStoredName: String { get }
+    /// Shows the name at once and stores it in the own contact row.
+    func setMyDisplayName(_ name: String)
     var contacts: [Contact] { get }
     var folders: [ChatFolder] { get }
     func chats(in folder: ChatFolder) -> [Chat]

@@ -72,7 +72,7 @@ struct CallHistoryContent: View {
             }
             ForEach(records) { record in
                 HStack(spacing: 11) {
-                    Avatar(name: record.name, size: 40)
+                    Avatar(name: record.name, colorKey: record.contactID, size: 40)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(record.name).font(.headline).foregroundStyle(record.isMissed ? Color.red : Color.primary).lineLimit(1)
                         Label(directionText(record), systemImage: record.isVideo ? "video.fill" : "phone.fill")

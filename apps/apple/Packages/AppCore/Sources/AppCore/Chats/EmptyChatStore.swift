@@ -6,6 +6,8 @@ import Foundation
 public final class EmptyChatStore: ChatStore {
     public var onChange: (@MainActor () -> Void)?
     public let me = Contact(id: "", displayName: "", username: "")
+    public var myStoredName: String { "" }
+    public func setMyDisplayName(_ name: String) {}
     public var contacts: [Contact] { [] }
     public var folders: [ChatFolder] { [.all, .unread] }
     public var messageRequests: [Chat] { [] }

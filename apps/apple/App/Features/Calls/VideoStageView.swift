@@ -11,6 +11,8 @@ struct VideoStageView: View {
     /// Show the corner tile with your own camera.
     let local: Bool
     let avatarName: String
+    /// The other person's account ID, for the tile colour.
+    let colorKey: String?
     let session: WebRTCMediaSession?
 
     var body: some View {
@@ -24,7 +26,7 @@ struct VideoStageView: View {
                         .accessibilityLabel("Video from the other person")
                 }
                 if !remote {
-                    Avatar(name: avatarName, size: 140)
+                    Avatar(name: avatarName, colorKey: colorKey, size: 140)
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel(Text(avatarName))
                 }

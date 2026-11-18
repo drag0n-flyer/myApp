@@ -18,7 +18,7 @@ struct ChatInfoView: View {
             if let chat, let contact {
                 Section {
                     VStack(spacing: 8) {
-                        Avatar(name: contact.displayName, size: 84)
+                        Avatar(name: contact.displayName, colorKey: contact.id, size: 84)
                         Text(contact.displayName).font(.title2.weight(.semibold)).multilineTextAlignment(.center)
                         Text("@\(contact.username)").foregroundStyle(.secondary)
                         HStack(spacing: 12) {

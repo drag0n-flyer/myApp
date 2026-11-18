@@ -227,7 +227,9 @@ public struct NotificationProcessor: Sendable {
         case .callSignal(let payload, let sender):
             let account = Self.account(of: sender)
             let contact = try deps.repo.contact(id: account).map {
-                Contact(id: $0.accountID, displayName: $0.displayName, username: $0.username)
+                // Stored names came from other people's devices: cleaned like every other screen.
+                let name = DisplayNameRule.forDisplay($0.displayName, fallback: $0.username)
+                return Contact(id: $0.accountID, displayName: name.isEmpty ? strings.unknownCaller : name, username: $0.username)
             } ?? Contact(id: account, displayName: strings.unknownCaller, username: "")
             return .incomingCall(payload, from: contact)
         case .ownDeviceAdded(let ids):

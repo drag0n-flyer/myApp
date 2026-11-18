@@ -74,6 +74,11 @@ final class AppModel {
     /// follow it (a 4003 close, a late 401) are ignored until the next sign-in.
     private var signOutGate = SignOutGate()
     var isSigningOut: Bool { signOutGate.inFlight }
+    /// Save name, sign out and delete account run one at a time (`AccountActionGate`).
+    private var accountGate = AccountActionGate()
+    var accountAction: AccountAction? { accountGate.running }
+    /// Bumped on every sign-out and sign-in: a name read or saved in an older session is not written.
+    private var sessionGeneration = 0
     /// "Find me by email" is being saved; a second change is ignored and a load keeps the person's value.
     private(set) var savingFindByEmail = false
     private var findByEmailChanged = false
@@ -341,7 +346,53 @@ final class AppModel {
 
     // MARK: - Account and devices
 
-    var me: Contact { chatStore.me }
+    var me: Contact { _ = revision; return chatStore.me }
+    /// The own name as stored, "" when none is: what the editor starts with (never the placeholder "You").
+    var myStoredName: String { _ = revision; return chatStore.myStoredName }
+
+    /// Saves the person's own name: shown at once, sent with `PATCH /v1/me/settings`. When the server does not take
+    /// it the stored name comes back and the error is returned. A name `DisplayNameRule` refuses never leaves the
+    /// device. Nothing is written for a session that has ended meanwhile. `nil` when saved, ignored (another account
+    /// action is running) or cancelled.
+    func saveDisplayName(_ input: String) async -> AccountError? {
+        guard let name = DisplayNameRule.clean(input) else { return .server }
+        guard accountGate.begin(.savingName) else { return nil }
+        defer { accountGate.finish() }
+        let store = chatStore
+        let generation = sessionGeneration
+        func current() -> Bool { sessionGeneration == generation && chatStore === store }
+        let previous = store.myStoredName   // "" when none is stored: never the placeholder
+        store.setMyDisplayName(name)
+        revision += 1
+        guard !isSampleData else { return nil }
+        guard let client = live?.client else {
+            store.setMyDisplayName(previous)
+            revision += 1
+            return .server
+        }
+        do throws(ServerError) {
+            try await client.updateSettings(displayName: name, findByEmail: nil)
+            return nil
+        } catch {
+            if current() { store.setMyDisplayName(previous); revision += 1 }
+            if error.code == "cancelled" { return nil }
+            return error.code == "network" ? .network : .server
+        }
+    }
+
+    /// Reads the own name from the server once when a session opens and stores it only when none is stored. Silent on
+    /// failure; writes nothing when the person signed out or the session changed meanwhile.
+    private func seedOwnName() async {
+        guard !isSampleData, let client = live?.client else { return }
+        let store = chatStore
+        let generation = sessionGeneration
+        guard store.myStoredName.isEmpty, let me = try? await client.me() else { return }
+        let same = sessionGeneration == generation && chatStore === store && live?.isSignedIn == true
+        guard let name = OwnNameSeed.nameToStore(stored: store.myStoredName, fetched: me.displayName, sameSession: same)
+        else { return }
+        store.setMyDisplayName(name)
+        revision += 1
+    }
     var linkedDevices: [DeviceInfo] = []
 
     func refreshDevices() async {
@@ -358,6 +409,8 @@ final class AppModel {
     /// Deletes the account on the server, then returns to the welcome screen.
     /// Returns the error to show when the server could not delete it.
     func deleteAccount() async -> AccountError? {
+        guard accountGate.begin(.deleting) else { return nil }   // another account action is running
+        defer { accountGate.finish() }
         await registrar?.unregisterAll()
         do throws(AccountError) {
             try await account.deleteAccount()
@@ -373,6 +426,8 @@ final class AppModel {
     /// account and returns to the welcome screen. With no connection (or any failure of the removal) nothing is
     /// wiped and the person stays signed in, so they can try again; the result says which.
     func signOut() async -> SignOutDecision {
+        guard accountGate.begin(.signingOut) else { return .failed }   // another account action is running
+        defer { accountGate.finish() }
         guard signOutGate.begin() else { return .failed }   // a second tap: the first one decides what is shown
         guard let live, !isSampleData else {
             // Sample data has no server.
@@ -434,6 +489,7 @@ final class AppModel {
     /// keeps its data when it records its device; the next sign-in, always a new device, wipes it before opening it
     /// (`LocalAccountData`). Steps and their order: `SignOutPlan`.
     private func resetToWelcome(revoked: Bool = true) {
+        sessionGeneration += 1
         // Drafts and the pending in-chat search belong to the account that is leaving.
         ChatScreenState.shared.reset()
         // Decoded pictures and plaintext copies made for previews and sends belong to it too.
@@ -505,6 +561,9 @@ final class AppModel {
         await refreshDevices()
         await installLiveStore()
         await startLive()
+        // Not awaited: offline, the read would hold up the inbox sync and key top-up below until it times out.
+        // The seed's session, store and signed-in guard makes a late write safe.
+        Task { await seedOwnName() }
         await syncInbox()
         await replenishKeyPackages()
         await registerForPushIfAllowed()

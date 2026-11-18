@@ -81,7 +81,7 @@ struct ContactsContent: View {
                     ForEach(section.people) { person in
                         Button { openChat(person.id) } label: {
                             HStack(spacing: 12) {
-                                Avatar(name: person.displayName, size: 38)
+                                Avatar(name: person.displayName, colorKey: person.id, size: 38)
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text(person.displayName).foregroundStyle(.primary).lineLimit(1)
                                     Text("@\(person.username)").font(.caption).foregroundStyle(.secondary)

@@ -17,7 +17,7 @@ struct CallView: View {
             if let call = model.activeCall {
                 CallBackground(isVideo: call.isVideoCall && call.isVideoOn)
                 if call.isVideoCall && call.isVideoOn {
-                    VideoStageView(remote: video.remoteVideoOn, local: !video.cameraDenied, avatarName: call.contact.displayName,
+                    VideoStageView(remote: video.remoteVideoOn, local: !video.cameraDenied, avatarName: call.contact.displayName, colorKey: call.contact.id,
                                    session: video.session)
                 } else {
                     ScrollView {
@@ -158,7 +158,7 @@ private struct AudioStage: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            Avatar(name: call.contact.displayName, size: 110)
+            Avatar(name: call.contact.displayName, colorKey: call.contact.id, size: 110)
                 .padding(.bottom, 8)
             Text(call.contact.displayName).font(.title.weight(.semibold))
             Text(statusText)
