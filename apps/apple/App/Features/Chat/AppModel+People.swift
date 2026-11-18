@@ -139,14 +139,14 @@ extension AppModel {
 
     // MARK: Sample mode
 
-    /// UI tests (`-scriptedTyping`): Riya shows as online and typing in the sample chat for about ten seconds, then her
+    /// UI tests (`-scriptedTyping`): Riya shows as online and typing in the sample chat for about twenty-four seconds, then her
     /// message arrives and the typing line goes away.
     private func startScriptedTyping() {
         peopleTasks.append(Task { [weak self] in
             let chatID = "chat-riya"
             try? await Task.sleep(for: .milliseconds(500))
             var waited = 0
-            while waited < 10_000, !Task.isCancelled {
+            while waited < 24_000, !Task.isCancelled {
                 guard let self else { return }
                 self.people?.ingest(EphemeralSignal(chatID: chatID, accountID: "riya", body: .presence(.online)))
                 self.people?.ingest(EphemeralSignal(chatID: chatID, accountID: "riya", body: .typing(on: true)))
