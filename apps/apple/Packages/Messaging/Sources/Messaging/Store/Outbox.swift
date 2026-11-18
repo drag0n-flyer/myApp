@@ -58,6 +58,8 @@ public actor Outbox: ControlSender {
     /// touches the thread-safe repository), so the main-actor chat store can enqueue synchronously and show the
     /// message as `sending` at once.
     nonisolated public func enqueue(_ envelope: ContentEnvelope, chatID: String) throws {
+        // A photo, voice or file message that has no real attachment yet (a placeholder) is never queued.
+        if let att = envelope.body.attachment, !AttachmentID.isValid(att.id) { throw AttachmentServiceError.invalidAttachmentID }
         let now = deps.now()
         let data = envelope.encoded()
         var text = ""
@@ -129,6 +131,11 @@ public actor Outbox: ControlSender {
             try deps.repo.removeOutbox(id: item.messageID)
             return true
         }
+        // A placeholder (no real attachment yet) must never go out: it fails instead of being sent.
+        if let att = envelope.body.attachment, !AttachmentID.isValid(att.id) {
+            try deps.repo.completeSend(id: item.messageID, status: "failed")
+            return true
+        }
         // A control message has no message row; its envelope time is when it was queued.
         let queuedAt = try deps.repo.message(id: item.messageID)?.receivedAt
             ?? Date(timeIntervalSince1970: Double(envelope.at) / 1000)
@@ -157,8 +164,13 @@ public actor Outbox: ControlSender {
     }
 
     /// Manual retry of a failed message: it goes to the END of its chat's queue.
-    nonisolated public func retry(messageID: String) throws {
-        try deps.repo.requeueSend(id: messageID)
+    @discardableResult
+    nonisolated public func retry(messageID: String) throws -> Bool {
+        if let message = try deps.repo.message(id: messageID),
+           let att = ContentEnvelope.decode(message.envelope).body.attachment, !AttachmentID.isValid(att.id) {
+            throw AttachmentServiceError.invalidAttachmentID
+        }
+        return try deps.repo.requeueSend(id: messageID)
     }
 
     /// Not stored, sent now through the chat's preferred conversation. Throws on failure.

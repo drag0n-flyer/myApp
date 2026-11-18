@@ -25,7 +25,11 @@ struct ChatView: View {
     @State private var draft = ""
     /// The draft set aside while the edit bar fills the composer.
     @State private var draftBeforeEdit = ""
-    @State private var downloaded: Set<String> = []
+    /// Messages whose download the person started; older loaded pages are re-read until each one finishes.
+    @State private var downloading: Set<String> = []
+    @State private var voice = VoicePlayer()
+    @State private var preview = MediaPreview()
+    @Environment(\.scenePhase) private var scenePhase
     @State private var history = ChatHistory()
     /// The store's newest messages as of the last sync, so ones that slide out of that window are kept.
     @State private var lastNewest: [Message] = []
@@ -112,6 +116,15 @@ struct ChatView: View {
             model.markRead(chatID: chatID)
             openSearchIfRequested()
         }
+        .onAppear {
+            MediaPreview.sweepStale()
+            voice.isInCall = { [weak model] in model?.activeCall?.isEnded == false }
+            voice.callStateChanged(inCall: model.activeCall?.isEnded == false)
+        }
+        .onChange(of: model.activeCall?.isEnded == false) { _, inCall in voice.callStateChanged(inCall: inCall) }
+        .onDisappear { voice.stop(); preview.close() }
+        .onChange(of: scenePhase) { _, phase in if phase != .active { voice.stop() } }
+        .mediaPreview(preview)
         .onChange(of: searchRequest) { _, _ in openSearchIfRequested() }
         .onChange(of: draft) { _, text in
             if editing == nil { model.drafts.set(text, for: chatID) }
@@ -257,8 +270,13 @@ struct ChatView: View {
                 isMine: mine,
                 reply: message.replyToID.flatMap { byID[$0] },
                 replySenderName: senderName,
-                showsMedia: downloaded.contains(message.id) || autoDownloads(message),
-                download: { downloaded.insert(message.id) },
+                mediaState: MediaBubbleState(media: message.media, fileExists: model.mediaFileIsUsable),
+                download: { downloading.insert(message.id); model.downloadMedia(messageID: message.id, in: chatID) },
+                openMedia: { url, name, isPhoto in
+                    preview.open(source: url, mediaDirectory: model.mediaDirectory, name: name, isPhoto: isPhoto)
+                },
+                voice: voice,
+                canDownload: !model.isSampleData,
                 retry: { model.retrySend(messageID: message.id) },
                 actions: MessageActions.available(for: message, isMine: mine),
                 perform: { perform($0, on: message, all: all, indexByID: indexByID) },
@@ -324,7 +342,7 @@ struct ChatView: View {
         guard let chat else { return }
         // Store changes in other chats (receipts and so on) cost this screen nothing.
         let changed = chat.messages != lastNewest
-        guard changed || needsOlderRefresh else { return }
+        guard changed || needsOlderRefresh || !downloading.isEmpty else { return }
         var next = history
         next.sync(previousNewest: lastNewest, newest: chat.messages, refreshOlder: true,
                   allowTrim: tracker.atBottom) { before, limit in
@@ -333,6 +351,15 @@ struct ChatView: View {
         history = next
         lastNewest = chat.messages
         needsOlderRefresh = false
+        if !downloading.isEmpty {
+            let loaded = history.messages(newest: chat.messages)
+            downloading = downloading.filter { id in
+                switch loaded.first(where: { $0.id == id })?.media?.phase {
+                case .remote, .downloading: true
+                default: false
+                }
+            }
+        }
     }
 
     /// Loads the next older page and keeps `anchorID` (the row that triggered it) where it was on screen.
@@ -449,17 +476,6 @@ struct ChatView: View {
         model.delete(messageID: target.id, in: chatID, followedBy: nextLoadedID(after: target.id))
     }
 
-    private func autoDownloads(_ message: Message) -> Bool {
-        let kind: MediaKind
-        switch message.content {
-        case .photo: kind = .photo
-        case .file: kind = .file
-        case .voice: kind = .voice
-        case .text, .call, .deleted, .unsupported, .system: return true
-        }
-        return AutoDownloadPolicy.shouldDownload(kind, network: model.network, settings: model.settings.autoDownload)
-    }
-
     private func send(_ chat: Chat) {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
@@ -518,7 +534,6 @@ struct ChatView: View {
     private func searchResults(_ chat: Chat) -> some View {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let shown = trimmed == searchedQuery ? hits : []
-        let known = Dictionary(history.messages(newest: chat.messages).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         return List {
             if !trimmed.isEmpty, searchedQuery == trimmed, hits.isEmpty {
                 Text("No results")
@@ -535,8 +550,8 @@ struct ChatView: View {
                 } label: {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(hit.preview).lineLimit(2).foregroundStyle(.primary)
-                        if let sentAt = known[hit.messageID]?.sentAt {
-                            Text(sentAt, format: .dateTime.day().month().year().hour().minute())
+                        if hit.sentAt != .distantPast {
+                            Text(hit.sentAt, format: .dateTime.day().month().year().hour().minute())
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
