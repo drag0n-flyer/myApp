@@ -39,6 +39,7 @@ final class GroupCreateTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Weekend plans"].waitToExist(10))
         app.navigationBars.buttons.element(boundBy: 0).tap()
         let row = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS 'Weekend plans'")).firstMatch
-        XCTAssertTrue(row.waitToExist(10))
+        // A group with no messages sorts below the fold.
+        XCTAssertTrue(row.scrollToExist(in: app))
     }
 }

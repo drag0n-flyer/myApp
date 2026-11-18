@@ -8,7 +8,7 @@ final class GroupInfoTests: XCTestCase {
 
     private func openInfo(of chatID: String, in app: XCUIApplication) {
         let row = app.element("chatlist.row.\(chatID)")
-        XCTAssertTrue(row.waitToExist(10))
+        XCTAssertTrue(row.scrollToExist(in: app))   // a group with no messages sorts below the fold
         row.tap()
         XCTAssertTrue(app.element("chat.header").waitToExist())
         app.element("chat.header").tap()
@@ -30,7 +30,7 @@ final class GroupInfoTests: XCTestCase {
         XCTAssertFalse(app.element("chatinfo.timer").exists)   // owner and admins only
 
         let leave = app.element("groupinfo.leave")
-        XCTAssertTrue(leave.waitToExist())
+        XCTAssertTrue(leave.scrollToExist(in: app))
         leave.tap()
         XCTAssertTrue(app.staticTexts["Leave this group?"].waitToExist())
         app.buttons["Cancel"].firstMatch.tap()
@@ -63,7 +63,9 @@ final class GroupInfoTests: XCTestCase {
         XCTAssertTrue(app.element("chatinfo.timer").exists)
         XCTAssertTrue(label(of: app.element("groupinfo.count")).contains("3 members"))
 
-        app.element("groupinfo.leave").tap()
+        let leave = app.element("groupinfo.leave")
+        XCTAssertTrue(leave.scrollToExist(in: app))
+        leave.tap()
         XCTAssertTrue(app.staticTexts["Leave this group?"].waitToExist())
         let confirm = app.buttons["groupinfo.leave.confirm"]
         XCTAssertTrue(confirm.waitToExist())

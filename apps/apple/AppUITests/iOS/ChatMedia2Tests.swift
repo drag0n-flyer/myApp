@@ -61,6 +61,6 @@ final class ChatMedia2Tests: XCTestCase {
         let cell = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'gallery.media.'")).firstMatch
         XCTAssertTrue(cell.waitToExist(), "The sample photo is in the Media tab")
         app.buttons["Files"].tap()
-        XCTAssertTrue(app.element("gallery.files.empty").waitToExist(), "Riya sent no files")
+        XCTAssertTrue(app.staticTexts["No files yet"].waitToExist(), "Riya sent no files")
     }
 }
