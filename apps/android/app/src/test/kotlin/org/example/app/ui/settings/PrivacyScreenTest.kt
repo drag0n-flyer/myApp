@@ -32,8 +32,16 @@ class PrivacyScreenTest {
     private var loadGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
     private val saved = mutableListOf<Boolean>()
 
+    /** What the graph does: change the setting, ask the server, put it back if the server did not take it. */
+    private suspend fun saveLikeTheGraph(value: Boolean) {
+        val previous = settings.settings.value.findByEmail
+        saved += value
+        settings.update { it.copy(findByEmail = value) }
+        try { saveEmail(value) } catch (e: Exception) { settings.update { it.copy(findByEmail = previous) }; throw e }
+    }
+
     private fun launch(store: SampleChatStore = SampleChatStore()) = rule.setContent {
-        AppTheme { PrivacyScreen(settings, store, saveFindByEmail = { saved += it; saveEmail(it) }, loadFindByEmail = { loadGate?.await(); serverEmail }, onBack = {}) }
+        AppTheme { PrivacyScreen(settings, store, saveFindByEmail = ::saveLikeTheGraph, loadFindByEmail = { loadGate?.await(); serverEmail }, onBack = {}) }
     }
 
     @Test

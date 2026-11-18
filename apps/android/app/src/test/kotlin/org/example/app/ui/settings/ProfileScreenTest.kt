@@ -27,12 +27,12 @@ class ProfileScreenTest {
 
     private var gate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
 
-    private val vm by lazy {
-        ProfileViewModel(
-            signOutAction = { signOuts++; gate?.await(); failure?.let { throw it } },
-            deleteAction = { deletes++; failure?.let { throw it } },
-        )
-    }
+    private val actions = AccountActions(
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Unconfined),
+        signOut = { signOuts++; gate?.await(); failure?.let { throw it } },
+        deleteAccount = { deletes++; failure?.let { throw it } },
+    )
+    private val vm by lazy { ProfileViewModel(actions) }
 
     private fun launch() = rule.setContent {
         AppTheme { ProfileScreen(Contact("me", "Ana", "ana"), vm, onBack = {}) }

@@ -228,7 +228,7 @@ fun AppRoot(
                 )
             }
             composable(PROFILE) {
-                val vm = viewModel<ProfileViewModel>(factory = factory { ProfileViewModel(graph::signOut, graph::deleteAccount) })
+                val vm = viewModel<ProfileViewModel>(factory = factory { ProfileViewModel(graph.accountActions) })
                 ProfileScreen(graph.chatStore.me, vm, onBack = { nav.popBackStack() })
             }
             composable(SettingsPage.Server.route) {

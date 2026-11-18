@@ -536,6 +536,71 @@ class AppGraphTest {
     }
 
     @Test
+    fun theSettingsAreGoneBeforeTheWipeMarkerCanBeDeleted() = runBlocking {
+        val (graph, _) = opened()
+        graph.settingsStore.update { it.copy(readReceipts = false) }
+        val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+        var storedWhileMarkerHeld: String? = "not checked"
+        // The first delete step runs while the marker is still there: a kill from here on must not leave old settings.
+        onCancelNotifications = { assertTrue(marker.exists()); storedWhileMarkerHeld = prefs.getString("settings", null) }
+        graph.wipeAfterRevocation()
+        assertNull(storedWhileMarkerHeld, "settings were still stored when the delete started")
+    }
+
+    @Test
+    fun aWipeResumedAtTheNextLaunchResetsTheSettings() = runBlocking {
+        val (graph, session) = opened()
+        graph.settingsStore.update { it.copy(readReceipts = false) }
+        session.database.close()
+        marker.writeText("full") // a kill left the wipe pending
+        val next = AppGraph(context, sampleData = false, scope = scope, platform = platform())
+        next.finishPendingWipe()
+        assertEquals(true, next.settingsStore.settings.value.readReceipts)
+        assertNull(context.getSharedPreferences("settings", Context.MODE_PRIVATE).getString("settings", null))
+        assertFalse(marker.exists())
+    }
+
+    /** Runs two saves on IO threads; the first PATCH waits on a gate so the second queues behind it. */
+    private fun saveFindByEmailTwice(first: Boolean, second: Boolean, patches: List<Int>): Pair<Result<Unit>, Result<Unit>> = runBlocking {
+        val (graph, _) = opened()
+        graph.settingsStore.update { it.copy(findByEmail = false) }
+        val gate = java.util.concurrent.CountDownLatch(1)
+        val seen = AtomicInteger(0)
+        answer = { r ->
+            if (r.method == "PATCH" && r.url.encodedPath == "/v1/me/settings") {
+                val n = seen.getAndIncrement()
+                if (n == 0) gate.await()
+                patches[n] to (if (patches[n] == 204) "" else """{"error":{"code":"internal"}}""")
+            } else null
+        }
+        val a = async(Dispatchers.IO) { runCatching { graph.saveFindByEmail(first) } }
+        while (seen.get() == 0) Thread.sleep(10)
+        val b = async(Dispatchers.IO) { runCatching { graph.saveFindByEmail(second) } }
+        Thread.sleep(300) // the second save is waiting for the first one's turn
+        gate.countDown()
+        val results = a.await() to b.await()
+        lastFindByEmail = graph.settingsStore.settings.value.findByEmail
+        results
+    }
+
+    private var lastFindByEmail: Boolean? = null
+
+    @Test
+    fun twoQueuedFindByEmailSavesThatBothFailEndMatchingTheServer() {
+        val (a, b) = saveFindByEmailTwice(first = true, second = false, patches = listOf(500, 500))
+        assertTrue(a.isFailure && b.isFailure)
+        assertEquals(false, lastFindByEmail, "the server still has false")
+    }
+
+    @Test
+    fun aFailedFindByEmailSaveFollowedByASuccessfulOneEndsWithTheSecondsValue() {
+        val (a, b) = saveFindByEmailTwice(first = true, second = true, patches = listOf(500, 204))
+        assertTrue(a.isFailure)
+        assertTrue(b.isSuccess)
+        assertEquals(true, lastFindByEmail)
+    }
+
+    @Test
     fun settingsAreResetOnSignOutAndDeleteToo() = runBlocking {
         val (graph, _) = opened()
         graph.settingsStore.update { it.copy(readReceipts = false) }

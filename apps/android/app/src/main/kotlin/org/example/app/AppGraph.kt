@@ -496,24 +496,33 @@ class AppGraph(
         }.await()
     }
 
+    /** Sign-out and delete, one at a time for the whole app, run in this graph's scope (the profile screen only shows them). */
+    val accountActions: org.example.app.ui.settings.AccountActions by lazy {
+        org.example.app.ui.settings.AccountActions(scope, signOut = ::signOut, deleteAccount = ::deleteAccount)
+    }
+
     private val findByEmailLock = Mutex()
 
     /**
      * Sets "find me by email" (`PATCH /v1/me/settings`) and keeps the local value matching the server. The local value
-     * changes first; if the server did not take it the value goes back and this throws [AccountError] for the screen to
+     * changes first; if the server did not take it the value goes back to what it was when this save's turn came and this throws [AccountError] for the screen to
      * show. It runs in the graph's scope, so leaving the screen mid-save still ends with the two matching. Saves run
      * one at a time. Sample data has no server.
      */
-    suspend fun saveFindByEmail(value: Boolean, previous: Boolean = !value) {
+    suspend fun saveFindByEmail(value: Boolean) {
         if (sampleData) { settingsStore.update { it.copy(findByEmail = value) }; return }
+        // Read before anything waits: a sign-out while this is queued or in flight makes both updates below no-ops.
+        val generation = settingsStore.generation
         scope.async {
             findByEmailLock.withLock {
-                settingsStore.update { it.copy(findByEmail = value) }
+                // The value the server has: the last save that finished (a failed one went back), read when it is our turn.
+                val previous = settingsStore.settings.value.findByEmail
+                settingsStore.update(generation) { it.copy(findByEmail = value) }
                 try {
                     val client = openSession()?.client ?: throw AccountError.Server
                     SocialApi(client).updateSettings(null, value)
                 } catch (e: Exception) {
-                    settingsStore.update { it.copy(findByEmail = previous) }
+                    settingsStore.update(generation) { it.copy(findByEmail = previous) }
                     if (e is CancellationException) throw e
                     throw when {
                         e is AccountError -> e
@@ -575,9 +584,10 @@ class AppGraph(
                 step { local.markWipePending(kind) } // durable first
                 if (kind == LocalData.FULL) step { liveAccount.signOutLocally() } // no session can open from here on
                 detachSession()?.let { stop(it, step, wipeRows = true) }
-                local.deleteAll(kind)?.let { failure = failure ?: it }
-                // The next account starts from its own defaults, not this one's settings.
+                // The next account starts from its own defaults, not this one's settings. Before the delete: the delete
+                // removes the marker last, so a kill after it must not leave the old settings behind.
                 if (kind == LocalData.FULL) step { settingsStore.reset(UserSettings.initial(serverPolicy)) }
+                local.deleteAll(kind)?.let { failure = failure ?: it }
             } finally {
                 synchronized(this@AppGraph) { wipeRunning = false }
                 if (kind == LocalData.FULL) _sessionEnds.value += 1

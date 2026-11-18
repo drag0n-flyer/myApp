@@ -24,8 +24,18 @@ class SettingsStore(private val prefs: SharedPreferences? = null, initial: UserS
     private val state = MutableStateFlow(prefs?.let { load(it, initial) } ?: initial)
     val settings: StateFlow<UserSettings> = state.asStateFlow()
 
+    private var epoch = 0L
+
+    /** Counts [reset]s. Work that outlives a reset (a save in flight) carries the value it started under. */
+    val generation: Long @Synchronized get() = epoch
+
+    /**
+     * Applies [change]. With [startedUnder] (the [generation] read before the work began) the update is dropped when a
+     * [reset] happened since: a late result must not write the old account's value into the new account's settings.
+     */
     @Synchronized
-    fun update(change: (UserSettings) -> UserSettings) {
+    fun update(startedUnder: Long? = null, change: (UserSettings) -> UserSettings) {
+        if (startedUnder != null && startedUnder != epoch) return
         val next = change(state.value)
         state.value = next
         prefs?.let { save(it, next) }
@@ -34,6 +44,7 @@ class SettingsStore(private val prefs: SharedPreferences? = null, initial: UserS
     /** Forgets everything stored and starts again from [initial]: the next account must not inherit these settings. */
     @Synchronized
     fun reset(initial: UserSettings) {
+        epoch++
         state.value = initial
         prefs?.edit()?.remove(KEY)?.commit()
     }

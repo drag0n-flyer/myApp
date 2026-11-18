@@ -88,4 +88,15 @@ class SettingsStoreTest {
         SettingsStore(prefs).update { it.copy(readReceipts = false) }
         assertEquals(false, SettingsStore(prefs).settings.value.readReceipts)
     }
+
+    @Test
+    fun anUpdateThatStartedBeforeAResetIsDropped() {
+        val store = SettingsStore()
+        val started = store.generation
+        store.reset(UserSettings())
+        store.update(started) { it.copy(findByEmail = true) } // a late save from the old account
+        assertEquals(false, store.settings.value.findByEmail)
+        store.update(store.generation) { it.copy(findByEmail = true) }
+        assertEquals(true, store.settings.value.findByEmail)
+    }
 }

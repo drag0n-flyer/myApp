@@ -30,8 +30,8 @@ import org.example.app.core.settings.IPHiding
 import org.example.app.ui.keyString
 
 /**
- * [saveFindByEmail] sends the choice to the server and throws if it could not; the switch then goes back and an
- * error shows. "Find me by username" is not offered: the server has no such setting.
+ * [saveFindByEmail] changes the setting, sends the choice to the server and, if it could not, puts the setting back and
+ * throws; the screen then shows an error. "Find me by username" is not offered: the server has no such setting.
  */
 @Composable
 fun PrivacyScreen(
@@ -71,11 +71,9 @@ fun PrivacyScreen(
         item {
             SwitchRow(stringResource(R.string.privacy_find_email), current.findByEmail) { value ->
                 if (saving) return@SwitchRow // one save at a time
-                val before = current.findByEmail
                 touched = true
                 saving = true
                 emailError = null
-                settings.update { it.copy(findByEmail = value) }
                 scope.launch {
                     try {
                         saveFindByEmail(value)
@@ -84,7 +82,6 @@ fun PrivacyScreen(
                         throw e
                     } catch (e: Exception) {
                         saving = false
-                        settings.update { it.copy(findByEmail = before) }
                         emailError = if (e is AccountError.Network) R.string.err_network else R.string.err_server
                     }
                 }
