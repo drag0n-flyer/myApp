@@ -74,6 +74,11 @@ class GroupSync(
         return true
     }
 
+    /** This account's own change just made on the server: its version is [version], and the actor is known to be this account. */
+    fun hint(conversationId: String, version: Long, actor: String) {
+        actors[conversationId] = version to actor
+    }
+
     /** Every group this account is in: start-up and reconnect. */
     fun noteAll() {
         for (chat in repo.chats()) {

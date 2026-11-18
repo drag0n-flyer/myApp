@@ -178,6 +178,13 @@ class InboxProcessor(
                 drop(raw, hash)
                 return Step.Done(null)
             }
+            // A group this account left or was removed from: its later messages and commits are dropped before the
+            // engine sees them (a Welcome, which may add this account again, is not).
+            if (raw.kind != "welcome" && GroupState.droppedForGone(repo, raw.conversationId)) {
+                accepted.remove(raw.cursor)
+                drop(raw, hash)
+                return Step.Done(null)
+            }
 
             // A Welcome needs the server's mode, fetched before the lock. A failed lookup can be retried while the
             // Welcome is unprocessed; one the server will never answer drops it.

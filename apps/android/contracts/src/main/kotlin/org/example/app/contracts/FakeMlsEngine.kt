@@ -24,6 +24,12 @@ class FakeMlsEngine(private val identity: String) : MlsEngine {
     /** A commit of ours, made but not merged. Only these exact bytes merge it when they come back. */
     private class Pending(val newEpoch: Long, val members: List<String>, var commit: ByteArray = ByteArray(0))
 
+    /**
+     * A Welcome for a group this engine still holds: refused as a duplicate (the default), or replacing the old state.
+     * Which one the real engine does when a removed device is added again is not verified; tests of that path set it.
+     */
+    var welcomeReplacesGroup = false
+
     private val lock = Mutex()
     private val groups = HashMap<GroupId, Group>()
     private var counter = 0L
@@ -93,7 +99,7 @@ class FakeMlsEngine(private val identity: String) : MlsEngine {
         when (message.firstOrNull()) {
             WELCOME -> readFrame(message, WELCOME) {
                 val id = GroupId(takeBytes()); val epoch = readLong(); val members = takeStrings()
-                if (id in groups) throw MlsException.Duplicate
+                if (id in groups && !welcomeReplacesGroup) throw MlsException.Duplicate
                 if (identity !in members) throw MlsException.NotMember
                 groups[id] = Group(epoch, members)
                 Incoming.Joined(id, epoch)

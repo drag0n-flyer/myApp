@@ -266,7 +266,17 @@ class IncomingHandler(
         val role = repo.groupMembers(chatId).firstOrNull { it.accountId == account }?.let { GroupRole.from(it.role) }
         if (!GroupMerge.accept(chat.groupVer, group.ver, role)) return
         // The decoder already checked the name and photo; a store that refuses them must not stall the inbox.
-        runCatching { repo.setGroupInfo(chatId, group.name, group.photo, group.ver) }
+        val kept = runCatching { repo.setGroupInfo(chatId, group.name, group.photo, group.ver) }.getOrDefault(false)
+        // The first name and photo a device learns (a new member, the creator's own) are not a change.
+        if (!kept || chat.groupVer == null) return
+        val by = account.takeIf { it != me.accountId }
+        val now = clock.now()
+        if (chat.title != group.name) {
+            GroupState.insertLine(repo, chatId, chat.conversationId, "sys-group-$chatId-${group.ver}-name", now, GroupState.envelope("groupRenamed", mapOf("by" to by, "name" to group.name)))
+        }
+        if (!(chat.photo contentEquals group.photo)) {
+            GroupState.insertLine(repo, chatId, chat.conversationId, "sys-group-$chatId-${group.ver}-photo", now + 1, GroupState.envelope("groupPhoto", mapOf("by" to by)))
+        }
     }
 
     /**
