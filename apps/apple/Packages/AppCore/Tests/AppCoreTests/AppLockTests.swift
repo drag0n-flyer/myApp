@@ -385,3 +385,32 @@ private func make(enabled: Bool = true, delay: Int = 60, stored: LockSettings?? 
     /// Test helper: pass the (sample) prompt, so the app is unlocked and tracking its absences.
     func unlockOnly() async { await unlockWithPrompt(reason: "x") }
 }
+
+@MainActor @Test func appLockPrivacyCoverStaysUpForTheWholeAbsenceEvenWhenLocked() {
+    let (lock, _, _) = make()   // starts locked
+    lock.phaseChanged(.inactive)
+    #expect(lock.isLocked && lock.showsPrivacyCover && lock.coversContent)
+    lock.phaseChanged(.active)
+    #expect(!lock.showsPrivacyCover && lock.coversContent)
+}
+
+@MainActor @Test func appLockIsDecidedOnBackgroundToInactiveBeforeTheSceneIsActive() async {
+    let (lock, _, clock) = make(delay: 60)
+    await lock.unlockOnly()
+    lock.phaseChanged(.inactive)
+    lock.phaseChanged(.background)
+    clock.advance(61)
+    lock.phaseChanged(.inactive)   // the cover is rendered under the privacy window before .active
+    #expect(lock.isLocked && lock.showsPrivacyCover)
+    lock.phaseChanged(.active)
+    #expect(lock.isLocked)
+}
+
+@MainActor @Test func appLockBackgroundToInactiveBeforeTheDelayStaysUnlocked() async {
+    let (lock, _, clock) = make(delay: 60)
+    await lock.unlockOnly()
+    lock.phaseChanged(.background)
+    clock.advance(30)
+    lock.phaseChanged(.inactive)
+    #expect(!lock.isLocked)
+}

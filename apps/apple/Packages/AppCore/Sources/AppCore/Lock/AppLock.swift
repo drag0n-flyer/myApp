@@ -92,9 +92,10 @@ public final class AppLock {
     /// The root shows only the cover (and the call screen) while this is true. No chat view exists then.
     public var coversContent: Bool { appLockOn && isLocked }
 
-    /// iPhone: not locked, but the scene left the active phase (app switcher, Notification Center, an alert): a
-    /// separate privacy window covers everything and the screens keep their state.
-    public var showsPrivacyCover: Bool { appLockOn && !isLocked && coversWhenInactive && phase != .active }
+    /// iPhone: the scene is not active (app switcher, Notification Center, an alert, the whole time away): a separate
+    /// privacy window covers everything and the screens keep their state. Up while locked too, so the root's own cover
+    /// is rendered underneath before the window hides.
+    public var showsPrivacyCover: Bool { appLockOn && coversWhenInactive && phase != .active }
 
     /// Changes whenever the cover should try the automatic prompt: a new request, or the scene becoming active.
     public var promptKey: Int { promptRequests * 2 + (phase == .active ? 1 : 0) }
@@ -105,10 +106,16 @@ public final class AppLock {
 
     public func phaseChanged(_ new: LockPhase) {
         guard new != phase else { return }
+        let old = phase
         phase = new
         switch new {
         case .active: didBecomeActive()
-        case .inactive: willResignActive()
+        case .inactive:
+            let returning = old == .background
+            willResignActive()
+            // Back from the background: decide now, while the privacy window still covers, so the root has rendered
+            // its cover before the window hides on `.active`.
+            if returning { lockIfDue() }
         case .background: didEnterBackground()
         }
     }
