@@ -24,7 +24,7 @@ public enum DataModePolicy {
         }
         let liftsMobileLimit: Bool
         if case .fixed = inCall { liftsMobileLimit = true } else { liftsMobileLimit = false }
-        if network == .mobile && !liftsMobileLimit {
+        if network != .wifi && !liftsMobileLimit {
             cap = min(cap, settings.mobileDataLimit)
         }
         return min(cap, server.maximum)
@@ -44,7 +44,7 @@ public enum DataModePolicy {
             if mode > server.maximum {
                 note = "Limited by your server"
                 enabled = false
-            } else if network == .mobile && mode > settings.mobileDataLimit {
+            } else if network != .wifi && mode > settings.mobileDataLimit {
                 note = "Above your mobile data limit"
             }
             return DataSheetOption(preference: .fixed(mode), title: mode.title, subtitle: mode.subtitle,
@@ -56,7 +56,7 @@ public enum DataModePolicy {
 
     /// The mode a new call would start with on the current network, for the chat list strip.
     public static func stripLabel(server: ServerPolicy, settings: CallSettings, network: NetworkType) -> String {
-        if settings.callDataMode == .auto && network != .mobile {
+        if settings.callDataMode == .auto && network == .wifi {
             return "Auto"
         }
         return ceiling(server: server, settings: settings, network: network, inCall: nil).title

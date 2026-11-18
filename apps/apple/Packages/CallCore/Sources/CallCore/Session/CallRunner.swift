@@ -51,7 +51,23 @@ public final class CallRunner {
 
     /// Feeds the machine and runs what it asks for. State changes and history go out at once; I/O is queued in order.
     public func handle(_ input: CallInput) {
-        let effects = machine.handle(input)
+        process(machine.handle(input))
+        firePendingRestart()
+    }
+
+    /// A handover that arrived before the call could restart (ringing, connecting) is carried out once, when the
+    /// call first becomes active; it is dropped when the call ends.
+    private var pendingRestart = false
+
+    private func firePendingRestart() {
+        guard pendingRestart else { return }
+        if isFinished { pendingRestart = false; return }
+        guard canRestart else { return }
+        pendingRestart = false
+        process(machine.handle(.pathChanged))
+    }
+
+    private func process(_ effects: [CallEffect]) {
         var queued: [CallEffect] = []
         var publishState = false
         for effect in effects {
@@ -85,7 +101,54 @@ public final class CallRunner {
     }
 
     public func pathChanged() { handle(.pathChanged) }
+
     public func update(context: CallContext) { handle(.contextChanged(context)) }
+
+    /// True while a restart makes sense: only an active or reconnecting call has a media path to restart. A ringing or
+    /// connecting call that restarts leaves have-local-offer and then fails.
+    public var canRestart: Bool { machine.state?.phase == .active || machine.state?.phase == .reconnecting }
+
+    /// The device's network changed while the call runs. `NetworkChange.action` decides. "No connection" is only
+    /// recorded; a call that cannot restart yet (ringing, connecting) just gets its new context.
+    public func networkChanged(from old: NetworkType, to new: NetworkType, meaningful: Bool, context: CallContext) {
+        switch NetworkChange.action(from: old, to: new, meaningful: meaningful) {
+        case .nothing, .record: return
+        case .contextOnly: update(context: context)
+        case .pathOnly: if canRestart { pathChanged() } else { pendingRestart = true }
+        case .restart:
+            if canRestart { restartOnNewNetwork(context: context) } else { update(context: context); pendingRestart = !isFinished }
+        }
+    }
+
+    /// A new data ceiling asks for a mode-change offer; on a path change that offer must BE the ICE restart
+    /// (same new profile, sent at once). A plain offer would be outstanding when the restart is asked for, and the
+    /// machine would drop the restart, leaving audio dead on the new path for several seconds. The path change is
+    /// delivered afterwards either way; while our offer is outstanding it adds nothing. When the rewrite sent a
+    /// restart offer, the callee's separate "please restart" request and the `modeChange` signal are left out.
+    private func restartOnNewNetwork(context: CallContext) {
+        var restarted = false
+        var effects = machine.handle(.contextChanged(context)).map { effect -> CallEffect in
+            guard case .makeOffer(let receive, _) = effect else { return effect }
+            restarted = true
+            return .makeOffer(receive: receive, iceRestart: true)
+        }
+        var path = machine.handle(.pathChanged)
+        if restarted {
+            // The restart offer already carries our ceiling, and the receiver applies it before choosing its send profile.
+            // A `modeChange` sent ahead of it would make the peer send its own plain offer first, and that offer would win
+            // the glare and cancel our restart.
+            effects.removeAll { effect in
+                if case .sendSignal(let p) = effect { return p.kind == .modeChange }
+                return false
+            }
+            path.removeAll { effect in
+                if case .sendSignal(let p) = effect { return p.kind == .renegotiate && p.sdp == nil }
+                return false
+            }
+        }
+        effects += path
+        process(effects)
+    }
 
     /// Waits until every queued effect (and the inputs they cause) has run.
     public func settled() async {

@@ -101,7 +101,7 @@ final class AppModel {
     }
     var network: NetworkType {
         didSet {
-            sampleCalls?.setNetwork(network); liveCalls?.setNetwork(network)
+            sampleCalls?.setNetwork(network)   // the live engine is told by the path monitor, with its verdict
             messaging?.network.value = network
         }
     }
@@ -639,7 +639,7 @@ final class AppModel {
         monitor.onChange = { [weak self] network, meaningful in
             guard let self else { return }
             if self.network != network { self.network = network }
-            if meaningful { self.liveCalls?.pathChanged() }
+            self.liveCalls?.networkChanged(network, meaningful: meaningful)
         }
         monitor.start()
         pathMonitor = monitor
