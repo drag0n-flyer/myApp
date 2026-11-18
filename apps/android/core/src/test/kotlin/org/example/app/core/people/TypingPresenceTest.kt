@@ -32,7 +32,8 @@ class TypingPresenceTest {
         assertEquals(true, send)
         assertNull(step(after, tick, 8_001).send)
         // the next repeat is eight seconds after that one
-        val keep = step(after, typed, 11_000).state
+        var keep = step(after, typed, 11_000).state
+        keep = step(keep, typed, 14_000).state
         assertNull(step(keep, tick, 15_999).send)
         assertEquals(true, step(keep, tick, 16_000).send)
     }
