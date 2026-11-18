@@ -277,3 +277,22 @@ private final class Counter: @unchecked Sendable {
     func bump() { lock.lock(); n += 1; lock.unlock() }
     var value: Int { lock.lock(); defer { lock.unlock() }; return n }
 }
+
+@Suite("TestAttachmentTimer") struct TestAttachmentTimer {
+    @Test func aChatTimerMakesPhotoVoiceAndFileCarryTtl() async throws {
+        let rig = await makeRig()
+        try rig.alice.deps.repo.setTimer(chatID: rig.bob.accountID, seconds: 86_400)
+        let service = AttachmentService(
+            deps: rig.alice.deps, outbox: rig.aliceEnqueuer, network: { .wifi }, settings: { AutoDownloadSettings() })
+        for (kind, name) in [(MediaKind.photo, "a.jpg"), (.voice, "a.caf"), (.file, "a.pdf")] {
+            let (file, _) = try sampleFile(in: rig.alice.directory, size: 2_000, name: name)
+            try await service.send(file: file, kind: kind, chatID: rig.bob.accountID, replyTo: nil, duration: 3)
+        }
+        let queued = await rig.aliceEnqueuer.items
+        #expect(queued.count == 3 && queued.allSatisfy { $0.envelope.ttl == 86_400 })
+        try rig.alice.deps.repo.setTimer(chatID: rig.bob.accountID, seconds: 0)
+        let (file, _) = try sampleFile(in: rig.alice.directory, size: 2_000, name: "b.jpg")
+        try await service.send(file: file, kind: .photo, chatID: rig.bob.accountID, replyTo: nil)
+        #expect(await rig.aliceEnqueuer.items.last?.envelope.ttl == nil)
+    }
+}

@@ -15,7 +15,7 @@ struct Boom: Error {}
     try migrate(db)
     try migrate(db)
     let v = try db.query("PRAGMA user_version") { $0.int(0) }
-    #expect(v == [2])
+    #expect(v == [3])
 }
 
 @Test func testTransactionRollsBack() throws {
@@ -75,7 +75,7 @@ struct Boom: Error {}
         do { try migrate(dbs[i]) } catch { failures.add("\(error)") }
     }
     #expect(failures.all.isEmpty, "\(failures.all)")
-    #expect(try dbs[0].query("PRAGMA user_version") { $0.int(0) } == [2])
+    #expect(try dbs[0].query("PRAGMA user_version") { $0.int(0) } == [3])
 }
 
 final class Failures: @unchecked Sendable {

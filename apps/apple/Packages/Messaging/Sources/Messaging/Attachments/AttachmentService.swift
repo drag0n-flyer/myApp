@@ -83,8 +83,10 @@ public actor AttachmentService {
         case .voice: body = .voice(att, duration: duration, replyTo: replyTo); kindName = "voice"
         case .file, .video: body = .file(att, name: fileName, mime: mime, replyTo: replyTo); kindName = "file"
         }
+        let timer = (try? deps.repo.timerSeconds(chatID: chatID)) ?? 0
         let envelope = ContentEnvelope(
-            id: UUID().uuidString.lowercased(), at: Int64((deps.now().timeIntervalSince1970 * 1000).rounded()), body: body)
+            id: UUID().uuidString.lowercased(), at: Int64((deps.now().timeIntervalSince1970 * 1000).rounded()), body: body,
+            ttl: timer > 0 ? timer : nil)
 
         // The sender keeps the plaintext so the message shows at once.
         let ext = Self.fileExtension(kind: kindName, name: fileName)
@@ -161,8 +163,10 @@ public actor AttachmentService {
         case "voice": body = .voice(att, duration: meta.duration, replyTo: nil)
         default: body = .file(att, name: meta.name, mime: meta.mime, replyTo: nil)
         }
+        // The placeholder was made when the file was picked, with the timer of that moment: its life is kept.
         let envelope = ContentEnvelope(
-            id: messageID, at: Int64((record.sentAt.timeIntervalSince1970 * 1000).rounded()), body: body)
+            id: messageID, at: Int64((record.sentAt.timeIntervalSince1970 * 1000).rounded()), body: body,
+            ttl: ContentEnvelope.decode(record.envelope).ttl)
         let ext = Self.fileExtension(kind: meta.kind, name: prepared ? nil : meta.name)
         let local = deps.mediaDirectory.appendingPathComponent("\(att.id).\(ext)")
         let data = envelope.encoded()

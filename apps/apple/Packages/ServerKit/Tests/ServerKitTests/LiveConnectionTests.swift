@@ -101,6 +101,31 @@ private func waitFor(_ cond: @Sendable () async -> Bool) async -> Bool {
         await conn.stop()
     }
 
+    @Test func sendEphemeralSendsTheFrameAndWaitsForTheAck() async throws {
+        let rig = await Rig()
+        await rig.startConnected()
+        let conn = rig.conn, socket = rig.socket
+        let t = Task { try await conn.sendEphemeral(conversationID: "cv", epoch: 3, ciphertext: Data([251, 255, 1])) }
+        #expect(await waitFor { await socket.sent.count == 1 })
+        #expect(await socket.sent[0] == #"{"data":{"ciphertext":"-_8B","conversationID":"cv","epoch":3},"id":"c1","type":"conv.ephemeral"}"#)
+        await socket.serverSends(#"{"type":"ack","id":"c1"}"#)
+        try await t.value
+        await conn.stop()
+    }
+
+    @Test func sendEphemeralNotFoundThrows() async {
+        let rig = await Rig()
+        await rig.startConnected()
+        let conn = rig.conn, socket = rig.socket
+        let t = Task { try await conn.sendEphemeral(conversationID: "cv", epoch: 3, ciphertext: Data([1])) }
+        #expect(await waitFor { await socket.sent.count == 1 })
+        await socket.serverSends(#"{"type":"error","id":"c1","data":{"code":"not_found"}}"#)
+        do { try await t.value; Issue.record("expected error") } catch {
+            #expect((error as? ServerError)?.code == "not_found")
+        }
+        await conn.stop()
+    }
+
     @Test func sendErrorThrows() async {
         let rig = await Rig()
         await rig.startConnected()

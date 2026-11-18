@@ -50,9 +50,19 @@ public enum SystemEvent: Hashable, Codable, Sendable {
     case deviceRemoved(name: String?)
     case safetyNumberChanged
     case messagesPaused
+    /// Disappearing messages were set to `seconds` (0 = turned off) by `name` (`nil` = "You").
+    case timer(seconds: Int, name: String?)
+
+    private static func timerText(seconds: Int, name: String?) -> String {
+        let who = name ?? "You"
+        guard seconds > 0 else { return "\(who) turned off disappearing messages" }
+        let days = seconds / 86_400
+        return "\(who) set messages to disappear after \(days) \(days == 1 ? "day" : "days")"
+    }
 
     public var text: String {
         switch self {
+        case .timer(let seconds, let name): Self.timerText(seconds: seconds, name: name)
         case .deviceAdded(let name?): "\(name) added a new device"
         case .deviceAdded(nil): "You added a new device"
         case .deviceRemoved(let name?): "\(name) removed a device"
