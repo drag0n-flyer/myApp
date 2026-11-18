@@ -121,6 +121,13 @@ interface ChatStore {
     /** The chat with this contact, created empty if there is none yet. */
     fun ensureChat(contactId: String): String
 
+    /**
+     * A new group chat with [contactIds] (2 to 99 contacts), [name] (1 to 50 characters) and an optional JPEG [photo].
+     * @throws GroupCreateFailed when it could not be made.
+     */
+    suspend fun createGroup(contactIds: List<String>, name: String, photo: ByteArray?): GroupCreated =
+        throw GroupCreateFailed(GroupCreateFailed.Reason.Other)
+
     // People base (disappearing messages and profiles). Defaults suit stores that keep none of it.
 
     /** The chat's disappearing-message timer in seconds; 0 is off. */

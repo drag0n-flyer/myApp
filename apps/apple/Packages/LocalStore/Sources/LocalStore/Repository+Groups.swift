@@ -40,7 +40,7 @@ extension Repository {
             INSERT INTO chats(id, is_request, unread, muted, last_activity, kind, conversation_id, title, photo)
             VALUES (?,0,0,0,?,'group',?,?,?) ON CONFLICT(id) DO NOTHING
             """, [.text(id), .int(millis(at)), .text(conversationID), title.map { .text($0) } ?? .null,
-                  (photo.flatMap { $0.count >= GroupLimits.minPhoto && $0.count <= GroupLimits.maxPhoto ? $0 : nil }).map { .blob($0) } ?? .null])
+                  (photo.flatMap { ProfilePhotoRule.isAcceptable($0) ? $0 : nil }).map { .blob($0) } ?? .null])
         return id
     }
 
@@ -87,7 +87,7 @@ extension Repository {
     /// under 4 or over 24,576 bytes is refused whole. `false` when nothing changed.
     @discardableResult
     public func setGroupInfo(chatID: String, title: String, photo: Data?, ver: Int) throws -> Bool {
-        guard ver >= 1, photo.map({ $0.count >= GroupLimits.minPhoto && $0.count <= GroupLimits.maxPhoto }) ?? true else { return false }
+        guard ver >= 1, photo.map({ ProfilePhotoRule.isAcceptable($0) }) ?? true else { return false }
         return try db.run("""
             UPDATE chats SET title=?, photo=?, group_ver=? WHERE id=? AND kind='group' AND (group_ver IS NULL OR group_ver < ?)
             """, [.text(title), photo.map { .blob($0) } ?? .null, .int(Int64(ver)), .text(chatID), .int(Int64(ver))]) > 0
