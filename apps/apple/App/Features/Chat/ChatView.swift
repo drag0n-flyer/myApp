@@ -310,7 +310,7 @@ struct ChatView: View {
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
-                .background(Color.secondaryBackground, in: Capsule())
+                .background(Color.bubbleBackground, in: Capsule())
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 4)
                 .accessibilityAddTraits(.isHeader)
@@ -681,7 +681,7 @@ struct ChatView: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
-            .background(Color.secondaryBackground, in: RoundedRectangle(cornerRadius: 10))
+            .background(Color.bubbleBackground, in: RoundedRectangle(cornerRadius: 10))
             Button { moveSearch(.previous) } label: { Image(systemName: "chevron.up") }
                 .disabled(hits.isEmpty || !searchAnswered)
                 .accessibilityLabel("Previous result")

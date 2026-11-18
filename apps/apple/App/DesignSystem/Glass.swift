@@ -43,6 +43,17 @@ extension Color {
         #endif
     }
 
+    /// An incoming bubble, a reaction pill or a card that sits on the chat background (`groupedBackground`): on iPhone
+    /// `secondaryBackground` is the same grey as that background, so these use the grouped-content colour, which
+    /// stands out from it in light and dark.
+    static var bubbleBackground: Color {
+        #if os(macOS)
+        Color(nsColor: .controlBackgroundColor)
+        #else
+        Color(uiColor: .secondarySystemGroupedBackground)
+        #endif
+    }
+
     static var groupedBackground: Color {
         #if os(macOS)
         Color(nsColor: .windowBackgroundColor)

@@ -73,7 +73,7 @@ struct MessageBubbleView: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
-            .background(Color.secondaryBackground, in: bubbleShape)
+            .background(Color.bubbleBackground, in: bubbleShape)
             Spacer(minLength: 60)
         }
         .accessibilityElement(children: .contain)
@@ -107,7 +107,7 @@ struct MessageBubbleView: View {
                         .font(.caption)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
-                        .background(Color.secondaryBackground, in: Capsule())
+                        .background(Color.bubbleBackground, in: Capsule())
                         .shadow(radius: 1)
                         .offset(x: 8, y: 12)
                         .accessibilityLabel(Text("Reaction \(message.reactions.joined())"))
@@ -191,7 +191,7 @@ struct MessageBubbleView: View {
     }
 
     private var bubbleBackground: AnyShapeStyle {
-        isMine ? AnyShapeStyle(Color.accentColor.gradient) : AnyShapeStyle(Color.secondaryBackground)
+        isMine ? AnyShapeStyle(Color.accentColor.gradient) : AnyShapeStyle(Color.bubbleBackground)
     }
 
     /// The caption of a photo or file, formatted like a text.
