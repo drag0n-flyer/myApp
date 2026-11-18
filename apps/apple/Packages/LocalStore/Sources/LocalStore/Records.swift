@@ -21,10 +21,25 @@ public struct ChatRecord: Sendable, Equatable {
     public var archived: Bool
     /// Disappearing messages: 0 = off. Written only by `setTimer`.
     public var timerSeconds: Int
+    /// `direct` or `group`. Written only by `upsertGroup`.
+    public var kind: String
+    /// The server conversation of a group chat; `nil` for a direct chat.
+    public var conversationID: String?
+    /// A group's name and photo, and the version they came with (`nil` = none yet). Written only by `setGroupInfo`.
+    public var title: String?
+    public var photo: Data?
+    public var groupVer: Int?
+    /// The version of the member list last applied (`nil` = none yet). Written only by `setGroupMembers`.
+    public var membersVersion: Int64?
+    /// `member`, `removed` or `left`. Written only by `setMyState`.
+    public var myState: String
     public init(id: String, isRequest: Bool, unread: Int, muted: Bool, lastActivity: Date, pinnedAt: Date? = nil, archived: Bool = false,
-                timerSeconds: Int = 0) {
+                timerSeconds: Int = 0, kind: String = "direct", conversationID: String? = nil, title: String? = nil, photo: Data? = nil,
+                groupVer: Int? = nil, membersVersion: Int64? = nil, myState: String = "member") {
         self.id = id; self.isRequest = isRequest; self.unread = unread; self.muted = muted; self.lastActivity = lastActivity
         self.pinnedAt = pinnedAt; self.archived = archived; self.timerSeconds = timerSeconds
+        self.kind = kind; self.conversationID = conversationID; self.title = title; self.photo = photo
+        self.groupVer = groupVer; self.membersVersion = membersVersion; self.myState = myState
     }
 }
 
@@ -167,5 +182,20 @@ public struct CallRecord: Sendable, Equatable {
     public init(id: String, chatID: String, video: Bool, outgoing: Bool, outcome: String, startedAt: Date, duration: Double) {
         self.id = id; self.chatID = chatID; self.video = video; self.outgoing = outgoing
         self.outcome = outcome; self.startedAt = startedAt; self.duration = duration
+    }
+}
+
+/// One member of a group chat and the role the server gave them (`owner`, `admin`, `member`).
+public struct GroupMemberRecord: Sendable, Equatable {
+    public var accountID: String, role: String
+    public init(accountID: String, role: String) { self.accountID = accountID; self.role = role }
+}
+
+/// A member's delivered or read receipt for a message of mine in a group.
+public struct ReceiptRecord: Sendable, Equatable {
+    public var messageID: String, accountID: String, kind: String
+    public var at: Date
+    public init(messageID: String, accountID: String, kind: String, at: Date) {
+        self.messageID = messageID; self.accountID = accountID; self.kind = kind; self.at = at
     }
 }

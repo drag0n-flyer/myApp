@@ -9,7 +9,7 @@ private let statusRank = ["sending": 0, "sent": 1, "delivered": 2, "read": 3]
 
 /// Typed access to the tables. Timestamps are stored as milliseconds since 1970.
 public final class Repository: @unchecked Sendable {
-    private let db: Database
+    let db: Database
     private let now: @Sendable () -> Date
 
     public init(db: Database, now: @escaping @Sendable () -> Date) {
@@ -44,10 +44,13 @@ public final class Repository: @unchecked Sendable {
 
     // MARK: chats
 
-    private let chatCols = "id, is_request, unread, muted, last_activity, pinned_at, archived, timer_seconds"
+    private let chatCols = "id, is_request, unread, muted, last_activity, pinned_at, archived, timer_seconds, kind, conversation_id, title, photo, group_ver, members_version, my_state"
     private func chatRow(_ r: Row) -> ChatRecord {
         ChatRecord(id: r.text(0), isRequest: r.int(1) != 0, unread: Int(r.int(2)), muted: r.int(3) != 0, lastActivity: date(r.int(4)),
-                   pinnedAt: r.isNull(5) ? nil : date(r.int(5)), archived: r.int(6) != 0, timerSeconds: Int(r.int(7)))
+                   pinnedAt: r.isNull(5) ? nil : date(r.int(5)), archived: r.int(6) != 0, timerSeconds: Int(r.int(7)),
+                   kind: r.text(8), conversationID: r.isNull(9) ? nil : r.text(9), title: r.isNull(10) ? nil : r.text(10),
+                   photo: r.isNull(11) ? nil : r.blob(11), groupVer: r.isNull(12) ? nil : Int(r.int(12)),
+                   membersVersion: r.isNull(13) ? nil : r.int(13), myState: r.text(14))
     }
 
     /// Inserts the chat, or updates `is_request`, `unread` and `last_activity` of an existing one. Pin, mute and

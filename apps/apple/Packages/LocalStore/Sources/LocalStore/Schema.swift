@@ -78,3 +78,26 @@ let schemaV4: [String] = [
     "ALTER TABLE outbox ADD COLUMN ciphertext_epoch INTEGER",
     "ALTER TABLE outbox ADD COLUMN ciphertext_conversation TEXT",
 ]
+
+/// Groups: a chat is `direct` (its ID is the peer's account ID) or `group` (`g:<conversationID>`). A group keeps its
+/// name, photo and their version (`group_ver`), the version of the member list last applied (`members_version`; NULL =
+/// none yet), this account's own state, its member list with roles, and the delivered and read receipts per member.
+/// Existing chats are `direct`. (`messages.sender_account` already holds the sender.)
+let schemaV5: [String] = [
+    "ALTER TABLE chats ADD COLUMN kind TEXT NOT NULL DEFAULT 'direct' CHECK(kind IN ('direct','group'))",
+    "ALTER TABLE chats ADD COLUMN conversation_id TEXT",
+    "ALTER TABLE chats ADD COLUMN title TEXT",
+    "ALTER TABLE chats ADD COLUMN photo BLOB",
+    "ALTER TABLE chats ADD COLUMN group_ver INTEGER",
+    "ALTER TABLE chats ADD COLUMN members_version INTEGER",
+    "ALTER TABLE chats ADD COLUMN my_state TEXT NOT NULL DEFAULT 'member' CHECK(my_state IN ('member','removed','left'))",
+    "CREATE UNIQUE INDEX chats_conversation ON chats(conversation_id) WHERE conversation_id IS NOT NULL",
+    """
+    CREATE TABLE group_members(chat_id TEXT NOT NULL REFERENCES chats ON DELETE CASCADE, account_id TEXT NOT NULL, \
+    role TEXT NOT NULL CHECK(role IN ('owner','admin','member')), PRIMARY KEY(chat_id, account_id)) STRICT
+    """,
+    """
+    CREATE TABLE receipts(message_id TEXT NOT NULL REFERENCES messages ON DELETE CASCADE, account_id TEXT NOT NULL, \
+    kind TEXT NOT NULL CHECK(kind IN ('delivered','read')), at INTEGER NOT NULL, PRIMARY KEY(message_id, account_id, kind)) STRICT
+    """,
+]
