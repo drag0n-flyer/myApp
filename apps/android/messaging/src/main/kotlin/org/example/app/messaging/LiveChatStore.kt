@@ -129,7 +129,7 @@ class LiveChatStore(
     )
     val receipts = Receipts(outbox, readReceiptsEnabled)
     val downloader = Downloader(server, dirs.blobDir, dirs.openDir, maxAttachmentBytes)
-    private val uploader = Uploader(server, dirs.tempDir, dirs.blobDir)
+    private val uploader = Uploader(server, dirs.tempDir)
     private val blobDir = dirs.blobDir
     private val tempDir = dirs.tempDir
     /** Ids of the attachment messages this process is preparing or uploading; a "sending" row not in here was cut off. */
@@ -430,14 +430,16 @@ class LiveChatStore(
             reload()
             fresh
         }
-        val att = try {
-            uploader.upload(prepared.file)
+        // The ciphertext waits in the temp folder until the message is stored, so no blob is ever left without a record.
+        val uploaded = try {
+            uploader.uploadKeeping(prepared.file)
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
             failUpload(id)
             return
         }
+        val att = uploaded.att
         val envelope = envelopeFor(kind, id, at, att, prepared)
         val queued = try {
             repo.transaction {
@@ -454,16 +456,22 @@ class LiveChatStore(
                     true
                 }
             }
-        } catch (e: Exception) {
-            Uploader.blobFile(blobDir, att).delete()
+        } catch (e: Throwable) {
+            uploaded.discard()
             throw e
         }
         if (!queued) {
-            Uploader.blobFile(blobDir, att).delete()
+            uploaded.discard()
             removeStaged(prepared.file, pending.path)
             repo.set(PENDING_UPLOAD_PREFIX + id, ByteArray(0))
             reload()
             return
+        }
+        try {
+            uploaded.moveTo(blobDir)
+        } catch (e: Exception) {
+            uploaded.discard()
+            try { repo.setAttachmentState(att.id, AttachmentState.FAILED, 0, null) } catch (_: Exception) { }
         }
         removeStaged(prepared.file, pending.path)
         bumpActivity(pending.chatId, at)

@@ -10,14 +10,34 @@ import org.example.app.contracts.DeliveryApi
 import org.example.app.messaging.content.Att
 import org.example.app.messaging.crypto.AttachmentCipher
 
+/** A finished upload whose ciphertext still waits in the temp folder: [moveTo] keeps it, [discard] deletes it. */
+class Uploaded internal constructor(val att: Att, private val temp: File) {
+    /** Moves the ciphertext to `<id>-<digest hex>.enc` (the name `Downloader` uses) in [blobDir] and returns it. */
+    fun moveTo(blobDir: File): File {
+        blobDir.mkdirs()
+        val target = Uploader.blobFile(blobDir, att)
+        if (!temp.renameTo(target)) {
+            temp.copyTo(target, overwrite = true)
+            temp.delete()
+        }
+        return target
+    }
+
+    fun discard() {
+        temp.delete()
+    }
+}
+
 /**
- * Encrypts a file and uploads the ciphertext (Design 7). The ciphertext goes to a temporary file in [tempDir]. When
- * the upload failed it is deleted. When it worked and [blobDir] is set, the file moves there as
- * `<id>-<digest hex>.enc` (the name `Downloader` uses), so the sender holds the same encrypted copy a receiver
- * downloads; without [blobDir] it is deleted. The key never leaves the returned [Att].
+ * Encrypts a file and uploads the ciphertext (Design 7). The ciphertext goes to a temporary file in [tempDir]. [upload]
+ * deletes it when done; [uploadKeeping] leaves it for the caller to keep ([Uploaded.moveTo], so the sender holds the
+ * same encrypted copy a receiver downloads) or [Uploaded.discard]. A failed upload deletes it either way. The key never
+ * leaves the returned [Att].
  */
-class Uploader(private val api: DeliveryApi, private val tempDir: File, private val blobDir: File? = null) {
-    suspend fun upload(plaintext: File): Att = withContext(Dispatchers.IO) {
+class Uploader(private val api: DeliveryApi, private val tempDir: File) {
+    suspend fun upload(plaintext: File): Att = uploadKeeping(plaintext).also { it.discard() }.att
+
+    suspend fun uploadKeeping(plaintext: File): Uploaded = withContext(Dispatchers.IO) {
         tempDir.mkdirs()
         val temp = File(tempDir, "${UUID.randomUUID()}.enc")
         try {
@@ -25,15 +45,10 @@ class Uploader(private val api: DeliveryApi, private val tempDir: File, private 
             val ref = FileInputStream(temp).use { api.uploadAttachment(it, temp.length()) }
             // The server chose the id; it becomes a file name, so it is held to the rule a received id is.
             AttachmentIds.check(ref.id)
-            val att = Att(id = ref.id, key = blob.key, dg = blob.digest, sz = blob.size, csz = blob.cipherSize)
-            blobDir?.let { dir ->
-                dir.mkdirs()
-                val target = blobFile(dir, att)
-                if (!temp.renameTo(target)) temp.copyTo(target, overwrite = true)
-            }
-            att
-        } finally {
+            Uploaded(Att(id = ref.id, key = blob.key, dg = blob.digest, sz = blob.size, csz = blob.cipherSize), temp)
+        } catch (e: Throwable) {
             temp.delete()
+            throw e
         }
     }
 
