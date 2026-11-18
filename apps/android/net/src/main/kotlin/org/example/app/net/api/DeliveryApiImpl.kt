@@ -6,6 +6,10 @@ import org.example.app.contracts.AttachmentRef
 import org.example.app.contracts.ConversationInfo
 import org.example.app.contracts.DeliveryApi
 import org.example.app.contracts.DeviceRecord
+import org.example.app.contracts.GroupMemberInfo
+import org.example.app.contracts.GroupRoleWire
+import org.example.app.contracts.MembersChange
+import org.example.app.contracts.ServerException
 import org.example.app.contracts.InboxItem
 import org.example.app.contracts.InboxPage
 import org.example.app.net.Auth
@@ -32,6 +36,22 @@ class DeliveryApiImpl(
     override suspend fun createConversation(peerAccountId: String): ConversationInfo =
         client.request("POST", "/v1/conversations", encodeBody(CreateConversationBody(listOf(peerAccountId))), Auth.Session, ConversationWire.serializer())
             .toInfo()
+
+    override suspend fun createGroup(accounts: List<String>): ConversationInfo =
+        client.request("POST", "/v1/conversations", encodeBody(CreateGroupBody("group", accounts)), Auth.Session, ConversationWire.serializer())
+            .toInfo()
+
+    override suspend fun addAccounts(id: String, accounts: List<String>): MembersChange =
+        client.request("POST", "/v1/conversations/${seg(id)}/accounts", encodeBody(AccountsBody(accounts)), Auth.Session, MembersChangeWire.serializer())
+            .toChange()
+
+    override suspend fun removeAccount(id: String, account: String): MembersChange =
+        client.request("DELETE", "/v1/conversations/${seg(id)}/accounts/${seg(account)}", null, Auth.Session, MembersChangeWire.serializer())
+            .toChange()
+
+    override suspend fun setRole(id: String, account: String, role: String): MembersChange =
+        client.request("PUT", "/v1/conversations/${seg(id)}/accounts/${seg(account)}/role", encodeBody(RoleBody(role)), Auth.Session, MembersChangeWire.serializer())
+            .toChange()
 
     override suspend fun conversation(id: String): ConversationInfo =
         client.request("GET", "/v1/conversations/${seg(id)}", null, Auth.Session, ConversationWire.serializer()).toInfo()
@@ -70,7 +90,7 @@ class DeliveryApiImpl(
         val w = client.request("GET", "/v1/inbox?$query", null, Auth.Session, InboxWire.serializer())
         return InboxPage(
             w.items.map {
-                InboxItem(it.cursor, it.kind, it.conversationID, it.seq, it.epoch, it.senderAccountID, it.senderDeviceID, it.payload, it.sentAt)
+                InboxItem(it.cursor, it.kind, it.conversationID, it.seq, it.epoch, it.senderAccountID, it.senderDeviceID, it.payload, it.sentAt, it.membersVersion)
             },
             w.more,
         )
@@ -87,5 +107,29 @@ class DeliveryApiImpl(
 
     override suspend fun downloadAttachment(id: String, fromByte: Long): InputStream = attachments.download(id, fromByte)
 
-    private fun ConversationWire.toInfo() = ConversationInfo(conversationID, mode, epoch)
+    /**
+     * The member list is hostile input: at most 100 distinct accounts, a version of at least 0, a role this version does not
+     * know read as `member` (the least it can be). Anything else is refused as `decoding`, like any reply that does not parse.
+     */
+    private fun ConversationWire.toInfo(): ConversationInfo {
+        if (kind != "direct" && kind != "group") throw badResponse()
+        if (membersVersion != null && membersVersion < 0) throw badResponse()
+        if (members.size > MAX_GROUP_MEMBERS || members.map { it.account }.toSet().size != members.size || members.any { it.account.isEmpty() }) {
+            throw badResponse()
+        }
+        val roles = members.map { GroupMemberInfo(it.account, if (it.role in KNOWN_ROLES) it.role else GroupRoleWire.MEMBER) }
+        return ConversationInfo(conversationID, mode, epoch, kind, roles, membersVersion)
+    }
+
+    private fun MembersChangeWire.toChange(): MembersChange {
+        if (membersVersion < 0) throw badResponse()
+        return MembersChange(membersVersion, deleted)
+    }
+
+    private fun badResponse() = ServerException(0, "decoding", null, null)
+
+    private companion object {
+        const val MAX_GROUP_MEMBERS = 100
+        val KNOWN_ROLES = setOf(GroupRoleWire.OWNER, GroupRoleWire.ADMIN, GroupRoleWire.MEMBER)
+    }
 }

@@ -103,6 +103,17 @@ class FakeDeliveryServer(var defaultMode: String = "e2ee") {
             .add(InboxItem(cursor, kind, conversationId, seq, epoch, account, device, payload, Instant.ofEpochMilli(1_700_000_000_000)))
     }
 
+    /** A stored `members` item: empty payload, only the new member list version (a group's membership changed). */
+    fun deliverMembers(to: String, conversationId: String, membersVersion: Long, from: String = "acc-ana/ana1") = synchronized(lock) {
+        cursor += 1
+        val (account, device) = from.split("/", limit = 2)
+        inboxes.getOrPut(to) { mutableListOf() }.add(
+            InboxItem(
+                cursor, "members", conversationId, null, 0, account, device, ByteArray(0), Instant.ofEpochMilli(1_700_000_000_000), membersVersion,
+            ),
+        )
+    }
+
     fun api(accountId: String, deviceId: String): DeliveryApi = Api(accountId, deviceId)
 
     /** Lands every held commit request, in order. Returns each one's outcome: the new epoch, or the error. */

@@ -63,7 +63,7 @@ class ChatListActionsScreenTest {
         rule.waitForIdle()
     }
 
-    private fun name(chatId: String) = store.contact(store.chat(chatId)!!.contactId)!!.displayName
+    private fun name(chatId: String) = store.contact(store.chat(chatId)!!.contactId!!)!!.displayName
 
     @Test
     fun longPressOpensTheMenuAndMarkAsReadIsOnlyOfferedForAChatWithUnreadMessages() {

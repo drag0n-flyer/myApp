@@ -10,7 +10,10 @@ import kotlinx.serialization.json.JsonObject
 
 class ServerException(val status: Int, val code: String, val retryAfter: Int?, val details: Map<String, Long>?) : Exception(code)
 
-/** [kind] is `message`, `commit` or `welcome`. */
+/**
+ * [kind] is `message`, `commit`, `welcome` or `members`. A `members` item has an empty payload and carries
+ * [membersVersion] only; the client then reads the conversation.
+ */
 class InboxItem(
     val cursor: Long,
     val kind: String,
@@ -21,7 +24,15 @@ class InboxItem(
     val senderDeviceId: String,
     val payload: ByteArray,
     val sentAt: Instant,
+    val membersVersion: Long? = null,
 )
+
+/** A group's member list changed: fetch it. [membersVersion] is the server's version after the change. */
+class MembersEvent(val conversationId: String, val membersVersion: Long)
+
+/** The `members` event of an inbox item; null for any other kind or a `members` item without a version. */
+fun InboxItem.membersEvent(): MembersEvent? =
+    if (kind == "members" && membersVersion != null) MembersEvent(conversationId, membersVersion) else null
 
 sealed interface ServerEvent {
     class Inbox(val item: InboxItem) : ServerEvent
@@ -69,7 +80,15 @@ interface DeliveryApi {
     /** Maps device ID to its KeyPackage. */
     suspend fun claimKeyPackages(accountId: String, deviceIds: List<String>? = null): Map<String, ByteArray>
     suspend fun createConversation(peerAccountId: String): ConversationInfo
+    /** A group conversation with the [accounts] (1 to 99 others); the caller is its owner. */
+    suspend fun createGroup(accounts: List<String>): ConversationInfo = throw UnsupportedOperationException("groups")
     suspend fun conversation(id: String): ConversationInfo
+    /** Owner or admin. Accounts already in are skipped. `group_full` over 100 accounts. */
+    suspend fun addAccounts(id: String, accounts: List<String>): MembersChange = throw UnsupportedOperationException("groups")
+    /** Removes [account], or leaves when it is the caller's own. `forbidden`, `owner_must_transfer`, `not_found`. */
+    suspend fun removeAccount(id: String, account: String): MembersChange = throw UnsupportedOperationException("groups")
+    /** Owner only; [role] is a [GroupRoleWire] value. */
+    suspend fun setRole(id: String, account: String, role: String): MembersChange = throw UnsupportedOperationException("groups")
     suspend fun postCommit(id: String, epoch: Long, commit: ByteArray, welcome: ByteArray?, addDevices: List<String>, removeDevices: List<String>): Long
     suspend fun postMessage(id: String, epoch: Long, ciphertext: ByteArray, escrow: ByteArray?, clientMsgId: String): Long
 
@@ -87,8 +106,27 @@ interface DeliveryApi {
     suspend fun downloadAttachment(id: String, fromByte: Long): InputStream
 }
 
-/** [mode] is `e2ee` or `server_readable`. */
-class ConversationInfo(val conversationId: String, val mode: String, val epoch: Long)
+/**
+ * [mode] is `e2ee` or `server_readable`. [kind] is `direct` (members empty, no version) or `group`, with the server's
+ * member list and its [membersVersion] from one snapshot.
+ */
+class ConversationInfo(
+    val conversationId: String, val mode: String, val epoch: Long,
+    val kind: String = "direct", val members: List<GroupMemberInfo> = emptyList(), val membersVersion: Long? = null,
+)
+
+/** Role names on the wire. */
+object GroupRoleWire {
+    const val OWNER = "owner"
+    const val ADMIN = "admin"
+    const val MEMBER = "member"
+}
+
+/** One member of a group as the server lists it. [role] is a [GroupRoleWire] value. */
+class GroupMemberInfo(val account: String, val role: String)
+
+/** The answer of a membership change: the new member list version, and whether the group is gone (the last member left). */
+class MembersChange(val membersVersion: Long, val deleted: Boolean)
 
 class InboxPage(val items: List<InboxItem>, val more: Boolean)
 

@@ -114,7 +114,7 @@ class ChatViewModel(
 
     private fun read(chat: Chat?, pages: List<Message>): ChatState = ChatState(
         chat = chat,
-        contactName = chat?.let { store.contact(it.contactId)?.displayName } ?: "",
+        contactName = chat?.let { it.title ?: it.contactId?.let { id -> store.contact(id)?.displayName } } ?: "",
         messages = if (pages.isEmpty()) chat?.messages.orEmpty() else ChatTimeline.merge(pages, chat?.messages.orEmpty()),
         sendingPaused = chat?.modeMismatch == true,
         isRequest = chat?.isRequest == true,

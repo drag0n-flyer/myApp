@@ -35,10 +35,37 @@ internal class ClaimResponse(@SerialName("keyPackages") val keyPackages: List<Cl
 internal class CreateConversationBody(@SerialName("members") val members: List<String>)
 
 @Serializable
+internal class CreateGroupBody(
+    @SerialName("kind") val kind: String,
+    @SerialName("accounts") val accounts: List<String>,
+)
+
+@Serializable
+internal class MemberWire(
+    @SerialName("account") val account: String,
+    @SerialName("role") val role: String,
+)
+
+@Serializable
 internal class ConversationWire(
     @SerialName("conversationID") val conversationID: String,
     @SerialName("mode") val mode: String,
     @SerialName("epoch") val epoch: Long,
+    @SerialName("kind") val kind: String = "direct",
+    @SerialName("members") val members: List<MemberWire> = emptyList(),
+    @SerialName("membersVersion") val membersVersion: Long? = null,
+)
+
+@Serializable
+internal class AccountsBody(@SerialName("accounts") val accounts: List<String>)
+
+@Serializable
+internal class RoleBody(@SerialName("role") val role: String)
+
+@Serializable
+internal class MembersChangeWire(
+    @SerialName("membersVersion") val membersVersion: Long,
+    @SerialName("deleted") val deleted: Boolean = false,
 )
 
 @Serializable
@@ -76,6 +103,7 @@ internal class InboxItemWire(
     @SerialName("senderDeviceID") val senderDeviceID: String,
     @SerialName("payload") @Serializable(with = Base64UrlSerializer::class) val payload: ByteArray,
     @SerialName("sentAt") @Serializable(with = InstantSerializer::class) val sentAt: Instant,
+    @SerialName("membersVersion") val membersVersion: Long? = null,
 )
 
 @Serializable

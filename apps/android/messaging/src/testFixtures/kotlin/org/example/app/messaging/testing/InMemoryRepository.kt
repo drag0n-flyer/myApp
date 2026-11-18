@@ -2,7 +2,12 @@ package org.example.app.messaging.testing
 
 import org.example.app.messaging.ports.AttachmentRecord
 import org.example.app.messaging.ports.CallRecord
+import org.example.app.messaging.ports.ChatKind
 import org.example.app.messaging.ports.ChatRecord
+import org.example.app.messaging.ports.GroupMemberRecord
+import org.example.app.messaging.ports.GroupStoreRules
+import org.example.app.messaging.ports.MyState
+import org.example.app.messaging.ports.ReceiptRecord
 import org.example.app.messaging.ports.ContactRecord
 import org.example.app.messaging.ports.ConversationMode
 import org.example.app.messaging.ports.ConversationRecord
@@ -44,12 +49,15 @@ class InMemoryRepository : Repository {
         val calls: MutableList<CallRecord> = mutableListOf(),
         val kv: MutableMap<String, ByteArray> = sortedMapOf(),
         val profiles: MutableMap<String, ProfileRecord> = linkedMapOf(),
+        val groupMembers: MutableMap<String, List<GroupMemberRecord>> = linkedMapOf(),
+        val receipts: MutableMap<Triple<String, String, String>, ReceiptRecord> = linkedMapOf(),
     ) {
         fun copy(): State = State(
             LinkedHashMap(contacts), LinkedHashMap(chats), LinkedHashMap(drafts), java.util.TreeMap(conversations), LinkedHashMap(members),
             LinkedHashMap(safety), LinkedHashMap(messages), LinkedHashMap(reactions), LinkedHashMap(attachments),
             LinkedHashMap(outbox), java.util.TreeMap(raw), LinkedHashMap(processed), LinkedHashMap(folders),
             LinkedHashMap(folderChats), LinkedHashMap(blocked), ArrayList(calls), java.util.TreeMap(kv), LinkedHashMap(profiles),
+            LinkedHashMap(groupMembers), LinkedHashMap(receipts),
         )
     }
 
@@ -162,7 +170,51 @@ class InMemoryRepository : Repository {
         s.attachments.values.removeAll { it.messageId in msgs }
         s.outbox.values.removeAll { it.chatId == id }
         s.safety.remove(id)
+        s.groupMembers.remove(id)
+        s.receipts.keys.removeAll { it.first in msgs }
         Unit
+    }
+
+    // groups
+    override fun upsertGroup(chatId: String, conversationId: String, title: String?, now: Long) = tx {
+        GroupStoreRules.requireGroup(conversationId, title)
+        val existing = s.chats[chatId]
+        require(existing == null || existing.kind == ChatKind.GROUP) { "not a group chat" }
+        require(s.chats.values.none { it.id != chatId && it.conversationId == conversationId }) { "conversation already has a chat" }
+        s.chats[chatId] = existing?.copy(conversationId = conversationId)
+            ?: ChatRecord(chatId, isRequest = false, unread = 0, muted = false, lastActivity = now, kind = ChatKind.GROUP, conversationId = conversationId, title = title)
+        Unit
+    }
+    override fun setGroupMembers(chatId: String, members: List<GroupMemberRecord>, version: Long): List<GroupMemberRecord>? = tx {
+        GroupStoreRules.requireMembers(members, version)
+        val chat = s.chats[chatId]
+        if (chat == null || chat.kind != ChatKind.GROUP || (chat.membersVersion != null && version <= chat.membersVersion)) return@tx null
+        val old = s.groupMembers[chatId].orEmpty()
+        s.groupMembers[chatId] = members.sortedBy { it.accountId }
+        s.chats[chatId] = chat.copy(membersVersion = version)
+        old
+    }
+    override fun groupMembers(chatId: String): List<GroupMemberRecord> = tx { s.groupMembers[chatId].orEmpty() }
+    override fun setGroupInfo(chatId: String, title: String, photo: ByteArray?, ver: Int): Boolean = tx {
+        GroupStoreRules.requireInfo(title, photo)
+        val chat = s.chats[chatId]
+        if (chat == null || chat.kind != ChatKind.GROUP || ver < 1 || (chat.groupVer != null && ver <= chat.groupVer)) return@tx false
+        s.chats[chatId] = chat.copy(title = title, photo = photo, groupVer = ver)
+        true
+    }
+    override fun setMyState(chatId: String, state: String) = tx {
+        require(state in MyState.all) { "state" }
+        s.chats[chatId]?.let { s.chats[chatId] = it.copy(myState = state) }
+        Unit
+    }
+    override fun addReceipt(messageId: String, accountId: String, kind: String, at: Long): Boolean = tx {
+        require(kind in GroupStoreRules.receiptKinds) { "kind" }
+        if (messageId !in s.messages) return@tx false
+        val key = Triple(messageId, accountId, kind)
+        if (key in s.receipts) false else { s.receipts[key] = ReceiptRecord(messageId, accountId, kind, at); true }
+    }
+    override fun receipts(messageId: String): List<ReceiptRecord> = tx {
+        s.receipts.values.filter { it.messageId == messageId }.sortedWith(compareBy({ it.accountId }, { it.kind }))
     }
 
     // conversations

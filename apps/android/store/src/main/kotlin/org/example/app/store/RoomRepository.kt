@@ -4,7 +4,12 @@ import androidx.sqlite.db.SimpleSQLiteQuery
 import org.example.app.messaging.ports.AttachmentRecord
 import org.example.app.messaging.ports.AttachmentState
 import org.example.app.messaging.ports.CallRecord
+import org.example.app.messaging.ports.ChatKind
 import org.example.app.messaging.ports.ChatRecord
+import org.example.app.messaging.ports.GroupMemberRecord
+import org.example.app.messaging.ports.GroupStoreRules
+import org.example.app.messaging.ports.MyState
+import org.example.app.messaging.ports.ReceiptRecord
 import org.example.app.messaging.ports.ContactRecord
 import org.example.app.messaging.ports.ConversationMode
 import org.example.app.messaging.ports.ConversationRecord
@@ -56,7 +61,12 @@ class RoomRepository(
     override fun contacts() = contacts.all().map { it.toRecord() }
 
     // chats
-    override fun upsertChat(c: ChatRecord) = chats.upsert(ChatEntity(c.id, c.isRequest, c.unread, c.muted, c.lastActivity, c.pinnedAt, c.archived, c.timerSeconds))
+    override fun upsertChat(c: ChatRecord) = chats.upsert(
+        ChatEntity(
+            c.id, c.isRequest, c.unread, c.muted, c.lastActivity, c.pinnedAt, c.archived, c.timerSeconds,
+            c.kind, c.conversationId, c.title, c.photo, c.groupVer, c.membersVersion, c.myState,
+        ),
+    )
     override fun chat(id: String) = chats.get(id)?.toRecord()
     override fun chats() = chats.all().map { it.toRecord() }
     override fun setUnread(chatId: String, n: Int) = chats.setUnread(chatId, n)
@@ -112,6 +122,69 @@ class RoomRepository(
         chats.deleteOutbox(id)
         chats.delete(id)
     }
+
+    // groups
+    override fun upsertGroup(chatId: String, conversationId: String, title: String?, now: Long) {
+        GroupStoreRules.requireGroup(conversationId, title)
+        upsertGroupChecked(chatId, conversationId, title, now)
+    }
+
+    private fun upsertGroupChecked(chatId: String, conversationId: String, title: String?, now: Long) = transaction {
+        val existing = chats.get(chatId)
+        if (existing == null) {
+            chats.insertNew(
+                ChatEntity(chatId, false, 0, false, now, kind = ChatKind.GROUP, conversationId = conversationId, title = title),
+            )
+        } else {
+            require(existing.kind == ChatKind.GROUP) { "Not a group chat" }
+            chats.setConversationId(chatId, conversationId)
+        }
+    }
+
+    override fun setGroupMembers(chatId: String, members: List<GroupMemberRecord>, version: Long): List<GroupMemberRecord>? {
+        GroupStoreRules.requireMembers(members, version)
+        return transaction {
+            val chat = chats.get(chatId)
+            if (chat == null || chat.kind != ChatKind.GROUP || (chat.membersVersion != null && version <= chat.membersVersion)) {
+                return@transaction null
+            }
+            val old = chats.members(chatId).map { GroupMemberRecord(it.accountId, it.role) }
+            chats.clearMembers(chatId)
+            chats.insertMembers(members.sortedBy { it.accountId }.map { GroupMemberEntity(chatId, it.accountId, it.role) })
+            chats.setMembersVersion(chatId, version)
+            old
+        }
+    }
+
+    override fun groupMembers(chatId: String) = chats.members(chatId).map { GroupMemberRecord(it.accountId, it.role) }
+
+    override fun setGroupInfo(chatId: String, title: String, photo: ByteArray?, ver: Int): Boolean {
+        GroupStoreRules.requireInfo(title, photo)
+        return transaction {
+            val chat = chats.get(chatId)
+            if (chat == null || chat.kind != ChatKind.GROUP || ver < 1 || (chat.groupVer != null && ver <= chat.groupVer)) {
+                return@transaction false
+            }
+            chats.setInfo(chatId, title, photo, ver)
+            true
+        }
+    }
+
+    override fun setMyState(chatId: String, state: String) {
+        require(state in MyState.all) { "Unknown group state" }
+        chats.setMyState(chatId, state)
+    }
+
+    override fun addReceipt(messageId: String, accountId: String, kind: String, at: Long): Boolean {
+        require(kind in GroupStoreRules.receiptKinds) { "Unknown receipt kind" }
+        return transaction {
+            if (chats.messageCount(messageId) == 0 || chats.receiptCount(messageId, accountId, kind) > 0) return@transaction false
+            chats.insertReceipt(ReceiptEntity(messageId, accountId, kind, at))
+            true
+        }
+    }
+
+    override fun receipts(messageId: String) = chats.receipts(messageId).map { ReceiptRecord(it.messageId, it.accountId, it.kind, it.at) }
 
     // conversations
     override fun upsertConversation(c: ConversationRecord) {
@@ -321,7 +394,9 @@ class RoomRepository(
 }
 
 private fun ContactEntity.toRecord() = ContactRecord(accountId, username, displayName, isContact, addedAt)
-private fun ChatEntity.toRecord() = ChatRecord(id, isRequest, unread, muted, lastActivity, pinnedAt, archived, timerSeconds)
+private fun ChatEntity.toRecord() = ChatRecord(
+    id, isRequest, unread, muted, lastActivity, pinnedAt, archived, timerSeconds, kind, conversationId, title, photo, groupVer, membersVersion, myState,
+)
 private fun ConversationEntity.toRecord() = ConversationRecord(serverId, chatId, groupId, mode, innerMode, modeMismatch, epoch, active, createdAt)
 private fun MessageRecord.toEntity() = MessageEntity(
     id, chatId, conversationId, senderAccount, senderDevice, sentAt, receivedAt, envelope, status, replyTo, editedAt,

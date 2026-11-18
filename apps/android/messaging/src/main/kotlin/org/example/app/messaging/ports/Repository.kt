@@ -19,7 +19,79 @@ data class ChatRecord(
     val archived: Boolean = false,
     /** Disappearing-message timer for the chat in seconds; 0 is off. */
     val timerSeconds: Int = 0,
-)
+    /** [ChatKind.DIRECT] (the chat ID is the peer's account ID) or [ChatKind.GROUP] (the ID is `g:<conversationID>`). */
+    val kind: String = ChatKind.DIRECT,
+    /** A group's conversation ID; null for a one-to-one chat. */
+    val conversationId: String? = null,
+    /** A group's name; null until it has one. */
+    val title: String? = null,
+    /** A group's photo (JPEG, at most 24,576 bytes). */
+    val photo: ByteArray? = null,
+    /** The `ver` of the stored group name and photo; null before the first. */
+    val groupVer: Int? = null,
+    /** The server's member list version this copy of the list is at; null before the first list. */
+    val membersVersion: Long? = null,
+    /** [MyState.MEMBER], [MyState.REMOVED] or [MyState.LEFT]. */
+    val myState: String = MyState.MEMBER,
+) {
+    override fun equals(other: Any?) = other is ChatRecord && id == other.id && isRequest == other.isRequest && unread == other.unread &&
+        muted == other.muted && lastActivity == other.lastActivity && pinnedAt == other.pinnedAt && archived == other.archived &&
+        timerSeconds == other.timerSeconds && kind == other.kind && conversationId == other.conversationId && title == other.title &&
+        (photo contentEquals other.photo) && groupVer == other.groupVer && membersVersion == other.membersVersion && myState == other.myState
+    override fun hashCode() = id.hashCode()
+}
+
+/** Allowed values of [ChatRecord.kind]. */
+object ChatKind {
+    const val DIRECT = "direct"
+    const val GROUP = "group"
+}
+
+/** Allowed values of [ChatRecord.myState]: whether this account is still in the group. */
+object MyState {
+    const val MEMBER = "member"
+    const val REMOVED = "removed"
+    const val LEFT = "left"
+    val all = setOf(MEMBER, REMOVED, LEFT)
+}
+
+/** One member of a group chat; [role] is a `GroupRole` wire name (`owner`, `admin`, `member`). */
+data class GroupMemberRecord(val accountId: String, val role: String)
+
+/** A delivered or read receipt from one member for one of my messages. [kind] is `delivered` or `read`. */
+data class ReceiptRecord(val messageId: String, val accountId: String, val kind: String, val at: Long)
+
+/** What a store must refuse to keep, whatever it was sent: the same checks in every [Repository]. */
+object GroupStoreRules {
+    const val MAX_MEMBERS = 100
+    const val PHOTO_MAX = 24_576
+    val receiptKinds = setOf("delivered", "read")
+
+    /** Throws [IllegalArgumentException] for a list that is too long, has a repeated or empty account ID, or an unknown role. */
+    fun requireMembers(members: List<GroupMemberRecord>, version: Long) {
+        require(version >= 0) { "Negative members version" }
+        require(members.size <= MAX_MEMBERS) { "Too many members" }
+        require(members.map { it.accountId }.toSet().size == members.size) { "Repeated member" }
+        for (m in members) {
+            require(m.accountId.isNotEmpty()) { "Empty account ID" }
+            require(org.example.app.core.groups.GroupRole.from(m.role) != null) { "Unknown role" }
+        }
+    }
+
+    private val conversationIdRule = Regex("[A-Za-z0-9_-]+")
+
+    /** A conversation ID of letters, digits, `_` and `-` only; a title, when given, that the name rule returns unchanged. */
+    fun requireGroup(conversationId: String, title: String?) {
+        require(conversationIdRule.matches(conversationId)) { "Bad conversation ID" }
+        if (title != null) require(org.example.app.core.groups.GroupNameRule.clean(title) == title) { "Bad group name" }
+    }
+
+    /** The name must pass the group name rule as it is; a photo is a JPEG of at most 24,576 bytes. */
+    fun requireInfo(title: String, photo: ByteArray?) {
+        require(org.example.app.core.groups.GroupNameRule.clean(title) == title) { "Bad group name" }
+        if (photo != null) require(photo.size in 2..PHOTO_MAX && photo[0] == 0xFF.toByte() && photo[1] == 0xD8.toByte()) { "Bad group photo" }
+    }
+}
 
 data class ConversationRecord(
     val serverId: String,
@@ -229,6 +301,37 @@ interface Repository {
 
     /** Deletes the chat and, by cascade, its conversations, messages and the rest. */
     fun deleteChat(id: String)
+
+    // groups
+    /**
+     * Makes the group chat [chatId] (`g:<conversationID>`) for [conversationId] when there is none: not a request, nothing
+     * unread, activity [now]. An existing group chat keeps everything (a pin, mute or title) and only gets the conversation ID.
+     * @throws IllegalArgumentException when [chatId] is an existing one-to-one chat. A second chat for one conversation fails.
+     */
+    fun upsertGroup(chatId: String, conversationId: String, title: String?, now: Long)
+    /**
+     * Replaces the group's member list and records [version], in one transaction, and returns the list it replaced. Null,
+     * and nothing changed, when [version] is not higher than the stored one or the chat is not a group chat.
+     * @throws IllegalArgumentException for a list that fails [GroupStoreRules.requireMembers].
+     */
+    fun setGroupMembers(chatId: String, members: List<GroupMemberRecord>, version: Long): List<GroupMemberRecord>?
+    /** The stored member list, by account ID. Empty for a one-to-one chat. */
+    fun groupMembers(chatId: String): List<GroupMemberRecord>
+    /**
+     * Keeps a group's name and photo when [ver] is at least 1 and strictly higher than the stored one. False, and nothing
+     * changed, otherwise or for a chat that is not a group.
+     * @throws IllegalArgumentException for a name or photo that fails [GroupStoreRules.requireInfo].
+     */
+    fun setGroupInfo(chatId: String, title: String, photo: ByteArray?, ver: Int): Boolean
+    /** One column. @throws IllegalArgumentException for a value outside [MyState.all]. */
+    fun setMyState(chatId: String, state: String)
+    /**
+     * Stores one receipt. True when new; false, and the first one stays, when this member already has one of this kind
+     * for the message, and false for a message that does not exist.
+     * @throws IllegalArgumentException for a kind other than `delivered` or `read`.
+     */
+    fun addReceipt(messageId: String, accountId: String, kind: String, at: Long): Boolean
+    fun receipts(messageId: String): List<ReceiptRecord>
 
     // conversations
     /** @throws IllegalArgumentException when `mode` or `innerMode` is not a [ConversationMode] value. */

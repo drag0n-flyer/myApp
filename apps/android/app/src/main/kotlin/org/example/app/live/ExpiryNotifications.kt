@@ -19,7 +19,7 @@ object ExpiryNotifications {
                 continue
             }
             val chat = store.chat(chatId) ?: continue
-            val contact = store.contact(chat.contactId) ?: continue
+            val contact = chat.contactId?.let { store.contact(it) } ?: continue
             val title = contact.displayName.ifEmpty { contact.username }
             val remaining = chat.messages
                 .filter { it.senderId != store.me.id && it.senderId != "system" && it.content !is MessageContent.System }

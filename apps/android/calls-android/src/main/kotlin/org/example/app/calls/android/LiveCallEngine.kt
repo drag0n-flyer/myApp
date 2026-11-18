@@ -123,6 +123,7 @@ class LiveCallEngine(
 
     override fun start(contactId: String, video: Boolean) = enqueue {
         if (live) return@enqueue
+        if (org.example.app.core.groups.ChatID.isGroup(contactId)) return@enqueue // a group chat ID is no one to call
         val peer = peers.peer(contactId)
         val id = newCallId()
         begin(id, peer?.contact ?: Contact(contactId, "", ""), isOutgoing = true, contact = peer?.isContact == true)

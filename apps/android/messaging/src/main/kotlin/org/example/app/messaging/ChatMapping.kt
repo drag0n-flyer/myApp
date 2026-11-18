@@ -18,6 +18,7 @@ import org.example.app.core.chats.SystemEvent
 import org.example.app.messaging.content.ContentCodec
 import org.example.app.messaging.content.ContentEnvelope
 import org.example.app.messaging.ports.AttachmentRecord
+import org.example.app.messaging.ports.ChatKind
 import org.example.app.messaging.ports.ChatRecord
 import org.example.app.messaging.ports.ConversationMode
 import org.example.app.messaging.ports.ConversationRecord
@@ -129,7 +130,8 @@ internal object ChatMapping {
         record: ChatRecord, conversations: List<ConversationRecord>, preferred: ConversationRecord?, folderIds: Set<String>,
         messages: List<Message>,
     ) = Chat(
-        id = record.id, contactId = record.id, encryption = encryption(preferred), folderIds = folderIds, unreadCount = record.unread,
+        id = record.id, contactId = if (record.kind == ChatKind.GROUP) null else record.id, title = record.title.takeIf { record.kind == ChatKind.GROUP },
+        encryption = encryption(preferred), folderIds = folderIds, unreadCount = record.unread,
         messages = messages, isRequest = record.isRequest, modeMismatch = conversations.any { it.modeMismatch },
         pinnedAt = record.pinnedAt?.let(java.time.Instant::ofEpochMilli), muted = record.muted, archived = record.archived,
         timerSeconds = record.timerSeconds,

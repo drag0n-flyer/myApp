@@ -14,6 +14,7 @@ import org.example.app.contracts.MemberKey
 import org.example.app.contracts.MlsEngine
 import org.example.app.contracts.MlsException
 import org.example.app.contracts.ServerException
+import org.example.app.core.groups.ChatID
 import org.example.app.messaging.content.ContentCodec
 import org.example.app.messaging.content.ContentEnvelope
 import org.example.app.messaging.ports.ChatRecord
@@ -58,6 +59,7 @@ class ConversationManager(
 
     /** The active conversation with the smallest server ID, created when there is none. Sends a pending `mode` envelope first. */
     suspend fun preferredConversation(contactId: String): ConversationRecord {
+        if (ChatID.isGroup(contactId)) throw SyncException.NoPeer // a group chat has no peer to make a one-to-one conversation with
         repo.preferredConversation(contactId)?.let { ensureModeAnnounced(it); return it }
         // A second caller waits for the first create instead of starting another.
         return creating.withLock {
@@ -80,6 +82,7 @@ class ConversationManager(
      * group for the same peer. See [finishCreate].
      */
     suspend fun create(contactId: String): ConversationRecord {
+        if (ChatID.isGroup(contactId)) throw SyncException.NoPeer
         pendingCreate(contactId)?.let { serverId ->
             try {
                 return finishCreate(serverId, resumed = true)

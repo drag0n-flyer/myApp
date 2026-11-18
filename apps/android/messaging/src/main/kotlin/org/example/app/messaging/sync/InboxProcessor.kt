@@ -10,6 +10,8 @@ import org.example.app.contracts.GroupId
 import org.example.app.contracts.InboxItem
 import org.example.app.contracts.Incoming
 import org.example.app.contracts.MemberKey
+import org.example.app.contracts.MembersEvent
+import org.example.app.contracts.membersEvent
 import org.example.app.contracts.MlsEngine
 import org.example.app.contracts.MlsException
 import org.example.app.contracts.ServerException
@@ -53,6 +55,13 @@ class InboxProcessor(
 
     /** Receives every applied result after its transaction (D5 receipts, D7 call signals and notices). */
     var onApplied: (suspend (AppliedResult) -> Unit)? = null
+
+    /**
+     * Receives each `members` item (a group's member list changed) when it is fetched. Such an item has no payload to
+     * decrypt: it is never stored raw and never becomes a message. Null drops it. A failing listener loses nothing the
+     * server cannot give again: the list and its version are read from `GET /v1/conversations/{id}`.
+     */
+    var onMembers: (suspend (MembersEvent) -> Unit)? = null
 
     /** Receives each drain's results as one batch, before [onApplied] (the delivered receipts: one per chat per batch). */
     var onBatch: (suspend (List<AppliedResult>) -> Unit)? = null
@@ -104,11 +113,21 @@ class InboxProcessor(
         while (fetched < maxItems) {
             val page = server.inbox(storedCursor(), minOf(PAGE_SIZE, maxItems - fetched))
             val last = page.items.maxOfOrNull { it.cursor } ?: break
+            // A `members` item has nothing to decrypt: it is an event, not a raw row.
             repo.transaction {
-                repo.insertRaw(page.items.map(::raw))
+                repo.insertRaw(page.items.filter { it.kind != "members" }.map(::raw))
                 repo.set(CURSOR_KEY, last.toString().encodeToByteArray())
             }
             server.ack(last)
+            for (event in page.items.mapNotNull { it.membersEvent() }) {
+                try {
+                    onMembers?.invoke(event)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // The list is read again from the server by its version; nothing else depends on this item.
+                }
+            }
             fetched += page.items.size
             progress(fetched)
             if (!page.more) break

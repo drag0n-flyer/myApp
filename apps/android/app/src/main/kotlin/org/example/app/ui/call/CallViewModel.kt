@@ -52,6 +52,8 @@ class CallViewModel(
         DataModePolicy.sheetOptions(server, settings, call.network, call.inCallPreference)
 
     fun start(contactId: String, video: Boolean) {
+        // A group chat ID is no one to call.
+        if (org.example.app.core.groups.ChatID.isGroup(contactId)) return
         outgoing = true
         recorded = false
         engine.start(contactId, video)

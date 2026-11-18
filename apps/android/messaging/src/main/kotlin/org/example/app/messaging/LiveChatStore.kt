@@ -13,6 +13,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import org.example.app.core.chats.ChatMedia
+import org.example.app.core.groups.ChatID
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -1241,6 +1242,8 @@ class LiveChatStore(
     }
 
     override fun block(contactId: String) = write {
+        // A group chat ID is not an account: blocking it would delete the group and send a bogus ID to the server.
+        if (ChatID.isGroup(contactId)) return@write
         repo.transaction {
             repo.block(contactId, nowMs())
             repo.deleteChat(contactId)
@@ -1253,6 +1256,7 @@ class LiveChatStore(
 
     /** Local first, like [block]: the server call is kept in `kv` and retried until it is accepted. */
     override fun unblock(contactId: String) = write {
+        if (ChatID.isGroup(contactId)) return@write
         repo.transaction {
             repo.unblock(contactId)
             repo.set(BLOCK_PREFIX + contactId, ByteArray(0)) // a block the server never got is dropped
@@ -1320,7 +1324,8 @@ class LiveChatStore(
         return contactId
     }
 
-    private fun ensureChatRow(contactId: String): Boolean = try {
+    /** False for a group chat ID: it is no contact, so no contact row and no one-to-one chat is ever made for it. */
+    private fun ensureChatRow(contactId: String): Boolean = if (ChatID.isGroup(contactId)) false else try {
         if (repo.chat(contactId) == null) {
             val known = repo.contact(contactId)
             if (known == null) repo.upsertContact(ContactRecord(contactId, "", "", false, nowMs()))

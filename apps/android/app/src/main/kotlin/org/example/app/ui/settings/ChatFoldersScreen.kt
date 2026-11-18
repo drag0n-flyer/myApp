@@ -87,7 +87,7 @@ fun ChatFoldersScreen(store: ChatStore, onBack: () -> Unit, modifier: Modifier =
     if (creating) {
         FormDialog(onDismiss = { creating = false }) {
             NewFolderForm(
-                chats.map { it.id to (store.contact(it.contactId)?.displayName ?: it.contactId) },
+                chats.map { it.id to (it.title ?: it.contactId?.let { id -> store.contact(id)?.displayName } ?: it.contactId ?: it.id) },
                 onCreate = { name, ids -> store.addFolder(name, ids); creating = false },
                 onCancel = { creating = false },
             )

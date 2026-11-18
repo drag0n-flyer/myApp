@@ -73,7 +73,7 @@ class ChatListActionsTest {
     @Test fun anIncomingMessageNeverChangesArchivedOrMutedButIsStoredAndCounted() {
         val s = store()
         val chat = s.chat(ids(s)[0])!!
-        val from = s.contact(chat.contactId)!!
+        val from = s.contact(chat.contactId!!)!!
         s.setArchived(chat.id, true)
         s.setMuted(chat.id, true)
         tick()

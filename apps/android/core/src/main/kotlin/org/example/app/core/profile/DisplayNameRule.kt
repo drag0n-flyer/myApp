@@ -36,7 +36,10 @@ object DisplayNameRule {
     private val invisible = setOf(0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF, 0x3164, 0x115F, 0x1160, 0xFFA0, 0x2800, 0x034F, 0x180E, 0x17B4, 0x17B5)
 
     /** The trimmed name, or null when it is not acceptable. */
-    fun clean(input: String): String? {
+    fun clean(input: String): String? = cleanUpTo(input, MAX)
+
+    /** The same character rules with another length limit in code points (a group name allows 50). */
+    fun cleanUpTo(input: String, max: Int): String? {
         val name = trimmed(input)
         if (name.isEmpty()) return null
         var count = 0
@@ -44,7 +47,7 @@ object DisplayNameRule {
         while (i < name.length) {
             val cp = name.codePointAt(i)
             i += Character.charCount(cp)
-            if (++count > MAX) return null
+            if (++count > max) return null
             if (isRefused(cp)) return null
         }
         return if (hasVisible(name)) name else null

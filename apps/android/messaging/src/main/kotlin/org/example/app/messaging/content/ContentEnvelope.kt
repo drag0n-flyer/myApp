@@ -17,6 +17,7 @@ import org.example.app.contracts.CallSignalPayload
 import org.example.app.core.chats.LinkPreviewParse
 import org.example.app.core.chats.ImageHeader
 import org.example.app.core.chats.LinkPreviewRule
+import org.example.app.core.groups.GroupNameRule
 import org.example.app.core.people.Expiry
 import org.example.app.core.people.TimerChoice
 import org.example.app.core.profile.DisplayNameRule
@@ -72,6 +73,15 @@ sealed interface ContentEnvelope {
         override fun hashCode() = id.hashCode() + ver
     }
 
+    /** A group's name and photo, sent by an owner or admin. [ver] only ever rises; a lower or equal one is ignored. Never stored as a message. */
+    class Group(
+        override val id: String, override val at: Long, val name: String, val photo: ByteArray?, val ver: Int, override val v: Int = 1,
+    ) : ContentEnvelope {
+        override fun equals(other: Any?) = other is Group && id == other.id && at == other.at && name == other.name &&
+            (photo contentEquals other.photo) && ver == other.ver && v == other.v
+        override fun hashCode() = id.hashCode() + ver
+    }
+
     /** A newer version, an unknown kind or a malformed message. [kind] is `"invalid"` when not even the header reads. [raw] is the original JSON text. */
     data class Unknown(override val id: String, override val at: Long, val kind: String, val raw: String, override val v: Int = 1) : ContentEnvelope
 }
@@ -89,8 +99,8 @@ object ContentCodec {
     /** Loose backstop on a whole envelope (UTF-8 bytes), both ways. The real text limit is [TextLimit], applied at compose time. */
     const val MAX_ENVELOPE_BYTES = 64 * 1024
     private val json = Json { ignoreUnknownKeys = true }
-    private val knownKinds = setOf("text", "photo", "voice", "file", "edit", "delete", "react", "receipt", "callsig", "mode", "typing", "presence", "timer", "profile")
-    private val invalidKinds = setOf("mode", "receipt", "typing", "presence", "timer", "profile")
+    private val knownKinds = setOf("text", "photo", "voice", "file", "edit", "delete", "react", "receipt", "callsig", "mode", "typing", "presence", "timer", "profile", "group")
+    private val invalidKinds = setOf("mode", "receipt", "typing", "presence", "timer", "profile", "group")
 
     /** Sorted keys, no whitespace, like the Swift encoder. Throws [IllegalArgumentException] only over the 64 KiB backstop. [ContentEnvelope.Unknown] is re-emitted verbatim. */
     fun encode(env: ContentEnvelope): ByteArray {
@@ -129,6 +139,9 @@ object ContentCodec {
             is ContentEnvelope.Presence -> head(env, "presence") { put("state", env.state) }
             is ContentEnvelope.Timer -> head(env, "timer") { put("seconds", env.seconds) }
             is ContentEnvelope.Profile -> head(env, "profile") {
+                put("name", env.name); env.photo?.let { put("photo", b64(it)) }; put("ver", env.ver)
+            }
+            is ContentEnvelope.Group -> head(env, "group") {
                 put("name", env.name); env.photo?.let { put("photo", b64(it)) }; put("ver", env.ver)
             }
             is ContentEnvelope.Unknown -> error("handled above")
@@ -176,6 +189,7 @@ object ContentCodec {
             "presence" -> o["state"].str()?.takeIf { it == "online" || it == "away" }?.let { ContentEnvelope.Presence(id, at, it) }
             "timer" -> o["seconds"].int()?.takeIf { TimerChoice.from(it) != null }?.let { ContentEnvelope.Timer(id, at, it) }
             "profile" -> profile(o, id, at)
+            "group" -> group(o, id, at)
             else -> null
         }
     }
@@ -221,6 +235,19 @@ object ContentCodec {
         val photoEl = o["photo"]
         val photo = if (photoEl == null || photoEl is JsonNull) null else photo(photoEl.str() ?: return null) ?: return null
         return ContentEnvelope.Profile(id, at, name, photo, ver)
+    }
+
+    /**
+     * The whole `group` envelope is invalid (null) when the name, photo or version is: the name is 1 to 50 code points
+     * under the display-name character rules and must already be clean (as a profile name must); the photo is a JPEG
+     * of at most 24,576 bytes (the profile-photo rule's frame-header size check is not in this build yet).
+     */
+    private fun group(o: JsonObject, id: String, at: Long): ContentEnvelope? {
+        val name = o["name"].str()?.takeIf { GroupNameRule.clean(it) == it } ?: return null
+        val ver = o["ver"].int()?.takeIf { it >= 1 } ?: return null
+        val photoEl = o["photo"]
+        val photo = if (photoEl == null || photoEl is JsonNull) null else jpeg(photoEl.str() ?: return null, PHOTO_MAX) ?: return null
+        return ContentEnvelope.Group(id, at, name, photo, ver)
     }
 
     /** An invalid preview is dropped (null) and the text kept. */

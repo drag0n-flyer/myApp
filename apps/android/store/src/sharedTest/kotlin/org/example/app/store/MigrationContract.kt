@@ -179,6 +179,57 @@ abstract class MigrationContract {
         }
     }
 
+    private fun createVersion4() {
+        val helper = v1Helper(object : SupportSQLiteOpenHelper.Callback(4) {
+            override fun onConfigure(db: SupportSQLiteDatabase) = db.setForeignKeyConstraintsEnabled(true)
+            override fun onCreate(db: SupportSQLiteDatabase) {
+                SchemaV1.create(db, hasFts)
+                Migration1To2.migrate(db)
+                Migration2To3.migrate(db)
+                Migration3To4.migrate(db)
+            }
+            override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = error("not expected")
+        })
+        assertEquals(4, helper.writableDatabase.version)
+        helper.close()
+    }
+
+    /** Version 4 to 5: every one-to-one chat becomes `direct` with its row and children intact; the group tables work. */
+    @Test fun populatedVersion4GetsGroupColumnsAndTablesWithEveryChatIntact() {
+        createVersion4()
+        val db = openCurrent()
+        try {
+            val raw = db.openHelper.writableDatabase
+            assertEquals(AppDatabase.VERSION, raw.version)
+            raw.query("SELECT id, kind, conversation_id, title, photo, group_ver, members_version, my_state, muted, unread FROM chats ORDER BY id").use { c ->
+                val rows = mutableListOf<List<String?>>()
+                while (c.moveToNext()) {
+                    assertEquals("direct", c.getString(1), "kind of ${c.getString(0)}")
+                    for (i in 2..6) assertTrue(c.isNull(i), "column $i of ${c.getString(0)} starts empty")
+                    assertEquals("member", c.getString(7))
+                    rows += listOf(c.getString(0), c.getString(8), c.getString(9))
+                }
+                assertEquals(listOf(listOf<String?>("chat-a", "0", "0"), listOf("chat-b", "1", "2"), listOf("chat-c", "0", "1")), rows)
+            }
+            raw.query("SELECT COUNT(*) FROM messages").use { it.moveToFirst(); assertEquals(3, it.getInt(0)) }
+            raw.query("PRAGMA foreign_key_check").use { assertFalse(it.moveToFirst(), "foreign key violation after migration") }
+            raw.query("PRAGMA integrity_check").use { it.moveToFirst(); assertEquals("ok", it.getString(0)) }
+
+            val repo = RoomRepository(db, allowLikeFallback = !hasFts)
+            val direct = repo.chat("chat-b")!!
+            assertEquals("direct", direct.kind); assertNull(direct.conversationId); assertEquals("member", direct.myState)
+            assertEquals(3, repo.chats().size)
+            // The new columns and tables work on the migrated database.
+            repo.upsertGroup("g:new", "new-conv", "Group", 7)
+            repo.setGroupMembers("g:new", listOf(org.example.app.messaging.ports.GroupMemberRecord("acc-a", "owner")), 1)
+            assertEquals(1, repo.groupMembers("g:new").size)
+            assertTrue(repo.addReceipt("m-1", "acc-a", "read", 9))
+            assertEquals(4, repo.chats().size)
+        } finally {
+            db.close()
+        }
+    }
+
     private inline fun AppDatabase.use(body: (AppDatabase) -> Unit) = try { body(this) } finally { close() }
 }
 
