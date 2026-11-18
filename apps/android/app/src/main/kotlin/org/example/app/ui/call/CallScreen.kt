@@ -14,6 +14,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -179,7 +181,21 @@ fun CallScreen(
         }
 
         Box(modifier.fillMaxSize().background(CallBackdrop).consumeTouches()) {
-            Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 14.dp, vertical = 12.dp)) {
+            val landscape = isLandscape()
+            val controls: @Composable (Boolean) -> Unit = { vertical ->
+                CallControls(
+                    current,
+                    onSpeaker = viewModel::toggleSpeaker,
+                    canFlip = canFlipCamera ?: ((surface?.cameraCount ?: 0) > 1),
+                    onFlip = { surface?.flipCamera() },
+                    onMute = viewModel::toggleMute,
+                    onVideo = viewModel::toggleVideo,
+                    onData = { showData = true },
+                    onEnd = viewModel::hangUp,
+                    vertical = vertical,
+                )
+            }
+            val stage: @Composable ColumnScope.() -> Unit = {
                 AnimatedVisibility(
                     visible = current.banner != null,
                     enter = fadeIn() + expandVertically(),
@@ -202,20 +218,23 @@ fun CallScreen(
                             egl = live?.eglContext, remoteVideoOn = remoteOn, mirrorLocal = front,
                         )
                     } else {
-                        AudioStage(current, viewModel.contactName(current), modeText(viewModel, current))
+                        AudioStage(current, viewModel.contactName(current), modeText(viewModel, current), compact = landscape)
                     }
                 }
                 if (viewModel.showSimulator) SimulateMenu(viewModel, Modifier.align(Alignment.CenterHorizontally).padding(bottom = 8.dp))
-                CallControls(
-                    current,
-                    onSpeaker = viewModel::toggleSpeaker,
-                    canFlip = canFlipCamera ?: ((surface?.cameraCount ?: 0) > 1),
-                    onFlip = { surface?.flipCamera() },
-                    onMute = viewModel::toggleMute,
-                    onVideo = viewModel::toggleVideo,
-                    onData = { showData = true },
-                    onEnd = viewModel::hangUp,
-                )
+            }
+            val inset = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 14.dp, vertical = 12.dp)
+            if (landscape) {
+                // The controls run along the short edge (the end side), the stage takes the rest.
+                Row(inset, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(Modifier.weight(1f).fillMaxHeight()) { stage() }
+                    controls(true)
+                }
+            } else {
+                Column(inset) {
+                    stage()
+                    controls(false)
+                }
             }
         }
 
@@ -253,10 +272,10 @@ private fun statusText(call: CallState): String = when (val phase = call.phase) 
 }
 
 @Composable
-private fun AudioStage(call: CallState, name: String, modeText: String) {
+private fun AudioStage(call: CallState, name: String, modeText: String, compact: Boolean = false) {
     val colorKey = call.contactId
     Column(
-        Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(top = 48.dp),
+        Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(top = if (compact) 8.dp else 48.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {

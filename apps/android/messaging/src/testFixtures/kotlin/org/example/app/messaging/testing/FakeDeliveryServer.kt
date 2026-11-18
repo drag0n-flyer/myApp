@@ -21,7 +21,7 @@ import org.example.app.contracts.ServerException
 class FakeDeliveryServer(var defaultMode: String = "e2ee") {
     class Conversation(val id: String, var mode: String, var epoch: Long, val members: java.util.TreeSet<String>)
 
-    class Posted(val conversationId: String, val epoch: Long, val payload: ByteArray, val escrow: ByteArray?, val clientMsgId: String, val sender: String)
+    class Posted(val conversationId: String, val epoch: Long, val payload: ByteArray, val escrow: ByteArray?, val clientMsgId: String, val sender: String, val expiresAtMs: Long? = null)
 
     private val lock = Any()
     private val keyPackages = HashMap<String, LinkedHashMap<String, ArrayDeque<ByteArray>>>() // account -> device -> packages
@@ -211,7 +211,10 @@ class FakeDeliveryServer(var defaultMode: String = "e2ee") {
             return newEpoch
         }
 
-        override suspend fun postMessage(id: String, epoch: Long, ciphertext: ByteArray, escrow: ByteArray?, clientMsgId: String): Long {
+        override suspend fun postMessage(id: String, epoch: Long, ciphertext: ByteArray, escrow: ByteArray?, clientMsgId: String): Long =
+            postMessage(id, epoch, ciphertext, escrow, clientMsgId, null)
+
+        override suspend fun postMessage(id: String, epoch: Long, ciphertext: ByteArray, escrow: ByteArray?, clientMsgId: String, expiresAtMs: Long?): Long {
             call("postMessage")
             val seq = synchronized(lock) {
                 postAttempts += Posted(id, epoch, ciphertext, escrow, clientMsgId, identity)
@@ -228,7 +231,7 @@ class FakeDeliveryServer(var defaultMode: String = "e2ee") {
                 val index = messages.filter { it.conversationId == id }.indexOfFirst { it.clientMsgId == clientMsgId }
                 if (index >= 0) return@synchronized (index + 1).toLong()
                 if (epoch != c.epoch) throw ServerException(409, "stale_epoch", null, null)
-                messages += Posted(id, epoch, ciphertext, escrow, clientMsgId, identity)
+                messages += Posted(id, epoch, ciphertext, escrow, clientMsgId, identity, expiresAtMs)
                 val seq = messages.count { it.conversationId == id }.toLong()
                 c.members.filter { it != identity }.forEach { deliver(it, "message", id, epoch, identity, ciphertext, seq) }
                 seq

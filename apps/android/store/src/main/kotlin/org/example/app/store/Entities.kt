@@ -26,6 +26,8 @@ data class ChatEntity(
     @ColumnInfo(name = "pinned_at") val pinnedAt: Long? = null,
     /** Added in version 2. Never changed by an incoming message. */
     @ColumnInfo(defaultValue = "0") val archived: Boolean = false,
+    /** Disappearing-message timer, seconds; 0 is off. Added in version 3. */
+    @ColumnInfo(name = "timer_seconds", defaultValue = "0") val timerSeconds: Int = 0,
 )
 
 /** Unsent composer text, one row per chat. Whitespace-only text is never stored. Added in version 2. */
@@ -81,7 +83,7 @@ data class SafetyEntity(
 @Entity(
     tableName = "messages",
     foreignKeys = [ForeignKey(ChatEntity::class, ["id"], ["chat_id"], onDelete = ForeignKey.CASCADE)],
-    indices = [Index("chat_id", "sent_at", name = "messages_chat_sent")],
+    indices = [Index("chat_id", "sent_at", name = "messages_chat_sent"), Index("expires_at", name = "messages_expires")],
 )
 data class MessageEntity(
     @PrimaryKey val id: String,
@@ -98,6 +100,19 @@ data class MessageEntity(
     val deleted: Boolean,
     val undecryptable: Boolean,
     @ColumnInfo(defaultValue = "") val folded: String,
+    /** Added in version 3. */
+    @ColumnInfo(name = "expires_at") val expiresAt: Long? = null,
+    val caption: String? = null,
+    @ColumnInfo(name = "link_preview") val linkPreview: String? = null,
+)
+
+/** What a contact says about themselves; the highest `ver` wins. Added in version 3. */
+@Entity(tableName = "profiles")
+data class ProfileEntity(
+    @PrimaryKey @ColumnInfo(name = "account_id") val accountId: String,
+    val name: String,
+    val photo: ByteArray?,
+    val ver: Int,
 )
 
 @Entity(
@@ -139,6 +154,7 @@ data class OutboxEntity(
     /** MLS ciphertext made for [envelope] and the epoch it was made in; null until the first encrypt. Added in version 3. */
     val ciphertext: ByteArray? = null,
     @ColumnInfo(name = "cipher_epoch") val cipherEpoch: Long? = null,
+    @ColumnInfo(name = "cipher_conversation") val cipherConversation: String? = null,
 )
 
 @Entity(tableName = "inbox_raw")

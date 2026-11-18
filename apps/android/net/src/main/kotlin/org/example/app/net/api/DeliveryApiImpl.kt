@@ -50,9 +50,16 @@ class DeliveryApiImpl(
         ).epoch
 
     override suspend fun postMessage(id: String, epoch: Long, ciphertext: ByteArray, escrow: ByteArray?, clientMsgId: String): Long =
+        postMessage(id, epoch, ciphertext, escrow, clientMsgId, null)
+
+    /** [expiresAtMs] goes out as an RFC 3339 `expiresAt`; the server needs it after now and at most 366 days ahead. */
+    override suspend fun postMessage(
+        id: String, epoch: Long, ciphertext: ByteArray, escrow: ByteArray?, clientMsgId: String, expiresAtMs: Long?,
+    ): Long =
         client.request(
             "POST", "/v1/conversations/${seg(id)}/messages",
-            encodeBody(MessageBody(epoch, ciphertext, escrow, clientMsgId)), Auth.Session, SeqWire.serializer(),
+            encodeBody(MessageBody(epoch, ciphertext, escrow, clientMsgId, expiresAtMs?.let { java.time.Instant.ofEpochMilli(it).toString() })),
+            Auth.Session, SeqWire.serializer(),
         ).seq
 
     override suspend fun inbox(after: Long?, limit: Int): InboxPage {

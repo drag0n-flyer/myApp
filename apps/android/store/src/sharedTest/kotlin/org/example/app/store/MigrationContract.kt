@@ -67,7 +67,7 @@ abstract class MigrationContract {
         val db = openCurrent()
         try {
             val raw = db.openHelper.writableDatabase
-            assertEquals(CURRENT_VERSION, raw.version)
+            assertEquals(AppDatabase.VERSION, raw.version)
             assertEquals(before, snapshot(raw), "a version 1 row changed or was lost")
             // Foreign keys still hold after the upgrade.
             raw.query("PRAGMA foreign_key_check").use { assertFalse(it.moveToFirst(), "foreign key violation after migration") }
@@ -114,42 +114,44 @@ abstract class MigrationContract {
         openCurrent().use { }
         val db = openCurrent()
         try {
-            assertEquals(CURRENT_VERSION, db.openHelper.writableDatabase.version)
+            assertEquals(AppDatabase.VERSION, db.openHelper.writableDatabase.version)
             assertEquals(3, RoomRepository(db, allowLikeFallback = !hasFts).chats().size)
         } finally {
             db.close()
         }
     }
 
-    private fun createVersion2(): Unit {
-        val helper = v1Helper(object : SupportSQLiteOpenHelper.Callback(2) {
+    private fun createVersion3(): Unit {
+        val helper = v1Helper(object : SupportSQLiteOpenHelper.Callback(3) {
             override fun onConfigure(db: SupportSQLiteDatabase) = db.setForeignKeyConstraintsEnabled(true)
             override fun onCreate(db: SupportSQLiteDatabase) {
                 SchemaV1.create(db, hasFts)
                 Migration1To2.migrate(db)
+                Migration2To3.migrate(db)
                 // A queued message that was already tried twice, and a second one in another chat.
                 db.execSQL("INSERT INTO outbox VALUES ('outbox-2', 'chat-a', x'0910', 0, 9500)")
             }
             override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = error("not expected")
         })
         val db = helper.writableDatabase
-        assertEquals(2, db.version)
+        assertEquals(3, db.version)
         helper.close()
     }
 
-    /** Outbox rows of a version 2 database have no stored ciphertext after the upgrade, and the new columns are usable. */
-    @Test fun populatedVersion2GetsOutboxCiphertextColumnsWithEveryOutboxRowIntact() {
-        createVersion2()
+    /** Outbox rows of a version 3 database have no stored ciphertext after the upgrade, and the new columns are usable. */
+    @Test fun populatedVersion3GetsOutboxCiphertextColumnsWithEveryOutboxRowIntact() {
+        createVersion3()
         val db = openCurrent()
         try {
             val raw = db.openHelper.writableDatabase
-            assertEquals(CURRENT_VERSION, raw.version)
-            raw.query("SELECT message_id, chat_id, hex(envelope), attempts, next_attempt_at, ciphertext, cipher_epoch FROM outbox ORDER BY rowid").use { c ->
+            assertEquals(AppDatabase.VERSION, raw.version)
+            raw.query("SELECT message_id, chat_id, hex(envelope), attempts, next_attempt_at, ciphertext, cipher_epoch, cipher_conversation FROM outbox ORDER BY rowid").use { c ->
                 val rows = mutableListOf<List<String?>>()
                 while (c.moveToNext()) {
                     rows += listOf(c.getString(0), c.getString(1), c.getString(2), c.getString(3), c.getString(4))
                     assertTrue(c.isNull(5), "ciphertext starts empty")
                     assertTrue(c.isNull(6), "cipher_epoch starts empty")
+                    assertTrue(c.isNull(7), "cipher_conversation starts empty")
                 }
                 assertEquals(
                     listOf(
@@ -164,10 +166,11 @@ abstract class MigrationContract {
             val repo = RoomRepository(db, allowLikeFallback = !hasFts)
             assertEquals(3, repo.chats().size)
             // The new columns work on a migrated row, and leave the rest of it alone.
-            repo.storeCiphertext("outbox-1", 7, byteArrayOf(1, 2, 3))
+            repo.storeCiphertext("outbox-1", "srv-b", 7, byteArrayOf(1, 2, 3))
             val row = repo.dueOutbox(Long.MAX_VALUE).single { it.messageId == "outbox-1" }
             assertContentEquals(byteArrayOf(1, 2, 3), row.ciphertext)
             assertEquals(7L, row.cipherEpoch)
+            assertEquals("srv-b", row.cipherConversation)
             assertContentEquals(byteArrayOf(7, 8), row.envelope)
             assertEquals(2, row.attempts)
             assertNull(repo.dueOutbox(Long.MAX_VALUE).single { it.messageId == "outbox-2" }.ciphertext)
@@ -179,8 +182,6 @@ abstract class MigrationContract {
     private inline fun AppDatabase.use(body: (AppDatabase) -> Unit) = try { body(this) } finally { close() }
 }
 
-/** The schema version the app is on now; the migration tests upgrade to it. */
-const val CURRENT_VERSION = 3
 
 /** The version 1 schema and a small populated data set. */
 object SchemaV1 {

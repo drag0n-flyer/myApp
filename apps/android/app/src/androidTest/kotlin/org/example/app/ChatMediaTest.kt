@@ -19,7 +19,6 @@ import androidx.core.app.ActivityOptionsCompat
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import org.example.app.core.calls.NetworkType
 import org.example.app.core.chats.SampleChatStore
@@ -83,7 +82,7 @@ class AttachPickerTest {
     }
 
     @Test
-    fun photoLaunchesThePhotoPickerForImages() {
+    fun photoLaunchesThePhotoPickerForPhotosAndVideos() {
         val registry = StubRegistry()
         val owner = object : ActivityResultRegistryOwner { override val activityResultRegistry = registry }
         val vm = ChatViewModel(SampleChatStore(), "chat-riya", NetworkType.Wifi) { AutoDownloadSettings() }
@@ -95,11 +94,16 @@ class AttachPickerTest {
         rule.onNodeWithContentDescription("Attach").performClick()
         rule.onNodeWithText("Photo").performClick()
         val intent = registry.intents.single()
-        // The system photo picker where there is one, the document picker narrowed to images where there is not.
+        // The system photo picker where there is one, the document picker narrowed to photos and videos where there is not.
         assertTrue(
             intent.action == MediaStore.ACTION_PICK_IMAGES || intent.action == Intent.ACTION_OPEN_DOCUMENT || intent.action == Intent.ACTION_PICK,
             "action=${intent.action}",
         )
-        assertEquals("image/*", intent.type)
+        // Photos and videos: the picker carries no single type; the document picker lists both kinds.
+        val kinds = intent.getStringArrayExtra(Intent.EXTRA_MIME_TYPES)?.toSet()
+        assertTrue(
+            intent.type == null || (intent.type == "*/*" && kinds == setOf("image/*", "video/*")),
+            "type=${intent.type} kinds=$kinds",
+        )
     }
 }

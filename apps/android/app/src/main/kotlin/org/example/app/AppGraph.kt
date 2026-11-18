@@ -470,6 +470,7 @@ class AppGraph(
                 is ServerEvent.Inbox -> quietly("sync") { session.chatStore.syncInbox() }
                 is ServerEvent.CallRing, is ServerEvent.CallAnswered, is ServerEvent.CallSignal, is ServerEvent.CallEnded ->
                     session.callEvents.emit(it)
+                is ServerEvent.ConvEphemeral -> session.ephemeral.onFrame(it)
                 is ServerEvent.DeviceRevoked -> Unit
             }
         }

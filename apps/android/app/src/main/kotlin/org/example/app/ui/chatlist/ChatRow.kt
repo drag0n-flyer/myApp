@@ -16,6 +16,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
@@ -37,6 +38,7 @@ import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -60,7 +62,11 @@ class ChatRowActions(
 /** One chat row: name, last message or draft, time, pin and muted icons, unread count. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun ChatRow(row: ChatRowModel, onClick: () -> Unit, modifier: Modifier = Modifier, onLongClick: (() -> Unit)? = null) {
+fun ChatRow(
+    row: ChatRowModel, onClick: () -> Unit, modifier: Modifier = Modifier, onLongClick: (() -> Unit)? = null,
+    /** Null: no selection state (one pane). True or false: the two-pane list, where the open chat's row is selected. */
+    selected: Boolean? = null,
+) {
     val preview = row.preview?.let { previewText(it) }.orEmpty()
     val clickable = if (onLongClick == null) {
         modifier.combinedClickable(role = Role.Button, onClick = onClick)
@@ -68,7 +74,8 @@ fun ChatRow(row: ChatRowModel, onClick: () -> Unit, modifier: Modifier = Modifie
         modifier.combinedClickable(role = Role.Button, onClick = onClick, onLongClick = onLongClick)
     }
     ListItem(
-        modifier = clickable,
+        modifier = if (selected == null) clickable else clickable.semantics { this.selected = selected },
+        colors = if (selected == true) ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.secondaryContainer) else ListItemDefaults.colors(),
         leadingContent = { Avatar(row.name, colorKey = row.colorKey) },
         headlineContent = { Text(row.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         supportingContent = {
@@ -141,6 +148,7 @@ fun SwipeableChatRow(
     actions: ChatRowActions,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    selected: Boolean? = null,
 ) {
     val current by rememberUpdatedState(row)
     var menuOpen by remember { mutableStateOf(false) }
@@ -187,7 +195,7 @@ fun SwipeableChatRow(
     ) {
         Box {
             ChatRow(
-                row, onClick,
+                row, onClick, selected = selected,
                 modifier = Modifier.semantics {
                     // No Pin in the archive: an archived chat is never pinned. Mark as read only with unread messages.
                     customActions = buildList {

@@ -63,14 +63,14 @@ No screens. Everything later tasks consume.
 
 **Produces — server calls** (`ServerKit` / `net`): `sendEphemeral(conversationID, epoch, ciphertext)` and an incoming `conv.ephemeral` frame event `{conversationID, epoch, from: {account, device}, ciphertext}`; `createContactLink() -> {token, expiresAt}`; `redeemContactLink(token) -> {accountID, username, displayName}` with errors `own_link`, `expired`, `too_many`, rate limited; `expiresAt` on message send.
 
-**Produces — signal channel** (`Messaging`): `EphemeralChannel.send(chatID, body)` encrypts a `typing`/`presence` envelope as an MLS application message for the chat's current epoch and calls `sendEphemeral`; `EphemeralChannel.events` yields `(chatID, accountID, body)` after decrypting incoming frames. A frame for an unknown conversation, an old epoch, or one that fails to decrypt is dropped silently. Uses the existing MLS lock; no stored state changes besides what MLS decryption requires (if decrypting an application message out of band would disturb message ordering or the ratchet for stored messages on either binding, stop and report with the evidence).
+**Produces — signal channel** (`Messaging`; revised, see spec 6.1): `EphemeralChannel.send(chatID, body)` encodes a `typing`/`presence` envelope as JSON bytes and calls `sendEphemeral` with the chat's conversation ID and current epoch; `EphemeralChannel.events` yields `(chatID, accountID, body)` for incoming frames. No MLS call is made on either side and nothing is stored. An incoming frame is dropped silently when: the conversation is unknown; `from.account` is not the other member of that chat (or a current member of that group) or is this account; the payload is over 256 bytes, is not valid JSON, or is any kind other than a valid `typing` or `presence`.
 
 - [ ] Shared vectors file and failing envelope tests on both platforms; implement; pass.
 - [ ] Failing tests for `Expiry`, `TimerChoice`, `ProfileMerge`; implement; pass.
 - [ ] Migration with a test that opens a database at the previous version with rows and migrates.
 - [ ] Store tests on the real store with the existing fakes: timer set → next send carries `ttl` and `expiresAt`; `sweepExpired` removes row, file and search hit; expired-on-arrival dropped; `timer` system line; `profile` accept/ignore (Review Focus 3); stray `typing` stored message dropped (Review Focus 1).
 - [ ] Server-call tests against the existing fake transport, with the exact JSON from the server design.
-- [ ] `EphemeralChannel` tests with the existing MLS fakes: round trip, wrong epoch dropped, undecryptable dropped.
+- [ ] `EphemeralChannel` tests: round trip; a frame from an account that is not in the chat dropped; own account dropped; a `text` envelope, bad JSON and a 257-byte payload dropped; no MLS engine call on send or receive (assert on the fake).
 
 ### Task P2: Typing and presence (spec 6.1)
 

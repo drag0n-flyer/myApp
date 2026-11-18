@@ -57,17 +57,20 @@ extension ServerClient {
         return r.epoch
     }
 
-    /// `clientMsgID` must be unique per conversation; a retry with the same value is idempotent.
+    /// `clientMsgID` must be unique per conversation; a retry with the same value is idempotent. `expiresAt` (a
+    /// disappearing message) is when the server may drop copies nobody has fetched; it must be after now and at
+    /// most 366 days ahead.
     public func postMessage(conversationID: String, epoch: UInt64, ciphertext: Data, escrow: Data?,
-                            clientMsgID: String) async throws(ServerError) -> Int64 {
+                            clientMsgID: String, expiresAt: Date? = nil) async throws(ServerError) -> Int64 {
         struct Body: Encodable {
             let epoch: UInt64
             let ciphertext: Base64URLData
             let escrow: Base64URLData?
             let clientMsgID: String
+            let expiresAt: Date?
         }
         let body = Body(epoch: epoch, ciphertext: Base64URLData(ciphertext), escrow: escrow.map { Base64URLData($0) },
-                        clientMsgID: clientMsgID)
+                        clientMsgID: clientMsgID, expiresAt: expiresAt)
         let r: Seq = try await request("POST", "/v1/conversations/\(seg(conversationID))/messages", body: body, auth: .session)
         return r.seq
     }

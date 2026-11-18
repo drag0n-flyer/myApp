@@ -55,7 +55,7 @@ KEY STRUCTURAL FACT: the back-end packages (Messaging, LocalStore, ServerKit, Se
 - Camera: SAMPLE-ONLY / STUB. Button sends `sendSample(.photo(bytes: 310_000))` even live. Live store ignores non-text `send`, so tapping Camera does nothing on a live account.
 - Location: STUB. Sends the literal text "📍 Shared location" via sendSample; on a live account this really is sent to the contact as plain text (a fake location). No real location.
 - Video: ABSENT (photos picker `.images` only; Files can carry a video as an opaque file).
-- File (fileImporter, any type): PARTIAL, real upload; no size limit shown in UI (no limit constants found in UI path; I did not find an enforced max, so uncertain). 
+- File (fileImporter, any type): PARTIAL, real upload; no size limit shown in UI (no limit constants found in UI path; I did not find an enforced max, so uncertain).
 - Voice message: WORKING to record and send (tap mic, tap stop; no hold-to-record, no waveform/timer shown while recording, no lock/slide cancel; trash cancels). Min length and 30 min max enforced (MediaPlan). Ogg Opus conversion in Messaging/Attachments/OggOpus.
 - Send preview: ABSENT. Upload/download progress UI: ABSENT (store reports progress via MediaState.phase; UI never reads `message.media`). Retry failed sends: WORKING for messages (Try again), via outbox retries (10 attempts with backoff then "failed").
 - Emoji/stickers/GIFs: ABSENT. Attachment of contacts: ABSENT.
@@ -114,7 +114,7 @@ KEY STRUCTURAL FACT: the back-end packages (Messaging, LocalStore, ServerKit, Se
 - Privacy: IP hiding (3 options): WORKING (feeds relay policy in calls; again no media). Who can find me (username/email): STUB (local only). Read receipts: WORKING (send and show). Disappearing messages: STUB (no effect found). Blocked list: PARTIAL (IDs, no unblock).
 - Data & Storage: call data mode / mobile limit / video-off: WORKING as settings; auto-download scope: WORKING as settings. "This month" usage bar (42/28/12 MB) and "Storage on this device 312 MB": SAMPLE-ONLY hard-coded numbers shown to every user (DataStorageView.swift comment "Sample numbers until real counters exist"). No clear cache/storage management.
 - Notifications: STUB (above). Chat folders: WORKING. Calls & Audio: PARTIAL (above). Appearance (System/Light/Dark): WORKING (@AppStorage applied in RootView; no accent colour/wallpaper/text size/bubble options).
-- Help: WORKING static text (3 tips). Open-source licenses: WORKING (LicensesView). 
+- Help: WORKING static text (3 tips). Open-source licenses: WORKING (LicensesView).
 - Absent settings: language, app lock/Face ID, backup/export, storage usage, about/version, support/feedback, sessions/devices beyond list, passkey management, email change, username change, sign out.
 - Settings persistence: UserSettings in memory + synced via DeviceSync scope for some; call/data settings were `didSet`-wired; I did not verify persistence across relaunch for `settings` (appears in-memory, initial from server policy each launch).
 

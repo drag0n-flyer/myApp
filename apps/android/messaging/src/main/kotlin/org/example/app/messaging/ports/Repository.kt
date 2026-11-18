@@ -17,6 +17,8 @@ data class ChatRecord(
     /** When the chat was pinned on this device; null when not pinned. */
     val pinnedAt: Long? = null,
     val archived: Boolean = false,
+    /** Disappearing-message timer for the chat in seconds; 0 is off. */
+    val timerSeconds: Int = 0,
 )
 
 data class ConversationRecord(
@@ -60,13 +62,27 @@ data class MessageRecord(
     val deleted: Boolean = false,
     val undecryptable: Boolean = false,
     val folded: String = "",
+    /** When the message disappears (epoch ms), from `at + ttl`; null for none. */
+    val expiresAt: Long? = null,
+    /** The caption of a photo or file, as sent. Its folded text is part of [folded]. */
+    val caption: String? = null,
+    /** The link preview (`lp`) as JSON, when the text carried a valid one. */
+    val linkPreview: String? = null,
 ) {
     override fun equals(other: Any?) = other is MessageRecord && id == other.id && chatId == other.chatId &&
         conversationId == other.conversationId && senderAccount == other.senderAccount && senderDevice == other.senderDevice &&
         sentAt == other.sentAt && receivedAt == other.receivedAt && envelope.contentEquals(other.envelope) &&
         status == other.status && replyTo == other.replyTo && editedAt == other.editedAt && deleted == other.deleted &&
-        undecryptable == other.undecryptable && folded == other.folded
+        undecryptable == other.undecryptable && folded == other.folded &&
+        expiresAt == other.expiresAt && caption == other.caption && linkPreview == other.linkPreview
     override fun hashCode() = id.hashCode()
+}
+
+/** What a contact says about themselves (`profile` envelope). [ver] only ever rises. */
+class ProfileRecord(val accountId: String, val name: String, val photo: ByteArray?, val ver: Int) {
+    override fun equals(other: Any?) = other is ProfileRecord && accountId == other.accountId && name == other.name &&
+        (photo contentEquals other.photo) && ver == other.ver
+    override fun hashCode() = accountId.hashCode()
 }
 
 data class ReactionRecord(val messageId: String, val accountId: String, val emoji: String)
@@ -97,11 +113,12 @@ data class AttachmentRecord(
  */
 data class OutboxRecord(
     val messageId: String, val chatId: String, val envelope: ByteArray, val attempts: Int, val nextAttemptAt: Long,
-    val ciphertext: ByteArray? = null, val cipherEpoch: Long? = null,
+    val ciphertext: ByteArray? = null, val cipherEpoch: Long? = null, val cipherConversation: String? = null,
 ) {
     override fun equals(other: Any?) = other is OutboxRecord && messageId == other.messageId && chatId == other.chatId &&
         envelope.contentEquals(other.envelope) && attempts == other.attempts && nextAttemptAt == other.nextAttemptAt &&
-        (ciphertext?.contentEquals(other.ciphertext) ?: (other.ciphertext == null)) && cipherEpoch == other.cipherEpoch
+        (ciphertext?.contentEquals(other.ciphertext) ?: (other.ciphertext == null)) && cipherEpoch == other.cipherEpoch &&
+        cipherConversation == other.cipherConversation
     override fun hashCode() = messageId.hashCode()
 }
 
@@ -184,6 +201,23 @@ interface Repository {
     fun drafts(): Map<String, String>
     /** Saves [text] for the chat; blank or null removes the draft. Ignored for a chat that does not exist. */
     fun setDraft(chatId: String, text: String?, at: Long)
+    /** Local and replicated by the `timer` envelope. Changes one column. */
+    fun setTimer(chatId: String, seconds: Int)
+    /** 0 (off) for an unknown chat. */
+    fun timerSeconds(chatId: String): Int
+    /**
+     * Removes every message whose `expires_at` is at or before [now], in one transaction: the row, its reactions, its
+     * attachment records, its outbox row and (by trigger) its search entry; then deletes the attachment files. Returns
+     * the removed message IDs so their notifications can be cancelled. A removed message that was still unread (not from
+     * [ownAccount] or `system`, not `read`) lowers its chat's unread count, never below zero.
+     */
+    fun sweepExpired(now: Long, ownAccount: String): List<String>
+
+    // profiles
+    fun profile(accountId: String): ProfileRecord?
+    /** Saves only when [ver] is strictly higher than the stored one (`ProfileMerge`). Returns whether it saved. */
+    fun saveProfile(accountId: String, name: String, photo: ByteArray?, ver: Int): Boolean
+
     /** Deletes the chat and, by cascade, its conversations, messages and the rest. */
     fun deleteChat(id: String)
 
@@ -250,7 +284,7 @@ interface Repository {
     fun bumpOutbox(id: String, nextAttemptAt: Long)
     fun removeOutbox(id: String)
     /** Keeps the ciphertext made for the outbox row [id] and its epoch. Does nothing when the row is gone. */
-    fun storeCiphertext(id: String, epoch: Long, ciphertext: ByteArray)
+    fun storeCiphertext(id: String, conversationId: String, epoch: Long, ciphertext: ByteArray)
 
     // raw inbox and processed hashes
     fun insertRaw(items: List<RawInboxRecord>)

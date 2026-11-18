@@ -199,6 +199,44 @@ class OutboxCiphertextTest {
         assertEquals(3, rig.ana1.mls.encryptCalls - before)
     }
 
+    /** Two conversations with one peer can be in the same epoch number: the epoch alone does not say who the bytes are for. */
+    @Test
+    fun ciphertextMadeForAnotherConversationIsNotPosted() = runTest {
+        val (rig, record) = joined()
+        val before = rig.ana1.mls.encryptCalls
+        rig.server.failNextMessages = 1
+        rig.ana1.outbox.enqueue(text("m-1"), "acc-bob")
+        rig.ana1.outbox.flush()
+        val row = rig.ana1.repo.dueOutbox(Long.MAX_VALUE).single()
+        assertEquals(record.serverId, row.cipherConversation)
+        // The preferred conversation of the chat is now a different one, in the same epoch number.
+        val foreign = byteArrayOf(9, 9, 9)
+        rig.ana1.repo.storeCiphertext("m-1", "srv-other", row.cipherEpoch!!, foreign)
+        rig.ana1.waitForBackoff()
+        rig.ana1.outbox.flush()
+        assertEquals(2, rig.ana1.mls.encryptCalls - before, "encrypted again for this conversation")
+        val posted = rig.server.postAttempts.last { it.clientMsgId == "m-1" }
+        assertFalse(posted.payload.contentEquals(foreign), "the old bytes are not posted to the new conversation")
+        assertEquals(record.serverId, posted.conversationId)
+        assertEquals("sent", rig.ana1.repo.message("m-1")?.status)
+    }
+
+    @Test
+    fun corruptedModeAnnounceValueFallsBackToAFreshEncrypt() = runTest {
+        val (rig, record) = joined()
+        val key = "mode-announce:${record.serverId}"
+        for (garbage in listOf(byteArrayOf(1, 2, 3), byteArrayOf(0, 3, 'a'.code.toByte()), ByteArray(40) { 0x7f })) {
+            ModePin.setPending(rig.ana1.repo, record.serverId, true)
+            rig.ana1.repo.set(key, garbage)
+            val before = rig.ana1.mls.encryptCalls
+            val postsBefore = rig.server.postAttempts.size
+            rig.ana1.manager.preferredConversation("acc-bob")
+            assertEquals(1, rig.ana1.mls.encryptCalls - before)
+            assertEquals(1, rig.server.postAttempts.size - postsBefore)
+            assertFalse(ModePin.isPending(rig.ana1.repo, record.serverId))
+        }
+    }
+
     @Test
     fun fiveHundredFailedAttemptsEncryptOncePerMessage() = runTest {
         val (rig, _) = joined()

@@ -74,10 +74,21 @@ public actor Outbox: ControlSender {
             id: envelope.id, chatID: chatID, conversationID: nil, senderAccount: deps.me.accountID,
             senderDevice: deps.me.deviceID, sentAt: Date(timeIntervalSince1970: Double(envelope.at) / 1000),
             receivedAt: now, envelope: data, status: "sending", replyTo: reply, editedAt: nil, deleted: false,
-            undecryptable: false, folded: fold(text))
+            undecryptable: false, folded: fold([text, envelope.caption ?? ""].filter { !$0.isEmpty }.joined(separator: " ")),
+            expiresAt: Self.expiry(of: envelope), caption: envelope.caption, linkPreview: envelope.preview?.json)
         try deps.repo.enqueueSend(
             message: message,
             outbox: OutboxRecord(messageID: envelope.id, chatID: chatID, envelope: data, attempts: 0, nextAttemptAt: now))
+    }
+
+    /// When the message disappears, from its own time and `ttl`; `nil` when it has none.
+    nonisolated static func expiry(of envelope: ContentEnvelope) -> Date? {
+        Expiry.expiresAt(atMs: envelope.at, ttlSeconds: envelope.ttl).map { Date(timeIntervalSince1970: Double($0) / 1000) }
+    }
+
+    /// The server accepts at most 366 days ahead: the wire value stays a minute inside that, whatever the clocks say.
+    nonisolated static func wireExpiry(of envelope: ContentEnvelope, now: Date) -> Date? {
+        expiry(of: envelope).map { min($0, now.addingTimeInterval(366 * 86_400 - 60)) }
     }
 
     /// Queues a control message (edit, delete, reaction, receipt) in the chat's queue, so it stays behind the
@@ -133,6 +144,11 @@ public actor Outbox: ControlSender {
         }
         // A placeholder (no real attachment yet) must never go out: it fails instead of being sent.
         if let att = envelope.body.attachment, !AttachmentID.isValid(att.id) {
+            try deps.repo.completeSend(id: item.messageID, status: "failed")
+            return true
+        }
+        // A message whose life has passed while it waited never goes out: the other side would drop it on arrival.
+        if let expiresAt = Self.expiry(of: envelope), expiresAt <= deps.now() {
             try deps.repo.completeSend(id: item.messageID, status: "failed")
             return true
         }
@@ -266,7 +282,7 @@ public actor Outbox: ControlSender {
             do {
                 _ = try await deps.server.postMessage(
                     conversationID: conversation.serverID, epoch: epoch, ciphertext: ciphertext, escrow: escrowCopy,
-                    clientMsgID: envelope.id)
+                    clientMsgID: envelope.id, expiresAt: Self.wireExpiry(of: envelope, now: deps.now()))
                 return
             } catch {
                 switch error.code {

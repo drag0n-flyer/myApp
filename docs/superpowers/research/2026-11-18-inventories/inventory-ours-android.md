@@ -72,7 +72,7 @@ Legend: W=WORKING, P=PARTIAL, S=SAMPLE-ONLY, STUB, ABSENT. Live build = sampleDa
 - QR codes for contacts: ABSENT. QR exists only for device linking and server-invite scanning (A/ui/qr/*). AddContactScreen comment says QR "arrives later".
 - Invite links: P. "Invite" row only shown if graph.inviteUrl != null; live build returns null (AppGraph.kt: "none in the live build until the app can make real invites"). So hidden in live. Sample-only.
 - Message requests: P. List and open W; no Accept / Decline buttons: ChatStore.accept() is never called from A/ (grepped). Block from chat info works.
-- Blocking: W. Chat info > Block (confirm) -> store.block, server block; Settings > Privacy > Blocked list (view only; NO unblock). 
+- Blocking: W. Chat info > Block (confirm) -> store.block, server block; Settings > Privacy > Blocked list (view only; NO unblock).
 - Reporting: W. Chat info > Report -> queued report with last lines to server (pending-report retry). No reason picker.
 - Safety-number verification: W when MLS engine gives real member keys. 12x5 digits sheet + "Mark verified" toggle (local). No QR/compare-by-scan. ChatInfoScreen.kt
 - Find-me privacy toggles (by username / by email): STUB. Stored in in-memory settings only; nothing sends them to the server (grepped findByUsername/findByEmail: only Settings UI + model).
@@ -82,7 +82,7 @@ Legend: W=WORKING, P=PARTIAL, S=SAMPLE-ONLY, STUB, ABSENT. Live build = sampleDa
 
 ## 8. Chat info / profile (A/ui/chatinfo/ChatInfoScreen.kt)
 - Header: initial avatar, name, @username: W. No photos, no bio, no profile editing of own profile (Settings header shows own name+username read-only).
-- Audio / Video buttons: W (start live call). 
+- Audio / Video buttons: W (start live call).
 - Mute button: STUB. Toggles a rememberSaveable boolean only; no effect on notifications, lost on leaving.
 - Search button: STUB (`onSearch = {}`).
 - Media/files count row: P (non-clickable).
@@ -118,7 +118,7 @@ Legend: W=WORKING, P=PARTIAL, S=SAMPLE-ONLY, STUB, ABSENT. Live build = sampleDa
 - App icon badge counts: ABSENT (no setNumber/badge code; launcher default dot only).
 
 ## 11. Settings (A/ui/settings/*; 8 rows)
-- IMPORTANT: all settings live in an in-memory StateFlow (SettingsStore.kt, "until the synced store exists"). They reset to defaults on every app restart. No SharedPreferences/DataStore. 
+- IMPORTANT: all settings live in an in-memory StateFlow (SettingsStore.kt, "until the synced store exists"). They reset to defaults on every app restart. No SharedPreferences/DataStore.
 - Header: own name + @username, read-only. No avatar change, no name edit, no username change.
 - Server: P. Shows host and a fixed "Connected" text (not live). ServerScreen in SettingsScreen.kt. No switch server / log out.
 - Linked devices: W. List with last-seen, remove (confirm), "Link a device" scans QR + biometric approve; auto-refreshes on device.revoked. LinkedDevicesScreen.kt
@@ -127,7 +127,7 @@ Legend: W=WORKING, P=PARTIAL, S=SAMPLE-ONLY, STUB, ABSENT. Live build = sampleDa
 - Notifications: P (see 10; radio is STUB).
 - Chat folders: W (persisted in DB).
 - Calls and audio: W (noise suppression).
-- Licenses / open-source notices: W (LicensesScreen.kt, generated). 
+- Licenses / open-source notices: W (LicensesScreen.kt, generated).
 - Missing vs mature apps: theme/dark mode toggle, language, text size, chat wallpaper, app lock/passcode (BiometricGate only used for link approval), backup/export, storage management, about/version, sign out, delete account, help/feedback.
 
 ## 12. Offline and reliability

@@ -11,6 +11,7 @@ import org.example.app.messaging.ports.MemberRecord
 import org.example.app.messaging.ports.MessageRecord
 import org.example.app.messaging.ports.OutboxRecord
 import org.example.app.messaging.ports.RawInboxRecord
+import org.example.app.messaging.ports.ProfileRecord
 import org.example.app.messaging.ports.ReactionRecord
 import org.example.app.messaging.ports.Repository
 import org.example.app.messaging.ports.SafetyRecord
@@ -42,12 +43,13 @@ class InMemoryRepository : Repository {
         val blocked: MutableMap<String, Long> = linkedMapOf(),
         val calls: MutableList<CallRecord> = mutableListOf(),
         val kv: MutableMap<String, ByteArray> = sortedMapOf(),
+        val profiles: MutableMap<String, ProfileRecord> = linkedMapOf(),
     ) {
         fun copy(): State = State(
             LinkedHashMap(contacts), LinkedHashMap(chats), LinkedHashMap(drafts), java.util.TreeMap(conversations), LinkedHashMap(members),
             LinkedHashMap(safety), LinkedHashMap(messages), LinkedHashMap(reactions), LinkedHashMap(attachments),
             LinkedHashMap(outbox), java.util.TreeMap(raw), LinkedHashMap(processed), LinkedHashMap(folders),
-            LinkedHashMap(folderChats), LinkedHashMap(blocked), ArrayList(calls), java.util.TreeMap(kv),
+            LinkedHashMap(folderChats), LinkedHashMap(blocked), ArrayList(calls), java.util.TreeMap(kv), LinkedHashMap(profiles),
         )
     }
 
@@ -116,6 +118,34 @@ class InMemoryRepository : Repository {
         if (text.isNullOrBlank()) s.drafts.remove(chatId) else if (chatId in s.chats) s.drafts[chatId] = text
         Unit
     }
+    override fun setTimer(chatId: String, seconds: Int) = tx { s.chats[chatId]?.let { s.chats[chatId] = it.copy(timerSeconds = seconds) }; Unit }
+    override fun timerSeconds(chatId: String) = tx { s.chats[chatId]?.timerSeconds ?: 0 }
+    override fun sweepExpired(now: Long, ownAccount: String): List<String> {
+        val paths = ArrayList<String>()
+        val removed = tx {
+            val ids = s.messages.values.filter { it.expiresAt != null && it.expiresAt <= now }.map { it.id }
+            val set = ids.toSet()
+            s.messages.values.filter { it.id in set && it.senderAccount != ownAccount && it.senderAccount != "system" && it.status != "read" }
+                .groupBy { it.chatId }.forEach { (chat, rows) ->
+                    s.chats[chat]?.let { s.chats[chat] = it.copy(unread = maxOf(0, it.unread - rows.size)) }
+                }
+            ids.forEach { s.messages.remove(it) }
+            s.reactions.keys.removeAll { it.first in set }
+            s.attachments.values.filter { it.messageId in set }.forEach { a -> a.localPath?.let(paths::add); s.attachments.remove(a.id) }
+            s.outbox.keys.removeAll(set)
+            ids
+        }
+        paths.forEach { runCatching { java.io.File(it).delete() } }
+        return removed
+    }
+
+    // profiles
+    override fun profile(accountId: String) = tx { s.profiles[accountId] }
+    override fun saveProfile(accountId: String, name: String, photo: ByteArray?, ver: Int): Boolean = tx {
+        if (!(ver >= 1 && (s.profiles[accountId]?.ver.let { it == null || ver > it }))) false
+        else { s.profiles[accountId] = ProfileRecord(accountId, name, photo, ver); true }
+    }
+
     override fun deleteChat(id: String) = tx {
         s.chats.remove(id)
         s.drafts.remove(id)
@@ -197,7 +227,7 @@ class InMemoryRepository : Repository {
         if (m == null || m.senderAccount != sender || m.deleted || (m.status != "sending" && m.status != "failed")) false
         else {
             s.messages[id] = m.copy(envelope = envelope, folded = folded, receivedAt = receivedAt)
-            s.outbox[id]?.let { s.outbox[id] = it.copy(ciphertext = null, cipherEpoch = null) }
+            s.outbox[id]?.let { s.outbox[id] = it.copy(ciphertext = null, cipherEpoch = null, cipherConversation = null) }
             true
         }
     }
@@ -250,8 +280,8 @@ class InMemoryRepository : Repository {
     }
     override fun bumpOutbox(id: String, nextAttemptAt: Long) = tx { s.outbox[id]?.let { s.outbox[id] = it.copy(attempts = it.attempts + 1, nextAttemptAt = nextAttemptAt) }; Unit }
     override fun removeOutbox(id: String) = tx { s.outbox.remove(id); Unit }
-    override fun storeCiphertext(id: String, epoch: Long, ciphertext: ByteArray) = tx {
-        s.outbox[id]?.let { s.outbox[id] = it.copy(ciphertext = ciphertext, cipherEpoch = epoch) }; Unit
+    override fun storeCiphertext(id: String, conversationId: String, epoch: Long, ciphertext: ByteArray) = tx {
+        s.outbox[id]?.let { s.outbox[id] = it.copy(ciphertext = ciphertext, cipherEpoch = epoch, cipherConversation = conversationId) }; Unit
     }
 
     // raw inbox and processed hashes

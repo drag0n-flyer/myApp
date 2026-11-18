@@ -156,22 +156,30 @@ public struct IncomingHandler: Sendable {
         let device = parts.count > 1 ? parts[1] : raw.senderDevice
         let envelope = ContentEnvelope.decode(plaintext)
         let chatID = conversation.chatID
+        // From the send time, but a sender's `at` in the future never extends the life.
+        let expiresAt = Expiry.expiresAt(atMs: min(envelope.at, Self.ms(now())), ttlSeconds: envelope.ttl)
+            .map { Date(timeIntervalSince1970: Double($0) / 1000) }
 
         func store(_ status: String? = nil, replyTo: String? = nil, folded: String = "", id: String? = nil,
                    content: Data? = nil) throws -> AppliedResult {
+            // A message whose time has already come (this device was offline) is never shown, counted or notified.
+            if Expiry.isExpired(expiresAt.map(Self.ms), nowMs: Self.ms(now())) { return .ignored }
             let ownDevice = account == me.accountID
             let record = MessageRecord(
                 id: id ?? (envelope.id.isEmpty ? "unsupported-\(raw.cursor)" : envelope.id), chatID: chatID,
                 conversationID: conversation.serverID, senderAccount: account, senderDevice: device,
                 sentAt: Date(timeIntervalSince1970: Double(envelope.at) / 1000), receivedAt: now(), envelope: content ?? plaintext,
                 status: status ?? (ownDevice ? "sent" : "delivered"), replyTo: replyTo, editedAt: nil, deleted: false,
-                undecryptable: false, folded: folded)
+                undecryptable: false, folded: folded, expiresAt: expiresAt, caption: envelope.caption,
+                linkPreview: envelope.preview?.json)
             guard try db.insertMessage(record) else { return .ignored }
             try bumpChat(record, db: db)
             return .stored(record)
         }
 
         func media(_ att: Att, kind: String, reply: String?, folded: String = "") throws -> AppliedResult {
+            // Dropped before any attachment row exists, so nothing is ever downloaded for it.
+            if Expiry.isExpired(expiresAt.map(Self.ms), nowMs: Self.ms(now())) { return .ignored }
             // The ID becomes part of a file path when it is downloaded: a message with an unusable one is kept as
             // a message this app cannot show, and no attachment row is made.
             guard AttachmentID.isValid(att.id) else {
@@ -190,18 +198,20 @@ public struct IncomingHandler: Sendable {
         case .text(let text, let reply):
             return try store(replyTo: reply, folded: fold(text))
         case .photo(let att, _, _, _, let reply):
-            return try media(att, kind: "photo", reply: reply)
+            return try media(att, kind: "photo", reply: reply, folded: fold(envelope.caption ?? ""))
         case .voice(let att, _, let reply):
             return try media(att, kind: "voice", reply: reply)
         case .file(let att, let name, _, let reply):
-            return try media(att, kind: "file", reply: reply, folded: fold(name))
-        case .unsupported:
+            return try media(att, kind: "file", reply: reply, folded: fold([name, envelope.caption].compactMap { $0 }.joined(separator: " ")))
+        case .unsupported(let kind):
+            // A signal, a profile or a timer with a bad field: not a message this app cannot show, so no row.
+            if Self.silentKinds.contains(kind) { return .ignored }
             return try store()
         case .edit(let target, let text):
             guard let message = try db.message(id: target), message.chatID == chatID, !message.deleted,
                   case .text(_, let reply) = ContentEnvelope.decode(message.envelope).body else { return .ignored }
             let old = ContentEnvelope.decode(message.envelope)
-            let edited = ContentEnvelope(id: old.id, at: old.at, body: .text(text, replyTo: reply)).encoded()
+            let edited = ContentEnvelope(id: old.id, at: old.at, body: .text(text, replyTo: reply), ttl: old.ttl).encoded()
             // The sender check is in the SQL, so an edit by anyone else changes nothing.
             try db.applyEdit(
                 id: target, sender: account, envelope: edited, folded: fold(text),
@@ -226,7 +236,50 @@ public struct IncomingHandler: Sendable {
                 try addPausedLine(conversation, db: db)
             }
             return .ignored
+        case .typing, .presence:
+            // Signals travel as ephemeral frames; one that arrives as a stored message is dropped.
+            return .ignored
+        case .timer(let seconds):
+            try applyTimer(seconds, id: envelope.id, at: envelope.at, from: account, conversation: conversation, db: db)
+            return .ignored
+        case .profile(let name, let photo, let ver):
+            // Only what a contact says about themselves; my own devices do not write a contact profile for me.
+            guard account != me.accountID else { return .ignored }
+            guard ProfileMerge.accept(current: try db.profile(for: account)?.ver, incoming: ver) else { return .ignored }
+            try db.saveProfile(accountID: account, name: name, photo: photo, ver: ver)
+            return .ignored
         }
+    }
+
+    static let timerSkewMs: Int64 = 5 * 60 * 1000
+
+    /// `kv` key holding the effective `at` (ms) of the last `timer` applied in a chat.
+    static func timerAtKey(_ chatID: String) -> String { "timer-at:" + chatID }
+
+    /// Kinds that never become a message row, whether valid or not.
+    static let silentKinds: Set<String> = ["typing", "presence", "profile", "timer"]
+
+    /// `timer`: the chat's timer changes and one system line says so. It is not a message, so nothing is counted as
+    /// unread and nothing notifies. The line's ID comes from the envelope, so a repeat adds no second line.
+    private func applyTimer(_ seconds: Int, id: String, at: Int64, from account: String, conversation: ConversationRecord, db: Repository) throws {
+        let chatID = conversation.chatID
+        // A change older than the last one applied for this chat is ignored (messages can arrive out of order).
+        // The comparison uses `min(at, now + 5 minutes)`, so a sender's clock far in the future cannot freeze the timer.
+        let effectiveAt = min(at, Self.ms(now()) + Self.timerSkewMs)
+        let key = Self.timerAtKey(chatID)
+        if let last = try db.get(key).flatMap({ Int64(String(decoding: $0, as: UTF8.self)) }), effectiveAt < last { return }
+        let event = SystemEvent.timer(seconds: seconds, name: account == me.accountID ? nil : account)
+        let envelope = (try? JSONEncoder().encode(event)) ?? Data()
+        let sentAt = Date(timeIntervalSince1970: Double(effectiveAt) / 1000)
+        let line = MessageRecord(
+            id: "sys-timer-\(id)", chatID: chatID, conversationID: conversation.serverID, senderAccount: ChatMapping.systemSender,
+            senderDevice: nil, sentAt: sentAt, receivedAt: now(), envelope: envelope, status: "sent", replyTo: nil,
+            editedAt: nil, deleted: false, undecryptable: false, folded: "")
+        try db.set(key, Data(String(effectiveAt).utf8))
+        // The same value again (a repeat or a replay) changes nothing and adds no second line.
+        guard try db.timerSeconds(chatID: chatID) != seconds else { return }
+        guard try db.insertMessage(line) else { return }
+        try db.setTimer(chatID: chatID, seconds: seconds)
     }
 
     /// A receipt counts when it is about my own messages (from the peer), or when it comes from one of my

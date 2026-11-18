@@ -50,6 +50,27 @@ func TestAllowN(t *testing.T) {
 	}
 }
 
+func TestRefund(t *testing.T) {
+	c := &clock{t: time.Unix(1000, 0)}
+	l := New(100, time.Hour, c.now)
+	l.AllowN("a", 100)
+	if ok, _ := l.AllowN("a", 1); ok {
+		t.Fatal("bucket should be empty")
+	}
+	l.Refund("a", 30)
+	if ok, _ := l.AllowN("a", 30); !ok {
+		t.Fatal("refunded tokens must be usable")
+	}
+	if ok, _ := l.AllowN("a", 1); ok {
+		t.Fatal("refund must not add more than was taken")
+	}
+	l.Refund("a", 1000) // never above full
+	if ok, _ := l.AllowN("a", 101); ok {
+		t.Fatal("capacity is still 100")
+	}
+	l.Refund("nobody", 5) // unknown key is harmless
+}
+
 func TestIdleKeysDropped(t *testing.T) {
 	c := &clock{t: time.Unix(1000, 0)}
 	l := New(2, time.Minute, c.now)
