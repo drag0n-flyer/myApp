@@ -129,8 +129,34 @@ func TestSettingsValidation(t *testing.T) {
 	if f.DisplayName != "Ana Śmigło" {
 		t.Fatalf("got %+v", f)
 	}
-	// 64 characters (not bytes) is allowed.
-	if res := c.Do(&me, "PATCH", "/v1/me/settings", map[string]string{"displayName": strings.Repeat("ś", 64)}); res.Status != 204 {
-		t.Fatalf("64 runes: %s", res)
+	// 40 characters (not bytes) is allowed.
+	if res := c.Do(&me, "PATCH", "/v1/me/settings", map[string]string{"displayName": strings.Repeat("ś", 40)}); res.Status != 204 {
+		t.Fatalf("40 runes: %s", res)
+	}
+}
+
+func TestSettingsDisplayNameRule(t *testing.T) {
+	c, d := setup(t)
+	me := testkit.Account(t, d, "bob")
+	for name, v := range map[string]string{
+		"bidi":       "Ana‮xyz",
+		"41 points":  strings.Repeat("a", 41),
+		"41 emoji":   strings.Repeat("😀", 41),
+		"invisible":  "​​",
+		"separator":  "A B",
+		"only space": "   ",
+	} {
+		if res := c.Do(&me, "PATCH", "/v1/me/settings", map[string]string{"displayName": v}); res.Status != 400 || res.Code() != "bad_request" {
+			t.Fatalf("%s: %s", name, res)
+		}
+	}
+	if res := c.Do(&me, "PATCH", "/v1/me/settings", map[string]string{"displayName": "  Asha  "}); res.Status != 204 {
+		t.Fatalf("padded: %s", res)
+	}
+	reader := testkit.Account(t, d, "carl")
+	var f found
+	c.Do(&reader, "GET", "/v1/users/bob", nil).Decode(t, &f)
+	if f.DisplayName != "Asha" {
+		t.Fatalf("stored %q, want trimmed", f.DisplayName)
 	}
 }
