@@ -126,7 +126,12 @@ class RoomRepository(
     // groups
     override fun upsertGroup(chatId: String, conversationId: String, title: String?, now: Long) {
         GroupStoreRules.requireGroup(conversationId, title)
-        upsertGroupChecked(chatId, conversationId, title, now)
+        try {
+            upsertGroupChecked(chatId, conversationId, title, now)
+        } catch (e: android.database.sqlite.SQLiteConstraintException) {
+            // The unique index on `conversation_id`: another chat already holds this conversation.
+            throw IllegalArgumentException("conversation already has a chat", e)
+        }
     }
 
     private fun upsertGroupChecked(chatId: String, conversationId: String, title: String?, now: Long) = transaction {

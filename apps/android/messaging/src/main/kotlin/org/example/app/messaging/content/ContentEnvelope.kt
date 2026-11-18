@@ -204,9 +204,9 @@ object ContentCodec {
     private const val TITLE_MAX = 200
     private const val DESC_MAX = 300
 
-    private fun jpeg(b64: String, max: Int): ByteArray? {
+    private fun jpeg(b64: String, max: Int, min: Int = 2): ByteArray? {
         val bytes = try { Base64.getDecoder().decode(b64) } catch (_: IllegalArgumentException) { return null }
-        return bytes.takeIf { it.size in 2..max && it[0] == 0xFF.toByte() && it[1] == 0xD8.toByte() }
+        return bytes.takeIf { it.size in min..max && it[0] == 0xFF.toByte() && it[1] == 0xD8.toByte() }
     }
 
     /** The whole profile is invalid (null) when the name, photo or version is. */
@@ -227,7 +227,7 @@ object ContentCodec {
         val name = o["name"].str()?.takeIf { GroupNameRule.clean(it) == it } ?: return null
         val ver = o["ver"].int()?.takeIf { it >= 1 } ?: return null
         val photoEl = o["photo"]
-        val photo = if (photoEl == null || photoEl is JsonNull) null else jpeg(photoEl.str() ?: return null, PHOTO_MAX) ?: return null
+        val photo = if (photoEl == null || photoEl is JsonNull) null else jpeg(photoEl.str() ?: return null, PHOTO_MAX, min = 4) ?: return null
         return ContentEnvelope.Group(id, at, name, photo, ver)
     }
 

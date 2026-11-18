@@ -622,8 +622,15 @@ abstract class RepositoryContract {
         assertFailsWith<IllegalArgumentException> { repo.upsertGroup("chat1", "c9", "X", 1) }
         assertEquals("direct", repo.chat("chat1")!!.kind)
         newGroup()
-        assertFailsWith<Exception> { repo.upsertGroup("g:other", "c1", "Y", 1) }
+        assertFailsWith<IllegalArgumentException> { repo.upsertGroup("g:other", "c1", "Y", 1) }
         assertNull(repo.chat("g:other"))
+    }
+
+    @Test fun aGroupPhotoOfFewerThanFourBytesIsRefused() {
+        newGroup()
+        val tiny = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte())
+        assertFailsWith<IllegalArgumentException> { repo.setGroupInfo("g:c1", "Name", tiny, 2) }
+        assertTrue(repo.setGroupInfo("g:c1", "Name", tiny + byteArrayOf(0), 2))
     }
 
     @Test fun upsertGroupRefusesABadTitleOrConversationId() {
