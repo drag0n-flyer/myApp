@@ -93,6 +93,7 @@ class Outbox(
     fun enqueue(envelope: ContentEnvelope, chatId: String) {
         val now = clock.now()
         val limited = if (envelope is ContentEnvelope.Text) envelope.copy(t = TextLimit.truncate(envelope.t)) else envelope
+        require(!limited.isPlaceholder()) { "an attachment without an uploaded id is never queued" }
         val data = ContentCodec.encode(limited)
         val (text, reply) = when (limited) {
             is ContentEnvelope.Text -> limited.t to limited.r
@@ -121,7 +122,19 @@ class Outbox(
     }
 
     /** Manual retry of a failed message: it goes to the END of its chat's queue. False when it is not a failed message. */
-    fun retry(messageId: String): Boolean = repo.requeueSend(messageId, clock.now())
+    fun retry(messageId: String): Boolean {
+        // A row still holding the placeholder of an attachment that has not uploaded must never go out as it is.
+        val stored = repo.message(messageId)?.let { ContentCodec.decode(it.envelope) }
+        if (stored != null && stored.isPlaceholder()) return false
+        return repo.requeueSend(messageId, clock.now())
+    }
+
+    private fun ContentEnvelope.isPlaceholder(): Boolean = when (this) {
+        is ContentEnvelope.Photo -> a.id.isEmpty()
+        is ContentEnvelope.Voice -> a.id.isEmpty()
+        is ContentEnvelope.File -> a.id.isEmpty()
+        else -> false
+    }
 
     /**
      * Sends what is due. Only the oldest queued row of a chat is eligible, so a newer message never overtakes an older

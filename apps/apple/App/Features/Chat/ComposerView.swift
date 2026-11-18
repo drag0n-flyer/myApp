@@ -67,6 +67,8 @@ struct ComposerView: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
             .glassBackground(in: RoundedRectangle(cornerRadius: 16))
+            // Contain, so the close button keeps its own identifier instead of taking the bar's.
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier(editing != nil ? "chat.editbar" : "chat.replybar")
         }
     }

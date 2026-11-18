@@ -106,7 +106,7 @@ class Downloader(
 
     private fun checkId(id: String) {
         // The id comes from another person's message: it must never become a path.
-        require(ID.matches(id)) { "bad attachment id" }
+        AttachmentIds.check(id)
     }
 
     /** Digest and key are 32 bytes; anything else is malformed, and `dg` becomes part of a file name. */
@@ -172,6 +172,5 @@ class Downloader(
     companion object {
         /** The server's `limits.attachmentBytes` default (100 MiB). Pass the value from server info when known. */
         const val DEFAULT_MAX_BYTES = 104_857_600L
-        private val ID = Regex("[A-Za-z0-9_-]{1,128}")
     }
 }

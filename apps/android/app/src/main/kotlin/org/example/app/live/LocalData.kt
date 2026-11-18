@@ -76,5 +76,14 @@ class LocalData(private val context: Context, private val platform: LivePlatform
 
     private fun databaseFile() = context.getDatabasePath(platform.databaseName)
 
-    private fun dirs() = listOf(platform.mlsDir, platform.mediaDir, File(platform.cacheDir, "open"), File(platform.cacheDir, "outgoing"))
+    /**
+     * The FileProvider copies (shared files, camera pictures, picked files) are under the app's own cache folder. With a
+     * profile the data's cache folder is another one, so those are listed by name too.
+     */
+    private fun dirs(): List<File> {
+        val own = listOf(platform.mlsDir, platform.mediaDir, File(platform.cacheDir, "open"), File(platform.cacheDir, "outgoing"))
+        val app = context.cacheDir
+        if (platform.cacheDir == app) return own
+        return own + listOf(File(app, "open/share"), File(app, "outgoing/camera"), File(app, "outgoing/files"))
+    }
 }

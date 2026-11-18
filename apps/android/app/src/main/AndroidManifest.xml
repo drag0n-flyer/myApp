@@ -27,6 +27,17 @@
             </intent-filter>
         </activity>
 
+        <!-- Opening and sharing a file, and the camera's output: one URI at a time, read access granted by the intent that carries it. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <!-- The ringing call over the lock screen: the call notification's full-screen intent opens it. -->
         <activity
             android:name=".ui.call.LockScreenCallActivity"

@@ -170,6 +170,16 @@ class InMemoryRepository : Repository {
             if (rank == null || current < rank) s.messages[id] = m.copy(status = status)
         }
     }
+    override fun deleteUnsentMessage(id: String, sender: String): Boolean = tx {
+        val m = s.messages[id]
+        if (m == null || m.senderAccount != sender || (m.status != "sending" && m.status != "failed")) false
+        else { s.messages.remove(id); s.outbox.remove(id); true }
+    }
+    override fun replaceUnsentEnvelope(id: String, sender: String, envelope: ByteArray, folded: String, receivedAt: Long): Boolean = tx {
+        val m = s.messages[id]
+        if (m == null || m.senderAccount != sender || m.deleted || (m.status != "sending" && m.status != "failed")) false
+        else { s.messages[id] = m.copy(envelope = envelope, folded = folded, receivedAt = receivedAt); true }
+    }
     override fun applyEdit(id: String, sender: String, envelope: ByteArray, folded: String, at: Long): Boolean = tx {
         val m = s.messages[id]
         if (m == null || m.senderAccount != sender || m.deleted) false

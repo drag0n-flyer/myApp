@@ -94,6 +94,26 @@ class TransferTest {
         } finally { dir.deleteRecursively() }
     }
 
+    @Test fun aKeptUploadIsInTheTempFolderUntilItIsCommittedAndGoneWhenDiscarded() = runBlocking {
+        val dir = tmp()
+        try {
+            val server = FakeServer()
+            val src = File(dir, "src.bin").also { it.writeBytes(ByteArray(5_000) { 4 }) }
+            val uploader = Uploader(server, File(dir, "tmp"))
+            val kept = uploader.uploadKeeping(src)
+            assertEquals(1, File(dir, "tmp").list()!!.size, "the ciphertext waits in the temp folder")
+            assertFalse(File(dir, "dl").exists(), "nothing is in the blob folder yet")
+            val blob = kept.moveTo(File(dir, "dl"))
+            assertEquals(blobName(kept.att), blob.name)
+            assertEquals(emptyList(), File(dir, "tmp").list()!!.toList())
+            assertContentEquals(server.blobs["up1"]!!, blob.readBytes())
+
+            val second = uploader.uploadKeeping(src)
+            second.discard()
+            assertEquals(emptyList(), File(dir, "tmp").list()!!.toList())
+        } finally { dir.deleteRecursively() }
+    }
+
     @Test fun openedPlaintextSurvivesUntilLastCloseAndSweepRemovesLeftovers() = runBlocking {
         val dir = tmp()
         try {
