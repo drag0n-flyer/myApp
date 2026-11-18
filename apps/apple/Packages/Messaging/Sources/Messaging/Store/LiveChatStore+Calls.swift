@@ -34,8 +34,9 @@ extension LiveChatStore {
     nonisolated public func open(
         _ data: Data, from contactID: String
     ) async throws -> (payload: CallSignalPayload, senderDeviceID: String) {
+        guard !ChatID.isGroup(contactID) else { throw CallSealError.wrongSender }
         let opened = try await openRecoveringSender(data)
-        guard !ChatID.isGroup(contactID), opened.senderAccountID == contactID else { throw CallSealError.wrongSender }
+        guard opened.senderAccountID == contactID else { throw CallSealError.wrongSender }
         return (opened.payload, opened.senderDeviceID)
     }
 
