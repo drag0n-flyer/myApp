@@ -353,7 +353,8 @@ class LiveChatStoreTest {
     @Test
     fun sendReturningIdQueuesOnceAndReturnsTheStoredMessageId() = runTest {
         val (rig, s, _) = joined()
-        val id = s.sendReturningId("from a notification", "acc-ana")
+        // Real time: the wait inside is a real timeout, not a virtual one.
+        val id = kotlinx.coroutines.withContext(Dispatchers.Default) { s.sendReturningId("from a notification", "acc-ana") }
         assertNotNull(id)
         s.settle()
         val rows = rig.bob1.repo.messages("acc-ana", null, 20).filter { it.senderAccount == "acc-bob" }

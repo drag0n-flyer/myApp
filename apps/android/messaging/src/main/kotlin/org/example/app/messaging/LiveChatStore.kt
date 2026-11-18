@@ -337,16 +337,23 @@ class LiveChatStore(
 
     /**
      * Like [send] for text, for a caller that must know the message was queued (a notification reply). Returns the new
-     * message's id once it is in the outbox, null when nothing was queued. Never returns null after queueing.
+     * message's id once it is in the outbox, and null only when nothing was queued and nothing ever will be.
+     *
+     * The caller and the writer share one claim. The writer takes it before it enqueues; the caller takes it when it
+     * gives up waiting ([waitMs]). Whoever takes it first decides: if the caller does, the writer finds it taken and
+     * enqueues nothing, so "not queued" is true for good; if the writer already did, the enqueue is under way and the
+     * caller waits for its id, so "queued" is never reported as null.
      */
     suspend fun sendReturningId(text: String, chatId: String, replyTo: String? = null, waitMs: Long = WRITE_WAIT_MS): String? {
         if (closed.get()) return null
         val body = TextLimit.truncate(text)
         if (body.isBlank()) return null
         val queued = kotlinx.coroutines.CompletableDeferred<String?>()
+        val claimed = AtomicBoolean(false)
         write {
             try {
                 beforeClaimForTest()
+                if (!claimed.compareAndSet(false, true)) return@write // the caller gave up: enqueue nothing
                 afterClaimForTest()
                 if (!ensureChatRow(chatId)) return@write
                 val id = freshId()
@@ -360,6 +367,7 @@ class LiveChatStore(
             }
         }
         return kotlinx.coroutines.withTimeoutOrNull(waitMs) { queued.await() }
+            ?: if (claimed.compareAndSet(false, true)) null else queued.await()
     }
 
     /** Test seams for [sendReturningId]: run in the writer before and after it claims the message. */

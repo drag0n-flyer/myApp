@@ -77,9 +77,16 @@ class MessageNotifier(
         }
     }
 
-    /** The call ended before it was answered. Own tag, so it does not replace the chat's unread-message notification. Never muted. */
-    fun showMissedCall(chatId: String, callerName: String) =
-        post(NotificationChannels.MESSAGES, CALL_TAG + chatId, callerName, context.getString(R.string.push_missed_call_body), chatId)
+    /**
+     * The call ended before it was answered. Own tag, so it does not replace the chat's unread-message notification.
+     * Never muted. With app lock on it names nobody: the app's name and the same words, nothing else.
+     */
+    fun showMissedCall(chatId: String, callerName: String, hideName: Boolean = false) =
+        post(
+            NotificationChannels.MESSAGES, CALL_TAG + chatId,
+            if (hideName || appLockOn()) appLabel() else callerName,
+            context.getString(R.string.push_missed_call_body), chatId,
+        )
 
     /** A ring from a non-contact never rang. Quiet, on the requests channel, and names nobody. */
     fun showStrangerMissedCall() =
@@ -147,7 +154,7 @@ class MessageNotifier(
 
     /**
      * App lock was just turned on: every showing chat notification is posted again in its locked form (no sender, no
-     * history, no Reply), and so is a "Not sent" notice, which then names nobody. Safe to call twice.
+     * history, no Reply), and so are a "Not sent" notice and a missed call, which then name nobody. Safe to call twice.
      */
     fun hideShownContent() = synchronized(NotifierState.lock) {
         val manager = NotificationManagerCompat.from(context)
@@ -162,6 +169,8 @@ class MessageNotifier(
         }
         val notSent = manager.activeNotifications.mapNotNull { it.tag?.takeIf { t -> t.startsWith(NOT_SENT_TAG) } }
         for (tag in notSent) showNotSent(tag.removePrefix(NOT_SENT_TAG), hideName = true)
+        val calls = manager.activeNotifications.mapNotNull { it.tag?.takeIf { t -> t.startsWith(CALL_TAG) } }
+        for (tag in calls) showMissedCall(tag.removePrefix(CALL_TAG), "", hideName = true)
         refreshSummary()
     }
 

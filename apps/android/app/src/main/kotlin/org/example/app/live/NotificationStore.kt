@@ -1,6 +1,11 @@
 package org.example.app.live
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.example.app.core.chats.Chat
 import org.example.app.core.chats.DraftKeeper
@@ -34,38 +39,53 @@ class LiveNotificationActions(
     /** Waits for [block] at most the given milliseconds; a seam for tests. */
     private val bounded: suspend (Long, suspend () -> Unit) -> Unit = { ms, block -> withTimeoutOrNull(ms) { block() } },
 ) : NotificationActionSink {
-    override suspend fun markRead(chatId: String): Boolean {
-        val s = store() ?: return false
-        if (s.chat(chatId) == null) return false // an ID from an intent is checked against the store first
+    /** Opening the session and reading the store block, so none of it runs on the caller's thread. */
+    private val io = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    override suspend fun markRead(chatId: String): Boolean = withContext(Dispatchers.IO) {
+        val s = store() ?: return@withContext false
+        if (s.chat(chatId) == null) return@withContext false // an ID from an intent is checked against the store first
         s.markRead(chatId) // also sends the read receipt when the setting allows
-        return true
+        true
     }
 
     /**
      * True only when the message is in the outbox. Refused (false, nothing queued) for an unknown chat, a message
      * request, a blocked contact, or a text over the limit, which the send path would cut short.
+     *
+     * Everything ends by [deadline]: a background process that overruns the broadcast is killed without a word, and the
+     * reply would be lost with no draft and no "Not sent". The id wait and the flush wait each take what is left, at
+     * most their own bound. If time runs out before the message is queued, `sendReturningId` makes sure it never will
+     * be, and the answer is false.
      */
-    override suspend fun reply(chatId: String, text: String, deadline: Deadline): Boolean {
-        val s = store() ?: return false
-        val chat = s.chat(chatId) ?: return false
-        if (chat.isRequest || chatId in s.blocked()) return false
-        if (TextLimit.truncate(text) != text) return false
-        s.sendReturningId(chatId, text, idWaitMs) ?: return false
-        // Queued. The outbox flushes in the session's own scope, not inside this broadcast, and the process may be cached
-        // away once the broadcast ends. Hold it open (bounded) for the first send attempt. Nothing below can make a
-        // queued message "not sent": the caller would save a draft and the person would send it twice.
-        try {
-            bounded(settleMs) { s.settle() }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            // The message stays queued; the outbox retries it.
+    override suspend fun reply(chatId: String, text: String, deadline: Deadline): Boolean = withContext(Dispatchers.IO) {
+        // The open is not cancelled when the wait ends: a half-open session is worse than a late one.
+        val opening = io.async { store() }
+        val s = withTimeoutOrNull(deadline.leftMs()) { opening.await() } ?: return@withContext false
+        val chat = s.chat(chatId) ?: return@withContext false
+        if (chat.isRequest || chatId in s.blocked()) return@withContext false
+        if (TextLimit.truncate(text) != text) return@withContext false
+        val idWait = minOf(idWaitMs, deadline.leftMs())
+        if (idWait <= 0) return@withContext false
+        s.sendReturningId(chatId, text, idWait) ?: return@withContext false
+        // Queued, so durable. The outbox flushes in the session's own scope, not inside this broadcast, and the process
+        // may be cached away once the broadcast ends: hold it open for the first send attempt, as long as time allows.
+        // Nothing below can make a queued message "not sent": the caller would save a draft and the person would send it twice.
+        val settleWait = minOf(settleMs, deadline.leftMs())
+        if (settleWait > 0) {
+            try {
+                bounded(settleWait) { s.settle() }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // The message stays queued; the outbox retries it.
+            }
         }
-        return true
+        true
     }
 
-    override suspend fun saveDraft(chatId: String, text: String) {
-        val s = store() ?: return
+    override suspend fun saveDraft(chatId: String, text: String) = withContext(Dispatchers.IO) {
+        val s = store() ?: return@withContext
         saveReplyDraft(drafts(s.meId), chatId, text)
     }
 }
