@@ -114,6 +114,17 @@ class SampleChatStore(
         send(content, chatId, null)
     }
 
+    /** Sample data has no uploads; a message of mine that shows as sending is removed, anything else stays. */
+    override fun cancelUpload(messageId: String) = mutate {
+        allChats = allChats.map { chat ->
+            if (chat.messages.any { it.id == messageId && it.senderId == me.id && it.status == DeliveryStatus.Sending }) {
+                chat.copy(messages = chat.messages.filterNot { it.id == messageId })
+            } else {
+                chat
+            }
+        }
+    }
+
     override fun react(emoji: String, messageId: String, chatId: String) = updateMessage(messageId, chatId) {
         if (emoji in it.reactions) it.copy(reactions = it.reactions - emoji) else it.copy(reactions = it.reactions + emoji)
     }

@@ -68,3 +68,24 @@ class UploadCancelTest {
 
     @Test fun cancelAfterSentKeepsTheMessage() = assertEquals(UploadCancel.Action.Keep, UploadCancel.onCancel(UploadCancel.Phase.Sent))
 }
+
+class SampleUploadCancelTest {
+    private fun storeWith(vararg messages: Message) =
+        SampleChatStore(SampleData.make(Instant.now()).let { d -> d.copy(chats = listOf(Chat("c1", "riya", ChatEncryption.EndToEnd, emptySet(), 0, messages.toList(), false))) })
+
+    private fun photo(id: String, status: DeliveryStatus, sender: String = "me") =
+        Message(id, sender, Instant.now(), MessageContent.Photo(5), status, null, emptyList())
+
+    @Test fun cancelRemovesAnUploadingMessageOfMine() {
+        val store = storeWith(photo("a", DeliveryStatus.Sent), photo("b", DeliveryStatus.Sending))
+        store.cancelUpload("b")
+        assertEquals(listOf("a"), store.chat("c1")!!.messages.map { it.id })
+    }
+
+    @Test fun cancelKeepsASentMessageAndSomeoneElses() {
+        val store = storeWith(photo("a", DeliveryStatus.Sent), photo("b", DeliveryStatus.Sending, sender = "riya"))
+        store.cancelUpload("a")
+        store.cancelUpload("b")
+        assertEquals(listOf("a", "b"), store.chat("c1")!!.messages.map { it.id })
+    }
+}
