@@ -288,7 +288,7 @@ struct ComposerView: View {
 
     /// Send on the preview: the plan was accepted there, so the items go to the engine in order with the caption.
     private func sendDraft(caption: String) {
-        let items = draftMedia.map { OutgoingMedia(url: $0.url ?? URL(fileURLWithPath: "/sample/Photo.jpg"), kind: $0.kind == .video ? .video : .photo) }
+        let items = draftMedia.map { OutgoingMedia(url: $0.url ?? URL(fileURLWithPath: "/sample/Photo.jpg"), kind: $0.kind == .video ? .video : .photo, deleteAfterStaging: $0.url != nil) }
         draftMedia = []
         sendMedia?(items, caption)
     }

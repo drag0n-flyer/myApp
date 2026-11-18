@@ -207,7 +207,8 @@ private struct MetaLine: View {
         HStack(spacing: 3) {
             Spacer(minLength: 0)
             if isMine, message.status == .failed {
-                Label("Not sent", systemImage: "exclamationmark.circle.fill")
+                Label(failedText, systemImage: "exclamationmark.circle.fill")
+                    .accessibilityIdentifier("chat.failed.\(message.id)")
                 Button("Try again", action: retry)
                     .buttonStyle(.borderless)
                     .underline()
@@ -225,6 +226,13 @@ private struct MetaLine: View {
         }
         .font(.caption2)
         .opacity(0.75)
+    }
+
+    /// "Not sent", or why a failed attachment will not go as it is.
+    private var failedText: LocalizedStringKey {
+        guard message.sendFailure == .tooBig else { return "Not sent" }
+        if case .file(let name, _) = message.content, ChatMedia.isVideo(name: name) { return "This video is too big to send." }
+        return "This file is too big to send."
     }
 
     /// Sent: a check. Delivered: an outline check circle. Read: a filled one.

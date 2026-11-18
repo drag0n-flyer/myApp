@@ -142,6 +142,7 @@ struct ChatView: View {
         }
         .onChange(of: chat?.messages) { _, _ in closeBarsForChangedMessages() }
         .onChange(of: model.revision) { _, _ in syncHistory() }
+        .task { await model.refreshAttachmentLimit() }
         .confirmationDialog("Delete this message for everyone?",
                             isPresented: Binding(get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } }),
                             titleVisibility: .visible) {

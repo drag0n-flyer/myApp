@@ -7,6 +7,10 @@ public enum IncomingCallDecision: Equatable, Sendable {
     case silentMissed
 }
 
+/// Reads one chat's photo and file messages, newest first: up to `limit` older than `before` (the newest when nil).
+/// Sendable and safe to call off the main actor, so a gallery can load without blocking the screen.
+public typealias AttachmentPager = @Sendable (_ before: String?, _ limit: Int) -> [Message]
+
 /// Chats, contacts, and message requests. `SampleChatStore` now; the real MLS-backed store later.
 @MainActor
 public protocol ChatStore: AnyObject {
@@ -44,6 +48,8 @@ public protocol ChatStore: AnyObject {
     /// Stops an upload that has not finished and removes its message, its queue entry and its files. After the
     /// message is sent it does nothing.
     func cancelUpload(messageID: String, in chatID: String)
+    /// A reader for the chat's photo and file messages (see `AttachmentPager`).
+    func attachmentPager(for chatID: String) -> AttachmentPager
     /// A recorded voice note of `duration` seconds.
     func sendVoice(_ fileURL: URL, duration: Double, in chatID: String)
     /// Sends a message that gave up (`DeliveryStatus.failed`) again.
@@ -96,19 +102,36 @@ public protocol ChatStore: AnyObject {
 public struct OutgoingMedia: Equatable, Sendable {
     public var url: URL
     public var kind: MediaKind
+    /// The file is the app's own temporary copy: it is deleted as soon as the store has copied it for sending.
+    public var deleteAfterStaging: Bool
 
-    public init(url: URL, kind: MediaKind) {
+    public init(url: URL, kind: MediaKind, deleteAfterStaging: Bool = false) {
         self.url = url
         self.kind = kind
+        self.deleteAfterStaging = deleteAfterStaging
     }
 }
 
 extension ChatStore {
+    /// For stores without a database: a snapshot of the chat's messages taken now.
+    public func attachmentPager(for chatID: String) -> AttachmentPager {
+        let newestFirst = Array(messages(in: chatID, before: nil, limit: 100_000).filter { ChatMedia.kind(of: $0) != nil }.reversed())
+        return { before, limit in
+            var start = 0
+            if let before {
+                guard let index = newestFirst.firstIndex(where: { $0.id == before }) else { return [] }
+                start = index + 1
+            }
+            return Array(newestFirst.dropFirst(start).prefix(limit))
+        }
+    }
+
     /// One after the other, the caption after the first item.
     public func sendMedia(_ items: [OutgoingMedia], caption: String, in chatID: String) {
         let text = caption.trimmingCharacters(in: .whitespacesAndNewlines)
         for (index, item) in items.enumerated() {
             sendAttachment(item.url, kind: item.kind, in: chatID)
+            if item.deleteAfterStaging { try? FileManager.default.removeItem(at: item.url) }
             if index == 0, !text.isEmpty { send(.text(text), in: chatID, replyTo: nil) }
         }
     }

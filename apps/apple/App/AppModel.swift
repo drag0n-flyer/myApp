@@ -144,6 +144,9 @@ final class AppModel {
     /// only the cover while `lock.coversContent`.
     let lock: AppLock
 
+    /// The attachment size limit the server advertised (nil until known).
+    var serverAttachmentLimit: Int64?
+
     /// Bumped after every store change so views that read store data refresh.
     private(set) var revision = 0 {
         didSet { NotificationActions.shared.storeChanged() }
@@ -341,6 +344,12 @@ final class AppModel {
 
     func send(_ content: MessageContent, in chatID: String) { chatStore.send(content, in: chatID); revision += 1 }
     func retrySend(messageID: String) { chatStore.retrySend(messageID: messageID); revision += 1 }
+    /// Asks the server for its attachment limit once (`GET /v1/server`); the size check for videos uses it.
+    func refreshAttachmentLimit() async {
+        guard serverAttachmentLimit == nil, !isSampleData, let client = live?.client,
+              let info = try? await client.serverInfo(), info.limits.attachmentBytes > 0 else { return }
+        serverAttachmentLimit = Int64(info.limits.attachmentBytes)
+    }
     /// Cancel on an outgoing attachment that is still uploading.
     func cancelUpload(messageID: String, in chatID: String) { chatStore.cancelUpload(messageID: messageID, in: chatID); revision += 1 }
     /// Photos and videos from the preview screen; the caption follows the first as a text message.

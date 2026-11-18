@@ -5,12 +5,30 @@ import Foundation
 public enum ChatMedia {
     public enum Kind: Equatable, Sendable { case photo, video, file }
 
-    /// Extensions the system player opens.
-    public static let videoExtensions: Set<String> = ["mov", "mp4", "m4v", "3gp"]
+    /// Extensions that make a file a video (same list on Android).
+    public static let videoExtensions: Set<String> = ["mp4", "m4v", "mov", "3gp", "webm", "mkv"]
 
-    public static func isVideo(name: String) -> Bool {
+    /// A video is `file` content whose mime starts with `video/` or whose name ends in a video extension, either
+    /// case-insensitive. A name with no extension (or only a leading dot) does not count.
+    public static func isVideo(name: String, mime: String) -> Bool {
+        if mime.lowercased().hasPrefix("video/") { return true }
         guard let dot = name.lastIndex(of: "."), dot != name.startIndex else { return false }
         return videoExtensions.contains(name[name.index(after: dot)...].lowercased())
+    }
+
+    /// The message content here carries no mime, so screens that only have the name use this (the name rule alone).
+    public static func isVideo(name: String) -> Bool { isVideo(name: name, mime: "") }
+
+    /// The mime a sender gives a video of this extension: `video/quicktime` for .mov, `video/mp4` for .mp4 and .m4v.
+    public static func videoMime(forExtension ext: String) -> String? {
+        switch ext.lowercased() {
+        case "mov": "video/quicktime"
+        case "mp4", "m4v": "video/mp4"
+        case "3gp": "video/3gpp"
+        case "webm": "video/webm"
+        case "mkv": "video/x-matroska"
+        default: nil
+        }
     }
 
     /// `nil` for messages that are not attachments (and for deleted ones).
@@ -61,4 +79,17 @@ public enum ChatMedia {
 
     /// The number shown next to "Media and files" in chat info.
     public static func count(_ messages: [Message]) -> Int { mediaMessages(messages).count + fileMessages(messages).count }
+
+    /// Reads every attachment message of a chat through `pager`, newest first, up to `cap`.
+    public static func loadAll(_ pager: AttachmentPager, pageSize: Int = 200, cap: Int = 5_000) -> [Message] {
+        var all: [Message] = []
+        var before: String?
+        while all.count < cap {
+            let page = pager(before, pageSize)
+            all += page
+            guard page.count == pageSize, let last = page.last else { break }
+            before = last.id
+        }
+        return all
+    }
 }

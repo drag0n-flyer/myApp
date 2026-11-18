@@ -11,11 +11,12 @@ struct MediaGalleryView: View {
     @State private var tab = Tab.media
     @State private var preview = MediaPreview()
     @State private var viewer: ViewerRequest?
+    /// The chat's photo and file messages, newest first. Loaded off the main actor and kept here, so drawing never
+    /// reads the database.
+    @State private var all: [Message] = []
+    @State private var reloadTask: Task<Void, Never>?
 
     var body: some View {
-        // Read after every store change, so a finished download shows at once.
-        let _ = model.revision
-        let all = model.chatAttachmentMessages(in: chatID)
         let media = ChatMedia.mediaMessages(all)
         let files = ChatMedia.fileMessages(all)
         VStack(spacing: 0) {
@@ -39,8 +40,26 @@ struct MediaGalleryView: View {
         #endif
         .mediaPreview(preview)
         .mediaViewer($viewer)
-        .onDisappear { preview.close() }
+        .onDisappear { preview.close(); reloadTask?.cancel() }
+        .task { await reload() }
+        // A finished download or a new message changes the list; progress ticks come often, so wait a moment.
+        .onChange(of: model.revision) { _, _ in
+            reloadTask?.cancel()
+            reloadTask = Task {
+                try? await Task.sleep(for: .milliseconds(300))
+                guard !Task.isCancelled else { return }
+                await reload()
+            }
+        }
         .accessibilityIdentifier("gallery")
+    }
+
+    /// One query per page of 200, run off the main actor.
+    private func reload() async {
+        let pager = model.attachmentPager(for: chatID)
+        let loaded = await Task.detached(priority: .userInitiated) { ChatMedia.loadAll(pager) }.value
+        guard !Task.isCancelled else { return }
+        all = loaded
     }
 
     // MARK: - Media
@@ -104,7 +123,9 @@ struct MediaGalleryView: View {
     private func tapped(_ message: Message, _ state: MediaBubbleState) {
         switch state {
         case .ready:
-            if let request = model.viewerRequest(chatID: chatID, startingAt: message.id) { viewer = request }
+            // The list in hand, oldest first, so tapping does not read the chat again.
+            let items = ChatMedia.viewerItems(Array(all.reversed()), isUsable: model.mediaFileIsUsable)
+            if !items.isEmpty { viewer = ViewerRequest(items: items, start: ChatMedia.startIndex(of: message.id, in: items)) }
         case .notDownloaded, .failed:
             if !model.isSampleData { model.downloadMedia(messageID: message.id, in: chatID) }
         case .downloading:

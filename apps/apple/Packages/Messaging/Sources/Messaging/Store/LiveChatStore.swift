@@ -50,6 +50,8 @@ public final class LiveChatStore: ChatStore {
     private var uploadFraction: [String: Double] = [:]
     /// The background task of each running upload, so Cancel can stop it.
     private var uploadTasks: [String: UUID] = [:]
+    /// Uploads the server refused for their size; their failed rows say so while the app runs.
+    private var tooBig: Set<String> = []
     /// The newest time given to a message of a batch, so a batch keeps its order within one millisecond.
     private var lastStamp = Date.distantPast
 
@@ -189,6 +191,7 @@ public final class LiveChatStore: ChatStore {
                 reactions: plain && !record.deleted ? (try? repo.reactions(messageID: record.id)) ?? [] : [],
                 displayName: { [contactRows] in Self.name(of: contactRows[$0]) },
                 showRead: showRead || record.senderAccount != me)
+            if record.status == "failed", tooBig.contains(record.id) { message.sendFailure = .tooBig }
             if record.status == "sending", uploading.contains(record.id) { message.uploadProgress = uploadFraction[record.id] ?? 0 }
             return message
         }
@@ -373,10 +376,10 @@ public final class LiveChatStore: ChatStore {
     /// `media/pending/<id>/` with a small description, and the row gets a placeholder envelope (no attachment ID yet)
     /// that is never queued. The upload then runs in the background (`AttachmentService.uploadPending`): a failure
     /// makes the row "failed" with the files kept, and "Try again" really uploads again.
-    private func sendMedia(_ fileURL: URL, kind: MediaKind, duration: Double, chatID: String, then: (@MainActor () -> Void)? = nil) {
-        guard attachments != nil, !closed, ensureChatRow(chatID) != nil else { then?(); return }
+    private func sendMedia(_ fileURL: URL, kind: MediaKind, duration: Double, chatID: String, then: (@MainActor (_ staged: Bool) -> Void)? = nil) {
+        guard attachments != nil, !closed, ensureChatRow(chatID) != nil else { then?(false); return }
         let id = freshID()
-        guard let folder = pendingFolder(id) else { then?(); return }
+        guard let folder = pendingFolder(id) else { then?(false); return }
         let kindName: String
         switch kind {
         case .photo: kindName = "photo"
@@ -400,19 +403,20 @@ public final class LiveChatStore: ChatStore {
                 try meta.write(to: folder)
             } catch {
                 PendingUpload.removeFolder(folder)
-                await self?.stagingDone(then)
+                await self?.stagingDone(then, staged: false)
                 return
             }
-            await self?.stagedForUpload(id: id, meta: meta, size: size, staged: staged, folder: folder)
-            await self?.stagingDone(then)
+            let ok = await self?.stagedForUpload(id: id, meta: meta, size: size, staged: staged, folder: folder) ?? false
+            await self?.stagingDone(then, staged: ok)
         }
     }
 
-    private func stagingDone(_ then: (@MainActor () -> Void)?) { then?() }
+    private func stagingDone(_ then: (@MainActor (_ staged: Bool) -> Void)?, staged: Bool) { then?(staged) }
 
     /// The picked file is staged: the message shows as "sending" with its real name and size, and the upload starts.
-    private func stagedForUpload(id: String, meta: PendingUpload, size: Int64, staged: URL, folder: URL) {
-        guard !closed else { PendingUpload.removeFolder(folder); return }
+    /// True when the row is in and the upload started.
+    private func stagedForUpload(id: String, meta: PendingUpload, size: Int64, staged: URL, folder: URL) -> Bool {
+        guard !closed else { PendingUpload.removeFolder(folder); return false }
         let placeholder = Att(id: "", key: Data(), dg: Data(), sz: size, csz: size)
         let body: ContentEnvelope.Body
         switch meta.kind {
@@ -436,19 +440,21 @@ public final class LiveChatStore: ChatStore {
             }
         } catch {
             PendingUpload.removeFolder(folder)
-            return
+            return false
         }
         bumpActivity(meta.chatID, at: at)
         refresh()
         startUpload(id)
+        return true
     }
 
-    private enum UploadOutcome { case done, failed, permanent, cancelled }
+    private enum UploadOutcome { case done, failed, permanent, cancelled, tooBig }
 
     /// Runs the upload of a pending attachment in the background, once per message at a time.
     private func startUpload(_ messageID: String) {
         guard let attachments, !closed, !uploading.contains(messageID), let folder = pendingFolder(messageID) else { return }
         uploading.insert(messageID)
+        tooBig.remove(messageID)
         uploadFraction[messageID] = 0
         let outbox = outbox
         uploadTasks[messageID] = background { [weak self] in
@@ -462,6 +468,8 @@ public final class LiveChatStore: ChatStore {
                 outcome = .cancelled
             } catch let error as AttachmentServiceError where error == .pendingMissing || error == .cannotPrepare {
                 outcome = .permanent
+            } catch let error as AttachmentServiceError where error == .tooBig {
+                outcome = .tooBig
             } catch {
                 outcome = .failed
             }
@@ -484,6 +492,10 @@ public final class LiveChatStore: ChatStore {
         switch outcome {
         case .done, .cancelled: break
         case .failed:
+            _ = try? repo.markUnsentFailed(id: messageID)
+        case .tooBig:
+            // Stays as a failed row that says why, instead of vanishing.
+            tooBig.insert(messageID)
             _ = try? repo.markUnsentFailed(id: messageID)
         case .permanent:
             // It can never be sent: the row goes, with its files.
@@ -569,14 +581,32 @@ public final class LiveChatStore: ChatStore {
         refresh()
     }
 
+    /// A reader for the chat's photo and file messages that works off the main actor: one query per page, newest
+    /// first (see `AttachmentPager`).
+    public func attachmentPager(for chatID: String) -> AttachmentPager {
+        let repo = repo
+        return { before, limit in
+            let anchor = before.flatMap { (try? repo.message(id: $0)) ?? nil }
+            if before != nil, anchor == nil { return [] }
+            let rows = (try? repo.attachmentMessages(chatID: chatID, before: anchor, limit: limit)) ?? []
+            return rows.map { record in
+                ChatMapping.message(record, attachment: (try? repo.attachment(messageID: record.id)) ?? nil, reactions: [],
+                                    displayName: { _ in nil })
+            }
+        }
+    }
+
     /// Several photos or videos from the preview screen: each row shows in order, and the caption is sent as a text
     /// message once the first one is staged, so it follows the first item.
     public func sendMedia(_ items: [OutgoingMedia], caption: String, in chatID: String) {
         let text = caption.trimmingCharacters(in: .whitespacesAndNewlines)
         func step(_ index: Int) {
             guard index < items.count, !closed else { return }
-            sendMedia(items[index].url, kind: items[index].kind, duration: 0, chatID: chatID) { [weak self] in
-                if index == 0, !text.isEmpty { self?.send(.text(text), in: chatID, replyTo: nil) }
+            sendMedia(items[index].url, kind: items[index].kind, duration: 0, chatID: chatID) { [weak self] staged in
+                if items[index].deleteAfterStaging { try? FileManager.default.removeItem(at: items[index].url) }
+                // The caption belongs to the first item: no caption when that item could not be staged. If the item
+                // is cancelled or fails later, the caption already sent stays.
+                if index == 0, staged, !text.isEmpty { self?.send(.text(text), in: chatID, replyTo: nil) }
                 step(index + 1)
             }
         }
@@ -588,6 +618,8 @@ public final class LiveChatStore: ChatStore {
         case .photo: return "image/jpeg"
         case .voice: return "audio/x-caf"
         case .video, .file:
+            // A video gets the real video mime (quicktime for .mov, mp4 for .mp4 and .m4v), so both apps agree.
+            if let mime = ChatMedia.videoMime(forExtension: url.pathExtension) { return mime }
             #if canImport(UniformTypeIdentifiers)
             if let mime = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType { return mime }
             #endif

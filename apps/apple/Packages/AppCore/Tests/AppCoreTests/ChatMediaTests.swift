@@ -18,6 +18,19 @@ import Testing
         #expect(!ChatMedia.isVideo(name: ".mp4"))
     }
 
+    @Test func theVideoRuleUsesMimeOrExtension() {
+        #expect(ChatMedia.isVideo(name: "a.MP4", mime: "application/octet-stream"))
+        #expect(ChatMedia.isVideo(name: "a.bin", mime: "video/mp4"))
+        #expect(ChatMedia.isVideo(name: "a.bin", mime: "VIDEO/Quicktime"))
+        #expect(!ChatMedia.isVideo(name: "a.jpg", mime: "image/jpeg"))
+        #expect(!ChatMedia.isVideo(name: "mov", mime: ""))
+        #expect(!ChatMedia.isVideo(name: "", mime: ""))
+        for ext in ["mp4", "m4v", "mov", "3gp", "webm", "mkv"] { #expect(ChatMedia.isVideo(name: "x.\(ext)", mime: "")) }
+        #expect(ChatMedia.videoMime(forExtension: "MOV") == "video/quicktime")
+        #expect(ChatMedia.videoMime(forExtension: "m4v") == "video/mp4")
+        #expect(ChatMedia.videoMime(forExtension: "txt") == nil)
+    }
+
     @Test func kinds() {
         #expect(ChatMedia.kind(of: message("a", .photo(bytes: 1), at: 0)) == .photo)
         #expect(ChatMedia.kind(of: message("b", .file(name: "v.mp4", bytes: 1), at: 0)) == .video)
@@ -55,5 +68,27 @@ import Testing
         #expect(ChatMedia.fileMessages(all).map(\.id) == ["f2", "f1"])
         #expect(ChatMedia.count(all) == 5)
         #expect(ChatMedia.count([]) == 0)
+    }
+
+    @Test func loadAllPagesUntilAShortPageAndStopsAtTheCap() {
+        let all = (0..<450).map { message("m\($0)", .photo(bytes: 1), at: Double(450 - $0)) }   // newest first
+        let pager: AttachmentPager = { before, limit in
+            let start = before.flatMap { id in all.firstIndex { $0.id == id } }.map { $0 + 1 } ?? 0
+            return Array(all.dropFirst(start).prefix(limit))
+        }
+        #expect(ChatMedia.loadAll(pager).map(\.id) == all.map(\.id))
+        #expect(ChatMedia.loadAll(pager, pageSize: 100, cap: 250).count == 300, "stops after the page that passes the cap")
+        #expect(ChatMedia.loadAll({ _, _ in [] }).isEmpty)
+    }
+
+    @MainActor @Test func theDefaultPagerReadsOnlyAttachmentsNewestFirst() {
+        let store = SampleChatStore()
+        let pager = store.attachmentPager(for: "chat-sam")
+        let page = pager(nil, 10)
+        #expect(!page.isEmpty && page.allSatisfy { ChatMedia.kind(of: $0) != nil })
+        #expect(zip(page, page.dropFirst()).allSatisfy { $0.0.sentAt >= $0.1.sentAt })
+        let lastID = page.last?.id
+        let rest = pager(lastID, 10)
+        #expect(rest.isEmpty)
     }
 }

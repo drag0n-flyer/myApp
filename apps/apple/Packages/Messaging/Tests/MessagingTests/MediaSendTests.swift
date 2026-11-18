@@ -17,12 +17,23 @@ private final class UploadGate: HTTPTransport, @unchecked Sendable {
     private var held = false
     private var waiting: [CheckedContinuation<Void, Never>] = []
     private var failures = 0
+    private var sizeRefused = false
+    private var reportFraction: Double?
     private var _uploads = 0
     init(_ inner: HTTPTransport) { self.inner = inner }
 
     var uploads: Int { lock.withLock { _uploads } }
     func hold() { lock.withLock { held = true } }
     func failNext(_ count: Int = 1) { lock.withLock { failures = count } }
+    /// Answers uploads with 413 too_large.
+    func refuseForSize() { lock.withLock { sizeRefused = true } }
+    /// Reports this fraction of the request body as sent, before the upload is held.
+    func reportProgress(_ fraction: Double) { lock.withLock { reportFraction = fraction } }
+
+    func send(_ request: URLRequest, progress: (@Sendable (Double) -> Void)?) async throws -> (Data, HTTPURLResponse) {
+        if let fraction = lock.withLock({ reportFraction }), request.url?.path == "/v1/attachments" { progress?(fraction) }
+        return try await send(request)
+    }
     func release() {
         let continuations = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
             held = false
@@ -47,6 +58,10 @@ private final class UploadGate: HTTPTransport, @unchecked Sendable {
             return false
         }
         if fail { throw URLError(.notConnectedToInternet) }
+        if lock.withLock({ sizeRefused }) {
+            let response = HTTPURLResponse(url: request.url!, statusCode: 413, httpVersion: nil, headerFields: nil)!
+            return (Data(#"{"error":{"code":"too_large","message":"attachment is over the size limit"}}"#.utf8), response)
+        }
         return try await inner.send(request)
     }
 
@@ -444,6 +459,80 @@ private struct Rig {
             }
         }
         #expect(kinds == ["p0.bin", "hi", "p1.bin", "p2.bin"])
+    }
+
+    @Test func theRingFollowsTheRequestsByteProgress() async throws {
+        let rig = try await Rig.make()
+        rig.gate.reportProgress(0.5)
+        rig.gate.hold()
+        try await rig.send()
+        await rig.gate.waitForUploads(1)
+        for _ in 0..<500 where abs((rig.last?.uploadProgress ?? 0) - 0.625) > 0.001 { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(abs((rig.last?.uploadProgress ?? 0) - 0.625) < 0.001, "0.3 + 0.65 * 0.5: \(String(describing: rig.last?.uploadProgress))")
+        rig.gate.release()
+        await rig.ana.store.settle()
+        #expect(rig.last?.uploadProgress == nil)
+    }
+
+    @Test func aServerRefusalForSizeKeepsTheRowFailedAndSaysWhy() async throws {
+        let rig = try await Rig.make()
+        rig.gate.refuseForSize()
+        try await rig.send()
+        let id = try #require(rig.last?.id)
+        await rig.ana.store.settle()
+        let row = try #require(rig.last)
+        #expect(row.id == id && row.status == .failed && row.sendFailure == .tooBig, "the row stays and says why")
+        #expect(try rig.ana.repo.dueOutbox(at: .distantFuture).isEmpty)
+        #expect(await rig.messagePosts() == 0)
+    }
+
+    @Test func theAttachmentPagerReadsOnlyThisChatsAttachmentsNewestFirst() async throws {
+        let rig = try await Rig.make()
+        try await rig.send()
+        await rig.ana.store.settle()
+        rig.ana.store.send(.text("hello"), in: "acc-bob", replyTo: nil)
+        try await rig.send()
+        await rig.ana.store.settle()
+        let pager = rig.ana.store.attachmentPager(for: "acc-bob")
+        let all = await Task.detached { pager(nil, 10) }.value
+        #expect(all.count == 2)
+        #expect(all.allSatisfy { ChatMedia.kind(of: $0) == .file })
+        #expect(all[0].sentAt >= all[1].sentAt)
+        let older = pager(all[0].id, 10)
+        #expect(older.map(\.id) == [all[1].id])
+        #expect(pager("missing", 10).isEmpty)
+    }
+
+    @Test func noCaptionWhenTheFirstItemCannotBeStaged() async throws {
+        let rig = try await Rig.make()
+        let missing = rig.ana.device.directory.appendingPathComponent("does-not-exist.bin")
+        let real = try rig.file(named: "second.bin", size: 2_000)
+        rig.ana.store.sendMedia([OutgoingMedia(url: missing, kind: .file), OutgoingMedia(url: real, kind: .file)],
+                                caption: "hi", in: "acc-bob")
+        for _ in 0..<500 where (rig.ana.store.chat(id: "acc-bob")?.messages.count ?? 0) < 1 { try await Task.sleep(for: .milliseconds(10)) }
+        await rig.ana.store.settle()
+        let contents = (rig.ana.store.chat(id: "acc-bob")?.messages ?? []).map(\.content)
+        #expect(contents == [.file(name: "second.bin", bytes: 2_000)], "no caption, and the other item still goes: \(contents)")
+    }
+
+    @Test func theAppsTemporaryCopiesAreDeletedOnceStaged() async throws {
+        let rig = try await Rig.make()
+        let first = try rig.file(named: "a.bin", size: 2_000)
+        let second = try rig.file(named: "b.bin", size: 2_000)
+        rig.ana.store.sendMedia([OutgoingMedia(url: first, kind: .file, deleteAfterStaging: true),
+                                 OutgoingMedia(url: second, kind: .file, deleteAfterStaging: false)], caption: "", in: "acc-bob")
+        for _ in 0..<500 where (rig.ana.store.chat(id: "acc-bob")?.messages.count ?? 0) < 2 { try await Task.sleep(for: .milliseconds(10)) }
+        await rig.ana.store.settle()
+        #expect(rig.ana.store.chat(id: "acc-bob")?.messages.count == 2)
+        #expect(!FileManager.default.fileExists(atPath: first.path), "the app's own copy is gone")
+        #expect(FileManager.default.fileExists(atPath: second.path), "a file the caller keeps stays")
+    }
+
+    @Test func aVideoIsSentWithItsExtensionAndARealVideoMime() {
+        #expect(LiveChatStore.mimeType(of: URL(fileURLWithPath: "/x/clip.MOV"), kind: .video) == "video/quicktime")
+        #expect(LiveChatStore.mimeType(of: URL(fileURLWithPath: "/x/clip.mp4"), kind: .video) == "video/mp4")
+        #expect(LiveChatStore.mimeType(of: URL(fileURLWithPath: "/x/clip.m4v"), kind: .file) == "video/mp4")
+        #expect(ChatMedia.isVideo(name: "clip.mov", mime: LiveChatStore.mimeType(of: URL(fileURLWithPath: "/x/clip.mov"), kind: .video)))
     }
 
     @Test func aPlaceholderIsNeverQueued() async throws {

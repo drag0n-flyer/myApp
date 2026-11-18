@@ -2411,6 +2411,17 @@
           }
         }
       }
+    },
+    "This file is too big to send." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This file is too big to send."
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

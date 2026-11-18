@@ -20,6 +20,8 @@ public enum AttachmentServiceError: Error, Equatable, Sendable {
     case pendingMissing
     /// A photo that cannot be read as an image.
     case cannotPrepare
+    /// The server refused the upload for its size (413).
+    case tooBig
 }
 
 /// Uploads, downloads and auto-downloads attachments (Design 7, 9).
@@ -139,7 +141,15 @@ public actor AttachmentService {
         defer { try? fm.removeItem(at: temp) }
         let sealed = try deps.attachments.encrypt(file: file, to: temp)
         progress?(0.3)
-        let uploaded = try await deps.server.uploadAttachment(try Data(contentsOf: temp))
+        let uploaded: UploadedAttachment
+        do {
+            // The request's own byte progress fills 0.3...0.95 where the transport reports it (Apple's URLSession does).
+            uploaded = try await deps.server.uploadAttachment(try Data(contentsOf: temp), progress: { sent in
+                progress?(0.3 + 0.65 * min(max(sent, 0), 1))
+            })
+        } catch let error as ServerError where error.status == 413 {
+            throw AttachmentServiceError.tooBig
+        }
         guard AttachmentID.isValid(uploaded.id) else { throw AttachmentServiceError.invalidAttachmentID }
         try Task.checkCancellation()
         progress?(0.95)

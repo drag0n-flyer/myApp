@@ -310,6 +310,23 @@ public final class Repository: @unchecked Sendable {
         return try db.query(sql, args, row: msgRow).reversed()
     }
 
+    /// The chat's photo and file messages (voice notes and deleted messages excluded), newest first, `limit` of them
+    /// older than `before` (all when nil). One query, so a gallery never reads the whole chat.
+    public func attachmentMessages(chatID: String, before: MessageRecord?, limit: Int) throws -> [MessageRecord] {
+        var sql = """
+            SELECT \(msgCols) FROM messages WHERE chat_id=? AND deleted=0
+            AND EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = messages.id AND a.kind IN ('photo','file'))
+            """
+        var args: [SQLValue] = [.text(chatID)]
+        if let before {
+            sql += " AND (sent_at < ? OR (sent_at = ? AND id < ?))"
+            args += [.int(ms(before.sentAt)), .int(ms(before.sentAt)), .text(before.id)]
+        }
+        sql += " ORDER BY sent_at DESC, id DESC LIMIT ?"
+        args.append(.int(Int64(limit)))
+        return try db.query(sql, args, row: msgRow)
+    }
+
     /// Never lowers a status along sending < sent < delivered < read. Other targets (e.g. "failed") are set unconditionally.
     public func updateStatus(ids: [String], to status: String) throws {
         guard !ids.isEmpty else { return }
