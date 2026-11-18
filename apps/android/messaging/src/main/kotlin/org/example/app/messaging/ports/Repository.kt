@@ -8,7 +8,16 @@ package org.example.app.messaging.ports
 
 data class ContactRecord(val accountId: String, val username: String, val displayName: String, val isContact: Boolean, val addedAt: Long)
 
-data class ChatRecord(val id: String, val isRequest: Boolean, val unread: Int, val muted: Boolean, val lastActivity: Long)
+data class ChatRecord(
+    val id: String,
+    val isRequest: Boolean,
+    val unread: Int,
+    val muted: Boolean,
+    val lastActivity: Long,
+    /** When the chat was pinned on this device; null when not pinned. */
+    val pinnedAt: Long? = null,
+    val archived: Boolean = false,
+)
 
 data class ConversationRecord(
     val serverId: String,
@@ -150,6 +159,16 @@ interface Repository {
     fun chats(): List<ChatRecord>
     fun setUnread(chatId: String, n: Int)
     fun setRequest(chatId: String, value: Boolean)
+    /** Local only. Each of these changes one column and nothing else, so an incoming message cannot undo it. */
+    fun setPinnedAt(chatId: String, at: Long?)
+    fun setMuted(chatId: String, muted: Boolean)
+    fun setArchived(chatId: String, archived: Boolean)
+    /** The saved composer text, or null. */
+    fun draft(chatId: String): String?
+    /** Every saved draft, by chat ID. */
+    fun drafts(): Map<String, String>
+    /** Saves [text] for the chat; blank or null removes the draft. Ignored for a chat that does not exist. */
+    fun setDraft(chatId: String, text: String?, at: Long)
     /** Deletes the chat and, by cascade, its conversations, messages and the rest. */
     fun deleteChat(id: String)
 

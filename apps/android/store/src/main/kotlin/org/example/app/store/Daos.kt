@@ -20,9 +20,23 @@ interface ChatDao {
     @Query("SELECT * FROM chats ORDER BY last_activity DESC, id") fun all(): List<ChatEntity>
     @Query("UPDATE chats SET unread = :n WHERE id = :id") fun setUnread(id: String, n: Int)
     @Query("UPDATE chats SET is_request = :v WHERE id = :id") fun setRequest(id: String, v: Boolean)
+    @Query("UPDATE chats SET pinned_at = :at WHERE id = :id") fun setPinnedAt(id: String, at: Long?)
+    @Query("UPDATE chats SET muted = :v WHERE id = :id") fun setMuted(id: String, v: Boolean)
+    @Query("UPDATE chats SET archived = :v WHERE id = :id") fun setArchived(id: String, v: Boolean)
+    @Query("SELECT text FROM drafts WHERE chat_id = :id") fun draft(id: String): String?
+    @Query("SELECT chat_id, text FROM drafts ORDER BY chat_id") fun drafts(): List<DraftRow>
+    /** Only for a chat that exists; a draft for no chat is dropped rather than failing the foreign key. */
+    @Query("INSERT OR REPLACE INTO drafts(chat_id, text, updated_at) SELECT id, :text, :at FROM chats WHERE id = :id")
+    fun putDraft(id: String, text: String, at: Long)
+    @Query("DELETE FROM drafts WHERE chat_id = :id") fun deleteDraft(id: String)
     @Query("DELETE FROM outbox WHERE chat_id = :id") fun deleteOutbox(id: String)
     @Query("DELETE FROM chats WHERE id = :id") fun delete(id: String)
 }
+
+data class DraftRow(
+    @androidx.room.ColumnInfo(name = "chat_id") val chatId: String,
+    @androidx.room.ColumnInfo(name = "text") val text: String,
+)
 
 @Dao
 interface ConversationDao {
