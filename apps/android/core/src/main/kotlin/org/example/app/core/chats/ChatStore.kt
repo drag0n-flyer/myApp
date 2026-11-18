@@ -58,6 +58,11 @@ interface ChatStore {
     fun searchMessages(query: String, limit: Int): List<MessageHit>
     fun send(content: MessageContent, chatId: String, replyTo: String? = null)
     fun sendAttachment(path: String, kind: MediaKind, chatId: String)
+    /**
+     * Attachments that could not be sent and were not kept (too big, unreadable), as they happen, for a one-line notice. A
+     * message that failed but is kept shows as [DeliveryStatus.Failed] instead. Nothing is replayed to a late collector.
+     */
+    val sendProblems: kotlinx.coroutines.flow.Flow<SendProblem> get() = kotlinx.coroutines.flow.emptyFlow()
     fun react(emoji: String, messageId: String, chatId: String)
     fun edit(messageId: String, chatId: String, text: String)
     fun delete(messageId: String, chatId: String)
@@ -95,4 +100,9 @@ interface ChatStore {
     fun renameFolder(id: String, name: String)
     fun deleteFolder(id: String)
     fun moveFolder(id: String, toCustomIndex: Int)
+}
+
+/** An attachment in [chatId] that was dropped, and why. */
+data class SendProblem(val chatId: String, val reason: Reason) {
+    enum class Reason { TooBig, Unreadable }
 }

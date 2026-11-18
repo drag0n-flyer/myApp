@@ -39,6 +39,7 @@ import org.example.app.messaging.FoundUser
 import org.example.app.messaging.LiveChatStore
 import org.example.app.messaging.MediaDirs
 import org.example.app.messaging.MediaPreparer
+import org.example.app.messaging.StageResult
 import org.example.app.messaging.NotificationProcessor
 import org.example.app.messaging.PreparedMedia
 import org.example.app.messaging.ReportedLine
@@ -204,11 +205,14 @@ class LiveSession(
     }
 
     /** A picked `content:` photo is copied (same 100 MiB cap as a file) so a retry after a restart does not need the URI permission. */
-    private suspend fun stagePicked(context: Context, source: String, into: File): File? {
+    private suspend fun stagePicked(context: Context, source: String, into: File): StageResult {
         val uri = Uri.parse(source)
-        if (!PickedFiles.isFromPicker(context, uri)) return null
-        val result = PickedFiles.copy(into, "photo") { context.contentResolver.openInputStream(uri) }
-        return (result as? PickedFiles.Result.Copied)?.file
+        if (!PickedFiles.isFromPicker(context, uri)) return StageResult.Unreadable
+        return when (val result = PickedFiles.copy(into, "photo") { context.contentResolver.openInputStream(uri) }) {
+            is PickedFiles.Result.Copied -> StageResult.Copied(result.file)
+            PickedFiles.Result.TooBig -> StageResult.TooBig
+            PickedFiles.Result.Unreadable -> StageResult.Unreadable
+        }
     }
 
     /** Photos are scaled and get a thumbnail; files go as they are. */
