@@ -47,17 +47,22 @@ struct MessageInfoView: View {
     }
 
     /// One member: tile, name and the time, read as "Name, time".
+    /// The time alone for a receipt from today, the date and time for an older one.
+    private static func timeFormat(for date: Date) -> Date.FormatStyle {
+        Calendar.current.isDateInToday(date) ? .dateTime.hour().minute() : .dateTime.day().month().hour().minute()
+    }
+
     private func row(_ entry: ReceiptEntry) -> some View {
         HStack(spacing: 10) {
             Avatar(name: entry.name, colorKey: entry.accountID, size: 32)
             Text(entry.name).lineLimit(1)
             Spacer(minLength: 8)
-            Text(entry.at, format: .dateTime.hour().minute())
+            Text(entry.at, format: Self.timeFormat(for: entry.at))
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(verbatim: "\(entry.name), \(entry.at.formatted(.dateTime.hour().minute()))"))
+        .accessibilityLabel(Text(verbatim: "\(entry.name), \(entry.at.formatted(Self.timeFormat(for: entry.at)))"))
         .accessibilityIdentifier("messageinfo.row.\(entry.accountID)")
     }
 }
