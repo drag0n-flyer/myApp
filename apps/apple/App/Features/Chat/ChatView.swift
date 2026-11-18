@@ -9,12 +9,21 @@ import AppKit
 /// A request to scroll to a message and highlight it. The token makes repeat requests for one message distinct.
 private struct JumpRequest: Equatable {
     let messageID: String
+    /// False when the scroll only puts the chat back where it was (no flash).
+    var flash = true
     let token = UUID()
 }
 
 private struct ForwardItem: Identifiable {
     let id = UUID()
     let text: String
+}
+
+/// The scroll place to return to when the search bar closes.
+private struct SearchAnchor {
+    /// The message at the bottom of the screen, or nil when the chat was at its end.
+    let messageID: String?
+    let newestID: String?
 }
 
 /// A conversation. Request chats show Accept / Block / Report instead of the composer.
@@ -47,6 +56,8 @@ struct ChatView: View {
     @State private var searchedQuery = ""
     /// Index into `hits` (newest first) of the result the search bar is on.
     @State private var currentHit: Int?
+    /// Where the chat was when the search bar opened, so closing the bar can return there.
+    @State private var searchAnchor: SearchAnchor?
     @State private var tracker = NewestTracker()
     @State private var firstUnreadID: String?
     @State private var capturedUnread = false
@@ -242,7 +253,11 @@ struct ChatView: View {
             .onChange(of: jump) { _, request in
                 guard let request else { return }
                 jump = nil
-                jumpToMessage(request.messageID, chat: chat, proxy: proxy)
+                if request.messageID == Self.bottomID {
+                    scrollToBottom(proxy)
+                } else {
+                    jumpToMessage(request.messageID, chat: chat, proxy: proxy, flash: request.flash)
+                }
             }
         }
     }
@@ -380,7 +395,7 @@ struct ChatView: View {
     }
 
     /// Scrolls to a message and highlights it, loading older pages as needed. Does nothing if history ends first.
-    private func jumpToMessage(_ id: String, chat: Chat, proxy: ScrollViewProxy) {
+    private func jumpToMessage(_ id: String, chat: Chat, proxy: ScrollViewProxy, flash: Bool = true) {
         var trial = history
         guard trial.load(until: id, newest: chat.messages, loader: { before, _ in model.olderMessages(in: chatID, before: before) }) else { return }
         history = trial
@@ -388,8 +403,9 @@ struct ChatView: View {
         if !chat.messages.contains(where: { $0.id == id }) {
             tracker.setAtBottom(false, newestID: chat.messages.last?.id)
         }
-        highlightID = id
-        Task { @MainActor in withAnimation { proxy.scrollTo(id, anchor: .center) } }
+        if flash { highlightID = id }
+        Task { @MainActor in withAnimation { proxy.scrollTo(id, anchor: flash ? .center : .bottom) } }
+        guard flash else { return }
         Task {
             try? await Task.sleep(for: .seconds(1.5))
             if highlightID == id { highlightID = nil }
@@ -510,6 +526,11 @@ struct ChatView: View {
     private func openSearchIfRequested() {
         guard model.chatSearchRequest == chatID else { return }
         model.chatSearchRequest = nil
+        if !searching {
+            let newest = history.messages(newest: chat?.messages ?? []).last?.id
+            let place = scrollTarget.id
+            searchAnchor = SearchAnchor(messageID: tracker.atBottom || place == Self.bottomID ? nil : place, newestID: newest)
+        }
         searching = true
         Task { @MainActor in searchFocused = true }
     }
@@ -520,6 +541,16 @@ struct ChatView: View {
     private var searchAnswered: Bool { !trimmedQuery.isEmpty && searchedQuery == trimmedQuery }
 
     private func closeSearch() {
+        // Back to where the person was; a message that came or went meanwhile means the newest.
+        let newest = history.messages(newest: chat?.messages ?? []).last?.id
+        if let anchor = searchAnchor {
+            if let id = anchor.messageID, anchor.newestID == newest {
+                jump = JumpRequest(messageID: id, flash: false)
+            } else {
+                jump = JumpRequest(messageID: Self.bottomID, flash: false)
+            }
+        }
+        searchAnchor = nil
         searching = false
         query = ""
         hits = []

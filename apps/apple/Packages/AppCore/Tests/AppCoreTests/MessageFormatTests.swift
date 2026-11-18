@@ -16,7 +16,7 @@ final class MessageFormatTests: XCTestCase {
     func testMonoOnly() { check("`a*b*`", plain: "a*b*", [(0..<4, [.mono])]) }
     func testNested() { check("*a _b_ c*", plain: "a b c", [(0..<5, [.bold]), (2..<3, [.italic])]) }
     func testWithinWords() {
-        for text in ["2*3*4", "snake_case_name", "a * b * c", "*a", "*a\nb*", "**", "a ** b"] {
+        for text in ["2*3*4", "snake_case_name", "a * b * c", "*a", "*a\nb*", "**", "a ** b", "**a**", "```a```", "``` a ```"] {
             check(text, plain: text)
         }
     }

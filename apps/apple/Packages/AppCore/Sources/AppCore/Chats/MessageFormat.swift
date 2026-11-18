@@ -157,6 +157,8 @@ public enum MessageFormat {
     private static func closing(_ c: [Character], _ mask: [Bool], open: Int) -> Int? {
         let m = c[open]
         if open > 0, !isBoundary(c[open - 1]) { return nil }
+        // Part of a run of one marker ("**", three backticks on one line) is never an opening.
+        if open > 0, c[open - 1] == m { return nil }
         // Followed by a non-space; a doubled marker ("**") is not an opening, so an empty pair stays as typed.
         guard open + 1 < c.count, !c[open + 1].isWhitespace, c[open + 1] != m else { return nil }
         var j = open + 2
