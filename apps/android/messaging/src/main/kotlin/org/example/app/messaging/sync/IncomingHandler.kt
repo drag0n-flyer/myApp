@@ -33,6 +33,8 @@ class IncomingHandler(
     private val clock: Clock,
     private val fold: (String) -> String = { it.lowercase(Locale.ROOT) },
     private val log: (String) -> Unit = { System.err.println(it) },
+    /** True when the bytes of a received profile photo decode as an image. The app passes its image decoder; the default accepts. */
+    private val photoDecodable: (ByteArray) -> Boolean = { true },
 ) {
     /**
      * Design 17: my own accepted commit comes back as an inbox item. When the stored epoch is already past it there
@@ -212,7 +214,10 @@ class IncomingHandler(
             is ContentEnvelope.Typing, is ContentEnvelope.Presence -> AppliedResult.Ignored
             is ContentEnvelope.Profile -> {
                 // My own profile is kept in the settings; the sender is the MLS credential, never a field of the message.
-                if (account != me.accountId) repo.saveProfile(account, envelope.name, envelope.photo, envelope.ver)
+                // Applied only for the chat's own peer, and whole or not at all: a photo that does not decode drops the name too.
+                if (account != me.accountId && account == chatId && envelope.photo.let { it == null || photoDecodable(it) }) {
+                    repo.saveProfile(account, envelope.name, envelope.photo, envelope.ver)
+                }
                 AppliedResult.Ignored
             }
             is ContentEnvelope.Timer -> {
