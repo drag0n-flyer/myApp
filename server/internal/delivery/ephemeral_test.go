@@ -26,13 +26,22 @@ type fakeRouter struct {
 	handlers map[string]realtime.FrameHandler
 	online   map[string]bool
 	sends    []sentFrame
+	closing  int // calls of Send, which closes a slow consumer; the relay must use TrySend
+	full     map[string]bool
 }
 
 func (f *fakeRouter) HandleFrame(t string, h realtime.FrameHandler) { f.handlers[t] = h }
 func (f *fakeRouter) Send(dev, typ string, data any) bool {
 	f.mu.Lock()
+	f.closing++
+	f.mu.Unlock()
+	return f.TrySend(dev, typ, data)
+}
+
+func (f *fakeRouter) TrySend(dev, typ string, data any) bool {
+	f.mu.Lock()
 	defer f.mu.Unlock()
-	if !f.online[dev] {
+	if !f.online[dev] || f.full[dev] {
 		return false
 	}
 	b, _ := json.Marshal(data)
@@ -62,7 +71,7 @@ func (f *fakeRouter) total() int {
 
 func (w world) frames(t *testing.T) *fakeRouter {
 	t.Helper()
-	fr := &fakeRouter{handlers: map[string]realtime.FrameHandler{}, online: map[string]bool{}}
+	fr := &fakeRouter{handlers: map[string]realtime.FrameHandler{}, online: map[string]bool{}, full: map[string]bool{}}
 	delivery.New(w.d).HandleFrames(fr)
 	for _, p := range []core.Principal{w.ana1, w.ana2, w.bob1, w.bob2, w.carol} {
 		fr.online[p.DeviceID] = true
@@ -405,5 +414,69 @@ func TestExpiredRowNeverDelivered(t *testing.T) {
 	w.f.Clock.Advance(2 * time.Hour) // no sweep ran
 	if n := count(); n != 1 {
 		t.Fatalf("after expiry, before sweep: %d", n)
+	}
+}
+
+func TestEphemeralNeverUsesClosingSend(t *testing.T) {
+	w := newWorld(t)
+	id := w.joined(t)
+	fr := w.frames(t)
+	fr.full[w.bob1.DeviceID] = true // a recipient whose buffer is full
+	if _, err := fr.eph(w.ana1, ephData(id, []byte("x"))); err != nil {
+		t.Fatal(err)
+	}
+	if fr.closing != 0 {
+		t.Fatalf("Send (closes slow consumers) called %d times", fr.closing)
+	}
+	if got := fr.to(w.bob1.DeviceID); len(got) != 0 {
+		t.Fatalf("full device got %+v", got)
+	}
+	if got := fr.to(w.bob2.DeviceID); len(got) != 1 {
+		t.Fatalf("other device got %+v", got)
+	}
+}
+
+func TestEphemeralDeviceBudgetAcrossConversations(t *testing.T) {
+	w := newWorld(t)
+	var ids []string
+	for i := 0; i < 5; i++ {
+		ids = append(ids, w.joined(t))
+	}
+	fr := w.frames(t)
+	for _, id := range ids[:4] {
+		for i := 0; i < 30; i++ {
+			if _, err := fr.eph(w.ana1, ephData(id, []byte("x"))); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if got := fr.to(w.bob1.DeviceID); len(got) != 120 {
+		t.Fatalf("relayed %d, want 120", len(got))
+	}
+	// A fifth conversation has its own budget, but the device is spent.
+	if r, err := fr.eph(w.ana1, ephData(ids[4], []byte("x"))); err != nil || r != nil {
+		t.Fatalf("over budget must be a plain ack: %v %v", r, err)
+	}
+	if got := fr.to(w.bob1.DeviceID); len(got) != 120 {
+		t.Fatalf("relayed %d after budget, want 120", len(got))
+	}
+	// The budget is checked before any lookup: even an unknown conversation
+	// is dropped, not refused.
+	if _, err := fr.eph(w.ana1, ephData(core.NewID(), []byte("x"))); err != nil {
+		t.Fatalf("over budget, unknown conversation: %v", err)
+	}
+	// Another device is unaffected.
+	if _, err := fr.eph(w.ana2, ephData(ids[4], []byte("x"))); err != nil {
+		t.Fatal(err)
+	}
+	if got := fr.to(w.bob1.DeviceID); len(got) != 121 {
+		t.Fatalf("relayed %d, want 121", len(got))
+	}
+	w.f.Clock.Advance(time.Minute + time.Second)
+	if _, err := fr.eph(w.ana1, ephData(ids[4], []byte("x"))); err != nil {
+		t.Fatal(err)
+	}
+	if got := fr.to(w.bob1.DeviceID); len(got) != 122 {
+		t.Fatalf("relayed %d, want 122", len(got))
 	}
 }
