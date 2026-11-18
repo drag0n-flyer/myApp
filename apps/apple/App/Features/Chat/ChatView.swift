@@ -107,7 +107,7 @@ struct ChatView: View {
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
-                ChatHeaderView(name: contact?.displayName ?? "", colorKey: contact?.id) {
+                ChatHeaderView(name: contact?.displayName ?? "", colorKey: contact?.id, status: model.headerStatus(chatID: chatID)) {
                     open(.info(chatID: chatID))
                 }
             }
@@ -155,6 +155,11 @@ struct ChatView: View {
             if sentClear { sentClear = false; return }
             if editing == nil { model.setDraft(text, for: chatID) }
         }
+        .onChange(of: draft) { _, text in
+            // Typing signals (spec 6.1); an edit fills the composer without being typing.
+            if editing == nil { model.composerChanged(chatID: chatID, isEmpty: text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
+        }
+        .onDisappear { model.composerSent(chatID: chatID) }
         .onChange(of: chat?.messages) { _, _ in
             closeBarsForChangedMessages()
             // A message that came, went or changed while the search bar is open: read the hits again.
@@ -530,6 +535,7 @@ struct ChatView: View {
         // Your own message always scrolls into view.
         tracker.setAtBottom(true, newestID: history.messages(newest: chat.messages).last?.id)
         model.send(.text(text), in: chatID, replyTo: replyingTo?.id)
+        model.composerSent(chatID: chatID)
         replyingTo = nil
         sentClear = true
         draft = ""
