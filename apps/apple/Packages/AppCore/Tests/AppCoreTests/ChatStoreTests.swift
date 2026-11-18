@@ -194,6 +194,34 @@ func msg(_ c: MessageContent) -> Message {
     s.download(messageID: m.id, in: "chat-riya")
 }
 
+@MainActor @Test func aSampleUploadShowsProgressAndCancelRemovesIt() {
+    let s = SampleChatStore()
+    s.sampleUploadDuration = .seconds(60)
+    let before = s.chat(id: "chat-riya")!.messages.count
+    s.sendAttachment(URL(fileURLWithPath: "/tmp/x.jpg"), kind: .photo, in: "chat-riya")
+    let m = s.chat(id: "chat-riya")!.lastMessage!
+    #expect(m.status == .sending && m.uploadProgress != nil)
+    s.cancelUpload(messageID: m.id, in: "chat-riya")
+    #expect(s.chat(id: "chat-riya")!.messages.count == before)
+}
+
+@MainActor @Test func cancelDoesNothingToASentSampleMessage() {
+    let s = SampleChatStore()
+    let sent = s.chat(id: "chat-riya")!.messages.first { $0.senderID == s.me.id }!
+    let before = s.chat(id: "chat-riya")!.messages.count
+    s.cancelUpload(messageID: sent.id, in: "chat-riya")
+    #expect(s.chat(id: "chat-riya")!.messages.count == before)
+}
+
+@MainActor @Test func sampleMediaBatchPutsTheCaptionAfterTheFirstItem() {
+    let s = SampleChatStore()
+    s.sampleUploadDuration = .seconds(60)
+    s.sendMedia([OutgoingMedia(url: URL(fileURLWithPath: "/tmp/a.jpg"), kind: .photo), OutgoingMedia(url: URL(fileURLWithPath: "/tmp/b.jpg"), kind: .photo)],
+                caption: " hi ", in: "chat-riya")
+    let tail = s.chat(id: "chat-riya")!.messages.suffix(3).map(\.content)
+    #expect(tail == [.photo(bytes: 0), .text("hi"), .photo(bytes: 0)])
+}
+
 @MainActor @Test func onChangeFires() {
     let s = SampleChatStore()
     var n = 0
