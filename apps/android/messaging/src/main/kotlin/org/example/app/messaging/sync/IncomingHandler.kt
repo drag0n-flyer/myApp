@@ -140,13 +140,48 @@ class IncomingHandler(
         if (repo.insertMessage(record)) bumpChat(record, repo)
     }
 
+    /** The member accounts of a group as its server just listed them, kept for a minute and never written to the store (see [noteFetchedMembers]). */
+    private class FetchedList(val at: Long, val accounts: Set<String>)
+
+    private val fetched = java.util.concurrent.ConcurrentHashMap<String, FetchedList>()
+
+    /**
+     * A message from a member the stored list has not got yet (a group that changed while this device was away): the inbox
+     * processor asks the server for the list once and gives the accounts it names here. They count as listed for
+     * [FETCHED_LIST_MS]. The stored list and its version stay the group sync's to write, so its system lines are not lost.
+     */
+    fun noteFetchedMembers(serverId: String, accounts: Set<String>, now: Long) {
+        fetched[serverId] = FetchedList(now, accounts)
+    }
+
+    /** The conversation ID of a group message whose MLS sender is not in the group's member list (stored, or just fetched); null for any other item. */
+    fun unlistedGroupConversation(incoming: Incoming, repo: Repository): String? {
+        if (incoming !is Incoming.Application) return null
+        val conversation = repo.conversationByGroup(incoming.group.raw) ?: return null
+        return conversation.serverId.takeIf { unlisted(incoming.sender.substringBefore('/'), conversation, repo) }
+    }
+
+    private fun unlisted(account: String, conversation: ConversationRecord, repo: Repository): Boolean {
+        if (repo.chat(conversation.chatId)?.kind != ChatKind.GROUP) return false
+        if (repo.groupMembers(conversation.chatId).any { it.accountId == account }) return false
+        val recent = fetched[conversation.serverId]?.takeIf { clock.now() - it.at in 0 until FETCHED_LIST_MS }
+        return recent == null || account !in recent.accounts
+    }
+
+    private fun isGroupChat(chatId: String, repo: Repository) = repo.chat(chatId)?.kind == ChatKind.GROUP
+
     private fun applyApplication(
         sender: String, plaintext: ByteArray, raw: RawInboxRecord, conversation: ConversationRecord, repo: Repository,
     ): AppliedResult {
         val account = sender.substringBefore('/')
         val device = sender.substringAfter('/', "").ifEmpty { null }
-        val envelope = ContentCodec.decode(plaintext)
         val chatId = conversation.chatId
+        // The server's list is the authority for who is in a group: nothing from anyone else is shown, counted or applied.
+        if (unlisted(account, conversation, repo)) {
+            log("item_dropped reason=sender_not_listed conversation=${conversation.serverId} cursor=${raw.cursor}")
+            return AppliedResult.Ignored
+        }
+        val envelope = ContentCodec.decode(plaintext)
 
         // A message whose `at + ttl` has passed (the device was offline) is dropped before anything is stored or downloaded.
         // Counted from the earlier of the claimed send time and now, so a sender's future `at` cannot lengthen a message's life.
@@ -211,7 +246,7 @@ class IncomingHandler(
                 AppliedResult.Ignored
             }
             is ContentEnvelope.Receipt -> {
-                applyReceipt(envelope.s, envelope.ids, account, chatId, repo)
+                applyReceipt(envelope.s, envelope.ids, account, minOf(envelope.at, clock.now()), chatId, repo)
                 AppliedResult.Ignored
             }
             // Typing and presence travel only in the ephemeral frame. One that arrives as a stored message is dropped.
@@ -224,8 +259,8 @@ class IncomingHandler(
                     if (account == me.accountId) {
                         // From another device of my own account: a higher version replaces my stored profile.
                         org.example.app.messaging.send.ProfileSender.adopt(repo, me.accountId, envelope.name, envelope.photo, envelope.ver)
-                    } else if (account == chatId && !repo.isBlocked(account)) {
-                        // Applied only for the chat's own peer, and never for a blocked account.
+                    } else if ((account == chatId || isGroupChat(chatId, repo)) && !repo.isBlocked(account)) {
+                        // Applied only for the chat's own peer (in a group, a listed member: the sender was checked above), and never for a blocked account.
                         repo.saveProfile(account, envelope.name, envelope.photo, envelope.ver)
                     }
                 }
@@ -262,6 +297,11 @@ class IncomingHandler(
      * ignored, so a late message cannot undo a newer choice. The line is a `system` row, never unread.
      */
     private fun applyTimer(timer: ContentEnvelope.Timer, account: String, chatId: String, repo: Repository) {
+        // In a group only an owner or admin sets the timer: the role is the server list's, the sender the MLS credential.
+        if (isGroupChat(chatId, repo)) {
+            val role = repo.groupMembers(chatId).firstOrNull { it.accountId == account }?.let { GroupRole.from(it.role) }
+            if (role == null || !role.canSetTimer) return
+        }
         val key = "timer-at:$chatId"
         // The sender controls `at`: a far-future one would otherwise win every later comparison for ever.
         val effectiveAt = minOf(timer.at, clock.now() + MAX_TIMER_SKEW_MS)
@@ -288,8 +328,16 @@ class IncomingHandler(
     }
 
     /** A receipt counts when it is about my own messages (from the peer), or comes from one of my own devices. */
-    private fun applyReceipt(kind: ReceiptKind, ids: List<String>, from: String, chatId: String, repo: Repository) {
+    private fun applyReceipt(kind: ReceiptKind, ids: List<String>, from: String, at: Long, chatId: String, repo: Repository) {
         val fromMe = from == me.accountId
+        // In a group a receipt is kept per member, for my messages only; the tick is worked out from them (`GroupTicks`).
+        if (!fromMe && isGroupChat(chatId, repo)) {
+            for (id in ids) {
+                val message = repo.message(id) ?: continue
+                if (message.chatId == chatId && message.senderAccount == me.accountId) repo.addReceipt(id, from, kind.wire, at)
+            }
+            return
+        }
         val valid = mutableListOf<String>()
         var unreadCleared = 0
         for (id in ids) {
@@ -306,13 +354,18 @@ class IncomingHandler(
     /** An incoming message from someone else counts as unread and moves the chat up. */
     private fun bumpChat(message: MessageRecord, repo: Repository) {
         // One statement: reading the row and writing it back could undo a pin, mute or archive made in between.
-        repo.bumpChat(message.chatId, if (message.senderAccount != me.accountId) 1 else 0, minOf(message.sentAt, clock.now()))
+        // A blocked member's message in a group is kept (its bubble is collapsed) but never counted unread.
+        val counts = message.senderAccount != me.accountId && !(isGroupChat(message.chatId, repo) && repo.isBlocked(message.senderAccount))
+        repo.bumpChat(message.chatId, if (counts) 1 else 0, minOf(message.sentAt, clock.now()))
     }
 }
 
 
 /** Envelope kinds that are never a chat row, valid or not. */
 private val PEOPLE_KINDS = setOf("typing", "presence", "timer", "profile", "group")
+
+/** How long a member list fetched for an unlisted sender counts. */
+private const val FETCHED_LIST_MS = 60_000L
 
 /** How far ahead of this device's clock a timer message's own time may claim to be. */
 private const val MAX_TIMER_SKEW_MS = 5 * 60_000L
