@@ -157,12 +157,13 @@ public struct IncomingHandler: Sendable {
         let envelope = ContentEnvelope.decode(plaintext)
         let chatID = conversation.chatID
 
-        func store(_ status: String? = nil, replyTo: String? = nil, folded: String = "", id: String? = nil) throws -> AppliedResult {
+        func store(_ status: String? = nil, replyTo: String? = nil, folded: String = "", id: String? = nil,
+                   content: Data? = nil) throws -> AppliedResult {
             let ownDevice = account == me.accountID
             let record = MessageRecord(
                 id: id ?? (envelope.id.isEmpty ? "unsupported-\(raw.cursor)" : envelope.id), chatID: chatID,
                 conversationID: conversation.serverID, senderAccount: account, senderDevice: device,
-                sentAt: Date(timeIntervalSince1970: Double(envelope.at) / 1000), receivedAt: now(), envelope: plaintext,
+                sentAt: Date(timeIntervalSince1970: Double(envelope.at) / 1000), receivedAt: now(), envelope: content ?? plaintext,
                 status: status ?? (ownDevice ? "sent" : "delivered"), replyTo: replyTo, editedAt: nil, deleted: false,
                 undecryptable: false, folded: folded)
             guard try db.insertMessage(record) else { return .ignored }
@@ -171,6 +172,11 @@ public struct IncomingHandler: Sendable {
         }
 
         func media(_ att: Att, kind: String, reply: String?, folded: String = "") throws -> AppliedResult {
+            // The ID becomes part of a file path when it is downloaded: a message with an unusable one is kept as
+            // a message this app cannot show, and no attachment row is made.
+            guard AttachmentID.isValid(att.id) else {
+                return try store(content: ContentEnvelope(id: envelope.id, at: envelope.at, body: .unsupported(kind: "attachment")).encoded())
+            }
             let result = try store(replyTo: reply, folded: folded)
             if case .stored(let record) = result {
                 try db.upsertAttachment(AttachmentRecord(
