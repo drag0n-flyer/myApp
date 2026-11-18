@@ -35,6 +35,7 @@ func (m *Module) Routes(r *httpx.Router) {
 	m.lookupRoutes(r)
 	m.blockRoutes(r)
 	m.reportRoutes(r)
+	m.contactLinkRoutes(r)
 }
 
 // Commands returns the admin CLI subcommands.
