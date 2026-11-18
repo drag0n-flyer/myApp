@@ -313,12 +313,17 @@ fun ChatScreen(
         val m = byIdRef[id]
         // The menu was built from an earlier copy: drop the action if it no longer applies.
         if (m == null || !MessageActions.stillApplies(action, m, m.senderId == myId)) return
-        val body = (m.content as? MessageContent.Text)?.text
+        val body = when (val c = m.content) {
+            is MessageContent.Text -> c.text
+            is MessageContent.Photo -> c.caption
+            is MessageContent.File -> c.caption
+            else -> null
+        }
         when (action) {
             MessageAction.Reply -> { editing = null; replying = id }
             MessageAction.React -> Unit
             MessageAction.Copy -> if (body != null) scope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("", body))) }
-            MessageAction.Forward -> forwardText = body
+            MessageAction.Forward -> forwardText = (m.content as? MessageContent.Text)?.text
             MessageAction.Edit -> if (body != null) { replying = null; editing = id; text = body }
             MessageAction.Delete -> confirmDelete = id
         }

@@ -161,10 +161,10 @@ abstract class RepositoryContract {
 
     @Test fun searchFollowsEditsAndDeletes() {
         repo.insertMessage(message("m1", "alpha bravo"))
-        assertTrue(repo.applyEdit("m1", "alice", byteArrayOf(1), TextFold.fold("charlie delta"), 5))
+        assertTrue(repo.applyEdit("m1", "alice", byteArrayOf(1), TextFold.fold("charlie delta"), 5, null, null))
         assertTrue(repo.search("alpha", 10).isEmpty())
         assertEquals(listOf("m1"), repo.search("charlie", 10).map { it.messageId })
-        assertFalse(repo.applyEdit("m1", "mallory", byteArrayOf(1), "evil", 6))
+        assertFalse(repo.applyEdit("m1", "mallory", byteArrayOf(1), "evil", 6, null, null))
         assertTrue(repo.markDeleted("m1", "alice"))
         assertTrue(repo.search("charlie", 10).isEmpty())
     }

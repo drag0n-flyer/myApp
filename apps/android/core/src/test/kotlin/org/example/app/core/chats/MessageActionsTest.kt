@@ -19,6 +19,17 @@ class MessageActionsTest {
     private val text = MessageContent.Text("hi")
     private val photo = MessageContent.Photo(1000)
 
+    @Test fun aCaptionedPhotoCanBeCopiedAndItsSenderCanEditIt() {
+        val captioned = MessageContent.Photo(1000, "words")
+        assertEquals(listOf(Reply, React, Copy, Edit, Delete), MessageActions.available(m(captioned), isMine = true))
+        assertEquals(listOf(Reply, React, Copy), MessageActions.available(m(captioned), isMine = false))
+        val file = MessageContent.File("a.pdf", 5, "application/pdf", "words")
+        assertEquals(listOf(Reply, React, Copy, Edit, Delete), MessageActions.available(m(file), isMine = true))
+    }
+
+    @Test fun aPhotoWithoutACaptionHasNoCopyOrEdit() =
+        assertEquals(listOf(Reply, React, Delete), MessageActions.available(m(photo), isMine = true))
+
     @Test fun ownTextHasEverything() =
         assertEquals(listOf(Reply, React, Copy, Forward, Edit, Delete), MessageActions.available(m(text), isMine = true))
 

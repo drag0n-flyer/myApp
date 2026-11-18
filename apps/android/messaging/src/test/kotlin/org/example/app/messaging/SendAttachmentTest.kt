@@ -515,7 +515,7 @@ class SendAttachmentTest {
     }
 
     @Test
-    fun aBatchCreatesItsMessagesInOrderTheCaptionAfterTheFirstItem() = runBlocking<Unit> {
+    fun aBatchCreatesItsMessagesInOrderAndTheCaptionRidesOnTheFirstItem() = runBlocking<Unit> {
         val f = fixture()
         val gateA = CompletableDeferred<Unit>()
         val gateB = CompletableDeferred<Unit>()
@@ -528,24 +528,23 @@ class SendAttachmentTest {
         val a = File(dir, "a.txt").also { it.writeText("aaa") }
         val b = File(dir, "b.txt").also { it.writeText("bbb") }
         val plan = listOf(
-            SendPlan.Send.Attachment(Picked("file:${a.path}", MediaKind.File, 3)),
-            SendPlan.Send.Text("hi"),
+            SendPlan.Send.Attachment(Picked("file:${a.path}", MediaKind.File, 3), "hi"),
             SendPlan.Send.Attachment(Picked("file:${b.path}", MediaKind.File, 3)),
         )
         s.store.sendBatch(plan, "acc-ana")
         fun mine() = f.d.repo.messages("acc-ana", null, 50).filter { it.senderAccount == f.d.me.accountId }
         Thread.sleep(200)
-        assertEquals(0, mine().size, "the caption waits for the first item")
+        assertEquals(0, mine().size, "nothing exists before the first item is staged")
         gateA.complete(Unit)
-        waitUntil("the caption") { mine().size == 2 }
+        waitUntil("the first item") { mine().size == 1 }
         Thread.sleep(200)
-        assertEquals(2, mine().size, "the second item waits for the caption")
+        assertEquals(1, mine().size, "the second item waits for the first")
         gateB.complete(Unit)
         s.store.settle()
-        val all = mine()
-        assertEquals(3, all.size)
-        assertEquals(1, all.count { ContentCodec.decode(it.envelope) is ContentEnvelope.Text })
-        assertEquals(2, all.count { ContentCodec.decode(it.envelope) is ContentEnvelope.File })
+        val all = mine().sortedBy { it.sentAt }
+        assertEquals(2, all.size)
+        assertEquals(0, all.count { ContentCodec.decode(it.envelope) is ContentEnvelope.Text }, "no text message follows")
+        assertEquals(listOf("hi", null), all.map { (ContentCodec.decode(it.envelope) as ContentEnvelope.File).c })
     }
 
     @Test
@@ -618,8 +617,7 @@ class SendAttachmentTest {
         val b = File(dir, "b.txt").also { it.writeText("bbb") }
         s.store.sendBatch(
             listOf(
-                SendPlan.Send.Attachment(Picked("file:${a.path}", MediaKind.File, 3)),
-                SendPlan.Send.Text("hi"),
+                SendPlan.Send.Attachment(Picked("file:${a.path}", MediaKind.File, 3), "hi"),
                 SendPlan.Send.Attachment(Picked("file:${b.path}", MediaKind.File, 3)),
             ),
             "acc-ana",
@@ -628,8 +626,8 @@ class SendAttachmentTest {
         // The test clock does not move; the store still orders the three as sent.
         val kinds = f.d.repo.messages("acc-ana", null, 50).filter { it.senderAccount == f.d.me.accountId }
             .sortedBy { it.sentAt }.map { ContentCodec.decode(it.envelope) }
-        assertEquals(listOf("file", "text", "file"), kinds.map { if (it is ContentEnvelope.Text) "text" else "file" })
-        assertEquals(3, f.d.repo.messages("acc-ana", null, 50).filter { it.senderAccount == f.d.me.accountId }.map { it.sentAt }.toSet().size)
+        assertEquals(listOf("file", "file"), kinds.map { if (it is ContentEnvelope.Text) "text" else "file" })
+        assertEquals(2, f.d.repo.messages("acc-ana", null, 50).filter { it.senderAccount == f.d.me.accountId }.map { it.sentAt }.toSet().size)
     }
 
     @Test
@@ -918,5 +916,80 @@ class SendAttachmentTest {
         val sent = assertIs<ContentEnvelope.File>(peerGot(f, id))
         assertEquals(original, sent.at)
         assertEquals(original, f.rig.ana1.repo.message(id)!!.sentAt)
+    }
+
+    @Test
+    fun aCaptionIsInTheEnvelopeTheRowTheSearchTextAndReachesThePeer() = runBlocking<Unit> {
+        val f = fixture()
+        val s = session(f)
+        s.store.sendAttachment(staged(f).path, MediaKind.File, "acc-ana", "see page 2")
+        s.store.settle()
+        val id = sentId(f)
+        val row = f.d.repo.message(id)!!
+        assertEquals("see page 2", (ContentCodec.decode(row.envelope) as ContentEnvelope.File).c)
+        assertEquals("see page 2", row.caption)
+        assertTrue(row.folded.contains("see page 2") && row.folded.contains("notes.txt"))
+        assertEquals("see page 2", assertIs<ContentEnvelope.File>(peerGot(f, id)).c)
+        assertEquals("see page 2", f.rig.ana1.repo.message(id)!!.caption)
+    }
+
+    @Test
+    fun aPhotoCaptionTravelsAsC() = runBlocking<Unit> {
+        val f = fixture()
+        f.width = 4; f.height = 3
+        val s = session(f)
+        s.store.sendAttachment(staged(f).path, MediaKind.Photo, "acc-ana", "sunset")
+        s.store.settle()
+        assertEquals("sunset", assertIs<ContentEnvelope.Photo>(peerGot(f, sentId(f))).c)
+    }
+
+    @Test
+    fun theCaptionIsOnTheRowWhileTheUploadIsStillRunning() = runBlocking<Unit> {
+        val f = fixture()
+        val s = session(f)
+        val gate = CompletableDeferred<Unit>()
+        s.api.gate = gate
+        s.store.sendAttachment(staged(f).path, MediaKind.File, "acc-ana", "waiting")
+        waitUntil("the upload to start") { s.api.attempts.get() == 1 }
+        val row = f.d.repo.message(sentId(f))!!
+        assertEquals("waiting", row.caption)
+        assertEquals("waiting", (ContentCodec.decode(row.envelope) as ContentEnvelope.File).c)
+        gate.complete(Unit)
+        s.store.settle()
+    }
+
+    @Test
+    fun aFailedUploadKeepsItsCaptionThroughTryAgain() = runBlocking<Unit> {
+        val f = fixture()
+        val s = session(f)
+        s.api.failUploads = true
+        s.store.sendAttachment(staged(f).path, MediaKind.File, "acc-ana", "keep me")
+        s.store.settle()
+        val id = sentId(f)
+        assertEquals("failed", statusOf(f, id))
+        s.api.failUploads = false
+        s.store.retrySend(id)
+        s.store.settle()
+        assertEquals("keep me", assertIs<ContentEnvelope.File>(peerGot(f, id)).c)
+    }
+
+    @Test
+    fun aCaptionOverTheTextLimitIsCutNotSentLong() = runBlocking<Unit> {
+        val f = fixture()
+        val s = session(f)
+        s.store.sendAttachment(staged(f).path, MediaKind.File, "acc-ana", "x".repeat(5_000))
+        s.store.settle()
+        val c = assertIs<ContentEnvelope.File>(peerGot(f, sentId(f))).c!!
+        assertEquals(4_096, c.length)
+    }
+
+    @Test
+    fun noCaptionMeansNoCField() = runBlocking<Unit> {
+        val f = fixture()
+        val s = session(f)
+        s.store.sendAttachment(staged(f).path, MediaKind.File, "acc-ana", "  ")
+        s.store.settle()
+        assertNull(assertIs<ContentEnvelope.File>(peerGot(f, sentId(f))).c)
+        assertNull(f.d.repo.message(sentId(f))!!.caption)
     }
 }

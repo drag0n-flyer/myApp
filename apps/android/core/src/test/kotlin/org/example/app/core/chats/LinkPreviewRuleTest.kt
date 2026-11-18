@@ -165,4 +165,40 @@ class LinkPreviewRuleTest {
         )
         for (location in refused) assertNull(LinkPreviewRule.redirectTarget(from, location), location)
     }
+
+    // cardFor: what may be sent
+
+    private val jpeg = byteArrayOf(-1, -40, 1)
+
+    @Test fun cardForKeepsAValidCardAndTrimsNothingElse() {
+        val card = LinkPreviewCard("https://example.org/a", "Title", "Desc", jpeg)
+        assertEquals(card, LinkPreviewRule.cardFor("see https://example.org/a", card))
+        assertEquals(LinkPreviewCard("https://example.org/a", "T"), LinkPreviewRule.cardFor("https://example.org/a", LinkPreviewCard("https://example.org/a", "T")))
+    }
+
+    @Test fun cardForRefusesWhatAReceiverWouldDrop() {
+        val text = "see https://example.org/a"
+        val refused = listOf(
+            LinkPreviewCard("https://example.org/b", "T"),
+            LinkPreviewCard("http://example.org/a", "T"),
+            LinkPreviewCard("https://example.org/a", ""),
+            LinkPreviewCard("https://example.org/a", "  "),
+            LinkPreviewCard("https://example.org/a", "t".repeat(201)),
+            LinkPreviewCard("https://example.org/a", "T", "d".repeat(301)),
+            LinkPreviewCard("https://example.org/a", "T", null, byteArrayOf(1, 2, 3)),
+            LinkPreviewCard("https://example.org/a", "T", null, byteArrayOf(-1)),
+            LinkPreviewCard("https://example.org/a", "T", null, ByteArray(8_193).also { it[0] = -1; it[1] = -40 }),
+        )
+        for (card in refused) assertNull(LinkPreviewRule.cardFor(text, card), card.title.length.toString() + card.url)
+        assertNull(LinkPreviewRule.cardFor("see https://127.0.0.1/a", LinkPreviewCard("https://127.0.0.1/a", "T")))
+    }
+
+    @Test fun cardForCountsCodePointsAndAcceptsTheLimits() {
+        val emoji = "\uD83D\uDE00"
+        val text = "https://example.org/a"
+        assertEquals(true, LinkPreviewRule.cardFor(text, LinkPreviewCard(text, emoji.repeat(200), emoji.repeat(300))) != null)
+        assertNull(LinkPreviewRule.cardFor(text, LinkPreviewCard(text, emoji.repeat(201))))
+        assertNull(LinkPreviewRule.cardFor(text, LinkPreviewCard(text, "T", emoji.repeat(301))))
+        assertEquals(true, LinkPreviewRule.cardFor(text, LinkPreviewCard(text, "T", null, ByteArray(8_192).also { it[0] = -1; it[1] = -40 })) != null)
+    }
 }

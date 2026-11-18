@@ -14,10 +14,12 @@ object MessageActions {
             else -> {}
         }
         val text = content is MessageContent.Text
+        // A caption is text under the media: it can be copied, and edited by its sender.
+        val caption = (content as? MessageContent.Photo)?.caption != null || (content as? MessageContent.File)?.caption != null
         if (isMine && message.status == DeliveryStatus.Failed) {
             // Never left this device: nothing to reply to, react to, forward or edit.
             return buildList {
-                if (text) add(MessageAction.Copy)
+                if (text || caption) add(MessageAction.Copy)
                 add(MessageAction.Delete)
             }
         }
@@ -27,6 +29,9 @@ object MessageActions {
             if (text) {
                 add(MessageAction.Copy)
                 add(MessageAction.Forward)
+                if (isMine) add(MessageAction.Edit)
+            } else if (caption) {
+                add(MessageAction.Copy)
                 if (isMine) add(MessageAction.Edit)
             }
             if (isMine) add(MessageAction.Delete)

@@ -16,6 +16,7 @@ import org.example.app.core.chats.ChatMedia
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
+import org.example.app.core.chats.LinkPreviewRule
 import org.example.app.core.chats.SendPlan
 import org.example.app.core.chats.UploadCancel
 import kotlinx.coroutines.CompletableDeferred
@@ -50,6 +51,8 @@ import org.example.app.core.settings.MediaKind
 import org.example.app.messaging.content.Att
 import org.example.app.messaging.content.ContentCodec
 import org.example.app.messaging.content.ContentEnvelope
+import org.example.app.messaging.content.EditRule
+import org.example.app.messaging.content.LinkPreview
 import org.example.app.messaging.content.TextLimit
 import org.example.app.messaging.media.Downloader
 import org.example.app.messaging.media.OpenedAttachment
@@ -510,12 +513,20 @@ class LiveChatStore(
     // Sending
 
     override fun send(content: MessageContent, chatId: String, replyTo: String?) {
-        val raw = (content as? MessageContent.Text)?.text ?: return
-        val text = TextLimit.truncate(raw)
+        val body = content as? MessageContent.Text ?: return
+        val text = TextLimit.truncate(body.text)
         if (text.isBlank()) return
+        // A preview a receiver would drop (link not in the text, too long, not a JPEG) is left off; the text still goes.
+        val card = body.preview?.let { LinkPreviewRule.cardFor(text, it) }
         write {
             if (!ensureChatRow(chatId)) return@write
-            outbox.enqueue(ContentEnvelope.Text(freshId(), nowMs(), text, replyTo, ttl = ttlFor(chatId)), chatId)
+            outbox.enqueue(
+                ContentEnvelope.Text(
+                    freshId(), nowMs(), text, replyTo, ttl = ttlFor(chatId),
+                    lp = card?.let { LinkPreview(it.url, it.title, it.desc, it.image) },
+                ),
+                chatId,
+            )
             bumpActivity(chatId, nowMs())
             requestFlush()
         }
@@ -570,6 +581,15 @@ class LiveChatStore(
         else -> null
     }
 
+    private fun captionOf(envelope: ByteArray?): String? = when (val e = envelope?.let { ContentCodec.decode(it) }) {
+        is ContentEnvelope.Photo -> e.c
+        is ContentEnvelope.File -> e.c
+        else -> null
+    }
+
+    /** The search text of an attachment's message: a file's name and the caption. */
+    private fun foldedFor(name: String?, caption: String?): String = fold(listOfNotNull(name, caption).joinToString(" "))
+
     /** Messages that gave up sending (they show as [DeliveryStatus.Failed]; the UI offers [retrySend]). */
     fun failedMessageIds(chatId: String): Set<String> =
         repo.messages(chatId, null, 200).filter { it.status == "failed" && it.senderAccount == device.accountId }.map { it.id }.toSet()
@@ -589,13 +609,15 @@ class LiveChatStore(
      * with the file's real name and size, so it shows at once; a failed upload makes it `failed` and keeps the files for
      * "Try again" ([retryUpload]); a file that can never be sent is removed ([dropUnsendable]).
      */
-    override fun sendAttachment(path: String, kind: MediaKind, chatId: String) = startAttachment(path, kind, chatId, null)
+    override fun sendAttachment(path: String, kind: MediaKind, chatId: String) = startAttachment(path, kind, chatId, null, null)
+
+    override fun sendAttachment(path: String, kind: MediaKind, chatId: String, caption: String?) = startAttachment(path, kind, chatId, null, caption)
 
     override val attachmentLimitBytes: Long get() = maxAttachmentBytes
 
     /**
-     * A preview's plan, in order: each attachment's message is stored (staged, `sending`) before the next step starts, so
-     * the caption and the later items come after it in the chat. The uploads then run side by side.
+     * A preview's plan, in order: each attachment's message is stored (staged, `sending`) before the next one starts, so
+     * the items keep their order in the chat. The caption is in the first one's message. The uploads then run side by side.
      */
     override fun sendBatch(sends: List<SendPlan.Send>, chatId: String) {
         if (closed.get() || sends.isEmpty()) return
@@ -603,18 +625,9 @@ class LiveChatStore(
         scope.launch {
             try {
                 for (item in sends) {
-                    when (item) {
-                        is SendPlan.Send.Attachment -> {
-                            val created = CompletableDeferred<Unit>()
-                            startAttachment(item.picked.path, item.picked.kind, chatId, created)
-                            created.await()
-                        }
-                        is SendPlan.Send.Text -> {
-                            send(MessageContent.Text(item.text), chatId)
-                            // The text is written by the writer: the next item must be made after it, not before.
-                            awaitWrites()
-                        }
-                    }
+                    val created = CompletableDeferred<Unit>()
+                    startAttachment(item.picked.path, item.picked.kind, chatId, created, item.caption)
+                    created.await()
                 }
             } finally {
                 inFlight.update { it - 1 }
@@ -623,7 +636,9 @@ class LiveChatStore(
     }
 
     /** [created] completes once the message is stored (or the attachment was dropped), before its upload starts. */
-    private fun startAttachment(path: String, kind: MediaKind, chatId: String, created: CompletableDeferred<Unit>?) {
+    private fun startAttachment(path: String, kind: MediaKind, chatId: String, created: CompletableDeferred<Unit>?, rawCaption: String?) {
+        // A caption follows the text rules: cut at the text limit, and none when blank. A voice message has none.
+        val caption = rawCaption?.let { TextLimit.truncate(it) }?.takeIf { it.isNotBlank() && kind != MediaKind.Voice }
         if (closed.get()) { created?.complete(Unit); return }
         inFlight.update { it + 1 }
         scope.launch {
@@ -642,8 +657,9 @@ class LiveChatStore(
                         MessageRecord(
                             id = id, chatId = chatId, conversationId = null, senderAccount = device.accountId, senderDevice = device.deviceId,
                             sentAt = at, receivedAt = at,
-                            envelope = ContentCodec.encode(envelopeFor(kind, id, at, placeholderAtt(staged.length()), PreparedMedia(staged), ttl)),
-                            status = "sending", replyTo = null, folded = "", expiresAt = Expiry.expiresAt(at, ttl?.toLong()),
+                            envelope = ContentCodec.encode(envelopeFor(kind, id, at, placeholderAtt(staged.length()), PreparedMedia(staged), ttl, caption)),
+                            status = "sending", replyTo = null, folded = caption?.let { fold(it) } ?: "",
+                            expiresAt = Expiry.expiresAt(at, ttl?.toLong()), caption = caption,
                         ),
                     )
                     repo.set(PENDING_UPLOAD_PREFIX + id, Json.encodeToString(PendingUpload.serializer(), pending).encodeToByteArray())
@@ -765,6 +781,7 @@ class LiveChatStore(
         val kind = MediaKind.valueOf(start.kind)
         // The timer chosen when the message was made stays with it, through a retry or a restart.
         val ttl = ttlOf(repo.message(id)?.envelope)
+        val caption = captionOf(repo.message(id)?.envelope)
         var pending = start
         val keptFile = pending.prepared.takeIf { it.isNotEmpty() }?.let(::File)?.takeIf { it.isFile }
         val prepared: PreparedMedia = if (keptFile != null) {
@@ -796,7 +813,7 @@ class LiveChatStore(
             val p = PreparedMedia(file, fresh.width, fresh.height, fresh.thumbnail, fresh.duration, fresh.name)
             pending = pending.copy(prepared = file.path)
             repo.transaction {
-                repo.replaceUnsentEnvelope(id, device.accountId, ContentCodec.encode(envelopeFor(kind, id, at, placeholderAtt(file.length()), p, ttl)), "", nowMs())
+                repo.replaceUnsentEnvelope(id, device.accountId, ContentCodec.encode(envelopeFor(kind, id, at, placeholderAtt(file.length()), p, ttl, caption)), foldedFor(null, caption), nowMs())
                 repo.set(PENDING_UPLOAD_PREFIX + id, Json.encodeToString(PendingUpload.serializer(), pending).encodeToByteArray())
             }
             reload()
@@ -812,11 +829,11 @@ class LiveChatStore(
             return
         }
         val att = uploaded.att
-        val envelope = envelopeFor(kind, id, at, att, prepared, ttl)
+        val envelope = envelopeFor(kind, id, at, att, prepared, ttl, caption)
         val queued = try {
             repo.transaction {
                 // False when the message was deleted while it uploaded: then nothing is queued and no record is written.
-                if (!repo.replaceUnsentEnvelope(id, device.accountId, ContentCodec.encode(envelope), fold(prepared.name.takeIf { kind == MediaKind.File || kind == MediaKind.Video } ?: ""), nowMs())) {
+                if (!repo.replaceUnsentEnvelope(id, device.accountId, ContentCodec.encode(envelope), foldedFor(prepared.name.takeIf { kind == MediaKind.File || kind == MediaKind.Video }, caption), nowMs())) {
                     false
                 } else {
                     outbox.enqueue(envelope, pending.chatId)
@@ -898,12 +915,12 @@ class LiveChatStore(
     /** The stand-in until the upload gives the real one: no id, but the real size, so the bubble never shows 0 B. */
     private fun placeholderAtt(size: Long) = Att("", ByteArray(0), ByteArray(0), size, size)
 
-    private fun envelopeFor(kind: MediaKind, id: String, at: Long, att: Att, p: PreparedMedia, ttl: Int? = null): ContentEnvelope = when (kind) {
-        MediaKind.Photo -> ContentEnvelope.Photo(id, at, att, p.width, p.height, p.thumbnail, ttl = ttl)
+    private fun envelopeFor(kind: MediaKind, id: String, at: Long, att: Att, p: PreparedMedia, ttl: Int? = null, caption: String? = null): ContentEnvelope = when (kind) {
+        MediaKind.Photo -> ContentEnvelope.Photo(id, at, att, p.width, p.height, p.thumbnail, ttl = ttl, c = caption)
         // A video is file content (the same on every platform): its name keeps the extension and the mime says video/.
-        MediaKind.Video -> ContentEnvelope.File(id, at, att, p.name, p.mime.ifEmpty { ChatMedia.videoMime(p.name) }, ttl = ttl)
+        MediaKind.Video -> ContentEnvelope.File(id, at, att, p.name, p.mime.ifEmpty { ChatMedia.videoMime(p.name) }, ttl = ttl, c = caption)
         MediaKind.Voice -> ContentEnvelope.Voice(id, at, att, p.duration, ttl = ttl)
-        MediaKind.File -> ContentEnvelope.File(id, at, att, p.name, p.mime.ifEmpty { "application/octet-stream" }, ttl = ttl)
+        MediaKind.File -> ContentEnvelope.File(id, at, att, p.name, p.mime.ifEmpty { "application/octet-stream" }, ttl = ttl, c = caption)
     }
 
     /** What a retry knows about the prepared file: its length, size or name, from the stored envelope. */
@@ -1045,10 +1062,11 @@ class LiveChatStore(
         if (newText.isBlank()) return@write
         val record = repo.message(messageId) ?: return@write
         if (record.chatId != chatId || record.senderAccount != device.accountId || record.deleted) return@write
-        val old = ContentCodec.decode(record.envelope) as? ContentEnvelope.Text ?: return@write
-        val edited = ContentCodec.encode(ContentEnvelope.Text(old.id, old.at, newText, old.r))
-        if (!repo.applyEdit(messageId, device.accountId, edited, fold(newText), nowMs())) return@write
-        sendControl(chatId) { id, at -> ContentEnvelope.Edit(id, at, messageId, newText) }
+        val result = EditRule.apply(ContentCodec.decode(record.envelope), newText, fold) ?: return@write
+        if (!repo.applyEdit(messageId, device.accountId, ContentCodec.encode(result.envelope), result.folded, nowMs(), result.caption, result.linkPreview)) return@write
+        // A photo or file that has not gone out yet sends its edited caption itself: the upload reads it from this row.
+        val notSent = record.status == "sending" || record.status == "failed"
+        if (result.envelope is ContentEnvelope.Text || !notSent) sendControl(chatId) { id, at -> ContentEnvelope.Edit(id, at, messageId, newText) }
     }
 
     override fun delete(messageId: String, chatId: String) = write {

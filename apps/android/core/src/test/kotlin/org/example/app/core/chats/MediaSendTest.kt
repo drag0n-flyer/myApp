@@ -10,18 +10,29 @@ import org.example.app.core.settings.MediaKind
 class SendPlanTest {
     private fun photo(n: Int) = Picked("p$n", MediaKind.Photo, 10)
 
-    @Test fun threePhotosAndACaptionSendPhotoTextPhotoPhoto() {
+    @Test fun threePhotosAndACaptionSendThreeItemsAndTheCaptionRidesOnTheFirst() {
         val items = listOf(photo(1), photo(2), photo(3))
         val result = SendPlan.plan(items, " hi ", 1_000)
         assertEquals(
-            SendPlan.Result.Ok(listOf(SendPlan.Send.Attachment(items[0]), SendPlan.Send.Text("hi"), SendPlan.Send.Attachment(items[1]), SendPlan.Send.Attachment(items[2]))),
+            SendPlan.Result.Ok(listOf(SendPlan.Send.Attachment(items[0], "hi"), SendPlan.Send.Attachment(items[1]), SendPlan.Send.Attachment(items[2]))),
             result,
         )
     }
 
-    @Test fun aBlankCaptionAddsNoText() {
+    @Test fun noTextMessageIsEverPlanned() {
+        val sends = (SendPlan.plan(listOf(photo(1), photo(2)), "caption", 1_000) as SendPlan.Result.Ok).sends
+        assertEquals(2, sends.size)
+        assertEquals(listOf<String?>("caption", null), sends.map { it.caption })
+    }
+
+    @Test fun aBlankCaptionIsNoCaption() {
         val result = SendPlan.plan(listOf(photo(1)), "  \n ", 1_000) as SendPlan.Result.Ok
-        assertEquals(listOf<SendPlan.Send>(SendPlan.Send.Attachment(photo(1))), result.sends)
+        assertEquals(listOf(SendPlan.Send.Attachment(photo(1), null)), result.sends)
+    }
+
+    @Test fun aCaptionIsTrimmedAndKeptWhole() {
+        val result = SendPlan.plan(listOf(photo(1)), "  line one\nline two  ", 1_000) as SendPlan.Result.Ok
+        assertEquals("line one\nline two", result.sends.single().caption)
     }
 
     @Test fun elevenItemsAreTooMany() = assertEquals(SendPlan.Result.Refused(SendPlan.Refusal.TooMany), SendPlan.plan((1..11).map(::photo), "", 1_000))

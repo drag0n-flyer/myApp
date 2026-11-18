@@ -26,6 +26,24 @@ object LinkPreviewRule {
         return link.url.takeIf { it.length <= MAX_URL && it in text }
     }
 
+    private const val TITLE_MAX = 200
+    private const val DESC_MAX = 300
+    private const val IMAGE_MAX = 8_192
+
+    /**
+     * [card] when a receiver will accept it for a message with [text], else null: the url is an https link that is in
+     * the text and passes [checkUrl]; the title has 1 to 200 code points (not blank); the description at most 300; the
+     * image, when there is one, is a JPEG of at most 8,192 bytes.
+     */
+    fun cardFor(text: String, card: LinkPreviewCard): LinkPreviewCard? {
+        if (checkUrl(card.url) == null || card.url !in text) return null
+        if (card.title.isBlank() || card.title.codePointCount(0, card.title.length) > TITLE_MAX) return null
+        if (card.desc != null && card.desc.codePointCount(0, card.desc.length) > DESC_MAX) return null
+        val img = card.image
+        if (img != null && !(img.size in 2..IMAGE_MAX && img[0] == 0xFF.toByte() && img[1] == 0xD8.toByte())) return null
+        return card
+    }
+
     /**
      * True when a request to [host] may be made: [host] is an ordinary public DNS name ([hostNameAllowed]) and every
      * address it [resolved] to is a public one. One bad address refuses the name. Each address is 4 or 16 raw bytes.

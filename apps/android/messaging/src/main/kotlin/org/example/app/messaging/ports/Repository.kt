@@ -240,7 +240,11 @@ interface Repository {
     fun messages(chatId: String, before: MessageRecord?, limit: Int): List<MessageRecord>
     /** Never lowers a status along sending < sent < delivered < read. Other targets are set unconditionally. */
     fun updateStatus(ids: List<String>, status: String)
-    fun applyEdit(id: String, sender: String, envelope: ByteArray, folded: String, at: Long): Boolean
+    /**
+     * Applies an edit: new envelope, search text and edit time. [caption] and [linkPreview] are the new values of those
+     * columns, used only where the row already has one (a caption of a captioned message, the preview of a message that has one).
+     */
+    fun applyEdit(id: String, sender: String, envelope: ByteArray, folded: String, at: Long, caption: String?, linkPreview: String?): Boolean
     /**
      * Replaces the envelope of one's own message that has not left yet (`sending` or `failed`), without marking it edited.
      * An attachment is stored before its upload, with what is known then; this puts in what the upload returned.
