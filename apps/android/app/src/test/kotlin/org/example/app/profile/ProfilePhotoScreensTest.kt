@@ -40,7 +40,7 @@ class ProfilePhotoScreensTest {
 
     private fun store(): SampleChatStore {
         val s = SampleChatStore(SampleData.make(Instant.now()))
-        val riya = s.chat("chat-riya")!!.contactId
+        val riya = s.chat("chat-riya")!!.contactId!!
         s.putProfile(Profile(riya, "Riya", requireNotNull(SamplePhoto.make()), 1))
         return s
     }

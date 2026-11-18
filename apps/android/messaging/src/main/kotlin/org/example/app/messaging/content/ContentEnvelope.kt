@@ -213,6 +213,9 @@ object ContentCodec {
         return bytes.takeIf { org.example.app.core.people.ProfilePhotoRule.isAcceptable(it) }
     }
 
+    /** A group photo's size limit (the same as a profile photo's). */
+    private const val PHOTO_MAX = 24_576
+
     private fun jpeg(b64: String, max: Int): ByteArray? {
         val bytes = try { Base64.getDecoder().decode(b64) } catch (_: IllegalArgumentException) { return null }
         return bytes.takeIf { it.size in 2..max && it[0] == 0xFF.toByte() && it[1] == 0xD8.toByte() }
