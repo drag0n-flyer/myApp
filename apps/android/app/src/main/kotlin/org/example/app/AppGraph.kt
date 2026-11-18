@@ -470,7 +470,8 @@ class AppGraph(
                 is ServerEvent.Inbox -> quietly("sync") { session.chatStore.syncInbox() }
                 is ServerEvent.CallRing, is ServerEvent.CallAnswered, is ServerEvent.CallSignal, is ServerEvent.CallEnded ->
                     session.callEvents.emit(it)
-                is ServerEvent.DeviceRevoked -> Unit
+                // Typing and presence frames are wired to `EphemeralChannel.onFrame` by the typing task (P2).
+                is ServerEvent.DeviceRevoked, is ServerEvent.ConvEphemeral -> Unit
             }
         }
         val socket = object : LiveSocket by live {
