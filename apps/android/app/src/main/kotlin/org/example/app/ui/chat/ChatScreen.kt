@@ -81,7 +81,14 @@ import org.example.app.ui.media.MediaActions
 import org.example.app.ui.media.MediaHost
 import org.example.app.ui.media.PhotoCache
 import org.example.app.ui.media.MediaPlayerEngine
-import org.example.app.ui.media.PhotoViewerScreen
+import org.example.app.ui.media.MediaViewerScreen
+import org.example.app.ui.media.ViewerItem
+import org.example.app.core.chats.isVideo
+import org.example.app.ui.media.SendPreviewScreen
+import org.example.app.core.chats.Picked
+import org.example.app.core.chats.SendPlan
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.saveable.listSaver
 import org.example.app.ui.media.VoicePlayer
 import org.example.app.ui.previewText
 
@@ -160,7 +167,17 @@ fun ChatScreen(
     var viewingPhoto by rememberSaveable { mutableStateOf<String?>(null) }
     val expectReturn by rememberUpdatedState(LocalExpectReturn.current)
     val mediaActions = remember(context, opener) { MediaActions(context, opener, scope, notify = { notice = it }, expectReturn = { expectReturn() }) }
-    val pickers = rememberAttachmentPickers(onAttachment = viewModel::sendAttachment, notify = { notice = it })
+    // Photos and videos wait on the preview (caption, Send) before anything is staged or uploaded.
+    var previewItems by rememberSaveable(stateSaver = PickedListSaver) { mutableStateOf<List<Picked>>(emptyList()) }
+    var previewProblem by remember { mutableStateOf<Int?>(null) }
+    val pickers = rememberAttachmentPickers(
+        onAttachment = viewModel::sendAttachment,
+        notify = { notice = it },
+        onPicked = { items ->
+            previewItems = items
+            previewProblem = viewModel.refusalFor(items)?.let(::refusalText)
+        },
+    )
     val voiceControls = rememberVoiceControls(chatKey = "$myId/${viewModel.chatId}", onNote = { viewModel.sendAttachment(it.path, MediaKind.Voice) }, notify = { notice = it })
     val capture by voiceControls.capture.state.collectAsState()
     val voiceHint by voiceControls.capture.hint.collectAsState()
@@ -175,6 +192,8 @@ fun ChatScreen(
             onOpenFile = mediaActions::openFile,
             onShareFile = mediaActions::shareFile,
             voice = voice,
+            uploads = viewModel.uploadProgress,
+            onCancelUpload = viewModel::cancelUpload,
         )
     }
 
@@ -412,7 +431,7 @@ fun ChatScreen(
                             val actions = MessageActions.available(message, own)
                             val autoKind = when (message.content) {
                                 is MessageContent.Photo -> MediaKind.Photo
-                                is MessageContent.File -> MediaKind.File
+                                is MessageContent.File -> if ((message.content as MessageContent.File).isVideo) MediaKind.Video else MediaKind.File
                                 is MessageContent.Voice -> MediaKind.Voice
                                 else -> null
                             }
@@ -471,7 +490,24 @@ fun ChatScreen(
             )
         }
         viewingPhoto?.let { id ->
-            PhotoViewerScreen(id, opener, onDismiss = { viewingPhoto = null }, onShare = { mediaActions.sharePhoto(id) })
+            // Every photo and video of the chat that is on this device, in order, starting at the tapped one.
+            val items by produceState<List<ViewerItem>?>(null, id) { value = viewModel.viewerItems().let { all -> if (all.any { it.id == id }) all else all + ViewerItem(id, false) } }
+            items?.let {
+                MediaViewerScreen(it, id, opener, onDismiss = { viewingPhoto = null }, onShare = mediaActions::sharePhoto, onSave = { mediaActions.save(it.id, it.videoName) })
+            }
+        }
+        if (previewItems.isNotEmpty()) {
+            SendPreviewScreen(
+                items = previewItems,
+                problem = previewProblem,
+                onCancel = { previewItems = emptyList(); previewProblem = null },
+                onSend = { caption ->
+                    when (val result = viewModel.sendPicked(previewItems, caption)) {
+                        is SendPlan.Result.Ok -> { previewItems = emptyList(); previewProblem = null }
+                        is SendPlan.Result.Refused -> previewProblem = refusalText(result.reason)
+                    }
+                },
+            )
         }
         confirmDelete?.let { id ->
             DeleteDialog(onConfirm = { confirmDelete = null; viewModel.delete(id) }, onDismiss = { confirmDelete = null })
@@ -564,3 +600,12 @@ private fun SearchBar(
 }
 
 private const val SEARCH_DEBOUNCE_MS = 300L
+
+private fun refusalText(reason: SendPlan.Refusal): Int =
+    if (reason == SendPlan.Refusal.TooMany) R.string.media_too_many else R.string.media_video_too_big
+
+/** The preview's items survive a rotation: three strings each. */
+private val PickedListSaver = listSaver<List<Picked>, String>(
+    save = { items -> items.flatMap { listOf(it.path, it.kind.name, it.bytes.toString()) } },
+    restore = { flat -> flat.chunked(3).map { (path, kind, bytes) -> Picked(path, MediaKind.valueOf(kind), bytes.toLong()) } },
+)

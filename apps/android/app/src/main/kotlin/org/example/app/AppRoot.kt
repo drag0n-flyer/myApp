@@ -42,6 +42,7 @@ import org.example.app.ui.calls.CallHistoryViewModel
 import org.example.app.ui.chat.ChatScreen
 import org.example.app.ui.chat.ChatViewModel
 import org.example.app.ui.chatinfo.ChatInfoScreen
+import org.example.app.ui.media.GalleryScreen
 import org.example.app.ui.chatlist.ArchiveScreen
 import org.example.app.ui.chatlist.ChatListScreen
 import org.example.app.ui.chatlist.ChatListViewModel
@@ -79,6 +80,7 @@ private const val MAIN = "main"
 /** `highlight` is a message ID to scroll to and flash (a search hit); the chat screen reads it as `highlightMessageId`. */
 private const val CHAT = "chat/{id}?highlight={highlight}"
 private const val INFO = "chatinfo/{id}"
+private const val GALLERY = "gallery/{id}"
 /** The approving phone scans a new device's code (opened from Linked devices). */
 const val LINK_SCAN = "linkscan"
 private const val REQUESTS = "requests"
@@ -320,7 +322,12 @@ fun AppRoot(
                     onCall = if (graph.callsAvailable) { video -> callVm.start(id, video) } else null,
                     onSearch = {},
                     onBlocked = { nav.popBackStack(MAIN, inclusive = false) },
+                    onOpenGallery = { nav.navigate("gallery/$id") },
                 )
+            }
+            composable(GALLERY, idArg) { entry ->
+                val id = entry.arguments!!.getString("id")!!
+                GalleryScreen(graph.chatStore, id, graph.attachmentOpener, onBack = { nav.popBackStack() })
             }
         }
         CallOverlay(call?.phase, callVm)
