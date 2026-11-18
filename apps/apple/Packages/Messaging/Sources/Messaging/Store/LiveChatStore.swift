@@ -33,6 +33,9 @@ public final class LiveChatStore: ChatStore {
     private var meContact: Contact
     private var contactRows: [String: ContactRecord] = [:]
     private var allChats: [Chat] = []
+    /// Draft texts not yet in the database: typed before the chat had a row, or a write that failed. They are laid
+    /// over the saved drafts on every reload and written as soon as the row exists.
+    private var draftsPending: [String: String] = [:]
     private var customFolders: [ChatFolder] = []
     private var tasks: [UUID: Task<Void, Never>] = [:]
     private let pendingGate = PendingActions.Gate()
@@ -110,6 +113,7 @@ public final class LiveChatStore: ChatStore {
     /// and every task started so far is cancelled and waited for, so none can write after the wipe.
     public func shutdown() async {
         closed = true
+        draftsPending.removeAll()
         for task in tasks.values { task.cancel() }
         await settle()
         if let attachments { await attachments.setOnChange {} }
@@ -137,12 +141,17 @@ public final class LiveChatStore: ChatStore {
         for folder in folderRecords {
             for chatID in (try? repo.folderChats(folderID: folder.id)) ?? [] { folderIDs[chatID, default: []].insert(folder.id) }
         }
-        allChats = ((try? repo.chats()) ?? []).map { record in
+        let records = (try? repo.chats()) ?? []
+        for id in draftsPending.keys where records.contains(where: { $0.id == id }) { persistDraft(id) }
+        var drafts = (try? repo.drafts()) ?? [:]
+        for (id, text) in draftsPending { drafts[id] = text.isEmpty ? nil : text }
+        allChats = records.map { record in
             let all = (try? repo.conversations(chatID: record.id)) ?? []
             let preferred = (try? repo.preferredConversation(chatID: record.id)) ?? all.first
             let latest = (try? repo.messages(chatID: record.id, before: nil, limit: Self.cachedMessageCount)) ?? []
             return ChatMapping.chat(
-                record, conversations: all, preferred: preferred, folderIDs: folderIDs[record.id] ?? [], messages: map(latest))
+                record, conversations: all, preferred: preferred, folderIDs: folderIDs[record.id] ?? [], messages: map(latest),
+                draft: drafts[record.id])
         }
     }
 
@@ -190,15 +199,20 @@ public final class LiveChatStore: ChatStore {
     public var folders: [ChatFolder] { [.all, .unread] + customFolders }
 
     public func chats(in folder: ChatFolder) -> [Chat] {
-        allChats.filter { chat in
-            guard !chat.isRequest else { return false }
+        // `allChats` is in activity order; pinned chats move to the front, the newest pin first.
+        ChatListOrder.pinnedFirst(allChats.filter { chat in
+            guard !chat.isRequest, !chat.archived else { return false }
             switch folder.kind {
             case .all: return true
             case .unread: return chat.unreadCount > 0
             case .custom: return chat.folderIDs.contains(folder.id)
             }
-        }
+        })
     }
+
+    public var archivedChats: [Chat] { ChatListOrder.pinnedFirst(allChats.filter { !$0.isRequest && $0.archived }) }
+
+    public var mutedChatIDs: Set<String> { Set(allChats.filter(\.muted).map(\.id)) }
 
     public func folderChipTitle(_ folder: ChatFolder) -> String {
         guard folder.kind == .unread else { return folder.name }
@@ -270,6 +284,8 @@ public final class LiveChatStore: ChatStore {
         do {
             try outbox.enqueue(envelope, chatID: chatID)
             bumpActivity(chatID, at: deps.now())
+            // The message is queued: its draft is done. (Nothing queued, nothing cleared.)
+            if case .text = body { setDraftQuietly(chatID) }
         } catch { return }
         refresh()   // the message shows as `sending` now
         let outbox = outbox
@@ -775,10 +791,53 @@ public final class LiveChatStore: ChatStore {
         } catch { return nil }
     }
 
+    /// One statement that raises `last_activity` only: pin, mute and archive are never written back from an older read.
     private func bumpActivity(_ chatID: String, at date: Date) {
-        guard var chat = (try? repo.chat(id: chatID)) ?? nil, date > chat.lastActivity else { return }
-        chat.lastActivity = date
-        try? repo.upsertChat(chat)
+        try? repo.bumpActivity(chatID: chatID, at: date)
+    }
+
+    // MARK: - Chat list actions (this device only)
+
+    @discardableResult
+    public func setPinned(_ chatID: String, _ pinned: Bool) -> Bool {
+        let done: Bool
+        if pinned {
+            done = (try? repo.pin(chatID: chatID, at: deps.now(), limit: ChatListOrder.maxPins)) ?? false
+        } else {
+            done = (try? repo.setPinnedAt(chatID: chatID, nil)) != nil
+        }
+        refresh()
+        return done
+    }
+
+    public func setMuted(_ chatID: String, _ muted: Bool) {
+        try? repo.setMuted(chatID: chatID, muted)
+        refresh()
+    }
+
+    public func setArchived(_ chatID: String, _ archived: Bool) {
+        try? repo.setArchived(chatID: chatID, archived)
+        refresh()
+    }
+
+    /// Called on every keystroke: written at once, and the cached chat is patched instead of reloading everything.
+    /// A chat with no row yet keeps its draft in memory; `reload` writes it when the row appears.
+    public func setDraft(_ chatID: String, _ text: String) {
+        let blank = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        draftsPending[chatID] = blank ? "" : text
+        persistDraft(chatID)
+        if let i = allChats.firstIndex(where: { $0.id == chatID }) { allChats[i].draft = blank ? nil : text }
+        onChange?()
+    }
+
+    private func setDraftQuietly(_ chatID: String) {
+        draftsPending[chatID] = ""
+        persistDraft(chatID)
+    }
+
+    private func persistDraft(_ chatID: String) {
+        guard let text = draftsPending[chatID] else { return }
+        if (try? repo.setDraft(chatID: chatID, text, at: deps.now())) == true { draftsPending[chatID] = nil }
     }
 
     // MARK: - Folders
