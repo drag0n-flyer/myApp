@@ -226,6 +226,29 @@ class SendAttachmentTest {
     }
 
     @Test
+    fun aMessageDeletedWhileItUploadsIsNeverSent() = runBlocking<Unit> {
+        val f = fixture()
+        val s = session(f)
+        val gate = CompletableDeferred<Unit>()
+        s.api.gate = gate
+        val staged = source(File(f.dirs.tempDir, "files").also { it.mkdirs() })
+        s.store.sendAttachment(staged.path, MediaKind.File, "acc-ana")
+        waitUntil("the upload to start") { s.api.attempts.get() == 1 }
+        val id = sentId(f)
+        s.store.delete(id, "acc-ana")
+        s.store.awaitWrites()
+        gate.complete(Unit)
+        s.store.settle()
+        f.rig.ana1.processor.sync()
+        assertNull(f.rig.ana1.repo.message(id), "the peer never gets the attachment")
+        assertNull(f.d.repo.attachmentForMessage(id))
+        assertEquals(emptyList(), f.dirs.blobDir.list().orEmpty().toList())
+        assertFalse(staged.exists(), "the staged copy is removed")
+        assertEquals(emptyList(), f.preparedDir.listFiles()!!.toList())
+        assertTrue(f.d.repo.get("pending.upload.$id")?.isEmpty() != false)
+    }
+
+    @Test
     fun openingNeverDownloadsAndDoesNothingAfterClose() = runBlocking<Unit> {
         val f = fixture()
         val s = session(f)

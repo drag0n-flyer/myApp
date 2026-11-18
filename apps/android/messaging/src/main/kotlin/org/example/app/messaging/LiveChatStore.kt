@@ -439,19 +439,31 @@ class LiveChatStore(
             return
         }
         val envelope = envelopeFor(kind, id, at, att, prepared)
-        try {
+        val queued = try {
             repo.transaction {
-                repo.replaceUnsentEnvelope(id, device.accountId, ContentCodec.encode(envelope), fold(prepared.name.takeIf { kind == MediaKind.File } ?: ""), nowMs())
-                outbox.enqueue(envelope, pending.chatId)
-                // The sender's own copy: the same record a received file gets, LOCAL at the ciphertext the upload kept.
-                repo.upsertAttachment(
-                    AttachmentRecord(att.id, id, attachmentKind(kind), att.key, att.dg, att.sz, att.csz, AttachmentState.LOCAL, att.csz, Uploader.blobFile(blobDir, att).path),
-                )
-                repo.set(PENDING_UPLOAD_PREFIX + id, ByteArray(0))
+                // False when the message was deleted while it uploaded: then nothing is queued and no record is written.
+                if (!repo.replaceUnsentEnvelope(id, device.accountId, ContentCodec.encode(envelope), fold(prepared.name.takeIf { kind == MediaKind.File } ?: ""), nowMs())) {
+                    false
+                } else {
+                    outbox.enqueue(envelope, pending.chatId)
+                    // The sender's own copy: the same record a received file gets, LOCAL at the ciphertext the upload kept.
+                    repo.upsertAttachment(
+                        AttachmentRecord(att.id, id, attachmentKind(kind), att.key, att.dg, att.sz, att.csz, AttachmentState.LOCAL, att.csz, Uploader.blobFile(blobDir, att).path),
+                    )
+                    repo.set(PENDING_UPLOAD_PREFIX + id, ByteArray(0))
+                    true
+                }
             }
         } catch (e: Exception) {
             Uploader.blobFile(blobDir, att).delete()
             throw e
+        }
+        if (!queued) {
+            Uploader.blobFile(blobDir, att).delete()
+            removeStaged(prepared.file, pending.path)
+            repo.set(PENDING_UPLOAD_PREFIX + id, ByteArray(0))
+            reload()
+            return
         }
         removeStaged(prepared.file, pending.path)
         bumpActivity(pending.chatId, at)
