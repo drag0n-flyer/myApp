@@ -163,3 +163,22 @@ private func unlocked(_ seconds: Int) -> AppLockPolicy {
     #expect(AppLockPolicy.isLocked(enabled: true, leftAt: t(0), now: t(60), delay: 60, expectedReturn: false))
     #expect(!AppLockPolicy.isLocked(enabled: true, leftAt: t(0), now: t(299), delay: 60, expectedReturn: true))
 }
+
+@Test func lockIfDueSetsLockedOnlyWhenTheDelayHasPassed() {
+    var p = unlocked(60)
+    p.onBackground(at: t(0))
+    #expect(p.secondsUntilDue == 60)
+    p.lockIfDue(at: t(59))
+    #expect(!p.locked)
+    p.lockIfDue(at: t(60))
+    #expect(p.locked)
+}
+
+@Test func lockIfDueIgnoresNoAbsenceAndAClockGoingBack() {
+    var p = unlocked(60)
+    p.lockIfDue(at: t(9999))
+    #expect(!p.locked && p.secondsUntilDue == nil)
+    p.onBackground(at: t(50))
+    p.lockIfDue(at: t(40))
+    #expect(p.locked)
+}

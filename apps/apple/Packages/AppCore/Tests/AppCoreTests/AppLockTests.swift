@@ -63,11 +63,11 @@ private func make(enabled: Bool = true, delay: Int = 60, stored: LockSettings?? 
     #expect(!lock.isLocked && !lock.coversContent)
 }
 
-@MainActor @Test func appLockWhenTheDeviceCannotAskTheCoverStays() async {
+@MainActor @Test func appLockWhenTheDeviceCannotAskItIsTreatedLikeNoScreenLock() async {
     let auth = SampleDeviceAuth(state: .unavailable)
     let (lock, _, _) = make(auth: auth)
     await lock.unlockWithPrompt(reason: "x")
-    #expect(lock.isLocked && auth.requests == 0)
+    #expect(!lock.isLocked && auth.requests == 0)
 }
 
 @MainActor @Test func appLockNoPasscodeLetsThePersonIn() async {
@@ -87,19 +87,20 @@ private func make(enabled: Bool = true, delay: Int = 60, stored: LockSettings?? 
     let (phone, _, _) = make(enabled: true)
     await phone.unlockOnly()
     phone.phaseChanged(.inactive)
-    #expect(phone.coversContent && !phone.isLocked)
+    // Not locked: the content stays (state kept); a separate privacy window covers it.
+    #expect(!phone.coversContent && phone.showsPrivacyCover && !phone.isLocked)
     phone.phaseChanged(.active)
-    #expect(!phone.coversContent)
+    #expect(!phone.coversContent && !phone.showsPrivacyCover)
     let (mac, _, _) = make(enabled: true, inactiveCover: false)
     await mac.unlockOnly()
     mac.phaseChanged(.inactive)
-    #expect(!mac.coversContent)
+    #expect(!mac.coversContent && !mac.showsPrivacyCover)
 }
 
 @MainActor @Test func appLockInactiveCoverNeverShowsWhenTheSettingIsOff() {
     let (lock, _, _) = make(enabled: false)
     lock.phaseChanged(.inactive)
-    #expect(!lock.coversContent)
+    #expect(!lock.coversContent && !lock.showsPrivacyCover)
 }
 
 @MainActor @Test func appLockImmediatelyLocksInTheBackgroundAndAsksOnReturn() async {
@@ -229,15 +230,15 @@ private func make(enabled: Bool = true, delay: Int = 60, stored: LockSettings?? 
     }
 }
 
-@MainActor @Test func appLockSwitchOffWithoutPasscodeNeedsNoPromptButOtherFailuresDo() async {
+@MainActor @Test func appLockSwitchOffWithoutAScreenLockNeedsNoPrompt() async {
     let none = SampleDeviceAuth(state: .passcodeNotSet)
     let (a, _, _) = make(auth: none)
     #expect(await a.requestSetEnabled(false, reason: "x") == .changed)
     #expect(!a.appLockOn && none.requests == 0)
     let other = SampleDeviceAuth(state: .unavailable)
     let (b, _, _) = make(auth: other)
-    #expect(await b.requestSetEnabled(false, reason: "x") == .unavailable)
-    #expect(b.appLockOn)
+    #expect(await b.requestSetEnabled(false, reason: "x") == .changed)   // like no screen lock: no prompt can be shown
+    #expect(!b.appLockOn && other.requests == 0)
 }
 
 @MainActor @Test func appLockAPromptAnsweredAfterSignOutChangesNothing() async {
@@ -286,11 +287,72 @@ private func make(enabled: Bool = true, delay: Int = 60, stored: LockSettings?? 
     #expect(lock.openChatWhenUnlocked("c") == "c")   // not locked: open now
 }
 
-@MainActor @Test func appLockATapDuringTheInactiveCoverIsHeld() async {
+@MainActor @Test func appLockATapWhileOnlyThePrivacyCoverShowsOpensAtOnce() async {
     let (lock, _, _) = make()
     await lock.unlockOnly()
     lock.phaseChanged(.inactive)
-    #expect(lock.openChatWhenUnlocked("a") == nil)
+    #expect(lock.openChatWhenUnlocked("a") == "a")
+}
+
+@MainActor @Test func appLockExpectedReturnCancelledLeavesNoAllowance() async {
+    let (lock, _, _) = make(delay: 0)
+    await lock.unlockOnly()
+    lock.expectReturn()
+    lock.cancelExpectedReturn()   // the picker closed without the app leaving
+    lock.phaseChanged(.background)
+    #expect(lock.isLocked)
+}
+
+@MainActor @Test func appLockExpectedReturnWhileTheViewerIsOpenKeepsTheAllowance() async {
+    let (lock, _, clock) = make(delay: 0)
+    await lock.unlockOnly()
+    lock.expectReturn()
+    lock.phaseChanged(.background)
+    clock.advance(200)
+    lock.phaseChanged(.active)
+    #expect(!lock.isLocked)
+}
+
+@MainActor @Test func appLockLockIfDueLocksAWindowLeftVisibleAfterTheDelay() async {
+    let (lock, _, clock) = make(delay: 60, inactiveCover: false, inactiveLeaves: true)
+    await lock.unlockOnly()
+    lock.phaseChanged(.inactive)
+    #expect(lock.secondsUntilDue == 60)
+    clock.advance(59)
+    lock.lockIfDue()
+    #expect(!lock.isLocked)
+    clock.advance(1)
+    lock.lockIfDue()
+    #expect(lock.isLocked && lock.coversContent)
+    lock.phaseChanged(.active)   // on return it stays locked and asks again
+    #expect(lock.isLocked)
+}
+
+@MainActor @Test func appLockLockIfDueDoesNothingWhenNotAwayOrOff() async {
+    let (lock, _, clock) = make(delay: 0)
+    await lock.unlockOnly()
+    clock.advance(9999)
+    lock.lockIfDue()
+    #expect(!lock.isLocked && lock.secondsUntilDue == nil)
+    let (off, _, c2) = make(enabled: false, inactiveCover: false, inactiveLeaves: true)
+    off.phaseChanged(.inactive)
+    c2.advance(9999)
+    off.lockIfDue()
+    #expect(!off.isLocked && off.secondsUntilDue == nil)
+}
+
+@MainActor @Test func appLockLockIfDueUsesTheExpectedReturnAllowance() async {
+    let (lock, _, clock) = make(delay: 0, inactiveCover: false, inactiveLeaves: true)
+    await lock.unlockOnly()
+    lock.expectReturn()
+    lock.phaseChanged(.inactive)
+    #expect(lock.secondsUntilDue == 300)
+    clock.advance(299)
+    lock.lockIfDue()
+    #expect(!lock.isLocked)
+    clock.advance(1)
+    lock.lockIfDue()
+    #expect(lock.isLocked)
 }
 
 @MainActor @Test func lockSettingsDefaultsStoreRoundTripsAndDistrustsOddData() {

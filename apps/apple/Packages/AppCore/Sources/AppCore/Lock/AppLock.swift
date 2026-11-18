@@ -26,7 +26,7 @@ public enum LockSwitchOutcome: Equatable, Sendable {
 /// Decisions: `AppLockPolicy` (the delay, on a monotonic clock) and this type (what is covered, which prompt results
 /// count). It starts locked when the setting is on, and also when the setting could not be read (unknown = locked).
 /// Only a success from `DeviceAuth` unlocks; every other result, error or cancel leaves the cover. The one exception
-/// is a device with no passcode any more (`DeviceAuthAvailability.passcodeNotSet`, and nothing else). Holds no secret.
+/// is a device that cannot ask (no passcode, or the system cannot show the prompt): the person is let in. Holds no secret.
 @MainActor
 @Observable
 public final class AppLock {
@@ -88,10 +88,11 @@ public final class AppLock {
     public var lockAfterSeconds: Int { settings?.lockAfterSeconds ?? AppLockPolicy.defaultSeconds }
 
     /// The root shows only the cover (and the call screen) while this is true. No chat view exists then.
-    public var coversContent: Bool {
-        guard appLockOn else { return false }
-        return isLocked || (coversWhenInactive && phase != .active)
-    }
+    public var coversContent: Bool { appLockOn && isLocked }
+
+    /// iPhone: not locked, but the scene left the active phase (app switcher, Notification Center, an alert): a
+    /// separate privacy window covers everything and the screens keep their state.
+    public var showsPrivacyCover: Bool { appLockOn && !isLocked && coversWhenInactive && phase != .active }
 
     /// Changes whenever the cover should try the automatic prompt: a new request, or the scene becoming active.
     public var promptKey: Int { promptRequests * 2 + (phase == .active ? 1 : 0) }
@@ -137,6 +138,19 @@ public final class AppLock {
     /// measured with the longer allowance; a launch that never takes the app off the screen expires.
     public func expectReturn() { expectedAt = now() }
 
+    /// The picker, camera or viewer closed without the app leaving the screen: no allowance for the next absence.
+    public func cancelExpectedReturn() { expectedAt = nil }
+
+    /// While the app is away: how long until the lock applies (the Mac timer's delay); nil when not away or off.
+    public var secondsUntilDue: Int? { left && appLockOn ? policy.secondsUntilDue : nil }
+
+    /// Called by the Mac timer: locks a window left visible behind other apps once the delay has passed.
+    public func lockIfDue() {
+        guard left else { return }
+        policy.lockIfDue(at: now())
+        if policy.locked && appLockOn { isLocked = true }
+    }
+
     private func leave() {
         guard !left else { return }
         left = true
@@ -164,7 +178,7 @@ public final class AppLock {
         case .passcodeNotSet:
             unlock()   // nothing protects the device any more: let the person in
         case .unavailable:
-            return
+            unlock()   // the system cannot ask: treated like no screen lock, the person is let in
         case .ready:
             let id = beginPrompt()
             let result = await auth.authenticate(reason: reason)
@@ -200,9 +214,8 @@ public final class AppLock {
         guard activePrompt == nil else { return .busy }
         let startEpoch = epoch
         switch auth.availability() {
-        case .unavailable:
-            return .unavailable
-        case .passcodeNotSet:
+        case .unavailable, .passcodeNotSet:
+            // No screen lock to ask with: it cannot be turned on; turning it off needs no prompt.
             if on { return .unavailable }
         case .ready:
             let id = beginPrompt()
@@ -257,7 +270,7 @@ public final class AppLock {
     /// A notification tap wants to open `chatID`. Returns it when it may open now; while covered it is kept (only the
     /// newest one) and handed to `onHeldChatReleased` once, after unlock.
     public func openChatWhenUnlocked(_ chatID: String) -> String? {
-        if coversContent || isLocked {
+        if isLocked {
             heldChatID = chatID
             return nil
         }

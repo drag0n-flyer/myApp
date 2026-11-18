@@ -66,6 +66,20 @@ public struct AppLockPolicy: Sendable {
         return locked
     }
 
+    /// How long after leaving the lock applies; nil when the app is not away or the lock is off.
+    public var secondsUntilDue: Int? {
+        guard enabled, leftAt != nil else { return nil }
+        return Self.effectiveDelay(setting: lockAfterSeconds, expectedReturn: expectedReturn)
+    }
+
+    /// Called by a timer while the app is away (a Mac window left visible behind other apps): locks when the delay has
+    /// passed, without waiting for a return. Does not end the absence.
+    public mutating func lockIfDue(at now: LockInstant) {
+        if Self.isLocked(enabled: enabled, leftAt: leftAt, now: now, delay: lockAfterSeconds, expectedReturn: expectedReturn) {
+            locked = true
+        }
+    }
+
     /// The person passed the device authentication.
     public mutating func unlocked() {
         locked = false
