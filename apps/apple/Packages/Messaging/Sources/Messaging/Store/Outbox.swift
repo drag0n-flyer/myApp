@@ -86,6 +86,11 @@ public actor Outbox: ControlSender {
         Expiry.expiresAt(atMs: envelope.at, ttlSeconds: envelope.ttl).map { Date(timeIntervalSince1970: Double($0) / 1000) }
     }
 
+    /// The server accepts at most 366 days ahead: the wire value stays a minute inside that, whatever the clocks say.
+    nonisolated static func wireExpiry(of envelope: ContentEnvelope, now: Date) -> Date? {
+        expiry(of: envelope).map { min($0, now.addingTimeInterval(366 * 86_400 - 60)) }
+    }
+
     /// Queues a control message (edit, delete, reaction, receipt) in the chat's queue, so it stays behind the
     /// messages queued before it, is retried like a message, and survives a restart. It has no message row:
     /// the outbox row's ID is the envelope ID.
@@ -277,7 +282,7 @@ public actor Outbox: ControlSender {
             do {
                 _ = try await deps.server.postMessage(
                     conversationID: conversation.serverID, epoch: epoch, ciphertext: ciphertext, escrow: escrowCopy,
-                    clientMsgID: envelope.id, expiresAt: Self.expiry(of: envelope))
+                    clientMsgID: envelope.id, expiresAt: Self.wireExpiry(of: envelope, now: deps.now()))
                 return
             } catch {
                 switch error.code {

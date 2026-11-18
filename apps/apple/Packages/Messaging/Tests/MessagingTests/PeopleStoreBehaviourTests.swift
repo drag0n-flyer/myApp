@@ -367,3 +367,44 @@ private let jpeg = Data([0xFF, 0xD8, 0xFF]) + Data(count: 100)
         #expect(rig.bob.store.chat(id: "acc-ana")?.unreadCount == 1)
     }
 }
+
+@Suite("TestPeopleStoreRound3") @MainActor struct TestPeopleStoreRound3 {
+    @Test func aFarFutureTimerDoesNotFreezeTheTimer() async throws {
+        let rig = try await Rig.make()
+        try await rig.ana.sendRaw(rig.envelope("far", .timer(seconds: 604_800), at: rig.ms + 10 * 365 * 86_400_000), to: "acc-bob")
+        await rig.bobSync()
+        #expect(rig.bob.store.timerSeconds("acc-ana") == 604_800)
+        let line = try #require(try rig.bob.repo.message(id: "sys-timer-far"))
+        #expect(line.sentAt == testEpochDate.addingTimeInterval(300))
+        rig.clock.advance(6 * 60)
+        try await rig.ana.sendRaw(rig.envelope("next", .timer(seconds: 86_400)), to: "acc-bob")
+        await rig.bobSync()
+        #expect(rig.bob.store.timerSeconds("acc-ana") == 86_400)
+    }
+
+    @Test func aLocalSetIsNotOverriddenByAnOlderIncomingTimer() async throws {
+        let rig = try await Rig.make()
+        // Ana sent her change a moment ago; bob set his own afterwards, before he read hers.
+        let old = rig.envelope("old", .timer(seconds: 604_800), at: rig.ms - 10_000)
+        try await rig.ana.sendRaw(old, to: "acc-bob")
+        rig.bob.store.setTimer("acc-ana", seconds: 86_400)
+        #expect(rig.bob.store.timerSeconds("acc-ana") == 86_400)
+        await rig.bobSync()
+        #expect(rig.bob.store.timerSeconds("acc-ana") == 86_400)
+        #expect(try rig.bob.repo.message(id: "sys-timer-old") == nil)
+    }
+
+    @Test func theWireExpiryStaysAMinuteInsideTheServerLimit() async throws {
+        let rig = try await Rig.make()
+        try await rig.ana.sendRaw(rig.envelope("max", .text("x", replyTo: nil), ttl: 31_622_400), to: "acc-bob")
+        try await rig.ana.sendRaw(rig.envelope("one", .text("y", replyTo: nil), ttl: 86_400), to: "acc-bob")
+        let conversation = try #require(await rig.server.conversationIDs().first)
+        let posted = await rig.server.storedMessages(in: conversation).compactMap(\.expiresAt)
+        #expect(posted.count == 2)
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let dates = posted.compactMap { formatter.date(from: $0) }
+        #expect(dates[0] == testEpochDate.addingTimeInterval(31_622_400 - 60))
+        #expect(dates[1] == testEpochDate.addingTimeInterval(86_400))
+    }
+}
