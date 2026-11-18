@@ -87,10 +87,12 @@ public enum ProfileSender {
             .map(\.chatID)
     }
 
-    /// The version to publish: `nil` when the name is empty, or neither the name nor the photo changed.
-    public static func nextVersion(current: Int?, publishedName: String?, name: String, photoChanged: Bool) -> Int? {
+    /// The version to publish: `nil` when the name is empty, or neither the name nor the photo changed; otherwise
+    /// `max(stored + 1, now)` with `now` the Unix time in seconds, so a device that never counted (or counted from 1
+    /// on a phone that is now at 3) still lands above what its peers hold.
+    public static func nextVersion(current: Int?, publishedName: String?, name: String, photoChanged: Bool, nowSeconds: Int) -> Int? {
         guard !name.isEmpty, photoChanged || name != publishedName else { return nil }
-        return (current ?? 0) + 1
+        return max((current ?? 0) + 1, nowSeconds)
     }
 }
 
@@ -106,8 +108,7 @@ public enum ProfileDisplay {
 
     /// The stored photo, only when it is a JPEG within the limit (a stored value is checked again before drawing).
     public static func photo(profile: StoredProfile?) -> Data? {
-        guard let photo = profile?.photo, photo.count <= ProfilePhotoSizing.maxBytes,
-              photo.count >= 4, photo[photo.startIndex] == 0xFF, photo[photo.startIndex + 1] == 0xD8 else { return nil }
+        guard let photo = profile?.photo, ProfilePhotoRule.isAcceptable(photo) else { return nil }
         return photo
     }
 }

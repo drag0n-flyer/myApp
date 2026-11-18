@@ -651,6 +651,7 @@ final class AppModel {
             messaging = nil
             makePeople(repo: nil, channel: nil)
             callSealer.clear()
+            ProfileImageCache.clear()   // the signed-out account's photos must not outlive it
             let empty = AppStores.signedOutStore(sampleData: isSampleData)
             empty.onChange = { [weak self] in self?.revision += 1 }
             chatStore = empty

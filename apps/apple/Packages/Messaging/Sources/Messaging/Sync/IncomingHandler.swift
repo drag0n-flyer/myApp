@@ -244,7 +244,13 @@ public struct IncomingHandler: Sendable {
             return .ignored
         case .profile(let name, let photo, let ver):
             // Only what a contact says about themselves; my own devices do not write a contact profile for me.
-            guard account != me.accountID, account == chatID else { return .ignored }   // only the chat's own peer
+            if account == me.accountID {
+                // Another device of mine changed the profile: adopt it when it is newer; this device sends nothing.
+                try OwnProfile.adopt(name: name, photo: photo, ver: ver, repo: db, me: me.accountID)
+                return .ignored
+            }
+            // Only the chat's own peer, and never a blocked account.
+            guard account == chatID, try !db.isBlocked(account) else { return .ignored }
             guard ProfileMerge.accept(current: try db.profile(for: account)?.ver, incoming: ver) else { return .ignored }
             try db.saveProfile(accountID: account, name: name, photo: photo, ver: ver)
             return .ignored

@@ -39,6 +39,8 @@ public final class LiveChatStore: ChatStore {
     private var contactRows: [String: ContactRecord] = [:]
     /// What contacts said about themselves (`profile`), by account, read at every reload.
     var profileRows: [String: StoredProfile] = [:]
+    /// Tests only: replaces how the own profile is queued for a chat.
+    var profileEnqueueOverride: ((ContentEnvelope.Body, String) throws -> Void)?
     private var allChats: [Chat] = []
     /// Draft texts not yet in the database: typed before the chat had a row, or a write that failed. They are laid
     /// over the saved drafts on every reload and written as soon as the row exists.
@@ -167,7 +169,8 @@ public final class LiveChatStore: ChatStore {
     private func reload() {
         let rows = (try? repo.contacts()) ?? []
         contactRows = Dictionary(rows.map { ($0.accountID, $0) }, uniquingKeysWith: { $1 })
-        profileRows = Dictionary(((try? repo.profiles()) ?? []).map {
+        // A message request is not shown by its profile (name or photo) until it is accepted.
+        profileRows = Dictionary(((try? repo.profiles()) ?? []).filter { contactRows[$0.accountID]?.isContact == true }.map {
             ($0.accountID, StoredProfile(accountID: $0.accountID, name: $0.name, photo: $0.photo, ver: $0.ver))
         }, uniquingKeysWith: { $1 })
         if let mine = contactRows[deps.me.accountID] {
@@ -213,7 +216,11 @@ public final class LiveChatStore: ChatStore {
                 record,
                 attachment: plain ? (try? repo.attachment(messageID: record.id)) ?? nil : nil,
                 reactions: plain && !record.deleted ? (try? repo.reactions(messageID: record.id)) ?? [] : [],
-                displayName: { [contactRows] in Self.name(of: contactRows[$0]) },
+                displayName: { [contactRows, profileRows] id in
+                    guard let row = contactRows[id] else { return nil }
+                    let name = ProfileDisplay.name(lookup: Self.name(of: row) ?? "", profile: profileRows[id], nickname: nil)
+                    return name.isEmpty ? nil : name
+                },
                 showRead: showRead || record.senderAccount != me)
             if record.status == "failed", tooBig.contains(record.id) { message.sendFailure = .tooBig }
             if record.status == "sending", uploading.contains(record.id) { message.uploadProgress = uploadFraction[record.id] ?? 0 }
@@ -780,7 +787,7 @@ public final class LiveChatStore: ChatStore {
     @discardableResult
     public func saveProfile(accountID: String, name: String, photo: Data?, ver: Int) -> Bool {
         guard !closed, DisplayNameRule.clean(name) == name,
-              photo.map({ LinkPreview.isJPEG($0, max: ContentEnvelope.maxProfilePhoto) }) ?? true,
+              photo.map(ProfilePhotoRule.isAcceptable) ?? true,
               ProfileMerge.accept(current: (try? repo.profile(for: accountID))?.ver, incoming: ver),
               (try? repo.saveProfile(accountID: accountID, name: name, photo: photo, ver: ver)) == true else { return false }
         refresh()
@@ -789,6 +796,10 @@ public final class LiveChatStore: ChatStore {
 
     func sendControl(_ body: ContentEnvelope.Body, chatID: String) {
         guard (try? outbox.enqueueControl(body, chatID: chatID)) != nil else { return }
+        flushOutboxSoon()
+    }
+
+    func flushOutboxSoon() {
         let outbox = outbox
         background { try? await outbox.flush() }
     }

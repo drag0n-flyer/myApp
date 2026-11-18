@@ -71,11 +71,21 @@ struct ProfileSenderTests {
     }
 
     @Test func versionBumpsOnlyOnARealChange() {
-        #expect(ProfileSender.nextVersion(current: nil, publishedName: nil, name: "Ana", photoChanged: false) == 1)
-        #expect(ProfileSender.nextVersion(current: 2, publishedName: "Ana", name: "Ana", photoChanged: false) == nil)
-        #expect(ProfileSender.nextVersion(current: 2, publishedName: "Ana", name: "Ana", photoChanged: true) == 3)
-        #expect(ProfileSender.nextVersion(current: 2, publishedName: "Ana", name: "Anna", photoChanged: false) == 3)
-        #expect(ProfileSender.nextVersion(current: 2, publishedName: "Ana", name: "", photoChanged: true) == nil)
+        let now = 1_700_000_000
+        #expect(ProfileSender.nextVersion(current: nil, publishedName: nil, name: "Ana", photoChanged: false, nowSeconds: now) == now)
+        #expect(ProfileSender.nextVersion(current: 2, publishedName: "Ana", name: "Ana", photoChanged: false, nowSeconds: now) == nil)
+        #expect(ProfileSender.nextVersion(current: 2, publishedName: "Ana", name: "Ana", photoChanged: true, nowSeconds: now) == now)
+        #expect(ProfileSender.nextVersion(current: 2, publishedName: "Ana", name: "Anna", photoChanged: false, nowSeconds: now) == now)
+        #expect(ProfileSender.nextVersion(current: 2, publishedName: "Ana", name: "", photoChanged: true, nowSeconds: now) == nil)
+    }
+
+    @Test func theVersionIsAtLeastOneAboveTheStoredOneAndAtLeastTheClock() {
+        // Never goes backwards, even when the clock is behind a stored version.
+        #expect(ProfileSender.nextVersion(current: 5_000_000_000, publishedName: nil, name: "A", photoChanged: false, nowSeconds: 1_700_000_000) == 5_000_000_001)
+        // A device whose counter was 3 and a second device with no counter both land on the clock: higher than 3.
+        #expect(ProfileSender.nextVersion(current: 3, publishedName: "A", name: "B", photoChanged: false, nowSeconds: 1_700_000_000) == 1_700_000_000)
+        #expect(ProfileMerge.accept(current: 3, incoming: 1_700_000_000))
+        #expect(ProfileSender.nextVersion(current: nil, publishedName: nil, name: "A", photoChanged: false, nowSeconds: 1_700_000_000) == 1_700_000_000)
     }
 
     private func chat(_ id: String, blocked: Bool = false, request: Bool = false, oneToOne: Bool = true) -> ProfileSender.Target {
@@ -107,10 +117,10 @@ struct ProfileDisplayTests {
     }
 
     @Test func photoOnlyWhenItIsAJPEGWithinTheLimit() {
-        let good = Data([0xFF, 0xD8, 0xFF, 0xE0] + [UInt8](repeating: 1, count: 100))
+        let good = Data([0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x01, 0x00, 0x01, 0x00, 0x01, 0x01, 0x11, 0x00] + [UInt8](repeating: 1, count: 100))
         #expect(ProfileDisplay.photo(profile: profile("A", photo: good)) == good)
         #expect(ProfileDisplay.photo(profile: profile("A", photo: Data([1, 2, 3]))) == nil)
-        let big = Data([0xFF, 0xD8] + [UInt8](repeating: 1, count: 24_576))
+        let big = Data([0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x01, 0x00, 0x01, 0x00, 0x01, 0x01, 0x11, 0x00] + [UInt8](repeating: 1, count: 24_576))
         #expect(ProfileDisplay.photo(profile: profile("A", photo: big)) == nil)
         #expect(ProfileDisplay.photo(profile: nil) == nil)
     }

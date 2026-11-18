@@ -10,7 +10,9 @@ final class ProfilePhotoTests: XCTestCase {
         let app = XCUIApplication.launched()
         XCTAssertTrue(app.element("avatar.photo").waitToExist())
 
-        app.staticTexts["Riya"].firstMatch.tap()
+        let row = app.element("chatlist.row.chat-riya")
+        XCTAssertTrue(row.waitToExist())
+        row.tap()
         XCTAssertTrue(app.element("chat.header").waitToExist())
         app.element("chat.header").tap()
         XCTAssertTrue(app.element("chatinfo.encryption").waitToExist())

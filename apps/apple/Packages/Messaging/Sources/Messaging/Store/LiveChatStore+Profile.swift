@@ -3,35 +3,27 @@ import Foundation
 import LocalStore
 
 /// The own profile: the photo, the version, and sending it to the one-to-one chats. The own name is the own contact
-/// row's name (`setMyDisplayName`). Kept in the settings store: `profile.ver`, `profile.name` and `profile.photo.published`
-/// (what the last version said), `profile.photo` (the current photo; empty = none), `profile.sent:<chat>` (the highest
-/// version queued for that chat).
+/// row's name (`setMyDisplayName`). The keys are in `OwnProfile`.
 extension LiveChatStore {
-    static let profileVerKey = "profile.ver"
-    static let profileNameKey = "profile.name"
-    static let profilePhotoKey = "profile.photo"
-    static let profilePublishedPhotoKey = "profile.photo.published"
-    static let profileSentPrefix = "profile.sent:"
+    static func profileSentKey(_ chatID: String) -> String { OwnProfile.sentKey(chatID) }
 
-    static func profileSentKey(_ chatID: String) -> String { profileSentPrefix + chatID }
-
-    private static func int(_ data: Data?) -> Int? { data.flatMap { Int(String(decoding: $0, as: UTF8.self)) } }
-
+    /// The own photo, checked again before it is drawn (a row written by an earlier build is not trusted).
     public var myPhoto: Data? {
-        guard let data = (try? deps.repo.get(Self.profilePhotoKey)) ?? nil, !data.isEmpty else { return nil }
+        guard let data = (try? deps.repo.get(OwnProfile.photoKey)) ?? nil, ProfilePhotoRule.isAcceptable(data) else { return nil }
         return data
     }
 
-    /// Stored when it is a JPEG within the limit (or `nil`, to remove it); the new profile goes out at once.
+    /// Stored when it passes `ProfilePhotoRule` (or `nil`, to remove it); the new profile goes out at once.
     @discardableResult
     public func setMyPhoto(_ photo: Data?) -> Bool {
-        if let photo, !LinkPreview.isJPEG(photo, max: ContentEnvelope.maxProfilePhoto) { return false }
-        guard (try? deps.repo.set(Self.profilePhotoKey, photo ?? Data())) != nil else { return false }
+        if let photo, !ProfilePhotoRule.isAcceptable(photo) { return false }
+        guard (try? deps.repo.set(OwnProfile.photoKey, photo ?? Data())) != nil else { return false }
         refresh()
         return true
     }
 
-    /// The photo of a contact (from their `profile`) or the own one; nothing when it is not a JPEG within the limit.
+    /// The photo of a contact (from their `profile`, once they are a contact) or the own one; nothing when it does
+    /// not pass `ProfilePhotoRule`.
     public func profilePhoto(for accountID: String) -> Data? {
         if accountID == deps.me.accountID { return myPhoto }
         return ProfileDisplay.photo(profile: profileRows[accountID])
@@ -39,38 +31,48 @@ extension LiveChatStore {
 
     /// Publishes a new version when the own name or photo is not what the last version said, then queues the current
     /// version once in every chat that has not had it: not for a blocked contact, a message request or a group.
-    /// Calling it again changes nothing.
+    /// The "sent" marker is written in the same transaction as the queued message, so a queue that fails leaves the
+    /// chat pending for the next pass. Calling it again changes nothing.
     public func sendOwnProfileIfNeeded() {
         let repo = deps.repo
         let me = deps.me.accountID
         guard let row = (try? repo.contact(id: me)) ?? nil else { return }
-        var ver = Self.int(try? repo.get(Self.profileVerKey)) ?? 0
-        var name = (try? repo.get(Self.profileNameKey)).flatMap { String(data: $0, encoding: .utf8) }
-        var photo = (try? repo.get(Self.profilePublishedPhotoKey)) ?? Data()
-        let current = (try? repo.get(Self.profilePhotoKey)) ?? Data()
+        var ver = OwnProfile.storedVersion(repo)
+        var name = (try? repo.get(OwnProfile.nameKey)).flatMap { $0 }.flatMap { String(data: $0, encoding: .utf8) }
+        var photo = (try? repo.get(OwnProfile.publishedPhotoKey)) ?? Data()
+        let current = (try? repo.get(OwnProfile.photoKey)) ?? Data()
+        let now = Int(deps.now().timeIntervalSince1970)
         if let cleaned = DisplayNameRule.clean(row.displayName),
            let next = ProfileSender.nextVersion(
-               current: ver >= 1 ? ver : nil, publishedName: name, name: cleaned, photoChanged: current != photo) {
+               current: ver >= 1 ? ver : nil, publishedName: name, name: cleaned, photoChanged: current != photo, nowSeconds: now) {
+            // A stored photo that no longer passes the rule is not published.
+            let publish = ProfilePhotoRule.isAcceptable(current) ? current : Data()
             let wrote = try? repo.transaction { () throws -> Void in
-                try repo.set(Self.profileVerKey, Data(String(next).utf8))
-                try repo.set(Self.profileNameKey, Data(cleaned.utf8))
-                try repo.set(Self.profilePublishedPhotoKey, current)
+                try repo.set(OwnProfile.verKey, Data(String(next).utf8))
+                try repo.set(OwnProfile.nameKey, Data(cleaned.utf8))
+                try repo.set(OwnProfile.publishedPhotoKey, publish)
             }
             guard wrote != nil else { return }
-            ver = next; name = cleaned; photo = current
+            ver = next; name = cleaned; photo = publish
         }
         guard ver >= 1, let name else { return }
         let blocked = Set((try? repo.blockedIDs()) ?? [])
         let targets = ((try? repo.chats()) ?? []).map {
             ProfileSender.Target(chatID: $0.id, blocked: blocked.contains($0.id), isRequest: $0.isRequest, isOneToOne: !$0.id.hasPrefix("g:"))
         }
-        let sent = ((try? repo.entries(prefix: Self.profileSentPrefix)) ?? [:]).reduce(into: [String: Int]()) {
-            $0[String($1.key.dropFirst(Self.profileSentPrefix.count))] = Self.int($1.value)
+        let sent = ((try? repo.entries(prefix: OwnProfile.sentPrefix)) ?? [:]).reduce(into: [String: Int]()) {
+            $0[String($1.key.dropFirst(OwnProfile.sentPrefix.count))] = OwnProfile.int($1.value)
         }
+        let enqueue = profileEnqueueOverride ?? { [outbox] body, chatID in try outbox.enqueueControl(body, chatID: chatID) }
+        let body = ContentEnvelope.Body.profile(name: name, photo: photo.isEmpty ? nil : photo, ver: ver)
+        var queued = false
         for chatID in ProfileSender.pending(chats: targets, ownVer: ver, sent: sent) {
-            // The marker comes first: a write that fails sends nothing, so a failure never makes a loop of sends.
-            guard (try? repo.set(Self.profileSentKey(chatID), Data(String(ver).utf8))) != nil else { continue }
-            sendControl(.profile(name: name, photo: photo.isEmpty ? nil : photo, ver: ver), chatID: chatID)
+            let done: Void? = try? repo.transaction { () throws -> Void in
+                try enqueue(body, chatID)
+                try repo.set(OwnProfile.sentKey(chatID), Data(String(ver).utf8))
+            }
+            if done != nil { queued = true }
         }
+        if queued { flushOutboxSoon() }
     }
 }

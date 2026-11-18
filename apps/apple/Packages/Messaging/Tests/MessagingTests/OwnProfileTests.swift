@@ -36,7 +36,10 @@ private struct Side {
     }
 }
 
-private let jpeg = Data([0xFF, 0xD8, 0xFF]) + Data(count: 100)
+/// A JPEG that passes `ProfilePhotoRule`: a 256 x 256 frame header and padding.
+private let jpeg = Data([0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x01, 0x00, 0x01, 0x00, 0x01, 0x01, 0x11, 0x00]) + Data(count: 100)
+/// The first version is the clock in seconds; the next ones are one above the one before.
+private let t0 = Int(testEpochDate.timeIntervalSince1970)
 
 @Suite("TestOwnProfile") @MainActor struct TestOwnProfile {
     private func make() async throws -> (ana: Side, bob: Side) {
@@ -57,18 +60,18 @@ private let jpeg = Data([0xFF, 0xD8, 0xFF]) + Data(count: 100)
         try ana.addLocalContact("acc-cy")
         try ana.addLocalContact("acc-dee")
         ana.store.setMyDisplayName("Ana")
-        for chat in ["acc-bob", "acc-cy", "acc-dee"] { #expect(try ana.sentVersion(chat) == 1) }
+        for chat in ["acc-bob", "acc-cy", "acc-dee"] { #expect(try ana.sentVersion(chat) == t0) }
         // Nothing changed: nothing is sent again.
         ana.store.setMyDisplayName("Ana")
         ana.store.sendOwnProfileIfNeeded()
-        for chat in ["acc-bob", "acc-cy", "acc-dee"] { #expect(try ana.sentVersion(chat) == 1) }
+        for chat in ["acc-bob", "acc-cy", "acc-dee"] { #expect(try ana.sentVersion(chat) == t0) }
         // A queued profile for a chat that cannot send yet is still there once, not twice.
         let queued = try ana.repo.dueOutbox(at: .distantFuture).filter { $0.chatID == "acc-cy" }
         #expect(queued.count == 1)
         guard case .profile(let name, let photo, let ver) = ContentEnvelope.decode(try #require(queued.first).envelope).body else {
             Issue.record("expected a profile"); return
         }
-        #expect(name == "Ana" && photo == nil && ver == 1)
+        #expect(name == "Ana" && photo == nil && ver == t0)
     }
 
     @Test func aPhotoChangeBumpsTheVersionAndReachesThePeer() async throws {
@@ -76,11 +79,11 @@ private let jpeg = Data([0xFF, 0xD8, 0xFF]) + Data(count: 100)
         ana.store.setMyDisplayName("Ana")
         #expect(ana.store.setMyPhoto(jpeg))
         #expect(ana.store.myPhoto == jpeg)
-        #expect(try ana.sentVersion("acc-bob") == 2)
+        #expect(try ana.sentVersion("acc-bob") == t0 + 1)
         await ana.store.settle()
         await bob.store.syncInbox()
         await bob.store.settle()
-        #expect(bob.store.profile(for: "acc-ana") == StoredProfile(accountID: "acc-ana", name: "Ana", photo: jpeg, ver: 2))
+        #expect(bob.store.profile(for: "acc-ana") == StoredProfile(accountID: "acc-ana", name: "Ana", photo: jpeg, ver: t0 + 1))
         #expect(try bob.repo.messages(chatID: "acc-ana", before: nil, limit: 10).isEmpty)
     }
 
@@ -90,18 +93,18 @@ private let jpeg = Data([0xFF, 0xD8, 0xFF]) + Data(count: 100)
         #expect(ana.store.setMyPhoto(jpeg))
         #expect(ana.store.setMyPhoto(nil))
         #expect(ana.store.myPhoto == nil)
-        #expect(try ana.sentVersion("acc-bob") == 3)
+        #expect(try ana.sentVersion("acc-bob") == t0 + 2)
         await ana.store.settle()
         await bob.store.syncInbox()
         await bob.store.settle()
-        #expect(bob.store.profile(for: "acc-ana") == StoredProfile(accountID: "acc-ana", name: "Ana", photo: nil, ver: 3))
+        #expect(bob.store.profile(for: "acc-ana") == StoredProfile(accountID: "acc-ana", name: "Ana", photo: nil, ver: t0 + 2))
     }
 
     @Test func removingWhenThereIsNoPhotoChangesNothing() async throws {
         let (ana, _) = try await make()
         ana.store.setMyDisplayName("Ana")
         #expect(ana.store.setMyPhoto(nil))
-        #expect(try ana.sentVersion("acc-bob") == 1)
+        #expect(try ana.sentVersion("acc-bob") == t0)
     }
 
     @Test func aBlockedContactAndAMessageRequestGetNothing() async throws {
@@ -112,10 +115,10 @@ private let jpeg = Data([0xFF, 0xD8, 0xFF]) + Data(count: 100)
         ana.store.setMyDisplayName("Ana")
         #expect(try ana.sentVersion("acc-bad") == nil)
         #expect(try ana.sentVersion("acc-stranger") == nil)
-        #expect(try ana.sentVersion("acc-bob") == 1)
+        #expect(try ana.sentVersion("acc-bob") == t0)
         // Accepting the request sends the profile then, once.
         ana.store.accept(requestID: "acc-stranger")
-        #expect(try ana.sentVersion("acc-stranger") == 1)
+        #expect(try ana.sentVersion("acc-stranger") == t0)
     }
 
     @Test func aPhotoThatIsNotAJPEGOrIsTooBigIsRefused() async throws {
@@ -124,7 +127,7 @@ private let jpeg = Data([0xFF, 0xD8, 0xFF]) + Data(count: 100)
         #expect(!ana.store.setMyPhoto(Data([1, 2, 3, 4])))
         #expect(!ana.store.setMyPhoto(Data([0xFF, 0xD8]) + Data(count: 24_576)))
         #expect(ana.store.myPhoto == nil)
-        #expect(try ana.sentVersion("acc-bob") == 1)
+        #expect(try ana.sentVersion("acc-bob") == t0)
     }
 
     @Test func noNameNoProfile() async throws {
@@ -133,10 +136,10 @@ private let jpeg = Data([0xFF, 0xD8, 0xFF]) + Data(count: 100)
         #expect(try ana.sentVersion("acc-bob") == nil)
         // The name arrives later: the first profile carries both.
         ana.store.setMyDisplayName("Ana")
-        #expect(try ana.sentVersion("acc-bob") == 1)
+        #expect(try ana.sentVersion("acc-bob") == t0)
         let queued = try ana.repo.dueOutbox(at: .distantFuture).filter { $0.chatID == "acc-bob" }
         let bodies = queued.map { ContentEnvelope.decode($0.envelope).body }
-        if let first = bodies.first, case .profile(_, let photo, let ver) = first { #expect(photo == jpeg && ver == 1) }
+        if let first = bodies.first, case .profile(_, let photo, let ver) = first { #expect(photo == jpeg && ver == t0) }
     }
 
     @Test func theProfileNameAndPhotoShowForTheContact() async throws {

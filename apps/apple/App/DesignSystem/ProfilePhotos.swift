@@ -1,12 +1,7 @@
-import SwiftUI
 import AppCore
-#if canImport(UIKit)
-import UIKit
-typealias PlatformImage = UIImage
-#elseif canImport(AppKit)
-import AppKit
-typealias PlatformImage = NSImage
-#endif
+import CoreGraphics
+import ImageIO
+import SwiftUI
 
 private struct ProfilePhotoKey: EnvironmentKey {
     static let defaultValue: @MainActor (String) -> Data? = { _ in nil }
@@ -21,26 +16,29 @@ extension EnvironmentValues {
     }
 }
 
-/// Decoded photos, so a list does not decode a JPEG again for every redraw.
+/// Decoded photos, so a list does not decode a JPEG again for every redraw. Data that fails `ProfilePhotoRule` (at most
+/// 24,576 bytes and a declared size of at most 1,024 x 1,024) is never decoded, and a decode is always a bounded
+/// thumbnail (at most 512 pixels), never a full-size decode. Cleared when the account signs out.
 @MainActor
 enum ProfileImageCache {
-    private static let cache = NSCache<NSData, PlatformImage>()
+    private static let cache = NSCache<NSData, CGImage>()
+    private static let maxPixels = 512
 
     static func image(for data: Data) -> Image? {
+        guard ProfilePhotoRule.isAcceptable(data) else { return nil }
         let key = data as NSData
-        let platform: PlatformImage
-        if let hit = cache.object(forKey: key) {
-            platform = hit
-        } else if let made = PlatformImage(data: data) {
-            cache.setObject(made, forKey: key)
-            platform = made
-        } else {
-            return nil
-        }
-        #if canImport(UIKit)
-        return Image(uiImage: platform)
-        #else
-        return Image(nsImage: platform)
-        #endif
+        if let hit = cache.object(forKey: key) { return Image(decorative: hit, scale: 1) }
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixels,
+            kCGImageSourceShouldCacheImmediately: true,
+        ]
+        guard let decoded = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        cache.setObject(decoded, forKey: key)
+        return Image(decorative: decoded, scale: 1)
     }
+
+    static func clear() { cache.removeAllObjects() }
 }
