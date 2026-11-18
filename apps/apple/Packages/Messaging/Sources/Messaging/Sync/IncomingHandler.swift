@@ -266,7 +266,7 @@ public struct IncomingHandler: Sendable {
     private func applyGroup(name: String, photo: Data?, ver: Int, from account: String, conversation: ConversationRecord, db: Repository) throws {
         guard ChatID.isGroup(conversation.chatID), let chat = try db.chat(id: conversation.chatID), chat.kind == "group",
               chat.myState == "member", GroupNameRule.clean(name) == name,
-              photo.map({ $0.count >= GroupLimits.minPhoto && $0.count <= GroupLimits.maxPhoto }) ?? true else { return }
+              photo.map({ ProfilePhotoRule.isAcceptable($0) }) ?? true else { return }
         let role = try db.groupMembers(chatID: chat.id).first { $0.accountID == account }.map { GroupRole(wire: $0.role) }
         guard GroupMerge.accept(currentVer: chat.groupVer, incomingVer: ver, senderRole: role) else { return }
         try db.setGroupInfo(chatID: chat.id, title: name, photo: photo, ver: ver)

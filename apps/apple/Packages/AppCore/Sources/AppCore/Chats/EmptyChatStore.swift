@@ -82,8 +82,8 @@ public struct AppStores {
     /// The engine used while there is no live engine.
     public let idleCalls: any CallEngine
 
-    public init(sampleData: Bool, server: ServerPolicy, settings: CallSettings, network: NetworkType) {
-        chatStore = Self.signedOutStore(sampleData: sampleData)
+    public init(sampleData: Bool, server: ServerPolicy, settings: CallSettings, network: NetworkType, memberGroup: Bool = false) {
+        chatStore = Self.signedOutStore(sampleData: sampleData, memberGroup: memberGroup)
         if sampleData {
             let simulated = SimulatedCallEngine(server: server, settings: settings, network: network)
             sampleCalls = simulated
@@ -95,8 +95,8 @@ public struct AppStores {
     }
 
     /// The store after sign-out (or when the live store could not be built).
-    public static func signedOutStore(sampleData: Bool) -> any ChatStore {
-        sampleData ? SampleChatStore() : EmptyChatStore()
+    public static func signedOutStore(sampleData: Bool, memberGroup: Bool = false) -> any ChatStore {
+        sampleData ? SampleChatStore(memberGroup: memberGroup) : EmptyChatStore()
     }
 }
 

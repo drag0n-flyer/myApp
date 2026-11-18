@@ -300,9 +300,10 @@ class ConversationManager(
         // A server ID already bound to another group is never rebound (it would move that chat's messages), and a group
         // already bound to another server ID is never bound twice (`group_id` is unique: the write would fail on every
         // retry and stall the inbox). Anyone who shares a chat with me knows its group ID and can build such a Welcome.
-        // A group I left or was removed from (its conversation row is inactive) may be joined again with a new MLS group.
+        // A group I left or was removed from (its conversation row is inactive and belongs to that group's chat) may be joined
+        // again with a new MLS group; an old one-to-one row is never rebound into a group.
         repo.conversation(serverConversationId)?.let {
-            if (!it.groupId.contentEquals(group.raw) && !(groupJoin != null && !it.active)) throw SyncException.ConversationRebound
+            if (!it.groupId.contentEquals(group.raw) && !(groupJoin != null && !it.active && it.chatId == org.example.app.core.groups.ChatID.group(serverConversationId))) throw SyncException.ConversationRebound
         }
         repo.conversationByGroup(group.raw)?.let { if (it.serverId != serverConversationId) throw SyncException.ConversationRebound }
         val keys = membership.keys(group)

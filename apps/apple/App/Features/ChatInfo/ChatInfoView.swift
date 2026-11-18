@@ -14,6 +14,14 @@ struct ChatInfoView: View {
     private var contact: Contact? { chat.flatMap { model.contact(id: $0.contactID) } }
 
     var body: some View {
+        if ChatID.isGroup(chatID) {
+            GroupInfoView(chatID: chatID, model: model)
+        } else {
+            directBody
+        }
+    }
+
+    private var directBody: some View {
         List {
             if let chat, let contact {
                 Section {
