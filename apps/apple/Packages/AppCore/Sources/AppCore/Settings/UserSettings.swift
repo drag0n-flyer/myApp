@@ -20,6 +20,9 @@ public struct UserSettings: Equatable, Codable, Sendable {
     /// Settings > Privacy > Link previews: whether this device may contact a website to make a preview of a link it sends.
     /// Off until the person turns it on.
     public var linkPreviews = false
+    /// Settings > Privacy > "Typing indicator" and "Online and last seen": off means nothing is sent and nothing is shown.
+    public var typingIndicator = true
+    public var onlineAndLastSeen = true
     public var noiseSuppression: NoiseSuppression = .standard
     /// App lock and its delay; mirrors `AppLock`, which owns the stored values.
     public var appLock = false

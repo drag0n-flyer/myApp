@@ -70,3 +70,11 @@ let schemaV3: [String] = [
     "CREATE INDEX messages_expires ON messages(expires_at) WHERE expires_at IS NOT NULL",
     "CREATE TABLE profiles(account_id TEXT PRIMARY KEY, name TEXT NOT NULL, photo BLOB, ver INTEGER NOT NULL) STRICT",
 ]
+
+/// A queued message keeps the ciphertext of its one MLS encrypt, and the conversation and epoch it was made in, so a retry posts the
+/// same bytes instead of encrypting again. Existing rows have none (they are encrypted on their next attempt).
+let schemaV4: [String] = [
+    "ALTER TABLE outbox ADD COLUMN ciphertext BLOB",
+    "ALTER TABLE outbox ADD COLUMN ciphertext_epoch INTEGER",
+    "ALTER TABLE outbox ADD COLUMN ciphertext_conversation TEXT",
+]

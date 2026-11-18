@@ -120,6 +120,10 @@ class InMemoryRepository : Repository {
     }
     override fun setTimer(chatId: String, seconds: Int) = tx { s.chats[chatId]?.let { s.chats[chatId] = it.copy(timerSeconds = seconds) }; Unit }
     override fun timerSeconds(chatId: String) = tx { s.chats[chatId]?.timerSeconds ?: 0 }
+    override fun expiredUnread(now: Long, ownAccount: String): Map<String, Int> =
+        s.messages.values.filter {
+            it.expiresAt != null && it.expiresAt <= now && it.senderAccount != ownAccount && it.senderAccount != "system" && it.status != "read"
+        }.groupingBy { it.chatId }.eachCount()
     override fun sweepExpired(now: Long, ownAccount: String): List<String> {
         val paths = ArrayList<String>()
         val removed = tx {
@@ -225,7 +229,11 @@ class InMemoryRepository : Repository {
     override fun replaceUnsentEnvelope(id: String, sender: String, envelope: ByteArray, folded: String, receivedAt: Long): Boolean = tx {
         val m = s.messages[id]
         if (m == null || m.senderAccount != sender || m.deleted || (m.status != "sending" && m.status != "failed")) false
-        else { s.messages[id] = m.copy(envelope = envelope, folded = folded, receivedAt = receivedAt); true }
+        else {
+            s.messages[id] = m.copy(envelope = envelope, folded = folded, receivedAt = receivedAt)
+            s.outbox[id]?.let { s.outbox[id] = it.copy(ciphertext = null, cipherEpoch = null, cipherConversation = null) }
+            true
+        }
     }
     override fun applyEdit(id: String, sender: String, envelope: ByteArray, folded: String, at: Long): Boolean = tx {
         val m = s.messages[id]
@@ -276,6 +284,9 @@ class InMemoryRepository : Repository {
     }
     override fun bumpOutbox(id: String, nextAttemptAt: Long) = tx { s.outbox[id]?.let { s.outbox[id] = it.copy(attempts = it.attempts + 1, nextAttemptAt = nextAttemptAt) }; Unit }
     override fun removeOutbox(id: String) = tx { s.outbox.remove(id); Unit }
+    override fun storeCiphertext(id: String, conversationId: String, epoch: Long, ciphertext: ByteArray) = tx {
+        s.outbox[id]?.let { s.outbox[id] = it.copy(ciphertext = ciphertext, cipherEpoch = epoch, cipherConversation = conversationId) }; Unit
+    }
 
     // raw inbox and processed hashes
     override fun insertRaw(items: List<RawInboxRecord>) = tx {

@@ -140,7 +140,7 @@ struct SearchView: View {
                 let chats = model.searchText.isEmpty ? [] : model.chats(in: .all, matching: model.searchText)
                 ForEach(chats) { chat in
                     Button { path.append(.chat(id: chat.id)) } label: {
-                        ChatRowView(chat: chat, name: model.contact(id: chat.contactID)?.displayName ?? "")
+                        ChatRowView(chat: chat, name: model.contact(id: chat.contactID)?.displayName ?? "", isTyping: model.isTyping(chatID: chat.id))
                     }
                     .buttonStyle(.plain)
                 }
@@ -246,7 +246,7 @@ struct ChatListContent: View {
 
             ForEach(model.chats(in: model.selectedFolder, matching: model.chatListQuery)) { chat in
                 Button { open(.chat(id: chat.id)) } label: {
-                    ChatRowView(chat: chat, name: model.contact(id: chat.contactID)?.displayName ?? "")
+                    ChatRowView(chat: chat, name: model.contact(id: chat.contactID)?.displayName ?? "", isTyping: model.isTyping(chatID: chat.id))
                 }
                 .buttonStyle(.plain)
                 .modifier(ChatRowActions(chat: chat, model: model, inArchive: chat.archived, pinLimit: { showingPinLimit = true }))

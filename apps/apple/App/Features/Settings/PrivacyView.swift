@@ -94,6 +94,20 @@ struct PrivacyView: View {
             }
 
             Section {
+                Toggle("Typing indicator", isOn: $model.settings.typingIndicator)
+                    .accessibilityIdentifier("privacy.typing")
+            } footer: {
+                Text("Others can see when you are typing. If you turn this off, you won't see it for others either.")
+            }
+
+            Section {
+                Toggle("Online and last seen", isOn: $model.settings.onlineAndLastSeen)
+                    .accessibilityIdentifier("privacy.presence")
+            } footer: {
+                Text("Others can see when you were last in the app. If you turn this off, you won't see it for others either.")
+            }
+
+            Section {
                 Toggle("Link previews", isOn: $model.settings.linkPreviews)
                     .accessibilityIdentifier("privacy.linkpreviews")
             } footer: {

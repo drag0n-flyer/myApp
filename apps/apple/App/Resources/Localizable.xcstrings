@@ -993,6 +993,17 @@
         }
       }
     },
+    "last seen %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "last seen %@"
+          }
+        }
+      }
+    },
     "Licenses" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1411,6 +1422,28 @@
         }
       }
     },
+    "online" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "online"
+          }
+        }
+      }
+    },
+    "Online and last seen" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Online and last seen"
+          }
+        }
+      }
+    },
     "Open-source licenses" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1429,6 +1462,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Opens it"
+          }
+        }
+      }
+    },
+    "Others can see when you are typing. If you turn this off, you won't see it for others either." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Others can see when you are typing. If you turn this off, you won't see it for others either."
+          }
+        }
+      }
+    },
+    "Others can see when you were last in the app. If you turn this off, you won't see it for others either." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Others can see when you were last in the app. If you turn this off, you won't see it for others either."
           }
         }
       }
@@ -2364,6 +2419,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Type"
+          }
+        }
+      }
+    },
+    "Typing indicator" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Typing indicator"
+          }
+        }
+      }
+    },
+    "typing…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "typing…"
           }
         }
       }
