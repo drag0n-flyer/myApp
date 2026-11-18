@@ -14,6 +14,9 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import org.example.app.contracts.CallSignalPayload
+import org.example.app.core.people.Expiry
+import org.example.app.core.people.TimerChoice
+import org.example.app.core.profile.DisplayNameRule
 import java.util.Base64
 
 /** Message payload: versioned JSON with short keys, carried as the MLS application-message plaintext. */
@@ -22,18 +25,25 @@ sealed interface ContentEnvelope {
     val id: String
     val at: Long
 
-    data class Text(override val id: String, override val at: Long, val t: String, val r: String? = null, override val v: Int = 1) : ContentEnvelope
+    /** [ttl] (seconds, 1...31,622,400) makes the message disappear at `at + ttl`. [lp] is the sender's link preview. */
+    data class Text(
+        override val id: String, override val at: Long, val t: String, val r: String? = null, override val v: Int = 1,
+        val ttl: Int? = null, val lp: LinkPreview? = null,
+    ) : ContentEnvelope
+    /** [c] is the caption. */
     class Photo(
         override val id: String, override val at: Long, val a: Att, val w: Int, val h: Int,
         val th: ByteArray? = null, val r: String? = null, override val v: Int = 1,
+        val ttl: Int? = null, val c: String? = null,
     ) : ContentEnvelope {
         override fun equals(other: Any?) = other is Photo && id == other.id && at == other.at && a == other.a &&
-            w == other.w && h == other.h && (th contentEquals other.th) && r == other.r && v == other.v
+            w == other.w && h == other.h && (th contentEquals other.th) && r == other.r && v == other.v &&
+            ttl == other.ttl && c == other.c
         override fun hashCode() = id.hashCode() + at.hashCode() + a.hashCode()
     }
     /** [dur] is seconds. The audio is Ogg Opus (`audio/ogg; codecs=opus`); the envelope carries no mime for it. */
-    data class Voice(override val id: String, override val at: Long, val a: Att, val dur: Double, val r: String? = null, override val v: Int = 1) : ContentEnvelope
-    data class File(override val id: String, override val at: Long, val a: Att, val name: String, val mime: String, val r: String? = null, override val v: Int = 1) : ContentEnvelope
+    data class Voice(override val id: String, override val at: Long, val a: Att, val dur: Double, val r: String? = null, override val v: Int = 1, val ttl: Int? = null) : ContentEnvelope
+    data class File(override val id: String, override val at: Long, val a: Att, val name: String, val mime: String, val r: String? = null, override val v: Int = 1, val ttl: Int? = null, val c: String? = null) : ContentEnvelope
     data class Edit(override val id: String, override val at: Long, val target: String, val t: String, override val v: Int = 1) : ContentEnvelope
     data class Delete(override val id: String, override val at: Long, val target: String, override val v: Int = 1) : ContentEnvelope
     data class React(override val id: String, override val at: Long, val target: String, val e: String, override val v: Int = 1) : ContentEnvelope
@@ -41,8 +51,30 @@ sealed interface ContentEnvelope {
     data class CallSig(override val id: String, override val at: Long, val p: CallSignalPayload, override val v: Int = 1) : ContentEnvelope
     data class Mode(override val id: String, override val at: Long, val m: String, override val v: Int = 1) : ContentEnvelope
 
+    /** Ephemeral: sent only through the `conv.ephemeral` frame. Never stored, never notifies. */
+    data class Typing(override val id: String, override val at: Long, val on: Boolean, override val v: Int = 1) : ContentEnvelope
+    /** Ephemeral. [state] is `online` or `away`. */
+    data class Presence(override val id: String, override val at: Long, val state: String, override val v: Int = 1) : ContentEnvelope
+    /** The chat's disappearing-message timer, one of the [TimerChoice] values (0 = off). Stored as a system line. */
+    data class Timer(override val id: String, override val at: Long, val seconds: Int, override val v: Int = 1) : ContentEnvelope
+    /** A contact's name and photo. Never stored as a message. */
+    class Profile(
+        override val id: String, override val at: Long, val name: String, val photo: ByteArray?, val ver: Int, override val v: Int = 1,
+    ) : ContentEnvelope {
+        override fun equals(other: Any?) = other is Profile && id == other.id && at == other.at && name == other.name &&
+            (photo contentEquals other.photo) && ver == other.ver && v == other.v
+        override fun hashCode() = id.hashCode() + ver
+    }
+
     /** A newer version, an unknown kind or a malformed message. [kind] is `"invalid"` when not even the header reads. [raw] is the original JSON text. */
     data class Unknown(override val id: String, override val at: Long, val kind: String, val raw: String, override val v: Int = 1) : ContentEnvelope
+}
+
+/** A link preview made by the sender's app. Receivers show it and never fetch. */
+class LinkPreview(val url: String, val title: String, val desc: String? = null, val img: ByteArray? = null) {
+    override fun equals(other: Any?) = other is LinkPreview && url == other.url && title == other.title && desc == other.desc &&
+        (img contentEquals other.img)
+    override fun hashCode() = url.hashCode()
 }
 
 enum class ReceiptKind(val wire: String) { Delivered("delivered"), Read("read") }
@@ -51,8 +83,8 @@ object ContentCodec {
     /** Loose backstop on a whole envelope (UTF-8 bytes), both ways. The real text limit is [TextLimit], applied at compose time. */
     const val MAX_ENVELOPE_BYTES = 64 * 1024
     private val json = Json { ignoreUnknownKeys = true }
-    private val knownKinds = setOf("text", "photo", "voice", "file", "edit", "delete", "react", "receipt", "callsig", "mode")
-    private val invalidKinds = setOf("mode", "receipt")
+    private val knownKinds = setOf("text", "photo", "voice", "file", "edit", "delete", "react", "receipt", "callsig", "mode", "typing", "presence", "timer", "profile")
+    private val invalidKinds = setOf("mode", "receipt", "typing", "presence", "timer", "profile")
 
     /** Sorted keys, no whitespace, like the Swift encoder. Throws [IllegalArgumentException] only over the 64 KiB backstop. [ContentEnvelope.Unknown] is re-emitted verbatim. */
     fun encode(env: ContentEnvelope): ByteArray {
@@ -64,14 +96,18 @@ object ContentCodec {
     private fun encodeUnchecked(env: ContentEnvelope): ByteArray {
         if (env is ContentEnvelope.Unknown) return env.raw.encodeToByteArray()
         val obj = when (env) {
-            is ContentEnvelope.Text -> { head(env, "text") { put("t", env.t); env.r?.let { put("r", it) } } }
+            is ContentEnvelope.Text -> { head(env, "text") {
+                put("t", env.t); env.r?.let { put("r", it) }; env.ttl?.let { put("ttl", it) }; env.lp?.let { put("lp", lpJson(it)) }
+            } }
             is ContentEnvelope.Photo -> head(env, "photo") {
                 put("a", attJson(env.a)); put("w", env.w); put("h", env.h)
                 env.th?.let { put("th", b64(it)) }; env.r?.let { put("r", it) }
+                env.ttl?.let { put("ttl", it) }; env.c?.let { put("c", it) }
             }
-            is ContentEnvelope.Voice -> head(env, "voice") { put("a", attJson(env.a)); put("dur", number(env.dur)); env.r?.let { put("r", it) } }
+            is ContentEnvelope.Voice -> head(env, "voice") { put("a", attJson(env.a)); put("dur", number(env.dur)); env.r?.let { put("r", it) }; env.ttl?.let { put("ttl", it) } }
             is ContentEnvelope.File -> head(env, "file") {
                 put("a", attJson(env.a)); put("name", env.name); put("mime", env.mime); env.r?.let { put("r", it) }
+                env.ttl?.let { put("ttl", it) }; env.c?.let { put("c", it) }
             }
             is ContentEnvelope.Edit -> { head(env, "edit") { put("target", env.target); put("t", env.t) } }
             is ContentEnvelope.Delete -> head(env, "delete") { put("target", env.target) }
@@ -83,6 +119,12 @@ object ContentCodec {
                 put("p", json.encodeToJsonElement(CallSignalPayload.serializer(), env.p))
             }
             is ContentEnvelope.Mode -> head(env, "mode") { put("m", env.m) }
+            is ContentEnvelope.Typing -> head(env, "typing") { put("on", env.on) }
+            is ContentEnvelope.Presence -> head(env, "presence") { put("state", env.state) }
+            is ContentEnvelope.Timer -> head(env, "timer") { put("seconds", env.seconds) }
+            is ContentEnvelope.Profile -> head(env, "profile") {
+                put("name", env.name); env.photo?.let { put("photo", b64(it)) }; put("ver", env.ver)
+            }
             is ContentEnvelope.Unknown -> error("handled above")
         }
         return sorted(obj).toString().encodeToByteArray()
@@ -103,16 +145,16 @@ object ContentCodec {
     private fun body(o: JsonObject, k: String, id: String, at: Long): ContentEnvelope? {
         val r = o["r"].str()
         return when (k) {
-            "text" -> o["t"].str()?.let { ContentEnvelope.Text(id, at, it, r) }
+            "text" -> o["t"].str()?.let { ContentEnvelope.Text(id, at, it, r, ttl = ttl(o), lp = linkPreview(o["lp"], it)) }
             "photo" -> {
                 val a = att(o["a"]); val w = o["w"].int(); val h = o["h"].int()
                 if (a == null || w == null || h == null) null
-                else ContentEnvelope.Photo(id, at, a, w, h, o["th"].str()?.let { Base64.getDecoder().decode(it) }, r)
+                else ContentEnvelope.Photo(id, at, a, w, h, o["th"].str()?.let { Base64.getDecoder().decode(it) }, r, ttl = ttl(o), c = caption(o))
             }
-            "voice" -> { val a = att(o["a"]); val d = o["dur"].dbl(); if (a == null || d == null) null else ContentEnvelope.Voice(id, at, a, d, r) }
+            "voice" -> { val a = att(o["a"]); val d = o["dur"].dbl(); if (a == null || d == null) null else ContentEnvelope.Voice(id, at, a, d, r, ttl = ttl(o)) }
             "file" -> {
                 val a = att(o["a"]); val n = o["name"].str(); val m = o["mime"].str()
-                if (a == null || n == null || m == null) null else ContentEnvelope.File(id, at, a, n, m, r)
+                if (a == null || n == null || m == null) null else ContentEnvelope.File(id, at, a, n, m, r, ttl = ttl(o), c = caption(o))
             }
             "edit" -> { val t = o["target"].str(); val x = o["t"].str(); if (t == null || x == null) null else ContentEnvelope.Edit(id, at, t, x) }
             "delete" -> o["target"].str()?.let { ContentEnvelope.Delete(id, at, it) }
@@ -124,8 +166,53 @@ object ContentCodec {
             }
             "callsig" -> o["p"]?.let { ContentEnvelope.CallSig(id, at, json.decodeFromJsonElement(CallSignalPayload.serializer(), it)) }
             "mode" -> o["m"].str()?.takeIf { it == "e2ee" || it == "server_readable" }?.let { ContentEnvelope.Mode(id, at, it) }
+            "typing" -> (o["on"] as? JsonPrimitive)?.takeIf { !it.isString }?.booleanOrNull?.let { ContentEnvelope.Typing(id, at, it) }
+            "presence" -> o["state"].str()?.takeIf { it == "online" || it == "away" }?.let { ContentEnvelope.Presence(id, at, it) }
+            "timer" -> o["seconds"].int()?.takeIf { TimerChoice.from(it) != null }?.let { ContentEnvelope.Timer(id, at, it) }
+            "profile" -> profile(o, id, at)
             else -> null
         }
+    }
+
+    /** `ttl` is an integer of 1...31,622,400; anything else is ignored and the message kept. */
+    private fun ttl(o: JsonObject): Int? = o["ttl"].long()?.takeIf { it in 1..Expiry.MAX_TTL_SECONDS }?.toInt()
+
+    /** A caption longer than a text message is cut to the same limit. */
+    private fun caption(o: JsonObject): String? = o["c"].str()?.let { TextLimit.truncate(it) }
+
+    private const val PHOTO_MAX = 24_576
+    private const val PREVIEW_IMAGE_MAX = 8_192
+    private const val TITLE_MAX = 200
+    private const val DESC_MAX = 300
+
+    private fun jpeg(b64: String, max: Int): ByteArray? {
+        val bytes = try { Base64.getDecoder().decode(b64) } catch (_: IllegalArgumentException) { return null }
+        return bytes.takeIf { it.size in 2..max && it[0] == 0xFF.toByte() && it[1] == 0xD8.toByte() }
+    }
+
+    /** The whole profile is invalid (null) when the name, photo or version is. */
+    private fun profile(o: JsonObject, id: String, at: Long): ContentEnvelope? {
+        val name = o["name"].str()?.takeIf { DisplayNameRule.clean(it) == it } ?: return null
+        val ver = o["ver"].int()?.takeIf { it >= 1 } ?: return null
+        val photoEl = o["photo"]
+        val photo = if (photoEl == null || photoEl is JsonNull) null else jpeg(photoEl.str() ?: return null, PHOTO_MAX) ?: return null
+        return ContentEnvelope.Profile(id, at, name, photo, ver)
+    }
+
+    /** An invalid preview is dropped (null) and the text kept. */
+    private fun linkPreview(e: JsonElement?, text: String): LinkPreview? {
+        val o = e as? JsonObject ?: return null
+        val url = o["url"].str()?.takeIf { it.startsWith("https://") && it in text } ?: return null
+        val title = o["title"].str()?.takeIf { it.codePointCount(0, it.length) in 1..TITLE_MAX } ?: return null
+        val descEl = o["desc"]
+        val desc = if (descEl == null || descEl is JsonNull) null else descEl.str()?.takeIf { it.codePointCount(0, it.length) <= DESC_MAX } ?: return null
+        val imgEl = o["img"]
+        val img = if (imgEl == null || imgEl is JsonNull) null else jpeg(imgEl.str() ?: return null, PREVIEW_IMAGE_MAX) ?: return null
+        return LinkPreview(url, title, desc, img)
+    }
+
+    private fun lpJson(lp: LinkPreview): JsonElement = buildJsonObject {
+        put("url", lp.url); put("title", lp.title); lp.desc?.let { put("desc", it) }; lp.img?.let { put("img", b64(it)) }
     }
 
     private fun att(e: JsonElement?): Att? {

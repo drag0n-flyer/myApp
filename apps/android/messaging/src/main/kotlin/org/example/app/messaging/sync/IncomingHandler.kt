@@ -195,6 +195,7 @@ class IncomingHandler(
                 applyReceipt(envelope.s, envelope.ids, account, chatId, repo)
                 AppliedResult.Ignored
             }
+            is ContentEnvelope.Typing, is ContentEnvelope.Presence, is ContentEnvelope.Profile, is ContentEnvelope.Timer -> AppliedResult.Ignored // handled in the behaviour step
             is ContentEnvelope.CallSig -> AppliedResult.CallSignal(envelope.p, sender)
             is ContentEnvelope.Mode -> {
                 ModePin.pin(repo, conversation, envelope.m, clock.now(), log)
