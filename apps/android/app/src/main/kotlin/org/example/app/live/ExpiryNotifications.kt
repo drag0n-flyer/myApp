@@ -19,14 +19,29 @@ object ExpiryNotifications {
                 continue
             }
             val chat = store.chat(chatId) ?: continue
-            val contact = chat.contactId?.let { store.contact(it) } ?: continue
-            val title = contact.displayName.ifEmpty { contact.username }
+            // A group is titled with its name and each line names its sender; a one-to-one chat with the contact.
+            val title = if (chat.isGroup) {
+                chat.title ?: context.getString(org.example.app.R.string.group_untitled)
+            } else {
+                val contact = chat.contactId?.let { store.contact(it) } ?: continue
+                contact.displayName.ifEmpty { contact.username }
+            }
             val remaining = chat.messages
                 .filter { it.senderId != store.me.id && it.senderId != "system" && it.content !is MessageContent.System }
                 .takeLast(left)
             if (remaining.isEmpty()) continue
             val expiresAt = if (remaining.all { it.expiresAt != null }) remaining.maxOf { it.expiresAt!!.toEpochMilli() } else null
-            PushRuntime.replaceChatLines(context, chatId, title, remaining.map { text(context, it.preview) to it.sentAt.toEpochMilli() }, expiresAt)
+            val lines = remaining.map { m ->
+                val body = text(context, m.preview)
+                val line = if (chat.isGroup) {
+                    val who = store.personName(m.senderId) ?: context.getString(org.example.app.R.string.group_someone)
+                    context.getString(org.example.app.R.string.group_sender_preview, who, body)
+                } else {
+                    body
+                }
+                line to m.sentAt.toEpochMilli()
+            }
+            PushRuntime.replaceChatLines(context, chatId, title, lines, expiresAt)
         }
     }
 

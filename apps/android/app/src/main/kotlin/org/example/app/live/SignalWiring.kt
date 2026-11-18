@@ -35,7 +35,11 @@ class EphemeralSignalChannel(private val ephemeral: EphemeralChannel, private va
 
     override val incoming: Flow<IncomingSignal> = ephemeral.events.mapNotNull { event ->
         when (val body = event.body) {
-            is ContentEnvelope.Typing -> IncomingSignal(event.chatId, Signal.Typing(body.on))
+            // In a group the sender says who is typing; the channel checked that it is a listed member.
+            is ContentEnvelope.Typing -> IncomingSignal(
+                event.chatId, Signal.Typing(body.on),
+                from = event.accountId.takeIf { org.example.app.core.groups.ChatID.isGroup(event.chatId) },
+            )
             is ContentEnvelope.Presence -> IncomingSignal(event.chatId, Signal.Presence(body.state == "online"))
             else -> null // EphemeralChannel emits only these two kinds
         }
@@ -73,6 +77,7 @@ fun buildSignals(
         presenceEnabled = { settings.value.onlineAndLastSeen },
         blocked = { id -> store.chat(id).let { it == null || it.isRequest || it.contactId in store.blockedIds.value } },
         presenceTargets = { PresenceTargets.pick(store.chats.value, nowMs()) },
+        blockedAccount = { id -> id in store.blockedIds.value },
         witnesses = witnesses, nowMs = nowMs,
     )
     signals.watchMessages(store.chats, store.me.id)

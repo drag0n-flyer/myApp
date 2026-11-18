@@ -576,4 +576,18 @@
     <string name="group_create_full">This group is full.</string>
     <string name="group_create_not_found">One of these people can\'t be added.</string>
     <string name="group_create_nobody">None of these people can be added yet.</string>
+
+    <!-- Groups: messages -->
+    <string name="group_sender_preview">%1$s: %2$s</string>
+    <string name="group_you_preview">You: %1$s</string>
+    <string name="group_typing_one">%1$s is typing…</string>
+    <string name="group_typing_many">%1$d people are typing…</string>
+    <string name="group_blocked_message">Message from a blocked contact</string>
+    <string name="group_blocked_show">Show</string>
+    <string name="group_blocked_show_label">Show message from a blocked contact</string>
+    <string name="message_info">Message info</string>
+    <string name="message_info_read_by">Read by</string>
+    <string name="message_info_delivered_to">Delivered to</string>
+    <string name="message_info_nobody">No one yet</string>
+    <string name="message_info_sender_label">Sent by %1$s</string>
 </resources>

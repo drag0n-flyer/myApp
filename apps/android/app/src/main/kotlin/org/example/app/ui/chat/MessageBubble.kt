@@ -72,12 +72,21 @@ fun MessageBubble(
     highlighted: Boolean = false,
     /** What photo, file and voice bubbles need from the screen; null shows them without opening anything. */
     media: MediaHost? = null,
+    /** In a group, the sender's name when this message starts a run of theirs: shown with their tile above the bubble. */
+    senderName: String? = null,
+    /** A group message from a person I blocked: shown as one line with "Show" until the person asks to see it. */
+    collapsed: Boolean = false,
+    onShowCollapsed: () -> Unit = {},
 ) {
     val content = message.content
     if (content is MessageContent.System) {
         Box(modifier.fillMaxWidth().padding(vertical = 4.dp), contentAlignment = Alignment.Center) {
             Text(previewText(message.preview), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        return
+    }
+    if (collapsed && !isOwn) {
+        BlockedLine(modifier, onShowCollapsed)
         return
     }
     val own = MaterialTheme.colorScheme.primaryContainer
@@ -90,6 +99,8 @@ fun MessageBubble(
         .pointerInput(onLongPress) { detectTapGestures(onLongPress = { onLongPress() }) }
         .semantics { onLongClick(optionsLabel) { onLongPress(); true } }
     Row(modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp), horizontalArrangement = if (isOwn) Arrangement.End else Arrangement.Start) {
+        Column {
+        if (senderName != null && !isOwn) SenderLine(senderName, message.senderId)
         Box {
             // The flash after a jump is a fill and an outline, so it shows on both the own and the other bubble colour.
             val outline = if (highlighted) BorderStroke(3.dp, MaterialTheme.colorScheme.tertiary) else null
@@ -120,6 +131,34 @@ fun MessageBubble(
                 }
             }
             menu()
+        }
+        }
+    }
+}
+
+/** The name and tile of a group member above the first bubble of their run. One element for a screen reader. */
+@Composable
+private fun SenderLine(name: String, accountId: String) {
+    val label = stringResource(R.string.message_info_sender_label, name)
+    Row(
+        Modifier.padding(start = 4.dp, bottom = 2.dp).semantics(mergeDescendants = true) { contentDescription = label },
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        org.example.app.ui.Avatar(name, size = 20.dp, colorKey = accountId)
+        Text(name, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+    }
+}
+
+/** "Message from a blocked contact" with a "Show" button; nothing of the message is in the tree until it is shown. */
+@Composable
+private fun BlockedLine(modifier: Modifier, onShow: () -> Unit) {
+    val showLabel = stringResource(R.string.group_blocked_show_label)
+    Row(modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp), horizontalArrangement = Arrangement.Start) {
+        Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+            Row(Modifier.padding(start = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(stringResource(R.string.group_blocked_message), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton(onClick = onShow, modifier = Modifier.semantics { contentDescription = showLabel }) { Text(stringResource(R.string.group_blocked_show)) }
+            }
         }
     }
 }
