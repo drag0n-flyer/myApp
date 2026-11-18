@@ -161,6 +161,41 @@ class PeopleBaseTest {
         assertEquals(0, s.bob.repo.timerSeconds("acc-ana"))
     }
 
+    @Test fun aFarFutureTimerAtDoesNotLockOutLaterTimers() = runTest {
+        val s = setup()
+        s.deliver(ContentEnvelope.Timer("far", Long.MAX_VALUE, 604_800))
+        assertEquals(604_800, s.bob.repo.timerSeconds("acc-ana"))
+        val line = s.chatMessages().single()
+        assertEquals(NOW + 5 * 60_000L, line.sentAt, "the line sorts at the clamped time")
+        s.bob.nowMs = NOW + 10 * 60_000L
+        s.deliver(ContentEnvelope.Timer("next", NOW + 10 * 60_000L, 0))
+        assertEquals(0, s.bob.repo.timerSeconds("acc-ana"), "a normal later timer still applies")
+    }
+
+    @Test fun aLocalTimerChoiceIsNotOverriddenByAnOlderIncomingOne() = runTest {
+        val s = setup()
+        val st = store(s.bob)
+        s.bob.nowMs = NOW + 1_000
+        st.setTimer("acc-ana", 86_400)
+        s.deliver(ContentEnvelope.Timer("old", NOW, 604_800)) // sent before the local choice
+        assertEquals(86_400, s.bob.repo.timerSeconds("acc-ana"))
+        s.bob.nowMs = NOW + 2_000
+        s.deliver(ContentEnvelope.Timer("new", NOW + 2_000, 0))
+        assertEquals(0, s.bob.repo.timerSeconds("acc-ana"))
+    }
+
+    @Test fun theWireExpiresAtIsClampedBelowTheServerMaximum() = runTest {
+        val s = setup()
+        // A max ttl with an `at` slightly ahead would be over 366 days from now.
+        s.bob.outbox.enqueue(ContentEnvelope.Text("clamp", NOW + 120_000, "long", ttl = 31_622_400), "acc-ana")
+        s.bob.outbox.flush()
+        val posted = s.rig.server.messages.last { it.clientMsgId == "clamp" }
+        assertEquals(NOW + 366L * 86_400_000 - 60_000, posted.expiresAtMs)
+        s.bob.outbox.enqueue(ContentEnvelope.Text("fine", NOW, "short", ttl = 60), "acc-ana")
+        s.bob.outbox.flush()
+        assertEquals(NOW + 60_000, s.rig.server.messages.last { it.clientMsgId == "fine" }.expiresAtMs, "a normal one is untouched")
+    }
+
     @Test fun timerNeverNotifies() = runTest {
         val s = setup()
         s.ana.send(s.conv, ContentEnvelope.Timer("t1", NOW, DAY))

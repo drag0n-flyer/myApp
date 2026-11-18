@@ -204,7 +204,7 @@ object ContentCodec {
     /** An invalid preview is dropped (null) and the text kept. */
     private fun linkPreview(e: JsonElement?, text: String): LinkPreview? {
         val o = e as? JsonObject ?: return null
-        val url = o["url"].str()?.takeIf { it.startsWith("https://") && it in text } ?: return null
+        val url = o["url"].str()?.takeIf { it.startsWith("https://", ignoreCase = true) && it in text } ?: return null
         val title = o["title"].str()?.takeIf { it.codePointCount(0, it.length) in 1..TITLE_MAX } ?: return null
         val descEl = o["desc"]
         val desc = if (descEl == null || descEl is JsonNull) null else descEl.str()?.takeIf { it.codePointCount(0, it.length) <= DESC_MAX } ?: return null

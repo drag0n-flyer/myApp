@@ -1274,6 +1274,8 @@ class LiveChatStore(
 
     override fun setTimer(chatId: String, seconds: Int) {
         if (closed.get() || org.example.app.core.people.TimerChoice.from(seconds) == null) return
+        // Remembered with the time of the choice, so an older timer from the peer cannot override it.
+        repo.set("timer-at:$chatId", nowMs().toString().encodeToByteArray())
         repo.setTimer(chatId, seconds)
         reload()
     }

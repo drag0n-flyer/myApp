@@ -115,4 +115,13 @@ class EnvelopePeopleVectorsTest {
             "AQ==", Base64.getEncoder().encodeToString(byteArrayOf(1)), // the encoder uses standard base64, as `th` does
         )
     }
+
+    @Test fun previewSchemeIsCaseInsensitiveButStillHttpsOnly() {
+        fun lp(url: String) = ContentCodec.decode(
+            """{"v":1,"id":"m","at":1,"k":"text","t":"see $url","lp":{"url":"$url","title":"T"}}""".encodeToByteArray(),
+        ) as ContentEnvelope.Text
+        assertEquals("HTTPS://Example.com/x", lp("HTTPS://Example.com/x").lp?.url)
+        assertNull(lp("http://example.com/x").lp)
+        assertNull(lp("HTTP://example.com/x").lp)
+    }
 }

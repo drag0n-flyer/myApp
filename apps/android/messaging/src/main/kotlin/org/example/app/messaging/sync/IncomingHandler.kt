@@ -233,9 +233,11 @@ class IncomingHandler(
      */
     private fun applyTimer(timer: ContentEnvelope.Timer, account: String, chatId: String, repo: Repository) {
         val key = "timer-at:$chatId"
+        // The sender controls `at`: a far-future one would otherwise win every later comparison for ever.
+        val effectiveAt = minOf(timer.at, clock.now() + MAX_TIMER_SKEW_MS)
         val last = repo.get(key)?.decodeToString()?.toLongOrNull()
-        if (last != null && timer.at < last) return
-        repo.set(key, timer.at.toString().encodeToByteArray())
+        if (last != null && effectiveAt < last) return
+        repo.set(key, effectiveAt.toString().encodeToByteArray())
         if (repo.timerSeconds(chatId) == timer.seconds) return
         repo.setTimer(chatId, timer.seconds)
         val nameField = if (account == me.accountId) "" else ",\"name\":" + kotlinx.serialization.json.JsonPrimitive(account).toString()
@@ -243,7 +245,7 @@ class IncomingHandler(
         repo.insertMessage(
             MessageRecord(
                 id = "sys-timer-${timer.id}", chatId = chatId, conversationId = null, senderAccount = ChatMapping.SYSTEM_SENDER,
-                senderDevice = null, sentAt = timer.at, receivedAt = clock.now(), envelope = body.encodeToByteArray(), status = "sent",
+                senderDevice = null, sentAt = effectiveAt, receivedAt = clock.now(), envelope = body.encodeToByteArray(), status = "sent",
             ),
         )
     }
@@ -274,3 +276,6 @@ class IncomingHandler(
 
 /** Envelope kinds that are never a chat row, valid or not. */
 private val PEOPLE_KINDS = setOf("typing", "presence", "timer", "profile")
+
+/** How far ahead of this device's clock a timer message's own time may claim to be. */
+private const val MAX_TIMER_SKEW_MS = 5 * 60_000L

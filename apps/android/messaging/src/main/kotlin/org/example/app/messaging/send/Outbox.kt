@@ -321,7 +321,8 @@ class Outbox(
             }
 
             try {
-                val expiresAt = expiryOf(envelope)
+                // The server refuses an expiry over 366 days ahead: a max ttl with an `at` a little ahead is held just under it.
+                val expiresAt = expiryOf(envelope)?.let { minOf(it, clock.now() + MAX_EXPIRY_AHEAD_MS) }
                 // Without an expiry the five-argument call is used, exactly as before this existed.
                 if (expiresAt == null) server.postMessage(conversation.serverId, encrypted.epoch, encrypted.ciphertext, escrowCopy, envelope.id)
                 else server.postMessage(conversation.serverId, encrypted.epoch, encrypted.ciphertext, escrowCopy, envelope.id, expiresAt)
@@ -387,5 +388,7 @@ class Outbox(
         /** A queued message that failed this many attempts, or sat in the queue this long, is marked `failed`. */
         const val MAX_ATTEMPTS = 10
         const val MAX_AGE_MS = 24L * 3600 * 1000
+        /** 366 days less a minute: the server's limit with room for clock drift. */
+        const val MAX_EXPIRY_AHEAD_MS = 366L * 86_400_000 - 60_000
     }
 }
