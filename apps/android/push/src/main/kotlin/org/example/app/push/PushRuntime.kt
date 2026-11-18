@@ -40,6 +40,12 @@ object PushRuntime {
     /** For N6: call it when app lock is turned on. Notifications already showing lose their sender, text and Reply. */
     fun hideShownContent(context: android.content.Context) = MessageNotifier(context.applicationContext).hideShownContent()
 
+    /** Disappearing messages were removed from these chats: their delivered notifications go (the lines carry no message IDs). */
+    fun cancelChatNotifications(context: android.content.Context, chatIds: Collection<String>) {
+        val notifier = MessageNotifier(context.applicationContext)
+        chatIds.forEach(notifier::cancelChat)
+    }
+
     /** What the notification buttons do. The app sets it in `PushWiring`; null while signed out. */
     @Volatile var notificationActions: NotificationActionSink? = null
 
