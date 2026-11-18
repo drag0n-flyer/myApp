@@ -59,3 +59,14 @@ let schemaV2: [String] = [
     "ALTER TABLE chats ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
     "CREATE TABLE drafts(chat_id TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE, text TEXT NOT NULL, updated_at INTEGER NOT NULL) STRICT",
 ]
+
+/// People: disappearing messages (`expires_at`, `chats.timer_seconds`), captions, link previews (JSON) and the
+/// profile each contact sent (name, photo, version).
+let schemaV3: [String] = [
+    "ALTER TABLE messages ADD COLUMN expires_at INTEGER",
+    "ALTER TABLE messages ADD COLUMN caption TEXT",
+    "ALTER TABLE messages ADD COLUMN link_preview TEXT",
+    "ALTER TABLE chats ADD COLUMN timer_seconds INTEGER NOT NULL DEFAULT 0",
+    "CREATE INDEX messages_expires ON messages(expires_at) WHERE expires_at IS NOT NULL",
+    "CREATE TABLE profiles(account_id TEXT PRIMARY KEY, name TEXT NOT NULL, photo BLOB, ver INTEGER NOT NULL) STRICT",
+]
