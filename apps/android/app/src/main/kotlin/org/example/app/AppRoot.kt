@@ -289,10 +289,10 @@ fun AppRoot(
         // The outcome is acted on at the root once unlocked, whatever dialog or screen is above the chats. A redeemed
         // person (Confirm) stays in the flow until the confirmation screen reports Add or Cancel, and is shown again if
         // its route is gone (a rotation, or the lock cover, cannot lose it).
-        val backStack by nav.currentBackStack.collectAsStateWithLifecycle()
-        val confirmShown = backStack.any { it.destination.route == CONFIRM_CONTACT }
-        LaunchedEffect(linkOutcome, locked, confirmShown) {
+        val topEntry by nav.currentBackStackEntryAsState()
+        LaunchedEffect(linkOutcome, locked, topEntry) {
             if (locked) return@LaunchedEffect
+            val confirmShown = runCatching { nav.getBackStackEntry(CONFIRM_CONTACT) }.isSuccess
             val outcome = linkOutcome ?: return@LaunchedEffect
             if (outcome is LinkOutcome.Confirm) {
                 if (!confirmShown) nav.navigate(
