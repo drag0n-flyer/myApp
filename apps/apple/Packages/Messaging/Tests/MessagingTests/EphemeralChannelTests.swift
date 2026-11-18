@@ -123,3 +123,13 @@ private struct Rig {
         #expect(await rig.drain(1).count == 1)
     }
 }
+
+@Suite("TestEphemeralBuffer") struct TestEphemeralBuffer {
+    @Test func the65thUnreadSignalDropsTheOldest() async throws {
+        let rig = try await Rig()
+        rig.channel.ingest(rig.frame(rig.envelope(.presence(.away))))            // the oldest
+        for _ in 0..<64 { rig.channel.ingest(rig.frame(rig.envelope(.typing(on: true)))) }
+        let got = await rig.drain(64)
+        #expect(got.count == 64 && got.allSatisfy { $0.body == .typing(on: true) })
+    }
+}

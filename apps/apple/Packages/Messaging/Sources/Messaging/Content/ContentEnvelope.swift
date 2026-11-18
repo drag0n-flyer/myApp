@@ -219,7 +219,7 @@ public struct ContentEnvelope: Codable, Sendable, Equatable {
             case "profile":
                 guard let name, DisplayNameRule.clean(name) == name, let ver = ver?.value, ver >= 1 else { return nil }
                 guard let photo else { return .profile(name: name, photo: nil, ver: ver) }
-                guard let text = photo.value, let image = Data(base64Encoded: text), LinkPreview.isJPEG(image, max: ContentEnvelope.maxProfilePhoto) else { return nil }
+                guard let text = photo.value, let image = LinkPreview.base64(text), LinkPreview.isJPEG(image, max: ContentEnvelope.maxProfilePhoto) else { return nil }
                 return .profile(name: name, photo: image, ver: ver)
             default: return nil
             }
@@ -269,14 +269,31 @@ public struct LinkPreview: Sendable, Equatable {
         var url: String
         var title: String
         var desc: String?
-        var img: Data?
+        /// Base64 as sent: padded or not on receive, always padded on send.
+        var imgText: String?
+
+        enum CodingKeys: String, CodingKey {
+            case url, title, desc
+            case imgText = "img"
+        }
+
+        init(url: String, title: String, desc: String?, img: Data?) {
+            self.url = url
+            self.title = title
+            self.desc = desc
+            self.imgText = img?.base64EncodedString()
+        }
+
+        var img: Data? { imgText.flatMap(LinkPreview.base64) }
 
         func valid(in text: String) -> Bool {
             guard let parsed = URL(string: url), parsed.scheme?.lowercased() == "https", parsed.host?.isEmpty == false else { return false }
             guard text.contains(url) else { return false }
             guard (1...200).contains(title.unicodeScalars.count) else { return false }
             if let desc, desc.unicodeScalars.count > 300 { return false }
-            if let img, !LinkPreview.isJPEG(img, max: ContentEnvelope.maxPreviewImage) { return false }
+            if imgText != nil {
+                guard let img, LinkPreview.isJPEG(img, max: ContentEnvelope.maxPreviewImage) else { return false }
+            }
             return true
         }
 
@@ -296,6 +313,13 @@ public struct LinkPreview: Sendable, Equatable {
     public init?(json: String) {
         guard let wire = try? JSONDecoder().decode(Wire.self, from: Data(json.utf8)) else { return nil }
         self.init(url: wire.url, title: wire.title, desc: wire.desc, img: wire.img)
+    }
+
+    /// Standard base64, padded or not.
+    static func base64(_ text: String) -> Data? {
+        let rest = text.count % 4
+        if rest == 1 { return nil }
+        return Data(base64Encoded: rest == 0 ? text : text + String(repeating: "=", count: 4 - rest))
     }
 
     /// Starts with FF D8 and is not empty or over `max` bytes.

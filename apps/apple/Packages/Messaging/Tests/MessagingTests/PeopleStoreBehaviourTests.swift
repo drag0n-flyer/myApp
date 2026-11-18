@@ -408,3 +408,24 @@ private let jpeg = Data([0xFF, 0xD8, 0xFF]) + Data(count: 100)
         #expect(dates[1] == testEpochDate.addingTimeInterval(86_400))
     }
 }
+
+@Suite("TestPeopleStoreRound4") @MainActor struct TestPeopleStoreRound4 {
+    @Test func aRepeatedTimerAddsNoSecondLine() async throws {
+        let rig = try await Rig.make()
+        try await rig.ana.sendRaw(rig.envelope("t1", .timer(seconds: 86_400)), to: "acc-bob")
+        rig.clock.advance(5)
+        try await rig.ana.sendRaw(rig.envelope("t2", .timer(seconds: 86_400)), to: "acc-bob")
+        await rig.bobSync()
+        let lines = try rig.bobMessages().filter { $0.id.hasPrefix("sys-timer-") }
+        #expect(lines.map(\.id) == ["sys-timer-t1"])
+        #expect(rig.bob.store.timerSeconds("acc-ana") == 86_400)
+        // timer-at advanced: a change older than the repeat is ignored, a newer one applies.
+        try await rig.ana.sendRaw(rig.envelope("t3", .timer(seconds: 0), at: rig.ms - 2_000), to: "acc-bob")
+        await rig.bobSync()
+        #expect(rig.bob.store.timerSeconds("acc-ana") == 86_400)
+        rig.clock.advance(5)
+        try await rig.ana.sendRaw(rig.envelope("t4", .timer(seconds: 0)), to: "acc-bob")
+        await rig.bobSync()
+        #expect(rig.bob.store.timerSeconds("acc-ana") == 0)
+    }
+}

@@ -35,6 +35,8 @@ public struct EphemeralSignal: Sendable, Equatable {
 public final class EphemeralChannel: Sendable {
     /// The most bytes a received signal may have.
     public static let maxPayload = 256
+    /// How many unread signals are kept.
+    public static let bufferedSignals = 64
 
     public let events: AsyncStream<EphemeralSignal>
     private let continuation: AsyncStream<EphemeralSignal>.Continuation
@@ -46,7 +48,8 @@ public final class EphemeralChannel: Sendable {
         self.repo = repo
         self.me = me
         self.sender = sender
-        (events, continuation) = AsyncStream.makeStream()
+        // Frames pile up only when nobody reads: the oldest go first.
+        (events, continuation) = AsyncStream.makeStream(of: EphemeralSignal.self, bufferingPolicy: .bufferingNewest(Self.bufferedSignals))
     }
 
     /// Sends `.typing` or `.presence` to the chat's current conversation. Throws `EphemeralError.refused` for any other

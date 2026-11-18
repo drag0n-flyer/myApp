@@ -1,7 +1,7 @@
 import Foundation
 
 extension LiveConnection {
-    /// Sends a typing or presence signal (an MLS application message, at most 4 KiB) to the conversation's other
+    /// Sends a typing or presence signal (a small JSON envelope in `ciphertext`, not MLS; at most 4 KiB) to the conversation's other
     /// connected devices. Returns when the server acknowledged it. The server drops the excess of its rate limits
     /// silently with the normal acknowledgement; `not_found` means this device is not a member; `bad_request` a
     /// missing field or a ciphertext that is empty or over 4 KiB.

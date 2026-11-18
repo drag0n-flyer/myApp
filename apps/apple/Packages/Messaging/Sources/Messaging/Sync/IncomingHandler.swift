@@ -275,9 +275,11 @@ public struct IncomingHandler: Sendable {
             id: "sys-timer-\(id)", chatID: chatID, conversationID: conversation.serverID, senderAccount: ChatMapping.systemSender,
             senderDevice: nil, sentAt: sentAt, receivedAt: now(), envelope: envelope, status: "sent", replyTo: nil,
             editedAt: nil, deleted: false, undecryptable: false, folded: "")
+        try db.set(key, Data(String(effectiveAt).utf8))
+        // The same value again (a repeat or a replay) changes nothing and adds no second line.
+        guard try db.timerSeconds(chatID: chatID) != seconds else { return }
         guard try db.insertMessage(line) else { return }
         try db.setTimer(chatID: chatID, seconds: seconds)
-        try db.set(key, Data(String(effectiveAt).utf8))
     }
 
     /// A receipt counts when it is about my own messages (from the peer), or when it comes from one of my
