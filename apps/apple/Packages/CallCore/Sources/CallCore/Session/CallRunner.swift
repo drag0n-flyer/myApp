@@ -50,7 +50,22 @@ public final class CallRunner {
     // MARK: - Inputs
 
     /// Feeds the machine and runs what it asks for. State changes and history go out at once; I/O is queued in order.
-    public func handle(_ input: CallInput) { process(machine.handle(input)) }
+    public func handle(_ input: CallInput) {
+        process(machine.handle(input))
+        firePendingRestart()
+    }
+
+    /// A handover that arrived before the call could restart (ringing, connecting) is carried out once, when the
+    /// call first becomes active; it is dropped when the call ends.
+    private var pendingRestart = false
+
+    private func firePendingRestart() {
+        guard pendingRestart else { return }
+        if isFinished { pendingRestart = false; return }
+        guard canRestart else { return }
+        pendingRestart = false
+        process(machine.handle(.pathChanged))
+    }
 
     private func process(_ effects: [CallEffect]) {
         var queued: [CallEffect] = []
@@ -99,9 +114,9 @@ public final class CallRunner {
         switch NetworkChange.action(from: old, to: new, meaningful: meaningful) {
         case .nothing, .record: return
         case .contextOnly: update(context: context)
-        case .pathOnly: if canRestart { pathChanged() }
+        case .pathOnly: if canRestart { pathChanged() } else { pendingRestart = true }
         case .restart:
-            if canRestart { restartOnNewNetwork(context: context) } else { update(context: context) }
+            if canRestart { restartOnNewNetwork(context: context) } else { update(context: context); pendingRestart = !isFinished }
         }
     }
 

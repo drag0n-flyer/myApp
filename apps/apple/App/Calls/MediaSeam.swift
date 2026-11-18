@@ -55,6 +55,15 @@ final class CallVideo {
 }
 
 enum CameraAccess {
+    /// The camera permission now, for `CameraPlan`. Never prompts.
+    static var status: CameraStatus {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized: .authorized
+        case .notDetermined: .notDetermined
+        default: .refused
+        }
+    }
+
     /// True when the user has allowed the camera. Never prompts, so it is safe inside the call's effect queue.
     static var isAuthorized: Bool { AVCaptureDevice.authorizationStatus(for: .video) == .authorized }
 

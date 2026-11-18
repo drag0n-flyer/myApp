@@ -94,6 +94,12 @@ private final class Pair {
 
     /// Both sides active on Wi-Fi.
     func activeCall() async {
+        await connectingCall()
+        await connect()
+    }
+
+    /// Both sides answered and exchanging, ICE not yet connected (phase connecting).
+    func connectingCall() async {
         caller.runner.handle(.start(contact: bob, video: false, callID: "c1"))
         await caller.runner.settled()
         await pump(from: caller, to: callee)
@@ -102,6 +108,9 @@ private final class Pair {
         await pump(from: callee, to: caller)
         await caller.runner.settled()
         await pump(from: caller, to: callee)
+    }
+
+    func connect() async {
         caller.media.emit(.iceState(.connected))
         callee.media.emit(.iceState(.connected))
         for _ in 0..<200 where caller.runner.state?.phase != .active || callee.runner.state?.phase != .active {
@@ -210,6 +219,29 @@ private final class Pair {
         await p.caller.runner.settled()
         #expect(p.caller.media.offers.count == before)
         #expect(p.caller.runner.state?.network == .mobile)
+    }
+
+    /// A handover while connecting is not lost: no restart before the call is active, exactly one right after.
+    @Test func handoverWhileConnectingRestartsOnceWhenActive() async {
+        let p = Pair()
+        await p.connectingCall()
+        #expect(p.caller.runner.state?.phase == .connecting)
+        let before = p.caller.media.offers.count
+        p.caller.runner.networkChanged(from: .wifi, to: .mobile, meaningful: true, context: ctx(.mobile))
+        await p.caller.runner.settled()
+        #expect(p.caller.media.offers.count == before)               // nothing while connecting
+        #expect(p.caller.runner.state?.network == .mobile)           // the context still moved
+        await p.connect()
+        #expect(Array(p.caller.media.offers.dropFirst(before)).map(\.iceRestart) == [true])
+    }
+
+    /// No change while connecting: no restart when the call becomes active.
+    @Test func noChangeWhileConnectingMeansNoRestartWhenActive() async {
+        let p = Pair()
+        await p.connectingCall()
+        let before = p.caller.media.offers.count
+        await p.connect()
+        #expect(p.caller.media.offers.count == before)
     }
 
     // MARK: Both sides
