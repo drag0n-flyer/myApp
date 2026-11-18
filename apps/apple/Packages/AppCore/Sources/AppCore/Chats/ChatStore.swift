@@ -48,6 +48,8 @@ public protocol ChatStore: AnyObject {
     func receive(_ content: MessageContent, from contact: Contact)
     func accept(requestID: String)
     func block(contactID: String)
+    /// Lifts a block (Settings > Privacy > Blocked). Local at once; the server is told in the background.
+    func unblock(contactID: String)
     func report(chatID: String)
     func markRead(chatID: String)
     func incomingCall(from contact: Contact, video: Bool) -> IncomingCallDecision

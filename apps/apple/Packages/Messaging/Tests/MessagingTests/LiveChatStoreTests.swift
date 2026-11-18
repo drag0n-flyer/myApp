@@ -163,6 +163,19 @@ private func text(_ message: Message?) -> String? {
         #expect(try rig.ana.repo.isBlocked("acc-bob"))
     }
 
+    @Test func unblockLiftsTheBlockAndCallsServer() async throws {
+        let rig = try await Rig.make()
+        try await rig.anaChatsWithBob()
+        rig.ana.store.block(contactID: "acc-bob")
+        await rig.ana.store.settle()
+        #expect(rig.ana.store.blockedIDs == ["acc-bob"])
+        rig.ana.store.unblock(contactID: "acc-bob")
+        #expect(rig.ana.store.blockedIDs.isEmpty)
+        await rig.ana.store.settle()
+        #expect(await rig.server.requests().contains("DELETE /v1/blocks/acc-bob"))
+        #expect(try !rig.ana.repo.isBlocked("acc-bob"))
+    }
+
     @Test func reportSendsLastTen() async throws {
         let rig = try await Rig.make()
         try await rig.anaChatsWithBob()
