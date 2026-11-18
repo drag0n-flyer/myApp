@@ -76,8 +76,8 @@ fun ChatRow(
     ListItem(
         modifier = if (selected == null) clickable else clickable.semantics { this.selected = selected },
         colors = if (selected == true) ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.secondaryContainer) else ListItemDefaults.colors(),
-        leadingContent = { Avatar(row.name, colorKey = row.colorKey) },
-        headlineContent = { Text(row.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        leadingContent = { Avatar(row.name.ifEmpty { stringResource(R.string.group_untitled) }, colorKey = row.colorKey) },
+        headlineContent = { Text(row.name.ifEmpty { stringResource(R.string.group_untitled) }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         supportingContent = {
             val draft = row.draft
             if (row.typing) {

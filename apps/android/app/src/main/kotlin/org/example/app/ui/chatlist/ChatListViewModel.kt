@@ -90,7 +90,8 @@ class ChatListViewModel(
     private fun rowOf(chat: Chat): ChatRowModel {
         val last = chat.lastMessage
         return ChatRowModel(
-            chat.id, chat.title ?: chat.contactId?.let { store.contact(it)?.displayName } ?: chat.contactId ?: chat.id,
+            // A group that has no name yet shows an empty name, which the row replaces with a word.
+            chat.id, if (chat.isGroup) chat.title.orEmpty() else chat.contactId?.let { store.contact(it)?.displayName } ?: chat.contactId ?: chat.id,
             last?.preview, last?.sentAt, chat.unreadCount,
             colorKey = chat.contactId ?: chat.id,
             pinned = chat.pinnedAt != null, muted = chat.muted, draft = chat.draft,

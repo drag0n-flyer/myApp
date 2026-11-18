@@ -69,6 +69,8 @@
     <string name="system_timer_set_other_quarter">%1$s set messages to disappear after 90 days</string>
     <string name="system_timer_off_you">You turned off disappearing messages</string>
     <string name="system_timer_off_other">%1$s turned off disappearing messages</string>
+    <string name="system_added_you">%1$s added you</string>
+    <string name="system_you_were_added">You were added</string>
 
     <!-- Chat list -->
     <string name="folder_all">All</string>
@@ -559,4 +561,19 @@
     <string name="chat_draft_label">Draft:</string>
     <string name="chat_pinned">Pinned</string>
     <string name="chat_muted">Muted</string>
+
+    <!-- Groups: create -->
+    <string name="group_new">New group</string>
+    <string name="group_add_people">Add people</string>
+    <string name="group_name">Group name</string>
+    <string name="group_create">Create</string>
+    <string name="group_choose_two">Choose at least 2 people</string>
+    <string name="group_not_added">%1$s couldn\'t be added yet</string>
+    <string name="group_someone">Someone</string>
+    <string name="group_ok">OK</string>
+    <string name="group_untitled">Group</string>
+    <string name="group_create_failed">Couldn\'t create the group. Try again.</string>
+    <string name="group_create_full">This group is full.</string>
+    <string name="group_create_not_found">One of these people can\'t be added.</string>
+    <string name="group_create_nobody">None of these people can be added yet.</string>
 </resources>

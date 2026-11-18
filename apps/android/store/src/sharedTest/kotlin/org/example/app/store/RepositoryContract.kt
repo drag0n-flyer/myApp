@@ -600,7 +600,7 @@ abstract class RepositoryContract {
 
     // Groups (version 5)
 
-    private val photo = byteArrayOf(-1, -40, 1, 2)
+    private val photo = byteArrayOf(-1, -40, -1, -64, 0, 11, 8, 1, 0, 1, 0, 1, 1, 17, 0)
     private fun member(id: String, role: String = "member") = org.example.app.messaging.ports.GroupMemberRecord(id, role)
 
     private fun newGroup(chat: String = "g:c1", conversation: String = "c1") {
@@ -630,8 +630,16 @@ abstract class RepositoryContract {
         assertFailsWith<IllegalArgumentException> { repo.upsertGroup("chat1", "c9", "X", 1) }
         assertEquals("direct", repo.chat("chat1")!!.kind)
         newGroup()
-        assertFailsWith<Exception> { repo.upsertGroup("g:other", "c1", "Y", 1) }
+        assertFailsWith<IllegalArgumentException> { repo.upsertGroup("g:other", "c1", "Y", 1) }
         assertNull(repo.chat("g:other"))
+    }
+
+    @Test fun aGroupPhotoThatFailsTheFrameHeaderRuleIsRefused() {
+        newGroup()
+        val tall = byteArrayOf(-1, -40, -1, -64, 0, 11, 8, 4, 1, 0, 1, 1, 1, 17, 0)
+        assertFailsWith<IllegalArgumentException> { repo.setGroupInfo("g:c1", "Name", tall, 2) }
+        assertFailsWith<IllegalArgumentException> { repo.setGroupInfo("g:c1", "Name", byteArrayOf(-1, -40, -1), 2) }
+        assertTrue(repo.setGroupInfo("g:c1", "Name", photo, 2))
     }
 
     @Test fun upsertGroupRefusesABadTitleOrConversationId() {
