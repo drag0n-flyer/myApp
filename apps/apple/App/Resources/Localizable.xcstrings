@@ -322,17 +322,6 @@
         }
       }
     },
-    "Cancel recording" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Cancel recording"
-          }
-        }
-      }
-    },
     "Change" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -575,6 +564,17 @@
         }
       }
     },
+    "Delete recording" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delete recording"
+          }
+        }
+      }
+    },
     "Delete this message for everyone?" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -791,6 +791,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Forward to…"
+          }
+        }
+      }
+    },
+    "Hold to record, release to send" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hold to record, release to send"
           }
         }
       }
@@ -1268,6 +1279,17 @@
         }
       }
     },
+    "Play recording" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Play recording"
+          }
+        }
+      }
+    },
     "Play voice message" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1330,6 +1352,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Record voice message"
+          }
+        }
+      }
+    },
+    "Recording" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recording"
+          }
+        }
+      }
+    },
+    "Recording locked" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recording locked"
           }
         }
       }
@@ -1440,6 +1484,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Send a message first to see the safety number."
+          }
+        }
+      }
+    },
+    "Send voice message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send voice message"
           }
         }
       }
@@ -1587,6 +1642,17 @@
         }
       }
     },
+    "Slide to cancel" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Slide to cancel"
+          }
+        }
+      }
+    },
     "Something went wrong on the server. Try again later." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1616,6 +1682,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Stop and send voice message"
+          }
+        }
+      }
+    },
+    "Stop recording" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stop recording"
           }
         }
       }

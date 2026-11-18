@@ -79,7 +79,9 @@ struct ChatView: View {
                                          replyingTo: replyingTo,
                                          replyingToName: replyingTo.map { senderName($0.senderID) } ?? "",
                                          editing: editing,
-                                         cancelBar: cancelBar)
+                                         cancelBar: cancelBar,
+                                         sampleMode: model.isSampleData,
+                                         callActive: model.activeCall?.isEnded == false)
                         }
                     }
             } else {

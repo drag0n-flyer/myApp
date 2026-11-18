@@ -22,8 +22,19 @@ struct ComposerView: View {
     var editing: Message?
     /// Closes whichever bar is showing.
     var cancelBar: () -> Void = {}
+    /// Sample data has no microphone: a stand-in recorder is used.
+    var sampleMode = false
+    /// True while a call is on; a recording in progress stops and is kept as a preview.
+    var callActive = false
 
-    @State private var voice = VoiceRecordingController()
+    @State private var session: VoiceSession?
+    /// The finger is down on the microphone (iPhone).
+    #if os(iOS)
+    @State private var touching = false
+    #endif
+    @State private var previewPlayer = VoicePlayer()
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.layoutDirection) private var layoutDirection
     @State private var showPhotos = false
     @State private var showFiles = false
     @State private var photoItem: PhotosPickerItem?
@@ -41,6 +52,14 @@ struct ComposerView: View {
     var body: some View {
         VStack(spacing: 6) {
             bar
+            if session?.hintVisible == true {
+                Text("Hold to record, release to send")
+                    .font(.footnote)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .glassBackground(in: Capsule())
+                    .accessibilityIdentifier("chat.voice.hint")
+            }
             controls
         }
         .padding(.horizontal, 10)
@@ -86,6 +105,9 @@ struct ComposerView: View {
 
     private var controls: some View {
         HStack(alignment: .bottom, spacing: 7) {
+            if let session, showsVoiceBar(session) {
+                voiceBar(session)
+            } else {
             Menu {
                 Button("Photo", systemImage: "photo") {
                     if sendAttachment == nil { sendSample(.photo(bytes: 240_000)) } else { showPhotos = true }
@@ -143,47 +165,23 @@ struct ComposerView: View {
                 .glassBackground(in: RoundedRectangle(cornerRadius: 21))
                 .accessibilityIdentifier("chat.composer.field")
                 .onSubmit(send)
+            }
 
-            if voice.isRecording {
-                Button { voice.cancel() } label: {
-                    Image(systemName: "trash")
-                        .font(.title3)
-                        .frame(width: 42, height: 42)
-                        .glassBackground(in: Circle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.red)
-                .accessibilityLabel("Cancel recording")
-                .accessibilityIdentifier("chat.composer.cancelRecording")
+            if let session, session.state == .locked || session.state == .preview {
                 Button {
-                    if let (url, seconds) = voice.finish() { sendAttachment?(.voice(url, duration: seconds)) }
+                    session.send()
                 } label: {
-                    Image(systemName: "stop.fill")
-                        .font(.title3)
+                    Image(systemName: "arrow.up")
+                        .font(.title3.weight(.semibold))
                         .foregroundStyle(.white)
                         .frame(width: 42, height: 42)
-                        .background(Circle().fill(.red))
+                        .background(Circle().fill(.tint))
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Stop and send voice message")
-                .accessibilityIdentifier("chat.composer.stopRecording")
-            } else if isEmpty {
-                Button {
-                    if sendAttachment != nil {
-                        Task { await voice.start() }
-                    } else {
-                        sendSample(.voice(duration: 5))
-                    }
-                } label: {
-                    Image(systemName: "mic")
-                        .font(.title3)
-                        .frame(width: 42, height: 42)
-                        .glassBackground(in: Circle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.tint)
-                .accessibilityLabel("Record voice message")
-                .accessibilityIdentifier("chat.composer.mic")
+                .accessibilityLabel("Send voice message")
+                .accessibilityIdentifier("chat.voice.send")
+            } else if isEmpty || session?.isActive == true {
+                micButton
             } else {
                 Button(action: send) {
                     Image(systemName: "arrow.up")
@@ -197,12 +195,202 @@ struct ComposerView: View {
                 .accessibilityIdentifier("chat.composer.send")
             }
         }
-        .onDisappear { voice.cancel() }
-        .alert("Microphone access is off", isPresented: Binding(get: { voice.denied }, set: { _ in voice.dismissDenied() })) {
+        .onAppear { makeSession() }
+        .onDisappear { session?.interrupted(); previewPlayer.stop() }
+        .onChange(of: scenePhase) { _, phase in if phase != .active { session?.interrupted() } }
+        .onChange(of: callActive) { _, active in
+            previewPlayer.callStateChanged(inCall: active)
+            if active { session?.interrupted() }
+        }
+        .onChange(of: session?.state) { old, new in voiceStateChanged(from: old, to: new) }
+        .alert("Microphone access is off", isPresented: Binding(get: { session?.denied ?? false }, set: { _ in session?.dismissDenied() })) {
             Button("OK", role: .cancel) {}
         } message: {
             Text("Turn it on in Settings to record voice messages.")
         }
+    }
+
+    // MARK: - Voice notes
+
+    private static let previewID = "voice-preview"
+
+    private func makeSession() {
+        guard session == nil else { return }
+        let capture: VoiceCapture = sampleMode ? SampleVoiceCapture() : VoiceRecordingController()
+        let made = VoiceSession(capture: capture, rtl: layoutDirection == .rightToLeft) { [sendAttachment, sendSample] url, seconds in
+            if let sendAttachment {
+                sendAttachment(.voice(url, duration: seconds))
+            } else {
+                try? FileManager.default.removeItem(at: url)
+                sendSample(.voice(duration: seconds))
+            }
+        }
+        previewPlayer.callActive = callActive
+        session = made
+    }
+
+    /// The bar replaces the field once recording has started (not while only waiting for the hold delay).
+    private func showsVoiceBar(_ session: VoiceSession) -> Bool {
+        switch session.state {
+        case .recording, .willCancel, .willLock, .locked, .preview: true
+        default: false
+        }
+    }
+
+    @ViewBuilder
+    private func voiceBar(_ session: VoiceSession) -> some View {
+        HStack(spacing: 8) {
+            switch session.state {
+            case .locked:
+                voiceIconButton("trash", label: "Delete recording", id: "chat.voice.delete") { session.delete() }
+                recordingStatus(session, locked: true)
+                voiceIconButton("stop.fill", label: "Stop recording", id: "chat.voice.stop") { session.stop() }
+            case .preview:
+                voiceIconButton("trash", label: "Delete recording", id: "chat.voice.delete") { session.delete() }
+                previewControls(session)
+            default:
+                recordingStatus(session, locked: false)
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(minHeight: 42)
+        .frame(maxWidth: .infinity)
+        .glassBackground(in: Capsule())
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("chat.voice.bar")
+    }
+
+    private func voiceIconButton(_ symbol: String, label: LocalizedStringKey, id: String,
+                                 action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.title3)
+                .frame(width: 42, height: 42)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.red)
+        .accessibilityLabel(label)
+        .accessibilityIdentifier(id)
+    }
+
+    /// Red dot, time, level meter and, while holding, the slide hint.
+    private func recordingStatus(_ session: VoiceSession, locked: Bool) -> some View {
+        let toLeading = layoutDirection == .rightToLeft ? session.dragOffset.dx : -session.dragOffset.dx
+        let cancelProgress = min(1, max(0, toLeading / VoiceGesture.cancelDistance))
+        return HStack(spacing: 8) {
+            Circle().fill(.red).frame(width: 10, height: 10)
+            Text(Message.clockText(session.elapsed))
+                .font(.body.monospacedDigit())
+            VoiceLevelMeter(levels: session.levels)
+                .frame(maxWidth: .infinity)
+                .frame(height: 28)
+            if !locked {
+                HStack(spacing: 2) {
+                    Image(systemName: "chevron.backward")
+                    Text("Slide to cancel")
+                }
+                .font(.footnote)
+                .foregroundStyle(session.state == .willCancel ? Color.red : Color.secondary)
+                .opacity(1 - cancelProgress)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(locked ? Text("Recording locked") : Text("Recording"))
+        .accessibilityValue(Text(Message.clockText(session.elapsed)))
+        .accessibilityIdentifier("chat.voice.status")
+    }
+
+    private func previewControls(_ session: VoiceSession) -> some View {
+        let playing = previewPlayer.isPlaying(Self.previewID)
+        let progress = previewPlayer.playingMessageID == Self.previewID ? previewPlayer.progress : 0
+        return HStack(spacing: 8) {
+            Button {
+                if let url = session.previewURL { previewPlayer.toggle(messageID: Self.previewID, url: url, isMine: true) }
+            } label: {
+                Image(systemName: playing ? "pause.fill" : "play.fill")
+                    .font(.title3)
+                    .frame(width: 42, height: 42)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(playing ? Text("Pause") : Text("Play recording"))
+            .accessibilityIdentifier("chat.voice.play")
+            ProgressView(value: progress)
+                .accessibilityHidden(true)
+            Text(Message.clockText(session.previewDuration))
+                .font(.body.monospacedDigit())
+                .accessibilityHidden(true)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("chat.voice.preview")
+    }
+
+    @ViewBuilder
+    private var micButton: some View {
+        let state = session?.state ?? .idle
+        let holding = state == .recording || state == .willLock || state == .willCancel
+        let lockProgress = min(1, max(0, -(session?.dragOffset.dy ?? 0) / VoiceGesture.lockDistance))
+        let icon = Image(systemName: holding ? "mic.fill" : "mic")
+            .font(.title3)
+            .foregroundStyle(holding ? Color.white : Color.accentColor)
+            .frame(width: 42, height: 42)
+            .background(Circle().fill(holding ? Color.red : Color.clear))
+            .glassBackground(in: Circle())
+            .scaleEffect(holding ? 1.25 : 1)
+            .overlay(alignment: .top) {
+                if holding {
+                    Image(systemName: state == .willLock ? "lock.fill" : "lock")
+                        .font(.footnote)
+                        .padding(8)
+                        .glassBackground(in: Circle())
+                        .opacity(0.4 + 0.6 * lockProgress)
+                        .offset(y: -(VoiceGesture.lockDistance + 14))
+                        .accessibilityHidden(true)
+                }
+            }
+        #if os(iOS)
+        icon
+            .contentShape(Circle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        if !touching { touching = true; session?.press() }
+                        session?.drag(dx: value.translation.width, dy: value.translation.height)
+                    }
+                    .onEnded { _ in
+                        touching = false
+                        session?.release()
+                    })
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Record voice message")
+            .accessibilityAddTraits(.isButton)
+            // VoiceOver and Switch Control cannot hold or drag: activating starts a locked recording.
+            .accessibilityAction { Task { await session?.activateAccessible() } }
+            .accessibilityIdentifier("chat.composer.mic")
+        #else
+        // The Mac never uses hold: a click starts a locked recording.
+        Button { Task { await session?.activateAccessible() } } label: { icon }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Record voice message")
+            .accessibilityIdentifier("chat.composer.mic")
+        #endif
+    }
+
+    private func voiceStateChanged(from old: VoiceGesture.State?, to new: VoiceGesture.State?) {
+        if new == .locked { AccessibilityNotification.Announcement(String(localized: "Recording locked")).post() }
+        if old == .preview && new == .idle { previewPlayer.stop() }
+        #if os(iOS)
+        switch (old, new) {
+        case (_, .recording?):
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        case (_, .willCancel?), (_, .willLock?), (_, .locked?):
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        case (.willCancel?, .idle?):
+            UINotificationFeedbackGenerator().notificationOccurred(.warning)
+        default: break
+        }
+        #endif
     }
 
     // MARK: - Importing

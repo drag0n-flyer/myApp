@@ -43,6 +43,32 @@ public final class VoiceRecorder {
         #endif
     }
 
+    public enum PermissionStatus: Sendable { case granted, denied, undetermined }
+
+    /// The microphone permission right now, without asking.
+    public static var permissionStatus: PermissionStatus {
+        #if os(iOS)
+        switch AVAudioApplication.shared.recordPermission {
+        case .granted: return .granted
+        case .denied: return .denied
+        default: return .undetermined
+        }
+        #else
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized: return .granted
+        case .notDetermined: return .undetermined
+        default: return .denied
+        }
+        #endif
+    }
+
+    /// Input level in decibels (0 is the loudest, about -160 is silence); -160 when not recording.
+    public var averagePowerDecibels: Float {
+        guard let rec = recorder, rec.isRecording else { return -160 }
+        rec.updateMeters()
+        return rec.averagePower(forChannel: 0)
+    }
+
     public func start() throws {
         cancel()
         #if os(iOS)
@@ -52,7 +78,8 @@ public final class VoiceRecorder {
         #endif
         let url = directory.appendingPathComponent("voice-\(UUID().uuidString.lowercased()).\(MediaPlan.Voice.recordingExtension)")
         let rec = try AVAudioRecorder(url: url, settings: Self.settings)
-        guard rec.prepareToRecord(), rec.record(forDuration: MediaPlan.Voice.maxDuration) else {
+        rec.isMeteringEnabled = true
+        guard rec.prepareToRecord(),rec.record(forDuration: MediaPlan.Voice.maxDuration) else {
             throw VoiceRecorderError.couldNotStart
         }
         recorder = rec

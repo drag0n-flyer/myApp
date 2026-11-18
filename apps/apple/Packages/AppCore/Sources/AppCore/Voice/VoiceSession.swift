@@ -136,7 +136,7 @@ public final class VoiceSession {
     }
 
     /// Removes recordings an earlier run left behind (the app was killed while recording or sending).
-    public static func removeOrphans(in directory: URL = FileManager.default.temporaryDirectory) {
+    public nonisolated static func removeOrphans(in directory: URL = FileManager.default.temporaryDirectory) {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
         for name in names where name.hasPrefix("voice-") && (name.hasSuffix(".caf") || name.hasSuffix(".ogg")) {
             try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
