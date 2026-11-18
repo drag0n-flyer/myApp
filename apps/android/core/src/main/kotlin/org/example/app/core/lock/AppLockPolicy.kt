@@ -17,12 +17,20 @@ class AppLockPolicy(var lockAfterSeconds: Int, enabled: Boolean = true) {
         private set
 
     private var leftAtMs: Long? = null
+    private var expectedReturn = false
 
-    /** The app left the screen. With "Immediately" the lock is set now, so nothing waits behind the screen on return. */
-    fun onBackground(nowMs: Long) {
+    /**
+     * The app left the screen. With "Immediately" the lock is set now, so nothing waits behind the screen on return.
+     * [expectedReturn]: the app itself opened a picker, camera or viewer, so this one absence gets the longer allowance
+     * of [effectiveDelaySeconds] and is not locked at the moment of leaving.
+     */
+    fun onBackground(nowMs: Long, expectedReturn: Boolean = false) {
         if (!enabled) return
-        if (leftAtMs == null) leftAtMs = nowMs
-        if (lockAfterSeconds <= 0) locked = true
+        if (leftAtMs == null) {
+            leftAtMs = nowMs
+            this.expectedReturn = expectedReturn
+        }
+        if (effectiveDelaySeconds(lockAfterSeconds, this.expectedReturn) <= 0) locked = true
     }
 
     /** The app came back. Returns whether it is locked. Without a matching [onBackground] (a rotation) nothing changes. */
@@ -31,8 +39,9 @@ class AppLockPolicy(var lockAfterSeconds: Int, enabled: Boolean = true) {
         leftAtMs = null
         if (enabled && left != null) {
             val away = nowMs - left
-            if (away < 0 || away >= lockAfterSeconds * 1000L) locked = true
+            if (away < 0 || away >= effectiveDelaySeconds(lockAfterSeconds, expectedReturn) * 1000L) locked = true
         }
+        expectedReturn = false
         return locked
     }
 
@@ -40,6 +49,7 @@ class AppLockPolicy(var lockAfterSeconds: Int, enabled: Boolean = true) {
     fun unlocked() {
         locked = false
         leftAtMs = null
+        expectedReturn = false
     }
 
     /** The setting changed. Turning it on happens after a passed prompt, so the app stays unlocked; off unlocks. */
@@ -51,6 +61,13 @@ class AppLockPolicy(var lockAfterSeconds: Int, enabled: Boolean = true) {
 
     companion object {
         const val DEFAULT_SECONDS = 60
+
+        /** How long the app's own picker, camera or viewer may keep the person away before the lock applies. */
+        const val EXPECTED_RETURN_SECONDS = 300
+
+        /** The delay for one absence: the setting, or at least [EXPECTED_RETURN_SECONDS] when the app itself sent the person away. */
+        fun effectiveDelaySeconds(setting: Int, expectedReturn: Boolean): Int =
+            if (expectedReturn) maxOf(setting, EXPECTED_RETURN_SECONDS) else setting
 
         /** Immediately, 1 minute, 5 minutes, 1 hour. */
         val DELAYS: List<Int> = listOf(0, 60, 300, 3600)

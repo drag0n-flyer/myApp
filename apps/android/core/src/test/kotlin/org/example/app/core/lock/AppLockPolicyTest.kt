@@ -102,3 +102,49 @@ class AppLockPolicyTest {
         assertEquals(60, AppLockPolicy.validDelay(-1))
     }
 }
+
+class AppLockExpectedReturnTest {
+    private fun immediately() = AppLockPolicy(0).also { it.unlocked() }
+
+    @Test fun immediatelyWithAnExpectedReturnStaysUnlockedAfterTwoMinutes() {
+        val p = immediately()
+        p.onBackground(0, expectedReturn = true)
+        assertFalse(p.locked)
+        assertFalse(p.onForeground(120_000))
+    }
+
+    @Test fun immediatelyWithAnExpectedReturnLocksAfterSixMinutes() {
+        val p = immediately()
+        p.onBackground(0, expectedReturn = true)
+        assertTrue(p.onForeground(360_000))
+    }
+
+    @Test fun immediatelyWithoutAnExpectedReturnLocks() {
+        val p = immediately()
+        p.onBackground(0)
+        assertTrue(p.onForeground(1_000))
+    }
+
+    @Test fun theAllowanceDoesNotCarryOverToASecondAbsence() {
+        val p = immediately()
+        p.onBackground(0, expectedReturn = true)
+        assertFalse(p.onForeground(10_000))
+        p.onBackground(20_000)
+        assertTrue(p.locked)
+        assertTrue(p.onForeground(21_000))
+    }
+
+    @Test fun aLongerSettingIsKept() {
+        assertEquals(3600, AppLockPolicy.effectiveDelaySeconds(3600, true))
+        assertEquals(300, AppLockPolicy.effectiveDelaySeconds(60, true))
+        assertEquals(60, AppLockPolicy.effectiveDelaySeconds(60, false))
+    }
+
+    @Test fun aBackwardsClockStillLocksWithAnExpectedReturn() {
+        val p = immediately()
+        p.onBackground(50_000, expectedReturn = true)
+        assertTrue(p.onForeground(49_000))
+    }
+
+    @Test fun processDeathStillStartsLocked() = assertTrue(AppLockPolicy(0).locked)
+}
