@@ -725,5 +725,28 @@
    "name": "Ann",
    "ver": 1
   }
+ },
+ {
+  "name": "profile photo with unpadded base64 is valid",
+  "json": "{\"v\":1,\"id\":\"m1\",\"at\":1700000000000,\"k\":\"profile\",\"name\":\"Ann\",\"photo\":\"/9j/4A\",\"ver\":1}",
+  "expect": {
+   "kind": "profile",
+   "name": "Ann",
+   "photoLen": 4,
+   "ver": 1
+  }
+ },
+ {
+  "name": "preview image with unpadded base64 is valid",
+  "json": "{\"v\":1,\"id\":\"m1\",\"at\":1700000000000,\"k\":\"text\",\"t\":\"see https://example.com/page now\",\"lp\":{\"url\":\"https://example.com/page\",\"title\":\"E\",\"img\":\"/9j/4A\"}}",
+  "expect": {
+   "kind": "text",
+   "text": "see https://example.com/page now",
+   "lp": {
+    "url": "https://example.com/page",
+    "title": "E",
+    "imgLen": 4
+   }
+  }
  }
 ]
