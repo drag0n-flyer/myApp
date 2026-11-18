@@ -21,7 +21,11 @@ private class Entry(val text: String, val at: Long, val mine: Boolean)
  * asynchronously, so a read of its list straight after one can be stale; for [FRESH_MS] this is trusted instead.
  * `gone`: the chat's notification was just cancelled.
  */
-private class Snapshot(val title: String?, val hidden: Boolean, val muted: Boolean, val entries: List<Entry>, val at: Long, val gone: Boolean = false)
+private class Snapshot(
+    val title: String?, val hidden: Boolean, val muted: Boolean, val entries: List<Entry>, val at: Long, val gone: Boolean = false,
+    /** The latest expiry among the lines when every one of them expires, else null (the notification stays until read). */
+    val expiresAt: Long? = null,
+)
 
 /** Shared by every [MessageNotifier] of the process (they are made on use), and guarded by [lock]. */
 private object NotifierState {
@@ -52,14 +56,16 @@ class MessageNotifier(
         private const val GROUP_KEY = "org.example.app.push.CHATS"
         private const val SELF_KEY = "self"
         private const val EXTRA_HIDDEN = "org.example.app.push.HIDDEN"
+        private const val EXTRA_EXPIRES = "org.example.app.push.EXPIRES"
 
         /** Forgets what this process last did to each chat's notification. For tests, which share one process. */
-        internal fun forgetRecent() = synchronized(NotifierState.lock) { NotifierState.recent.clear() }
+        fun forgetRecent() = synchronized(NotifierState.lock) { NotifierState.recent.clear() }
     }
 
     fun show(outcome: NotificationOutcome) {
         when (outcome) {
-            is NotificationOutcome.Message -> postChat(outcome.chatId, outcome.senderName, Entry(outcome.preview, System.currentTimeMillis(), mine = false))
+            is NotificationOutcome.Message ->
+                postChat(outcome.chatId, outcome.senderName, Entry(outcome.preview, System.currentTimeMillis(), mine = false), addedExpiresAt = outcome.expiresAtMs)
             is NotificationOutcome.Request ->
                 post(NotificationChannels.REQUESTS, "request:" + outcome.chatId, appLabel(), context.getString(R.string.push_request_body), outcome.chatId)
             NotificationOutcome.Generic ->
@@ -105,6 +111,26 @@ class MessageNotifier(
         refreshSummary(cancelled = CHAT_TAG + chatId)
     }
 
+    /**
+     * Messages in this chat expired: only its message notification goes. A missed-call notice and a "not sent" notice are
+     * not about those messages and stay.
+     */
+    fun cancelChatMessages(chatId: String) = synchronized(NotifierState.lock) {
+        NotificationManagerCompat.from(context).cancel(CHAT_TAG + chatId, 0)
+        NotifierState.recent[CHAT_TAG + chatId] = Snapshot(null, false, false, emptyList(), System.currentTimeMillis(), gone = true)
+        refreshSummary(cancelled = CHAT_TAG + chatId)
+    }
+
+    /**
+     * Some of the chat's messages expired but others are still unread: its notification shows those (text and time),
+     * without alerting again. Does nothing when the chat has no notification showing (a dismissed one stays dismissed).
+     * [expiresAtMs] is the latest expiry among them when all expire, else null.
+     */
+    fun replaceLines(chatId: String, title: String, lines: List<Pair<String, Long>>, expiresAtMs: Long?) = synchronized(NotifierState.lock) {
+        if (stateOf(chatId) == null || lines.isEmpty()) return@synchronized
+        postChatLocked(chatId, title, null, alert = false, forceLocked = false, replace = lines.map { Entry(it.first, it.second, mine = false) }, addedExpiresAt = expiresAtMs)
+    }
+
     /** The reply was queued: the chat's notification gets the sent line, without alerting again. Nothing to update once it was dismissed. */
     fun showSent(chatId: String, text: String) {
         val title = shownTitle(chatId) ?: return
@@ -146,10 +172,11 @@ class MessageNotifier(
         NotifierState.recent[tag]?.takeIf { System.currentTimeMillis() - it.at < NotifierState.FRESH_MS }?.let { return if (it.gone) null else it }
         val n = active(tag)?.notification ?: return null
         val muted = n.channelId == NotificationChannels.MUTED
-        if (n.extras.getBoolean(EXTRA_HIDDEN)) return Snapshot(null, true, muted, emptyList(), System.currentTimeMillis())
+        val expires = n.extras.getLong(EXTRA_EXPIRES, 0L).takeIf { it > 0 }
+        if (n.extras.getBoolean(EXTRA_HIDDEN)) return Snapshot(null, true, muted, emptyList(), System.currentTimeMillis(), expiresAt = expires)
         val style = NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(n)
         val entries = style?.messages?.map { Entry(it.text?.toString().orEmpty(), it.timestamp, it.person?.key == SELF_KEY) }.orEmpty()
-        return Snapshot(n.extras.getString("android.title"), false, muted, entries, System.currentTimeMillis())
+        return Snapshot(n.extras.getString("android.title"), false, muted, entries, System.currentTimeMillis(), expiresAt = expires)
     }
 
     /**
@@ -186,17 +213,41 @@ class MessageNotifier(
     private fun history(chatId: String): List<Entry> = stateOf(chatId)?.takeIf { !it.hidden }?.entries.orEmpty()
 
     /** One post at a time: the history is read, the notification built and posted, and the cache updated under one lock. */
-    private fun postChat(chatId: String, senderName: String, added: Entry?, alert: Boolean = true, forceLocked: Boolean = false) =
-        synchronized(NotifierState.lock) { postChatLocked(chatId, senderName, added, alert, forceLocked) }
+    private fun postChat(chatId: String, senderName: String, added: Entry?, alert: Boolean = true, forceLocked: Boolean = false, addedExpiresAt: Long? = null) =
+        synchronized(NotifierState.lock) { postChatLocked(chatId, senderName, added, alert, forceLocked, addedExpiresAt = addedExpiresAt) }
 
-    private fun postChatLocked(chatId: String, senderName: String, added: Entry?, alert: Boolean, forceLocked: Boolean) {
+    private fun postChatLocked(
+        chatId: String, senderName: String, added: Entry?, alert: Boolean, forceLocked: Boolean,
+        /** Lines that replace the notification's history (some messages expired). */
+        replace: List<Entry>? = null,
+        /** When [added] (or every line of [replace]) disappears; null when it stays. */
+        addedExpiresAt: Long? = null,
+    ) {
         val manager = NotificationManagerCompat.from(context)
         // Without the permission (Android 13+) the system would drop it anyway.
         if (!manager.areNotificationsEnabled()) return
         NotificationChannels.ensure(context)
         val locked = forceLocked || appLockOn()
-        val entries = if (locked) listOf(added ?: Entry("", System.currentTimeMillis(), false)) else history(chatId) + listOfNotNull(added)
+        val priorLines = if (locked || replace != null) emptyList() else history(chatId)
+        // Was a notification showing (even one that hides its content under the app lock)? Then whatever it holds counts.
+        val prior = stateOf(chatId)
+        val showing = prior != null
+        val priorExpires = prior?.expiresAt
+        val entries = when {
+            locked -> listOf(added ?: Entry("", System.currentTimeMillis(), false))
+            replace != null -> replace
+            else -> priorLines + listOfNotNull(added)
+        }
         if (entries.isEmpty()) return
+        // A notification must not outlive every message in it. It times out at the latest expiry of its lines, but only
+        // when each of them expires; one line that stays keeps it until read. My own reply line changes nothing.
+        val expiresAt: Long? = when {
+            replace != null -> if (locked) priorExpires else addedExpiresAt
+            added == null || added.mine -> priorExpires
+            !showing -> addedExpiresAt
+            priorExpires == null || addedExpiresAt == null -> null
+            else -> maxOf(priorExpires, addedExpiresAt)
+        }
         val unread = entries.mapIndexed { i, e ->
             Message(
                 id = "n$i", senderId = if (e.mine) SELF_KEY else chatId, sentAt = Instant.ofEpochMilli(e.at),
@@ -223,7 +274,8 @@ class MessageNotifier(
             .setAutoCancel(true)
             .setGroup(GROUP_KEY)
             .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_CHILDREN)
-            .addExtras(android.os.Bundle().apply { putBoolean(EXTRA_HIDDEN, plan.hideContent) })
+            .addExtras(android.os.Bundle().apply { putBoolean(EXTRA_HIDDEN, plan.hideContent); putLong(EXTRA_EXPIRES, expiresAt ?: 0L) })
+        if (expiresAt != null) builder.setTimeoutAfter(maxOf(1L, expiresAt - System.currentTimeMillis()))
         if (plan.silent) builder.setPriority(NotificationCompat.PRIORITY_LOW)
         if (plan.silent || !alert) builder.setSilent(true)
         if (!alert) builder.setOnlyAlertOnce(true)
@@ -247,7 +299,7 @@ class MessageNotifier(
         manager.notify(CHAT_TAG + chatId, 0, builder.build())
         val kept = if (plan.hideContent) emptyList() else plan.lines.map { Entry(it.text, it.sentAt.toEpochMilli(), (it.sentAt.toEpochMilli() to it.text) in mineKeys) }
         NotifierState.recent[CHAT_TAG + chatId] = Snapshot(
-            if (plan.hideContent) null else plan.title, plan.hideContent, plan.silent, kept, System.currentTimeMillis(),
+            if (plan.hideContent) null else plan.title, plan.hideContent, plan.silent, kept, System.currentTimeMillis(), expiresAt = expiresAt,
         )
         refreshSummary(posted = CHAT_TAG + chatId to plan.silent)
     }

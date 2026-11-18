@@ -142,7 +142,8 @@ private let jpeg = Data([0xFF, 0xD8, 0xFF]) + Data(count: 100)
         }
         #expect(seconds == 604_800 && !name.isEmpty)
         #expect(chat.unreadCount == 0)
-        // Turning it off.
+        // Turning it off, a moment later: two changes in the same millisecond are a tie that the message ID decides.
+        rig.clock.advance()
         rig.ana.store.setTimer("acc-bob", seconds: 0)
         await rig.ana.store.settle()
         await rig.bobSync()

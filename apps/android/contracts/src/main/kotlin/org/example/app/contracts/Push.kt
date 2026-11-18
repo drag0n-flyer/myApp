@@ -5,7 +5,8 @@ sealed interface NotificationOutcome {
 
     /** Shows "[App]", "New message". */
     object Generic : NotificationOutcome
-    class Message(val chatId: String, val senderName: String, val preview: String) : NotificationOutcome
+    /** [expiresAtMs]: when the message disappears (epoch ms), so its notification does not outlive it; null when it stays. */
+    class Message(val chatId: String, val senderName: String, val preview: String, val expiresAtMs: Long? = null) : NotificationOutcome
 
     /** Shows "Message request". */
     class Request(val chatId: String) : NotificationOutcome

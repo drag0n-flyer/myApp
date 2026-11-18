@@ -33,7 +33,14 @@ import org.example.app.core.chats.ChatStore
 /** Add a contact by username. Scanning a QR code arrives with the camera work in onboarding (A8). */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AddContactScreen(store: ChatStore, onBack: () -> Unit, onAdded: () -> Unit, modifier: Modifier = Modifier) {
+fun AddContactScreen(
+    store: ChatStore,
+    onBack: () -> Unit,
+    onAdded: () -> Unit,
+    modifier: Modifier = Modifier,
+    /** Other ways to add someone; a way that is null does not show. */
+    links: AddContactLinks? = null,
+) {
     var username by rememberSaveable { mutableStateOf("") }
     var notFound by rememberSaveable { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -70,6 +77,7 @@ fun AddContactScreen(store: ChatStore, onBack: () -> Unit, onAdded: () -> Unit, 
             Button(onClick = ::submit, enabled = clean.isNotEmpty(), modifier = Modifier.padding(top = 16.dp)) {
                 Text(stringResource(R.string.add_submit))
             }
+            if (links != null) AddContactLinkRows(links)
         }
     }
 }
