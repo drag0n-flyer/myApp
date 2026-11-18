@@ -145,6 +145,13 @@ public protocol PeopleStore: AnyObject {
     func profile(for accountID: String) -> StoredProfile?
     /// Keeps the profile when `ver` is strictly higher than the stored one; `false` (nothing changes) otherwise.
     @discardableResult func saveProfile(accountID: String, name: String, photo: Data?, ver: Int) -> Bool
+    /// The own profile photo (a JPEG of at most 24,576 bytes), or `nil`.
+    var myPhoto: Data? { get }
+    /// Keeps the photo (`nil` removes it) and sends the new profile to every one-to-one chat. `false` and nothing
+    /// changes when the data is not a JPEG within the limit.
+    @discardableResult func setMyPhoto(_ photo: Data?) -> Bool
+    /// The photo to draw for this person (the own account included), or `nil` for the coloured letter.
+    func profilePhoto(for accountID: String) -> Data?
 }
 
 extension PeopleStore {
@@ -154,6 +161,9 @@ extension PeopleStore {
     public func nextExpiry() -> Date? { nil }
     public func profile(for accountID: String) -> StoredProfile? { nil }
     @discardableResult public func saveProfile(accountID: String, name: String, photo: Data?, ver: Int) -> Bool { false }
+    public var myPhoto: Data? { nil }
+    @discardableResult public func setMyPhoto(_ photo: Data?) -> Bool { false }
+    public func profilePhoto(for accountID: String) -> Data? { nil }
 }
 
 extension ChatStore {

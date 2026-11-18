@@ -144,6 +144,13 @@ public final class Repository: @unchecked Sendable {
         }.first
     }
 
+    /// Every stored contact profile (read once per reload, not once per screen row).
+    public func profiles() throws -> [ProfileRecord] {
+        try db.query("SELECT account_id, name, photo, ver FROM profiles") {
+            ProfileRecord(accountID: $0.text(0), name: $0.text(1), photo: $0.isNull(2) ? nil : $0.blob(2), ver: Int($0.int(3)))
+        }
+    }
+
     /// Keeps the profile only when `ver` is at least 1 and strictly higher than the stored one; `false` otherwise,
     /// and nothing changes.
     @discardableResult

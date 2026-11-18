@@ -25,16 +25,30 @@ struct Avatar: View {
     let colorKey: String?
     var size: CGFloat = 46
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.profilePhoto) private var profilePhoto
+
+    /// UI tests look for the photo by its identifier; otherwise the tile is decoration and hidden from VoiceOver.
+    private static let exposedForTests = ProcessInfo.processInfo.arguments.contains("-uiTesting")
 
     var body: some View {
-        Circle()
-            .fill(Color.avatarTile(for: colorKey, dark: colorScheme == .dark))
-            .frame(width: size, height: size)
-            .overlay {
-                Text(String(name.first ?? "?").uppercased())
-                    .font(.system(size: size * 0.38, weight: .semibold))
-                    .foregroundStyle(.white)
-            }
-            .accessibilityHidden(true)
+        if let key = colorKey, let data = profilePhoto(key), let image = ProfileImageCache.image(for: data) {
+            image
+                .resizable()
+                .scaledToFill()
+                .frame(width: size, height: size)
+                .clipShape(Circle())
+                .accessibilityIdentifier("avatar.photo")
+                .accessibilityHidden(!Self.exposedForTests)
+        } else {
+            Circle()
+                .fill(Color.avatarTile(for: colorKey, dark: colorScheme == .dark))
+                .frame(width: size, height: size)
+                .overlay {
+                    Text(String(name.first ?? "?").uppercased())
+                        .font(.system(size: size * 0.38, weight: .semibold))
+                        .foregroundStyle(.white)
+                }
+                .accessibilityHidden(true)
+        }
     }
 }

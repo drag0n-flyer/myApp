@@ -66,11 +66,13 @@ struct AppMain: App {
         #if os(macOS)
         Window("Call", id: "call") {
             MacCallWindow(model: model)
+                .environment(\.profilePhoto, { [model] id in model.profilePhoto(for: id) })
         }
         .defaultSize(width: 420, height: 720)
 
         Settings {
             LockGate(lock: model.lock) { MacSettingsView(model: model) }
+                .environment(\.profilePhoto, { [model] id in model.profilePhoto(for: id) })
         }
         #endif
     }

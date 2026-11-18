@@ -29,7 +29,7 @@ public final class LiveChatStore: ChatStore {
     }
 
     let deps: MessagingDeps
-    private let outbox: Outbox
+    let outbox: Outbox
     let inbox: InboxProcessor
     let conversations: ConversationManaging
     private let attachments: AttachmentService?
@@ -37,6 +37,8 @@ public final class LiveChatStore: ChatStore {
 
     private var meContact: Contact
     private var contactRows: [String: ContactRecord] = [:]
+    /// What contacts said about themselves (`profile`), by account, read at every reload.
+    var profileRows: [String: StoredProfile] = [:]
     private var allChats: [Chat] = []
     /// Draft texts not yet in the database: typed before the chat had a row, or a write that failed. They are laid
     /// over the saved drafts on every reload and written as soon as the row exists.
@@ -165,6 +167,9 @@ public final class LiveChatStore: ChatStore {
     private func reload() {
         let rows = (try? repo.contacts()) ?? []
         contactRows = Dictionary(rows.map { ($0.accountID, $0) }, uniquingKeysWith: { $1 })
+        profileRows = Dictionary(((try? repo.profiles()) ?? []).map {
+            ($0.accountID, StoredProfile(accountID: $0.accountID, name: $0.name, photo: $0.photo, ver: $0.ver))
+        }, uniquingKeysWith: { $1 })
         if let mine = contactRows[deps.me.accountID] {
             // No stored name shows the placeholder; the placeholder itself is never stored.
             let name = DisplayNameRule.forDisplay(mine.displayName, fallback: "")
@@ -194,6 +199,7 @@ public final class LiveChatStore: ChatStore {
                 record, conversations: all, preferred: preferred, folderIDs: folderIDs[record.id] ?? [], messages: map(latest),
                 draft: drafts[record.id])
         }
+        sendOwnProfileIfNeeded()
     }
 
     private func map(_ records: [MessageRecord]) -> [Message] {
@@ -228,7 +234,10 @@ public final class LiveChatStore: ChatStore {
     }
 
     private func contact(from row: ContactRecord) -> Contact {
-        Contact(id: row.accountID, displayName: Self.name(of: row) ?? "Unknown", username: row.username)
+        // The name the person sent about themselves wins over the lookup name (no local nicknames exist yet).
+        Contact(id: row.accountID,
+                displayName: ProfileDisplay.name(lookup: Self.name(of: row) ?? "Unknown", profile: profileRows[row.accountID], nickname: nil),
+                username: row.username)
     }
 
     private func nowMillis() -> Int64 { Int64((deps.now().timeIntervalSince1970 * 1000).rounded()) }
@@ -778,7 +787,7 @@ public final class LiveChatStore: ChatStore {
         return true
     }
 
-    private func sendControl(_ body: ContentEnvelope.Body, chatID: String) {
+    func sendControl(_ body: ContentEnvelope.Body, chatID: String) {
         guard (try? outbox.enqueueControl(body, chatID: chatID)) != nil else { return }
         let outbox = outbox
         background { try? await outbox.flush() }
