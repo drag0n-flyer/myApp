@@ -48,6 +48,7 @@ fun ChatListScreen(
     onNewChat: () -> Unit,
     onSearch: () -> Unit,
     modifier: Modifier = Modifier,
+    onOpenArchive: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
