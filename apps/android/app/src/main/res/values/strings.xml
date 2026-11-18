@@ -615,4 +615,5 @@
     <string name="group_delete_body">Its messages are removed from this device.</string>
     <string name="group_change_failed">That didn\'t work. Try again.</string>
     <string name="group_photo_label">Group photo</string>
+    <string name="group_photo_add">Add photo</string>
 </resources>

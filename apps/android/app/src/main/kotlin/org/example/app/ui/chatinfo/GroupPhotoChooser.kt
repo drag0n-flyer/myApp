@@ -4,7 +4,20 @@ import android.content.ActivityNotFoundException
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import org.example.app.profile.ProfilePhotoCache
+import org.example.app.ui.Avatar
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -87,6 +100,26 @@ fun GroupPhotoChooser(show: Boolean, onDismiss: () -> Unit, onPhoto: (ByteArray)
             onDismissRequest = { error = false },
             text = { Text(stringResource(R.string.profile_photo_error)) },
             confirmButton = { TextButton(onClick = { error = false }) { Text(stringResource(R.string.group_ok)) } },
+        )
+    }
+}
+
+/**
+ * The chosen photo as the group will show it (a circle), or the coloured letter while there is none. The bytes are checked
+ * against `ProfilePhotoRule` again and decoded sub-sampled, off the main thread, by the shared photo cache.
+ */
+@Composable
+fun GroupPhotoTile(photo: ByteArray?, name: String, size: androidx.compose.ui.unit.Dp = 84.dp) {
+    val bitmap by produceState<ImageBitmap?>(null, photo) {
+        value = if (photo == null) null else withContext(Dispatchers.Default) { ProfilePhotoCache.get(photo)?.asImageBitmap() }
+    }
+    val shown = bitmap
+    if (shown == null) {
+        Avatar(name.ifBlank { stringResource(R.string.group_untitled) }, size = size, colorKey = null)
+    } else {
+        Image(
+            shown, contentDescription = stringResource(R.string.group_photo_label),
+            modifier = Modifier.size(size).clip(CircleShape), contentScale = ContentScale.Crop,
         )
     }
 }
