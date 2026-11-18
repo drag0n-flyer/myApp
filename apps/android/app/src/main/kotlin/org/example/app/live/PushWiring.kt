@@ -149,6 +149,6 @@ private class SessionNotificationStore(private val store: LiveChatStore) : Notif
         store.markRead(chatId)
         store.awaitWrites()
     }
-    override suspend fun sendReturningId(chatId: String, text: String): String? = store.sendReturningId(text, chatId)
+    override suspend fun sendReturningId(chatId: String, text: String, waitMs: Long): String? = store.sendReturningId(text, chatId, waitMs = waitMs)
     override suspend fun settle() = store.settle()
 }

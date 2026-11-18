@@ -24,10 +24,23 @@ interface NotificationActionSink {
      * holds. True only when it is queued. False when the chat is unknown or a message request, the text is too long to
      * send whole, or there is no session; nothing was queued then.
      */
-    suspend fun reply(chatId: String, text: String): Boolean
+    suspend fun reply(chatId: String, text: String, deadline: Deadline): Boolean
 
     /** Keeps [text] as the chat's unsent draft. */
     suspend fun saveDraft(chatId: String, text: String)
+}
+
+/**
+ * A point on the monotonic clock. The reply receiver makes one when the broadcast arrives; everything it waits for must
+ * finish before it, because a background process that overruns the broadcast is killed without a word.
+ */
+class Deadline private constructor(private val endNanos: Long, private val nanoTime: () -> Long) {
+    /** Milliseconds left, never negative. */
+    fun leftMs(): Long = maxOf(0L, (endNanos - nanoTime()) / 1_000_000)
+
+    companion object {
+        fun after(ms: Long, nanoTime: () -> Long = System::nanoTime): Deadline = Deadline(nanoTime() + ms * 1_000_000, nanoTime)
+    }
 }
 
 /** Reply tokens already used, so a broadcast delivered twice sends once. */
@@ -62,7 +75,7 @@ internal class NotificationActionHandler(
      * sends once; the notification is then posted again with a fresh token, so the next Reply works. A reply that is
      * not sent keeps its text as the chat's draft and says so; it is never dropped quietly.
      */
-    suspend fun reply(chatId: String?, text: String?, nonce: String?) {
+    suspend fun reply(chatId: String?, text: String?, nonce: String?, deadline: Deadline) {
         if (chatId == null || !valid(chatId) || nonce.isNullOrBlank()) return
         val body = text?.trim().orEmpty()
         if (body.isEmpty()) {
@@ -75,7 +88,7 @@ internal class NotificationActionHandler(
             false
         } else {
             try {
-                sink.reply(chatId, body)
+                sink.reply(chatId, body, deadline)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (_: Exception) {
@@ -129,6 +142,9 @@ object NotificationActions {
     const val EXTRA_NONCE = "org.example.app.push.NONCE"
     internal const val MAX_ID_LENGTH = 256
 
+    /** From the broadcast arriving to the last thing a reply may wait for. */
+    const val REPLY_BUDGET_MS = 9_000L
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     /** Runs the action an intent asks for. Anything else is ignored. */
@@ -136,13 +152,14 @@ object NotificationActions {
         context: Context,
         intent: Intent,
         handler: NotificationActionHandler = NotificationActionHandler({ PushRuntime.notificationActions }, MessageNotifier(context)),
+        deadline: Deadline = Deadline.after(REPLY_BUDGET_MS),
     ): Job = scope.launch {
         val chatId = intent.getStringExtra(MessageNotifier.EXTRA_CHAT_ID)
         when (intent.action) {
             ACTION_MARK_READ -> handler.markRead(chatId)
             ACTION_REPLY -> {
                 val text = androidx.core.app.RemoteInput.getResultsFromIntent(intent)?.getCharSequence(KEY_REPLY_TEXT)?.toString()
-                handler.reply(chatId, text, intent.getStringExtra(EXTRA_NONCE))
+                handler.reply(chatId, text, intent.getStringExtra(EXTRA_NONCE), deadline)
             }
             else -> Unit
         }

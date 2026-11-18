@@ -339,13 +339,15 @@ class LiveChatStore(
      * Like [send] for text, for a caller that must know the message was queued (a notification reply). Returns the new
      * message's id once it is in the outbox, null when nothing was queued. Never returns null after queueing.
      */
-    suspend fun sendReturningId(text: String, chatId: String, replyTo: String? = null): String? {
+    suspend fun sendReturningId(text: String, chatId: String, replyTo: String? = null, waitMs: Long = WRITE_WAIT_MS): String? {
         if (closed.get()) return null
         val body = TextLimit.truncate(text)
         if (body.isBlank()) return null
         val queued = kotlinx.coroutines.CompletableDeferred<String?>()
         write {
             try {
+                beforeClaimForTest()
+                afterClaimForTest()
                 if (!ensureChatRow(chatId)) return@write
                 val id = freshId()
                 outbox.enqueue(ContentEnvelope.Text(id, nowMs(), body, replyTo), chatId)
@@ -357,8 +359,12 @@ class LiveChatStore(
                 queued.complete(null) // does nothing once the id is out
             }
         }
-        return kotlinx.coroutines.withTimeoutOrNull(WRITE_WAIT_MS) { queued.await() }
+        return kotlinx.coroutines.withTimeoutOrNull(waitMs) { queued.await() }
     }
+
+    /** Test seams for [sendReturningId]: run in the writer before and after it claims the message. */
+    internal var beforeClaimForTest: () -> Unit = {}
+    internal var afterClaimForTest: () -> Unit = {}
 
     /** Messages that gave up sending (they show as [DeliveryStatus.Failed]; the UI offers [retrySend]). */
     fun failedMessageIds(chatId: String): Set<String> =

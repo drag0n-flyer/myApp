@@ -175,4 +175,37 @@ class MessageNotifierTest {
         notifier().hideShownContent()
         assertEquals(listOf("New message"), lines(chatNotifications().single().notification))
     }
+
+    private fun appLabel() = context.applicationInfo.loadLabel(context.packageManager).toString()
+
+    private fun assertNamesNobody(sbn: StatusBarNotification, name: String) {
+        val n = sbn.notification
+        assertEquals(appLabel(), n.extras.getString("android.title"))
+        assertEquals("Missed call", n.extras.getString("android.text"))
+        val shown = n.extras.keySet().mapNotNull { n.extras.get(it)?.toString() }.joinToString("|") + n.tickerText + n.sortKey
+        assertTrue(!shown.contains(name), shown)
+        assertEquals("messages", n.channelId)
+    }
+
+    @Test
+    fun aMissedCallWithAppLockNamesNobody() {
+        locked = true
+        notifier().showMissedCall("c1", "Zed")
+        assertNamesNobody(nm.activeNotifications.single { it.tag == "call:c1" }, "Zed")
+    }
+
+    @Test
+    fun aMissedCallWithoutAppLockStillNamesTheCaller() {
+        notifier().showMissedCall("c1", "Zed")
+        assertEquals("Zed", nm.activeNotifications.single { it.tag == "call:c1" }.notification.extras.getString("android.title"))
+    }
+
+    @Test
+    fun hidingShownContentAlsoHidesAMissedCallsCaller() {
+        notifier().showMissedCall("c1", "Zed")
+        notifier().showMissedCall("c2", "Yan")
+        notifier().hideShownContent()
+        assertNamesNobody(nm.activeNotifications.single { it.tag == "call:c1" }, "Zed")
+        assertNamesNobody(nm.activeNotifications.single { it.tag == "call:c2" }, "Yan")
+    }
 }

@@ -34,7 +34,7 @@ internal class FakeSink(private val known: Set<String> = setOf("c1")) : Notifica
         return chatId in known
     }
 
-    override suspend fun reply(chatId: String, text: String): Boolean {
+    override suspend fun reply(chatId: String, text: String, deadline: Deadline): Boolean {
         replies += chatId to text
         if (replyFails) throw IllegalStateException("boom")
         return replyResult && chatId in known
