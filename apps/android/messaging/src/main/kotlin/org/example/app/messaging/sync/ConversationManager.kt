@@ -8,6 +8,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.example.app.contracts.CommitBundle
 import org.example.app.contracts.DeliveryApi
+import org.example.app.contracts.Encrypted
 import org.example.app.contracts.GroupId
 import org.example.app.contracts.MemberKey
 import org.example.app.contracts.MlsEngine
@@ -288,17 +289,63 @@ class ConversationManager(
     /** Sends `mode(innerMode)` in [conversation] (after any add commit). */
     suspend fun announceMode(conversation: ConversationRecord) {
         val inner = conversation.innerMode ?: throw SyncException.ModeUnknown
-        val envelope = ContentEnvelope.Mode(UUID.randomUUID().toString().lowercase(), clock.now(), inner)
-        val plaintext = ContentCodec.encode(envelope)
         // Design 18: escrow only when both the creator's mode and the server's say server_readable. Checked before
         // encrypting, so a missing sealer does not advance the ratchet.
         val needsEscrow = inner == ConversationMode.SERVER_READABLE && conversation.mode == ConversationMode.SERVER_READABLE
         val sealer = if (needsEscrow) escrow ?: throw SyncException.EscrowKeyUnavailable else null
-        // Encrypting advances the ratchet, so it is under the lock; the post is not.
-        val encrypted = critical { mls.encrypt(plaintext, GroupId(conversation.groupId)) }
-        val escrowCopy = sealer?.seal(plaintext, envelope.at, conversation.serverId)
-        server.postMessage(conversation.serverId, encrypted.epoch, encrypted.ciphertext, escrowCopy, envelope.id)
+        // A post that failed is retried by the next send. Within one epoch the saved ciphertext goes out again (no new
+        // generation). In a new epoch the envelope is new too, with a new ID: the server deduplicates on the ID whatever
+        // the epoch, so the old ID would be dropped as a duplicate and a member added since would never see the mode.
+        // Decided under the lock, next to the epoch check. Encrypting advances the ratchet; the post is not under the lock.
+        val group = GroupId(conversation.groupId)
+        val saved = loadAnnounce(conversation.serverId)
+        var chosen: ContentEnvelope.Mode? = null
+        val encrypted = critical {
+            val reusable = saved?.takeIf { it.epoch == mls.epoch(group) }
+            val mode = ContentEnvelope.Mode(
+                reusable?.id ?: UUID.randomUUID().toString().lowercase(), reusable?.at ?: clock.now(), inner,
+            )
+            chosen = mode
+            reusable?.let { Encrypted(it.ciphertext, it.epoch) }
+                ?: mls.encrypt(ContentCodec.encode(mode), group).also { saveAnnounce(conversation.serverId, mode, it) }
+        }
+        val sent = requireNotNull(chosen)
+        val escrowCopy = sealer?.seal(ContentCodec.encode(sent), sent.at, conversation.serverId)
+        server.postMessage(conversation.serverId, encrypted.epoch, encrypted.ciphertext, escrowCopy, sent.id)
         ModePin.setPending(repo, conversation.serverId, false)
+        ModePin.clearAnnounce(repo, conversation.serverId)
+    }
+
+    private class SavedAnnounce(val id: String, val at: Long, val epoch: Long, val ciphertext: ByteArray)
+
+    private fun announceKey(serverId: String) = ModePin.announceKey(serverId)
+
+    /** A saved ID is the lowercase UUID this class made; anything else (or over 128 bytes) is not trusted. */
+    private fun plausibleId(id: String) = id.length <= 128 && runCatching { UUID.fromString(id) }.isSuccess && id == id.lowercase()
+
+    private fun saveAnnounce(serverId: String, envelope: ContentEnvelope.Mode, encrypted: Encrypted) {
+        val bytes = java.io.ByteArrayOutputStream()
+        java.io.DataOutputStream(bytes).use {
+            it.writeUTF(envelope.id); it.writeLong(envelope.at); it.writeLong(encrypted.epoch)
+            it.writeInt(encrypted.ciphertext.size); it.write(encrypted.ciphertext)
+        }
+        repo.set(announceKey(serverId), bytes.toByteArray())
+    }
+
+    /** What an earlier failed announce kept; null when there is none (or it cannot be read, which only costs one encrypt). */
+    private fun loadAnnounce(serverId: String): SavedAnnounce? {
+        val raw = repo.get(announceKey(serverId))?.takeIf { it.isNotEmpty() } ?: return null
+        return try {
+            java.io.DataInputStream(raw.inputStream()).use {
+                val id = it.readUTF(); val at = it.readLong(); val epoch = it.readLong()
+                if (!plausibleId(id)) return null
+                val size = it.readInt()
+                if (size < 0 || size > raw.size) return null
+                SavedAnnounce(id, at, epoch, ByteArray(size).also { b -> it.readFully(b) })
+            }
+        } catch (_: java.io.IOException) {
+            null
+        }
     }
 
     // Commit with the epoch-conflict retry
