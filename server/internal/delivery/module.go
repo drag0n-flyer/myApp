@@ -10,6 +10,7 @@ import (
 	"github.com/drag0n-flyer/myApp/server/internal/core"
 	"github.com/drag0n-flyer/myApp/server/internal/httpx"
 	"github.com/drag0n-flyer/myApp/server/internal/ratelimit"
+	"github.com/drag0n-flyer/myApp/server/internal/realtime"
 )
 
 // Module is the delivery module.
@@ -17,6 +18,9 @@ type Module struct {
 	d          core.Deps
 	claimLimit *ratelimit.Limiter // KeyPackage claims: 100/hour per account
 	msgLimit   *ratelimit.Limiter // messages: 600/minute per device
+
+	frames   realtime.FrameRouter // set by HandleFrames (ephemeral.go)
+	ephLimit *ratelimit.Limiter   // conv.ephemeral: 30/minute per device and conversation
 }
 
 // New returns the delivery module.

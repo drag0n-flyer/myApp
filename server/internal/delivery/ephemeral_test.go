@@ -165,6 +165,7 @@ func TestEphemeralOfflineMemberGetsNothingLater(t *testing.T) {
 	w := newWorld(t)
 	id := w.joined(t)
 	fr := w.frames(t)
+	before := len(w.page(t, w.bob2, "").Items) // the setup welcome
 	fr.online[w.bob2.DeviceID] = false
 	if _, err := fr.eph(w.ana1, ephData(id, []byte("x"))); err != nil {
 		t.Fatal(err)
@@ -173,7 +174,7 @@ func TestEphemeralOfflineMemberGetsNothingLater(t *testing.T) {
 	if got := fr.to(w.bob2.DeviceID); len(got) != 0 {
 		t.Fatalf("got %+v", got)
 	}
-	if page := w.page(t, w.bob2, ""); len(page.Items) != 0 {
+	if page := w.page(t, w.bob2, ""); len(page.Items) != before {
 		t.Fatalf("inbox %+v", page.Items)
 	}
 }
@@ -183,6 +184,8 @@ func TestEphemeralStoresNothingAndPushesNothing(t *testing.T) {
 	id := w.joined(t)
 	fr := w.frames(t)
 	fr.online[w.bob2.DeviceID] = false
+	events := len(w.f.Notify.Events(w.bob2.DeviceID)) + len(w.f.Notify.Events(w.bob1.DeviceID))
+	pushes := len(w.f.Push.Pushed)
 	inbox := w.count(t, `select count(*) from inbox`)
 	clientMsgs := w.count(t, `select count(*) from client_messages`)
 	seq := w.count(t, `select next_seq from conversations`)
@@ -203,11 +206,11 @@ func TestEphemeralStoresNothingAndPushesNothing(t *testing.T) {
 	if n := w.count(t, `select count(*) from escrow`); n != 0 {
 		t.Fatal("escrow rows")
 	}
-	if ev := w.f.Notify.Events(w.bob2.DeviceID); len(ev) != 0 {
-		t.Fatalf("notifier events = %+v", ev)
+	if n := len(w.f.Notify.Events(w.bob2.DeviceID)) + len(w.f.Notify.Events(w.bob1.DeviceID)); n != events {
+		t.Fatalf("notifier events %d -> %d", events, n)
 	}
-	if ev := w.f.Notify.Events(w.bob1.DeviceID); len(ev) != 0 {
-		t.Fatalf("notifier events = %+v", ev)
+	if n := len(w.f.Push.Pushed); n != pushes {
+		t.Fatalf("pushes %d -> %d", pushes, n)
 	}
 }
 
