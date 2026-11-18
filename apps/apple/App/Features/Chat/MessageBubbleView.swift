@@ -259,6 +259,34 @@ struct SystemEventText: View {
         case .timer: TimerLineText(event: event)
         case .addedYou(let name?): Text("\(name) added you")
         case .addedYou(nil): Text("You were added")
+        case .group(let line): GroupLineText(line: line)
+        }
+    }
+}
+
+/// "%@ added %@", "You were removed" and the other lines about a group's people, name and photo.
+struct GroupLineText: View {
+    let line: GroupSystemLine
+
+    var body: some View {
+        switch line {
+        case .added(let by?, let who): Text("\(by) added \(who)")
+        case .added(nil, let who): Text("\(who) was added")
+        case .removed(let by?, let who): Text("\(by) removed \(who)")
+        case .removed(nil, let who): Text("\(who) was removed")
+        case .left(let who): Text("\(who) left")
+        case .youWereRemoved: Text("You were removed")
+        case .madeAdmin(let who): Text("\(who) is now an admin")
+        case .noLongerAdmin(let who): Text("\(who) is no longer an admin")
+        case .nameChanged(let by?, let name): Text("\(by) changed the group name to “\(name)”")
+        case .nameChanged(nil, let name): Text("The group name was changed to “\(name)”")
+        case .photoChanged(let by?): Text("\(by) changed the group photo")
+        case .photoChanged(nil): Text("The group photo was changed")
+        case .youAdded(let who): Text("You added \(who)")
+        case .youRemoved(let who): Text("You removed \(who)")
+        case .youLeft: Text("You left")
+        case .youChangedName(let name): Text("You changed the group name to “\(name)”")
+        case .youChangedPhoto: Text("You changed the group photo")
         }
     }
 }

@@ -54,6 +54,7 @@ public final class LiveChatStore: ChatStore {
     private var tasks: [UUID: Task<Void, Never>] = [:]
     private let pendingGate = PendingActions.Gate()
     private var closed = false
+    var isClosed: Bool { closed }
     private var rebaselined: Set<String> = []
     /// Messages whose attachment upload is running now. A second "Try again" while one runs does nothing.
     private var uploading: Set<String> = []
@@ -99,6 +100,7 @@ public final class LiveChatStore: ChatStore {
     public func syncInbox() async {
         guard !closed else { return }
         await installAutoDownload()
+        await installGroupSync()
         _ = try? await inbox.syncOnce()
         // A chat whose first commit's reply was lost is finished here, never started again (MLS profile, step 5).
         await conversations.resumePendingCreates()
@@ -113,6 +115,27 @@ public final class LiveChatStore: ChatStore {
         await inbox.setOnStored { [weak self] message in
             await MainActor.run {
                 _ = self?.background { await attachments.autoDownload(for: message) }
+            }
+        }
+    }
+
+    /// Every group this device is in is read from the server once and brought in line, so a missed `members` item is caught
+    /// up. The app calls it at start-up and on each live connect (not on every inbox event: it is one request per group).
+    public func reconcileGroups() async {
+        guard !closed else { return }
+        await conversations.reconcileGroups()
+        flushOutboxSoon()
+        refresh()
+    }
+
+    /// A `members` item starts a group sync in the background (it may read the inbox itself, so the drain never waits for it).
+    private func installGroupSync() async {
+        let manager = conversations
+        await inbox.setOnMembers { [weak self] id, actor in
+            Task { @MainActor in
+                await manager.groupMembersChanged(conversationID: id, actor: actor)
+                self?.flushOutboxSoon()
+                self?.refresh()
             }
         }
     }
@@ -242,7 +265,7 @@ public final class LiveChatStore: ChatStore {
                     let name = ProfileDisplay.name(lookup: Self.name(of: row) ?? "", profile: profileRows[id], nickname: nil)
                     return name.isEmpty ? nil : name
                 },
-                showRead: showRead || record.senderAccount != me)
+                showRead: showRead || record.senderAccount != me, me: me)
             if ChatID.isGroup(record.chatID), record.senderAccount != me, blockedAccounts.contains(record.senderAccount) {
                 message.fromBlockedSender = true
             }

@@ -231,6 +231,8 @@ public actor FakeServer {
         var shape = rest
         if shape.count == 2, ["conversations", "users", "blocks", "attachments"].contains(shape[0]) { shape[1] = "{}" }
         if shape.count == 3, shape[0] == "conversations" { shape[1] = "{}" }
+        if shape.count == 4, shape[0] == "conversations", shape[2] == "accounts" { shape[1] = "{}"; shape[3] = "{}" }
+        if shape.count == 5, shape[0] == "conversations", shape[2] == "accounts" { shape[1] = "{}"; shape[3] = "{}" }
         let id = rest.count > 1 ? rest[1] : ""
         switch "\(method) /\(shape.joined(separator: "/"))" {
         case "POST /keypackages": return uploadKeyPackages(me, body)
@@ -240,6 +242,9 @@ public actor FakeServer {
         case "GET /conversations/{}": return getConversation(me, id)
         case "POST /conversations/{}/commits": return postCommit(me, id, body)
         case "POST /conversations/{}/messages": return postMessage(me, id, body)
+        case "POST /conversations/{}/accounts": return addAccounts(me, id, body)
+        case "DELETE /conversations/{}/accounts/{}": return removeAccount(me, id, rest[3])
+        case "PUT /conversations/{}/accounts/{}/role": return setRole(me, id, rest[3], body)
         case "GET /inbox": return inbox(me, query)
         case "POST /inbox/ack": return ack(me, body)
         case "GET /users/{}": return user(id)
@@ -395,6 +400,13 @@ public actor FakeServer {
         for device in added {
             guard let account = deviceAccount[device], c.accounts.contains(account) else { return failure(400, "bad_request") }
         }
+        if c.kind == "group" {
+            // Only my own devices, or devices of accounts that left the group and are still in the conversation.
+            for device in removed {
+                guard c.members.contains(device), let account = deviceAccount[device],
+                      account == me.account || !c.accounts.contains(account) else { return failure(403, "forbidden") }
+            }
+        }
         let before = c.members
         let newEpoch = c.epoch + 1
         // The commit goes to every device present before it, including the sender.
@@ -415,6 +427,88 @@ public actor FakeServer {
         conversations[id] = c
         if commitResponsesToLose > 0 { commitResponsesToLose -= 1; responseLost = true }
         return ok(EpochOut(epoch: newEpoch))
+    }
+
+    // MARK: - Group membership
+
+    private struct MembersChangeOut: Encodable { let membersVersion: Int64; let deleted: Bool }
+    private struct AccountsBody: Decodable { let accounts: [String] }
+    private struct RoleBody: Decodable { let role: String }
+
+    /// One stored `members` item for every member device present before the change (the removed account's included).
+    private func announceMembers(_ c: Conversation, to devices: Set<String>, from me: Caller) {
+        for device in devices.sorted() {
+            let item = InboxItem(cursor: nextCursor, kind: "members", conversationID: c.id, seq: nil, epoch: Int64(c.epoch),
+                                 senderAccountID: me.account, senderDeviceID: me.device, payload: Data(), sentAt: now(),
+                                 membersVersion: c.membersVersion)
+            nextCursor += 1
+            inboxes[device, default: []].append(item)
+            for continuation in subscribers[device, default: [:]].values { continuation.yield(.inbox(item)) }
+        }
+    }
+
+    /// The group the caller's account is in, or the failure to answer: `not_found` for a non-member, `bad_request` for a direct chat.
+    private func memberGroup(_ me: Caller, _ id: String) -> (Conversation?, (Data, HTTPURLResponse)?) {
+        guard let c = conversations[id], c.accounts.contains(me.account) else { return (nil, failure(404, "not_found")) }
+        guard c.kind == "group" else { return (nil, failure(400, "bad_request")) }
+        return (c, nil)
+    }
+
+    private func addAccounts(_ me: Caller, _ id: String, _ body: Data) -> (Data, HTTPURLResponse) {
+        let (found, refusal) = memberGroup(me, id)
+        guard var c = found else { return refusal! }
+        guard let role = c.roles[me.account], role == "owner" || role == "admin" else { return failure(403, "forbidden") }
+        guard let b: AccountsBody = decode(body) else { return failure(400, "bad_request") }
+        guard b.accounts.allSatisfy({ accounts[$0] != nil }) else { return failure(404, "not_found") }
+        let fresh = Array(Set(b.accounts).subtracting(c.accounts)).sorted().filter { !blocks[$0, default: []].contains(me.account) }
+        guard c.accounts.count + fresh.count <= 100 else { return failure(409, "group_full") }
+        if fresh.isEmpty { return ok(MembersChangeOut(membersVersion: c.membersVersion, deleted: false)) }
+        let present = c.members
+        for account in fresh { c.accounts.insert(account); c.roles[account] = "member" }
+        c.membersVersion += 1
+        conversations[id] = c
+        announceMembers(c, to: present, from: me)
+        return ok(MembersChangeOut(membersVersion: c.membersVersion, deleted: false))
+    }
+
+    private func removeAccount(_ me: Caller, _ id: String, _ target: String) -> (Data, HTTPURLResponse) {
+        let (found, refusal) = memberGroup(me, id)
+        guard var c = found else { return refusal! }
+        guard let targetRole = c.roles[target] else { return failure(404, "not_found") }
+        let mine = c.roles[me.account] ?? "member"
+        if target == me.account {
+            if mine == "owner", c.accounts.count > 1 { return failure(409, "owner_must_transfer") }
+        } else {
+            let allowed = (mine == "owner" && targetRole != "owner") || (mine == "admin" && targetRole == "member")
+            guard allowed else { return failure(403, "forbidden") }
+        }
+        let present = c.members
+        c.accounts.remove(target)
+        c.roles[target] = nil
+        c.members = c.members.filter { deviceAccount[$0] != target }
+        c.membersVersion += 1
+        if c.accounts.isEmpty {
+            conversations[id] = nil
+            return ok(MembersChangeOut(membersVersion: c.membersVersion, deleted: true))
+        }
+        conversations[id] = c
+        announceMembers(c, to: present, from: me)
+        return ok(MembersChangeOut(membersVersion: c.membersVersion, deleted: false))
+    }
+
+    private func setRole(_ me: Caller, _ id: String, _ target: String, _ body: Data) -> (Data, HTTPURLResponse) {
+        let (found, refusal) = memberGroup(me, id)
+        guard var c = found else { return refusal! }
+        guard c.roles[me.account] == "owner" else { return failure(403, "forbidden") }
+        guard let b: RoleBody = decode(body), ["owner", "admin", "member"].contains(b.role), target != me.account else { return failure(400, "bad_request") }
+        guard let current = c.roles[target] else { return failure(404, "not_found") }
+        if current == b.role { return ok(MembersChangeOut(membersVersion: c.membersVersion, deleted: false)) }
+        if b.role == "owner" { c.roles[me.account] = "admin" }
+        c.roles[target] = b.role
+        c.membersVersion += 1
+        conversations[id] = c
+        announceMembers(c, to: c.members, from: me)
+        return ok(MembersChangeOut(membersVersion: c.membersVersion, deleted: false))
     }
 
     private func postMessage(_ me: Caller, _ id: String, _ body: Data) -> (Data, HTTPURLResponse) {

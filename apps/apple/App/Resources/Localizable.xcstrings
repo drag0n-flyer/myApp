@@ -1,6 +1,17 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "%@ added %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ added %@"
+          }
+        }
+      }
+    },
     "%@ added a new device" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -34,6 +45,28 @@
         }
       }
     },
+    "%@ changed the group name to “%@”" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ changed the group name to “%@”"
+          }
+        }
+      }
+    },
+    "%@ changed the group photo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ changed the group photo"
+          }
+        }
+      }
+    },
     "%@ couldn't be added yet" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -45,6 +78,28 @@
         }
       }
     },
+    "%@ is no longer an admin" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ is no longer an admin"
+          }
+        }
+      }
+    },
+    "%@ is now an admin" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ is now an admin"
+          }
+        }
+      }
+    },
     "%@ is typing…" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -52,6 +107,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@ is typing…"
+          }
+        }
+      }
+    },
+    "%@ left" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ left"
+          }
+        }
+      }
+    },
+    "%@ removed %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ removed %@"
           }
         }
       }
@@ -107,6 +184,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@ turned off disappearing messages"
+          }
+        }
+      }
+    },
+    "%@ was added" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ was added"
+          }
+        }
+      }
+    },
+    "%@ was removed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ was removed"
           }
         }
       }
@@ -2985,6 +3084,28 @@
         }
       }
     },
+    "The group name was changed to “%@”" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The group name was changed to “%@”"
+          }
+        }
+      }
+    },
+    "The group photo was changed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The group photo was changed"
+          }
+        }
+      }
+    },
     "The last 10 messages will be sent to the server admin." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3557,6 +3678,17 @@
         }
       }
     },
+    "You added %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You added %@"
+          }
+        }
+      }
+    },
     "You added a new device" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3612,6 +3744,28 @@
         }
       }
     },
+    "You changed the group name to “%@”" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You changed the group name to “%@”"
+          }
+        }
+      }
+    },
+    "You changed the group photo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You changed the group photo"
+          }
+        }
+      }
+    },
     "You have too many unused links. Wait for one to expire." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3619,6 +3773,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "You have too many unused links. Wait for one to expire."
+          }
+        }
+      }
+    },
+    "You left" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You left"
+          }
+        }
+      }
+    },
+    "You removed %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You removed %@"
           }
         }
       }
@@ -3685,6 +3861,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "You were added"
+          }
+        }
+      }
+    },
+    "You were removed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You were removed"
           }
         }
       }

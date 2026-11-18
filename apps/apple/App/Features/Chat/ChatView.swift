@@ -92,6 +92,8 @@ struct ChatView: View {
                     .safeAreaInset(edge: .bottom) {
                         if chat.isRequest {
                             RequestActionsBar(chat: chat, model: model)
+                        } else if chat.myGroupState.isReadOnly {
+                            GroupReadOnlyBar()
                         } else {
                             ComposerWithPreview(previews: previews) {
                             ComposerView(text: $draft, send: { send(chat) }, sendSample: sendSample,

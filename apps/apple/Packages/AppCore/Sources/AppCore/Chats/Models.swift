@@ -54,6 +54,8 @@ public enum SystemEvent: Hashable, Codable, Sendable {
     case timer(seconds: Int, name: String?)
     /// "%@ added you" when this device joined a group; `by` is the adder's account ID, or a name once shown.
     case addedYou(by: String?)
+    /// A change to a group's members, roles, name or photo. Names are account IDs when stored, display names once shown.
+    case group(GroupSystemLine)
 
     private static func timerText(seconds: Int, name: String?) -> String {
         let who = name ?? "You"
@@ -62,11 +64,34 @@ public enum SystemEvent: Hashable, Codable, Sendable {
         return "\(who) set messages to disappear after \(days) \(days == 1 ? "day" : "days")"
     }
 
+    private static func groupText(_ line: GroupSystemLine) -> String {
+        switch line {
+        case .added(let by?, let who): "\(by) added \(who)"
+        case .added(nil, let who): "\(who) was added"
+        case .removed(let by?, let who): "\(by) removed \(who)"
+        case .removed(nil, let who): "\(who) was removed"
+        case .left(let who): "\(who) left"
+        case .youWereRemoved: "You were removed"
+        case .madeAdmin(let who): "\(who) is now an admin"
+        case .noLongerAdmin(let who): "\(who) is no longer an admin"
+        case .nameChanged(let by?, let name): "\(by) changed the group name to “\(name)”"
+        case .nameChanged(nil, let name): "The group name was changed to “\(name)”"
+        case .photoChanged(let by?): "\(by) changed the group photo"
+        case .photoChanged(nil): "The group photo was changed"
+        case .youAdded(let who): "You added \(who)"
+        case .youRemoved(let who): "You removed \(who)"
+        case .youLeft: "You left"
+        case .youChangedName(let name): "You changed the group name to “\(name)”"
+        case .youChangedPhoto: "You changed the group photo"
+        }
+    }
+
     public var text: String {
         switch self {
         case .timer(let seconds, let name): Self.timerText(seconds: seconds, name: name)
         case .addedYou(let name?): "\(name) added you"
         case .addedYou(nil): "You were added"
+        case .group(let line): Self.groupText(line)
         case .deviceAdded(let name?): "\(name) added a new device"
         case .deviceAdded(nil): "You added a new device"
         case .deviceRemoved(let name?): "\(name) removed a device"
@@ -240,10 +265,13 @@ public struct Chat: Identifiable, Hashable, Codable, Sendable {
     public var draft: String?
     /// A group's name; `nil` for a one-to-one chat (it is called by its contact).
     public var title: String?
+    /// Whether I am still in this group. A chat I was removed from or left stays, read-only. Always `.member` for a one-to-one chat.
+    public var myGroupState: GroupMyState
 
     public init(id: String, contactID: String?, encryption: ChatEncryption, folderIDs: Set<String>, unreadCount: Int, messages: [Message], isRequest: Bool,
                 modeMismatch: Bool = false, pinnedAt: Date? = nil, muted: Bool = false, archived: Bool = false, draft: String? = nil,
-                title: String? = nil) {
+                title: String? = nil, myGroupState: GroupMyState = .member) {
+        self.myGroupState = myGroupState
         self.title = title
         self.id = id
         self.contactID = contactID

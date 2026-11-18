@@ -86,10 +86,11 @@ extension Repository {
     /// Sets the name and photo of a group chat when `ver` is at least 1 and higher than the stored `group_ver`. A photo
     /// under 4 or over 24,576 bytes is refused whole. `false` when nothing changed.
     @discardableResult
-    public func setGroupInfo(chatID: String, title: String, photo: Data?, ver: Int) throws -> Bool {
+    public func setGroupInfo(chatID: String, title: String, photo: Data?, ver: Int, orEqual: Bool = false) throws -> Bool {
         guard ver >= 1, photo.map({ ProfilePhotoRule.isAcceptable($0) }) ?? true else { return false }
+        // `orEqual`: the caller has already decided an equal version wins (`GroupMerge`, the tie rule).
         return try db.run("""
-            UPDATE chats SET title=?, photo=?, group_ver=? WHERE id=? AND kind='group' AND (group_ver IS NULL OR group_ver < ?)
+            UPDATE chats SET title=?, photo=?, group_ver=? WHERE id=? AND kind='group' AND (group_ver IS NULL OR group_ver \(orEqual ? "<=" : "<") ?)
             """, [.text(title), photo.map { .blob($0) } ?? .null, .int(Int64(ver)), .text(chatID), .int(Int64(ver))]) > 0
     }
 
@@ -98,6 +99,47 @@ extension Repository {
     public func setMyState(chatID: String, _ state: String) throws -> Bool {
         guard Self.myStates.contains(state) else { return false }
         return try db.run("UPDATE chats SET my_state=? WHERE id=? AND kind='group'", [.text(state), .text(chatID)]) > 0
+    }
+
+    /// Removes every conversation row of a group chat (and, by cascade, its stored MLS members), keeping the chat, its
+    /// messages and its member list. Used when I am removed or leave, so a later Welcome for the same conversation is
+    /// a fresh join and never refused as rebound. Returns the server IDs that were removed.
+    @discardableResult
+    public func deleteConversations(groupChatID chatID: String) throws -> [String] {
+        guard ChatID.isGroup(chatID) else { return [] }
+        return try db.transaction { d -> [String] in
+            let ids = try d.query("SELECT server_id FROM conversations WHERE chat_id=?", [.text(chatID)]) { $0.text(0) }
+            try d.execute("DELETE FROM conversations WHERE chat_id=?", [.text(chatID)])
+            return ids
+        }
+    }
+
+    /// Deletes a group chat I am no longer in, with its messages, member list, queued sends and every other row under it,
+    /// in one transaction. Returns the local files of its attachments and the IDs of its messages (a queued upload keeps a
+    /// folder named after its message), so the caller deletes the files. `nil` and nothing deleted for a chat that is
+    /// not a group chat, is unknown, or is one I am still a member of.
+    public func deleteGroupChat(id chatID: String) throws -> (paths: [String], messageIDs: [String])? {
+        guard ChatID.isGroup(chatID) else { return nil }
+        return try db.transaction { d -> (paths: [String], messageIDs: [String])? in
+            let state = try d.query("SELECT my_state FROM chats WHERE id=? AND kind='group'", [.text(chatID)]) { $0.text(0) }
+            guard let state = state.first, state != "member" else { return nil }
+            let paths = try d.query("""
+                SELECT a.local_path FROM attachments a JOIN messages m ON m.id = a.message_id WHERE m.chat_id=? AND a.local_path IS NOT NULL
+                """, [.text(chatID)]) { $0.text(0) }
+            let messageIDs = try d.query("SELECT id FROM messages WHERE chat_id=?", [.text(chatID)]) { $0.text(0) }
+            try d.execute("DELETE FROM outbox WHERE chat_id=?", [.text(chatID)])
+            try d.execute("DELETE FROM chats WHERE id=?", [.text(chatID)])
+            return (paths, messageIDs)
+        }
+    }
+
+    /// What is still queued for a chat can never be sent (I am out of the group): the queue rows go and the messages
+    /// among them are marked `failed`, one transaction.
+    public func failQueuedSends(chatID: String) throws {
+        try db.transaction { d in
+            try d.execute("UPDATE messages SET status='failed' WHERE status='sending' AND id IN (SELECT message_id FROM outbox WHERE chat_id=?)", [.text(chatID)])
+            try d.execute("DELETE FROM outbox WHERE chat_id=?", [.text(chatID)])
+        }
     }
 
     // MARK: receipts

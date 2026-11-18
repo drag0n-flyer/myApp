@@ -1,3 +1,4 @@
+import AppCore
 import Foundation
 import LocalStore
 import SecureMessagingCore
@@ -24,10 +25,27 @@ public protocol ConversationManaging: Sendable {
     func resumePendingCreates() async
     /// Makes a group chat (plan G2).
     func createGroup(accounts: [String], name: String, photo: Data?) async throws -> GroupCreation
+    /// Every group this device is in is fetched and brought in line with the server (start-up, reconnect).
+    func reconcileGroups() async
+    /// A `members` item arrived for the conversation.
+    func groupMembersChanged(conversationID: String, actor: String?) async
+    /// Changes to a group (plan G4). Each throws `ServerError` or `GroupAdminError`.
+    func addGroupMembers(chatID: String, accounts: [String]) async throws -> [String]
+    func removeGroupMember(chatID: String, account: String) async throws
+    func leaveGroup(chatID: String) async throws
+    func setGroupRole(chatID: String, account: String, role: GroupRole) async throws
+    func changeGroupInfo(chatID: String, name: String?, photo: Data?, setPhoto: Bool) async throws
 }
 
 extension ConversationManaging {
     public func resumePendingCreates() async {}
+    public func reconcileGroups() async {}
+    public func groupMembersChanged(conversationID: String, actor: String?) async {}
+    public func addGroupMembers(chatID: String, accounts: [String]) async throws -> [String] { throw GroupAdminError.notGroup }
+    public func removeGroupMember(chatID: String, account: String) async throws { throw GroupAdminError.notGroup }
+    public func leaveGroup(chatID: String) async throws { throw GroupAdminError.notGroup }
+    public func setGroupRole(chatID: String, account: String, role: GroupRole) async throws { throw GroupAdminError.notGroup }
+    public func changeGroupInfo(chatID: String, name: String?, photo: Data?, setPhoto: Bool) async throws { throw GroupAdminError.notGroup }
     public func createGroup(accounts: [String], name: String, photo: Data?) async throws -> GroupCreation { throw SyncError.noPeer }
 }
 
