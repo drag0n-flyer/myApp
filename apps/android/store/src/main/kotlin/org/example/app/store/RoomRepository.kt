@@ -21,7 +21,14 @@ import org.example.app.messaging.ports.SafetyRecord
 import org.example.app.messaging.ports.SearchHit
 
 /** [Repository] on Room. Blocking calls; callers run them on an I/O dispatcher. */
-class RoomRepository(private val db: AppDatabase, allowLikeFallback: Boolean = false) : Repository {
+/**
+ * [clock] is the time reads use to hide a message whose `expires_at` has passed before the sweep removes it.
+ */
+class RoomRepository(
+    private val db: AppDatabase,
+    allowLikeFallback: Boolean = false,
+    private val clock: () -> Long = System::currentTimeMillis,
+) : Repository {
     private val contacts = db.contacts()
     private val chats = db.chats()
     private val conversations = db.conversations()
@@ -64,6 +71,8 @@ class RoomRepository(private val db: AppDatabase, allowLikeFallback: Boolean = f
         if (text.isNullOrBlank()) chats.deleteDraft(chatId) else chats.putDraft(chatId, text, at)
     override fun setTimer(chatId: String, seconds: Int) = chats.setTimer(chatId, seconds)
     override fun timerSeconds(chatId: String) = chats.timerSeconds(chatId) ?: 0
+    override fun expiredUnread(now: Long, ownAccount: String): Map<String, Int> =
+        messages.expiredUnread(now, ownAccount).associate { it.chatId to it.n }
     override fun sweepExpired(now: Long, ownAccount: String): List<String> {
         val paths = ArrayList<String>()
         val removed = transaction {
@@ -147,7 +156,7 @@ class RoomRepository(private val db: AppDatabase, allowLikeFallback: Boolean = f
     override fun insertMessage(m: MessageRecord): Boolean = messages.insert(m.toEntity()) != -1L
     override fun message(id: String) = messages.get(id)?.toRecord()
     override fun messages(chatId: String, before: MessageRecord?, limit: Int): List<MessageRecord> {
-        val rows = if (before == null) messages.newest(chatId, limit) else messages.olderThan(chatId, before.sentAt, before.id, limit)
+        val rows = if (before == null) messages.newest(chatId, clock(), limit) else messages.olderThan(chatId, before.sentAt, before.id, clock(), limit)
         return rows.map { it.toRecord() }.reversed()
     }
     override fun updateStatus(ids: List<String>, status: String) {
@@ -165,8 +174,12 @@ class RoomRepository(private val db: AppDatabase, allowLikeFallback: Boolean = f
         if (removed) outbox.remove(id)
         removed
     }
-    override fun replaceUnsentEnvelope(id: String, sender: String, envelope: ByteArray, folded: String, receivedAt: Long) =
-        messages.replaceUnsentEnvelope(id, sender, envelope, folded, receivedAt) > 0
+    override fun replaceUnsentEnvelope(id: String, sender: String, envelope: ByteArray, folded: String, receivedAt: Long) = transaction {
+        val replaced = messages.replaceUnsentEnvelope(id, sender, envelope, folded, receivedAt) > 0
+        // A ciphertext made for the old envelope must never go out for the new one.
+        if (replaced) outbox.clearCiphertext(id)
+        replaced
+    }
     override fun applyEdit(id: String, sender: String, envelope: ByteArray, folded: String, at: Long) =
         messages.applyEdit(id, sender, envelope, folded, at) > 0
     override fun markDeleted(id: String, sender: String) = messages.markDeleted(id, sender) > 0
@@ -181,13 +194,13 @@ class RoomRepository(private val db: AppDatabase, allowLikeFallback: Boolean = f
         if (q.isEmpty()) return emptyList()
         if (q.codePointCount(0, q.length) < 3 || !hasFts) {
             val escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            return messages.searchLike("%$escaped%", limit).map { SearchHit(it.chatId, it.id) }
+            return messages.searchLike("%$escaped%", clock(), limit).map { SearchHit(it.chatId, it.id) }
         }
         // The trigram tokenizer matches a quoted phrase as a substring of 3 or more characters.
         val phrase = "\"" + q.replace("\"", "\"\"") + "\""
         val sql = "SELECT m.chat_id, m.id FROM messages_fts JOIN messages m ON m.rowid = messages_fts.rowid " +
-            "WHERE messages_fts MATCH ? AND m.deleted = 0 ORDER BY m.sent_at DESC LIMIT ?"
-        db.openHelper.readableDatabase.query(SimpleSQLiteQuery(sql, arrayOf<Any?>(phrase, limit))).use { c ->
+            "WHERE messages_fts MATCH ? AND m.deleted = 0 AND (m.expires_at IS NULL OR m.expires_at > ?) ORDER BY m.sent_at DESC LIMIT ?"
+        db.openHelper.readableDatabase.query(SimpleSQLiteQuery(sql, arrayOf<Any?>(phrase, clock(), limit))).use { c ->
             val hits = ArrayList<SearchHit>()
             while (c.moveToNext()) hits.add(SearchHit(c.getString(0), c.getString(1)))
             return hits
@@ -201,8 +214,8 @@ class RoomRepository(private val db: AppDatabase, allowLikeFallback: Boolean = f
             AttachmentEntity(a.id, a.messageId, a.kind, a.key, a.digest, a.size, a.cipherSize, a.state, a.downloaded, a.localPath),
         )
     }
-    override fun attachment(id: String) = messages.attachment(id)?.toRecord()
-    override fun attachmentForMessage(messageId: String) = messages.attachmentForMessage(messageId)?.toRecord()
+    override fun attachment(id: String) = messages.attachment(id, clock())?.toRecord()
+    override fun attachmentForMessage(messageId: String) = messages.attachmentForMessage(messageId, clock())?.toRecord()
     override fun setAttachmentState(id: String, state: String, downloaded: Long, localPath: String?) {
         requireState(state)
         messages.setAttachmentState(id, state, downloaded, localPath)
@@ -229,6 +242,7 @@ class RoomRepository(private val db: AppDatabase, allowLikeFallback: Boolean = f
     }
     override fun bumpOutbox(id: String, nextAttemptAt: Long) = outbox.bump(id, nextAttemptAt)
     override fun removeOutbox(id: String) = outbox.remove(id)
+    override fun storeCiphertext(id: String, conversationId: String, epoch: Long, ciphertext: ByteArray) = outbox.storeCiphertext(id, conversationId, epoch, ciphertext)
 
     // raw inbox and processed hashes
     override fun insertRaw(items: List<RawInboxRecord>) = outbox.insertRaw(items.map { it.toEntity() })
@@ -309,7 +323,7 @@ private fun MessageEntity.toRecord() = MessageRecord(
     deleted, undecryptable, folded, expiresAt, caption, linkPreview,
 )
 private fun AttachmentEntity.toRecord() = AttachmentRecord(id, messageId, kind, key, digest, size, cipherSize, state, downloaded, localPath)
-private fun OutboxRecord.toEntity() = OutboxEntity(messageId, chatId, envelope, attempts, nextAttemptAt)
-private fun OutboxEntity.toRecord() = OutboxRecord(messageId, chatId, envelope, attempts, nextAttemptAt)
+private fun OutboxRecord.toEntity() = OutboxEntity(messageId, chatId, envelope, attempts, nextAttemptAt, ciphertext, cipherEpoch, cipherConversation)
+private fun OutboxEntity.toRecord() = OutboxRecord(messageId, chatId, envelope, attempts, nextAttemptAt, ciphertext, cipherEpoch, cipherConversation)
 private fun RawInboxRecord.toEntity() = InboxRawEntity(cursor, kind, conversationId, seq, epoch, senderAccount, senderDevice, payload, sentAt)
 private fun InboxRawEntity.toRecord() = RawInboxRecord(cursor, kind, conversationId, seq, epoch, senderAccount, senderDevice, payload, sentAt)
