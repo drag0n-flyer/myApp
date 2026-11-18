@@ -10,6 +10,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import org.example.app.contracts.GroupId
+import org.example.app.core.people.Expiry
 import org.example.app.messaging.content.ContentCodec
 import org.example.app.messaging.content.ContentEnvelope
 import org.example.app.messaging.ports.ConversationRecord
@@ -219,6 +220,71 @@ class OutboxCiphertextTest {
         assertFalse(posted.payload.contentEquals(foreign), "the old bytes are not posted to the new conversation")
         assertEquals(record.serverId, posted.conversationId)
         assertEquals("sent", rig.ana1.repo.message("m-1")?.status)
+    }
+
+    @Test
+    fun reusedCiphertextRePostStillCarriesTheExpiry() = runTest {
+        val (rig, _) = joined()
+        val before = rig.ana1.mls.encryptCalls
+        rig.server.failNextMessages = 2
+        rig.ana1.outbox.enqueue(ContentEnvelope.Text("m-1", NOW, "hi", ttl = 3600), "acc-bob")
+        repeat(2) { rig.ana1.outbox.flush(); rig.ana1.waitForBackoff() }
+        rig.ana1.outbox.flush()
+        assertEquals(1, rig.ana1.mls.encryptCalls - before)
+        val attempts = rig.server.postAttempts.filter { it.clientMsgId == "m-1" }
+        assertEquals(3, attempts.size)
+        attempts.forEach { assertEquals(Expiry.expiresAt(NOW, 3600), it.expiresAtMs) }
+    }
+
+    /**
+     * The server deduplicates on the client message ID whatever the epoch, so an announce at a new epoch must carry a
+     * new ID: the first post may have been stored (its reply lost) and the new member never saw it.
+     */
+    @Test
+    fun announceAtANewEpochUsesANewMessageId() = runTest {
+        val (rig, record) = joined()
+        ModePin.setPending(rig.ana1.repo, record.serverId, true)
+        val postsBefore = rig.server.postAttempts.size
+        rig.server.afterMessageApplied = { throw org.example.app.contracts.ServerException(0, "network", null, null) }
+        assertFailsWith<Exception> { rig.ana1.manager.preferredConversation("acc-bob") }
+        rig.server.afterMessageApplied = null
+        advanceEpoch(rig, record)
+        rig.ana1.manager.preferredConversation("acc-bob")
+        val attempts = rig.server.postAttempts.drop(postsBefore)
+        assertEquals(2, attempts.size)
+        assertEquals(attempts[0].epoch + 1, attempts[1].epoch)
+        assertFalse(attempts[0].clientMsgId == attempts[1].clientMsgId, "a new ID at the new epoch")
+    }
+
+    @Test
+    fun savedAnnounceWithAnImplausibleIdIsIgnored() = runTest {
+        val (rig, record) = joined()
+        val key = "mode-announce:${record.serverId}"
+        val epoch = rig.ana1.mls.epoch(org.example.app.contracts.GroupId(record.groupId))
+        for (id in listOf("not-a-uuid", "x".repeat(200), "")) {
+            val bytes = java.io.ByteArrayOutputStream()
+            java.io.DataOutputStream(bytes).use {
+                it.writeUTF(id); it.writeLong(NOW); it.writeLong(epoch); it.writeInt(3); it.write(byteArrayOf(1, 2, 3))
+            }
+            ModePin.setPending(rig.ana1.repo, record.serverId, true)
+            rig.ana1.repo.set(key, bytes.toByteArray())
+            val before = rig.ana1.mls.encryptCalls
+            val postsBefore = rig.server.postAttempts.size
+            rig.ana1.manager.preferredConversation("acc-bob")
+            assertEquals(1, rig.ana1.mls.encryptCalls - before)
+            val posted = rig.server.postAttempts.drop(postsBefore).single()
+            assertFalse(posted.payload.contentEquals(byteArrayOf(1, 2, 3)))
+            assertFalse(posted.clientMsgId == id)
+        }
+    }
+
+    @Test
+    fun settingThePendingMarkerAgainDropsASavedAnnounce() = runTest {
+        val (rig, record) = joined()
+        val key = "mode-announce:${record.serverId}"
+        rig.ana1.repo.set(key, byteArrayOf(1, 2, 3))
+        ModePin.setPending(rig.ana1.repo, record.serverId, true)
+        assertTrue((rig.ana1.repo.get(key) ?: ByteArray(0)).isEmpty())
     }
 
     @Test

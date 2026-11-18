@@ -217,7 +217,7 @@ class FakeDeliveryServer(var defaultMode: String = "e2ee") {
         override suspend fun postMessage(id: String, epoch: Long, ciphertext: ByteArray, escrow: ByteArray?, clientMsgId: String, expiresAtMs: Long?): Long {
             call("postMessage")
             val seq = synchronized(lock) {
-                postAttempts += Posted(id, epoch, ciphertext, escrow, clientMsgId, identity)
+                postAttempts += Posted(id, epoch, ciphertext, escrow, clientMsgId, identity, expiresAtMs)
                 if (failNextMessages > 0) {
                     failNextMessages -= 1
                     throw ServerException(503, "unavailable", null, null)
