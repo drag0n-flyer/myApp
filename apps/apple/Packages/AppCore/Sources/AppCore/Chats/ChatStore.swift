@@ -24,6 +24,10 @@ public protocol ChatStore: AnyObject {
     var messageRequestsRowTitle: String? { get }
     /// Account IDs this device has blocked (Settings > Privacy).
     var blockedIDs: Set<String> { get }
+    /// Chats this device archived, in list order. They are left out of `chats(in:)`.
+    var archivedChats: [Chat] { get }
+    /// Chats this device muted: their notifications are silent and their unread count is neutral.
+    var mutedChatIDs: Set<String> { get }
     func chat(id: String) -> Chat?
     func contact(id: String) -> Contact?
     /// Called after any change to the store's data.
@@ -59,6 +63,19 @@ public protocol ChatStore: AnyObject {
     func unblock(contactID: String)
     func report(chatID: String)
     func markRead(chatID: String)
+    /// Pins or unpins on this device. False when 5 chats are already pinned or the chat is archived.
+    @discardableResult func setPinned(_ chatID: String, _ pinned: Bool) -> Bool
+    func setMuted(_ chatID: String, _ muted: Bool)
+    /// Archiving also unpins; unarchiving does not pin again.
+    func setArchived(_ chatID: String, _ archived: Bool)
+    /// The unsent text of a chat, kept on this device. Blank text removes it. Called on every keystroke: it shows at once
+    /// and does not call `onChange`; the database write may come later (see `flushDrafts`).
+    func setDraft(_ chatID: String, _ text: String)
+    /// The unsent text to show in the composer, also for a chat that has no row yet. "" when there is none.
+    func draft(for chatID: String) -> String
+    /// Writes every draft not yet saved and calls `onChange` when it wrote something. Called when a chat is left and when
+    /// the app stops being active.
+    func flushDrafts()
     func incomingCall(from contact: Contact, video: Bool) -> IncomingCallDecision
     func addContact(username: String) async -> Contact?
     /// The chat with this contact, created empty if there is none yet.
@@ -71,6 +88,10 @@ public protocol ChatStore: AnyObject {
 }
 
 extension ChatStore {
+    public func draft(for chatID: String) -> String { chat(id: chatID)?.draft ?? "" }
+
+    public func flushDrafts() {}
+
     /// Searches every chat for the newest 500 hits and keeps this chat's. A store with a chat-scoped query should override it.
     public func searchMessages(_ query: String, in chatID: String, limit: Int) -> [MessageHit] {
         Array(searchMessages(query, limit: 500).filter { $0.chatID == chatID }.prefix(limit))

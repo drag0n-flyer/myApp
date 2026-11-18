@@ -16,8 +16,12 @@ public struct ChatRecord: Sendable, Equatable {
     public var unread: Int
     public var muted: Bool
     public var lastActivity: Date
-    public init(id: String, isRequest: Bool, unread: Int, muted: Bool, lastActivity: Date) {
+    /// Local to the device; `nil` when the chat is not pinned.
+    public var pinnedAt: Date?
+    public var archived: Bool
+    public init(id: String, isRequest: Bool, unread: Int, muted: Bool, lastActivity: Date, pinnedAt: Date? = nil, archived: Bool = false) {
         self.id = id; self.isRequest = isRequest; self.unread = unread; self.muted = muted; self.lastActivity = lastActivity
+        self.pinnedAt = pinnedAt; self.archived = archived
     }
 }
 

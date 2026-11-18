@@ -4,6 +4,7 @@ import SwiftUI
 enum ChatRoute: Hashable {
     case chat(id: String)
     case requests
+    case archive
     case info(chatID: String)
 }
 
@@ -122,6 +123,7 @@ struct ChatDestination: View {
         switch route {
         case .chat(let id): ChatView(chatID: id, model: model, open: open)
         case .requests: MessageRequestsView(model: model, open: open)
+        case .archive: ArchiveView(model: model, open: open)
         case .info(let chatID): ChatInfoView(chatID: chatID, model: model)
         }
     }
@@ -134,6 +136,7 @@ struct ChatListContent: View {
     /// The "New chat" button of the empty list.
     var newChat: (() -> Void)?
     let open: (ChatRoute) -> Void
+    @State private var showingPinLimit = false
 
     var body: some View {
         List {
@@ -154,7 +157,13 @@ struct ChatListContent: View {
                 .accessibilityIdentifier("chatlist.requests")
             }
 
-            if model.chats(in: .all).isEmpty, model.chatListQuery.isEmpty {
+            if !model.archivedChats.isEmpty {
+                Button { open(.archive) } label: { ArchivedRowView(chats: model.archivedChats) }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("chatlist.archived")
+            }
+
+            if model.chats(in: .all).isEmpty, model.archivedChats.isEmpty, model.chatListQuery.isEmpty {
                 ContentUnavailableView {
                     Label("No chats yet", systemImage: "bubble.left.and.bubble.right")
                 } actions: {
@@ -174,10 +183,14 @@ struct ChatListContent: View {
                     ChatRowView(chat: chat, name: model.contact(id: chat.contactID)?.displayName ?? "")
                 }
                 .buttonStyle(.plain)
+                .modifier(ChatRowActions(chat: chat, model: model, inArchive: chat.archived, pinLimit: { showingPinLimit = true }))
                 .listRowBackground(selectedChatID == chat.id ? Color.accentColor.opacity(0.15) : nil)
                 .accessibilityIdentifier("chatlist.row.\(chat.id)")
             }
         }
         .listStyle(.plain)
+        .alert("You can pin up to 5 chats.", isPresented: $showingPinLimit) {
+            Button("OK", role: .cancel) {}
+        }
     }
 }

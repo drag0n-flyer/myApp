@@ -46,6 +46,40 @@
         }
       }
     },
+    "%lld chats" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld chat"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld chats"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld unread" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld unread"
+          }
+        }
+      }
+    },
     "1 hour" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -145,6 +179,28 @@
         }
       }
     },
+    "Archive" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Archive"
+          }
+        }
+      }
+    },
+    "Archived" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Archived"
+          }
+        }
+      }
+    },
     "Ask for Face ID, Touch ID or your passcode to open %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -207,6 +263,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Camera access is off"
+          }
+        }
+      }
+    },
+    "Camera access is off. Turn it on in Settings." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Camera access is off. Turn it on in Settings."
           }
         }
       }
@@ -607,6 +674,17 @@
         }
       }
     },
+    "Draft:" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Draft:"
+          }
+        }
+      }
+    },
     "Earlier message" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -640,6 +718,17 @@
         }
       }
     },
+    "edited" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "edited"
+          }
+        }
+      }
+    },
     "Editing" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -658,6 +747,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Enter a valid email address."
+          }
+        }
+      }
+    },
+    "Flip" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Flip"
           }
         }
       }
@@ -735,6 +835,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Incoming video call"
+          }
+        }
+      }
+    },
+    "iPhone" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iPhone"
           }
         }
       }
@@ -871,6 +982,28 @@
         }
       }
     },
+    "Mute" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mute"
+          }
+        }
+      }
+    },
+    "Muted" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Muted"
+          }
+        }
+      }
+    },
     "New chat" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -911,6 +1044,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "No app can open this file."
+          }
+        }
+      }
+    },
+    "No archived chats" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No archived chats"
           }
         }
       }
@@ -1098,6 +1242,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Photo · %@"
+          }
+        }
+      }
+    },
+    "Pin" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pin"
+          }
+        }
+      }
+    },
+    "Pinned" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pinned"
           }
         }
       }
@@ -1718,6 +1884,17 @@
         }
       }
     },
+    "Unarchive" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unarchive"
+          }
+        }
+      }
+    },
     "Unblock" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1769,6 +1946,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Unlock %@"
+          }
+        }
+      }
+    },
+    "Unmute" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unmute"
+          }
+        }
+      }
+    },
+    "Unpin" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unpin"
           }
         }
       }
@@ -1850,6 +2049,17 @@
         }
       }
     },
+    "Video from the other person" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Video from the other person"
+          }
+        }
+      }
+    },
     "Voice message, %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1879,6 +2089,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "You added a new device"
+          }
+        }
+      }
+    },
+    "You can pin up to 5 chats." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You can pin up to 5 chats."
           }
         }
       }
@@ -1923,61 +2144,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Your contacts weren't copied"
-          }
-        }
-      }
-    },
-    "edited" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "edited"
-          }
-        }
-      }
-    },
-    "iPhone" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "iPhone"
-          }
-        }
-      }
-    },
-    "Camera access is off. Turn it on in Settings." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Camera access is off. Turn it on in Settings."
-          }
-        }
-      }
-    },
-    "Flip" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Flip"
-          }
-        }
-      }
-    },
-    "Video from the other person" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Video from the other person"
           }
         }
       }

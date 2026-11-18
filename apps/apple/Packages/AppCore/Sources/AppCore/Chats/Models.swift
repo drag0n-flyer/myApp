@@ -173,9 +173,17 @@ public struct Chat: Identifiable, Hashable, Codable, Sendable {
     public var isRequest: Bool
     /// The server and the conversation disagree about the chat's mode; sending is paused (Design 18).
     public var modeMismatch: Bool
+    /// When the chat was pinned on this device; `nil` when it is not pinned. Local to the device.
+    public var pinnedAt: Date?
+    /// Local to the device: a muted chat notifies silently and its unread count is neutral.
+    public var muted: Bool
+    /// Local to the device: an archived chat is left out of the main list.
+    public var archived: Bool
+    /// The unsent text saved for this chat; `nil` when there is none.
+    public var draft: String?
 
     public init(id: String, contactID: String, encryption: ChatEncryption, folderIDs: Set<String>, unreadCount: Int, messages: [Message], isRequest: Bool,
-                modeMismatch: Bool = false) {
+                modeMismatch: Bool = false, pinnedAt: Date? = nil, muted: Bool = false, archived: Bool = false, draft: String? = nil) {
         self.id = id
         self.contactID = contactID
         self.encryption = encryption
@@ -184,6 +192,10 @@ public struct Chat: Identifiable, Hashable, Codable, Sendable {
         self.messages = messages
         self.isRequest = isRequest
         self.modeMismatch = modeMismatch
+        self.pinnedAt = pinnedAt
+        self.muted = muted
+        self.archived = archived
+        self.draft = draft
     }
 
     public var lastMessage: Message? { messages.last }

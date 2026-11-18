@@ -307,9 +307,17 @@ final class AppModel {
 
     /// Chats in a folder whose name or messages match `query`.
     func chats(in folder: ChatFolder, matching query: String) -> [Chat] {
-        let chats = chats(in: folder)
+        var chats = chats(in: folder)
         let query = query.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else { return chats }
+        // Search covers archived chats too (Android's does): they follow the main list's matches.
+        chats += chatStore.archivedChats.filter { chat in
+            switch folder.kind {
+            case .all: true
+            case .unread: chat.unreadCount > 0
+            case .custom: chat.folderIDs.contains(folder.id)
+            }
+        }
         // Message matches come from the store's search (the whole history), not only the loaded messages.
         let messageChatIDs = Set(chatStore.searchMessages(query, limit: 200).map(\.chatID))
         return chats.filter { chat in
@@ -361,7 +369,7 @@ final class AppModel {
 
     func chatID(for contactID: String) -> String? {
         _ = revision
-        return (chatStore.chats(in: .all) + chatStore.messageRequests).first { $0.contactID == contactID }?.id
+        return (chatStore.chats(in: .all) + chatStore.archivedChats + chatStore.messageRequests).first { $0.contactID == contactID }?.id
     }
 
     /// Opens search for `text`: the search tab on iOS 26, otherwise the chat list's own field.

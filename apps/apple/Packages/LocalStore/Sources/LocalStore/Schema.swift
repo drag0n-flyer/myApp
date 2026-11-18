@@ -52,3 +52,10 @@ let schemaV1: [String] = [
     "CREATE INDEX folder_chats_chat ON folder_chats(chat_id)",
     "CREATE TABLE kv(key TEXT PRIMARY KEY, value BLOB NOT NULL) STRICT",
 ]
+
+/// Chat list actions and saved drafts. Pin, archive and draft are local to the device. (`chats.muted` is in version 1.)
+let schemaV2: [String] = [
+    "ALTER TABLE chats ADD COLUMN pinned_at INTEGER",
+    "ALTER TABLE chats ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
+    "CREATE TABLE drafts(chat_id TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE, text TEXT NOT NULL, updated_at INTEGER NOT NULL) STRICT",
+]

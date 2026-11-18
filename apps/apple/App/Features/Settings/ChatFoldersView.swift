@@ -62,7 +62,7 @@ private struct NewFolderView: View {
             Form {
                 TextField("Folder name", text: $name)
                 Section("Chats") {
-                    ForEach(model.chats(in: .all)) { chat in
+                    ForEach(model.everyChat) { chat in
                         let title = model.contact(id: chat.contactID)?.displayName ?? ""
                         Toggle(title, isOn: Binding(
                             get: { chosen.contains(chat.id) },

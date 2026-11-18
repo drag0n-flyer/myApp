@@ -27,7 +27,7 @@ struct CallRecord: Identifiable {
 extension AppModel {
     /// Calls recorded in chats, newest first.
     var callHistory: [CallRecord] {
-        (chats(in: .all) + messageRequests)
+        (everyChat + messageRequests)
             .flatMap { chat in
                 chat.messages.compactMap { message -> CallRecord? in
                     guard case .call(let summary) = message.content else { return nil }

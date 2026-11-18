@@ -13,6 +13,8 @@ public final class EmptyChatStore: ChatStore {
     public var messageRequests: [Chat] { [] }
     public var messageRequestsRowTitle: String? { nil }
     public var blockedIDs: Set<String> { [] }
+    public var archivedChats: [Chat] { [] }
+    public var mutedChatIDs: Set<String> { [] }
     public var supportsSafetyNumbers: Bool { false }
 
     public init() {}
@@ -38,6 +40,10 @@ public final class EmptyChatStore: ChatStore {
     public func unblock(contactID: String) {}
     public func report(chatID: String) {}
     public func markRead(chatID: String) {}
+    public func setPinned(_ chatID: String, _ pinned: Bool) -> Bool { false }
+    public func setMuted(_ chatID: String, _ muted: Bool) {}
+    public func setArchived(_ chatID: String, _ archived: Bool) {}
+    public func setDraft(_ chatID: String, _ text: String) {}
     public func incomingCall(from contact: Contact, video: Bool) -> IncomingCallDecision { .silentMissed }
     public func addContact(username: String) async -> Contact? { nil }
     public func ensureChat(with contactID: String) -> String { contactID }

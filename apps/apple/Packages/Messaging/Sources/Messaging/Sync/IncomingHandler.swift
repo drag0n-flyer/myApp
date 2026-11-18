@@ -242,9 +242,7 @@ public struct IncomingHandler: Sendable {
             if fromMe, kind == .read, message.senderAccount != me.accountID, message.status != "read" { unreadCleared += 1 }
         }
         try db.updateStatus(ids: valid, to: kind.rawValue)
-        if unreadCleared > 0, let chat = try db.chat(id: chatID) {
-            try db.setUnread(chatID: chatID, max(0, chat.unread - unreadCleared))
-        }
+        if unreadCleared > 0 { try db.reduceUnread(chatID: chatID, by: unreadCleared) }
     }
 
     /// One system line per conversation ("Messages in this chat are paused"), never stored twice.
@@ -260,10 +258,9 @@ public struct IncomingHandler: Sendable {
 
     /// An incoming message from someone else counts as unread and moves the chat up.
     private func bumpChat(_ message: MessageRecord, db: Repository) throws {
-        guard var chat = try db.chat(id: message.chatID) else { return }
-        if message.senderAccount != me.accountID { chat.unread += 1 }
-        chat.lastActivity = max(chat.lastActivity, min(message.sentAt, now()))
-        try db.upsertChat(chat)
+        // One statement: pin, mute and archive are never read and written back.
+        try db.bumpChat(chatID: message.chatID, unreadDelta: message.senderAccount != me.accountID ? 1 : 0,
+                        at: min(message.sentAt, now()))
     }
 
     static func ms(_ date: Date) -> Int64 { Int64((date.timeIntervalSince1970 * 1000).rounded()) }

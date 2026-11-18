@@ -1,22 +1,5 @@
 import Foundation
 
-/// Unsent composer text per chat, kept for the life of the process.
-public struct DraftKeeper: Sendable {
-    private var drafts: [String: String] = [:]
-
-    public init() {}
-
-    public mutating func set(_ text: String, for chatID: String) {
-        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            drafts[chatID] = nil
-        } else {
-            drafts[chatID] = text
-        }
-    }
-
-    public func draft(for chatID: String) -> String { drafts[chatID] ?? "" }
-}
-
 public enum LinkDetector {
     /// `text` with web and e-mail links marked, so the system opens them when tapped.
     public static func attributed(_ text: String) -> AttributedString {
