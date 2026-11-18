@@ -114,7 +114,7 @@ class ChatMediaSendTest {
     }
 
     @Test fun aPhotoThatIsNotAContentUriIsRefusedWithAMessage() {
-        launch(AnsweringRegistry { c, _ -> if (c is ActivityResultContracts.PickVisualMedia) Uri.parse("file:///data/data/org.example.app/databases/app.db") else null })
+        launch(AnsweringRegistry { c, _ -> if (c is ActivityResultContracts.PickVisualMedia) Uri.parse("file:///data/data/${app.packageName}/databases/app.db") else null })
         attach("Photo")
         assertEquals(emptyList(), store.sent)
         rule.onNodeWithText("Couldn't read that file.").assertIsDisplayed()

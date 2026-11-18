@@ -93,8 +93,8 @@ class PickedFilesTest {
     @Test fun onlyContentUrisFromThePickerAreAccepted() {
         val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
         assertTrue(PickedFiles.isFromPicker(context, Uri.parse("content://com.android.providers.media.documents/document/1")))
-        assertFalse(PickedFiles.isFromPicker(context, Uri.parse("file:///data/data/org.example.app/databases/app.db")))
-        assertFalse(PickedFiles.isFromPicker(context, Uri.parse("/data/data/org.example.app/databases/app.db")))
+        assertFalse(PickedFiles.isFromPicker(context, Uri.parse("file:///data/data/${context.packageName}/databases/app.db")))
+        assertFalse(PickedFiles.isFromPicker(context, Uri.parse("/data/data/${context.packageName}/databases/app.db")))
         assertFalse(PickedFiles.isFromPicker(context, Uri.parse("http://example.com/x")))
         // The app's own FileProvider (the copies it shares and the camera file) is not a source to attach from.
         assertFalse(PickedFiles.isFromPicker(context, Uri.parse("content://${SharedFiles.authority(context)}/shared/open/x.pdf")))
