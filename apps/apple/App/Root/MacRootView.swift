@@ -19,6 +19,7 @@ struct MacRootView: View {
     @State private var detailPath: [ChatRoute] = []
     @State private var missedOnly = false
     @State private var showingNewChat = false
+    @State private var linkFromNewChat: URL?
     @State private var searchPresented = false
 
     var body: some View {
@@ -102,8 +103,10 @@ struct MacRootView: View {
                     .accessibilityIdentifier("mac.newchat")
             }
         }
-        .sheet(isPresented: $showingNewChat) {
-            NewChatView(model: model) { contactID in
+        .sheet(isPresented: $showingNewChat, onDismiss: {
+            if let url = linkFromNewChat { linkFromNewChat = nil; model.handle(url: url) }
+        }) {
+            NewChatView(model: model, onLink: { url in linkFromNewChat = url; showingNewChat = false }) { contactID in
                 showingNewChat = false
                 sidebar = .folder(ChatFolder.all.id)
                 open(.chat(id: model.openChat(with: contactID)))
