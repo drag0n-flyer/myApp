@@ -88,10 +88,16 @@ class PeopleSignals(
         scope.launch {
             for (ignored in wake) {
                 while (true) {
-                    val next = synchronized(lock) { typingQueue.removeFirstOrNull() ?: presenceQueue.removeFirstOrNull() }
+                    // One locked step: a frame and its barrier queued between two steps would let the barrier finish first.
+                    var done: List<CompletableDeferred<Unit>> = emptyList()
+                    val next = synchronized(lock) {
+                        val frame = typingQueue.removeFirstOrNull() ?: presenceQueue.removeFirstOrNull()
+                        if (frame == null) { done = barriers.toList(); barriers.clear() }
+                        frame
+                    }
                     if (next == null) {
                         // Everything queued before a barrier has been handed to the channel.
-                        synchronized(lock) { val done = barriers.toList(); barriers.clear(); done }.forEach { it.complete(Unit) }
+                        done.forEach { it.complete(Unit) }
                         break
                     }
                     try { channel.send(next.first, next.second) } catch (e: CancellationException) { throw e } catch (_: Exception) { }
