@@ -6,6 +6,7 @@ final class SettingsTests: XCTestCase {
 
     private func openData(_ app: XCUIApplication) {
         app.tab("Settings").tap()
+        XCTAssertTrue(app.element("settings.data").waitToExist())   // the list may still be appearing
         app.element("settings.data").tap()
         XCTAssertTrue(app.element("data.mobilelimit").waitToExist())
     }
