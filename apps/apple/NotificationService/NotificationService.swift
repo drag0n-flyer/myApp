@@ -87,8 +87,10 @@ private final class Delivery: @unchecked Sendable {
             switch presentation {
             case .empty:
                 handler(UNNotificationContent())
-            case .content(let title, let body, let threadID, let sound):
+            case .content(let title, let body, let threadID, let sound, let messageID):
                 let content = content ?? UNMutableNotificationContent()
+                // A random message ID (no content): lets the app remove this notification when the message expires.
+                if let messageID { content.userInfo[NotificationMessageKey.userInfo] = messageID }
                 let settings = NSESettings.read()
                 if let threadID, threadID != NotificationProcessor.devicesThreadID {
                     // A chat's message: one thread per chat, Reply only when unlocked, silent when muted.

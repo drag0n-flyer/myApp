@@ -43,6 +43,7 @@ struct ChatInfoView: View {
                         LabeledContent("Media and files", value: "\(mediaCount(chat))")
                     }
                     .accessibilityIdentifier("chatinfo.media")
+                    DisappearingMessagesRow(chatID: chatID, model: model)
                 }
 
                 Section {

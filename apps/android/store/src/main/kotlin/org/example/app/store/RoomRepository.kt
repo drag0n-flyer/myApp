@@ -33,6 +33,8 @@ class RoomRepository(
     private val db: AppDatabase,
     allowLikeFallback: Boolean = false,
     private val clock: () -> Long = System::currentTimeMillis,
+    /** Attachment files are deleted only from inside these folders (media, open copies, outgoing); empty deletes none. */
+    private val mediaRoots: List<java.io.File> = emptyList(),
 ) : Repository {
     private val contacts = db.contacts()
     private val chats = db.chats()
@@ -83,6 +85,7 @@ class RoomRepository(
     override fun timerSeconds(chatId: String) = chats.timerSeconds(chatId) ?: 0
     override fun expiredUnread(now: Long, ownAccount: String): Map<String, Int> =
         messages.expiredUnread(now, ownAccount).associate { it.chatId to it.n }
+    override fun expiredMessageIds(now: Long): List<String> = messages.expiredIds(now)
     override fun sweepExpired(now: Long, ownAccount: String): List<String> {
         val paths = ArrayList<String>()
         val removed = transaction {
@@ -97,8 +100,14 @@ class RoomRepository(
             ids
         }
         // Files go after the commit: a rolled-back sweep must not leave rows pointing at deleted files.
-        paths.forEach { runCatching { java.io.File(it).delete() } }
+        // A stored path is only ever deleted when it is inside the app's media folders (after resolving "..").
+        paths.forEach { p -> runCatching { java.io.File(p).takeIf(::insideMediaRoots)?.delete() } }
         return removed
+    }
+
+    private fun insideMediaRoots(file: java.io.File): Boolean {
+        val path = file.canonicalFile.toPath()
+        return mediaRoots.any { path.startsWith(it.canonicalFile.toPath()) }
     }
 
     // profiles

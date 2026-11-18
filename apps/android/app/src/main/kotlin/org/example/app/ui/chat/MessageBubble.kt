@@ -104,6 +104,9 @@ fun MessageBubble(
                         if (isOwn && message.status == DeliveryStatus.Sending && content.isAttachment()) {
                             Text(stringResource(R.string.media_sending), style = MaterialTheme.typography.labelSmall)
                         }
+                        if (message.expiresAt != null) {
+                            Icon(painterResource(R.drawable.ic_timer), contentDescription = stringResource(R.string.timer_glyph), modifier = Modifier.size(12.dp))
+                        }
                         Text(clockTime(message.sentAt), style = MaterialTheme.typography.labelSmall)
                         if (isOwn) Ticks(message.status)
                     }

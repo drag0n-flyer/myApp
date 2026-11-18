@@ -188,7 +188,7 @@ class IncomingHandler(
                 val message = repo.message(envelope.target)
                 val old = message?.let { ContentCodec.decode(it.envelope) }
                 if (message != null && message.chatId == chatId && !message.deleted && old is ContentEnvelope.Text) {
-                    val edited = ContentCodec.encode(ContentEnvelope.Text(old.id, old.at, envelope.t, old.r))
+                    val edited = ContentCodec.encode(old.edited(envelope.t))
                     // The sender check is in the query: an edit by anyone else changes nothing.
                     repo.applyEdit(envelope.target, account, edited, fold(envelope.t), envelope.at)
                 }
@@ -237,9 +237,16 @@ class IncomingHandler(
         val key = "timer-at:$chatId"
         // The sender controls `at`: a far-future one would otherwise win every later comparison for ever.
         val effectiveAt = minOf(timer.at, clock.now() + MAX_TIMER_SKEW_MS)
+        val idKey = "timer-id:$chatId"
         val last = repo.get(key)?.decodeToString()?.toLongOrNull()
-        if (last != null && effectiveAt < last) return
+        val lastId = repo.get(idKey)?.decodeToString()?.takeIf { it.isNotEmpty() }
+        if (last != null) {
+            if (effectiveAt < last) return
+            // The same millisecond: the greater envelope id wins (plain string order), so both devices end on one value.
+            if (effectiveAt == last && lastId != null && timer.id <= lastId) return
+        }
         repo.set(key, effectiveAt.toString().encodeToByteArray())
+        repo.set(idKey, timer.id.encodeToByteArray())
         if (repo.timerSeconds(chatId) == timer.seconds) return
         repo.setTimer(chatId, timer.seconds)
         val nameField = if (account == me.accountId) "" else ",\"name\":" + kotlinx.serialization.json.JsonPrimitive(account).toString()

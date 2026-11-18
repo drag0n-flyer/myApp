@@ -66,6 +66,12 @@ private final class Counter: @unchecked Sendable {
         #expect(p == .content(title: "Ana", body: "Lunch?", threadID: "a", sound: true))
     }
 
+    @Test func theMessageIDReachesTheContent() {
+        let p = NotificationPresentation(
+            outcome: .show(title: "Ana", body: "Lunch?", threadID: "a", messageID: "m1"), filtering: false, strings: strings)
+        #expect(p == .content(title: "Ana", body: "Lunch?", threadID: "a", sound: true, messageID: "m1"))
+    }
+
     @Test func dropIsEmptyOnlyWhenFiltering() {
         #expect(NotificationPresentation(outcome: .drop, filtering: true, strings: strings) == .empty)
         #expect(NotificationPresentation(outcome: .drop, filtering: false, strings: strings) == .fallback(strings))

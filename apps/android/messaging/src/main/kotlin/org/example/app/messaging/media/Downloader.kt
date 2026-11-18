@@ -64,7 +64,7 @@ class Downloader(
         checkShape(att)
         // The plaintext file is named for the id, the digest and the key, so a message with another key never
         // shares (or deletes) the file that another message shows.
-        val name = "${att.id}-${hex(att.dg)}-${hex(MessageDigest.getInstance("SHA-256").digest(att.key)).take(16)}"
+        val name = openName(att.id, att.dg, att.key)
         lock(att.id).withLock {
             val blob = ensureBlob(att)
             val plain = File(openDir, name)
@@ -172,5 +172,11 @@ class Downloader(
     companion object {
         /** The server's `limits.attachmentBytes` default (100 MiB). Pass the value from server info when known. */
         const val DEFAULT_MAX_BYTES = 104_857_600L
+
+        /** The file name of an attachment's decrypted copy in the open folder. */
+        fun openName(id: String, digest: ByteArray, key: ByteArray): String {
+            fun hex(b: ByteArray) = b.joinToString("") { String.format(java.util.Locale.ROOT, "%02x", it) }
+            return "$id-${hex(digest)}-${hex(MessageDigest.getInstance("SHA-256").digest(key)).take(16)}"
+        }
     }
 }

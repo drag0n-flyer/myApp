@@ -56,6 +56,8 @@ class ChatViewModel(
     private val network: NetworkType,
     private val io: CoroutineDispatcher = Dispatchers.IO,
     private val nowMs: () -> Long = System::currentTimeMillis,
+    /** Typing and presence; null shows and sends none. */
+    private val signals: org.example.app.core.people.PeopleSignals? = null,
     private val autoDownload: () -> AutoDownloadSettings,
 ) : ViewModel() {
     // Every message this screen has seen: the store's cached newest page as it moves on, plus older pages loaded since.
@@ -118,6 +120,17 @@ class ChatViewModel(
 
     private val myId: String get() = store.me.id
 
+    /** What the header shows under the name: typing, online or last seen. Nothing for a message request. */
+    val peer: StateFlow<org.example.app.core.people.PeerView?> =
+        (signals?.views ?: MutableStateFlow<Map<String, org.example.app.core.people.PeerView>>(emptyMap()))
+            .map { views -> if (state.value.isRequest) null else views[chatId] }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /** The composer text changed: starts, repeats or ends the typing signal. A message request gets none. */
+    fun typed(isEmpty: Boolean) {
+        if (!state.value.isRequest) signals?.composerChanged(chatId, isEmpty)
+    }
+
     /**
      * Read straight from the store and the loaded pages rather than from [state], which a collector updates a moment
      * later: decisions here must not depend on whether that has happened yet.
@@ -135,8 +148,12 @@ class ChatViewModel(
         // A reply to a message that is gone or deleted would show a dead quote; send it as a plain message.
         val target = replyTo?.takeIf { id -> current(id)?.let { MessageActions.stillApplies(MessageAction.Reply, it, mine(it)) } == true }
         store.send(MessageContent.Text(clean), chatId, target)
+        signals?.messageSent(chatId)
         return true
     }
+
+    /** The chat screen was left: a typing signal that is out ends at once. Sends nothing when none is out. */
+    fun leftChat() { signals?.messageSent(chatId) }
 
     // Older history
 

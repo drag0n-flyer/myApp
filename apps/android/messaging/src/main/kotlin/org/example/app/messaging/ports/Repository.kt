@@ -283,6 +283,9 @@ interface Repository {
      */
     fun expiredUnread(now: Long, ownAccount: String): Map<String, Int>
 
+    /** The IDs of the messages whose `expires_at` is at or before [now], not yet swept. */
+    fun expiredMessageIds(now: Long): List<String>
+
     // profiles
     fun profile(accountId: String): ProfileRecord?
     /** Saves only when [ver] is strictly higher than the stored one (`ProfileMerge`). Returns whether it saved. */

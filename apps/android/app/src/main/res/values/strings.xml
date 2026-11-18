@@ -61,6 +61,14 @@
     <string name="system_device_removed">%1$s removed a device</string>
     <string name="system_safety_number_changed">Safety number changed</string>
     <string name="system_messages_paused">Messages in this chat are paused. Open chat info for details.</string>
+    <string name="system_timer_set_you_day">You set messages to disappear after 1 day</string>
+    <string name="system_timer_set_you_week">You set messages to disappear after 7 days</string>
+    <string name="system_timer_set_you_quarter">You set messages to disappear after 90 days</string>
+    <string name="system_timer_set_other_day">%1$s set messages to disappear after 1 day</string>
+    <string name="system_timer_set_other_week">%1$s set messages to disappear after 7 days</string>
+    <string name="system_timer_set_other_quarter">%1$s set messages to disappear after 90 days</string>
+    <string name="system_timer_off_you">You turned off disappearing messages</string>
+    <string name="system_timer_off_other">%1$s turned off disappearing messages</string>
 
     <!-- Chat list -->
     <string name="folder_all">All</string>
@@ -124,6 +132,13 @@
     <string name="sending_paused_hint">Sending is paused. Open chat info for details.</string>
 
     <!-- Chat info -->
+    <string name="info_disappearing">Disappearing messages</string>
+    <string name="info_disappearing_explainer">New messages disappear from this chat after the time you choose. People can still copy or photograph them.</string>
+    <string name="timer_off">Off</string>
+    <string name="timer_day">1 day</string>
+    <string name="timer_week">7 days</string>
+    <string name="timer_quarter">90 days</string>
+    <string name="timer_glyph">Disappearing message</string>
     <string name="info_title">Info</string>
     <string name="info_audio">Audio</string>
     <string name="info_video">Video</string>
@@ -322,6 +337,28 @@
     <string name="add_username">Username</string>
     <string name="add_submit">Add</string>
     <string name="add_not_found">No one with that username on this server.</string>
+    <string name="add_scan">Scan QR code</string>
+    <string name="add_paste_link">Paste link</string>
+    <string name="add_paste_link_hint">Link</string>
+    <string name="add_paste_link_open">Open</string>
+    <string name="add_invite_link">Invite with a link</string>
+    <string name="add_make_link_busy">Making a link</string>
+    <string name="my_qr_title">My QR code</string>
+    <string name="my_qr_description">Your QR code. Someone who scans it can add you.</string>
+    <string name="my_qr_footer">Anyone who scans this code can add you as a contact.</string>
+    <string name="my_qr_share">Share</string>
+    <string name="scan_link_title">Scan QR code</string>
+    <string name="link_confirm_message">Add %1$s to your contacts?</string>
+    <string name="link_confirm_unknown">Couldn\'t add this person. Try again.</string>
+    <string name="link_not_a_link">That isn\'t a link for a person.</string>
+    <string name="link_other_server">This link is for a different server.</string>
+    <string name="link_own">This is your own link.</string>
+    <string name="link_expired">This link has expired. Ask for a new one.</string>
+    <string name="link_rate_limited">Too many tries. Wait a moment and try again.</string>
+    <string name="link_failed">Couldn\'t open the link. Check your connection and try again.</string>
+    <string name="link_too_many">You have too many unused links. Wait for one to expire.</string>
+    <string name="link_make_failed">Couldn\'t make a link. Check your connection and try again.</string>
+    <string name="link_problem_ok">OK</string>
     <string name="requests_title">Message requests</string>
     <string name="requests_footer">People not in your contacts land here. They can\'t ring you until you accept.</string>
     <string name="requests_empty">No message requests</string>
@@ -357,6 +394,13 @@
     <string name="privacy_find_email">By email</string>
     <string name="privacy_messages">Messages</string>
     <string name="privacy_read_receipts">Read receipts</string>
+    <string name="privacy_typing">Typing indicator</string>
+    <string name="privacy_typing_footer">Others can see when you are typing. If you turn this off, you won\'t see it for others either.</string>
+    <string name="privacy_online">Online and last seen</string>
+    <string name="privacy_online_footer">Others can see when you were last in the app. If you turn this off, you won\'t see it for others either.</string>
+    <string name="signal_typing">typing…</string>
+    <string name="signal_online">online</string>
+    <string name="signal_last_seen">last seen %1$s</string>
     <string name="privacy_blocked">Blocked</string>
     <string name="privacy_blocked_empty">No one blocked</string>
     <string name="blocked_unblock">Unblock</string>

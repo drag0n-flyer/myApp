@@ -132,6 +132,7 @@ class InMemoryRepository : Repository {
         s.messages.values.filter {
             it.expiresAt != null && it.expiresAt <= now && it.senderAccount != ownAccount && it.senderAccount != "system" && it.status != "read"
         }.groupingBy { it.chatId }.eachCount()
+    override fun expiredMessageIds(now: Long): List<String> = s.messages.values.filter { it.expiresAt != null && it.expiresAt <= now }.map { it.id }
     override fun sweepExpired(now: Long, ownAccount: String): List<String> {
         val paths = ArrayList<String>()
         val removed = tx {
