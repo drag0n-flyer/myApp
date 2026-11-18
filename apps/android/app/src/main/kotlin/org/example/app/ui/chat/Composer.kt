@@ -23,6 +23,7 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -30,6 +31,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import org.example.app.R
 import org.example.app.core.settings.MediaKind
@@ -59,6 +62,9 @@ fun Composer(
     onCloseBar: () -> Unit = {},
 ) {
     var sheet by rememberSaveable { mutableStateOf(false) }
+    // The caller owns the text; the cursor lives here and goes to the end whenever the caller replaces the text.
+    var field by remember { mutableStateOf(TextFieldValue(text, TextRange(text.length))) }
+    if (field.text != text) field = TextFieldValue(text, TextRange(text.length))
     Column(modifier.fillMaxWidth().imePadding().navigationBarsPadding()) {
         if (bar != null) {
             val label = when (bar) {
@@ -90,8 +96,12 @@ fun Composer(
                 Icon(painterResource(R.drawable.ic_attach), contentDescription = stringResource(R.string.attach))
             }
             TextField(
-                value = text,
-                onValueChange = { onTextChange(TextLimit.truncate(it)) },
+                value = field,
+                onValueChange = { value ->
+                    val cut = TextLimit.truncate(value.text)
+                    field = if (cut == value.text) value else TextFieldValue(cut, TextRange(cut.length))
+                    onTextChange(cut)
+                },
                 enabled = enabled,
                 placeholder = { Text(stringResource(if (enabled) R.string.message_hint else R.string.sending_paused_hint)) },
                 maxLines = 5,

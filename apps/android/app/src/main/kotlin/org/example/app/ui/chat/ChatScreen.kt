@@ -230,7 +230,9 @@ fun ChatScreen(
             }
         },
         bottomBar = {
-            if (state.isRequest) {
+            if (searching) {
+                // The search field is the only input while searching.
+            } else if (state.isRequest) {
                 RequestBar(onAccept = onAccept, onBlock = onBlock, onReport = onReport)
             } else {
                 Composer(
