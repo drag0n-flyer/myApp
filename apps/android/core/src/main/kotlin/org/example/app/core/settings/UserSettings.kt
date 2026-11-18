@@ -20,6 +20,8 @@ data class UserSettings(
     val findByUsername: Boolean = true,
     val findByEmail: Boolean = false,
     val readReceipts: Boolean = true,
+    /** Make a link preview for the first link of a message (the device contacts the website). Off until the person turns it on. */
+    val linkPreviews: Boolean = false,
     /** Settings > Privacy (design 6.1): off means the app neither sends nor shows typing signals. */
     val typingIndicator: Boolean = true,
     /** Off means the app neither sends nor shows online and last seen. */

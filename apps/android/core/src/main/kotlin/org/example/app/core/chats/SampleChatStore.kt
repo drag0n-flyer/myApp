@@ -137,12 +137,15 @@ class SampleChatStore(
         return removed
     }
 
-    override fun sendAttachment(path: String, kind: MediaKind, chatId: String) {
+    override fun sendAttachment(path: String, kind: MediaKind, chatId: String) = sendAttachment(path, kind, chatId, null)
+
+    override fun sendAttachment(path: String, kind: MediaKind, chatId: String, caption: String?) {
+        val c = caption?.takeIf { it.isNotBlank() }
         val content = when (kind) {
-            MediaKind.Photo -> MessageContent.Photo(0)
-            MediaKind.Video -> MessageContent.File(ChatMedia.videoFileName(path.substringAfterLast('/'), null), 0, "video/mp4")
+            MediaKind.Photo -> MessageContent.Photo(0, c)
+            MediaKind.Video -> MessageContent.File(ChatMedia.videoFileName(path.substringAfterLast('/'), null), 0, "video/mp4", c)
             MediaKind.Voice -> MessageContent.Voice(0.0)
-            MediaKind.File -> MessageContent.File(path.substringAfterLast('/'), 0)
+            MediaKind.File -> MessageContent.File(path.substringAfterLast('/'), 0, caption = c)
         }
         send(content, chatId, null)
     }
@@ -163,7 +166,14 @@ class SampleChatStore(
     }
 
     override fun edit(messageId: String, chatId: String, text: String) = updateMessage(messageId, chatId) {
-        if (it.senderId == me.id && it.content is MessageContent.Text) it.copy(content = MessageContent.Text(text), editedAt = clock()) else it
+        val c = it.content
+        if (it.senderId != me.id) it
+        else when {
+            c is MessageContent.Text -> it.copy(content = MessageContent.Text(text, c.preview?.takeIf { p -> p.url in text }), editedAt = clock())
+            c is MessageContent.Photo && c.caption != null -> it.copy(content = c.copy(caption = text), editedAt = clock())
+            c is MessageContent.File && c.caption != null -> it.copy(content = c.copy(caption = text), editedAt = clock())
+            else -> it
+        }
     }
 
     override fun delete(messageId: String, chatId: String) = updateMessage(messageId, chatId) {

@@ -8,6 +8,7 @@ import org.example.app.messaging.ChatMapping
 import org.example.app.messaging.content.Att
 import org.example.app.messaging.content.ContentCodec
 import org.example.app.messaging.content.ContentEnvelope
+import org.example.app.messaging.content.EditRule
 import org.example.app.messaging.content.ReceiptKind
 import org.example.app.messaging.ports.AttachmentRecord
 import org.example.app.messaging.ports.AttachmentState
@@ -187,10 +188,10 @@ class IncomingHandler(
             is ContentEnvelope.Edit -> {
                 val message = repo.message(envelope.target)
                 val old = message?.let { ContentCodec.decode(it.envelope) }
-                if (message != null && message.chatId == chatId && !message.deleted && old is ContentEnvelope.Text) {
-                    val edited = ContentCodec.encode(old.edited(envelope.t))
+                val result = if (message != null && message.chatId == chatId && !message.deleted && old != null) EditRule.apply(old, envelope.t, fold) else null
+                if (result != null) {
                     // The sender check is in the query: an edit by anyone else changes nothing.
-                    repo.applyEdit(envelope.target, account, edited, fold(envelope.t), envelope.at)
+                    repo.applyEdit(envelope.target, account, ContentCodec.encode(result.envelope), result.folded, envelope.at, result.caption, result.linkPreview)
                 }
                 AppliedResult.Ignored
             }

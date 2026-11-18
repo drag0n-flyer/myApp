@@ -58,17 +58,16 @@ interface ChatStore {
     fun searchMessages(query: String, limit: Int): List<MessageHit>
     fun send(content: MessageContent, chatId: String, replyTo: String? = null)
     fun sendAttachment(path: String, kind: MediaKind, chatId: String)
+    /** Like [sendAttachment] with a caption (null or blank: none). A store that keeps no captions ignores it. */
+    fun sendAttachment(path: String, kind: MediaKind, chatId: String, caption: String?) = sendAttachment(path, kind, chatId)
     /** The largest attachment the server takes, in bytes: a video above it is refused before anything is staged. */
     val attachmentLimitBytes: Long get() = 104_857_600L
     /**
-     * Sends a preview's plan ([SendPlan.plan]) in order: each attachment, and the caption as a text message right after
-     * the first. The default does them one after the other; a store that creates attachments asynchronously keeps the order.
+     * Sends a preview's plan ([SendPlan.plan]) in order: each attachment, the caption in the first one's message. The
+     * default does them one after the other; a store that creates attachments asynchronously keeps the order.
      */
     fun sendBatch(sends: List<SendPlan.Send>, chatId: String) {
-        for (item in sends) when (item) {
-            is SendPlan.Send.Attachment -> sendAttachment(item.picked.path, item.picked.kind, chatId)
-            is SendPlan.Send.Text -> send(MessageContent.Text(item.text), chatId)
-        }
+        for (item in sends) sendAttachment(item.picked.path, item.picked.kind, chatId, item.caption)
     }
     /**
      * The fraction (0.0 to 1.0) uploaded of each outgoing attachment that is still uploading, by message id. A message

@@ -394,6 +394,10 @@
     <string name="privacy_find_email">By email</string>
     <string name="privacy_messages">Messages</string>
     <string name="privacy_read_receipts">Read receipts</string>
+    <string name="privacy_link_previews">Link previews</string>
+    <string name="privacy_link_previews_footer">To make a preview, your device contacts the website, which learns your IP address.</string>
+    <string name="link_preview_remove">Remove preview</string>
+    <string name="link_preview_open">Open link</string>
     <string name="privacy_typing">Typing indicator</string>
     <string name="privacy_typing_footer">Others can see when you are typing. If you turn this off, you won\'t see it for others either.</string>
     <string name="privacy_online">Online and last seen</string>

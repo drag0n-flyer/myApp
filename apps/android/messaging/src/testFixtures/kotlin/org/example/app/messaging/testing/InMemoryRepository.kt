@@ -236,10 +236,16 @@ class InMemoryRepository : Repository {
             true
         }
     }
-    override fun applyEdit(id: String, sender: String, envelope: ByteArray, folded: String, at: Long): Boolean = tx {
+    override fun applyEdit(id: String, sender: String, envelope: ByteArray, folded: String, at: Long, caption: String?, linkPreview: String?): Boolean = tx {
         val m = s.messages[id]
         if (m == null || m.senderAccount != sender || m.deleted) false
-        else { s.messages[id] = m.copy(envelope = envelope, folded = folded, editedAt = at); true }
+        else {
+            s.messages[id] = m.copy(
+                envelope = envelope, folded = folded, editedAt = at,
+                caption = caption, linkPreview = linkPreview,
+            )
+            true
+        }
     }
     override fun markDeleted(id: String, sender: String): Boolean = tx {
         val m = s.messages[id]

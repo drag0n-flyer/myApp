@@ -29,10 +29,11 @@ sealed interface SystemEvent {
 }
 
 sealed interface MessageContent {
-    data class Text(val text: String) : MessageContent
+    /** [preview] is the link preview the sender's app made; it is shown as carried and never fetched. */
+    data class Text(val text: String, val preview: LinkPreviewCard? = null) : MessageContent
     data class Voice(val duration: Double) : MessageContent
-    data class Photo(val bytes: Long) : MessageContent
-    data class File(val name: String, val bytes: Long, val mime: String = "") : MessageContent
+    data class Photo(val bytes: Long, val caption: String? = null) : MessageContent
+    data class File(val name: String, val bytes: Long, val mime: String = "", val caption: String? = null) : MessageContent
     data class Call(val summary: CallSummary) : MessageContent
     /** The sender deleted it. */
     data object Deleted : MessageContent

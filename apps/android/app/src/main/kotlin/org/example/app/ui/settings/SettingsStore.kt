@@ -86,6 +86,7 @@ class SettingsStore(
             .put("ipHiding", s.ipHiding.name)
             .put("findByEmail", s.findByEmail)
             .put("readReceipts", s.readReceipts)
+            .put("linkPreviews", s.linkPreviews)
             .put("typingIndicator", s.typingIndicator)
             .put("onlineAndLastSeen", s.onlineAndLastSeen)
             .put("noiseSuppression", s.noiseSuppression.name)
@@ -108,6 +109,7 @@ class SettingsStore(
                 ipHiding = text("ipHiding")?.let { v -> IPHiding.entries.firstOrNull { it.name == v } } ?: d.ipHiding,
                 findByEmail = bool("findByEmail", d.findByEmail),
                 readReceipts = bool("readReceipts", d.readReceipts),
+                linkPreviews = bool("linkPreviews", d.linkPreviews),
                 typingIndicator = bool("typingIndicator", d.typingIndicator),
                 onlineAndLastSeen = bool("onlineAndLastSeen", d.onlineAndLastSeen),
                 noiseSuppression = text("noiseSuppression")?.let { v -> NoiseSuppression.entries.firstOrNull { it.name == v } } ?: d.noiseSuppression,

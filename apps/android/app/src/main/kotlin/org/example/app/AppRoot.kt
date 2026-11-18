@@ -65,6 +65,7 @@ import org.example.app.ui.call.IncomingCallScreen
 import org.example.app.ui.calls.CallHistoryScreen
 import org.example.app.ui.calls.CallHistoryViewModel
 import org.example.app.ui.chat.ChatScreen
+import org.example.app.ui.chat.LocalLinkPreviews
 import org.example.app.ui.chat.ChatViewModel
 import org.example.app.ui.chatinfo.ChatInfoScreen
 import org.example.app.ui.media.GalleryScreen
@@ -332,7 +333,7 @@ fun AppRoot(
             }
             return@AppTheme
         }
-        CompositionLocalProvider(LocalExpectReturn provides graph.appLock::expectReturn) {
+        CompositionLocalProvider(LocalExpectReturn provides graph.appLock::expectReturn, LocalLinkPreviews provides graph.linkPreviewSupport) {
         Box {
         NavHost(nav, startDestination = MAIN) {
             composable(LINK_SCAN) {

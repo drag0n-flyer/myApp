@@ -75,6 +75,18 @@ class PrivacyScreenTest {
     }
 
     @Test
+    fun linkPreviewsIsOffByDefaultWithItsFooterAndCanBeTurnedOn() {
+        launch()
+        rule.onNodeWithText("Link previews").assertIsDisplayed().assertIsOff()
+        rule.onNodeWithText("To make a preview, your device contacts the website, which learns your IP address.").assertIsDisplayed()
+        assertEquals(false, settings.settings.value.linkPreviews)
+        rule.onNodeWithText("Link previews").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithText("Link previews").assertIsOn()
+        assertTrue(settings.settings.value.linkPreviews)
+    }
+
+    @Test
     fun findByEmailIsSentToTheServerAndKept() {
         launch()
         rule.onNodeWithText("By email").performClick()
