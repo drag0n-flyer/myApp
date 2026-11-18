@@ -96,6 +96,7 @@ class ChatViewModel(
                     // Only a change in this chat's messages is worth re-reading the older range for.
                     if (chat.messages != seen) requestRefresh(chat.messages.firstOrNull()?.id)
                     seen = chat.messages
+                    if (atBottom) trimOlder()
                 }
             }
         }
@@ -170,14 +171,27 @@ class ChatViewModel(
         if (pager.shouldLoad(oldestVisibleIndex)) viewModelScope.launch { loadOlder() }
     }
 
+    private var atBottom = true
+
+    /**
+     * The screen reports whether the newest message is on screen. Loaded history is trimmed only then (see [trimOlder]),
+     * and once when the reader gets back to the bottom.
+     */
+    fun setAtBottom(value: Boolean) {
+        val changed = value && !atBottom
+        atBottom = value
+        if (changed) viewModelScope.launch { trimOlder() }
+    }
+
     /**
      * Above [MAX_OLDER] loaded older messages, keep the newest [KEEP_OLDER] and let the pager ask for the trimmed ones
-     * again when the user scrolls back up to them. Bounds memory and the refresh above.
+     * again. Only called while the newest message is on screen: trimming under a reader who scrolls up, or who just
+     * jumped to an old message, would drop what they are looking at.
      */
-    private fun trimOlder() {
+    private suspend fun trimOlder() = loadLock.withLock {
         val cacheIds = store.chat(chatId)?.messages.orEmpty().map { it.id }.toSet()
         val older = known.value.filter { it.id !in cacheIds }
-        if (older.size <= MAX_OLDER) return
+        if (older.size <= MAX_OLDER) return@withLock
         val keep = older.takeLast(KEEP_OLDER).map { it.id }.toSet()
         known.update { all -> all.filter { it.id in cacheIds || it.id in keep } }
         pager.reset()
@@ -185,9 +199,8 @@ class ChatViewModel(
 
     /**
      * Loads one older page. False when history has ended (nothing more can be loaded). Safe to call from several places.
-     * [trim] is off while a jump loads pages, which must keep what it loads.
      */
-    suspend fun loadOlder(trim: Boolean = true): Boolean = loadLock.withLock {
+    suspend fun loadOlder(): Boolean = loadLock.withLock {
         if (!pager.begin()) return@withLock false
         try {
             val before = snapshot()
@@ -196,7 +209,6 @@ class ChatViewModel(
             // A page that adds nothing new is the end, however long it is: never loop on a store that repeats itself.
             val grew = snapshot().size > before.size
             pager.finish(if (grew) page.size else 0)
-            if (trim) trimOlder()
             true
         } catch (e: Exception) {
             pager.abort()
@@ -208,7 +220,7 @@ class ChatViewModel(
     suspend fun ensureLoaded(messageId: String): Boolean {
         while (true) {
             if (current(messageId) != null) return true
-            if (!loadOlder(trim = false)) return current(messageId) != null
+            if (!loadOlder()) return current(messageId) != null
         }
     }
 
@@ -259,9 +271,9 @@ class ChatViewModel(
             val index = loaded.indexOfFirst { it.id == messageId }
             if (index < 0) return@launch
             if (store.chat(chatId)?.messages.orEmpty().any { it.id == messageId }) return@launch // the flow carries it
-            // The message right before the next newer one is this message.
+            // The message just before the next newer one is this message, unless hidden lines sit in between: read a few.
             val next = loaded.getOrNull(index + 1) ?: return@launch
-            val page = withContext(io) { store.messages(chatId, next.id, 1) }
+            val page = withContext(io) { store.messages(chatId, next.id, REREAD_PAGE) }
             page.firstOrNull { it.id == messageId }?.let { fresh -> known.update { ChatTimeline.merge(it, listOf(fresh)) } }
         }
     }
@@ -354,5 +366,6 @@ class ChatViewModel(
         const val MAX_REFRESH = 1_000
         const val MAX_OLDER = 1_000
         const val KEEP_OLDER = 500
+        const val REREAD_PAGE = 3
     }
 }

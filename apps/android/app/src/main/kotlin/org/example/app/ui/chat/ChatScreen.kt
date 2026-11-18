@@ -153,6 +153,7 @@ fun ChatScreen(
     }
     val atBottom by remember { derivedStateOf { list.firstVisibleItemIndex == 0 && list.firstVisibleItemScrollOffset == 0 } }
     LaunchedEffect(atBottom, newest?.id) { if (atBottom) lastSeenNewestId = newest?.id }
+    LaunchedEffect(atBottom) { viewModel.setAtBottom(atBottom) }
     val unseen = ChatTimeline.unseenCount(messages, lastSeenNewestId)
 
     // Ask for the next older page when the oldest rows come within reach.

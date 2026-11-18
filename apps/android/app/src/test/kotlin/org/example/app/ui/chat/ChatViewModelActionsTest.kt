@@ -314,12 +314,14 @@ class ChatViewModelActionsTest {
         private val base = inner.chat("chat-riya")!!
         private val flow = MutableStateFlow(listOf(base.copy(messages = all.takeLast(50))))
         var reads = 0
+        /** Rows the store never shows (a hidden safety-number line) but that still sit between two messages. */
+        var hiddenIds: Set<String> = emptySet()
         override val chats: StateFlow<List<Chat>> get() = flow
         override fun chat(id: String): Chat? = flow.value.firstOrNull { it.id == id }
         override fun messages(chatId: String, before: String?, limit: Int): List<Message> {
             reads++
             val end = if (before == null) all.size else all.indexOfFirst { it.id == before }.let { if (it < 0) return emptyList() else it }
-            return all.subList(maxOf(0, end - limit), end).toList()
+            return all.subList(maxOf(0, end - limit), end).filter { it.id !in hiddenIds }
         }
         fun publish() { flow.value = listOf(base.copy(messages = all.takeLast(50))) }
         /** The chat changes but its messages do not (an unread count, say). */
@@ -346,7 +348,7 @@ class ChatViewModelActionsTest {
     }
 
     private fun WindowStore.arrive(n: Int) {
-        all += message(1000 + n)
+        all += message(100_000 + n)
         publish()
     }
 
@@ -467,27 +469,81 @@ class ChatViewModelActionsTest {
         assertEquals(181 - 80, vm.state.value.messages.size)
     }
 
+    private fun nums(vm: ChatViewModel) = vm.state.value.messages.map { it.id.removePrefix("m").toInt() }
+
     @Test
-    fun theLoadedOlderRangeIsTrimmedToTheNewest500AndReloadsOnDemand() = runTest {
+    fun scrollingUpThroughAThousandFiveHundredMessagesReachesTheStartAndDropsNothing() = runTest {
         val store = windowed(1_500)
         val vm = vm(store)
-        repeat(20) { vm.loadOlder() }
-        assertEquals(50 + 1_000, vm.state.value.messages.size)
-        vm.loadOlder()
-        val ids = vm.state.value.messages.map { it.id.removePrefix("m").toInt() }
-        assertEquals(50 + 500, ids.size)
-        assertEquals((950 until 1_500).toList(), ids)
-        // The trimmed pages come back on demand.
-        vm.loadOlder()
-        assertEquals((900 until 1_500).toList(), vm.state.value.messages.map { it.id.removePrefix("m").toInt() })
+        vm.setAtBottom(false)
+        // The scroll-up path: every near-the-top step asks for a page.
+        while (vm.loadOlder()) { /* keep going */ }
+        assertEquals((0 until 1_500).toList(), nums(vm))
     }
 
     @Test
-    fun aJumpIsNotTrimmedWhileItLoads() = runTest {
+    fun anArrivalWhileAwayFromTheBottomRemovesNothing() = runTest {
         val store = windowed(1_500)
         val vm = vm(store)
-        assertTrue(vm.ensureLoaded("m3"))
-        assertTrue(vm.state.value.messages.size > 1_400)
+        vm.setAtBottom(false)
+        repeat(21) { vm.loadOlder() }
+        assertEquals(50 + 1_050, vm.state.value.messages.size)
+        store.arrive(0)
+        assertEquals(50 + 1_050 + 1, vm.state.value.messages.size)
+        assertEquals(400, nums(vm).first())
+    }
+
+    @Test
+    fun anArrivalAtTheBottomTrimsToTheNewest500AndOlderPagesReloadOnDemand() = runTest {
+        val store = windowed(1_500)
+        val vm = vm(store)
+        // At the bottom (the default) while 1,050 older messages were loaded, say by a jump on opening.
+        repeat(21) { vm.loadOlder() }
+        assertEquals(50 + 1_050, vm.state.value.messages.size)
+        store.arrive(0)
+        val ids = nums(vm)
+        // The cache window moved by one: 49 cached + the arrival + the newest 500 older, contiguous.
+        assertEquals((951 until 1_500).toList() + listOf(100_000), ids)
+        // The trimmed pages come back on demand.
+        vm.loadOlder()
+        assertEquals((901 until 1_500).toList() + listOf(100_000), nums(vm))
+    }
+
+    @Test
+    fun reachingTheBottomAgainTrimsOnce() = runTest {
+        val store = windowed(1_500)
+        val vm = vm(store)
+        vm.setAtBottom(false)
+        repeat(21) { vm.loadOlder() }
+        vm.setAtBottom(true)
+        assertEquals(((1_500 - 50 - 500) until 1_500).toList(), nums(vm))
+        // Pages reload on demand, contiguous with what was kept.
+        vm.loadOlder()
+        assertEquals(((1_500 - 50 - 550) until 1_500).toList(), nums(vm))
+    }
+
+    @Test
+    fun aJumpTargetSurvivesAnArrival() = runTest {
+        val store = windowed(1_500)
+        val vm = vm(store)
+        assertTrue(vm.ensureLoaded("m10"))
+        // The screen scrolled away from the bottom to show it.
+        vm.setAtBottom(false)
+        store.arrive(0)
+        assertTrue(nums(vm).contains(10))
+        assertEquals(0, nums(vm).first())
+    }
+
+    @Test
+    fun theReReadFindsTheMessageEvenWithAHiddenLineBetweenItAndTheNextOne() = runTest {
+        val store = windowed(180, sender = "me")
+        val hidden = message(0).copy(id = "hidden-1", sentAt = base.plusSeconds(100).plusMillis(500), senderId = "system")
+        store.all.add(store.all.indexOfFirst { it.id == "m101" }, hidden)
+        store.hiddenIds = setOf("hidden-1")
+        val vm = vm(store)
+        vm.loadOlder()
+        assertTrue(vm.delete("m100"))
+        assertEquals(MessageContent.Deleted, vm.state.value.messages.single { it.id == "m100" }.content)
     }
 
     // Search
