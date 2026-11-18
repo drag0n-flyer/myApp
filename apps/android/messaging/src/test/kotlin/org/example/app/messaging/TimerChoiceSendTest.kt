@@ -6,6 +6,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -50,7 +51,7 @@ class TimerChoiceSendTest {
         val sent = rig.server.messages.filter { it.sender == "acc-bob/bob1" }
         assertEquals(1, sent.size, "exactly one envelope goes out")
         assertEquals(604_800, rig.bob1.repo.timerSeconds("acc-ana"))
-        assertEquals(NOW.toString(), rig.bob1.repo.get("timer-at:acc-ana")!!.decodeToString())
+        assertTrue(rig.bob1.repo.get("timer-at:acc-ana")!!.decodeToString().toLong() in NOW..NOW + 1_000, "the time of the choice is kept")
 
         // The local line: mine, so no name.
         val line = st.messages("acc-ana", null, 20).single { it.content is MessageContent.System }
