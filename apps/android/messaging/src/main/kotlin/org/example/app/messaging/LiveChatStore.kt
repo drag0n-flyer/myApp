@@ -338,7 +338,11 @@ class LiveChatStore(
             folderIds.getOrPut(chatId) { mutableSetOf() } += f.id
         }
 
-        val records = runCatching { repo.chats() }.getOrDefault(emptyList()).sortedByDescending { it.lastActivity }
+        // An expired message is not counted before the sweep removes it.
+        val expiredUnread = runCatching { repo.expiredUnread(nowMs(), device.accountId) }.getOrDefault(emptyMap())
+        val records = runCatching { repo.chats() }.getOrDefault(emptyList())
+            .map { it.copy(unread = maxOf(0, it.unread - (expiredUnread[it.id] ?: 0))) }
+            .sortedByDescending { it.lastActivity }
         // Saved drafts, with the ones still waiting to be written laid over them so a reload cannot show an older text.
         val drafts = runCatching { repo.drafts() }.getOrDefault(emptyMap()).toMutableMap()
         for ((chatId, text) in draftsPending) if (text.isBlank()) drafts.remove(chatId) else drafts[chatId] = text

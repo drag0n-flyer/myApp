@@ -14,6 +14,9 @@ import org.example.app.contracts.MlsEngine
  */
 class SpyMlsEngine(private val inner: MlsEngine, private val lockHeld: () -> Boolean) : MlsEngine {
     val unlockedCalls = mutableListOf<String>()
+    /** How many times `encrypt` ran: each one advances the sender's generation. */
+    var encryptCalls = 0
+        private set
     var processCalls = 0
         private set
     /** Throws its result instead of processing, when not null. */
@@ -33,7 +36,7 @@ class SpyMlsEngine(private val inner: MlsEngine, private val lockHeld: () -> Boo
     override suspend fun remove(members: List<String>, from: GroupId): CommitBundle { check("remove"); return inner.remove(members, from) }
     override suspend fun commitAccepted(group: GroupId) { check("commitAccepted"); inner.commitAccepted(group) }
     override suspend fun commitRejected(group: GroupId) { check("commitRejected"); inner.commitRejected(group) }
-    override suspend fun encrypt(plaintext: ByteArray, group: GroupId): Encrypted { check("encrypt"); return inner.encrypt(plaintext, group) }
+    override suspend fun encrypt(plaintext: ByteArray, group: GroupId): Encrypted { check("encrypt"); encryptCalls += 1; return inner.encrypt(plaintext, group) }
     override suspend fun process(message: ByteArray): Incoming {
         check("process")
         processCalls += 1

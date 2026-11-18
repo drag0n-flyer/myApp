@@ -20,7 +20,9 @@ import kotlin.test.assertTrue
 /** Behaviour every [org.example.app.messaging.ports.Repository] on Room must have, whatever the open helper. */
 abstract class RepositoryContract {
     protected abstract fun openDatabase(): AppDatabase
-    protected open fun newRepository(db: AppDatabase) = RoomRepository(db)
+    /** The repository's clock: nothing is expired while it reads 0. */
+    protected var nowMs = 0L
+    protected open fun newRepository(db: AppDatabase) = RoomRepository(db, clock = { nowMs })
 
     protected lateinit var db: AppDatabase
     protected lateinit var repo: RoomRepository
@@ -504,6 +506,40 @@ abstract class RepositoryContract {
         repo.insertMessage(message("u2", "f", sentAt = 6).copy(status = "delivered", expiresAt = 10))
         repo.sweepExpired(10, "me")
         assertEquals(0, repo.chat("chat1")!!.unread, "never below zero")
+    }
+
+    @Test fun anExpiredMessageIsHiddenFromEveryReadBeforeTheSweep() {
+        repo.insertMessage(message("gone", "needle gone", sentAt = 10).copy(expiresAt = 100))
+        repo.insertMessage(message("edge", "needle edge", sentAt = 11).copy(expiresAt = 200))
+        repo.insertMessage(message("live", "needle live", sentAt = 12).copy(expiresAt = 201))
+        repo.insertMessage(message("forever", "needle forever", sentAt = 13))
+        for (id in listOf("gone", "edge", "live")) {
+            repo.upsertAttachment(org.example.app.messaging.ports.AttachmentRecord("att-$id", id, "photo", ByteArray(1), ByteArray(1), 1, 1, "local", 1, null))
+        }
+        nowMs = 200
+        assertEquals(listOf("live", "forever"), repo.messages("chat1", null, 10).map { it.id })
+        assertEquals(emptyList(), repo.messages("chat1", repo.message("live"), 10).map { it.id }, "older than live: both expired")
+        assertEquals(listOf("forever", "live"), repo.search("needle", 10).map { it.messageId })
+        assertEquals(listOf("forever", "live"), repo.search("ne", 10).map { it.messageId }, "the short LIKE search too")
+        assertNull(repo.attachment("att-gone")); assertNull(repo.attachmentForMessage("edge"))
+        assertNotNull(repo.attachment("att-live")); assertNotNull(repo.attachmentForMessage("live"))
+        nowMs = 100
+        assertEquals(listOf("edge", "live", "forever"), repo.messages("chat1", null, 10).map { it.id })
+        nowMs = 0
+        assertEquals(4, repo.messages("chat1", null, 10).size, "nothing hides while the clock is before every expiry")
+    }
+
+    @Test fun expiredUnreadCountsOnlyUnreadIncomingMessagesPastTheirTime() {
+        repo.setUnread("chat1", 3)
+        repo.insertMessage(message("u1", "a", sentAt = 1).copy(status = "delivered", expiresAt = 10))
+        repo.insertMessage(message("r1", "b", sentAt = 2).copy(status = "read", expiresAt = 10))
+        repo.insertMessage(message("own", "c", sentAt = 3).copy(senderAccount = "me", status = "delivered", expiresAt = 10))
+        repo.insertMessage(message("sys", "d", sentAt = 4).copy(senderAccount = "system", status = "sent", expiresAt = 10))
+        repo.insertMessage(message("keep", "e", sentAt = 5).copy(status = "delivered", expiresAt = 99))
+        assertEquals(emptyMap(), repo.expiredUnread(9, "me"))
+        assertEquals(mapOf("chat1" to 1), repo.expiredUnread(10, "me"))
+        assertEquals(mapOf("chat1" to 2), repo.expiredUnread(99, "me"))
+        assertEquals(3, repo.chat("chat1")!!.unread, "the stored count is only lowered by the sweep")
     }
 
     @Test fun saveProfileKeepsOnlyAStrictlyHigherVersion() {

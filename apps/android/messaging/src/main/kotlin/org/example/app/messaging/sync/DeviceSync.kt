@@ -163,6 +163,8 @@ class DeviceSync(
         val fresh = repo.conversation(conversation.serverId)?.takeIf { it.innerMode != null }
         if (fresh != null) {
             try {
+                // A new member is being told: nothing saved for an earlier announce (the ID the server already holds) is reused.
+                ModePin.clearAnnounce(repo, fresh.serverId)
                 conversations.announceMode(fresh)
             } catch (e: CancellationException) {
                 throw e

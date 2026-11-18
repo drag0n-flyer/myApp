@@ -106,9 +106,19 @@ data class AttachmentRecord(
     override fun hashCode() = id.hashCode()
 }
 
-data class OutboxRecord(val messageId: String, val chatId: String, val envelope: ByteArray, val attempts: Int, val nextAttemptAt: Long) {
+/**
+ * One queued send. [ciphertext] and [cipherEpoch] hold the MLS ciphertext made for this row's envelope and the epoch it
+ * was made in, so a retry in the same epoch posts the same bytes instead of encrypting (and advancing the sender's
+ * generation) again. Both are null until the first encrypt; the row is replaced (so they are cleared) with its envelope.
+ */
+data class OutboxRecord(
+    val messageId: String, val chatId: String, val envelope: ByteArray, val attempts: Int, val nextAttemptAt: Long,
+    val ciphertext: ByteArray? = null, val cipherEpoch: Long? = null, val cipherConversation: String? = null,
+) {
     override fun equals(other: Any?) = other is OutboxRecord && messageId == other.messageId && chatId == other.chatId &&
-        envelope.contentEquals(other.envelope) && attempts == other.attempts && nextAttemptAt == other.nextAttemptAt
+        envelope.contentEquals(other.envelope) && attempts == other.attempts && nextAttemptAt == other.nextAttemptAt &&
+        (ciphertext?.contentEquals(other.ciphertext) ?: (other.ciphertext == null)) && cipherEpoch == other.cipherEpoch &&
+        cipherConversation == other.cipherConversation
     override fun hashCode() = messageId.hashCode()
 }
 
@@ -203,6 +213,12 @@ interface Repository {
      */
     fun sweepExpired(now: Long, ownAccount: String): List<String>
 
+    /**
+     * Per chat, how many unread incoming messages (not from [ownAccount] or `system`, not `read`) have already
+     * expired at [now] but are not swept yet; the chat list subtracts them from the stored unread count.
+     */
+    fun expiredUnread(now: Long, ownAccount: String): Map<String, Int>
+
     // profiles
     fun profile(accountId: String): ProfileRecord?
     /** Saves only when [ver] is strictly higher than the stored one (`ProfileMerge`). Returns whether it saved. */
@@ -277,6 +293,8 @@ interface Repository {
     fun requeueSend(id: String, now: Long): Boolean
     fun bumpOutbox(id: String, nextAttemptAt: Long)
     fun removeOutbox(id: String)
+    /** Keeps the ciphertext made for the outbox row [id] and its epoch. Does nothing when the row is gone. */
+    fun storeCiphertext(id: String, conversationId: String, epoch: Long, ciphertext: ByteArray)
 
     // raw inbox and processed hashes
     fun insertRaw(items: List<RawInboxRecord>)

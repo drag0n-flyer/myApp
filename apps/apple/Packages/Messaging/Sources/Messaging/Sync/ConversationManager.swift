@@ -92,6 +92,18 @@ public actor ConversationManager: ConversationManaging {
     // sent yet" is an explicit marker in the `kv` table: `mode-pending:<serverID>` (non-empty = pending).
     func pendingKey(_ serverID: String) -> String { "mode-pending:\(serverID)" }
 
+    /// The one encrypt of a pending `mode` envelope: `kv` key `mode-sealed:<serverID>`, a `SealedMode`. A retry in
+    /// the same epoch posts the same bytes (every MLS encrypt advances the sender's generation, and a receiver
+    /// can skip only 1,024 of them). Cleared when the announcement is posted or the marker is set again.
+    func sealedModeKey(_ serverID: String) -> String { "mode-sealed:\(serverID)" }
+
+    struct SealedMode: Codable {
+        var id: String
+        var at: Int64
+        var ciphertext: Data
+        var epoch: UInt64
+    }
+
     func isModePending(_ serverID: String) throws -> Bool {
         !(try deps.repo.get(pendingKey(serverID)) ?? Data()).isEmpty
     }
@@ -371,19 +383,33 @@ public actor ConversationManager: ConversationManaging {
     /// Sends `.mode(inner_mode)` in the conversation (after any add commit).
     public func announceMode(_ conversation: ConversationRecord) async throws {
         guard let inner = conversation.innerMode else { throw SyncError.modeUnknown }
-        let envelope = ContentEnvelope(
-            id: UUID().uuidString.lowercased(), at: Int64((deps.now().timeIntervalSince1970 * 1000).rounded()), body: .mode(inner))
+        let sealedKey = sealedModeKey(conversation.serverID)
+        let repo = deps.repo, mls = deps.mls, now = deps.now()
+        let group = GroupID(raw: conversation.groupID)
+        let kept = (try? repo.get(sealedKey)).flatMap { $0 }.flatMap { try? JSONDecoder().decode(SealedMode.self, from: $0) }
+        // Encrypting advances the group's ratchet, so it is under the lock; the post is not. An encrypt made in
+        // an earlier try is used again while the group is still in the epoch it was made in.
+        let sealed: SealedMode = try await locked {
+            if let kept, try await mls.epoch(of: group) == kept.epoch { return kept }
+            let envelope = ContentEnvelope(
+                id: UUID().uuidString.lowercased(), at: Int64((now.timeIntervalSince1970 * 1000).rounded()), body: .mode(inner))
+            let (ciphertext, epoch) = try await mls.encrypt(envelope.encoded(), in: group)
+            let fresh = SealedMode(id: envelope.id, at: envelope.at, ciphertext: ciphertext, epoch: epoch)
+            // Not stored (a failing disk): still posted; the next try then encrypts again.
+            if let data = try? JSONEncoder().encode(fresh) { try? repo.set(sealedKey, data) }
+            return fresh
+        }
+        let envelope = ContentEnvelope(id: sealed.id, at: sealed.at, body: .mode(inner))
         let plaintext = envelope.encoded()
-        // Encrypting advances the group's ratchet, so it is under the lock; the post is not.
-        let (ciphertext, epoch) = try await locked { try await deps.mls.encrypt(plaintext, in: GroupID(raw: conversation.groupID)) }
         // Design 18: escrow only when both the creator's mode and the server's say server_readable.
         var escrow: Data?
         if inner == "server_readable", conversation.mode == "server_readable" {
             escrow = try await sealEscrow(envelope: plaintext, at: envelope.at, conversationID: conversation.serverID)
         }
         _ = try await deps.server.postMessage(
-            conversationID: conversation.serverID, epoch: epoch, ciphertext: ciphertext, escrow: escrow,
+            conversationID: conversation.serverID, epoch: sealed.epoch, ciphertext: sealed.ciphertext, escrow: escrow,
             clientMsgID: envelope.id)
+        try? deps.repo.set(sealedKey, Data())
         try deps.repo.set(pendingKey(conversation.serverID), Data())
     }
 
