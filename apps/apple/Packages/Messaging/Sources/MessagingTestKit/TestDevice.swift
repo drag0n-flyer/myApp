@@ -37,7 +37,8 @@ public let testEpochDate = Date(timeIntervalSince1970: 1_700_000_000)
 /// `username` is registered for the account on first use.
 public func makeDevice(
     _ server: FakeServer, account: String, username: String,
-    now: @escaping @Sendable () -> Date = { testEpochDate }, realMemberKeys: Bool = false
+    now: @escaping @Sendable () -> Date = { testEpochDate }, realMemberKeys: Bool = false,
+    database: Database? = nil
 ) async -> TestDevice {
     let deviceID = await server.registerDevice(account: account, username: username)
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("messaging-test-\(UUID().uuidString)")
@@ -48,8 +49,12 @@ public func makeDevice(
     let client = ServerClient(host: FakeServer.host, session: session,
                               transport: await server.transport(accountID: account, deviceID: deviceID))
     // An in-memory database cannot fail to open; the test kit has nowhere to report it anyway.
-    let db = try! Database.inMemory()
-    try! migrate(db)
+    // A test that needs to reach the database itself passes its own (already migrated) one.
+    let db: Database
+    if let database { db = database } else {
+        db = try! Database.inMemory()
+        try! migrate(db)
+    }
     let notifier = RecordingDeviceNotifier()
     let deps = MessagingDeps(
         me: (account, deviceID), server: client, mls: FakeMLSEngine(identity: "\(account)/\(deviceID)", realMemberKeys: realMemberKeys),

@@ -44,9 +44,9 @@ final class ChatListOrderTests: XCTestCase {
         XCTAssertNil(ChatListOrder.draftPreview(nil))
     }
 
-    func testArchivedUnreadCountSumsArchivedChats() {
-        let list = [chat("a", unread: 2, archived: true), chat("b", unread: 5), chat("c", unread: 1, archived: true)]
-        XCTAssertEqual(ChatListOrder.archivedUnread(list), 3)
+    func testArchivedUnreadCountsArchivedChatsWithUnreadMessages() {
+        let list = [chat("a", unread: 2, archived: true), chat("b", unread: 5), chat("c", unread: 1, archived: true), chat("d", archived: true)]
+        XCTAssertEqual(ChatListOrder.archivedUnread(list), 2)
     }
 
     func testPinnedFirstKeepsTheOrderOfTheRest() {

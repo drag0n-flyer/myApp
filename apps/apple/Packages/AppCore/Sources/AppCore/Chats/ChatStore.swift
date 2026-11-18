@@ -63,8 +63,14 @@ public protocol ChatStore: AnyObject {
     func setMuted(_ chatID: String, _ muted: Bool)
     /// Archiving also unpins; unarchiving does not pin again.
     func setArchived(_ chatID: String, _ archived: Bool)
-    /// The unsent text of a chat, kept on this device. Blank text removes it.
+    /// The unsent text of a chat, kept on this device. Blank text removes it. Called on every keystroke: it shows at once
+    /// and does not call `onChange`; the database write may come later (see `flushDrafts`).
     func setDraft(_ chatID: String, _ text: String)
+    /// The unsent text to show in the composer, also for a chat that has no row yet. "" when there is none.
+    func draft(for chatID: String) -> String
+    /// Writes every draft not yet saved and calls `onChange` when it wrote something. Called when a chat is left and when
+    /// the app stops being active.
+    func flushDrafts()
     func incomingCall(from contact: Contact, video: Bool) -> IncomingCallDecision
     func addContact(username: String) async -> Contact?
     /// The chat with this contact, created empty if there is none yet.
@@ -77,6 +83,10 @@ public protocol ChatStore: AnyObject {
 }
 
 extension ChatStore {
+    public func draft(for chatID: String) -> String { chat(id: chatID)?.draft ?? "" }
+
+    public func flushDrafts() {}
+
     /// Searches every chat for the newest 500 hits and keeps this chat's. A store with a chat-scoped query should override it.
     public func searchMessages(_ query: String, in chatID: String, limit: Int) -> [MessageHit] {
         Array(searchMessages(query, limit: 500).filter { $0.chatID == chatID }.prefix(limit))

@@ -221,10 +221,12 @@ public final class SampleChatStore: ChatStore {
     }
 
     public func setDraft(_ chatID: String, _ text: String) {
-        defer { onChange?() }
         guard let i = index(of: chatID) else { return }
         allChats[i].draft = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
     }
+
+    /// Drafts live in memory here: leaving a chat only has to refresh the list.
+    public func flushDrafts() { onChange?() }
 
     public func incomingCall(from caller: Contact, video: Bool) -> IncomingCallDecision {
         defer { onChange?() }

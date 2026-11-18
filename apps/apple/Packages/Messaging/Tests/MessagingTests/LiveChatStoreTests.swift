@@ -766,30 +766,57 @@ private func text(_ message: Message?) -> String? {
         #expect(store.setPinned(ids[5], true))
     }
 
-    @Test func draftsAreSavedShownAndClearedWhenBlank() async throws {
+    @Test func draftsAreShownAtOnceWithoutANotificationAndWrittenLater() async throws {
         let rig = try await Rig.make()
         try await rig.anaChatsWithBob()
         let store = rig.ana.store
+        store.draftWriteDelay = .milliseconds(40)
         var changes = 0
         store.onChange = { changes += 1 }
         store.setDraft("acc-bob", "half a thought")
-        #expect(store.chat(id: "acc-bob")?.draft == "half a thought")
-        #expect(try rig.ana.repo.drafts() == ["acc-bob": "half a thought"])
-        #expect(changes > 0)
         store.setDraft("acc-bob", "half a thought, longer")
-        #expect(try rig.ana.repo.drafts() == ["acc-bob": "half a thought, longer"])
-        store.refresh()
+        // In memory at once; nothing told the views (a keystroke must not refresh the chat screen); not yet in the database.
         #expect(store.chat(id: "acc-bob")?.draft == "half a thought, longer")
+        #expect(store.draft(for: "acc-bob") == "half a thought, longer")
+        #expect(changes == 0)
+        #expect(try rig.ana.repo.drafts().isEmpty)
+        // The debounced write arrives on its own.
+        for _ in 0..<300 where try rig.ana.repo.drafts().isEmpty { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(try rig.ana.repo.drafts() == ["acc-bob": "half a thought, longer"])
+        #expect(changes == 0)
+    }
+
+    @Test func flushWritesAtOnceAndTellsTheViews() async throws {
+        let rig = try await Rig.make()
+        try await rig.anaChatsWithBob()
+        let store = rig.ana.store
+        store.draftWriteDelay = .seconds(60)   // the timer never fires in this test
+        var changes = 0
+        store.onChange = { changes += 1 }
+        store.setDraft("acc-bob", "half a thought")
+        #expect(try rig.ana.repo.drafts().isEmpty)
+        store.flushDrafts()
+        #expect(try rig.ana.repo.drafts() == ["acc-bob": "half a thought"])
+        #expect(changes == 1)
+        store.flushDrafts()
+        #expect(changes == 1, "nothing left to write, nothing to tell")
+        store.refresh()
+        #expect(store.chat(id: "acc-bob")?.draft == "half a thought")
         store.setDraft("acc-bob", "  \n")
         #expect(store.chat(id: "acc-bob")?.draft == nil)
+        store.flushDrafts()
         #expect(try rig.ana.repo.drafts().isEmpty)
     }
 
-    @Test func aDraftTypedBeforeTheChatRowExistsIsWrittenWhenTheRowAppears() async throws {
+    @Test func aDraftTypedBeforeTheChatRowExistsShowsAndIsWrittenWhenTheRowAppears() async throws {
         let rig = try await Rig.make()
         let store = rig.ana.store
         store.setDraft("acc-new", "typed first")
+        #expect(store.chat(id: "acc-new") == nil)
+        #expect(store.draft(for: "acc-new") == "typed first", "the composer reads the pending text")
+        store.flushDrafts()
         #expect(try rig.ana.repo.drafts().isEmpty)
+        #expect(store.draft(for: "acc-new") == "typed first")
         try addContacts(rig, ["acc-new"])
         #expect(store.chat(id: "acc-new")?.draft == "typed first")
         #expect(try rig.ana.repo.drafts() == ["acc-new": "typed first"])
@@ -800,16 +827,19 @@ private func text(_ message: Message?) -> String? {
         try await rig.anaChatsWithBob()
         let store = rig.ana.store
         store.setDraft("acc-bob", "old")
+        store.flushDrafts()
         store.setDraft("acc-bob", "newer")
         store.refresh()
         store.refresh()
         #expect(store.chat(id: "acc-bob")?.draft == "newer")
+        #expect(store.draft(for: "acc-bob") == "newer")
     }
 
     @Test func aDraftSurvivesARestartAndGoesWithTheChat() async throws {
         let rig = try await Rig.make()
         try await rig.anaChatsWithBob()
         rig.ana.store.setDraft("acc-bob", "keep me")
+        rig.ana.store.flushDrafts()
         let again = Side(rig.ana.device)
         #expect(again.store.chat(id: "acc-bob")?.draft == "keep me")
         try rig.ana.repo.deleteChat(id: "acc-bob")
@@ -821,11 +851,40 @@ private func text(_ message: Message?) -> String? {
         try await rig.anaChatsWithBob()
         let store = rig.ana.store
         store.setDraft("acc-bob", "hello bob")
+        store.flushDrafts()
         store.send(.text("   "), in: "acc-bob")   // blank: refused, nothing queued
         #expect(store.chat(id: "acc-bob")?.draft == "hello bob")
         store.send(.text("hello bob"), in: "acc-bob")
         #expect(store.chat(id: "acc-bob")?.draft == nil)
+        #expect(store.draft(for: "acc-bob") == "")
         #expect(try rig.ana.repo.drafts().isEmpty)
         await store.settle()
+    }
+
+    @Test func aSendThatCouldNotBeQueuedKeepsTheDraft() async throws {
+        let server = FakeServer()
+        let clock = StoreClock()
+        let db = try Database.inMemory()
+        try migrate(db)
+        let device = await makeDevice(server, account: "acc-ana", username: "ana", now: clock.now, database: db)
+        let side = Side(device)
+        try side.repo.upsertContact(ContactRecord(accountID: "acc-bob", username: "bob", displayName: "Bob", isContact: true, addedAt: clock.now()))
+        _ = side.store.ensureChat(with: "acc-bob")
+        side.store.setDraft("acc-bob", "must not vanish")
+        side.store.flushDrafts()
+        // The database refuses the outbox row: the message cannot be queued.
+        try db.execute("CREATE TRIGGER no_outbox BEFORE INSERT ON outbox BEGIN SELECT RAISE(ABORT, 'full'); END")
+        side.store.send(.text("must not vanish"), in: "acc-bob")
+        #expect(try side.repo.dueOutbox(at: .distantFuture).isEmpty)
+        #expect(side.store.chat(id: "acc-bob")?.messages.isEmpty == true)
+        #expect(side.store.chat(id: "acc-bob")?.draft == "must not vanish")
+        #expect(side.store.draft(for: "acc-bob") == "must not vanish")
+        #expect(try side.repo.drafts() == ["acc-bob": "must not vanish"])
+        // Once the database works again the same send queues and clears the draft.
+        try db.execute("DROP TRIGGER no_outbox")
+        side.store.send(.text("must not vanish"), in: "acc-bob")
+        #expect(side.store.chat(id: "acc-bob")?.draft == nil)
+        #expect(try side.repo.drafts().isEmpty)
+        await side.store.settle()
     }
 }

@@ -226,6 +226,9 @@ func msg(_ c: MessageContent) -> Message {
     let id = s.chats(in: .all)[0].id
     s.setDraft(id, "half a thought")
     #expect(s.chat(id: id)?.draft == "half a thought")
+    #expect(s.draft(for: id) == "half a thought")
+    s.flushDrafts()
     s.setDraft(id, "  \n ")
     #expect(s.chat(id: id)?.draft == nil)
+    #expect(s.draft(for: id) == "")
 }

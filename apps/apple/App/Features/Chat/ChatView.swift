@@ -108,12 +108,13 @@ struct ChatView: View {
         .toolbar(.hidden, for: .tabBar)
         #endif
         .onAppear {
+            // Also for a chat that has no row yet: its pending text is in the store.
+            if !capturedUnread { draft = model.draft(for: chatID) }
             if !capturedUnread, let chat {
                 // Before markRead clears the count.
                 capturedUnread = true
                 lastNewest = chat.messages
                 firstUnreadID = ChatTimeline.firstUnreadID(messages: chat.messages, unreadCount: chat.unreadCount, myID: model.me.id)
-                draft = model.draft(for: chatID)
             }
             model.markRead(chatID: chatID)
             openSearchIfRequested()
@@ -124,8 +125,8 @@ struct ChatView: View {
             voice.callStateChanged(inCall: model.activeCall?.isEnded == false)
         }
         .onChange(of: model.activeCall?.isEnded == false) { _, inCall in voice.callStateChanged(inCall: inCall) }
-        .onDisappear { voice.stop(); preview.close() }
-        .onChange(of: scenePhase) { _, phase in if phase != .active { voice.stop() } }
+        .onDisappear { voice.stop(); preview.close(); model.flushDrafts() }
+        .onChange(of: scenePhase) { _, phase in if phase != .active { voice.stop(); model.flushDrafts() } }
         .mediaPreview(preview)
         .onChange(of: searchRequest) { _, _ in openSearchIfRequested() }
         .onChange(of: draft) { _, text in

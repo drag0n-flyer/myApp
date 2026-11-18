@@ -53,8 +53,16 @@ struct ArchivedRowView: View {
         }
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text("Archived"))
-        .accessibilityValue(Text("\(chats.count)"))
+        .accessibilityLabel(Text(label(unread: unread)))
+    }
+}
+
+extension ArchivedRowView {
+    /// "Archived, 3 chats, 2 unread" (the unread part only when there is something unread).
+    fileprivate func label(unread: Int) -> String {
+        var parts = [String(localized: "Archived"), String(localized: "\(chats.count) chats")]
+        if unread > 0 { parts.append(String(localized: "\(unread) unread")) }
+        return parts.joined(separator: ", ")
     }
 }
 

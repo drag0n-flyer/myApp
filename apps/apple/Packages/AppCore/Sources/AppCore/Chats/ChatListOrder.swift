@@ -34,9 +34,9 @@ public enum ChatListOrder {
         chats.filter { $0.unreadCount > 0 && !$0.muted && !$0.archived }.count
     }
 
-    /// The unread count shown on the "Archived" row: every unread message in archived chats.
+    /// The unread count shown on the "Archived" row: archived chats with something unread (as on Android).
     public static func archivedUnread(_ chats: [Chat]) -> Int {
-        chats.filter(\.archived).reduce(0) { $0 + $1.unreadCount }
+        chats.filter { $0.archived && $0.unreadCount > 0 }.count
     }
 
     /// The first line of the draft that is not blank, trimmed; `nil` when there is none.

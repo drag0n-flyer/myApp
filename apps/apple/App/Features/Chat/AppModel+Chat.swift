@@ -37,14 +37,22 @@ final class ChatScreenState {
 
 extension AppModel {
     /// The saved unsent text of a chat (kept in the store, so it survives a restart).
-    func draft(for chatID: String) -> String { chatStore.chat(id: chatID)?.draft ?? "" }
+    /// Read through the store's accessor: a chat with no row yet still has its pending text.
+    func draft(for chatID: String) -> String { chatStore.draft(for: chatID) }
 
+    /// Does not touch `revision`: typing must not make the chat screen read its history again.
     func setDraft(_ text: String, for chatID: String) { chatStore.setDraft(chatID, text) }
+
+    /// Saves drafts not yet written: when a chat is left and when the app stops being active.
+    func flushDrafts() { chatStore.flushDrafts() }
 
     // MARK: Chat list actions (the stores call `onChange`, which refreshes every view)
 
     /// Chats this device archived. Every read touches `revision` so SwiftUI tracks store changes.
     var archivedChats: [Chat] { _ = revision; return chatStore.archivedChats }
+
+    /// Every chat of the list, archived ones included (call history, folder picker, finding a chat of a contact).
+    var everyChat: [Chat] { _ = revision; return chatStore.chats(in: .all) + chatStore.archivedChats }
 
     /// False when 5 chats are already pinned: the caller shows "You can pin up to 5 chats."
     @discardableResult

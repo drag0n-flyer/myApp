@@ -177,7 +177,7 @@ struct ChatListContent: View {
                     ChatRowView(chat: chat, name: model.contact(id: chat.contactID)?.displayName ?? "")
                 }
                 .buttonStyle(.plain)
-                .modifier(ChatRowActions(chat: chat, model: model, inArchive: false, pinLimit: { showingPinLimit = true }))
+                .modifier(ChatRowActions(chat: chat, model: model, inArchive: chat.archived, pinLimit: { showingPinLimit = true }))
                 .listRowBackground(selectedChatID == chat.id ? Color.accentColor.opacity(0.15) : nil)
                 .accessibilityIdentifier("chatlist.row.\(chat.id)")
             }

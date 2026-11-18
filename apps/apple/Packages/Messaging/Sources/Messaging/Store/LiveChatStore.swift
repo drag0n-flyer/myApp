@@ -36,6 +36,9 @@ public final class LiveChatStore: ChatStore {
     /// Draft texts not yet in the database: typed before the chat had a row, or a write that failed. They are laid
     /// over the saved drafts on every reload and written as soon as the row exists.
     private var draftsPending: [String: String] = [:]
+    /// Typing waits this long before a draft is written. Tests shorten it.
+    var draftWriteDelay: Duration = .milliseconds(500)
+    private var draftTask: Task<Void, Never>?
     private var customFolders: [ChatFolder] = []
     private var tasks: [UUID: Task<Void, Never>] = [:]
     private let pendingGate = PendingActions.Gate()
@@ -113,6 +116,7 @@ public final class LiveChatStore: ChatStore {
     /// and every task started so far is cancelled and waited for, so none can write after the wipe.
     public func shutdown() async {
         closed = true
+        draftTask?.cancel()
         draftsPending.removeAll()
         for task in tasks.values { task.cancel() }
         await settle()
@@ -820,14 +824,39 @@ public final class LiveChatStore: ChatStore {
         refresh()
     }
 
-    /// Called on every keystroke: written at once, and the cached chat is patched instead of reloading everything.
-    /// A chat with no row yet keeps its draft in memory; `reload` writes it when the row appears.
+    /// Called on every keystroke: the text is kept and shown at once (the cached chat is patched), nobody is told,
+    /// and the database write waits for a pause in typing (`draftWriteDelay`). `flushDrafts` writes it early: when the
+    /// chat is left, when the app stops being active, and a send writes it itself. A chat with no row yet keeps its
+    /// draft in memory; `reload` writes it when the row appears.
     public func setDraft(_ chatID: String, _ text: String) {
         let blank = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         draftsPending[chatID] = blank ? "" : text
-        persistDraft(chatID)
         if let i = allChats.firstIndex(where: { $0.id == chatID }) { allChats[i].draft = blank ? nil : text }
-        onChange?()
+        draftTask?.cancel()
+        let delay = draftWriteDelay
+        draftTask = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled else { return }
+            self?.writePendingDrafts()
+        }
+    }
+
+    public func draft(for chatID: String) -> String {
+        draftsPending[chatID] ?? allChats.first { $0.id == chatID }?.draft ?? ""
+    }
+
+    public func flushDrafts() {
+        draftTask?.cancel()
+        draftTask = nil
+        if writePendingDrafts() { onChange?() }
+    }
+
+    /// Writes every pending draft whose chat has a row. True when something was written.
+    @discardableResult
+    private func writePendingDrafts() -> Bool {
+        let before = draftsPending.count
+        for id in Array(draftsPending.keys) { persistDraft(id) }
+        return draftsPending.count < before
     }
 
     private func setDraftQuietly(_ chatID: String) {
