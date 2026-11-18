@@ -30,8 +30,10 @@ class PrivacyAppLockTest {
     private val settings = SettingsStore()
     private val lock = AppLock({ settings.settings.value })
 
+    private var switchedOn = 0
+
     private fun show(auth: SampleDeviceAuth) = rule.setContent {
-        AppTheme { PrivacyScreen(settings, SampleChatStore(), lock, auth, saveFindByEmail = {}, loadFindByEmail = { null }, onBack = {}) }
+        AppTheme { PrivacyScreen(settings, SampleChatStore(), lock, auth, saveFindByEmail = {}, loadFindByEmail = { null }, onBack = {}, onLockSwitchedOn = { switchedOn++ }) }
     }
 
     @Test fun theSwitchAndItsSubtitleUseTheDesignsWords() {
@@ -63,6 +65,27 @@ class PrivacyAppLockTest {
         assertFalse(lock.locked.value) // it was just passed
         rule.onNodeWithText("Lock after").assertIsDisplayed()
         assertTrue(rule.onAllNodes(hasText("1 minute")).fetchSemanticsNodes().isNotEmpty()) // the default
+    }
+
+    @Test fun switchingItOnTellsTheNotificationsExactlyOnceAfterTheSettingIsStored() {
+        val auth = SampleDeviceAuth(results = listOf(AuthResult.Cancelled, AuthResult.Success))
+        var storedWhenTold: Boolean? = null
+        rule.setContent {
+            AppTheme {
+                PrivacyScreen(settings, SampleChatStore(), lock, auth, saveFindByEmail = {}, loadFindByEmail = { null }, onBack = {},
+                    onLockSwitchedOn = { switchedOn++; storedWhenTold = settings.settings.value.appLock })
+            }
+        }
+        rule.onNodeWithText("App lock").performClick() // cancelled
+        assertEquals(0, switchedOn)
+        rule.onNodeWithText("App lock").performClick() // passes
+        rule.waitForIdle()
+        assertEquals(1, switchedOn)
+        assertEquals(true, storedWhenTold)
+        rule.onNodeWithText("App lock").performClick() // turning it off: prompt passes, nothing is re-posted
+        rule.waitForIdle()
+        assertFalse(settings.settings.value.appLock)
+        assertEquals(1, switchedOn)
     }
 
     @Test fun withoutAScreenLockTheSwitchIsDisabledWithTheReason() {

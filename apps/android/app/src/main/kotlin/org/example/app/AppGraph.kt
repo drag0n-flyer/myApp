@@ -93,6 +93,7 @@ import org.example.app.push.PlayServices
 import org.example.app.push.PushTransport
 import org.example.app.push.UnifiedPushSetup
 import org.example.app.ui.lock.AppLock
+import org.example.app.ui.lock.LockSwitch
 import org.example.app.ui.settings.SettingsStore
 
 private const val TAG = "AppGraph"
@@ -106,7 +107,7 @@ internal fun statusOf(socket: ConnectionState?, sessionGone: Boolean, networkUp:
     else -> ConnectionStatus.from(socketConnected = socket == ConnectionState.Connected, hasNetwork = networkUp)
 }
 
-private const val SETTINGS_PREFS = "settings"
+internal const val SETTINGS_PREFS = "settings"
 
 /** Sample data only. */
 private val SAMPLE_POLICY = ServerPolicy(ModePreference.Auto, DataMode.High, IPHiding.NonContacts, true, "home.example.org")
@@ -145,7 +146,7 @@ class AppGraph(
     val settingsStore: SettingsStore by lazy {
         // Live settings are kept on the device and survive a restart; sample data keeps them in memory.
         if (sampleData) SettingsStore()
-        else SettingsStore(appContext.getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE), UserSettings.initial(serverPolicy))
+        else SettingsStore(appContext.getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE), UserSettings.initial(serverPolicy), LockSwitch.shared)
     }
 
     /** The app lock's state for the process; starts locked when the setting is on (see [AppLock]). */

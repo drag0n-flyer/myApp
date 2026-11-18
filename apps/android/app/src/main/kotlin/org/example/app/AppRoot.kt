@@ -47,6 +47,7 @@ import org.example.app.ui.chatlist.ChatListViewModel
 import org.example.app.ui.chatlist.NewChatScreen
 import org.example.app.ui.search.SearchScreen
 import org.example.app.ui.search.SearchViewModel
+import org.example.app.push.PushRuntime
 import org.example.app.push.PushTransport
 import androidx.compose.runtime.produceState
 import kotlinx.coroutines.Dispatchers
@@ -262,7 +263,7 @@ fun AppRoot(
                 ServerScreen(graph.serverPolicy.host, onBack = { nav.popBackStack() }, status = status)
             }
             composable(SettingsPage.LinkedDevices.route) { LinkedDevicesScreen(graph.accountService, onBack = { nav.popBackStack() }, onLinkDevice = { nav.navigate(LINK_SCAN) }, refreshes = graph.deviceListChanged) }
-            composable(SettingsPage.Privacy.route) { PrivacyScreen(graph.settingsStore, graph.chatStore, graph.appLock, deviceAuth, saveFindByEmail = graph::saveFindByEmail, loadFindByEmail = graph::loadFindByEmail, onBack = { nav.popBackStack() }) }
+            composable(SettingsPage.Privacy.route) { PrivacyScreen(graph.settingsStore, graph.chatStore, graph.appLock, deviceAuth, saveFindByEmail = graph::saveFindByEmail, loadFindByEmail = graph::loadFindByEmail, onBack = { nav.popBackStack() }, onLockSwitchedOn = { PushRuntime.hideShownContent(context) }) }
             composable(SettingsPage.DataStorage.route) { DataStorageScreen(graph.settingsStore, graph.serverPolicy, onBack = { nav.popBackStack() }) }
             composable(SettingsPage.ChatFolders.route) { ChatFoldersScreen(graph.chatStore, onBack = { nav.popBackStack() }) }
             composable(SettingsPage.CallsAudio.route) { CallsAudioScreen(graph.settingsStore, onBack = { nav.popBackStack() }) }

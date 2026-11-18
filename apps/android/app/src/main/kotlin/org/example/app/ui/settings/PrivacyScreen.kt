@@ -50,6 +50,8 @@ fun PrivacyScreen(
     loadFindByEmail: suspend () -> Boolean?,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Called once right after app lock is stored as on (notifications already showing must lose their content). */
+    onLockSwitchedOn: () -> Unit = {},
 ) {
     val current by settings.settings.collectAsStateWithLifecycle()
     val blocked by chatStore.blockedIds.collectAsStateWithLifecycle()
@@ -69,7 +71,7 @@ fun PrivacyScreen(
         return
     }
     SettingsPage(stringResource(R.string.settings_privacy), onBack, modifier) {
-        item { AppLockRows(settings, appLock, deviceAuth) }
+        item { AppLockRows(settings, appLock, deviceAuth, onLockSwitchedOn) }
         item { SectionHeader(stringResource(R.string.privacy_ip_title)) }
         items(IPHiding.entries.toList(), key = { it.name }) { option ->
             RadioRow(keyString(option.titleKey), keyString(option.subtitleKey), current.ipHiding == option) {
@@ -142,7 +144,7 @@ private fun BlockedList(store: ChatStore, blocked: Set<String>, onBack: () -> Un
  * a sign-out (the settings were reset) changes nothing.
  */
 @Composable
-private fun AppLockRows(settings: SettingsStore, appLock: AppLock, auth: DeviceAuth) {
+private fun AppLockRows(settings: SettingsStore, appLock: AppLock, auth: DeviceAuth, onSwitchedOn: () -> Unit) {
     val current by settings.settings.collectAsStateWithLifecycle()
     val secure by rememberRefreshedOnResume { auth.available }
     val title = stringResource(R.string.applock_title)
@@ -156,6 +158,7 @@ private fun AppLockRows(settings: SettingsStore, appLock: AppLock, auth: DeviceA
             if (settings.generation != generation) return
             settings.update(generation) { it.copy(appLock = value) }
             appLock.setEnabled(value)
+            if (value) onSwitchedOn()
         }
         if (!secure) apply() // only reachable to turn it off
         else auth.authenticate(prompt) { result -> if (result == AuthResult.Success) apply() }
