@@ -62,6 +62,8 @@ fun ChatInfoScreen(
     onSearch: (name: String) -> Unit,
     onBlocked: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Opens "Media and files" of this chat. */
+    onOpenGallery: () -> Unit = {},
 ) {
     val chats by store.chats.collectAsStateWithLifecycle()
     val requests by store.requests.collectAsStateWithLifecycle()
@@ -102,7 +104,8 @@ fun ChatInfoScreen(
             }
             HorizontalDivider()
             ListItem(
-                headlineContent = { Text(stringResource(R.string.info_media_files_links)) },
+                modifier = Modifier.clickable(role = Role.Button, onClick = onOpenGallery),
+                headlineContent = { Text(stringResource(R.string.info_media_and_files)) },
                 trailingContent = { Text(chat.messages.count { it.content is MessageContent.Photo || it.content is MessageContent.File }.toString()) },
             )
             HorizontalDivider()

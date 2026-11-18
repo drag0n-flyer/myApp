@@ -30,7 +30,10 @@ import org.example.app.core.chats.MessageAction
 import org.example.app.core.chats.MessageActions
 import org.example.app.core.chats.MessageContent
 import org.example.app.core.chats.MessageHit
+import org.example.app.core.chats.Picked
+import org.example.app.core.chats.SendPlan
 import org.example.app.core.chats.SendProblem
+import org.example.app.ui.media.ChatMedia
 import org.example.app.core.settings.AutoDownloadPolicy
 import org.example.app.core.settings.AutoDownloadSettings
 import org.example.app.core.settings.MediaKind
@@ -84,7 +87,7 @@ class ChatViewModel(
             var seen: List<Message>? = null
             chatFlow.collect { chat ->
                 if (chat != null) {
-                    known.update { ChatTimeline.merge(it, chat.messages) }
+                    known.update { ChatTimeline.merge(withoutRemoved(it, chat.messages), chat.messages) }
                     // Only a change in this chat's messages is worth re-reading the older range for.
                     if (chat.messages != seen) requestRefresh(chat.messages.firstOrNull()?.id)
                     seen = chat.messages
@@ -92,6 +95,16 @@ class ChatViewModel(
                 }
             }
         }
+    }
+
+    /**
+     * A message this screen has seen that is newer than the oldest message in the store's cached page, yet no longer in it,
+     * was removed (a cancelled upload): it must not stay on screen. Older ones merely fell out of the cache and are kept.
+     */
+    private fun withoutRemoved(seen: List<Message>, cache: List<Message>): List<Message> {
+        val oldest = cache.firstOrNull()?.sentAt
+        val cacheIds = cache.mapTo(HashSet()) { it.id }
+        return seen.filter { it.id in cacheIds || (oldest != null && it.sentAt <= oldest) }
     }
 
     private fun read(chat: Chat?, pages: List<Message>): ChatState = ChatState(
@@ -365,6 +378,28 @@ class ChatViewModel(
 
     /** Sends a picked, photographed or recorded file; [path] is a file the sender can read, or a `content:` URI for a photo. */
     fun sendAttachment(path: String, kind: MediaKind) = store.sendAttachment(path, kind, chatId)
+
+    /**
+     * Send on the preview: the items in order with the trimmed caption as a text message after the first, or the refusal
+     * (more than ten, a video over the server's limit) with nothing staged or sent. A paused chat sends nothing.
+     */
+    fun sendPicked(items: List<Picked>, caption: String): SendPlan.Result {
+        val result = SendPlan.plan(items, TextLimit.truncate(caption), store.attachmentLimitBytes)
+        if (result is SendPlan.Result.Ok && !state.value.sendingPaused) store.sendBatch(result.sends, chatId)
+        return result
+    }
+
+    /** The refusal [sendPicked] would give for [items] (checked when they are picked), or null. */
+    fun refusalFor(items: List<Picked>): SendPlan.Refusal? = (SendPlan.plan(items, "", store.attachmentLimitBytes) as? SendPlan.Result.Refused)?.reason
+
+    /** The fraction uploaded of each outgoing attachment that is still uploading, by message id. */
+    val uploadProgress: StateFlow<Map<String, Double>> get() = store.uploadProgress
+
+    /** Cancel on an outgoing attachment that is still uploading: it stops and the message is removed. */
+    fun cancelUpload(messageId: String) = store.cancelUpload(messageId)
+
+    /** The photos and videos on this device from the whole chat, oldest first: what the viewer swipes over. */
+    suspend fun viewerIds(): List<String> = withContext(io) { ChatMedia.viewerIds(ChatMedia.load(store, chatId)) }
 
     /** Why the last attachment sent from this chat was dropped (too big, unreadable), until it has been shown; null when none. */
     val sendProblem: kotlinx.coroutines.flow.Flow<SendProblem.Reason?> = store.sendProblem(chatId)

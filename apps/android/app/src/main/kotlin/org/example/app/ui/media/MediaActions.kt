@@ -41,6 +41,16 @@ class MediaActions(
 
     fun sharePhoto(messageId: String) = hand(messageId, null, view = false)
 
+    /** Saves the photo or video to the device's gallery. False when it could not be opened or the device refused. */
+    suspend fun save(messageId: String): Boolean {
+        val opened = opener?.openOrNull(messageId) ?: return false
+        return try {
+            withContext(Dispatchers.IO) { MediaSaver.save(context, opened.file) }
+        } finally {
+            withContext(NonCancellable + Dispatchers.IO) { opened.close() }
+        }
+    }
+
     private fun hand(messageId: String, name: String?, view: Boolean) {
         if (busy) return
         busy = true
@@ -52,8 +62,8 @@ class MediaActions(
                     return@launch
                 }
                 val staged = try {
-                    // A photo has no name of its own: the extension comes from what the bytes are.
-                    val finalName = name ?: ("photo." + withContext(Dispatchers.IO) { imageExtension(opened.file) })
+                    // A photo or video has no name of its own: the name comes from what the bytes are.
+                    val finalName = name ?: withContext(Dispatchers.IO) { mediaName(opened.file) }
                     SharedFiles.stage(SharedFiles.shareDir(context), opened.file, finalName, "file")
                 } catch (e: IOException) {
                     null
@@ -107,10 +117,11 @@ class MediaActions(
             return false
         }
 
-        fun imageExtension(file: File): String {
+        fun mediaName(file: File): String {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeFile(file.path, bounds)
-            return bounds.outMimeType?.let { MimeTypeMap.getSingleton().getExtensionFromMimeType(it) } ?: "jpg"
+            if (bounds.outWidth <= 0 && org.example.app.media.VideoMeta.probe(file) != null) return "video.mp4"
+            return "photo." + (bounds.outMimeType?.let { MimeTypeMap.getSingleton().getExtensionFromMimeType(it) } ?: "jpg")
         }
     }
 }

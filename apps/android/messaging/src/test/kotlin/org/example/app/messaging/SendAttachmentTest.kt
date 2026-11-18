@@ -22,6 +22,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import org.example.app.core.chats.SendProblem
+import org.example.app.core.chats.Picked
+import org.example.app.core.chats.SendPlan
 import kotlinx.coroutines.runBlocking
 import org.example.app.contracts.AttachmentRef
 import org.example.app.contracts.DeliveryApi
@@ -508,6 +510,40 @@ class SendAttachmentTest {
         gate.complete(Unit)
         s.store.settle()
         assertNull(s.store.uploadProgress.value[id])
+    }
+
+    @Test
+    fun aBatchCreatesItsMessagesInOrderTheCaptionAfterTheFirstItem() = runBlocking<Unit> {
+        val f = fixture()
+        val gateA = CompletableDeferred<Unit>()
+        val gateB = CompletableDeferred<Unit>()
+        val s = session(f) { src, into ->
+            val name = src.removePrefix("file:")
+            (if (name.endsWith("a.txt")) gateA else gateB).await()
+            StageResult.Copied(File(name).copyTo(File(into, File(name).name), overwrite = true))
+        }
+        val dir = tmp("batch")
+        val a = File(dir, "a.txt").also { it.writeText("aaa") }
+        val b = File(dir, "b.txt").also { it.writeText("bbb") }
+        val plan = listOf(
+            SendPlan.Send.Attachment(Picked("file:${a.path}", MediaKind.File, 3)),
+            SendPlan.Send.Text("hi"),
+            SendPlan.Send.Attachment(Picked("file:${b.path}", MediaKind.File, 3)),
+        )
+        s.store.sendBatch(plan, "acc-ana")
+        fun mine() = f.d.repo.messages("acc-ana", null, 50).filter { it.senderAccount == f.d.me.accountId }
+        Thread.sleep(200)
+        assertEquals(0, mine().size, "the caption waits for the first item")
+        gateA.complete(Unit)
+        waitUntil("the caption") { mine().size == 2 }
+        Thread.sleep(200)
+        assertEquals(2, mine().size, "the second item waits for the caption")
+        gateB.complete(Unit)
+        s.store.settle()
+        val all = mine()
+        assertEquals(3, all.size)
+        assertEquals(1, all.count { ContentCodec.decode(it.envelope) is ContentEnvelope.Text })
+        assertEquals(2, all.count { ContentCodec.decode(it.envelope) is ContentEnvelope.File })
     }
 
     @Test

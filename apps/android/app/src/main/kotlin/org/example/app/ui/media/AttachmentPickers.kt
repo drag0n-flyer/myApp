@@ -29,6 +29,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.example.app.R
+import org.example.app.core.chats.Picked
 import org.example.app.core.settings.MediaKind
 import org.example.app.media.MediaCache
 import org.example.app.media.VoicePrep
@@ -47,23 +48,32 @@ class AttachmentPickers(val cameraAvailable: Boolean, private val launch: (Attac
 }
 
 /**
- * Photo (`PickVisualMedia`), File (`OpenDocument`, copied into app storage first) and Camera (`TakePicture` into a
- * file of the app's own camera folder, after the camera permission). Each result goes to [onAttachment] as a path the
- * sender can read and the kind of attachment. Runs its file work off the main thread.
+ * Photo and video (`PickMultipleVisualMedia`), File (`OpenDocument`, copied into app storage first) and Camera
+ * (`TakePicture` into a file of the app's own camera folder, after the camera permission). A file goes to [onAttachment]
+ * as a path the sender can read; photos and videos go to [onPicked], which shows the send preview (nothing is staged or
+ * uploaded before the person sends). Runs its file work off the main thread.
  */
 @Composable
-fun rememberAttachmentPickers(onAttachment: (path: String, kind: MediaKind) -> Unit, notify: (Int) -> Unit): AttachmentPickers {
+fun rememberAttachmentPickers(
+    onAttachment: (path: String, kind: MediaKind) -> Unit,
+    notify: (Int) -> Unit,
+    onPicked: (List<Picked>) -> Unit = { items -> items.forEach { onAttachment(it.path, it.kind) } },
+): AttachmentPickers {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val attach by rememberUpdatedState(onAttachment)
+    val picked by rememberUpdatedState(onPicked)
     val say by rememberUpdatedState(notify)
     val expectReturn by rememberUpdatedState(LocalExpectReturn.current)
     // Where the camera is writing; kept across a rotation and the camera app being in front.
     var cameraFile by rememberSaveable { mutableStateOf<String?>(null) }
 
-    val photo = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        if (PickedFiles.isFromPicker(context, uri)) attach(uri.toString(), MediaKind.Photo) else say(R.string.media_file_unreadable)
+    val photo = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        val fromPicker = uris.filter { PickedFiles.isFromPicker(context, it) }
+        if (fromPicker.size < uris.size) say(R.string.media_file_unreadable)
+        if (fromPicker.isEmpty()) return@rememberLauncherForActivityResult
+        scope.launch { picked(withContext(Dispatchers.IO) { fromPicker.map { describePicked(context, it) } }) }
     }
 
     val document = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -93,7 +103,7 @@ fun rememberAttachmentPickers(onAttachment: (path: String, kind: MediaKind) -> U
                     val file = File(path)
                     (taken && file.length() > 0).also { if (!it) file.delete() }
                 }
-                if (usable) attach(path, MediaKind.Photo)
+                if (usable) picked(listOf(Picked(path, MediaKind.Photo, withContext(Dispatchers.IO) { File(path).length() })))
             }
         }
     }
@@ -128,7 +138,7 @@ fun rememberAttachmentPickers(onAttachment: (path: String, kind: MediaKind) -> U
         AttachmentPickers(hasCamera) { choice ->
             try {
                 when (choice) {
-                    AttachChoice.Photo -> expectReturn().also { photo.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+                    AttachChoice.Photo -> expectReturn().also { photo.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) }
                     AttachChoice.File -> expectReturn().also { document.launch(arrayOf("*/*")) }
                     AttachChoice.Camera ->
                         if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
@@ -142,6 +152,19 @@ fun rememberAttachmentPickers(onAttachment: (path: String, kind: MediaKind) -> U
             }
         }
     }
+}
+
+/** A picked photo or video: a video by the type the provider reports, and its size (0 when the provider does not say). Blocking. */
+private fun describePicked(context: Context, uri: Uri): Picked {
+    val type = try { context.contentResolver.getType(uri) } catch (e: Exception) { null }
+    val size = try {
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { c ->
+            if (c.moveToFirst() && !c.isNull(0)) c.getLong(0) else 0L
+        } ?: 0L
+    } catch (e: Exception) {
+        0L
+    }
+    return Picked(uri.toString(), if (type?.startsWith("video/") == true) MediaKind.Video else MediaKind.Photo, size)
 }
 
 /** What the document provider calls the file; null when it does not say. The caller cleans it before use. */

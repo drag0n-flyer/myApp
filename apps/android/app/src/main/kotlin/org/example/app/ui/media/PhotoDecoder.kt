@@ -54,15 +54,40 @@ object PhotoDecoder {
     }
 }
 
+/**
+ * Decodes the picked image behind [uri] sampled for a [boxWidth] x [boxHeight] box (the send preview shows it before anything
+ * is copied). Null when it cannot be read. Blocking: call it off the main thread.
+ */
+fun PhotoDecoder.decodeUriFit(context: android.content.Context, uri: android.net.Uri, boxWidth: Int, boxHeight: Int): Bitmap? {
+    if (boxWidth <= 0 || boxHeight <= 0) return null
+    return try {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        val sample = sampleSize(bounds.outWidth, bounds.outHeight, boxWidth, boxHeight)
+        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample }) }
+    } catch (e: Exception) {
+        null
+    } catch (e: OutOfMemoryError) {
+        null
+    }
+}
+
 /** Decoded bubble photos, held for the life of one chat screen. An eighth of the heap, counted in bytes. */
 class PhotoCache(maxBytes: Int = (Runtime.getRuntime().maxMemory() / 8).coerceIn(1L, Int.MAX_VALUE.toLong()).toInt()) {
     private val cache = object : LruCache<String, Bitmap>(maxBytes) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.allocationByteCount
     }
 
+    /** The length of the video a cached frame came from, by the same key; absent for a photo. */
+    private val videoLengths = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
     operator fun get(key: String): Bitmap? = cache.get(key)
     operator fun set(key: String, bitmap: Bitmap) { cache.put(key, bitmap) }
 
+    fun videoLengthMs(key: String): Long? = videoLengths[key]
+    fun setVideoLengthMs(key: String, ms: Long) { videoLengths[key] = ms }
+
     /** Frees the pictures: they are the contents of a conversation. */
-    fun clear() = cache.evictAll()
+    fun clear() { cache.evictAll(); videoLengths.clear() }
 }

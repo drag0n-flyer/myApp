@@ -58,6 +58,18 @@ interface ChatStore {
     fun searchMessages(query: String, limit: Int): List<MessageHit>
     fun send(content: MessageContent, chatId: String, replyTo: String? = null)
     fun sendAttachment(path: String, kind: MediaKind, chatId: String)
+    /** The largest attachment the server takes, in bytes: a video above it is refused before anything is staged. */
+    val attachmentLimitBytes: Long get() = 104_857_600L
+    /**
+     * Sends a preview's plan ([SendPlan.plan]) in order: each attachment, and the caption as a text message right after
+     * the first. The default does them one after the other; a store that creates attachments asynchronously keeps the order.
+     */
+    fun sendBatch(sends: List<SendPlan.Send>, chatId: String) {
+        for (item in sends) when (item) {
+            is SendPlan.Send.Attachment -> sendAttachment(item.picked.path, item.picked.kind, chatId)
+            is SendPlan.Send.Text -> send(MessageContent.Text(item.text), chatId)
+        }
+    }
     /**
      * The fraction (0.0 to 1.0) uploaded of each outgoing attachment that is still uploading, by message id. A message
      * is in the map from the moment it shows as sending until it is queued, failed or cancelled.

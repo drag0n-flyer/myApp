@@ -13,7 +13,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
+import org.example.app.core.chats.SendPlan
 import org.example.app.core.chats.UploadCancel
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -568,8 +570,40 @@ class LiveChatStore(
      * with the file's real name and size, so it shows at once; a failed upload makes it `failed` and keeps the files for
      * "Try again" ([retryUpload]); a file that can never be sent is removed ([dropUnsendable]).
      */
-    override fun sendAttachment(path: String, kind: MediaKind, chatId: String) {
-        if (closed.get()) return
+    override fun sendAttachment(path: String, kind: MediaKind, chatId: String) = startAttachment(path, kind, chatId, null)
+
+    override val attachmentLimitBytes: Long get() = maxAttachmentBytes
+
+    /**
+     * A preview's plan, in order: each attachment's message is stored (staged, `sending`) before the next step starts, so
+     * the caption and the later items come after it in the chat. The uploads then run side by side.
+     */
+    override fun sendBatch(sends: List<SendPlan.Send>, chatId: String) {
+        if (closed.get() || sends.isEmpty()) return
+        inFlight.update { it + 1 }
+        scope.launch {
+            try {
+                for (item in sends) {
+                    when (item) {
+                        is SendPlan.Send.Attachment -> {
+                            val created = CompletableDeferred<Unit>()
+                            startAttachment(item.picked.path, item.picked.kind, chatId, created)
+                            created.await()
+                        }
+                        is SendPlan.Send.Text -> send(MessageContent.Text(item.text), chatId)
+                    }
+                    // The next message must carry a later time than this one: the chat is ordered by it.
+                    kotlinx.coroutines.delay(2)
+                }
+            } finally {
+                inFlight.update { it - 1 }
+            }
+        }
+    }
+
+    /** [created] completes once the message is stored (or the attachment was dropped), before its upload starts. */
+    private fun startAttachment(path: String, kind: MediaKind, chatId: String, created: CompletableDeferred<Unit>?) {
+        if (closed.get()) { created?.complete(Unit); return }
         inFlight.update { it + 1 }
         scope.launch {
             val id = freshId()
@@ -595,6 +629,7 @@ class LiveChatStore(
                 stored = true
                 bumpActivity(chatId, at)
                 reload()
+                created?.complete(Unit)
                 upload(id, at, pending)
             } catch (e: CancellationException) {
                 if (id in cancelled) withContext(NonCancellable) { removeUnsent(id) }
@@ -607,6 +642,7 @@ class LiveChatStore(
                 uploadJobs -= id
                 cancelled -= id
                 progress.update { it - id }
+                created?.complete(Unit)
                 reload()
                 inFlight.update { it - 1 }
             }

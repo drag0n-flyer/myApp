@@ -16,6 +16,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
 import androidx.core.app.ActivityOptionsCompat
 import androidx.test.core.app.ApplicationProvider
 import java.io.ByteArrayInputStream
@@ -68,6 +69,11 @@ class ChatMediaSendTest {
 
     private class RecordingStore(inner: SampleChatStore) : ChatStore by inner {
         val sent = mutableListOf<Pair<String, MediaKind>>()
+        val batches = mutableListOf<List<org.example.app.core.chats.SendPlan.Send>>()
+        override fun sendBatch(sends: List<org.example.app.core.chats.SendPlan.Send>, chatId: String) {
+            batches += sends
+            sends.forEach { if (it is org.example.app.core.chats.SendPlan.Send.Attachment) sendAttachment(it.picked.path, it.picked.kind, chatId) }
+        }
         val problem = kotlinx.coroutines.flow.MutableStateFlow<org.example.app.core.chats.SendProblem.Reason?>(null)
         var taken = 0
         override fun sendProblem(chatId: String): kotlinx.coroutines.flow.Flow<org.example.app.core.chats.SendProblem.Reason?> = problem
@@ -100,14 +106,19 @@ class ChatMediaSendTest {
 
     private fun cameraFileOf(uri: Uri): File = File(SharedFiles.cameraDir(app), uri.lastPathSegment!!)
 
-    @Test fun photoOpensThePhotoPickerForImagesAndSendsTheChosenPhoto() {
+    @Test fun photoOpensThePickerForPhotosAndVideosAndSendsTheChosenPhotoFromThePreview() {
         val picked = Uri.parse("content://media/picker/0/1")
-        val registry = AnsweringRegistry { c, _ -> if (c is ActivityResultContracts.PickVisualMedia) picked else null }
+        val registry = AnsweringRegistry { c, _ -> if (c is ActivityResultContracts.PickMultipleVisualMedia) listOf(picked) else null }
         launch(registry)
         attach("Photo")
         val (contract, input) = registry.launched.single()
-        assertTrue(contract is ActivityResultContracts.PickVisualMedia)
-        assertEquals(ActivityResultContracts.PickVisualMedia.ImageOnly, (input as androidx.activity.result.PickVisualMediaRequest).mediaType)
+        assertTrue(contract is ActivityResultContracts.PickMultipleVisualMedia)
+        assertEquals(ActivityResultContracts.PickVisualMedia.ImageAndVideo, (input as androidx.activity.result.PickVisualMediaRequest).mediaType)
+        // Nothing is sent until Send is pressed on the preview.
+        rule.waitUntil(5_000) { rule.onAllNodes(androidx.compose.ui.test.hasText("Add a caption")).fetchSemanticsNodes().isNotEmpty() }
+        assertEquals(emptyList(), store.sent)
+        rule.onNodeWithText("Send").performClick()
+        rule.waitUntil(5_000) { store.sent.isNotEmpty() }
         assertEquals(listOf(picked.toString() to MediaKind.Photo), store.sent)
     }
 
@@ -130,7 +141,7 @@ class ChatMediaSendTest {
     }
 
     @Test fun aPhotoThatIsNotAContentUriIsRefusedWithAMessage() {
-        launch(AnsweringRegistry { c, _ -> if (c is ActivityResultContracts.PickVisualMedia) Uri.parse("file:///data/data/${app.packageName}/databases/app.db") else null })
+        launch(AnsweringRegistry { c, _ -> if (c is ActivityResultContracts.PickMultipleVisualMedia) listOf(Uri.parse("file:///data/data/${app.packageName}/databases/app.db")) else null })
         attach("Photo")
         assertEquals(emptyList(), store.sent)
         rule.onNodeWithText("Couldn't read that file.").assertIsDisplayed()
@@ -188,6 +199,8 @@ class ChatMediaSendTest {
         }
         launch(registry)
         attach("Camera")
+        rule.waitUntil(5_000) { rule.onAllNodes(androidx.compose.ui.test.hasText("Add a caption")).fetchSemanticsNodes().isNotEmpty() }
+        rule.onNodeWithText("Send").performClick()
         rule.waitUntil(5_000) { store.sent.isNotEmpty() }
         val uri = registry.launched.single().second as Uri
         assertEquals(SharedFiles.authority(app), uri.authority)
@@ -257,5 +270,48 @@ class ChatMediaSendTest {
         }
         rule.onNodeWithText("Cancel").assertIsNotEnabled()
         rule.onNodeWithContentDescription("Send").assertIsNotEnabled()
+    }
+    private fun pick(count: Int) {
+        val uris = (1..count).map { Uri.parse("content://media/picker/0/$it") }
+        launch(AnsweringRegistry { c, _ -> if (c is ActivityResultContracts.PickMultipleVisualMedia) uris else null })
+        attach("Photo")
+        rule.waitUntil(5_000) { rule.onAllNodes(androidx.compose.ui.test.hasText("Add a caption")).fetchSemanticsNodes().isNotEmpty() }
+    }
+
+    @Test fun thePreviewShowsTheCaptionFieldSendAndCancelAndCancelSendsNothing() {
+        pick(1)
+        rule.onNodeWithText("Add a caption").assertIsDisplayed()
+        rule.onNodeWithText("Send").assertIsDisplayed()
+        rule.onNodeWithText("Cancel").performClick()
+        rule.waitUntil(5_000) { rule.onAllNodes(androidx.compose.ui.test.hasText("Add a caption")).fetchSemanticsNodes().isEmpty() }
+        assertEquals(emptyList(), store.sent)
+        assertEquals(emptyList(), store.batches)
+    }
+
+    @Test fun theCaptionTravelsAsATextRightAfterTheFirstItem() {
+        pick(3)
+        rule.onNodeWithText("Add a caption").performTextInput(" hi ")
+        rule.onNodeWithText("Send").performClick()
+        rule.waitUntil(5_000) { store.batches.isNotEmpty() }
+        val kinds = store.batches.single().map { if (it is org.example.app.core.chats.SendPlan.Send.Text) "text:" + it.text else "item" }
+        assertEquals(listOf("item", "text:hi", "item", "item"), kinds)
+    }
+
+    @Test fun moreThanTenItemsAreRefusedBeforeAnythingIsSent() {
+        pick(11)
+        rule.onNodeWithText("You can send up to 10 photos and videos at a time.").assertIsDisplayed()
+        rule.onNodeWithText("Send").performClick()
+        rule.waitForIdle()
+        assertEquals(emptyList(), store.batches)
+        assertEquals(emptyList(), store.sent)
+    }
+
+    @Test fun aVideoOverTheLimitIsRefusedByTheViewModelWithNothingStaged() {
+        val small = object : ChatStore by store { override val attachmentLimitBytes: Long = 1_000 }
+        val vm = ChatViewModel(small, "chat-riya", NetworkType.Wifi) { AutoDownloadSettings() }
+        val video = org.example.app.core.chats.Picked("content://v", MediaKind.Video, 1_001)
+        assertEquals(org.example.app.core.chats.SendPlan.Result.Refused(org.example.app.core.chats.SendPlan.Refusal.VideoTooBig), vm.sendPicked(listOf(video), "caption"))
+        assertEquals(emptyList(), store.sent)
+        assertEquals(emptyList(), store.batches)
     }
 }

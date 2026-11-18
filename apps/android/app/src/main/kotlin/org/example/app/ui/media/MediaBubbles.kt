@@ -11,7 +11,16 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.Dp
+import kotlinx.coroutines.flow.StateFlow
+import org.example.app.core.chats.DeliveryStatus
+import org.example.app.media.VideoMeta
+import org.example.app.media.videoClock
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
@@ -61,7 +70,43 @@ class MediaHost(
     val fileExists: (String) -> Boolean = { File(it).exists() },
     /** Plays voice messages; null leaves the play button without effect. */
     val voice: VoicePlayer? = null,
+    /** The fraction uploaded of each outgoing attachment still uploading, by message id; null shows no progress. */
+    val uploads: StateFlow<Map<String, Double>>? = null,
+    /** Cancel on an outgoing attachment that is still uploading. */
+    val onCancelUpload: (messageId: String) -> Unit = {},
 )
+
+private val NO_UPLOADS: StateFlow<Map<String, Double>> = MutableStateFlow(emptyMap())
+
+/** True for an outgoing attachment that has not finished uploading: it has no stored copy yet and is still on its way. */
+private fun Message.isUploading() = status == DeliveryStatus.Sending && media == null
+
+/** The progress ring with Cancel (×) inside it. [fraction] is 0.0 to 1.0. */
+@Composable
+fun UploadRing(fraction: Double, onCancel: () -> Unit, modifier: Modifier = Modifier, size: Dp = 40.dp) {
+    val sending = stringResource(R.string.media_sending)
+    val cancel = stringResource(R.string.media_cancel_upload)
+    Box(modifier, contentAlignment = Alignment.Center) {
+        CircularProgressIndicator(
+            progress = { fraction.toFloat().coerceIn(0f, 1f) },
+            modifier = Modifier.semantics { contentDescription = sending }.size(size),
+        )
+        IconButton(onClick = onCancel, modifier = Modifier.size(size)) {
+            Icon(painterResource(R.drawable.ic_close), contentDescription = cancel, modifier = Modifier.size(size / 2))
+        }
+    }
+}
+
+@Composable
+private fun UploadBox(message: Message, host: MediaHost?) {
+    val fractions by (host?.uploads ?: NO_UPLOADS).collectAsState()
+    Box(
+        Modifier.fillMaxWidth().heightIn(min = 120.dp).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp)),
+        contentAlignment = Alignment.Center,
+    ) {
+        UploadRing(fractions[message.id] ?: 0.0, onCancel = { host?.onCancelUpload?.invoke(message.id) })
+    }
+}
 
 /**
  * The bubble's state from the message's media state. Whether a downloaded file is still there is asked off the main
@@ -92,7 +137,9 @@ fun PhotoBubble(
 ) {
     val state = rememberBubbleState(message.media, host)
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        if (state is MediaBubbleState.Ready) {
+        if (message.isUploading()) {
+            UploadBox(message, host)
+        } else if (state is MediaBubbleState.Ready) {
             PhotoImage(message, host)
         } else {
             MediaPlaceholder(state, wait = wait, blurred = true, onDownload = onDownload)
@@ -163,6 +210,7 @@ fun FileBubble(
     val state = rememberBubbleState(message.media, host)
     val ready = state is MediaBubbleState.Ready
     val downloadingLabel = stringResource(R.string.downloading)
+    val fractions by (host?.uploads ?: NO_UPLOADS).collectAsState()
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
             Modifier
@@ -180,6 +228,7 @@ fun FileBubble(
             }
         }
         when {
+            message.isUploading() -> UploadRing(fractions[message.id] ?: 0.0, onCancel = { host?.onCancelUpload?.invoke(message.id) }, size = 32.dp)
             ready -> IconButton(onClick = { host?.onShareFile?.invoke(message.id, name) }) {
                 Icon(painterResource(R.drawable.ic_share), contentDescription = stringResource(R.string.media_share))
             }
@@ -226,7 +275,8 @@ fun MediaPlaceholder(state: MediaBubbleState, wait: Boolean, blurred: Boolean, o
 
 private sealed interface PhotoLoad {
     data object Loading : PhotoLoad
-    data class Loaded(val bitmap: Bitmap) : PhotoLoad
+    /** [videoMs] is the length of the video the picture is a frame of; null for a photo. */
+    data class Loaded(val bitmap: Bitmap, val videoMs: Long? = null) : PhotoLoad
     data object Unreadable : PhotoLoad
 }
 
@@ -241,7 +291,7 @@ private fun PhotoImage(message: Message, host: MediaHost?) {
     val load by produceState<PhotoLoad>(PhotoLoad.Loading, key, host) {
         val cached = host?.photos?.get(key)
         if (cached != null) {
-            value = PhotoLoad.Loaded(cached)
+            value = PhotoLoad.Loaded(cached, host.photos.videoLengthMs(key))
             return@produceState
         }
         val opened = host?.opener?.openOrNull(message.id)
@@ -250,12 +300,22 @@ private fun PhotoImage(message: Message, host: MediaHost?) {
             return@produceState
         }
         try {
-            val bitmap = withContext(Dispatchers.IO) { PhotoDecoder.decodeFit(opened.file, boxWidth, boxHeight) }
+            // A photo is decoded; what is not a photo may be a video, shown as one of its frames.
+            val (bitmap, videoMs) = withContext(Dispatchers.IO) {
+                val photo = PhotoDecoder.decodeFit(opened.file, boxWidth, boxHeight)
+                if (photo != null) {
+                    photo to null
+                } else {
+                    val info = VideoMeta.probe(opened.file)
+                    if (info == null) null to null else VideoMeta.frame(opened.file, boxWidth, boxHeight) to info.durationMs
+                }
+            }
             if (bitmap == null) {
                 value = PhotoLoad.Unreadable
             } else {
                 host.photos[key] = bitmap
-                value = PhotoLoad.Loaded(bitmap)
+                if (videoMs != null) host.photos.setVideoLengthMs(key, videoMs)
+                value = PhotoLoad.Loaded(bitmap, videoMs)
             }
         } finally {
             withContext(NonCancellable + Dispatchers.IO) { opened.close() }
@@ -263,16 +323,33 @@ private fun PhotoImage(message: Message, host: MediaHost?) {
     }
     val description = stringResource(R.string.preview_photo)
     when (val l = load) {
-        is PhotoLoad.Loaded -> Image(
-            bitmap = l.bitmap.asImageBitmap(),
-            contentDescription = description,
-            modifier = Modifier
-                .widthIn(max = BUBBLE_PHOTO_WIDTH)
-                .heightIn(max = BUBBLE_PHOTO_HEIGHT)
-                .aspectRatio(l.bitmap.width.toFloat() / l.bitmap.height.toFloat())
-                .clip(RoundedCornerShape(12.dp))
-                .clickable(role = Role.Button) { host?.onOpenPhoto?.invoke(message.id) },
-        )
+        is PhotoLoad.Loaded -> {
+            val label = if (l.videoMs != null) stringResource(R.string.media_play_video) else description
+            Box(
+                Modifier
+                    .widthIn(max = BUBBLE_PHOTO_WIDTH)
+                    .heightIn(max = BUBBLE_PHOTO_HEIGHT)
+                    .aspectRatio(l.bitmap.width.toFloat() / l.bitmap.height.toFloat())
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable(role = Role.Button) { host?.onOpenPhoto?.invoke(message.id) },
+            ) {
+                Image(
+                    bitmap = l.bitmap.asImageBitmap(),
+                    contentDescription = label,
+                    modifier = Modifier.matchParentSize(),
+                )
+                if (l.videoMs != null) {
+                    Icon(
+                        painterResource(R.drawable.ic_play), contentDescription = null, tint = Color.White,
+                        modifier = Modifier.align(Alignment.Center).size(48.dp).background(Color.Black.copy(alpha = 0.5f), CircleShape).padding(8.dp),
+                    )
+                    Text(
+                        videoClock(l.videoMs), color = Color.White, style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.align(Alignment.BottomStart).padding(8.dp).background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(6.dp)).padding(horizontal = 6.dp, vertical = 2.dp),
+                    )
+                }
+            }
+        }
         PhotoLoad.Loading, PhotoLoad.Unreadable -> Box(
             Modifier.fillMaxWidth().heightIn(min = 120.dp).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp)),
             contentAlignment = Alignment.Center,
