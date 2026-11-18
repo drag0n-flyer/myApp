@@ -14,6 +14,12 @@ struct ComposerView: View {
     let sendSample: (MessageContent) -> Void
     /// Real attachments and voice notes. When nil, the sample stand-ins above are used.
     var sendAttachment: ((ComposerAttachment) -> Void)?
+    /// Photos and videos from the preview screen, with the caption.
+    var sendMedia: (([OutgoingMedia], String) -> Void)?
+    /// The largest video that can be sent.
+    var attachmentLimit = SendPlan.defaultLimitBytes
+    /// Sample data has no photo library: Photo opens the preview with a stand-in picture.
+    var sampleMedia = false
     /// The message a reply is being written to; shows the reply bar.
     var replyingTo: Message?
     /// Display name of the person `replyingTo` is from.
@@ -39,7 +45,10 @@ struct ComposerView: View {
     @Environment(\.layoutDirection) private var layoutDirection
     @State private var showPhotos = false
     @State private var showFiles = false
-    @State private var photoItem: PhotosPickerItem?
+    @State private var photoItems: [PhotosPickerItem] = []
+    /// Photos and videos on the preview screen; nothing is handed to the engine before Send.
+    @State private var draftMedia: [DraftMedia] = []
+    @State private var videoTooBig = false
     #if os(iOS)
     @State private var showCamera = false
     @State private var cameraDenied = false
@@ -112,7 +121,9 @@ struct ComposerView: View {
             } else {
             Menu {
                 Button("Photo", systemImage: "photo") {
-                    if sendAttachment == nil { sendSample(.photo(bytes: 240_000)) } else { showPhotos = true }
+                    if sampleMedia {
+                        draftMedia = [DraftMedia(url: nil, kind: .photo, bytes: 240_000)]
+                    } else if sendAttachment == nil { sendSample(.photo(bytes: 240_000)) } else { showPhotos = true }
                 }
                 #if os(iOS)
                 if sendAttachment == nil {
@@ -132,7 +143,8 @@ struct ComposerView: View {
             }
             .accessibilityLabel("Attach")
             .expectsReturn(when: pickerOpen)
-            .photosPicker(isPresented: $showPhotos,selection: $photoItem, matching: .images)
+            .photosPicker(isPresented: $showPhotos, selection: $photoItems, maxSelectionCount: SendPlan.maxItems,
+                          matching: .any(of: [.images, .videos]))
             .fileImporter(isPresented: $showFiles, allowedContentTypes: [.item]) { result in
                 guard case .success(let url) = result else { return }
                 importFile(url)
@@ -140,7 +152,8 @@ struct ComposerView: View {
             #if os(iOS)
             .fullScreenCover(isPresented: $showCamera) {
                 CameraPicker(
-                    onPhoto: { url in showCamera = false; sendAttachment?(.photo(url)) },
+                    onPhoto: { url in showCamera = false; showPreview(of: [draft(url, .photo)]) },
+                    onVideo: { url in showCamera = false; showPreview(of: [draft(url, .video)]) },
                     onCancel: { showCamera = false })
                     .ignoresSafeArea()
             }
@@ -153,10 +166,10 @@ struct ComposerView: View {
                 Text("Turn it on in Settings to take photos.")
             }
             #endif
-            .onChange(of: photoItem) { _, item in
-                guard let item else { return }
-                photoItem = nil
-                Task { await importPhoto(item) }
+            .onChange(of: photoItems) { _, items in
+                guard !items.isEmpty else { return }
+                photoItems = []
+                Task { await importPicked(items) }
             }
 
             TextField("Message", text: $text, axis: .vertical)
@@ -205,6 +218,12 @@ struct ComposerView: View {
             if active { session?.interrupted() }
         }
         .onChange(of: session?.state) { old, new in voiceStateChanged(from: old, to: new) }
+        .sheet(isPresented: Binding(get: { !draftMedia.isEmpty }, set: { if !$0 { discardDraft() } })) {
+            SendPreviewView(items: draftMedia, limitBytes: attachmentLimit, send: sendDraft, cancel: discardDraft)
+        }
+        .alert("This video is too big to send.", isPresented: $videoTooBig) {
+            Button("OK", role: .cancel) {}
+        }
         .alert("Microphone access is off", isPresented: Binding(get: { session?.denied ?? false }, set: { _ in session?.dismissDenied() })) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -427,13 +446,63 @@ struct ComposerView: View {
         sendAttachment?(.file(copy))
     }
 
-    private func importPhoto(_ item: PhotosPickerItem) async {
-        guard let data = try? await item.loadTransferable(type: Data.self) else { return }
-        let folder = MediaPreview.stagingFolder
-        let url = folder.appendingPathComponent("photo-\(UUID().uuidString.lowercased())")
-        guard (try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)) != nil,
-              (try? data.write(to: url, options: .completeFileProtection)) != nil else { return }
-        sendAttachment?(.photo(url))
+    /// Loads what the person picked (photos and videos) into the staging folder and opens the preview. A video over
+    /// the limit is refused here, before anything is kept.
+    private func importPicked(_ items: [PhotosPickerItem]) async {
+        var added: [DraftMedia] = []
+        for item in items.prefix(SendPlan.maxItems) {
+            if item.supportedContentTypes.contains(where: { $0.conforms(to: .movie) }) {
+                guard let movie = try? await item.loadTransferable(type: PickedMovie.self) else { continue }
+                let bytes = Self.fileSize(movie.url)
+                if bytes > attachmentLimit {
+                    try? FileManager.default.removeItem(at: movie.url)
+                    videoTooBig = true
+                    continue
+                }
+                added.append(DraftMedia(url: movie.url, kind: .video, bytes: bytes))
+            } else {
+                guard let data = try? await item.loadTransferable(type: Data.self) else { continue }
+                let folder = MediaPreview.stagingFolder
+                let url = folder.appendingPathComponent("photo-\(UUID().uuidString.lowercased())")
+                guard (try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)) != nil,
+                      (try? data.write(to: url, options: .completeFileProtection)) != nil else { continue }
+                added.append(DraftMedia(url: url, kind: .photo, bytes: Int64(data.count)))
+            }
+        }
+        showPreview(of: added)
+    }
+
+    private func draft(_ url: URL, _ kind: PickedMedia.Kind) -> DraftMedia {
+        DraftMedia(url: url, kind: kind, bytes: Self.fileSize(url))
+    }
+
+    private static func fileSize(_ url: URL) -> Int64 {
+        Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+    }
+
+    private func showPreview(of items: [DraftMedia]) {
+        guard !items.isEmpty else { return }
+        if let big = items.first(where: { $0.kind == .video && $0.bytes > attachmentLimit }) {
+            if let url = big.url { try? FileManager.default.removeItem(at: url) }
+            videoTooBig = true
+            return
+        }
+        draftMedia = items
+    }
+
+    /// Send on the preview: the plan was accepted there, so the items go to the engine in order with the caption.
+    private func sendDraft(caption: String) {
+        let items = draftMedia.map { OutgoingMedia(url: $0.url ?? URL(fileURLWithPath: "/sample/Photo.jpg"), kind: $0.kind == .video ? .video : .photo, deleteAfterStaging: $0.url != nil) }
+        draftMedia = []
+        sendMedia?(items, caption)
+    }
+
+    /// Cancel on the preview: the picked copies are removed.
+    private func discardDraft() {
+        for item in draftMedia {
+            if let url = item.url, MediaPathGuard.isInside(url, directory: MediaPreview.stagingFolder) { try? FileManager.default.removeItem(at: url) }
+        }
+        draftMedia = []
     }
 
     private func copyToTemp(_ url: URL, name: String) -> URL? {

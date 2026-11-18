@@ -20,6 +20,8 @@ public enum AttachmentServiceError: Error, Equatable, Sendable {
     case pendingMissing
     /// A photo that cannot be read as an image.
     case cannotPrepare
+    /// The server refused the upload for its size (413).
+    case tooBig
 }
 
 /// Uploads, downloads and auto-downloads attachments (Design 7, 9).
@@ -106,7 +108,8 @@ public actor AttachmentService {
     /// after that commit does the plaintext move to its final place. If the message was deleted meanwhile,
     /// nothing is queued and nothing is left behind.
     /// Throws `pendingMissing` and `cannotPrepare` for failures that can never succeed; anything else may be retried.
-    public func uploadPending(messageID: String, pendingDir: URL) async throws {
+    /// `progress` is told how far the preparing and uploading have come (0...1); the upload itself is one request.
+    public func uploadPending(messageID: String, pendingDir: URL, progress: (@Sendable (Double) -> Void)? = nil) async throws {
         let fm = FileManager.default
         guard let meta = PendingUpload.read(from: pendingDir) else { throw AttachmentServiceError.pendingMissing }
         let source = pendingDir.appendingPathComponent(meta.sourceName)
@@ -132,13 +135,24 @@ public actor AttachmentService {
         }
         #endif
         try Task.checkCancellation()
+        progress?(0.1)
 
         let temp = pendingDir.appendingPathComponent("upload.enc")
         defer { try? fm.removeItem(at: temp) }
         let sealed = try deps.attachments.encrypt(file: file, to: temp)
-        let uploaded = try await deps.server.uploadAttachment(try Data(contentsOf: temp))
+        progress?(0.3)
+        let uploaded: UploadedAttachment
+        do {
+            // The request's own byte progress fills 0.3...0.95 where the transport reports it (Apple's URLSession does).
+            uploaded = try await deps.server.uploadAttachment(try Data(contentsOf: temp), progress: { sent in
+                progress?(0.3 + 0.65 * min(max(sent, 0), 1))
+            })
+        } catch let error as ServerError where error.status == 413 {
+            throw AttachmentServiceError.tooBig
+        }
         guard AttachmentID.isValid(uploaded.id) else { throw AttachmentServiceError.invalidAttachmentID }
         try Task.checkCancellation()
+        progress?(0.95)
 
         let att = Att(id: uploaded.id, key: sealed.key, dg: sealed.digest, sz: sealed.size, csz: sealed.cipherSize)
         let body: ContentEnvelope.Body

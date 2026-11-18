@@ -3,9 +3,10 @@ import AVFoundation
 import SwiftUI
 import UIKit
 
-/// The system camera (iPhone only). Calls `onPhoto` with a JPEG in the staging folder, or `onCancel`.
+/// The system camera (iPhone only). Calls `onPhoto` with a JPEG or `onVideo` with a movie, both in the staging folder, or `onCancel`.
 struct CameraPicker: UIViewControllerRepresentable {
     let onPhoto: (URL) -> Void
+    let onVideo: (URL) -> Void
     let onCancel: () -> Void
 
     static var isAvailable: Bool { UIImagePickerController.isSourceTypeAvailable(.camera) }
@@ -25,25 +26,41 @@ struct CameraPicker: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> UIImagePickerController {
         let picker = UIImagePickerController()
         picker.sourceType = .camera
-        picker.mediaTypes = ["public.image"]
+        picker.mediaTypes = ["public.image", "public.movie"]
         picker.delegate = context.coordinator
         return picker
     }
 
     func updateUIViewController(_ controller: UIImagePickerController, context: Context) {}
 
-    func makeCoordinator() -> Coordinator { Coordinator(onPhoto: onPhoto, onCancel: onCancel) }
+    func makeCoordinator() -> Coordinator { Coordinator(onPhoto: onPhoto, onVideo: onVideo, onCancel: onCancel) }
 
     final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
         let onPhoto: (URL) -> Void
+        let onVideo: (URL) -> Void
         let onCancel: () -> Void
 
-        init(onPhoto: @escaping (URL) -> Void, onCancel: @escaping () -> Void) {
+        init(onPhoto: @escaping (URL) -> Void, onVideo: @escaping (URL) -> Void, onCancel: @escaping () -> Void) {
             self.onPhoto = onPhoto
+            self.onVideo = onVideo
             self.onCancel = onCancel
         }
 
         func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            if let movie = info[.mediaURL] as? URL {
+                // The camera's own temporary movie is copied into the staging folder under a name of ours.
+                let folder = MediaPreview.stagingFolder
+                let ext = movie.pathExtension.lowercased()
+                let safe = !ext.isEmpty && ext.count <= 5 && ext.allSatisfy { $0.isLetter || $0.isNumber } ? ext : "mov"
+                let url = folder.appendingPathComponent("camera-\(UUID().uuidString.lowercased()).\(safe)")
+                do {
+                    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                    try FileManager.default.copyItem(at: movie, to: url)
+                    try? FileManager.default.removeItem(at: movie)
+                    onVideo(url)
+                } catch { onCancel() }
+                return
+            }
             guard let image = info[.originalImage] as? UIImage, let data = image.jpegData(compressionQuality: 0.9) else { onCancel(); return }
             let folder = MediaPreview.stagingFolder
             let url = folder.appendingPathComponent("camera-\(UUID().uuidString.lowercased()).jpg")

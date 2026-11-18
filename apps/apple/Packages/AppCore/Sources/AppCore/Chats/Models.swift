@@ -109,6 +109,11 @@ public enum DeliveryStatus: Hashable, Codable, Sendable {
     case failed
 }
 
+public enum SendFailure: Hashable, Codable, Sendable {
+    /// The server refused the attachment for its size.
+    case tooBig
+}
+
 public struct Message: Identifiable, Hashable, Codable, Sendable {
     public var id: String
     public var senderID: String
@@ -120,9 +125,16 @@ public struct Message: Identifiable, Hashable, Codable, Sendable {
     public var editedAt: Date?
     public var media: MediaState?
     public var undecryptable: Bool
+    /// How much of an outgoing attachment has been prepared and uploaded (0...1); `nil` when nothing is uploading.
+    public var uploadProgress: Double?
+    /// Why a failed send will not work again as it is (kept while the app runs; a restart shows plain "Not sent").
+    public var sendFailure: SendFailure?
 
     public init(id: String, senderID: String, sentAt: Date, content: MessageContent, status: DeliveryStatus, replyToID: String?, reactions: [String],
-                editedAt: Date? = nil, media: MediaState? = nil, undecryptable: Bool = false) {
+                editedAt: Date? = nil, media: MediaState? = nil, undecryptable: Bool = false, uploadProgress: Double? = nil,
+                sendFailure: SendFailure? = nil) {
+        self.uploadProgress = uploadProgress
+        self.sendFailure = sendFailure
         self.id = id
         self.senderID = senderID
         self.sentAt = sentAt

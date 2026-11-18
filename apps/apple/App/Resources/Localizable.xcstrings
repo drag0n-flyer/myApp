@@ -34,6 +34,17 @@
         }
       }
     },
+    "%@ · %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ · %@"
+          }
+        }
+      }
+    },
     "%@, %@" : {
       "comment" : "VoiceOver label of a call info row: the row's name, then its value",
       "extractionState" : "manual",
@@ -131,6 +142,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Accept"
+          }
+        }
+      }
+    },
+    "Add a caption" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add a caption"
           }
         }
       }
@@ -333,6 +355,28 @@
         }
       }
     },
+    "Cancel recording" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel recording"
+          }
+        }
+      }
+    },
+    "Cancel upload" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel upload"
+          }
+        }
+      }
+    },
     "Change" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -340,6 +384,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Change"
+          }
+        }
+      }
+    },
+    "Chat" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chat"
+          }
+        }
+      }
+    },
+    "Chat Info" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chat Info"
           }
         }
       }
@@ -494,6 +560,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Couldn't load the licenses."
+          }
+        }
+      }
+    },
+    "Couldn't open this photo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't open this photo"
           }
         }
       }
@@ -663,6 +740,17 @@
         }
       }
     },
+    "Double-tap to zoom" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Double-tap to zoom"
+          }
+        }
+      }
+    },
     "Download" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -670,6 +758,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Download"
+          }
+        }
+      }
+    },
+    "Downloading" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Downloading"
           }
         }
       }
@@ -758,6 +857,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Enter a valid email address."
+          }
+        }
+      }
+    },
+    "Files" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Files"
           }
         }
       }
@@ -927,6 +1037,17 @@
         }
       }
     },
+    "Lock Now" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lock Now"
+          }
+        }
+      }
+    },
     "Mac" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -956,6 +1077,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Marked as verified"
+          }
+        }
+      }
+    },
+    "Media" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Media"
+          }
+        }
+      }
+    },
+    "Media and files" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Media and files"
           }
         }
       }
@@ -1037,6 +1180,17 @@
         }
       }
     },
+    "New Chat" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New Chat"
+          }
+        }
+      }
+    },
     "New device added" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1055,6 +1209,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "New message"
+          }
+        }
+      }
+    },
+    "Next" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Next"
+          }
+        }
+      }
+    },
+    "Next Chat" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Next Chat"
           }
         }
       }
@@ -1121,6 +1297,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "No contacts yet"
+          }
+        }
+      }
+    },
+    "No files yet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No files yet"
+          }
+        }
+      }
+    },
+    "No media yet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No media yet"
           }
         }
       }
@@ -1312,6 +1510,17 @@
         }
       }
     },
+    "Play video" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Play video"
+          }
+        }
+      }
+    },
     "Play voice message" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1330,6 +1539,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Point your camera at the QR code on your Mac."
+          }
+        }
+      }
+    },
+    "Previous" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Previous"
+          }
+        }
+      }
+    },
+    "Previous Chat" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Previous Chat"
           }
         }
       }
@@ -1477,6 +1708,28 @@
         }
       }
     },
+    "Save to Photos" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Save to Photos"
+          }
+        }
+      }
+    },
+    "Saved" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Saved"
+          }
+        }
+      }
+    },
     "Scan invite QR code" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1499,6 +1752,17 @@
         }
       }
     },
+    "Search" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search"
+          }
+        }
+      }
+    },
     "Search in chat" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1506,6 +1770,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Search in chat"
+          }
+        }
+      }
+    },
+    "Select a chat" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Select a chat"
+          }
+        }
+      }
+    },
+    "Send" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send"
           }
         }
       }
@@ -1594,6 +1880,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Settings"
+          }
+        }
+      }
+    },
+    "Share" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Share"
+          }
+        }
+      }
+    },
+    "Show" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show"
           }
         }
       }
@@ -1884,6 +2192,17 @@
         }
       }
     },
+    "This file is too big to send." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This file is too big to send."
+          }
+        }
+      }
+    },
     "This message was deleted" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1902,6 +2221,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "This server needs an invite code."
+          }
+        }
+      }
+    },
+    "This video is too big to send." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This video is too big to send."
           }
         }
       }
@@ -2159,6 +2489,17 @@
         }
       }
     },
+    "Video" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Video"
+          }
+        }
+      }
+    },
     "Video from the other person" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2166,6 +2507,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Video from the other person"
+          }
+        }
+      }
+    },
+    "Video · %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Video · %@"
           }
         }
       }
@@ -2225,6 +2577,17 @@
         }
       }
     },
+    "You can send up to 10 at a time." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You can send up to 10 at a time."
+          }
+        }
+      }
+    },
     "You removed a device" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2265,94 +2628,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Your video"
-          }
-        }
-      }
-    },
-    "Select a chat" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Select a chat"
-          }
-        }
-      }
-    },
-    "New Chat" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "New Chat"
-          }
-        }
-      }
-    },
-    "Next Chat" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Next Chat"
-          }
-        }
-      }
-    },
-    "Previous Chat" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Previous Chat"
-          }
-        }
-      }
-    },
-    "Chat Info" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Chat Info"
-          }
-        }
-      }
-    },
-    "Lock Now" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Lock Now"
-          }
-        }
-      }
-    },
-    "Search" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Search"
-          }
-        }
-      }
-    },
-    "Chat" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Chat"
           }
         }
       }

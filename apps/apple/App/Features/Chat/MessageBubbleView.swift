@@ -11,6 +11,8 @@ struct MessageBubbleView: View {
     let download: () -> Void
     /// Opens a downloaded photo or file: the file, its received name (nil for photos) and whether it is a photo.
     var openMedia: (URL, String?, Bool) -> Void = { _, _, _ in }
+    /// Stops an upload that is still running and removes its message.
+    var cancelUpload: () -> Void = {}
     var voice: VoicePlayer?
     /// False with sample data: there is nothing to fetch, so the bubble shows a plain placeholder, not a Download button.
     var canDownload = true
@@ -158,11 +160,14 @@ struct MessageBubbleView: View {
             VoiceMessageView(messageID: message.id, duration: duration, isMine: isMine, state: mediaState, player: voice,
                              canDownload: canDownload, download: download)
         case .photo(let bytes):
-            MediaBubbleView(isPhoto: true, name: nil, bytes: bytes, state: mediaState, messageID: message.id,
+            MediaBubbleView(isPhoto: true, uploadProgress: isMine ? message.uploadProgress : nil, cancelUpload: cancelUpload,
+                            name: nil, bytes: bytes, state: mediaState, messageID: message.id,
                             canDownload: canDownload, download: download, open: { openMedia($0, nil, true) })
         case .file(let name, let bytes):
             let cleaned = MediaFileName.clean(name)
-            MediaBubbleView(isPhoto: false, name: cleaned, bytes: bytes, state: mediaState, messageID: message.id,
+            MediaBubbleView(isPhoto: false, isVideo: ChatMedia.isVideo(name: cleaned),
+                            uploadProgress: isMine ? message.uploadProgress : nil, cancelUpload: cancelUpload,
+                            name: cleaned, bytes: bytes, state: mediaState, messageID: message.id,
                             canDownload: canDownload, download: download, open: { openMedia($0, cleaned, false) })
         case .call:
             Label(message.previewText, systemImage: "phone")
@@ -203,7 +208,8 @@ private struct MetaLine: View {
         HStack(spacing: 3) {
             Spacer(minLength: 0)
             if isMine, message.status == .failed {
-                Label("Not sent", systemImage: "exclamationmark.circle.fill")
+                Label(failedText, systemImage: "exclamationmark.circle.fill")
+                    .accessibilityIdentifier("chat.failed.\(message.id)")
                 Button("Try again", action: retry)
                     .buttonStyle(.borderless)
                     .underline()
@@ -221,6 +227,13 @@ private struct MetaLine: View {
         }
         .font(.caption2)
         .opacity(0.75)
+    }
+
+    /// "Not sent", or why a failed attachment will not go as it is.
+    private var failedText: LocalizedStringKey {
+        guard message.sendFailure == .tooBig else { return "Not sent" }
+        if case .file(let name, _) = message.content, ChatMedia.isVideo(name: name) { return "This video is too big to send." }
+        return "This file is too big to send."
     }
 
     /// Sent: a check. Delivered: an outline check circle. Read: a filled one.
