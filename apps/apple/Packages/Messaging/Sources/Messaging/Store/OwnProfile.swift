@@ -22,8 +22,8 @@ enum OwnProfile {
     }
 
     /// A `profile` that came from another device of my own account. It replaces my stored profile (name and photo,
-    /// after the photo rule) only with a strictly higher version, and marks every chat as sent at that version: the
-    /// device that made the change sends it to the chats, this one sends nothing.
+    /// after the photo rule) only with a strictly higher version. This device then sends the adopted version to its own
+    /// chats that have not had it (`sendOwnProfileIfNeeded`), because the other device may not reach them.
     @discardableResult
     static func adopt(name: String, photo: Data?, ver: Int, repo: Repository, me: String) throws -> Bool {
         guard DisplayNameRule.clean(name) == name, photo.map(ProfilePhotoRule.isAcceptable) ?? true,
@@ -37,7 +37,6 @@ enum OwnProfile {
                 row.displayName = name
                 try repo.upsertContact(row)
             }
-            for chat in try repo.chats() { try repo.set(sentKey(chat.id), Data(String(ver).utf8)) }
         }
         return true
     }

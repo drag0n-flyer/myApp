@@ -134,5 +134,20 @@
   "name": "segment length runs past the end",
   "hex": "ffd8ffe1ffff00",
   "accept": false
+ },
+ {
+  "name": "first frame marker C9 (arithmetic) declaring 65000x65000, then a C0 16x16",
+  "hex": "ffd8ffc9000b08fde8fde801011100ffc0000b080010001001011100",
+  "accept": false
+ },
+ {
+  "name": "C3 alone",
+  "hex": "ffd8ffc3000b080010001001011100",
+  "accept": false
+ },
+ {
+  "name": "C5 differential then C0",
+  "hex": "ffd8ffc5000b080010001001011100ffc0000b080010001001011100",
+  "accept": false
  }
 ]

@@ -166,17 +166,18 @@ private let t0 = Int(testEpochDate.timeIntervalSince1970)
         #expect(try bob.repo.profile(for: "acc-ana")?.ver == t0)
     }
 
-    @Test func anotherDeviceOfMineWithAHigherVersionIsAdoptedAndSendsNothing() async throws {
+    @Test func anotherDeviceOfMineWithAHigherVersionIsAdoptedAndSentOnToMyPendingChats() async throws {
         let (ana, _, _) = try await make()
         try ana.addLocalContact("acc-cy")
         ana.store.setMyDisplayName("Ana")
-        let before = try ana.repo.dueOutbox(at: .distantFuture).count
         #expect(try OwnProfile.adopt(name: "Ana Two", photo: jpeg, ver: t0 + 50, repo: ana.repo, me: "acc-ana"))
         #expect(ana.store.myPhoto == jpeg)
-        #expect(try ana.sentVersion("acc-bob") == t0 + 50 && ana.sentVersion("acc-cy") == t0 + 50)
         ana.store.refresh()
         #expect(ana.store.myStoredName == "Ana Two")
-        #expect(try ana.repo.dueOutbox(at: .distantFuture).count == before)
+        // The adopted version goes to this device's pending chats, as adopted (no new version is made).
+        #expect(try ana.sentVersion("acc-bob") == t0 + 50 && ana.sentVersion("acc-cy") == t0 + 50)
+        let queued = try ana.repo.dueOutbox(at: .distantFuture).filter { $0.chatID == "acc-cy" }.map { ContentEnvelope.decode($0.envelope).body }
+        #expect(queued.contains(.profile(name: "Ana Two", photo: jpeg, ver: t0 + 50)))
         // Equal or lower: ignored.
         #expect(try !OwnProfile.adopt(name: "Low", photo: nil, ver: t0 + 50, repo: ana.repo, me: "acc-ana"))
         #expect(try !OwnProfile.adopt(name: "Low", photo: nil, ver: t0, repo: ana.repo, me: "acc-ana"))
