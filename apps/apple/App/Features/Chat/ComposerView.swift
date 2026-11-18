@@ -2,6 +2,9 @@ import AppCore
 import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
+#if os(iOS)
+import UIKit
+#endif
 
 /// Floating glass composer: attach, message field, mic or send.
 struct ComposerView: View {
@@ -24,6 +27,10 @@ struct ComposerView: View {
     @State private var showPhotos = false
     @State private var showFiles = false
     @State private var photoItem: PhotosPickerItem?
+    #if os(iOS)
+    @State private var showCamera = false
+    @State private var cameraDenied = false
+    #endif
 
     private var isEmpty: Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
@@ -77,7 +84,13 @@ struct ComposerView: View {
                 Button("Photo", systemImage: "photo") {
                     if sendAttachment == nil { sendSample(.photo(bytes: 240_000)) } else { showPhotos = true }
                 }
-                Button("Camera", systemImage: "camera") { sendSample(.photo(bytes: 310_000)) }
+                #if os(iOS)
+                if sendAttachment == nil {
+                    Button("Camera", systemImage: "camera") { sendSample(.photo(bytes: 310_000)) }
+                } else if CameraPicker.isAvailable {
+                    Button("Camera", systemImage: "camera") { Task { await openCamera() } }
+                }
+                #endif
                 Button("File", systemImage: "doc") {
                     if sendAttachment == nil { sendSample(.file(name: "Notes.pdf", bytes: 180_000)) } else { showFiles = true }
                 }
@@ -93,6 +106,22 @@ struct ComposerView: View {
                 guard case .success(let url) = result else { return }
                 importFile(url)
             }
+            #if os(iOS)
+            .fullScreenCover(isPresented: $showCamera) {
+                CameraPicker(
+                    onPhoto: { url in showCamera = false; sendAttachment?(.photo(url)) },
+                    onCancel: { showCamera = false })
+                    .ignoresSafeArea()
+            }
+            .alert("Camera access is off", isPresented: $cameraDenied) {
+                Button("Settings") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Turn it on in Settings to take photos.")
+            }
+            #endif
             .onChange(of: photoItem) { _, item in
                 guard let item else { return }
                 photoItem = nil
@@ -171,6 +200,15 @@ struct ComposerView: View {
 
     // MARK: - Importing
 
+    #if os(iOS)
+    private func openCamera() async {
+        switch await CameraPicker.requestAccess() {
+        case .allowed: showCamera = true
+        case .denied: cameraDenied = true
+        }
+    }
+    #endif
+
     private func importFile(_ url: URL) {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
@@ -180,13 +218,15 @@ struct ComposerView: View {
 
     private func importPhoto(_ item: PhotosPickerItem) async {
         guard let data = try? await item.loadTransferable(type: Data.self) else { return }
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("photo-\(UUID().uuidString.lowercased())")
-        guard (try? data.write(to: url)) != nil else { return }
+        let folder = MediaPreview.stagingFolder
+        let url = folder.appendingPathComponent("photo-\(UUID().uuidString.lowercased())")
+        guard (try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)) != nil,
+              (try? data.write(to: url, options: .completeFileProtection)) != nil else { return }
         sendAttachment?(.photo(url))
     }
 
     private func copyToTemp(_ url: URL, name: String) -> URL? {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString.lowercased())
+        let dir = MediaPreview.stagingFolder.appendingPathComponent(UUID().uuidString.lowercased())
         let dest = dir.appendingPathComponent(name)
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
