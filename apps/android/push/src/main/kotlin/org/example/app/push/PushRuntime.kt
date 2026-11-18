@@ -37,6 +37,9 @@ object PushRuntime {
 
     @Volatile var registrationSink: RegistrationSink? = null
 
+    /** What the notification buttons do. The app sets it in `PushWiring`; null while signed out. */
+    @Volatile var notificationActions: NotificationActionSink? = null
+
     /** The chats whose notifications are quiet. The app wires this in `PushWiring`; empty until then. */
     @Volatile var mutedChatIds: () -> Set<String> = { emptySet() }
 

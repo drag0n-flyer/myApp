@@ -29,6 +29,11 @@
             </intent-filter>
         </service>
 
+        <!-- The notification buttons. Not exported: only this app's own PendingIntents reach it. -->
+        <receiver
+            android:name=".NotificationActionReceiver"
+            android:exported="false" />
+
         <receiver
             android:name=".AppUnifiedPushReceiver"
             android:enabled="true"
