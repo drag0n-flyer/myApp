@@ -1,6 +1,9 @@
-/// What a display name may be. The same rule as Android's `DisplayNameRule`: 1 to 40 code points after trimming, at
-/// least one visible character, no line or paragraph separators, no control characters, no direction or format
-/// controls. Lengths count Unicode scalars (Kotlin's code points), never grapheme clusters.
+/// What a display name may be. The same rule as Android's `DisplayNameRule` and the server's `ValidDisplayName`:
+/// 1 to 40 code points after trimming, at least one visible character, no line or paragraph separators, no control
+/// characters, no format characters (listed by code point, plus every other Cf one) except U+200C, U+200D and the
+/// tag characters U+E0020...U+E007F that emoji sequences need. Unassigned code points count as visible, so the
+/// Unicode table version of a platform does not change the result. Lengths count Unicode scalars (Kotlin's code
+/// points), never grapheme clusters.
 /// `forDisplay` cleans a name that came from somewhere else.
 public enum DisplayNameRule {
     public static let max = 40
@@ -8,8 +11,12 @@ public enum DisplayNameRule {
     /// The longest name the server stores.
     private static let serverMax = 64
 
-    private static let directionControls: Set<UInt32> = [
-        0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 0x2066, 0x2067, 0x2068, 0x2069, 0x200E, 0x200F, 0x061C,
+    /// Format and direction characters refused by code point, whatever the platform's tables say.
+    private static let refusedRanges: [ClosedRange<UInt32>] = [
+        0x00AD...0x00AD, 0x0600...0x0605, 0x061C...0x061C, 0x06DD...0x06DD, 0x070F...0x070F, 0x0890...0x0891,
+        0x08E2...0x08E2, 0x180E...0x180E, 0x200B...0x200B, 0x200E...0x200F, 0x202A...0x202E, 0x2060...0x2064,
+        0x2066...0x206F, 0xFEFF...0xFEFF, 0xFFF9...0xFFFB, 0x110BD...0x110BD, 0x110CD...0x110CD,
+        0x13430...0x1343F, 0x1BCA0...0x1BCA3, 0x1D173...0x1D17A, 0xE0001...0xE0001,
     ]
 
     /// Fillers that draw nothing: they do not count as a visible character.
@@ -28,7 +35,7 @@ public enum DisplayNameRule {
         if name.isEmpty { return nil }
         if name.count > max { return nil }
         for s in name {
-            if directionControls.contains(s.value) || isBreakOrControl(s) { return nil }
+            if isRefused(s) { return nil }
         }
         guard hasVisible(name) else { return nil }
         var result = String.UnicodeScalarView()
@@ -39,7 +46,7 @@ public enum DisplayNameRule {
     /// A name for showing, from data this device did not check: direction and format controls, line and paragraph
     /// breaks and control characters removed, trimmed, cut to 64 code points; `fallback` when nothing visible is left.
     public static func forDisplay(_ name: String, fallback: String) -> String {
-        let kept = Array(name.unicodeScalars).filter { !directionControls.contains($0.value) && !isBreakOrControl($0) }
+        let kept = Array(name.unicodeScalars).filter { !isRefused($0) }
         var cut = trimmed(kept)
         if cut.count > serverMax { cut = trimmed(Array(cut.prefix(serverMax))) }
         guard hasVisible(cut) else { return fallback }
@@ -48,10 +55,13 @@ public enum DisplayNameRule {
         return String(result)
     }
 
-    private static func isBreakOrControl(_ s: Unicode.Scalar) -> Bool {
+    private static func isRefused(_ s: Unicode.Scalar) -> Bool {
+        let v = s.value
+        if refusedRanges.contains(where: { $0.contains(v) }) { return true }
         switch s.properties.generalCategory {
-        case .control, .lineSeparator, .paragraphSeparator: true
-        default: false
+        case .control, .lineSeparator, .paragraphSeparator: return true
+        case .format: return !(v == 0x200C || v == 0x200D || (0xE0020...0xE007F).contains(v))
+        default: return false
         }
     }
 
@@ -84,7 +94,7 @@ public enum DisplayNameRule {
                  .decimalNumber, .letterNumber, .otherNumber,
                  .connectorPunctuation, .dashPunctuation, .openPunctuation, .closePunctuation,
                  .initialPunctuation, .finalPunctuation, .otherPunctuation,
-                 .mathSymbol, .currencySymbol, .modifierSymbol, .otherSymbol:
+                 .mathSymbol, .currencySymbol, .modifierSymbol, .otherSymbol, .unassigned:
                 return true
             default: continue
             }

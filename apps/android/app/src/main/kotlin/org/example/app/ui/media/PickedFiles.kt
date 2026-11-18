@@ -93,7 +93,10 @@ object PickedFiles {
     suspend fun stage(context: Context, source: String, into: File, maxBytes: Long = MAX_BYTES): StageResult {
         val uri = Uri.parse(source)
         if (!isFromPicker(context, uri)) return StageResult.Unreadable
-        return when (val result = copy(into, "photo", maxBytes) { context.contentResolver.openInputStream(uri) }) {
+        // A video keeps a real name and extension (the picker's name, else from its mime); a photo is re-encoded, its name is moot.
+        val type = try { context.contentResolver.getType(uri) } catch (e: Exception) { null }
+        val name = if (type?.startsWith("video/") == true) org.example.app.core.chats.ChatMedia.videoFileName(displayName(context, uri), type) else "photo"
+        return when (val result = copy(into, name, maxBytes) { context.contentResolver.openInputStream(uri) }) {
             is Result.Copied -> StageResult.Copied(result.file)
             Result.TooBig -> StageResult.TooBig
             Result.Unreadable -> StageResult.Unreadable

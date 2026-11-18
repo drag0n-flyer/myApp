@@ -26,6 +26,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,7 +46,7 @@ import androidx.compose.ui.unit.dp
 import org.example.app.R
 import org.example.app.ui.media.AttachChoice
 import org.example.app.ui.media.CaptureState
-import org.example.app.ui.media.voiceClock
+import org.example.app.core.chats.VoiceGesture
 import org.example.app.messaging.content.TextLimit
 
 /** The bar above the composer: who is being replied to, or that a message is being edited. */
@@ -69,11 +73,20 @@ fun Composer(
     onCloseBar: () -> Unit = {},
     /** False hides the Camera row (a phone without a camera). */
     showCamera: Boolean = true,
-    /** Not null while a voice message is being recorded: the recording bar replaces the message field. */
-    recording: CaptureState.Recording? = null,
-    onCancelRecording: () -> Unit = {},
-    onSendRecording: () -> Unit = {},
+    /** The voice message in progress (hold bar, locked bar, preview) and the microphone's gesture callbacks. */
+    voice: VoiceUi = VoiceUi.None,
 ) {
+    val haptic = LocalHapticFeedback.current
+    val recordingPhase = (voice.state as? CaptureState.Recording)?.phase
+    LaunchedEffect(voice.state is CaptureState.Recording) {
+        if (voice.state is CaptureState.Recording) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+    }
+    LaunchedEffect(recordingPhase) {
+        if (recordingPhase == VoiceGesture.State.willCancel || recordingPhase == VoiceGesture.State.willLock) {
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        }
+    }
+    var across by remember { mutableFloatStateOf(0f) }
     var sheet by rememberSaveable { mutableStateOf(false) }
     // The caller owns the text; the cursor lives here and goes to the end whenever the caller replaces the text.
     var field by remember { mutableStateOf(TextFieldValue(text, TextRange(text.length))) }
@@ -100,38 +113,44 @@ fun Composer(
                 }
             }
         }
-        if (recording != null) {
-            RecordingBar(recording, onCancelRecording, onSendRecording)
+        val locked = voice.state as? CaptureState.Recording
+        if (voice.hint && voice.state == CaptureState.Idle) VoiceHint()
+        if (voice.state is CaptureState.Preview) {
+            PreviewBar(voice.state, voice)
+        } else if (locked != null && !voice.holding) {
+            LockedBar(locked, voice)
         } else Row(
             Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            IconButton(onClick = { sheet = true }, enabled = enabled) {
-                Icon(painterResource(R.drawable.ic_attach), contentDescription = stringResource(R.string.attach))
+            if (locked != null) {
+                HoldBar(locked, across, Modifier.weight(1f))
+            } else {
+                IconButton(onClick = { sheet = true }, enabled = enabled) {
+                    Icon(painterResource(R.drawable.ic_attach), contentDescription = stringResource(R.string.attach))
+                }
+                TextField(
+                    value = field,
+                    onValueChange = { value ->
+                        val cut = TextLimit.truncate(value.text)
+                        field = if (cut == value.text) value else TextFieldValue(cut, TextRange(cut.length))
+                        onTextChange(cut)
+                    },
+                    enabled = enabled,
+                    placeholder = { Text(stringResource(if (enabled) R.string.message_hint else R.string.sending_paused_hint)) },
+                    maxLines = 5,
+                    colors = TextFieldDefaults.colors(focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent),
+                    shape = RoundedCornerShape(24.dp),
+                    modifier = Modifier.weight(1f),
+                )
             }
-            TextField(
-                value = field,
-                onValueChange = { value ->
-                    val cut = TextLimit.truncate(value.text)
-                    field = if (cut == value.text) value else TextFieldValue(cut, TextRange(cut.length))
-                    onTextChange(cut)
-                },
-                enabled = enabled,
-                placeholder = { Text(stringResource(if (enabled) R.string.message_hint else R.string.sending_paused_hint)) },
-                maxLines = 5,
-                colors = TextFieldDefaults.colors(focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent),
-                shape = RoundedCornerShape(24.dp),
-                modifier = Modifier.weight(1f),
-            )
             if (text.isNotBlank()) {
                 IconButton(onClick = { onSend(text) }, enabled = enabled) {
                     Icon(painterResource(R.drawable.ic_send), contentDescription = stringResource(R.string.send))
                 }
             } else {
-                IconButton(onClick = onRecordVoice, enabled = enabled) {
-                    Icon(painterResource(R.drawable.ic_mic), contentDescription = stringResource(R.string.record_voice))
-                }
+                MicButton(enabled, voice, onRecordVoice) { across = it }
             }
         }
     }
@@ -142,26 +161,6 @@ fun Composer(
                 if (showCamera) AttachRow(R.string.attach_camera, R.drawable.ic_camera) { sheet = false; onAttach(AttachChoice.Camera) }
                 AttachRow(R.string.attach_file, R.drawable.ic_file) { sheet = false; onAttach(AttachChoice.File) }
             }
-        }
-    }
-}
-
-/** "Recording…" with the time so far, Cancel and Send. The buttons wait while the note is being finished. */
-@Composable
-private fun RecordingBar(recording: CaptureState.Recording, onCancel: () -> Unit, onSend: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Box(Modifier.size(10.dp).background(MaterialTheme.colorScheme.error, CircleShape))
-        Column(Modifier.weight(1f).semantics(mergeDescendants = true) {}) {
-            Text(stringResource(R.string.media_recording), style = MaterialTheme.typography.labelLarge)
-            Text(voiceClock((recording.seconds * 1000).toInt()), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        TextButton(onClick = onCancel, enabled = !recording.stopping) { Text(stringResource(R.string.cancel)) }
-        IconButton(onClick = onSend, enabled = !recording.stopping) {
-            Icon(painterResource(R.drawable.ic_send), contentDescription = stringResource(R.string.send))
         }
     }
 }

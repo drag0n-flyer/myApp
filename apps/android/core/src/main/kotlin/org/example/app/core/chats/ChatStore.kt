@@ -58,6 +58,28 @@ interface ChatStore {
     fun searchMessages(query: String, limit: Int): List<MessageHit>
     fun send(content: MessageContent, chatId: String, replyTo: String? = null)
     fun sendAttachment(path: String, kind: MediaKind, chatId: String)
+    /** The largest attachment the server takes, in bytes: a video above it is refused before anything is staged. */
+    val attachmentLimitBytes: Long get() = 104_857_600L
+    /**
+     * Sends a preview's plan ([SendPlan.plan]) in order: each attachment, and the caption as a text message right after
+     * the first. The default does them one after the other; a store that creates attachments asynchronously keeps the order.
+     */
+    fun sendBatch(sends: List<SendPlan.Send>, chatId: String) {
+        for (item in sends) when (item) {
+            is SendPlan.Send.Attachment -> sendAttachment(item.picked.path, item.picked.kind, chatId)
+            is SendPlan.Send.Text -> send(MessageContent.Text(item.text), chatId)
+        }
+    }
+    /**
+     * The fraction (0.0 to 1.0) uploaded of each outgoing attachment that is still uploading, by message id. A message
+     * is in the map from the moment it shows as sending until it is queued, failed or cancelled.
+     */
+    val uploadProgress: StateFlow<Map<String, Double>> get() = NO_UPLOADS
+    /**
+     * Cancel on an outgoing attachment: while it is queued or uploading it stops, and the message, its staged files and
+     * any encrypted copy are removed (the other side never sees it). Once it is sent this does nothing.
+     */
+    fun cancelUpload(messageId: String) {}
     /**
      * The last attachment in [chatId] that was dropped (too big, unreadable) and not yet shown, or null. It is kept until
      * the chat screen has shown it and calls [takeSendProblem], so leaving the chat early loses nothing. A message that
@@ -117,6 +139,8 @@ interface ChatStore {
     fun deleteFolder(id: String)
     fun moveFolder(id: String, toCustomIndex: Int)
 }
+
+private val NO_UPLOADS: StateFlow<Map<String, Double>> = kotlinx.coroutines.flow.MutableStateFlow(emptyMap())
 
 /** An attachment in [chatId] that was dropped, and why. */
 data class SendProblem(val chatId: String, val reason: Reason) {

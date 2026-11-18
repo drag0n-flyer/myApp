@@ -13,6 +13,8 @@ import Testing
     for (i, c) in cases.enumerated() {
         let input = c["input"] as! String
         let want = c["clean"] as? String
-        #expect(DisplayNameRule.clean(input) == want, "case \(i): \(input.unicodeScalars.map { String($0.value, radix: 16) })")
+        // Compare scalars: String `==` uses canonical equivalence and would hide a changed code point sequence.
+        let got = DisplayNameRule.clean(input).map { Array($0.unicodeScalars) }
+        #expect(got == want.map { Array($0.unicodeScalars) }, "case \(i): \(input.unicodeScalars.map { String($0.value, radix: 16) })")
     }
 }

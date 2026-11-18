@@ -28,6 +28,7 @@ type fakeFrames struct {
 }
 
 func (f *fakeFrames) HandleFrame(t string, h realtime.FrameHandler) { f.handlers[t] = h }
+func (f *fakeFrames) TrySend(dev, typ string, data any) bool        { return f.Send(dev, typ, data) }
 func (f *fakeFrames) Send(dev, typ string, data any) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()

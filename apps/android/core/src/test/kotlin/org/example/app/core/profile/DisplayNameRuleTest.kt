@@ -61,7 +61,8 @@ class DisplayNameRuleTest {
         assertEquals("!", DisplayNameRule.clean("!"))
         assertEquals("\u00A9", DisplayNameRule.clean("\u00A9"))
         assertEquals("\uD83D\uDE00", DisplayNameRule.clean("\uD83D\uDE00"))
-        assertEquals("A\u200BB", DisplayNameRule.clean("A\u200BB"))
+        assertEquals(null, DisplayNameRule.clean("A\u200BB")) // hidden format characters are refused inside a name
+        assertEquals("A\u200DB", DisplayNameRule.clean("A\u200DB"))
         val family = "\uD83D\uDC68\u200D\uD83D\uDC69\u200D\uD83D\uDC67" // joined emoji keep their joiners
         assertEquals(family, DisplayNameRule.clean(family))
     }

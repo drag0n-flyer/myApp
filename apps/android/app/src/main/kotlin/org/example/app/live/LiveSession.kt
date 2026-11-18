@@ -203,7 +203,7 @@ class LiveSession(
             api.report(accountId, conversationId, "other", messages.map { ReportedMessage(Instant.ofEpochMilli(it.sentAt), it.text) }, null)
     }
 
-    /** Photos are scaled and get a thumbnail; files go as they are. */
+    /** Photos are scaled and get a thumbnail; videos and files go as they are. */
     private class Preparer(private val context: Context, private val outDir: File) : MediaPreparer {
         override suspend fun prepare(path: String, kind: MediaKind): PreparedMedia? = when (kind) {
             MediaKind.Photo -> try {
@@ -218,7 +218,10 @@ class LiveSession(
             }
             MediaKind.File -> PreparedMedia(File(path))
             MediaKind.Voice -> VoicePrep.prepare(File(path))
-            MediaKind.Video -> null
+            // A video goes as picked (no re-encoding); only its size is read. Not a video the platform can read: it can never be sent.
+            MediaKind.Video -> org.example.app.media.VideoMeta.probe(File(path))?.let {
+                PreparedMedia(File(path), it.width, it.height, name = File(path).name, mime = org.example.app.core.chats.ChatMedia.videoMime(File(path).name))
+            }
         }
     }
 }

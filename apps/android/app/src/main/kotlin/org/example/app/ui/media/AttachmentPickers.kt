@@ -29,6 +29,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.example.app.R
+import org.example.app.core.chats.Picked
 import org.example.app.core.settings.MediaKind
 import org.example.app.media.MediaCache
 import org.example.app.media.VoicePrep
@@ -47,23 +48,32 @@ class AttachmentPickers(val cameraAvailable: Boolean, private val launch: (Attac
 }
 
 /**
- * Photo (`PickVisualMedia`), File (`OpenDocument`, copied into app storage first) and Camera (`TakePicture` into a
- * file of the app's own camera folder, after the camera permission). Each result goes to [onAttachment] as a path the
- * sender can read and the kind of attachment. Runs its file work off the main thread.
+ * Photo and video (`PickMultipleVisualMedia`), File (`OpenDocument`, copied into app storage first) and Camera
+ * (`TakePicture` into a file of the app's own camera folder, after the camera permission). A file goes to [onAttachment]
+ * as a path the sender can read; photos and videos go to [onPicked], which shows the send preview (nothing is staged or
+ * uploaded before the person sends). Runs its file work off the main thread.
  */
 @Composable
-fun rememberAttachmentPickers(onAttachment: (path: String, kind: MediaKind) -> Unit, notify: (Int) -> Unit): AttachmentPickers {
+fun rememberAttachmentPickers(
+    onAttachment: (path: String, kind: MediaKind) -> Unit,
+    notify: (Int) -> Unit,
+    onPicked: (List<Picked>) -> Unit = { items -> items.forEach { onAttachment(it.path, it.kind) } },
+): AttachmentPickers {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val attach by rememberUpdatedState(onAttachment)
+    val picked by rememberUpdatedState(onPicked)
     val say by rememberUpdatedState(notify)
     val expectReturn by rememberUpdatedState(LocalExpectReturn.current)
     // Where the camera is writing; kept across a rotation and the camera app being in front.
     var cameraFile by rememberSaveable { mutableStateOf<String?>(null) }
 
-    val photo = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        if (PickedFiles.isFromPicker(context, uri)) attach(uri.toString(), MediaKind.Photo) else say(R.string.media_file_unreadable)
+    val photo = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        val fromPicker = uris.filter { PickedFiles.isFromPicker(context, it) }
+        if (fromPicker.size < uris.size) say(R.string.media_file_unreadable)
+        if (fromPicker.isEmpty()) return@rememberLauncherForActivityResult
+        scope.launch { picked(withContext(Dispatchers.IO) { fromPicker.map { describePicked(context, it) } }) }
     }
 
     val document = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -93,7 +103,7 @@ fun rememberAttachmentPickers(onAttachment: (path: String, kind: MediaKind) -> U
                     val file = File(path)
                     (taken && file.length() > 0).also { if (!it) file.delete() }
                 }
-                if (usable) attach(path, MediaKind.Photo)
+                if (usable) picked(listOf(Picked(path, MediaKind.Photo, withContext(Dispatchers.IO) { File(path).length() })))
             }
         }
     }
@@ -128,7 +138,7 @@ fun rememberAttachmentPickers(onAttachment: (path: String, kind: MediaKind) -> U
         AttachmentPickers(hasCamera) { choice ->
             try {
                 when (choice) {
-                    AttachChoice.Photo -> expectReturn().also { photo.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+                    AttachChoice.Photo -> expectReturn().also { photo.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) }
                     AttachChoice.File -> expectReturn().also { document.launch(arrayOf("*/*")) }
                     AttachChoice.Camera ->
                         if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
@@ -144,8 +154,22 @@ fun rememberAttachmentPickers(onAttachment: (path: String, kind: MediaKind) -> U
     }
 }
 
+/** A picked photo or video: a video by the type the provider reports, and its size (0 when the provider does not say). Blocking. */
+private fun describePicked(context: Context, uri: Uri): Picked {
+    val type = try { context.contentResolver.getType(uri) } catch (e: Exception) { null }
+    val size = try {
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { c ->
+            if (c.moveToFirst() && !c.isNull(0)) c.getLong(0) else 0L
+        } ?: 0L
+    } catch (e: Exception) {
+        0L
+    }
+    val video = org.example.app.core.chats.ChatMedia.isVideo(displayName(context, uri).orEmpty(), type.orEmpty())
+    return Picked(uri.toString(), if (video) MediaKind.Video else MediaKind.Photo, size)
+}
+
 /** What the document provider calls the file; null when it does not say. The caller cleans it before use. */
-private fun displayName(context: Context, uri: Uri): String? = try {
+internal fun displayName(context: Context, uri: Uri): String? = try {
     context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
         if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getString(0) else null
     } ?: uri.lastPathSegment
@@ -153,36 +177,65 @@ private fun displayName(context: Context, uri: Uri): String? = try {
     uri.lastPathSegment
 }
 
-/** The microphone button's side of recording: the capture, and the tap that asks for the permission first. */
-class VoiceControls(val capture: VoiceCapture, val requestStart: () -> Unit)
+/**
+ * The microphone button's side of recording: the capture, [press] (finger down: asks for the permission first, and a
+ * press that triggers the system prompt does not record) and [activate] (TalkBack, keyboard: a locked recording).
+ */
+class VoiceControls(val capture: VoiceCapture, val press: (rtl: Boolean) -> Unit, val activate: () -> Unit)
 
 /**
- * A [VoiceCapture] on the real recorder. A tap on the microphone starts recording after the microphone permission (asked
- * on first use); refusing it says so in one line. Leaving the screen, or the app going to the background, throws a
- * recording in progress away: a note recorded with the microphone cut off would be silence.
+ * A [VoiceCapture] on the real recorder. Holding the microphone records after the microphone permission (asked on first
+ * use, and that first press records nothing); refusing it says so in one line. The app going to the background, or a call,
+ * stops a recording in progress and keeps what was captured as a preview; so does leaving the chat or a rotation (the preview
+ * comes back with the next screen of the same [chatKey]). The 30-minute limit does the same.
  */
 @Composable
-fun rememberVoiceControls(onNote: (File) -> Unit, notify: (Int) -> Unit): VoiceControls {
+fun rememberVoiceControls(
+    /** "<accountId>/<chatId>": a kept recording is only ever shown again in the same chat of the same account. */
+    chatKey: String,
+    onNote: (File) -> Unit,
+    notify: (Int) -> Unit,
+    /** The recorder behind the capture; tests pass a fake. [onLimit] is called on the recording thread. */
+    recorderFor: (Context, File, onLimit: () -> Unit) -> RecorderPort = { ctx, dir, onLimit ->
+        VoiceRecorderPort(VoiceRecorder(ctx, dir) { onLimit() }, dir)
+    },
+    /** Run on a finished note before it is sent; tests pass their own. */
+    check: (File) -> Boolean = { VoicePrep.prepare(it) != null },
+): VoiceControls {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val note by rememberUpdatedState(onNote)
     val say by rememberUpdatedState(notify)
-    val capture = remember(context) {
+    val capture = remember(context, chatKey) {
         val dir = MediaCache.outgoingDir(context)
-        VoiceCapture(scope, VoiceRecorderPort(VoiceRecorder(context, dir), dir), { note(it) }, { say(it) }, check = { VoicePrep.prepare(it) != null })
+        var self: VoiceCapture? = null
+        val madeIn = VoiceKeep.currentGeneration()
+        VoiceCapture(
+            scope, recorderFor(context, dir) { self?.limitReached() }, { note(it) }, { say(it) },
+            check = check,
+            keep = { VoiceKeep.put(chatKey, it, madeIn) },
+        ).also { self = it }
     }
-    DisposableEffect(capture) { onDispose { capture.release() } }
-    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { capture.cancel() }
+    DisposableEffect(capture) {
+        // Asks for a recording kept by the previous screen of this chat. When this screen leaves it stops asking first, so
+        // its own recording is kept for the next screen and not handed to a screen that is already gone.
+        val waiter: (CaptureState.Preview) -> Unit = { capture.adopt(it) }
+        VoiceKeep.take(chatKey, waiter)
+        onDispose {
+            VoiceKeep.forget(chatKey, waiter)
+            capture.release()
+        }
+    }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { capture.interrupted() }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) capture.begin() else say(R.string.media_mic_off)
+        if (!granted) say(R.string.media_mic_off)
     }
     return remember(capture, permission) {
-        VoiceControls(capture) {
-            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                capture.begin()
-            } else {
-                permission.launch(Manifest.permission.RECORD_AUDIO)
-            }
+        fun allowed(): Boolean {
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) return true
+            permission.launch(Manifest.permission.RECORD_AUDIO)
+            return false
         }
+        VoiceControls(capture, press = { rtl -> if (allowed()) capture.press(rtl) }, activate = { if (allowed()) capture.activate() })
     }
 }

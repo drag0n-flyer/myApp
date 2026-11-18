@@ -25,6 +25,9 @@ type FrameRouter interface {
 	HandleFrame(frameType string, h FrameHandler)
 	// Send writes a frame to a connected device and reports whether it was connected.
 	Send(deviceID string, frameType string, data any) bool
+	// TrySend is Send for signals that may be lost: a full buffer drops the
+	// frame and, unlike Send, leaves the connection open.
+	TrySend(deviceID string, frameType string, data any) bool
 }
 
 // Module is the realtime module. It is the server's core.Notifier and
@@ -130,6 +133,21 @@ func (m *Module) Send(deviceID string, frameType string, data any) bool {
 		return false
 	}
 	return c.enqueue(b)
+}
+
+// TrySend writes a frame to a connected device without ever closing its
+// connection. It reports false when the device is offline or its buffer is
+// full (the frame is dropped).
+func (m *Module) TrySend(deviceID string, frameType string, data any) bool {
+	c := m.hub.get(deviceID)
+	if c == nil {
+		return false
+	}
+	b, err := encodeFrame(frameType, "", data)
+	if err != nil {
+		return false
+	}
+	return c.tryEnqueue(b)
 }
 
 func (m *Module) serveWS(w http.ResponseWriter, r *http.Request) error {

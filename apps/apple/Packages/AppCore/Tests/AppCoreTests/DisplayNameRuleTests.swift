@@ -69,7 +69,8 @@ private func scalar(_ cp: UInt32) -> String { String(Unicode.Scalar(cp)!) }
     #expect(DisplayNameRule.clean("!") == "!")
     #expect(DisplayNameRule.clean("\u{00A9}") == "\u{00A9}")
     #expect(DisplayNameRule.clean("😀") == "😀")
-    #expect(DisplayNameRule.clean("A\u{200B}B") == "A\u{200B}B")
+    #expect(DisplayNameRule.clean("A\u{200B}B") == nil)   // hidden format characters are refused inside a name
+    #expect(DisplayNameRule.clean("A\u{200D}B") == "A\u{200D}B")
     let family = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}"
     #expect(DisplayNameRule.clean(family) == family)
 }

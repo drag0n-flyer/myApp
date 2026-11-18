@@ -123,6 +123,22 @@ func (c *conn) enqueue(b []byte) bool {
 	}
 }
 
+// tryEnqueue queues a frame without blocking and without closing the
+// connection: a full buffer drops the frame. For signals that may be lost.
+func (c *conn) tryEnqueue(b []byte) bool {
+	select {
+	case <-c.done:
+		return false
+	default:
+	}
+	select {
+	case c.send <- b:
+		return true
+	default:
+		return false
+	}
+}
+
 func (c *conn) writeLoop(ctx context.Context) {
 	for {
 		select {

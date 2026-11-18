@@ -148,11 +148,18 @@ public final class LiveChatStore: ChatStore {
         return id
     }
 
-    /// The time for a new message: never earlier than a millisecond after the one before it.
+    /// The time for a new message: a millisecond after the one before it while the clock has not passed it (a
+    /// burst keeps its order), and the clock itself otherwise, so a clock that jumped ahead and was corrected is
+    /// followed again instead of every later message carrying a time in the future.
     private func stamp() -> Date {
-        let now = max(deps.now(), lastStamp.addingTimeInterval(0.001))
-        lastStamp = now
-        return now
+        let stamped = Self.nextStamp(clock: deps.now(), last: lastStamp)
+        lastStamp = stamped
+        return stamped
+    }
+
+    nonisolated static func nextStamp(clock: Date, last: Date) -> Date {
+        let ahead = last.timeIntervalSince(clock)
+        return ahead >= 0 && ahead <= 1 ? last.addingTimeInterval(0.001) : clock
     }
 
     private func reload() {

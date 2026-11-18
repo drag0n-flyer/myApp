@@ -324,3 +324,29 @@ func TestConnectionCount(t *testing.T) {
 	c2.Close(websocket.StatusNormalClosure, "bye")
 	waitFor(t, func() bool { return e.m.ConnectionCount() == 1 })
 }
+
+func TestTrySendDropsOnFullBufferWithoutClosing(t *testing.T) {
+	e := setup(t)
+	ws := e.dial(t, e.p)
+	c := &conn{ws: ws, dev: "d", send: make(chan []byte, sendBuffer), done: make(chan struct{}), hub: e.m.hub}
+	e.m.hub.add(c)
+	for i := 0; i < sendBuffer; i++ {
+		if !e.m.TrySend("d", "conv.ephemeral", map[string]int{"n": i}) {
+			t.Fatalf("TrySend %d failed early", i)
+		}
+	}
+	if e.m.TrySend("d", "conv.ephemeral", map[string]int{"n": -1}) {
+		t.Fatal("overflow accepted")
+	}
+	select {
+	case <-c.done:
+		t.Fatal("TrySend closed the connection")
+	default:
+	}
+	if e.m.hub.get("d") != c {
+		t.Fatal("connection was unregistered")
+	}
+	if e.m.TrySend("nobody", "conv.ephemeral", nil) {
+		t.Fatal("offline device reported as sent")
+	}
+}
