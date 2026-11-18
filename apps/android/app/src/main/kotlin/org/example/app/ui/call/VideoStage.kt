@@ -7,14 +7,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -63,26 +61,29 @@ fun VideoStage(
 }
 
 /**
- * One [SurfaceViewRenderer] on a [VideoFeed]. It attaches on entering the composition and, on leaving it (the screen
- * goes, or the call ends), detaches and releases, so two calls in a row leave nothing behind.
+ * One [SurfaceViewRenderer] on a [VideoFeed]. The renderer is made once per feed, inside the view's factory (so what is
+ * on screen is what is attached), and detached and released when the view is released: the screen goes, the call ends,
+ * or the composition is abandoned. A new [egl] object on a recomposition does not make another renderer.
  */
 @Composable
 private fun FeedView(feed: VideoFeed, egl: EglBase.Context, mirror: Boolean, overlay: Boolean, modifier: Modifier) {
-    val context = LocalContext.current
-    val renderer = remember(feed, egl) {
-        SurfaceViewRenderer(context).apply {
-            init(egl, null)
-            setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL)
-            setEnableHardwareScaler(true)
-            setZOrderMediaOverlay(overlay)
-        }
+    key(feed) {
+        AndroidView(
+            factory = { context ->
+                SurfaceViewRenderer(context).apply {
+                    init(egl, null)
+                    setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL)
+                    setEnableHardwareScaler(true)
+                    setZOrderMediaOverlay(overlay)
+                    feed.attach(this)
+                }
+            },
+            modifier = modifier,
+            onRelease = {
+                feed.detach(it)
+                it.release()
+            },
+            update = { it.setMirror(mirror) },
+        )
     }
-    DisposableEffect(renderer) {
-        feed.attach(renderer)
-        onDispose {
-            feed.detach(renderer)
-            renderer.release()
-        }
-    }
-    AndroidView(factory = { renderer }, modifier = modifier, update = { it.setMirror(mirror) })
 }

@@ -22,6 +22,7 @@ import androidx.core.content.ContextCompat
 class CallService : Service() {
     companion object {
         private const val ACTION_ANSWERED = "org.example.app.calls.service.ANSWERED"
+        private const val ACTION_CAMERA = "org.example.app.calls.service.CAMERA"
         private const val EXTRA_SEND_VIDEO = "org.example.app.calls.service.SEND_VIDEO"
 
         /** Android 10 has no microphone or camera foreground service types. */
@@ -36,6 +37,22 @@ class CallService : Service() {
 
         /** The user answered, or placed the call. [sendVideo] is whether the camera is on. */
         fun answered(context: Context, call: CallInfo, sendVideo: Boolean) = start(context, ACTION_ANSWERED, call, sendVideo)
+
+        /** The call this service is running, while it runs. */
+        @Volatile private var running: CallInfo? = null
+
+        /**
+         * The camera permission arrived mid-call: re-declares the foreground service with the camera type. Does nothing
+         * when no call service is running (it never starts one by itself).
+         */
+        fun cameraGranted(context: Context) {
+            val call = running ?: return
+            try {
+                start(context, ACTION_CAMERA, call, sendVideo = true)
+            } catch (_: RuntimeException) {
+                // The system refused the restart: the call goes on as it was.
+            }
+        }
 
         fun stop(context: Context) {
             context.stopService(Intent(context, CallService::class.java))
@@ -52,13 +69,19 @@ class CallService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    override fun onDestroy() {
+        running = null
+        super.onDestroy()
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val call = CallExtras.read(intent?.extras)
         if (call == null) {
             stopSelf()
             return START_NOT_STICKY
         }
-        if (intent?.action == ACTION_ANSWERED) {
+        if (intent?.action == ACTION_ANSWERED || intent?.action == ACTION_CAMERA) {
+            running = call
             val video = intent.getBooleanExtra(EXTRA_SEND_VIDEO, false)
             foreground(CallNotifications.ongoing(this, call), allowed(serviceTypes(video)))
         }

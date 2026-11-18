@@ -53,7 +53,12 @@ class CallVideoInstrumentedTest {
         override fun detach(sink: VideoSink) { detaches++; attached -= sink }
     }
 
-    private class FakeSurface(override val cameraCount: Int, override val eglContext: EglBase.Context?) : CallVideoSurface {
+    private class FakeSurface(
+        override val cameraCount: Int,
+        private val fixedEgl: EglBase.Context?,
+        private val freshEgl: (() -> EglBase.Context)? = null,
+    ) : CallVideoSurface {
+        override val eglContext: EglBase.Context? get() = freshEgl?.invoke() ?: fixedEgl
         override val remote = CountingFeed()
         override val local = CountingFeed()
         override val remoteVideoOn: StateFlow<Boolean> = MutableStateFlow(true)
@@ -73,7 +78,7 @@ class CallVideoInstrumentedTest {
 
     @Test
     fun videoCallShowsTheStageAndNoFlipWithOneCamera() {
-        val surface = FakeSurface(cameraCount = 1, eglContext = null)
+        val surface = FakeSurface(cameraCount = 1, fixedEgl = null)
         CallVideo.publish(surface)
         val (_, vm) = startVideoCall()
         rule.setContent { AppTheme { CallScreen(vm, ticking = false, cameraAccess = granted) } }
@@ -84,7 +89,7 @@ class CallVideoInstrumentedTest {
 
     @Test
     fun flipShowsWithTwoCamerasAndFlips() {
-        val surface = FakeSurface(cameraCount = 2, eglContext = null)
+        val surface = FakeSurface(cameraCount = 2, fixedEgl = null)
         CallVideo.publish(surface)
         val (_, vm) = startVideoCall()
         rule.setContent { AppTheme { CallScreen(vm, ticking = false, cameraAccess = granted) } }
@@ -121,6 +126,29 @@ class CallVideoInstrumentedTest {
             assertEquals(1, second.remote.detaches)
             assertTrue(second.remote.attached.isEmpty() && second.local.attached.isEmpty())
         } finally {
+            egl.release()
+        }
+    }
+
+    @Test
+    fun aNewEglContextObjectOnEveryReadMakesExactlyOneRenderer() {
+        val egl = EglBase.create()
+        // Like the AAR: a different context object on each read.
+        val surface = FakeSurface(cameraCount = 1, fixedEgl = null, freshEgl = { egl.eglBaseContext })
+        CallVideo.publish(surface)
+        try {
+            val (engine, vm) = startVideoCall()
+            rule.setContent { AppTheme { CallScreen(vm, ticking = false, cameraAccess = granted) } }
+            rule.waitForIdle()
+            repeat(4) {
+                rule.runOnIdle { engine.advance(1.0) } // each tick recomposes the screen
+                rule.waitForIdle()
+            }
+            assertEquals(1, surface.remote.attaches)
+            assertEquals(1, surface.local.attaches)
+            assertEquals(0, surface.remote.detaches)
+        } finally {
+            CallVideo.clear(surface)
             egl.release()
         }
     }

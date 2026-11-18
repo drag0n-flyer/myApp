@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import org.example.app.calls.android.CallService
 import org.example.app.calls.policy.AudioProfile
 import org.example.app.calls.policy.IceTransportPolicy
 import org.example.app.calls.policy.MediaStats
@@ -141,7 +142,8 @@ class WebRtcMediaSession(context: Context, private val settings: UserSettings) :
 
     /** What the call screen draws and controls; published while the call has video. */
     private val surface = object : CallVideoSurface {
-        override val eglContext: EglBase.Context? get() = WebRtcFactory.eglContext()
+        // Once per session: the AAR's getEglBaseContext() returns a new object on every read, and the screen keys on it.
+        override val eglContext: EglBase.Context? by lazy(LazyThreadSafetyMode.NONE) { WebRtcFactory.eglContext() }
         override val remote = feed(remoteSinks) { remoteTrack }
         override val local = feed(localSinks) { videoTrack }
         override val remoteVideoOn: StateFlow<Boolean> = remoteOn.asStateFlow()
@@ -212,7 +214,8 @@ class WebRtcMediaSession(context: Context, private val settings: UserSettings) :
         if (video) {
             cameras = try { Camera2Enumerator(appContext).deviceNames.size } catch (_: Exception) { 0 }
             startRemoteVideoMonitor()
-            CallVideo.publish(surface)
+            // Under the lock, with the closed check: a close that ran in between must not leave its surface published.
+            synchronized(lock) { if (!closed) CallVideo.publish(surface) }
         }
     }
 
@@ -360,10 +363,10 @@ class WebRtcMediaSession(context: Context, private val settings: UserSettings) :
 
     override suspend fun close() {
         val peer: PeerConnection?
-        CallVideo.clear(surface) // the screen lets go of its renderers first
         synchronized(lock) {
             if (closed) return
             closed = true
+            CallVideo.clear(surface) // the screen lets go of its renderers
             // Renderers come off the tracks before the peer connection disposes them.
             remoteSinks.closeAll { remoteTrack?.removeSink(it) }
             localSinks.closeAll { videoTrack?.removeSink(it) }
@@ -447,15 +450,22 @@ class WebRtcMediaSession(context: Context, private val settings: UserSettings) :
             val name = enumerator.deviceNames.firstOrNull { enumerator.isFrontFacing(it) }
                 ?: enumerator.deviceNames.firstOrNull() ?: run { cameraFailed.value = true; return }
             val helper = SurfaceTextureHelper.create("CallCamera", WebRtcFactory.eglContext())
+                ?: run { cameraFailed.value = true; return }
             front.value = enumerator.isFrontFacing(name)
-            enumerator.createCapturer(name, object : CameraVideoCapturer.CameraEventsHandler {
+            val created = enumerator.createCapturer(name, object : CameraVideoCapturer.CameraEventsHandler {
                 override fun onCameraError(errorDescription: String) { cameraFailed.value = true }
                 override fun onCameraDisconnected() { cameraFailed.value = true }
                 override fun onCameraFreezed(errorDescription: String) = Unit
                 override fun onCameraOpening(cameraName: String) = Unit
                 override fun onFirstFrameAvailable() { cameraFailed.value = false }
                 override fun onCameraClosed() = Unit
-            }).also {
+            })
+            if (created == null) {
+                helper.dispose()
+                cameraFailed.value = true
+                return
+            }
+            created.also {
                 it.initialize(helper, appContext, source.capturerObserver)
                 textureHelper = helper
                 capturer = it
@@ -468,11 +478,14 @@ class WebRtcMediaSession(context: Context, private val settings: UserSettings) :
 
     /** The permission arrived after video was asked for: starts the camera at the tier that was waiting. */
     private fun retryCapture() {
-        synchronized(lock) {
+        val started = synchronized(lock) {
             if (closed) return
             val tier = pendingTier ?: return
             startCapture(tier)
+            capturing != null
         }
+        // The call's service started without the camera type; add it now (Android 14 cuts a camera without it in the background).
+        if (started) CallService.cameraGranted(appContext)
     }
 
     private fun flip() {

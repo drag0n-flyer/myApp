@@ -30,12 +30,13 @@ class NetworkWatcher internal constructor(
     private var last: NetworkType? = null
 
     fun start() {
+        // Registered under the lock, so a concurrent stop() cannot slip in between and leave a callback behind.
         synchronized(lock) {
             if (started) return
             started = true
             last = null
+            source.register(::report)
         }
-        source.register(::report)
     }
 
     fun stop() {
@@ -43,8 +44,8 @@ class NetworkWatcher internal constructor(
             if (!started) return
             started = false
             last = null
+            source.unregister()
         }
-        source.unregister()
     }
 
     private fun report(type: NetworkType) {

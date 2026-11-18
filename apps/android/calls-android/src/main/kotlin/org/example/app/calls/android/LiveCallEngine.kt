@@ -154,7 +154,8 @@ class LiveCallEngine(
         }
         network = type
         run(machine.handle(CallEvent.ContextChanged(callContext(isContact))))
-        if (live) run(machine.handle(CallEvent.PathChanged))
+        // No network: nothing to restart over, and a restart now would block the useful one when a network returns.
+        if (type != NetworkType.Offline && live) run(machine.handle(CallEvent.PathChanged))
     }
 
     override fun reset() = enqueue {
@@ -256,6 +257,7 @@ class LiveCallEngine(
         outgoing = isOutgoing
         isContact = contact
         shownPhase = null
+        network = null // each call starts from the device's current network, not the last call's
         run(machine.handle(CallEvent.ContextChanged(callContext(contact))))
     }
 
