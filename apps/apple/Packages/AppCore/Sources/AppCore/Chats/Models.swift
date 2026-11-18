@@ -82,8 +82,10 @@ public struct MessageHit: Hashable, Sendable {
     public var chatID: String
     public var messageID: String
     public var preview: String
+    public var sentAt: Date
 
-    public init(chatID: String, messageID: String, preview: String) {
+    public init(chatID: String, messageID: String, preview: String, sentAt: Date = .distantPast) {
+        self.sentAt = sentAt
         self.chatID = chatID
         self.messageID = messageID
         self.preview = preview
