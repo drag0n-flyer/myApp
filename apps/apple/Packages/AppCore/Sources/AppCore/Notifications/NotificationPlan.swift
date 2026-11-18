@@ -75,6 +75,18 @@ public enum NotificationPlan {
     public static func badgeCount(unread: [String: Int], muted: Set<String>, archived: Set<String>) -> Int {
         unread.filter { $0.value > 0 && !muted.contains($0.key) && !archived.contains($0.key) }.count
     }
+
+    /// Chats whose unread count fell to zero between two looks: they were read, so their notifications go.
+    public static func readChats(before: [String: Int], after: [String: Int]) -> Set<String> {
+        Set(before.filter { $0.value > 0 && after[$0.key] == 0 }.keys)
+    }
+
+    /// Chats whose notifications must go because the chat left the list between two looks, or was blocked since.
+    public static func leftChats(
+        before: Set<String>, after: Set<String>, blockedBefore: Set<String>, blockedAfter: Set<String>
+    ) -> Set<String> {
+        before.subtracting(after).union(blockedAfter.subtracting(blockedBefore))
+    }
 }
 
 /// Finds the chat a notification belongs to.

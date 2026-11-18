@@ -91,6 +91,18 @@ import Testing
         #expect(NotificationPlan.badgeCount(unread: [:], muted: [], archived: []) == 0)
         #expect(NotificationPlan.badgeCount(unread: ["a": -1], muted: [], archived: []) == 0)
     }
+
+    @Test func aChatIsReadWhenItsUnreadCountFallsToZero() {
+        let before = ["a": 2, "b": 0, "c": 1, "d": 3]
+        let after = ["a": 0, "b": 0, "c": 4]   // d left the list: not "read", see leftChats
+        #expect(NotificationPlan.readChats(before: before, after: after) == ["a"])
+    }
+
+    @Test func aChatThatLeftOrWasBlockedLosesItsNotifications() {
+        #expect(NotificationPlan.leftChats(before: ["a", "b"], after: ["a"], blockedBefore: [], blockedAfter: []) == ["b"])
+        #expect(NotificationPlan.leftChats(before: ["a", "b"], after: ["a", "b"], blockedBefore: [], blockedAfter: ["b"]) == ["b"])
+        #expect(NotificationPlan.leftChats(before: ["a"], after: ["a"], blockedBefore: ["a"], blockedAfter: ["a"]).isEmpty)
+    }
 }
 
 @Suite struct NotificationRouteTests {
