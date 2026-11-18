@@ -11,7 +11,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
@@ -131,7 +133,7 @@ class LiveChatStore(
     private val mediaPreparer: MediaPreparer = MediaPreparer { path, kind -> if (kind == MediaKind.File) PreparedMedia(File(path)) else null },
     /**
      * Copies a `content:` or `file:` source into the given folder and returns the copy, or why it cannot (too large, not
-     * readable); the person is told through [sendProblems]. A URI permission ends with the process, so the copy is made
+     * readable); the person is told through [sendProblem]. A URI permission ends with the process, so the copy is made
      * when the message is created.
      */
     private val stageSource: suspend (source: String, into: File) -> StageResult = { _, _ -> StageResult.Unreadable },
@@ -166,10 +168,13 @@ class LiveChatStore(
     override val reportedChatIds: StateFlow<Set<String>> = _reported.asStateFlow()
     override val mutedChatIds: StateFlow<Set<String>> = _muted.asStateFlow()
 
-    private val problems = kotlinx.coroutines.flow.MutableSharedFlow<SendProblem>(extraBufferCapacity = 16)
-    override val sendProblems: kotlinx.coroutines.flow.Flow<SendProblem> = problems.asSharedFlow()
+    /** The last dropped attachment per chat, kept until the chat screen has shown it ([takeSendProblem]). */
+    private val problems = MutableStateFlow<Map<String, SendProblem.Reason>>(emptyMap())
+    override fun sendProblem(chatId: String): Flow<SendProblem.Reason?> = problems.map { it[chatId] }.distinctUntilChanged()
+    override fun takeSendProblem(chatId: String) = problems.update { it - chatId }
+    private fun raise(chatId: String, reason: SendProblem.Reason) { if (!closed.get()) problems.update { it + (chatId to reason) } }
 
-    private val meFlow =MutableStateFlow(Contact(device.accountId, "You", ""))
+    private val meFlow = MutableStateFlow(Contact(device.accountId, "You", ""))
     private val meContact: Contact get() = meFlow.value
     @Volatile private var contactRows: Map<String, ContactRecord> = emptyMap()
     override val me: Contact get() = meContact
@@ -227,6 +232,7 @@ class LiveChatStore(
     suspend fun shutdown() {
         closed.set(true)
         settle()
+        problems.value = emptyMap() // nothing of this account is kept past sign-out
     }
 
     private fun write(reload: Boolean = true, job: () -> Unit) {
@@ -574,13 +580,13 @@ class LiveChatStore(
             val copy = (result as? StageResult.Copied)?.file?.takeIf { it.isFile }
             if (copy == null) {
                 dir.deleteRecursively()
-                problems.tryEmit(SendProblem(chatId, if (result is StageResult.TooBig) SendProblem.Reason.TooBig else SendProblem.Reason.Unreadable))
+                raise(chatId, if (result is StageResult.TooBig) SendProblem.Reason.TooBig else SendProblem.Reason.Unreadable)
             }
             return copy
         }
         val file = File(path)
         if (!file.isFile) {
-            problems.tryEmit(SendProblem(chatId, SendProblem.Reason.Unreadable))
+            raise(chatId, SendProblem.Reason.Unreadable)
             return null
         }
         return if (isInsideTemp(file)) moveInto(pendingDir(id), file) else file
@@ -737,7 +743,7 @@ class LiveChatStore(
             failUpload(id)
         }
         pendingDir(id).deleteRecursively()
-        problems.tryEmit(SendProblem(chatId, SendProblem.Reason.Unreadable))
+        raise(chatId, SendProblem.Reason.Unreadable)
         reload()
     }
 
@@ -761,7 +767,7 @@ class LiveChatStore(
         false
     }
 
-    /** The stand-in until the upload gives the real one: no id, but the real size, so the bubble never shows 0 B. */
+    /** True for an attachment envelope that still holds the placeholder: nothing about it was ever queued. */
     private fun isPlaceholder(envelope: ByteArray): Boolean = when (val e = runCatching { ContentCodec.decode(envelope) }.getOrNull()) {
         is ContentEnvelope.Photo -> e.a.id.isEmpty()
         is ContentEnvelope.Voice -> e.a.id.isEmpty()
@@ -769,6 +775,7 @@ class LiveChatStore(
         else -> false
     }
 
+    /** The stand-in until the upload gives the real one: no id, but the real size, so the bubble never shows 0 B. */
     private fun placeholderAtt(size: Long) = Att("", ByteArray(0), ByteArray(0), size, size)
 
     private fun envelopeFor(kind: MediaKind, id: String, at: Long, att: Att, p: PreparedMedia): ContentEnvelope = when (kind) {
@@ -804,6 +811,25 @@ class LiveChatStore(
         }
         File(blobDir.parentFile ?: blobDir, "pending").listFiles()?.forEach { dir ->
             if (dir.name !in uploading && repo.get(PENDING_UPLOAD_PREFIX + dir.name)?.isNotEmpty() != true) dir.deleteRecursively()
+        }
+    }
+
+    /**
+     * Removes finished blobs (`<id>-<digest>.enc`) in the blob folder that nothing points to: a process killed after the
+     * ciphertext was moved in but before the message was stored leaves one. Kept: a blob an attachment record points to,
+     * one a pending-upload key mentions, and anything younger than [ORPHAN_BLOB_AGE_MS], so a send in progress in this
+     * process is never touched.
+     */
+    private fun sweepOrphanBlobs() {
+        val files = blobDir.listFiles { f -> f.isFile && f.name.endsWith(".enc") } ?: return
+        val now = System.currentTimeMillis()
+        val pendingText = repo.entries(PENDING_UPLOAD_PREFIX).values.filter { it.isNotEmpty() }.joinToString("\n") { it.decodeToString() }
+        for (file in files) {
+            if (uploading.isNotEmpty() || now - file.lastModified() < ORPHAN_BLOB_AGE_MS) continue
+            val id = file.name.removeSuffix(".enc").substringBeforeLast('-')
+            val record = try { repo.attachment(id) } catch (_: Exception) { continue }
+            if (record != null || pendingText.contains(file.name) || pendingText.contains(file.path)) continue
+            file.delete()
         }
     }
 
@@ -866,6 +892,7 @@ class LiveChatStore(
     /** Removes decrypted files and partial downloads a killed process left: `Downloader.sweepOpen`, then `MediaCache.sweep`. */
     fun sweepStartup() {
         failInterruptedUploads()
+        sweepOrphanBlobs()
         reload()
         downloader.sweepOpen()
         mediaSweep()
@@ -1172,6 +1199,7 @@ class LiveChatStore(
 
     companion object {
         const val CACHED_MESSAGES = 50
+        private const val ORPHAN_BLOB_AGE_MS = 10 * 60 * 1000L
         private const val WRITE_WAIT_MS = 10_000L
         private const val REPORTED_MESSAGES = 10
         const val BLOCK_PREFIX = "pending.block."

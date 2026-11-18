@@ -11,7 +11,6 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -367,9 +366,11 @@ class ChatViewModel(
     /** Sends a picked, photographed or recorded file; [path] is a file the sender can read, or a `content:` URI for a photo. */
     fun sendAttachment(path: String, kind: MediaKind) = store.sendAttachment(path, kind, chatId)
 
-    /** Why an attachment sent from this chat was dropped (too big, unreadable), for the one-line notice. */
-    val sendProblems: kotlinx.coroutines.flow.Flow<SendProblem.Reason> =
-        store.sendProblems.filter { it.chatId == chatId }.map { it.reason }
+    /** Why the last attachment sent from this chat was dropped (too big, unreadable), until it has been shown; null when none. */
+    val sendProblem: kotlinx.coroutines.flow.Flow<SendProblem.Reason?> = store.sendProblem(chatId)
+
+    /** The notice has been shown: the store forgets the problem, so it is shown once. */
+    fun sendProblemShown() = store.takeSendProblem(chatId)
 
     /** Photos and files wait for a tap when the rules say not to download on this network. */
     fun autoDownloads(kind: MediaKind): Boolean = AutoDownloadPolicy.shouldDownload(kind, network, autoDownload())

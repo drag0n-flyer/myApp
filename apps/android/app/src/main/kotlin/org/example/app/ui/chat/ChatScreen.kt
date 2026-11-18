@@ -144,8 +144,11 @@ fun ChatScreen(
         }
     }
     LaunchedEffect(viewModel) {
-        viewModel.sendProblems.collect {
-            notice = if (it == SendProblem.Reason.TooBig) R.string.media_file_too_big else R.string.media_file_unreadable
+        viewModel.sendProblem.collect {
+            if (it != null) {
+                notice = if (it == SendProblem.Reason.TooBig) R.string.media_file_too_big else R.string.media_file_unreadable
+                viewModel.sendProblemShown()
+            }
         }
     }
     val photos = remember { PhotoCache() }

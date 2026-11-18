@@ -59,10 +59,13 @@ interface ChatStore {
     fun send(content: MessageContent, chatId: String, replyTo: String? = null)
     fun sendAttachment(path: String, kind: MediaKind, chatId: String)
     /**
-     * Attachments that could not be sent and were not kept (too big, unreadable), as they happen, for a one-line notice. A
-     * message that failed but is kept shows as [DeliveryStatus.Failed] instead. Nothing is replayed to a late collector.
+     * The last attachment in [chatId] that was dropped (too big, unreadable) and not yet shown, or null. It is kept until
+     * the chat screen has shown it and calls [takeSendProblem], so leaving the chat early loses nothing. A message that
+     * failed but is kept shows as [DeliveryStatus.Failed] instead.
      */
-    val sendProblems: kotlinx.coroutines.flow.Flow<SendProblem> get() = kotlinx.coroutines.flow.emptyFlow()
+    fun sendProblem(chatId: String): kotlinx.coroutines.flow.Flow<SendProblem.Reason?> = kotlinx.coroutines.flow.flowOf(null)
+    /** Forgets the problem of [chatId] once it has been shown. */
+    fun takeSendProblem(chatId: String) {}
     fun react(emoji: String, messageId: String, chatId: String)
     fun edit(messageId: String, chatId: String, text: String)
     fun delete(messageId: String, chatId: String)

@@ -74,22 +74,20 @@ class ChatViewModelTest {
     }
 
     @Test
-    fun sendProblemsOfThisChatReachTheScreenAndOthersDoNot() {
+    fun aSendProblemIsHandedToTheChatOnceShownAndForgotten() {
         val inner = storeWith(listOf(msg("1", "riya", MessageContent.Text("hi"))))
-        val problems = kotlinx.coroutines.flow.MutableSharedFlow<org.example.app.core.chats.SendProblem>(extraBufferCapacity = 4)
+        val kept = kotlinx.coroutines.flow.MutableStateFlow<org.example.app.core.chats.SendProblem.Reason?>(org.example.app.core.chats.SendProblem.Reason.TooBig)
+        val taken = mutableListOf<String>()
         val store = object : ChatStore by inner {
-            override val sendProblems: kotlinx.coroutines.flow.Flow<org.example.app.core.chats.SendProblem> get() = problems
+            override fun sendProblem(chatId: String) = if (chatId == "chat-riya") kept else kotlinx.coroutines.flow.flowOf(null)
+            override fun takeSendProblem(chatId: String) { taken += chatId; kept.value = null }
         }
         val vm = ChatViewModel(store, "chat-riya", NetworkType.Wifi) { AutoDownloadSettings() }
-        val seen = mutableListOf<org.example.app.core.chats.SendProblem.Reason>()
-        val job = kotlinx.coroutines.CoroutineScope(Dispatchers.Main).launch { vm.sendProblems.collect { seen += it } }
-        problems.tryEmit(org.example.app.core.chats.SendProblem("chat-other", org.example.app.core.chats.SendProblem.Reason.TooBig))
-        problems.tryEmit(org.example.app.core.chats.SendProblem("chat-riya", org.example.app.core.chats.SendProblem.Reason.TooBig))
-        problems.tryEmit(org.example.app.core.chats.SendProblem("chat-riya", org.example.app.core.chats.SendProblem.Reason.Unreadable))
+        val seen = mutableListOf<org.example.app.core.chats.SendProblem.Reason?>()
+        val job = kotlinx.coroutines.CoroutineScope(Dispatchers.Main).launch { vm.sendProblem.collect { seen += it } }
+        vm.sendProblemShown()
         job.cancel()
-        assertEquals(
-            listOf(org.example.app.core.chats.SendProblem.Reason.TooBig, org.example.app.core.chats.SendProblem.Reason.Unreadable),
-            seen,
-        )
+        assertEquals(listOf(org.example.app.core.chats.SendProblem.Reason.TooBig, null), seen)
+        assertEquals(listOf("chat-riya"), taken)
     }
 }

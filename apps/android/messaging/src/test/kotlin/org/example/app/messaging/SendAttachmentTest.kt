@@ -19,6 +19,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import org.example.app.core.chats.SendProblem
 import kotlinx.coroutines.runBlocking
@@ -129,7 +130,7 @@ class SendAttachmentTest {
             mediaSweep = { f.dirs.tempDir.listFiles()?.forEach { it.deleteRecursively() } },
         )
         return Session(store, api, scope).also { s ->
-            scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { store.sendProblems.collect { s.problems += it } }
+            scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { store.sendProblem("acc-ana").collect { r -> if (r != null) s.problems += SendProblem("acc-ana", r) } }
         }
     }
 
@@ -646,6 +647,53 @@ class SendAttachmentTest {
         s.store.settle()
         assertTrue(File(f.d.repo.attachmentForMessage(id)!!.localPath!!).isFile)
         assertIs<ContentEnvelope.File>(peerGot(f, id))
+    }
+
+    @Test
+    fun aDroppedAttachmentIsKeptUntilTheChatShowsItThenForgottenSeenByNoOtherChatAndClearedOnSignOut() = runBlocking<Unit> {
+        val f = fixture()
+        // Nothing has collected anything yet: the chat is not open.
+        val s = session(f) { _, _ -> StageResult.TooBig }
+        s.store.sendAttachment("content://provider/1", MediaKind.Photo, "acc-ana")
+        s.store.settle()
+        assertEquals(SendProblem.Reason.TooBig, s.store.sendProblem("acc-ana").first(), "shown when the chat is opened later")
+        assertNull(s.store.sendProblem("acc-other").first(), "another chat does not see it")
+        s.store.takeSendProblem("acc-ana")
+        assertNull(s.store.sendProblem("acc-ana").first(), "and only once")
+        s.store.sendAttachment("content://provider/2", MediaKind.Photo, "acc-ana")
+        s.store.settle()
+        assertEquals(SendProblem.Reason.TooBig, s.store.sendProblem("acc-ana").first())
+        s.store.shutdown()
+        assertNull(s.store.sendProblem("acc-ana").first(), "sign-out clears it")
+    }
+
+    private fun aged(file: File, ageMs: Long) = file.also { it.writeText("blob"); it.setLastModified(System.currentTimeMillis() - ageMs) }
+
+    @Test
+    fun atStartOnlyOldUnreferencedBlobsAreSwept() = runBlocking<Unit> {
+        val f = fixture()
+        val s = session(f)
+        val hex = "ab".repeat(32)
+        val hour = 3_600_000L
+        f.dirs.blobDir.mkdirs()
+        val orphan = aged(File(f.dirs.blobDir, "orphan-$hex.enc"), hour)
+        val referenced = aged(File(f.dirs.blobDir, "kept-$hex.enc"), hour)
+        val pendingRef = aged(File(f.dirs.blobDir, "waiting-$hex.enc"), hour)
+        val fresh = aged(File(f.dirs.blobDir, "fresh-$hex.enc"), 1_000)
+        val partial = aged(File(f.dirs.blobDir, "part.partial"), hour)
+        f.d.repo.upsertAttachment(
+            org.example.app.messaging.ports.AttachmentRecord("kept", "m-x", "file", ByteArray(32), ByteArray(32), 4, 4, AttachmentState.LOCAL, 4, referenced.path),
+        )
+        f.d.repo.set("pending.upload.p1", """{"kind":"File","chatId":"acc-ana","path":"${pendingRef.path}"}""".encodeToByteArray())
+        insertRow(f, "p1", "failed", deleted = false)
+
+        s.store.sweepStartup()
+
+        assertFalse(orphan.exists(), "an old blob nothing points to is removed")
+        assertTrue(referenced.exists(), "a blob an attachment record points to stays")
+        assertTrue(pendingRef.exists(), "a blob a pending upload refers to stays")
+        assertTrue(fresh.exists(), "a recent file may belong to a send in progress")
+        assertTrue(partial.exists(), "only finished blobs are judged")
     }
 
     @Test
