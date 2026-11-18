@@ -106,7 +106,7 @@ internal fun ForwardSheet(contacts: List<Contact>, onPick: (Contact) -> Unit, on
                 items(contacts, key = { it.id }) { contact ->
                     ListItem(
                         modifier = Modifier.clickable(role = Role.Button) { onPick(contact) },
-                        leadingContent = { Avatar(contact.displayName, size = 40.dp) },
+                        leadingContent = { Avatar(contact.displayName, size = 40.dp, colorKey = contact.id) },
                         headlineContent = { Text(contact.displayName) },
                     )
                 }

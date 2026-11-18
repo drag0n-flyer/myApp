@@ -198,7 +198,7 @@ fun CallScreen(
                         val remoteOn by (live?.remoteVideoOn ?: ALWAYS_OFF).collectAsStateWithLifecycle()
                         val front by (live?.frontCamera ?: ALWAYS_ON).collectAsStateWithLifecycle()
                         VideoStage(
-                            remote = live?.remote, local = live?.local, avatarName = viewModel.contactName(current),
+                            remote = live?.remote, local = live?.local, avatarName = viewModel.contactName(current), avatarKey = current.contactId,
                             egl = live?.eglContext, remoteVideoOn = remoteOn, mirrorLocal = front,
                         )
                     } else {
@@ -254,12 +254,13 @@ private fun statusText(call: CallState): String = when (val phase = call.phase) 
 
 @Composable
 private fun AudioStage(call: CallState, name: String, modeText: String) {
+    val colorKey = call.contactId
     Column(
         Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(top = 48.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Avatar(name, size = 110.dp, modifier = Modifier.padding(bottom = 8.dp))
+        Avatar(name, size = 110.dp, modifier = Modifier.padding(bottom = 8.dp), colorKey = colorKey)
         Text(name, style = MaterialTheme.typography.headlineMedium, color = Color.White, textAlign = TextAlign.Center)
         Text(statusText(call), style = MaterialTheme.typography.titleMedium, color = Color.White.copy(alpha = 0.7f))
         Row(Modifier.padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

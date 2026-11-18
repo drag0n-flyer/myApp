@@ -195,7 +195,7 @@ fun AppRoot(
                     } else if (tab == MainTab.Settings) {
                         var devices by remember { mutableIntStateOf(0) }
                         LaunchedEffect(Unit) { devices = runCatching { graph.accountService.devices().size }.getOrDefault(0) }
-                        SettingsScreen(graph.chatStore.me, graph.serverPolicy.host, devices, onOpen = { nav.navigate(it.route) }, onOpenProfile = { nav.navigate(PROFILE) })
+                        SettingsScreen(graph.chatStore.meState.collectAsStateWithLifecycle().value, graph.serverPolicy.host, devices, onOpen = { nav.navigate(it.route) }, onOpenProfile = { nav.navigate(PROFILE) })
                     } else {
                         TabPlaceholder(tab)
                     }
@@ -229,7 +229,8 @@ fun AppRoot(
             }
             composable(PROFILE) {
                 val vm = viewModel<ProfileViewModel>(factory = factory { ProfileViewModel(graph.accountActions) })
-                ProfileScreen(graph.chatStore.me, vm, onBack = { nav.popBackStack() })
+                val me = graph.chatStore.meState.collectAsStateWithLifecycle().value
+                ProfileScreen(me, vm, onBack = { nav.popBackStack() }, storedName = graph.chatStore.myStoredName)
             }
             composable(SettingsPage.Server.route) {
                 val status by graph.connectionStatus.collectAsStateWithLifecycle()

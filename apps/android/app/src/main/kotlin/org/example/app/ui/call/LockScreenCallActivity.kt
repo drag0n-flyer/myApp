@@ -38,7 +38,7 @@ class LockScreenCallActivity : ComponentActivity() {
         val name = CallExtras.displayName(this, info)
         setContent {
             AppTheme {
-                IncomingCallContent(name = name, onDecline = ::decline, onAnswer = ::answer)
+                IncomingCallContent(name = name, onDecline = ::decline, onAnswer = ::answer, colorKey = info.contact.id)
             }
         }
         watchRinging()

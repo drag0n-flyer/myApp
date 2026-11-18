@@ -61,7 +61,7 @@ fun SettingsScreen(
                 val profile = stringResource(R.string.settings_profile)
                 ListItem(
                     modifier = Modifier.fillMaxWidth().clickable(onClickLabel = profile, role = Role.Button, onClick = onOpenProfile),
-                    leadingContent = { Avatar(me.displayName, size = 56.dp) },
+                    leadingContent = { Avatar(me.displayName, size = 56.dp, colorKey = me.id) },
                     headlineContent = { Text(me.displayName, style = MaterialTheme.typography.titleMedium) },
                     supportingContent = { Text(usernameText(me.username)) },
                 )
