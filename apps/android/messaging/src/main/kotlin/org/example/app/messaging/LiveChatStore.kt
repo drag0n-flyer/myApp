@@ -64,12 +64,14 @@ import org.example.app.messaging.media.Uploader
 import org.example.app.messaging.ports.AttachmentRecord
 import org.example.app.messaging.ports.AttachmentState
 import org.example.app.messaging.ports.CallRecord
+import org.example.app.messaging.ports.ChatKind
 import org.example.app.messaging.ports.ChatRecord
 import org.example.app.messaging.ports.Clock
 import org.example.app.messaging.ports.ContactRecord
 import org.example.app.messaging.ports.FolderRecord
 import org.example.app.messaging.ports.MessageRecord
 import org.example.app.messaging.ports.MlsLock
+import org.example.app.messaging.ports.MyState
 import org.example.app.messaging.ports.Repository
 import org.example.app.messaging.send.Outbox
 import org.example.app.messaging.send.Receipts
@@ -382,7 +384,7 @@ class LiveChatStore(
                 true -> chat.pinnedAt ?: Instant.ofEpochMilli(nowMs())
                 false -> null
             }
-            chat.copy(draft = drafts[record.id], pinnedAt = pinnedAt)
+            chat.copy(draft = drafts[record.id], pinnedAt = pinnedAt, group = groupInfoOf(record))
         }
         // Pinned chats first (the newest pin on top); the rest keep their activity order.
         val (pinnedChats, otherChats) = built.filter { !it.isRequest }.partition { it.pinnedAt != null }
@@ -432,7 +434,37 @@ class LiveChatStore(
             loaded[device.accountId] = org.example.app.core.people.Profile(device.accountId, myStoredName, it, runCatching { profileSender.ver() }.getOrDefault(0))
         }
         profileNames = loaded.filterKeys { it != device.accountId }.mapValues { it.value.name }
+        // A group's photo shows under the chat ID, only when it passes the profile photo rule (a row an earlier build stored is checked again).
+        for (row in runCatching { repo.chats() }.getOrDefault(emptyList())) {
+            val photo = row.photo ?: continue
+            if (row.kind == ChatKind.GROUP && org.example.app.core.people.ProfilePhotoRule.isAcceptable(photo)) {
+                loaded[row.id] = org.example.app.core.people.Profile(row.id, row.title.orEmpty(), photo, row.groupVer ?: 0)
+            }
+        }
         profilesFlow.value = loaded
+    }
+
+    /** A group chat's member list (roles the server gave, unknown roles left out) and whether this account is still in it; null for a one-to-one chat. */
+    private fun groupInfoOf(record: ChatRecord): org.example.app.core.groups.GroupInfo? {
+        if (record.kind != ChatKind.GROUP) return null
+        val members = runCatching { repo.groupMembers(record.id) }.getOrDefault(emptyList()).mapNotNull { row ->
+            org.example.app.core.groups.GroupRole.from(row.role)?.let { org.example.app.core.groups.Member(row.accountId, it) }
+        }
+        val state = when (record.myState) {
+            MyState.REMOVED -> org.example.app.core.groups.MyGroupState.Removed
+            MyState.LEFT -> org.example.app.core.groups.MyGroupState.Left
+            else -> org.example.app.core.groups.MyGroupState.Member
+        }
+        return org.example.app.core.groups.GroupInfo(members, state)
+    }
+
+    /** Removes a group chat this account is no longer in, with its rows. A group it is still in, or a one-to-one chat, is left alone. */
+    override fun deleteChat(chatId: String) = write {
+        if (!ChatID.isGroup(chatId)) return@write
+        repo.transaction {
+            val row = repo.chat(chatId) ?: return@transaction
+            if (row.kind == ChatKind.GROUP && row.myState != MyState.MEMBER) repo.deleteChat(chatId)
+        }
     }
 
     override fun setMyPhoto(photo: ByteArray?) {

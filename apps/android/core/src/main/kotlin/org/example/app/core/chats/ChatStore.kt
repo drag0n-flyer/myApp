@@ -142,6 +142,8 @@ interface ChatStore {
     suspend fun renameGroup(chatId: String, name: String): Unit = throw GroupChangeFailed(GroupChangeFailed.Reason.Other)
     /** Owner and admins; a JPEG that passes `ProfilePhotoRule`, or null for no photo. */
     suspend fun setGroupPhoto(chatId: String, photo: ByteArray?): Unit = throw GroupChangeFailed(GroupChangeFailed.Reason.Other)
+    /** Removes a group chat this account is no longer in (left or removed), with its history. Anything else does nothing. */
+    fun deleteChat(chatId: String) {}
 
     // People base (disappearing messages and profiles). Defaults suit stores that keep none of it.
 

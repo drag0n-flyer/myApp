@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.test.runTest
 import org.example.app.core.chats.GroupChangeFailed
@@ -245,6 +246,37 @@ class GroupAdminTest {
         assertEquals(MyState.MEMBER, bob.repo.chat(chat)!!.myState)
         assertNotNull(bob.repo.preferredConversation(chat))
         assertTrue(bob.repo.messages(chat, null, 100).none { it.id.startsWith("join-failed") })
+    }
+
+    @Test
+    fun aGroupWelcomeTheEngineRefusesIsOnlyParkedNeverAOneToOneCouldntJoinChat() = runTest {
+        val (w, f, chat) = group()
+        val ana = w.device("ana1")
+        val bob = w.device("bob1")
+        f.admin(ana).removeMember(chat, "acc-bob")
+        f.catchUp(bob)
+        // The engine still holds the old state and refuses the new Welcome as a duplicate (the default of the fake).
+        f.admin(ana).addMembers(chat, listOf("acc-bob"))
+        f.catchUp(bob)
+        assertTrue(bob.repo.entries(Parked.PREFIX).values.any { it.isNotEmpty() }, "parked")
+        assertNull(bob.repo.chat("acc-ana"), "no chat with the creator")
+        assertTrue(bob.repo.chats().none { it.kind != org.example.app.messaging.ports.ChatKind.GROUP })
+        assertTrue(bob.repo.messages(chat, null, 100).none { it.id.startsWith("join-failed") })
+        assertEquals(MyState.REMOVED, bob.repo.chat(chat)!!.myState)
+    }
+
+    @Test
+    fun aLeftoverActorHintNeverTurnsAnAdminsRemovalIntoALeave() = runTest {
+        val (w, f, chat) = group()
+        val ana = w.device("ana1")
+        val bob = w.device("bob1")
+        f.of(bob).hint("conv-0001", 1, "acc-bob") // a hint from an earlier pass that never finished
+        f.admin(ana).removeMember(chat, "acc-cat")
+        f.admin(ana).removeMember(chat, "acc-bob")
+        f.of(bob).noteAll()
+        f.of(bob).runPending()
+        assertEquals(MyState.REMOVED, bob.repo.chat(chat)!!.myState)
+        assertEquals(listOf("""{"youWereRemoved":{}}"""), bob.repo.messages(chat, null, 100).filter { it.id.startsWith("sys-gone-") }.map { it.envelope.decodeToString() })
     }
 
     @Test

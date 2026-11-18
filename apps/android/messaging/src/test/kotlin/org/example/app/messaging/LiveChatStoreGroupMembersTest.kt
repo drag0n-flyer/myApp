@@ -73,5 +73,17 @@ class LiveChatStoreGroupMembersTest {
         ana.setRole(chat, "acc-bob", GroupRole.Owner)
         ana.leaveGroup(chat)
         assertEquals(true, ana.chats.value.single { it.id == chat }.readOnly)
+        // Deleting a chat this account left removes the chat, its conversation rows and its members; a chat it is still in stays.
+        val repo = w.device("cat1").repo
+        cat.deleteChat(chat)
+        cat.awaitWrites()
+        assertEquals(null, repo.chat(chat))
+        assertEquals(emptyList(), repo.conversations(chat))
+        assertEquals(emptyList(), repo.groupMembers(chat))
+        val bobRepo = w.device("bob1").repo
+        bob.syncInbox(); bob.settle()
+        bob.deleteChat(chat)
+        bob.awaitWrites()
+        assertTrue(bobRepo.chat(chat) != null, "still a member: not deleted")
     }
 }

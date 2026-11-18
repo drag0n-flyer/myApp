@@ -208,6 +208,8 @@ data class Chat(
     val timerSeconds: Int = 0,
     /** A group this account left or was removed from: nothing can be sent, the history stays until the chat is deleted. */
     val readOnly: Boolean = false,
+    /** A group chat's member list and whether this account is still in it; null for a one-to-one chat. */
+    val group: org.example.app.core.groups.GroupInfo? = null,
 ) {
     /** True for a group chat (`g:<conversationID>`). */
     val isGroup: Boolean get() = org.example.app.core.groups.ChatID.isGroup(id)

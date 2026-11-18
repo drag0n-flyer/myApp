@@ -28,6 +28,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.res.painterResource
@@ -46,15 +47,21 @@ import org.example.app.core.chats.GroupCreateFailed
 import org.example.app.core.chats.GroupCreated
 import org.example.app.core.groups.GroupNameRule
 import org.example.app.ui.Avatar
+import org.example.app.ui.chatinfo.GroupPhotoChooser
+import org.example.app.ui.chatinfo.GroupPhotoTile
 import org.example.app.ui.usernameText
 
 /**
  * New group, in two steps: "Add people" (contacts to tick, at least 2) and then the name and "Create". A person who could
- * not be added yet is listed after the group exists. [onCreated] gets the new chat's ID. No group photo is chosen here yet.
+ * not be added yet is listed after the group exists. [onCreated] gets the new chat's ID. The naming step offers an optional photo.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun NewGroupScreen(store: ChatStore, onCreated: (chatId: String) -> Unit, onBack: () -> Unit, modifier: Modifier = Modifier) {
+fun NewGroupScreen(
+    store: ChatStore, onCreated: (chatId: String) -> Unit, onBack: () -> Unit, modifier: Modifier = Modifier,
+    /** The photo choosing control (the system picker); tests give a stand-in. */
+    photoChooser: @Composable (show: Boolean, onDismiss: () -> Unit, onPhoto: (ByteArray) -> Unit) -> Unit = { show, dismiss, onPhoto -> GroupPhotoChooser(show, dismiss, onPhoto) },
+) {
     val contacts by store.contacts.collectAsStateWithLifecycle()
     val locale = LocalLocale.current.platformLocale
     val sorted = remember(contacts, locale) {
@@ -64,6 +71,9 @@ fun NewGroupScreen(store: ChatStore, onCreated: (chatId: String) -> Unit, onBack
     var picked by rememberSaveable { mutableStateOf(listOf<String>()) }
     var naming by rememberSaveable { mutableStateOf(false) }
     var name by rememberSaveable { mutableStateOf("") }
+    // A JPEG that already passes the profile photo rule (the chooser encodes it); null is no photo.
+    var photo by rememberSaveable { mutableStateOf<ByteArray?>(null) }
+    var choosingPhoto by rememberSaveable { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var failure by remember { mutableStateOf<GroupCreateFailed.Reason?>(null) }
     var told by remember { mutableStateOf<GroupCreated?>(null) }
@@ -78,7 +88,7 @@ fun NewGroupScreen(store: ChatStore, onCreated: (chatId: String) -> Unit, onBack
         failure = null
         scope.launch {
             try {
-                val made = store.createGroup(picked, cleanName, null)
+                val made = store.createGroup(picked, cleanName, photo)
                 if (made.notAdded.isEmpty()) onCreated(made.chatId) else told = made
             } catch (e: GroupCreateFailed) {
                 failure = e.reason
@@ -128,6 +138,13 @@ fun NewGroupScreen(store: ChatStore, onCreated: (chatId: String) -> Unit, onBack
             }
         } else {
             Column(Modifier.padding(padding).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    GroupPhotoTile(photo, cleanName ?: name)
+                    TextButton(onClick = { choosingPhoto = true }, enabled = !busy) {
+                        Text(stringResource(if (photo == null) R.string.group_photo_add else R.string.profile_change_photo))
+                    }
+                    if (photo != null) TextButton(onClick = { photo = null }, enabled = !busy) { Text(stringResource(R.string.profile_remove_photo)) }
+                }
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = capName(it) },
@@ -149,6 +166,8 @@ fun NewGroupScreen(store: ChatStore, onCreated: (chatId: String) -> Unit, onBack
             }
         }
     }
+
+    photoChooser(choosingPhoto, { choosingPhoto = false }, { jpeg -> photo = jpeg })
 
     told?.let { made ->
         AlertDialog(

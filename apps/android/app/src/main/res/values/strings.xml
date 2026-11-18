@@ -577,7 +577,6 @@
     <string name="group_change_forbidden">You can\'t do that in this group.</string>
     <string name="group_change_full">This group is full.</string>
     <string name="group_change_not_found">This person or group can\'t be found.</string>
-    <string name="group_change_failed">Couldn\'t change the group. Try again.</string>
     <string name="system_group_added">%1$s added %2$s</string>
     <string name="system_group_added_by_you">You added %1$s</string>
     <string name="system_group_added_plain">%1$s was added</string>
@@ -599,4 +598,43 @@
     <string name="group_create_full">This group is full.</string>
     <string name="group_create_not_found">One of these people can\'t be added.</string>
     <string name="group_create_nobody">None of these people can be added yet.</string>
+
+    <!-- Groups: info screen -->
+    <plurals name="group_member_count">
+        <item quantity="one">%1$d member</item>
+        <item quantity="other">%1$d members</item>
+    </plurals>
+    <string name="group_members_header">Members</string>
+    <string name="group_role_owner">Owner</string>
+    <string name="group_role_admin">Admin</string>
+    <string name="group_member_desc">%1$s, %2$s</string>
+    <string name="group_member_actions">Actions for %1$s</string>
+    <string name="group_add_members">Add members</string>
+    <string name="group_add_confirm">Add</string>
+    <string name="group_add_none">Everyone you know is already in this group.</string>
+    <string name="group_add_room">You can add up to %1$d more people.</string>
+    <string name="group_act_make_admin">Make admin</string>
+    <string name="group_act_remove_admin">Remove as admin</string>
+    <string name="group_act_make_owner">Make owner</string>
+    <string name="group_act_remove">Remove from group</string>
+    <string name="group_act_message">Message</string>
+    <string name="group_act_safety_number">View safety number</string>
+    <string name="group_make_owner_title">Make %1$s the owner?</string>
+    <string name="group_make_owner_body">You will become an admin. Only the owner can change who is an admin.</string>
+    <string name="group_remove_title">Remove %1$s?</string>
+    <string name="group_remove_body">They will no longer be in this group.</string>
+    <string name="group_edit_name">Edit group name</string>
+    <string name="group_save">Save</string>
+    <string name="group_mute">Mute</string>
+    <string name="group_leave">Leave group</string>
+    <string name="group_leave_title">Leave this group?</string>
+    <string name="group_leave_body">You will stop getting its messages. What is here stays on this device until you delete the chat.</string>
+    <string name="group_leave_owner_title">Choose a new owner before you leave.</string>
+    <string name="group_no_longer">You\'re no longer in this group</string>
+    <string name="group_delete_chat">Delete chat</string>
+    <string name="group_delete_title">Delete this chat?</string>
+    <string name="group_delete_body">Its messages are removed from this device.</string>
+    <string name="group_change_failed">Couldn\'t change the group. Check your connection and try again.</string>
+    <string name="group_photo_label">Group photo</string>
+    <string name="group_photo_add">Add photo</string>
 </resources>

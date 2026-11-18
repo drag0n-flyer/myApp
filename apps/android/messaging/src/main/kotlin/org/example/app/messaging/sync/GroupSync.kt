@@ -120,12 +120,15 @@ class GroupSync(
         // A group still being created (or never finished) has no active conversation: nothing to follow yet.
         val conversation = repo.preferredConversation(chat.id)
         if (conversation == null || PendingCreate.isPending(repo, conversation.serverId)) return Result(emptyList())
+        // A hint is used once, by the pass that follows it: a leftover one must never name the actor of a later change.
+        val hint = actors.remove(conversationId)
         val info = try {
             server.conversation(conversationId)
         } catch (e: ServerException) {
             if (e.status == 404) {
-                // The server says this account is not in the conversation (or it is gone).
-                gone(chat, actors[conversationId]?.second)
+                // The server says this account is not in the conversation (or it is gone): removed. No list, no version to
+                // check a hint against, so none is trusted.
+                gone(chat, null)
                 return Result(emptyList())
             }
             throw e
@@ -133,10 +136,11 @@ class GroupSync(
         val members = validated(info, conversationId) ?: return Result(emptyList()).also { log("group_list_invalid conversation=$conversationId") }
         val version = info.membersVersion ?: return Result(emptyList())
         if (members.none { it.accountId == me.accountId }) {
-            gone(chat, actors[conversationId]?.second)
+            // Left (the item that carried the version named this account) or removed.
+            gone(chat, hint?.takeIf { it.first == version }?.second)
             return Result(emptyList())
         }
-        applyList(chat, members, version, actors[conversationId])
+        applyList(chat, members, version, hint)
         return Result(syncDevices(chat, conversation, members))
     }
 
