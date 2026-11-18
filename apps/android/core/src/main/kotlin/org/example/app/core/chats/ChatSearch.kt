@@ -4,11 +4,11 @@ package org.example.app.core.chats
 object ChatSearch {
     enum class Direction { Next, Previous }
 
-    /** The index to show after a move, wrapping at both ends; null when there are no results. [current] null selects the newest. */
+    /** The index to show after a move, wrapping at both ends; null when there are no results. With no [current], Next gives the newest and Previous the oldest. */
     fun step(results: List<MessageHit>, current: Int?, direction: Direction): Int? {
         if (results.isEmpty()) return null
-        if (current == null || current !in results.indices) return 0
         val last = results.size - 1
+        if (current == null || current !in results.indices) return if (direction == Direction.Next) 0 else last
         return when (direction) {
             Direction.Next -> if (current == last) 0 else current + 1
             Direction.Previous -> if (current == 0) last else current - 1

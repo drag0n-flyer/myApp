@@ -22,7 +22,7 @@ class MessageFormatTest {
     @Test fun monoParsesNothingInside() = check("`a*b*`", "a*b*", span(0, 4, Style.Mono))
     @Test fun nested() = check(
         "*a _b_ c*", "a b c",
-        span(0, 2, Style.Bold), span(2, 3, Style.Bold, Style.Italic), span(3, 5, Style.Bold),
+        span(0, 5, Style.Bold), span(2, 3, Style.Italic),
     )
     @Test fun wordsAroundAndInside() = check("x *a* y", "x a y", span(2, 3, Style.Bold))
 
@@ -32,14 +32,27 @@ class MessageFormatTest {
     @Test fun unclosedIsNotFormatted() = check("*a", "*a")
     @Test fun spanDoesNotCrossNewline() = check("*a\nb*", "*a\nb*")
     @Test fun emptyPairIsNotFormatted() = check("**", "**")
+    @Test fun doubledMarkerIsNeverRead() {
+        check("a ** b", "a ** b")
+        check("**a**", "**a**")
+        check("a ``` b", "a ``` b")
+        check("```", "```")
+        check("```a```", "```a```")
+        check("``` a ```", "``` a ```")
+    }
     @Test fun spaceInsideMarkersIsNotFormatted() = check("* a *", "* a *")
 
     @Test fun punctuationBeforeAndAfterIsFine() = check("(*a*)", "(a)", span(1, 2, Style.Bold))
     @Test fun commaAfterIsFine() = check("*a*,", "a,", span(0, 1, Style.Bold))
 
-    @Test fun blockKeepsInnerTextVerbatim() = check("```\n*a*\n_b_\n```", "*a*\n_b_", span(0, 7, Style.Block))
-    @Test fun blockBetweenLines() = check("x\n```\ny\n```\nz", "x\ny\nz", span(2, 3, Style.Block))
+    @Test fun blockKeepsInnerTextVerbatim() = check("```\n*a*\n_b_\n```", "*a*\n_b_", span(0, 7, Style.Mono, Style.Block))
+    @Test fun blockBetweenLines() = check("x\n```\n*a*\n_b_\n```\ny", "x\n*a*\n_b_\ny", span(2, 9, Style.Mono, Style.Block))
     @Test fun unclosedBlockIsNotFormatted() = check("```\na", "```\na")
+    @Test fun emptyBlockIsNotFormatted() {
+        check("```\n```", "```\n```")
+        check("```\n\n```", "```\n\n```")
+    }
+    @Test fun fenceWithTextOnItsLineIsNotABlock() = check("```a\nb\n```", "```a\nb\n```")
 
     @Test fun linkStaysWhole() = check("*a* https://x.example/_b_", "a https://x.example/_b_", span(0, 1, Style.Bold))
     @Test fun linksAreFoundInPlainCoordinates() =
@@ -52,7 +65,16 @@ class MessageFormatTest {
     @Test fun linkOutsideMonoStays() = assertEquals(1, MessageFormat.links("`a` https://x.example").size)
 
     @Test fun emojiRangesAreUtf16() = check("*😀* b", "😀 b", span(0, 2, Style.Bold))
-    @Test fun emojiBeforeMarkerCountsAsPunctuation() = check("😀*a*", "😀a", span(2, 3, Style.Bold))
+    @Test fun emojiIsNotABoundary() = check("😀*a*", "😀*a*")
+    @Test fun precomposedLetterBeforeSpace() = check("é _x_", "é x", span(2, 3, Style.Italic))
+    @Test fun boldRunWithFamilyEmojiAndCombiningAccent() = check("*👨‍👩‍👧 e\u0301*", "👨‍👩‍👧 e\u0301", span(0, 11, Style.Bold))
+    @Test fun tildeAndBacktickAreBoundaries() {
+        check("~*a*", "~a", span(1, 2, Style.Bold))
+        check("*a* `b`", "a b", span(0, 1, Style.Bold), span(2, 3, Style.Mono))
+    }
+    @Test fun linkWordWithClosingMarkerAfterIt() =
+        check("*see https://x.example*", "see https://x.example", span(0, 21, Style.Bold))
+    @Test fun uppercaseSchemeIsAlsoProtected() = check("*a* HTTPS://X.example/_b_", "a HTTPS://X.example/_b_", span(0, 1, Style.Bold))
     @Test fun combinedCharacters() = check("x *é* y", "x é y", span(2, 4, Style.Bold))
     @Test fun familyEmojiJoined() = check("_👨‍👩‍👧_", "👨‍👩‍👧", span(0, 8, Style.Italic))
 

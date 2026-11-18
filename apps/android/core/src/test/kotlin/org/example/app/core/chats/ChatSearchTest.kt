@@ -12,9 +12,9 @@ class ChatSearchTest {
         assertNull(ChatSearch.step(emptyList(), 0, ChatSearch.Direction.Previous))
     }
 
-    @Test fun firstMoveFromNothingSelectsTheNewest() {
+    @Test fun firstMoveFromNothingNextIsTheNewestAndPreviousTheOldest() {
         assertEquals(0, ChatSearch.step(hits(3), null, ChatSearch.Direction.Next))
-        assertEquals(0, ChatSearch.step(hits(3), null, ChatSearch.Direction.Previous))
+        assertEquals(2, ChatSearch.step(hits(3), null, ChatSearch.Direction.Previous))
     }
 
     @Test fun nextGoesToOlderResults() = assertEquals(1, ChatSearch.step(hits(3), 0, ChatSearch.Direction.Next))
