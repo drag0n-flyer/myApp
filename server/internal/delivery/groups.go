@@ -79,7 +79,7 @@ func lockGroup(ctx context.Context, tx pgx.Tx, id, callerAccount string) (groupC
 func (m *Module) bumpAndNotify(ctx context.Context, tx pgx.Tx, g groupCtx, callerAccount, callerDevice string, recipients []string) (int64, error) {
 	// Every device this change delivers to, locked once, sorted, before any
 	// insert or later lock: the global order that commits and messages use.
-	if err := lockDevices(ctx, tx, recipients); err != nil {
+	if _, err := lockDevices(ctx, tx, recipients); err != nil {
 		return 0, err
 	}
 	var v int64
@@ -196,12 +196,13 @@ func (m *Module) LeaveAllGroups(ctx context.Context, tx pgx.Tx, accountID string
 		return announce, err
 	}
 	// Re-read membership under the locks.
-	lock, err := queryStrings(ctx, tx, `select id::text from devices where account_id = $1`, accountID)
+	lock, err := queryStrings(ctx, tx, `select id::text from devices where account_id = $1 order by id`, accountID)
 	if err != nil {
 		return announce, err
 	}
 	// senderDeviceID of the items is the all-zero UUID when the account has
-	// no device (the column is a non-null uuid).
+	// no device (the column is a non-null uuid). Otherwise it is the lowest
+	// device ID, so the choice is stable.
 	ownDevice := "00000000-0000-0000-0000-000000000000"
 	if len(lock) > 0 {
 		ownDevice = lock[0]
@@ -229,7 +230,7 @@ func (m *Module) LeaveAllGroups(ctx context.Context, tx pgx.Tx, accountID string
 		}
 		live = append(live, g)
 	}
-	if err := lockDevices(ctx, tx, lock); err != nil {
+	if _, err := lockDevices(ctx, tx, lock); err != nil {
 		return announce, err
 	}
 	for _, g := range live {
@@ -439,7 +440,7 @@ func (m *Module) removeAccount(w http.ResponseWriter, r *http.Request) error {
 		if err != nil {
 			return err
 		}
-		if err := lockDevices(ctx, tx, recipients); err != nil {
+		if _, err := lockDevices(ctx, tx, recipients); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `delete from conversation_accounts where conversation_id = $1 and account_id = $2`, id, target); err != nil {

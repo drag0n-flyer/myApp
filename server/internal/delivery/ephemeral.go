@@ -3,6 +3,8 @@ package delivery
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"github.com/jackc/pgx/v5"
 	"strings"
 	"time"
 
@@ -35,7 +37,12 @@ func (m *Module) HandleFrames(frames realtime.FrameRouter) {
 // runs at all.
 func (m *Module) ephemeralRespectsBlocks(ctx context.Context, id string) (bool, error) {
 	var kind string
-	if err := m.d.DB.QueryRow(ctx, `select kind from conversations where id = $1`, id).Scan(&kind); err != nil {
+	err := m.d.DB.QueryRow(ctx, `select kind from conversations where id = $1`, id).Scan(&kind)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// The conversation was deleted since the membership check.
+		return false, httpx.Err("not_found", "no such conversation")
+	}
+	if err != nil {
 		return false, err
 	}
 	return kind == "direct", nil
