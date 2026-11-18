@@ -279,8 +279,84 @@ class SampleChatStore(
             nextId += 1
             id = org.example.app.core.groups.ChatID.group("sample-$nextId")
             allChats = allChats + Chat(id, null, ChatEncryption.EndToEnd, emptySet(), 0, emptyList(), isRequest = false, title = title)
+            groupMembers[id] = java.util.TreeMap<String, org.example.app.core.groups.GroupRole>().apply {
+                put(me.id, org.example.app.core.groups.GroupRole.Owner)
+                contactIds.forEach { put(it, org.example.app.core.groups.GroupRole.Member) }
+            }
         }
         return GroupCreated(id, emptyList())
+    }
+
+    // Group membership (sample data: the rules of `GroupRole`, no server).
+
+    private val groupMembers = HashMap<String, java.util.TreeMap<String, org.example.app.core.groups.GroupRole>>()
+
+    /** The members of a sample group by account ID, with roles. */
+    fun sampleMembers(chatId: String): Map<String, org.example.app.core.groups.GroupRole> = synchronized(lock) { groupMembers[chatId]?.toMap().orEmpty() }
+
+    private fun members(chatId: String) = groupMembers[chatId] ?: throw GroupChangeFailed(GroupChangeFailed.Reason.NotFound)
+    private fun myRole(chatId: String) = members(chatId)[me.id] ?: throw GroupChangeFailed(GroupChangeFailed.Reason.Forbidden)
+
+    override suspend fun addMembers(chatId: String, accounts: List<String>): List<String> {
+        synchronized(lock) {
+            val members = members(chatId)
+            if (!myRole(chatId).canAdd) throw GroupChangeFailed(GroupChangeFailed.Reason.Forbidden)
+            val fresh = accounts.filter { it !in members }.distinct()
+            if (members.size + fresh.size > MAX_GROUP) throw GroupChangeFailed(GroupChangeFailed.Reason.Full)
+            fresh.forEach { members[it] = org.example.app.core.groups.GroupRole.Member }
+        }
+        mutate { }
+        return emptyList()
+    }
+
+    override suspend fun removeMember(chatId: String, account: String) {
+        synchronized(lock) {
+            val members = members(chatId)
+            val target = members[account] ?: throw GroupChangeFailed(GroupChangeFailed.Reason.NotFound)
+            if (account == me.id || !myRole(chatId).canRemove(target)) throw GroupChangeFailed(GroupChangeFailed.Reason.Forbidden)
+            members.remove(account)
+        }
+        mutate { }
+    }
+
+    override suspend fun leaveGroup(chatId: String) {
+        synchronized(lock) {
+            val members = members(chatId)
+            if (myRole(chatId) == org.example.app.core.groups.GroupRole.Owner && members.size > 1) {
+                throw GroupChangeFailed(GroupChangeFailed.Reason.OwnerMustTransfer)
+            }
+            members.remove(me.id)
+        }
+        mutate { }
+    }
+
+    override suspend fun setRole(chatId: String, account: String, role: org.example.app.core.groups.GroupRole) {
+        synchronized(lock) {
+            val members = members(chatId)
+            if (!myRole(chatId).canSetRoles || account == me.id) throw GroupChangeFailed(GroupChangeFailed.Reason.Forbidden)
+            if (account !in members) throw GroupChangeFailed(GroupChangeFailed.Reason.NotFound)
+            members[account] = role
+            if (role == org.example.app.core.groups.GroupRole.Owner) members[me.id] = org.example.app.core.groups.GroupRole.Admin
+        }
+        mutate { }
+    }
+
+    override suspend fun renameGroup(chatId: String, name: String) {
+        val title = org.example.app.core.groups.GroupNameRule.clean(name)
+        synchronized(lock) { if (!myRole(chatId).canEditInfo) throw GroupChangeFailed(GroupChangeFailed.Reason.Forbidden) }
+        if (title == null) throw GroupChangeFailed(GroupChangeFailed.Reason.Other)
+        mutate {
+            change(chatId) { it.copy(title = title) }
+            append(Message(makeId(), "system", clock(), MessageContent.System(SystemEvent.GroupRenamed(null, title)), DeliveryStatus.Sent, null, emptyList()), chatId)
+        }
+    }
+
+    override suspend fun setGroupPhoto(chatId: String, photo: ByteArray?) {
+        synchronized(lock) { if (!myRole(chatId).canEditInfo) throw GroupChangeFailed(GroupChangeFailed.Reason.Forbidden) }
+        if (photo != null && !org.example.app.core.people.ProfilePhotoRule.isAcceptable(photo)) throw GroupChangeFailed(GroupChangeFailed.Reason.Other)
+        mutate {
+            append(Message(makeId(), "system", clock(), MessageContent.System(SystemEvent.GroupPhotoChanged(null)), DeliveryStatus.Sent, null, emptyList()), chatId)
+        }
     }
 
     override fun addFolder(name: String, chatIds: Set<String>): ChatFolder {
@@ -357,5 +433,9 @@ class SampleChatStore(
     private fun makeId(): String {
         nextId += 1
         return "local-$nextId"
+    }
+
+    private companion object {
+        const val MAX_GROUP = 100
     }
 }
