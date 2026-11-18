@@ -154,7 +154,7 @@ class AccessibilityTest {
 
     @Test fun settings() = screen { SettingsScreen(Contact("me", "Me", "me"), "home.example.org", linkedDevices = 2, onOpen = {}, onOpenProfile = {}) }
 
-    @Test fun privacy() = screen { PrivacyScreen(SettingsStore(), SampleChatStore(), saveFindByEmail = {}, loadFindByEmail = { null }, onBack = {}) }
+    @Test fun privacy() = screen { PrivacyScreen(SettingsStore(), SampleChatStore(), org.example.app.ui.lock.AppLock({ org.example.app.core.settings.UserSettings() }), org.example.app.ui.lock.SampleDeviceAuth(), saveFindByEmail = {}, loadFindByEmail = { null }, onBack = {}) }
 
     @Test fun welcome() = screen { WelcomeScreen(canCreateAccount = true, onGetStarted = {}, onHaveAccount = {}) }
 

@@ -47,6 +47,7 @@ import org.example.app.ui.chatlist.ChatListViewModel
 import org.example.app.ui.chatlist.NewChatScreen
 import org.example.app.ui.search.SearchScreen
 import org.example.app.ui.search.SearchViewModel
+import org.example.app.push.PushRuntime
 import org.example.app.push.PushTransport
 import androidx.compose.runtime.produceState
 import kotlinx.coroutines.Dispatchers
@@ -58,7 +59,15 @@ import org.example.app.ui.onboarding.LinkApprovalFlow
 import org.example.app.ui.onboarding.LinkApprovalViewModel
 import org.example.app.ui.onboarding.OnboardingHost
 import org.example.app.ui.onboarding.OnboardingViewModel
+import org.example.app.ui.lock.AuthResult
+import org.example.app.ui.lock.DeviceAuth
+import org.example.app.ui.lock.LockCover
+import org.example.app.ui.lock.LocalExpectReturn
+import androidx.compose.runtime.CompositionLocalProvider
+import org.example.app.ui.lock.PlatformDeviceAuth
+import org.example.app.ui.lock.SampleDeviceAuth
 import org.example.app.ui.theme.AppTheme
+import androidx.compose.runtime.collectAsState
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.createSavedStateHandle
@@ -77,9 +86,10 @@ private const val NEW_CHAT = "newchat"
 private const val SEARCH = "search"
 private const val PROFILE = "settings/profile"
 
-private fun shareInvite(context: Context, url: String) {
+private fun shareInvite(context: Context, url: String, expectReturn: () -> Unit) {
     val send = Intent(Intent.ACTION_SEND).setType("text/plain")
         .putExtra(Intent.EXTRA_TEXT, context.getString(R.string.invite_message, context.getString(R.string.app_name), url))
+    expectReturn()
     context.startActivity(Intent.createChooser(send, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
 }
 
@@ -87,10 +97,11 @@ private fun shareInvite(context: Context, url: String) {
 private fun canUseFullScreenIntent(context: Context): Boolean =
     Build.VERSION.SDK_INT < 34 || context.getSystemService(NotificationManager::class.java).canUseFullScreenIntent()
 
-private fun openFullScreenSettings(context: Context) {
+private fun openFullScreenSettings(context: Context, expectReturn: () -> Unit) {
     if (Build.VERSION.SDK_INT < 34) return
     val intent = Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, Uri.parse("package:${context.packageName}"))
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    expectReturn()
     runCatching { context.startActivity(intent) }
 }
 
@@ -105,6 +116,7 @@ fun AppRoot(
     graph: AppGraph,
     // Sample mode goes straight to the chats; the live build starts with onboarding until signed in.
     startWithOnboarding: Boolean? = null,
+    deviceAuth: DeviceAuth = defaultDeviceAuth(graph),
 ) {
     AppTheme {
         // An account that cannot be read right now is not a signed-out one: ask again, never onboard over it.
@@ -143,9 +155,15 @@ fun AppRoot(
         val nav = rememberNavController()
         val idArg = listOf(navArgument("id") { type = NavType.StringType })
         val chatArgs = idArg + navArgument("highlight") { type = NavType.StringType; nullable = true; defaultValue = null }
-        // A message notification was tapped (also while the app was running): open that chat.
+        // While the app lock is on and locked, only the cover (and a ringing or active call) is composed.
+        val lockSetting by graph.settingsStore.settings.collectAsState()
+        val lockState by graph.appLock.locked.collectAsState()
+        val locked = lockSetting.appLock && lockState
+        // A message notification was tapped (also while the app was running): open that chat. Locked, it is held
+        // until the unlock, then followed once (the key changes, and the request is cleared after it is followed).
         val requestedChat by graph.requestedChat.collectAsStateWithLifecycle()
-        LaunchedEffect(requestedChat) {
+        LaunchedEffect(requestedChat, locked) {
+            if (locked) return@LaunchedEffect
             requestedChat?.let { id ->
                 // Only a chat this account has: another app could send any ID.
                 graph.openableChat(id)?.let { nav.navigate("chat/${Uri.encode(it)}") }
@@ -165,6 +183,14 @@ fun AppRoot(
             },
         )
         val call by callVm.call.collectAsStateWithLifecycle()
+        if (locked) {
+            Box {
+                LockCover(graph.appLock, deviceAuth)
+                CallOverlay(call?.phase, callVm)
+            }
+            return@AppTheme
+        }
+        CompositionLocalProvider(LocalExpectReturn provides graph.appLock::expectReturn) {
         Box {
         NavHost(nav, startDestination = MAIN) {
             composable(LINK_SCAN) {
@@ -190,7 +216,7 @@ fun AppRoot(
                             graph.chatStore, graph.inviteUrl,
                             onOpenChat = { nav.navigate("chat/$it") },
                             onAddContact = { nav.navigate(ADD_CONTACT) },
-                            onInvite = { shareInvite(context, it) },
+                            onInvite = { shareInvite(context, it, graph.appLock::expectReturn) },
                         )
                     } else if (tab == MainTab.Settings) {
                         var devices by remember { mutableIntStateOf(0) }
@@ -237,7 +263,7 @@ fun AppRoot(
                 ServerScreen(graph.serverPolicy.host, onBack = { nav.popBackStack() }, status = status)
             }
             composable(SettingsPage.LinkedDevices.route) { LinkedDevicesScreen(graph.accountService, onBack = { nav.popBackStack() }, onLinkDevice = { nav.navigate(LINK_SCAN) }, refreshes = graph.deviceListChanged) }
-            composable(SettingsPage.Privacy.route) { PrivacyScreen(graph.settingsStore, graph.chatStore, saveFindByEmail = graph::saveFindByEmail, loadFindByEmail = graph::loadFindByEmail, onBack = { nav.popBackStack() }) }
+            composable(SettingsPage.Privacy.route) { PrivacyScreen(graph.settingsStore, graph.chatStore, graph.appLock, deviceAuth, saveFindByEmail = graph::saveFindByEmail, loadFindByEmail = graph::loadFindByEmail, onBack = { nav.popBackStack() }, onLockSwitchedOn = { PushRuntime.hideShownContent(context) }) }
             composable(SettingsPage.DataStorage.route) { DataStorageScreen(graph.settingsStore, graph.serverPolicy, onBack = { nav.popBackStack() }) }
             composable(SettingsPage.ChatFolders.route) { ChatFoldersScreen(graph.chatStore, onBack = { nav.popBackStack() }) }
             composable(SettingsPage.CallsAudio.route) { CallsAudioScreen(graph.settingsStore, onBack = { nav.popBackStack() }) }
@@ -249,7 +275,7 @@ fun AppRoot(
                 NotificationsScreen(
                     transport,
                     canUseFullScreenIntent = fullScreenAllowed,
-                    onOpenFullScreenSettings = { openFullScreenSettings(context) },
+                    onOpenFullScreenSettings = { openFullScreenSettings(context, graph.appLock::expectReturn) },
                     onBack = { nav.popBackStack() },
                 )
             }
@@ -287,11 +313,27 @@ fun AppRoot(
                 )
             }
         }
-        when {
-            call == null -> {}
-            call?.phase == CallPhase.Incoming -> IncomingCallScreen(callVm)
-            else -> CallScreen(callVm)
+        CallOverlay(call?.phase, callVm)
         }
         }
+    }
+}
+
+/** The ringing or active call over everything, also over the lock cover: it shows the caller's name and the controls only. */
+@Composable
+private fun CallOverlay(phase: CallPhase?, callVm: CallViewModel) {
+    when (phase) {
+        null -> {}
+        CallPhase.Incoming -> IncomingCallScreen(callVm)
+        else -> CallScreen(callVm)
+    }
+}
+
+/** Sample data answers with a scripted fake (the first, automatic prompt is dismissed; Unlock passes); live uses the phone's own. */
+@Composable
+private fun defaultDeviceAuth(graph: AppGraph): DeviceAuth {
+    val context = LocalContext.current
+    return remember(graph, context) {
+        if (graph.sampleData) SampleDeviceAuth(results = listOf(AuthResult.Cancelled)) else PlatformDeviceAuth(context)
     }
 }

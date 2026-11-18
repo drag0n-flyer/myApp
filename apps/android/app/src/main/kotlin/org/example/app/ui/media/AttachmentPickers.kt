@@ -16,6 +16,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import org.example.app.ui.lock.LocalExpectReturn
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
@@ -56,6 +57,7 @@ fun rememberAttachmentPickers(onAttachment: (path: String, kind: MediaKind) -> U
     val scope = rememberCoroutineScope()
     val attach by rememberUpdatedState(onAttachment)
     val say by rememberUpdatedState(notify)
+    val expectReturn by rememberUpdatedState(LocalExpectReturn.current)
     // Where the camera is writing; kept across a rotation and the camera app being in front.
     var cameraFile by rememberSaveable { mutableStateOf<String?>(null) }
 
@@ -103,6 +105,7 @@ fun rememberAttachmentPickers(onAttachment: (path: String, kind: MediaKind) -> U
             }
             cameraFile = file.path
             try {
+                expectReturn()
                 camera.launch(SharedFiles.uriFor(context, file))
             } catch (e: ActivityNotFoundException) {
                 cameraFile = null
@@ -125,8 +128,8 @@ fun rememberAttachmentPickers(onAttachment: (path: String, kind: MediaKind) -> U
         AttachmentPickers(hasCamera) { choice ->
             try {
                 when (choice) {
-                    AttachChoice.Photo -> photo.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                    AttachChoice.File -> document.launch(arrayOf("*/*"))
+                    AttachChoice.Photo -> expectReturn().also { photo.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+                    AttachChoice.File -> expectReturn().also { document.launch(arrayOf("*/*")) }
                     AttachChoice.Camera ->
                         if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
                             startCamera()

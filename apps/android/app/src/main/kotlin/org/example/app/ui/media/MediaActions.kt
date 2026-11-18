@@ -27,6 +27,8 @@ class MediaActions(
     private val context: Context,
     private val opener: AttachmentOpener?,
     private val scope: CoroutineScope,
+    /** Called right before the viewer or share sheet is started (the app lock allows the person to come back from it). */
+    private val expectReturn: () -> Unit = {},
     private val notify: (Int) -> Unit,
 ) {
     // Main thread only. A second tap while the first is still preparing the file does nothing.
@@ -80,6 +82,7 @@ class MediaActions(
                 // From the application context (not from the screen) an activity can only start in a task of its own.
                 if (!context.isActivity()) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 try {
+                    expectReturn()
                     context.startActivity(intent)
                 } catch (e: ActivityNotFoundException) {
                     notify(R.string.media_no_app)
