@@ -136,7 +136,8 @@ fun PasteLinkDialog(onOpen: (String) -> Unit, onDismiss: () -> Unit) {
 /** A field to paste a link into; nothing is read from the clipboard by the app. A plain composable so tests can use it without a window. */
 @Composable
 fun PasteLinkForm(onOpen: (String) -> Unit, onCancel: () -> Unit, modifier: Modifier = Modifier) {
-    var text by rememberSaveable { mutableStateOf("") }
+    // Not saved state: a pasted one-time link must not end up in a saved bundle.
+    var text by remember { mutableStateOf("") }
     Column(modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text(stringResource(R.string.add_paste_link), style = MaterialTheme.typography.headlineSmall)
         OutlinedTextField(

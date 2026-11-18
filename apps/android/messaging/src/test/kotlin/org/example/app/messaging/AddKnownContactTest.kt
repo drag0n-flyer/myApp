@@ -17,9 +17,9 @@ class AddKnownContactTest {
     private val scope = CoroutineScope(Dispatchers.Default + Job())
 
     /** Every lookup answers "no one": a contact added through it would be a bug. */
-    private class NoLookup : SocialPort {
+    private class NoLookup(val answer: FoundUser? = null) : SocialPort {
         var lookups = 0
-        override suspend fun lookUpUser(username: String): FoundUser? { lookups++; return null }
+        override suspend fun lookUpUser(username: String): FoundUser? { lookups++; return answer }
         override suspend fun block(accountId: String) = Unit
         override suspend fun unblock(accountId: String) = Unit
         override suspend fun report(accountId: String, conversationId: String?, messages: List<ReportedLine>) = Unit
@@ -49,6 +49,20 @@ class AddKnownContactTest {
         val st = store(Rig().start().bob1, NoLookup())
         assertNull(st.addKnownContact("", "cy", "Cy"))
         assertNull(st.addKnownContact("acc-cy", "  ", "Cy"))
+        assertEquals(emptyList(), st.contacts.value)
+    }
+
+    @Test fun neverAddsYourselfByAccountId() = runTest {
+        val d = Rig().start().bob1
+        val st = store(d, NoLookup())
+        assertNull(st.addKnownContact(d.me.accountId, "bob", "Bob"))
+        assertEquals(emptyList(), st.contacts.value)
+    }
+
+    @Test fun neverAddsYourselfByUsernameLookup() = runTest {
+        val d = Rig().start().bob1
+        val st = store(d, NoLookup(FoundUser(d.me.accountId, "bob", "Bob")))
+        assertNull(st.addContact("bob"))
         assertEquals(emptyList(), st.contacts.value)
     }
 }

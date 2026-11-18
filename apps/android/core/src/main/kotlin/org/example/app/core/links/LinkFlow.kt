@@ -39,12 +39,21 @@ class LinkFlow(
         }
     }
 
-    /** The outcome, once, when [ready]; while locked it stays. */
+    /**
+     * A problem or an open-chat outcome, once, when [ready]; while locked it stays. A confirmation is not taken here: it
+     * stays (so a rotation or the lock cannot lose a redeemed person) until [finishConfirmation].
+     */
     fun takeOutcome(ready: Boolean): LinkOutcome? {
         if (!ready) return null
         val o = _outcome.value ?: return null
+        if (o is LinkOutcome.Confirm) return null
         _outcome.value = null
         return o
+    }
+
+    /** The confirmation screen reports Add or Cancel. */
+    fun finishConfirmation() {
+        if (_outcome.value is LinkOutcome.Confirm) _outcome.value = null
     }
 
     /** The account ended: an outcome of the old account is dropped. A link still waiting stays for the next sign-in. */

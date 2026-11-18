@@ -170,7 +170,7 @@ class AppGraph(
 
     /** Opens a contact link: the host is the signed-in server's, read when the link is handled; nothing leaves the device for another host. */
     val contactLinkOpener: ContactLinkOpener by lazy {
-        ContactLinkOpener({ serverPolicy.host }, { chatStore.contacts.value }, ::redeemContactLink)
+        ContactLinkOpener({ serverPolicy.host }, { chatStore.me.username }, { chatStore.contacts.value }, ::redeemContactLink)
     }
 
     /**

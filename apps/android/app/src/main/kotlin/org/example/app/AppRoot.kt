@@ -286,16 +286,25 @@ fun AppRoot(
         // Keyed on everything that can make a waiting link startable again: a new link, the unlock, the end of the
         // previous open, the previous outcome being acted on. No timers.
         LaunchedEffect(pendingLink, locked, linkBusy, linkOutcome) { flow.start(ready = !locked) }
-        // The outcome is acted on at the root once unlocked, whatever dialog or screen is above the chats.
-        LaunchedEffect(linkOutcome, locked) {
-            val outcome = flow.takeOutcome(ready = !locked) ?: return@LaunchedEffect
-            when (outcome) {
-                is LinkOutcome.Confirm -> nav.navigate(
+        // The outcome is acted on at the root once unlocked, whatever dialog or screen is above the chats. A redeemed
+        // person (Confirm) stays in the flow until the confirmation screen reports Add or Cancel, and is shown again if
+        // its route is gone (a rotation, or the lock cover, cannot lose it).
+        val backStack by nav.currentBackStack.collectAsStateWithLifecycle()
+        val confirmShown = backStack.any { it.destination.route == CONFIRM_CONTACT }
+        LaunchedEffect(linkOutcome, locked, confirmShown) {
+            if (locked) return@LaunchedEffect
+            val outcome = linkOutcome ?: return@LaunchedEffect
+            if (outcome is LinkOutcome.Confirm) {
+                if (!confirmShown) nav.navigate(
                     "confirmcontact/${Uri.encode(outcome.username)}" +
                         (outcome.redeemed?.let { "?id=${Uri.encode(it.accountId)}&name=${Uri.encode(it.displayName)}" } ?: ""),
                 )
-                is LinkOutcome.OpenChat -> openChat.value(graph.chatStore.ensureChat(outcome.contactId), null)
-                is LinkOutcome.Problem -> linkProblem = outcome.problem
+                return@LaunchedEffect
+            }
+            when (val taken = flow.takeOutcome(ready = true)) {
+                is LinkOutcome.OpenChat -> openChat.value(graph.chatStore.ensureChat(taken.contactId), null)
+                is LinkOutcome.Problem -> linkProblem = taken.problem
+                else -> {}
             }
         }
         val context = LocalContext.current
@@ -478,13 +487,16 @@ fun AppRoot(
                     onAdd = {
                         val who = if (id != null) graph.chatStore.addKnownContact(id, username, name.orEmpty()) else graph.chatStore.addContact(username)
                         if (who != null) {
+                            graph.linkFlow.finishConfirmation()
                             nav.popBackStack(MAIN, inclusive = false)
                             openChat.value(graph.chatStore.ensureChat(who.id), null)
                         }
                         who != null
                     },
-                    onBack = { nav.popBackStack() },
+                    onBack = { graph.linkFlow.finishConfirmation(); nav.popBackStack() },
                 )
+                // The system back gesture is Cancel too.
+                androidx.activity.compose.BackHandler { graph.linkFlow.finishConfirmation(); nav.popBackStack() }
             }
             composable(NEW_CHAT) {
                 NewChatScreen(

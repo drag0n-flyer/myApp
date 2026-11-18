@@ -32,7 +32,7 @@ sealed class ContactLink {
             val uri = try { URI(url.trim()) } catch (_: Exception) { return NotALink }
             val name = uri.host
             if (!"https".equals(uri.scheme, ignoreCase = true) || name.isNullOrEmpty() || uri.userInfo != null) return NotALink
-            val host = if (uri.port != -1) "$name:${uri.port}" else name
+            val host = if (uri.port != -1 && uri.port != 443) "$name:${uri.port}" else name
             val path = uri.rawPath ?: return NotALink
             val parts = path.split('/')
             // "" before the first slash, the kind, the value: nothing else.
@@ -42,7 +42,7 @@ sealed class ContactLink {
                 "c" -> parts[2].takeIf { it.length == TOKEN_LENGTH && it.all(::isTokenChar) }?.let(::Invite)
                 else -> null
             } ?: return NotALink
-            return if (host.lowercase(Locale.ROOT) == serverHost.trim().lowercase(Locale.ROOT)) found else OtherServer
+            return if (host.lowercase(Locale.ROOT) == serverHost.trim().lowercase(Locale.ROOT).removeSuffix(":443")) found else OtherServer
         }
 
         private fun isTokenChar(c: Char) = c in 'A'..'Z' || c in 'a'..'z' || c in '0'..'9' || c == '-' || c == '_'

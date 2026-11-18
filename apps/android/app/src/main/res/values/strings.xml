@@ -335,7 +335,7 @@
     <string name="scan_link_title">Scan QR code</string>
     <string name="link_confirm_message">Add %1$s to your contacts?</string>
     <string name="link_confirm_unknown">Couldn\'t add this person. Try again.</string>
-    <string name="link_not_a_link">That isn\'t a link this app can open.</string>
+    <string name="link_not_a_link">That isn\'t a link for a person.</string>
     <string name="link_other_server">This link is for a different server.</string>
     <string name="link_own">This is your own link.</string>
     <string name="link_expired">This link has expired. Ask for a new one.</string>

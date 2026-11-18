@@ -30,13 +30,17 @@ sealed class LinkOutcome {
  */
 class ContactLinkOpener(
     private val serverHost: () -> String,
+    /** The signed-in person's username ("" when not known yet). */
+    private val myUsername: () -> String,
     private val contacts: () -> List<Contact>,
     private val redeem: suspend (token: String) -> RedeemedContact,
 ) {
     suspend fun open(url: String): LinkOutcome = when (val link = ContactLink.parse(url, serverHost())) {
         ContactLink.NotALink -> LinkOutcome.Problem(LinkProblem.NotALink)
         ContactLink.OtherServer -> LinkOutcome.Problem(LinkProblem.OtherServer)
-        is ContactLink.User -> known { it.username == link.username } ?: LinkOutcome.Confirm(link.username, null)
+        is ContactLink.User ->
+            if (isMe(link.username)) LinkOutcome.Problem(LinkProblem.OwnLink)
+            else known { it.username == link.username } ?: LinkOutcome.Confirm(link.username, null)
         is ContactLink.Invite -> {
             val who = try {
                 redeem(link.token)
@@ -47,9 +51,12 @@ class ContactLinkOpener(
             } catch (_: Exception) {
                 return LinkOutcome.Problem(LinkProblem.Failed)
             }
+            if (isMe(who.username)) return LinkOutcome.Problem(LinkProblem.OwnLink)
             known { it.id == who.accountId } ?: LinkOutcome.Confirm(who.username, who)
         }
     }
+
+    private fun isMe(username: String) = myUsername().isNotBlank() && myUsername() == username
 
     private fun known(match: (Contact) -> Boolean): LinkOutcome? =
         contacts().firstOrNull(match)?.let { LinkOutcome.OpenChat(it.id) }

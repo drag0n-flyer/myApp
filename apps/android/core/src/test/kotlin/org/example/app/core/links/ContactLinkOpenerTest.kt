@@ -15,6 +15,7 @@ class ContactLinkOpenerTest {
 
     private fun opener() = ContactLinkOpener(
         serverHost = { "home.example.org" },
+        myUsername = { "me" },
         contacts = { contacts },
         redeem = { t -> redeemed += t; redeemResult() },
     )
@@ -35,6 +36,27 @@ class ContactLinkOpenerTest {
     @Test fun inviteOfExistingContactOpensTheChat() {
         redeemResult = { RedeemedContact("acc-bob", "bob", "Bob") }
         assertEquals(LinkOutcome.OpenChat("acc-bob"), open("https://home.example.org/c/$token"))
+    }
+
+    @Test fun myOwnUserLinkIsMyOwnLink() {
+        assertEquals(LinkOutcome.Problem(LinkProblem.OwnLink), open("https://home.example.org/u/me"))
+        assertEquals(emptyList(), redeemed)
+    }
+
+    @Test fun aRedeemedResultThatIsMeIsMyOwnLink() {
+        redeemResult = { RedeemedContact("acc-me", "me", "Me") }
+        assertEquals(LinkOutcome.Problem(LinkProblem.OwnLink), open("https://home.example.org/c/$token"))
+    }
+
+    @Test fun aBlankOwnUsernameMatchesNobody() {
+        val o = ContactLinkOpener({ "home.example.org" }, { "" }, { contacts }, { RedeemedContact("a", "x", "X") })
+        assertEquals(LinkOutcome.Confirm("alice", null), runBlocking { o.open("https://home.example.org/u/alice") })
+    }
+
+    @Test fun explicit443IsNoPortOnEitherSide() {
+        assertEquals(LinkOutcome.Confirm("alice", null), open("https://home.example.org:443/u/alice"))
+        val o = ContactLinkOpener({ "home.example.org:443" }, { "me" }, { contacts }, { redeemResult() })
+        assertEquals(LinkOutcome.Confirm("alice", null), runBlocking { o.open("https://home.example.org/u/alice") })
     }
 
     @Test fun otherServerSendsNothing() {

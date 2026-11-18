@@ -49,4 +49,11 @@ class ContactLinkTest {
         assertEquals(ContactLink.NotALink, parse("https://user@home.example.org/u/alice"))
     }
     @Test fun surroundingSpacesAreTrimmed() = assertEquals(ContactLink.User("alice"), parse("  https://home.example.org/u/alice\n"))
+
+    @Test fun explicit443IsNoPort() {
+        assertEquals(ContactLink.User("alice"), ContactLink.parse("https://home.example.org:443/u/alice", "home.example.org"))
+        assertEquals(ContactLink.User("alice"), ContactLink.parse("https://home.example.org/u/alice", "home.example.org:443"))
+        assertEquals(ContactLink.User("alice"), ContactLink.parse("https://home.example.org:443/u/alice", "HOME.example.org:443"))
+        assertEquals(ContactLink.OtherServer, ContactLink.parse("https://home.example.org:444/u/alice", "home.example.org:443"))
+    }
 }

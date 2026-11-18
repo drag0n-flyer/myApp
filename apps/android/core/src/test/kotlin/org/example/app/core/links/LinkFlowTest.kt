@@ -19,7 +19,7 @@ class LinkFlowTest {
     private val redeemed = mutableListOf<String>()
     private val jobs = mutableListOf<Job>()
 
-    private val opener = ContactLinkOpener({ host }, { listOf(Contact("acc-bob", "Bob", "bob")) }) { t ->
+    private val opener = ContactLinkOpener({ host }, { "me" }, { listOf(Contact("acc-bob", "Bob", "bob")) }) { t ->
         redeemed += t
         gate?.await()
         RedeemedContact("acc-cy", "cy", "Cy")
@@ -79,7 +79,7 @@ class LinkFlowTest {
         gate!!.complete(Unit); settle()
         flow.start(ready = true) // first's confirmation not shown yet
         assertEquals(listOf(token), redeemed)
-        flow.takeOutcome(true)
+        flow.finishConfirmation()
         flow.start(ready = true); settle()
         assertEquals(listOf(token, "ZZZZZZZZZZZZZZZZZZZZZZ"), redeemed)
     }
@@ -92,5 +92,24 @@ class LinkFlowTest {
         assertNull(flow.outcome.value)
         flow.start(ready = true); settle()
         assertEquals(LinkOutcome.Confirm("carol", null), flow.outcome.value)
+    }
+
+    @Test fun aConfirmationStaysUntilTheScreenReportsAddOrCancel() {
+        flow.pending.offer("https://home.example.org/c/$token")
+        flow.start(ready = true); settle()
+        val confirm = flow.outcome.value
+        assertEquals(LinkOutcome.Confirm("cy", RedeemedContact("acc-cy", "cy", "Cy")), confirm)
+        assertNull(flow.takeOutcome(ready = true), "navigating is not dismissing")
+        assertNull(flow.takeOutcome(ready = false))
+        assertEquals(confirm, flow.outcome.value, "still there to be shown again if the route was lost")
+        flow.finishConfirmation()
+        assertNull(flow.outcome.value)
+    }
+
+    @Test fun finishingDoesNotDropAnotherKindOfOutcome() {
+        flow.pending.offer("https://home.example.org/u/bob")
+        flow.start(ready = true); settle()
+        flow.finishConfirmation()
+        assertEquals(LinkOutcome.OpenChat("acc-bob"), flow.takeOutcome(true))
     }
 }

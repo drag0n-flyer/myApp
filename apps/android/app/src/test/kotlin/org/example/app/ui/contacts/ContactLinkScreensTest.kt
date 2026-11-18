@@ -117,4 +117,16 @@ class ContactLinkScreensTest {
         val other = Intent(Intent.ACTION_VIEW, Uri.parse("https://home.example.org/other/x")).addCategory(Intent.CATEGORY_BROWSABLE)
         assertTrue(pm.queryIntentActivities(other, 0).none { it.activityInfo.name == MainActivity::class.java.name })
     }
+
+    @Test fun anIntentReopenedFromRecentsIsNotALinkAgain() {
+        val link = "https://home.example.org/u/neha"
+        val again = Intent(Intent.ACTION_VIEW, Uri.parse(link)).addFlags(Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY)
+        assertNull(contactLinkFrom(again))
+        assertNull(org.example.app.chatIdFrom(Intent().putExtra(org.example.app.push.MessageNotifier.EXTRA_CHAT_ID, "c1").addFlags(Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY)))
+    }
+
+    @Test fun theMessageForANonLinkIsWorded() {
+        rule.setContent { AppTheme { LinkProblemDialog(LinkProblem.NotALink, onDismiss = {}) } }
+        rule.onNodeWithText("That isn't a link for a person.").assertIsDisplayed()
+    }
 }

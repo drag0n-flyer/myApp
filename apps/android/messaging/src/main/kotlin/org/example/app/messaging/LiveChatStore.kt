@@ -1232,6 +1232,7 @@ class LiveChatStore(
         val name = username.trim().lowercase(Locale.ROOT)
         if (name.isEmpty()) return null
         val user = try { social.lookUpUser(name) } catch (e: CancellationException) { throw e } catch (_: Exception) { null } ?: return null
+        if (user.accountId == device.accountId) return null // never add yourself
         val row = ContactRecord(user.accountId, user.username, user.displayName, true, contactRows[user.accountId]?.addedAt ?: nowMs())
         repo.upsertContact(row)
         reload()
@@ -1240,7 +1241,7 @@ class LiveChatStore(
 
     override suspend fun addKnownContact(accountId: String, username: String, displayName: String): Contact? {
         val user = username.trim().lowercase(Locale.ROOT)
-        if (accountId.isBlank() || user.isEmpty()) return null
+        if (accountId.isBlank() || user.isEmpty() || accountId == device.accountId) return null // never add yourself
         val row = ContactRecord(accountId, user, displayName, true, contactRows[accountId]?.addedAt ?: nowMs())
         repo.upsertContact(row)
         reload()
