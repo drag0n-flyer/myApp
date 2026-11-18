@@ -6,8 +6,12 @@ struct MessageBubbleView: View {
     let isMine: Bool
     let reply: Message?
     let replySenderName: (String) -> String
-    let showsMedia: Bool
+    /// What the photo, file or voice message shows (from `message.media`).
+    let mediaState: MediaBubbleState
     let download: () -> Void
+    /// Opens a downloaded photo or file: the file, its received name (nil for photos) and whether it is a photo.
+    var openMedia: (URL, String?, Bool) -> Void = { _, _, _ in }
+    var voice: VoicePlayer?
     /// Sends a message that is marked "Not sent" again.
     var retry: () -> Void = {}
     /// Context menu items for this message, from `MessageActions.available`.
@@ -148,13 +152,14 @@ struct MessageBubbleView: View {
         case .text(let text):
             Text(Self.underlinedLinks(text)).font(.body).tint(isMine ? Color.white : Color.accentColor)
         case .voice(let duration):
-            VoiceMessageView(duration: duration, isMine: isMine)
+            VoiceMessageView(messageID: message.id, duration: duration, isMine: isMine, state: mediaState, player: voice, download: download)
         case .photo(let bytes):
-            MediaView(label: String(localized: "Photo · \(DataFormat.size(bytes: bytes))"),
-                      symbol: "photo", isShown: showsMedia, identifier: "chat.media.download.\(message.id)", download: download)
+            MediaBubbleView(isPhoto: true, name: nil, bytes: bytes, state: mediaState, messageID: message.id,
+                            download: download, open: { openMedia($0, nil, true) })
         case .file(let name, let bytes):
-            MediaView(label: "\(name) · \(DataFormat.size(bytes: bytes))",
-                      symbol: "doc.fill", isShown: showsMedia, identifier: "chat.media.download.\(message.id)", download: download)
+            let cleaned = MediaFileName.clean(name)
+            MediaBubbleView(isPhoto: false, name: cleaned, bytes: bytes, state: mediaState, messageID: message.id,
+                            download: download, open: { openMedia($0, cleaned, false) })
         case .call:
             Label(message.previewText, systemImage: "phone")
         case .deleted:
@@ -202,6 +207,7 @@ private struct MetaLine: View {
                     .accessibilityHint(Text("Sends this message again"))
                     .accessibilityIdentifier("chat.retry.\(message.id)")
             }
+            if isMine, message.status == .sending { Text("Sending…") }
             if message.editedAt != nil { Text("edited") }
             Text(message.sentAt, format: .dateTime.hour().minute())
             if isMine, message.status != .failed {
@@ -216,7 +222,8 @@ private struct MetaLine: View {
     /// Sent: a check. Delivered: an outline check circle. Read: a filled one.
     private var statusSymbol: String {
         switch message.status {
-        case .sending, .sent, .failed: "checkmark"
+        case .sending: "clock"
+        case .sent, .failed: "checkmark"
         case .delivered: "checkmark.circle"
         case .read: "checkmark.circle.fill"
         }
@@ -224,79 +231,11 @@ private struct MetaLine: View {
 
     private var statusLabel: Text {
         switch message.status {
-        case .sending: Text("Sending")
+        case .sending: Text("Sending…")
         case .sent: Text("Sent")
         case .delivered: Text("Delivered")
         case .read: Text("Read")
         case .failed: Text("Not sent")
-        }
-    }
-}
-
-private struct VoiceMessageView: View {
-    let duration: Double
-    let isMine: Bool
-    private let bars: [CGFloat] = [6, 12, 18, 9, 15, 7, 13, 17, 8, 11, 5, 14]
-
-    var body: some View {
-        HStack(spacing: 7) {
-            Image(systemName: "play.fill")
-                .font(.caption)
-                .frame(width: 28, height: 28)
-                .background(Circle().fill(isMine ? Color.white.opacity(0.25) : Color.accentColor))
-                .foregroundStyle(.white)
-            HStack(spacing: 2) {
-                ForEach(bars.indices, id: \.self) { i in
-                    Capsule().frame(width: 2.5, height: bars[i]).opacity(0.75)
-                }
-            }
-            Text(Message.clockText(duration)).font(.caption).opacity(0.7)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text("Voice message, \(Message.clockText(duration))"))
-        .accessibilityAddTraits(.isButton)
-    }
-}
-
-/// Photo or file: a blurred placeholder with its size until downloaded.
-private struct MediaView: View {
-    @ScaledMetric(relativeTo: .body) private var mediaWidth: CGFloat = 200
-    @ScaledMetric(relativeTo: .body) private var mediaHeight: CGFloat = 130
-    let label: String
-    let symbol: String
-    let isShown: Bool
-    let identifier: String
-    let download: () -> Void
-
-    var body: some View {
-        if isShown {
-            RoundedRectangle(cornerRadius: 12)
-                .fill(LinearGradient(colors: [.blue.opacity(0.5), .purple.opacity(0.4), .orange.opacity(0.4)],
-                                     startPoint: .topLeading, endPoint: .bottomTrailing))
-                .frame(width: mediaWidth).frame(minHeight: mediaHeight)
-                .overlay { Image(systemName: symbol).font(.largeTitle).foregroundStyle(.white.opacity(0.8)) }
-                .accessibilityLabel(Text(label))
-        } else {
-            Button(action: download) {
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(LinearGradient(colors: [.gray.opacity(0.5), .gray.opacity(0.3)], startPoint: .top, endPoint: .bottom))
-                    .frame(width: mediaWidth).frame(minHeight: mediaHeight)
-                    .blur(radius: 2)
-                    .overlay {
-                        VStack(spacing: 6) {
-                            Image(systemName: "arrow.down")
-                                .font(.headline)
-                                .frame(width: 38, height: 38)
-                                .background(Circle().fill(.black.opacity(0.35)))
-                            Text(label).font(.caption.weight(.semibold))
-                        }
-                        .foregroundStyle(.white)
-                    }
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(Text(label))
-            .accessibilityHint("Downloads")
-            .accessibilityIdentifier(identifier)
         }
     }
 }
