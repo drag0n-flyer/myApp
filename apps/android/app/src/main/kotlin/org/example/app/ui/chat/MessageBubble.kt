@@ -107,6 +107,10 @@ fun MessageBubble(
                     if (message.reactions.isNotEmpty()) Text(message.reactions.joinToString(" "))
                     Row(Modifier.align(Alignment.End), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         if (message.editedAt != null) Text(stringResource(R.string.edited), style = MaterialTheme.typography.labelSmall)
+                        // A photo, file or voice message that is still on its way says so in words, with the clock mark after it.
+                        if (isOwn && message.status == DeliveryStatus.Sending && content.isAttachment()) {
+                            Text(stringResource(R.string.media_sending), style = MaterialTheme.typography.labelSmall)
+                        }
                         Text(clockTime(message.sentAt), style = MaterialTheme.typography.labelSmall)
                         if (isOwn) Ticks(message.status)
                     }
@@ -123,6 +127,8 @@ fun MessageBubble(
         }
     }
 }
+
+private fun MessageContent.isAttachment() = this is MessageContent.Photo || this is MessageContent.File || this is MessageContent.Voice
 
 private fun clockTime(at: Instant): String = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date.from(at))
 
@@ -153,7 +159,12 @@ private fun Ticks(status: DeliveryStatus) {
             DeliveryStatus.Failed -> R.string.chat_not_sent
         },
     )
-    val icon = if (status == DeliveryStatus.Sent || status == DeliveryStatus.Sending) R.drawable.ic_check else R.drawable.ic_done_all
+    // The clock while it is on its way, one tick when sent, two when delivered or read.
+    val icon = when (status) {
+        DeliveryStatus.Sending -> R.drawable.ic_schedule
+        DeliveryStatus.Sent -> R.drawable.ic_check
+        else -> R.drawable.ic_done_all
+    }
     val tint = if (status == DeliveryStatus.Read) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
     Icon(painterResource(icon), contentDescription = label, tint = tint, modifier = Modifier.size(14.dp))
 }

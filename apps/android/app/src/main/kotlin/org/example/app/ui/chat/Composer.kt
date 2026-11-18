@@ -3,6 +3,10 @@ package org.example.app.ui.chat
 import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.TextButton
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -36,7 +40,9 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import org.example.app.R
-import org.example.app.core.settings.MediaKind
+import org.example.app.ui.media.AttachChoice
+import org.example.app.ui.media.CaptureState
+import org.example.app.ui.media.voiceClock
 import org.example.app.messaging.content.TextLimit
 
 /** The bar above the composer: who is being replied to, or that a message is being edited. */
@@ -56,11 +62,17 @@ fun Composer(
     text: String,
     onTextChange: (String) -> Unit,
     onSend: (String) -> Unit,
-    onAttach: (MediaKind) -> Unit,
+    onAttach: (AttachChoice) -> Unit,
     onRecordVoice: () -> Unit,
     modifier: Modifier = Modifier,
     bar: ComposerBar? = null,
     onCloseBar: () -> Unit = {},
+    /** False hides the Camera row (a phone without a camera). */
+    showCamera: Boolean = true,
+    /** Not null while a voice message is being recorded: the recording bar replaces the message field. */
+    recording: CaptureState.Recording? = null,
+    onCancelRecording: () -> Unit = {},
+    onSendRecording: () -> Unit = {},
 ) {
     var sheet by rememberSaveable { mutableStateOf(false) }
     // The caller owns the text; the cursor lives here and goes to the end whenever the caller replaces the text.
@@ -88,7 +100,9 @@ fun Composer(
                 }
             }
         }
-        Row(
+        if (recording != null) {
+            RecordingBar(recording, onCancelRecording, onSendRecording)
+        } else Row(
             Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -124,10 +138,30 @@ fun Composer(
     if (sheet) {
         ModalBottomSheet(onDismissRequest = { sheet = false }) {
             Column(Modifier.padding(bottom = 16.dp)) {
-                AttachRow(R.string.attach_photo, R.drawable.ic_attach) { sheet = false; onAttach(MediaKind.Photo) }
-                AttachRow(R.string.attach_camera, R.drawable.ic_videocam) { sheet = false; onAttach(MediaKind.Photo) }
-                AttachRow(R.string.attach_file, R.drawable.ic_attach) { sheet = false; onAttach(MediaKind.File) }
+                AttachRow(R.string.attach_photo, R.drawable.ic_image) { sheet = false; onAttach(AttachChoice.Photo) }
+                if (showCamera) AttachRow(R.string.attach_camera, R.drawable.ic_videocam) { sheet = false; onAttach(AttachChoice.Camera) }
+                AttachRow(R.string.attach_file, R.drawable.ic_file) { sheet = false; onAttach(AttachChoice.File) }
             }
+        }
+    }
+}
+
+/** "Recording…" with the time so far, Cancel and Send. The buttons wait while the note is being finished. */
+@Composable
+private fun RecordingBar(recording: CaptureState.Recording, onCancel: () -> Unit, onSend: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(Modifier.size(10.dp).background(MaterialTheme.colorScheme.error, CircleShape))
+        Column(Modifier.weight(1f).semantics(mergeDescendants = true) {}) {
+            Text(stringResource(R.string.media_recording), style = MaterialTheme.typography.labelLarge)
+            Text(voiceClock((recording.seconds * 1000).toInt()), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        TextButton(onClick = onCancel, enabled = !recording.stopping) { Text(stringResource(R.string.cancel)) }
+        IconButton(onClick = onSend, enabled = !recording.stopping) {
+            Icon(painterResource(R.drawable.ic_send), contentDescription = stringResource(R.string.send))
         }
     }
 }

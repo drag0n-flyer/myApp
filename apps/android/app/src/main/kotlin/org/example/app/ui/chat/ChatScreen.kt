@@ -31,6 +31,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -71,6 +72,9 @@ import org.example.app.core.chats.MessageContent
 import org.example.app.core.settings.MediaKind
 import org.example.app.ui.Avatar
 import org.example.app.ui.media.AttachmentOpener
+import org.example.app.ui.media.CaptureState
+import org.example.app.ui.media.rememberAttachmentPickers
+import org.example.app.ui.media.rememberVoiceControls
 import org.example.app.ui.media.MediaActions
 import org.example.app.ui.media.MediaHost
 import org.example.app.ui.media.PhotoCache
@@ -89,8 +93,6 @@ fun ChatScreen(
     /** Null hides the call buttons (no live calls before E6). */
     onCall: ((video: Boolean) -> Unit)?,
     modifier: Modifier = Modifier,
-    onAttach: (MediaKind) -> Unit = {},
-    onRecordVoice: () -> Unit = {},
     /** Message request bar. */
     onAccept: () -> Unit = {},
     /** Called with the contact to block; the screen shows an error instead when the chat cannot be resolved. */
@@ -142,6 +144,9 @@ fun ChatScreen(
     DisposableEffect(photos) { onDispose { photos.clear() } }
     var viewingPhoto by rememberSaveable { mutableStateOf<String?>(null) }
     val mediaActions = remember(context, opener) { MediaActions(context, opener, scope, notify = { notice = it }) }
+    val pickers = rememberAttachmentPickers(onAttachment = viewModel::sendAttachment, notify = { notice = it })
+    val voiceControls = rememberVoiceControls(onNote = { viewModel.sendAttachment(it.path, MediaKind.Voice) }, notify = { notice = it })
+    val capture by voiceControls.capture.state.collectAsState()
     // One voice message plays at a time; it stops when the screen is left or the app goes to the background.
     val voice = remember(opener) { VoicePlayer(scope, opener, MediaPlayerEngine.factory) }
     DisposableEffect(voice) { onDispose { voice.release() } }
@@ -310,8 +315,12 @@ fun ChatScreen(
                             viewModel.setDraft("")
                         }
                     },
-                    onAttach = onAttach,
-                    onRecordVoice = onRecordVoice,
+                    onAttach = pickers::start,
+                    onRecordVoice = voiceControls.requestStart,
+                    showCamera = pickers.cameraAvailable,
+                    recording = capture as? CaptureState.Recording,
+                    onCancelRecording = voiceControls.capture::cancel,
+                    onSendRecording = voiceControls.capture::send,
                     bar = bar,
                     onCloseBar = {
                         if (editing != null) text = viewModel.draft()

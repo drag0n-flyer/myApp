@@ -454,4 +454,5 @@
     <string name="media_mic_unavailable">The microphone isn\'t available right now. Close other apps that use it and try again.</string>
     <string name="media_record_failed">Couldn\'t record the voice message.</string>
     <string name="media_file_unreadable">Couldn\'t read that file.</string>
+    <string name="media_file_too_big">That file is too big to send.</string>
 </resources>
