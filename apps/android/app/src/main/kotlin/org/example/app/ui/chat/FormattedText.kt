@@ -22,12 +22,10 @@ import org.example.app.core.chats.MessageFormat.Style
  * changes; copy, edit, forward and search use the stored text.
  */
 fun formattedText(text: String, linkColor: Color, codeBackground: Color = Color.Unspecified): AnnotatedString {
-    val spans = MessageFormat.parse(text)
-    val links = MessageFormat.links(text)
-    val plain = MessageFormat.plain(text)
+    val layout = MessageFormat.layout(text)
     return buildAnnotatedString {
-        append(plain)
-        for (span in spans) {
+        append(layout.plain)
+        for (span in layout.spans) {
             val s = span.styles
             val code = Style.Mono in s || Style.Block in s
             addStyle(
@@ -41,7 +39,7 @@ fun formattedText(text: String, linkColor: Color, codeBackground: Color = Color.
                 span.start, span.end,
             )
         }
-        for (link in links) {
+        for (link in layout.links) {
             addLink(
                 LinkAnnotation.Url(link.url, TextLinkStyles(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline))),
                 link.start, link.end,

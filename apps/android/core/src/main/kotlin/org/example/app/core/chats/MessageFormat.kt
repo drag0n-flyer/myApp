@@ -25,7 +25,17 @@ object MessageFormat {
     /** A tappable link, in [plain] coordinates. */
     data class Link(val start: Int, val end: Int, val url: String)
 
-    private class Result(val plain: String, val spans: List<Span>, val links: List<Link>)
+    /** Everything the display needs, from one scan of the text. */
+    class Layout(val plain: String, val spans: List<Span>, val links: List<Link>)
+
+    /** Text longer than this many graphemes is left as typed (links are still found): bounded work on hostile input. */
+    const val MAX_GRAPHEMES = 4_096
+
+    /** Counters for the bounds tests. */
+    internal var analyzeCalls = 0
+    internal var monoScanSteps = 0
+
+    fun layout(text: String): Layout = analyze(text)
 
     /** One span per marker pair (outer first), mono and block as `{Mono, Block}` / `{Mono}`. */
     fun parse(text: String): List<Span> = analyze(text).spans
@@ -79,15 +89,42 @@ object MessageFormat {
         return out
     }
 
-    private fun analyze(text: String): Result {
+    private fun overLimit(text: String): Boolean {
+        // A grapheme is at least one UTF-16 unit, so shorter texts cannot be over the limit.
+        if (text.length <= MAX_GRAPHEMES) return false
+        val it = java.text.BreakIterator.getCharacterInstance()
+        it.setText(text)
+        var count = 0
+        while (it.next() != java.text.BreakIterator.DONE) if (++count > MAX_GRAPHEMES) return true
+        return false
+    }
+
+    /** A combining mark or a zero-width joiner directly after a marker makes it part of a character, not a marker. */
+    private fun joined(text: String, i: Int): Boolean {
+        val next = i + 1
+        if (next >= text.length) return false
+        val cp = text.codePointAt(next)
+        if (cp == 0x200D) return true
+        return when (Character.getType(cp).toByte()) {
+            Character.NON_SPACING_MARK, Character.COMBINING_SPACING_MARK, Character.ENCLOSING_MARK -> true
+            else -> false
+        }
+    }
+
+    private fun analyze(text: String): Layout {
+        analyzeCalls++
         val n = text.length
-        if (n == 0) return Result(text, emptyList(), emptyList())
+        if (n == 0) return Layout(text, emptyList(), emptyList())
+        if (overLimit(text)) {
+            return Layout(text, emptyList(), LinkFinder.find(text).map { Link(it.range.first, it.range.last + 1, it.url) })
+        }
         val removed = BooleanArray(n)
         // (start, end exclusive, styles) in original coordinates.
         val ranges = ArrayList<Triple<Int, Int, Set<Style>>>()
         val inLink = BooleanArray(n)
         for (r in protectedWords(text)) for (k in r) inLink[k] = true
         val stack = ArrayList<Open>()
+        var noCloserUntil = 0
 
         fun before(i: Int) = text.codePointBefore(i)
 
@@ -113,7 +150,7 @@ object MessageFormat {
         while (i < n) {
             val c = text[i]
             if (inLink[i]) { i++; continue }
-            if (c == '\n') {
+            if (c == '\n' || c == '\r') {
                 stack.clear()
                 val block = findBlock(text, i + 1)
                 if (block != null) {
@@ -137,14 +174,18 @@ object MessageFormat {
                     continue
                 }
             }
+            if ((c == '`' || c in MARKERS) && joined(text, i)) { i++; continue }
             if (c == '`') {
                 var found = -1
-                if (canOpen(i)) {
+                // A scan that reached the end of the line without a closer means no later opener on that line has one.
+                if (i >= noCloserUntil && canOpen(i)) {
                     var j = i + 1
-                    while (j < n && text[j] != '\n') {
+                    while (j < n && text[j] != '\n' && text[j] != '\r') {
+                        monoScanSteps++
                         if (text[j] == '`' && canClose(j)) { found = j; break }
                         j++
                     }
+                    if (found < 0) noCloserUntil = j
                 }
                 if (found >= 0) {
                     removed[i] = true
@@ -157,8 +198,8 @@ object MessageFormat {
                 continue
             }
             if (c in MARKERS) {
-                val at = stack.indexOfLast { it.ch == c }
-                if (at >= 0 && canClose(i) && i > stack[at].at + 1) {
+                val at = if (canClose(i)) stack.indexOfLast { it.ch == c } else -1
+                if (at >= 0 && i > stack[at].at + 1) {
                     ranges += Triple(stack[at].at + 1, i, setOf(styleOf(c)))
                     removed[stack[at].at] = true
                     removed[i] = true
@@ -190,7 +231,7 @@ object MessageFormat {
         val links = LinkFinder.find(plainText)
             .filter { l -> code.none { l.range.first >= it.start && l.range.first < it.end } }
             .map { Link(it.range.first, it.range.last + 1, it.url) }
-        return Result(plainText, spans, links)
+        return Layout(plainText, spans, links)
     }
 
     private class Block(val openStart: Int, val contentStart: Int, val contentEnd: Int, val after: Int)

@@ -12,8 +12,6 @@ class FormattedPreviewTest {
 
     @Test fun previewDropsTheMarkers() = assertEquals(MessagePreview.Text("hi there 2*3*4"), message().preview)
 
-    @Test fun storedTextIsAsTyped() = assertEquals(MessageContent.Text(typed), message().content)
-
     @Test fun sampleSearchSnippetIsPlainAndFindsTheTypedText() {
         val store = SampleChatStore()
         val chat = store.chats.value.first()

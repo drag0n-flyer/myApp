@@ -222,9 +222,11 @@ class ChatViewModel(
     suspend fun ensureLoaded(messageId: String): Boolean {
         // The caller must call [finishJump] when it has scrolled or given up.
         jumps++
+        var pages = 0
         while (true) {
             if (current(messageId) != null) return true
-            if (!loadOlder()) return current(messageId) != null
+            // A jump never loads more than this many pages; the message is then reported as not found.
+            if (pages++ >= MAX_JUMP_PAGES || !loadOlder()) return current(messageId) != null
         }
     }
 
@@ -377,6 +379,7 @@ class ChatViewModel(
 
     private companion object {
         const val REACTION_REPEAT_MS = 500L
+        const val MAX_JUMP_PAGES = 40
         const val SEARCH_LIMIT = 200
         const val SEARCH_WANTED = 50
         const val SEARCH_MAX = 1_000

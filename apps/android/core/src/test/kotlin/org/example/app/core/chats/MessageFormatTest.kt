@@ -3,6 +3,7 @@ package org.example.app.core.chats
 import org.example.app.core.chats.MessageFormat.Style
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /**
  * The same table runs on iPhone and Mac. Ranges are UTF-16 units of `MessageFormat.plain(text)`, end exclusive
@@ -77,6 +78,63 @@ class MessageFormatTest {
     @Test fun uppercaseSchemeIsAlsoProtected() = check("*a* HTTPS://X.example/_b_", "a HTTPS://X.example/_b_", span(0, 1, Style.Bold))
     @Test fun combinedCharacters() = check("x *é* y", "x é y", span(2, 4, Style.Bold))
     @Test fun familyEmojiJoined() = check("_👨‍👩‍👧_", "👨‍👩‍👧", span(0, 8, Style.Italic))
+
+    // Rows agreed with the Swift side.
+    @Test fun innermostCloserWins() = check("*a *b* c*", "a b c", span(0, 5, Style.Bold), span(2, 3, Style.Bold))
+    @Test fun blockWithOnlyBlankLinesIsNotABlock() = check("```\n \n```", "```\n \n```")
+    @Test fun starRunAtTheEndIsTyped() = check("*a**", "*a**")
+    @Test fun doubledTildeInsideStrike() = check("~a~~b~", "a~~b", span(0, 4, Style.Strike))
+    @Test fun doubledBacktickInsideMono() = check("`a``b`", "a``b", span(0, 4, Style.Mono))
+    @Test fun crLfEndsTheLine() = check("*a\r\nb*", "*a\r\nb*")
+    @Test fun monoInsideBoldHidesItsStar() = check("*a `b* c` d*", "a b* c d", span(0, 8, Style.Bold), span(2, 6, Style.Mono))
+    @Test fun markerBeforeACombiningMarkIsNotAMarker() {
+        check("*\u0301a* x", "*\u0301a* x")
+        check("*a*\u0301 x", "*a*\u0301 x")
+    }
+    @Test fun markerBeforeAZeroWidthJoinerIsNotAMarker() {
+        check("*\u200Da* x", "*\u200Da* x")
+        check("*a*\u200D x", "*a*\u200D x")
+    }
+
+    // Hostile input: bounded work.
+    @Test fun overTheLimitTheTextIsLeftAsTypedButLinksAreStillFound() {
+        val long = "*a* https://x.example " + "x".repeat(5_000)
+        assertEquals(long, MessageFormat.plain(long))
+        assertEquals(emptyList(), MessageFormat.parse(long))
+        assertEquals(listOf(MessageFormat.Link(4, 21, "https://x.example")), MessageFormat.links(long))
+    }
+    @Test fun exactlyAtTheLimitStillFormats() {
+        val text = "*a* " + "x".repeat(4_092)
+        assertEquals(listOf(span(0, 1, Style.Bold)), MessageFormat.parse(text))
+    }
+    @Test fun theLimitCountsGraphemesNotUnits() {
+        // 3,000 letters with an accent are 6,000 UTF-16 units but 3,000 graphemes: still formatted.
+        val text = "*a* " + "e\u0301".repeat(3_000)
+        assertEquals(listOf(span(0, 1, Style.Bold)), MessageFormat.parse(text))
+    }
+    @Test fun oneScanPerLayout() {
+        MessageFormat.analyzeCalls = 0
+        MessageFormat.layout("*a* https://x.example")
+        assertEquals(1, MessageFormat.analyzeCalls)
+    }
+    @Test fun backtickScanIsLinear() {
+        val text = " `a".repeat(1_300)
+        MessageFormat.monoScanSteps = 0
+        assertEquals(text, MessageFormat.plain(text))
+        assertTrue(MessageFormat.monoScanSteps <= 2 * text.length, "steps ${MessageFormat.monoScanSteps}")
+    }
+    @Test fun sixtyFourKilobytesOfBackticksIsFast() {
+        val text = " `a".repeat(22_000)
+        val t0 = System.nanoTime()
+        assertEquals(text, MessageFormat.plain(text))
+        assertTrue((System.nanoTime() - t0) / 1_000_000 < 200)
+    }
+    @Test fun manyClosingBracketsAfterALinkAreFast() {
+        val text = "https://x.example" + ")".repeat(30_000)
+        val t0 = System.nanoTime()
+        assertEquals(listOf(MessageFormat.Link(0, 17, "https://x.example")), MessageFormat.links(text))
+        assertTrue((System.nanoTime() - t0) / 1_000_000 < 200)
+    }
 
     @Test fun plainTextIsReturnedAsTyped() {
         val typed = "hello world, 2*3*4"

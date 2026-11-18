@@ -549,8 +549,8 @@ private fun SearchBar(
         },
         actions = {
             if (status != null) Text(status, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            IconButton(onClick = onPrevious, enabled = canMove) { Icon(painterResource(R.drawable.ic_arrow_down), contentDescription = stringResource(R.string.chat_search_previous)) }
-            IconButton(onClick = onNext, enabled = canMove) { Icon(painterResource(R.drawable.ic_arrow_up), contentDescription = stringResource(R.string.chat_search_next)) }
+            IconButton(onClick = onPrevious, enabled = canMove) { Icon(painterResource(R.drawable.ic_arrow_up), contentDescription = stringResource(R.string.chat_search_previous)) }
+            IconButton(onClick = onNext, enabled = canMove) { Icon(painterResource(R.drawable.ic_arrow_down), contentDescription = stringResource(R.string.chat_search_next)) }
         },
     )
 }
