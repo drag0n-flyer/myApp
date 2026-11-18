@@ -322,6 +322,18 @@ public final class SampleChatStore: ChatStore {
         return chatIDCreatingRequestIfNeeded(for: contact)
     }
 
+    public func createGroup(accounts: [String], name: String, photo: Data?) async -> GroupCreateOutcome {
+        guard let title = GroupNameRule.clean(name) else { return .failed(.invalidName) }
+        let others = Array(Set(accounts).subtracting([me.id]))
+        guard others.count >= GroupCreateRules.minPeople else { return .failed(.tooFewPeople) }
+        guard others.count <= GroupCreateRules.maxPeople else { return .failed(.tooManyPeople) }
+        defer { onChange?() }
+        let id = ChatID.group(makeID())
+        allChats.append(Chat(id: id, contactID: nil, encryption: .endToEnd, folderIDs: [], unreadCount: 0, messages: [],
+                             isRequest: false, title: title))
+        return .created(chatID: id, notAdded: [])
+    }
+
     public func addFolder(name: String, chatIDs: Set<String>) -> ChatFolder {
         defer { onChange?() }
         let folder = ChatFolder(id: "folder-\(makeID())", name: name, kind: .custom)

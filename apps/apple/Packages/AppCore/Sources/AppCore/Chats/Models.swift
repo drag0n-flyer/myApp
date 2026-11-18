@@ -214,9 +214,13 @@ public struct Chat: Identifiable, Hashable, Codable, Sendable {
     public var archived: Bool
     /// The unsent text saved for this chat; `nil` when there is none.
     public var draft: String?
+    /// A group's name; `nil` for a one-to-one chat (it is called by its contact).
+    public var title: String?
 
     public init(id: String, contactID: String?, encryption: ChatEncryption, folderIDs: Set<String>, unreadCount: Int, messages: [Message], isRequest: Bool,
-                modeMismatch: Bool = false, pinnedAt: Date? = nil, muted: Bool = false, archived: Bool = false, draft: String? = nil) {
+                modeMismatch: Bool = false, pinnedAt: Date? = nil, muted: Bool = false, archived: Bool = false, draft: String? = nil,
+                title: String? = nil) {
+        self.title = title
         self.id = id
         self.contactID = contactID
         self.encryption = encryption
