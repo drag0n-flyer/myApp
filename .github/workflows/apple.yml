@@ -77,8 +77,8 @@ jobs:
           if has "^$P/SecureMessaging/"; then messaging=true; app=true; fi
           if has "^$P/Messaging/"; then messaging=true; app=true; fi
           if has "^$P/CallCore/"; then callcore=true; callmedia=true; app=true; fi
-          # The app links CallMedia and WebRTCBinary.
-          if has "^$P/(CallMedia|WebRTCBinary)/"; then callmedia=true; app=true; fi
+          # The app does not use CallMedia yet, so no app build for these.
+          if has "^$P/(CallMedia|WebRTCBinary)/"; then callmedia=true; fi
           if has "^apps/apple/(App|AppUITests|NotificationService|scripts)/|^apps/apple/(project\.yml|AppID\.xcconfig)$"; then app=true; fi
           # The end-to-end job also depends on the server and the mail sink, which no other job uses.
           if has "^apps/apple/Packages/(AppCore|ServerKit)/|^apps/apple/scripts/e2e-server\.sh$|^server/|^tools/smtp-sink/"; then e2e=true; fi

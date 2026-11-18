@@ -1574,6 +1574,50 @@
           }
         }
       }
+    },
+    "Camera access is off. Turn it on in Settings." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Camera access is off. Turn it on in Settings."
+          }
+        }
+      }
+    },
+    "Flip" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Flip"
+          }
+        }
+      }
+    },
+    "Video from the other person" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Video from the other person"
+          }
+        }
+      }
+    },
+    "Your video" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your video"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

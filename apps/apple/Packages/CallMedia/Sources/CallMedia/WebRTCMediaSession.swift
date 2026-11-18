@@ -33,6 +33,8 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
     private var bweMax: Int?            // the ceiling last applied
     private var statsSampler: StatsSampler?
     private var videoController: VideoController?
+    private var remoteRenderers: [any RTCVideoRenderer] = []   // behind `lock`
+    private var localRenderers: [any RTCVideoRenderer] = []    // behind `lock`
     private var closed = false
     private var monitor: Task<Void, Never>?
 
@@ -54,6 +56,58 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
     func rawStatsForTesting() async -> [RawStat] {
         guard let pc = lock.withLock({ pc }) else { return [] }
         return await StatsReader(pc: pc).rawStats()
+    }
+
+    /// Test hook: how many renderers are registered (remote, local).
+    var rendererCountsForTesting: (remote: Int, local: Int) { lock.withLock { (remoteRenderers.count, localRenderers.count) } }
+
+    // MARK: Video views
+
+    /// True on a device with a front and a back camera. Always false on a Mac.
+    public static var canSwitchCamera: Bool { VideoController.canSwitchCamera }
+
+    /// Shows the other side's video in `renderer` (an `RTCMTLVideoView`). The renderer is kept until removed
+    /// and is attached to the remote track as soon as one exists, so adding it before the call connects is fine.
+    public func addRemoteRenderer(_ renderer: any RTCVideoRenderer) {
+        lock.withLock { remoteRenderers.append(renderer) }
+        refreshRemoteRenderers()
+    }
+
+    public func removeRemoteRenderer(_ renderer: any RTCVideoRenderer) {
+        let track: RTCVideoTrack? = lock.withLock {
+            remoteRenderers.removeAll { $0 === renderer }
+            return remoteVideoTrack()
+        }
+        track?.remove(renderer)
+    }
+
+    /// Shows the camera preview in `renderer`. Frames arrive while video is on.
+    public func addLocalRenderer(_ renderer: any RTCVideoRenderer) {
+        let track: RTCVideoTrack? = lock.withLock { localRenderers.append(renderer); return videoTrack }
+        track?.add(renderer)
+    }
+
+    public func removeLocalRenderer(_ renderer: any RTCVideoRenderer) {
+        let track: RTCVideoTrack? = lock.withLock { localRenderers.removeAll { $0 === renderer }; return videoTrack }
+        track?.remove(renderer)
+    }
+
+    /// Switches between the front and back camera while video is on. Does nothing otherwise.
+    public func switchCamera() async {
+        let controller = lock.withLock { videoController }
+        await controller?.switchCamera()
+    }
+
+    /// Attaches every registered remote renderer to the remote video track, once there is one (adding twice is a no-op).
+    private func refreshRemoteRenderers() {
+        let (track, renderers): (RTCVideoTrack?, [any RTCVideoRenderer]) = lock.withLock { (remoteVideoTrack(), remoteRenderers) }
+        guard let track else { return }
+        for r in renderers { track.add(r) }
+    }
+
+    /// Call with `lock` held.
+    private func remoteVideoTrack() -> RTCVideoTrack? {
+        pc?.transceivers.first { $0.mediaType == .video }?.receiver.track as? RTCVideoTrack
     }
 
     public init(prewarm: Bool = false) {
@@ -130,6 +184,7 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
         // The remote offer's Opus parameters describe what we send; ours go in the answer.
         try await Self.setRemote(pc, RTCSessionDescription(type: .offer, sdp: SDPMunger.apply(send, to: sdp)))
         applySendProfile(send)
+        refreshRemoteRenderers()
         let answer = try await Self.answer(pc, Self.emptyConstraints)
         let munged = SDPMunger.apply(receive, to: answer)
         try await Self.setLocal(pc, RTCSessionDescription(type: .answer, sdp: munged))
@@ -140,6 +195,7 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
         let pc = try requirePC()
         try await Self.setRemote(pc, RTCSessionDescription(type: .answer, sdp: SDPMunger.apply(send, to: sdp)))
         applySendProfile(send)
+        refreshRemoteRenderers()
     }
 
     public func rollback() async throws {
@@ -202,6 +258,7 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
             self.pc = nil; capturer = nil
             audioTrack = nil; audioSender = nil; audioSource = nil
             videoTrack = nil; videoSender = nil; videoSource = nil; videoController = nil; statsSampler = nil
+            remoteRenderers = []; localRenderers = []
             return r
         }
         if let cap { await withCheckedContinuation { (k: CheckedContinuation<Void, Never>) in cap.stopCapture { k.resume() } } }
@@ -258,6 +315,7 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
                         k.resume(returning: (v?.values["framesDecoded"] as? NSNumber)?.doubleValue)
                     }
                 }
+                self.refreshRemoteRenderers()   // the remote track can change on renegotiation
                 if let changed = detector.sample(frames: frames) { self.continuation.yield(.remoteVideo(changed)) }
             }
         }
