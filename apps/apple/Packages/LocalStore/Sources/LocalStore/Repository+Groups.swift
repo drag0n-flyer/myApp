@@ -95,6 +95,19 @@ extension Repository {
         return try db.run("UPDATE chats SET my_state=? WHERE id=? AND kind='group'", [.text(state), .text(chatID)]) > 0
     }
 
+    /// Removes every conversation row of a group chat (and, by cascade, its stored MLS members), keeping the chat, its
+    /// messages and its member list. Used when I am removed or leave, so a later Welcome for the same conversation is
+    /// a fresh join and never refused as rebound. Returns the server IDs that were removed.
+    @discardableResult
+    public func deleteConversations(groupChatID chatID: String) throws -> [String] {
+        guard ChatID.isGroup(chatID) else { return [] }
+        return try db.transaction { d -> [String] in
+            let ids = try d.query("SELECT server_id FROM conversations WHERE chat_id=?", [.text(chatID)]) { $0.text(0) }
+            try d.execute("DELETE FROM conversations WHERE chat_id=?", [.text(chatID)])
+            return ids
+        }
+    }
+
     // MARK: receipts
 
     /// One row per member and kind (`delivered`, `read`); the first time stays. `false` for a repeat, an unknown kind

@@ -247,3 +247,16 @@ private func groupMessage(_ id: String, from sender: String = "me") -> MessageRe
     #expect(try repo.upsertGroup(conversationID: "Ab_9-z", title: String(repeating: "a", count: 50), photo: nil, at: t(1)) == "g:Ab_9-z")
     #expect(try repo.upsertGroup(conversationID: "c-2", title: nil, photo: nil, at: t(1)) == "g:c-2")
 }
+
+@Test func testDeleteConversationsOfAGroupKeepsTheChatItsMessagesAndMembers() throws {
+    let repo = try groupRepo()
+    try repo.upsertConversation(ConversationRecord(serverID: "c1", chatID: chatID, groupID: Data([9]), mode: "e2ee", innerMode: nil,
+                                                   modeMismatch: false, epoch: 1, active: true, createdAt: Date(timeIntervalSince1970: 1)))
+    try repo.upsertChat(chat("bob"))
+    try repo.upsertConversation(ConversationRecord(serverID: "c2", chatID: "bob", groupID: Data([8]), mode: "e2ee", innerMode: nil,
+                                                   modeMismatch: false, epoch: 1, active: true, createdAt: Date(timeIntervalSince1970: 1)))
+    #expect(try repo.deleteConversations(groupChatID: "bob").isEmpty)   // a one-to-one chat is never touched
+    #expect(try repo.conversation(serverID: "c2") != nil)
+    #expect(try repo.deleteConversations(groupChatID: chatID) == ["c1"])
+    #expect(try repo.conversation(serverID: "c1") == nil && repo.chat(id: chatID) != nil)
+}
