@@ -92,6 +92,9 @@ class NotificationProcessor(
         if (repo.isProcessed(hash)) return NotificationOutcome.Nothing
         if (known != null && handler.isEchoedOwnCommit(known, repo)) return NotificationOutcome.Nothing
 
+        // A group message from a sender the stored list lacks is left undecrypted for the app's sync, which fetches the list once.
+        if (known != null && handler.rawSenderUnlisted(known, repo)) return NotificationOutcome.FetchInbox
+
         // The engine's state change and its rows are one step, so a timeout never cuts it in half.
         return withContext(NonCancellable) {
             val incoming = try {

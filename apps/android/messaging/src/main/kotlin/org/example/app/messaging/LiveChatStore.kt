@@ -223,6 +223,8 @@ class LiveChatStore(
     private val profilesFlow = MutableStateFlow<Map<String, org.example.app.core.people.Profile>>(emptyMap())
     override val profiles: StateFlow<Map<String, org.example.app.core.people.Profile>> = profilesFlow.asStateFlow()
     @Volatile private var profileNames: Map<String, String> = emptyMap()
+    /** Profile names of group members whose one-to-one chat is a message request: used for group lines only. */
+    @Volatile private var groupOnlyNames: Map<String, String> = emptyMap()
 
     private val profileSender = org.example.app.messaging.send.ProfileSender(repo, device.accountId, { runCatching { repo.contact(device.accountId)?.displayName }.getOrNull().orEmpty() }) { chatId, name, photo, ver ->
         outbox.enqueueControl(chatId) { id, at -> ContentEnvelope.Profile(id, at, name, photo, ver) }
@@ -397,6 +399,10 @@ class LiveChatStore(
         val showSafety = supportsSafetyNumbers
         val show = showRead
         val members = HashMap<String, List<org.example.app.core.groups.Member>>()
+        // One query for every receipt of my group messages in this batch, not one per message.
+        val receiptsByMessage = repo.receiptsFor(
+            records.filter { ChatID.isGroup(it.chatId) && it.senderAccount == device.accountId }.map { it.id },
+        ).groupBy { it.messageId }
         return records.map { record ->
             val plain = record.senderAccount != ChatMapping.SYSTEM_SENDER && !record.id.startsWith(ChatMapping.CALL_PREFIX)
             ChatMapping.message(
@@ -405,7 +411,7 @@ class LiveChatStore(
                 reactions = if (plain && !record.deleted) repo.reactions(record.id) else emptyList(),
                 showRead = show,
                 displayName = { account -> personName(account) },
-                groupStatus = if (plain) groupTick(record, members) else null,
+                groupStatus = if (plain) groupTick(record, members, receiptsByMessage) else null,
             )
         }.filter { showSafety || it.content != MessageContent.System(org.example.app.core.chats.SystemEvent.SafetyNumberChanged) }
     }
@@ -420,7 +426,7 @@ class LiveChatStore(
 
     /** A contact's name by the usual rule, else a group member's own (cleaned) profile name; null when neither is known. */
     override fun personName(accountId: String): String? =
-        nameOf(contactRows[accountId]) ?: profileNames[accountId]?.let { org.example.app.core.profile.DisplayNameRule.forDisplay(it, "") }?.ifEmpty { null }
+        nameOf(contactRows[accountId]) ?: (profileNames[accountId] ?: groupOnlyNames[accountId])?.let { org.example.app.core.profile.DisplayNameRule.forDisplay(it, "") }?.ifEmpty { null }
 
     override fun messageReceipts(messageId: String): List<org.example.app.core.chats.MessageReceipt> {
         val record = repo.message(messageId) ?: return emptyList()
@@ -434,13 +440,16 @@ class LiveChatStore(
     }
 
     /** The tick of my message in a group, from the members' receipts; null for a message that has not left yet or is not mine in a group. */
-    private fun groupTick(record: MessageRecord, members: MutableMap<String, List<org.example.app.core.groups.Member>>): DeliveryStatus? {
+    private fun groupTick(
+        record: MessageRecord, members: MutableMap<String, List<org.example.app.core.groups.Member>>,
+        receiptsByMessage: Map<String, List<org.example.app.messaging.ports.ReceiptRecord>>,
+    ): DeliveryStatus? {
         if (!ChatID.isGroup(record.chatId) || record.senderAccount != device.accountId || record.status == "sending" || record.status == "failed") return null
         val list = members.getOrPut(record.chatId) {
             repo.groupMembers(record.chatId).mapNotNull { m -> org.example.app.core.groups.GroupRole.from(m.role)?.let { org.example.app.core.groups.Member(m.accountId, it) } }
         }
         val state = org.example.app.core.groups.GroupTicks.state(
-            repo.receipts(record.id).map { org.example.app.core.groups.GroupReceipt(it.accountId, it.kind) }, list, device.accountId,
+            (receiptsByMessage[record.id] ?: emptyList()).map { org.example.app.core.groups.GroupReceipt(it.accountId, it.kind) }, list, device.accountId,
         )
         return when (state) {
             org.example.app.core.groups.GroupTicks.State.Sent -> DeliveryStatus.Sent
@@ -455,7 +464,10 @@ class LiveChatStore(
     private fun loadProfiles() {
         val loaded = HashMap<String, org.example.app.core.people.Profile>()
         // A profile from a blocked account is never shown, and one from a message request waits until it is accepted.
-        val hidden = runCatching { repo.blockedIds().toSet() + repo.chats().filter { it.isRequest }.map { it.id } }.getOrDefault(emptySet())
+        val blocked = runCatching { repo.blockedIds().toSet() }.getOrDefault(emptySet())
+        val requestIds = runCatching { repo.chats().filter { it.isRequest }.map { it.id }.toSet() }.getOrDefault(emptySet())
+        val hidden = blocked + requestIds
+        val groupOnly = HashMap<String, String>()
         for (id in contactRows.keys) {
             if (id == device.accountId || id in hidden) continue
             runCatching { repo.profile(id) }.getOrNull()?.let { loaded[id] = org.example.app.core.people.Profile(it.accountId, it.name, it.photo, it.ver) }
@@ -464,9 +476,13 @@ class LiveChatStore(
         val inGroups = runCatching { repo.chats().filter { it.kind == org.example.app.messaging.ports.ChatKind.GROUP }.flatMap { repo.groupMembers(it.id) } }
             .getOrDefault(emptyList()).map { it.accountId }.toSet()
         for (id in inGroups) {
-            if (id == device.accountId || id in hidden || id in loaded) continue
-            runCatching { repo.profile(id) }.getOrNull()?.let { loaded[id] = org.example.app.core.people.Profile(it.accountId, it.name, it.photo, it.ver) }
+            if (id == device.accountId || id in blocked || id in loaded) continue
+            val row = runCatching { repo.profile(id) }.getOrNull() ?: continue
+            // A person whose one-to-one chat is still a message request: the name shows in the group only, never in the request.
+            if (id in requestIds) groupOnly[id] = row.name
+            else loaded[id] = org.example.app.core.people.Profile(row.accountId, row.name, row.photo, row.ver)
         }
+        groupOnlyNames = groupOnly
         runCatching { profileSender.photo() }.getOrNull()?.let {
             loaded[device.accountId] = org.example.app.core.people.Profile(device.accountId, myStoredName, it, runCatching { profileSender.ver() }.getOrDefault(0))
         }
@@ -584,9 +600,12 @@ class LiveChatStore(
         val folded = fold(query.trim())
         if (folded.isEmpty() || limit <= 0) return emptyList()
         val requestIds = _requests.value.map { it.id }.toSet()
+        val blockedNow = runCatching { repo.blockedIds().toSet() }.getOrDefault(emptySet())
         return repo.search(folded, limit).mapNotNull { hit ->
             if (hit.chatId in requestIds) return@mapNotNull null
             val record = repo.message(hit.messageId) ?: return@mapNotNull null
+            // A group message from a blocked sender is stored but never found by search.
+            if (ChatID.isGroup(record.chatId) && record.senderAccount in blockedNow) return@mapNotNull null
             val text = when (val p = map(listOf(record)).first().preview) {
                 is MessagePreview.Text -> p.text
                 is MessagePreview.Resource -> ""

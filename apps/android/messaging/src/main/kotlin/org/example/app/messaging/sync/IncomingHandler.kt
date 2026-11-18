@@ -161,6 +161,17 @@ class IncomingHandler(
         return conversation.serverId.takeIf { unlisted(incoming.sender.substringBefore('/'), conversation, repo) }
     }
 
+    /**
+     * True when a stored inbox row is a group message whose server-reported sender is not in the stored list. The push path
+     * checks this before decrypting: it must not decrypt and then drop, so it leaves the row for the app's sync, which
+     * fetches the list once.
+     */
+    fun rawSenderUnlisted(raw: RawInboxRecord, repo: Repository): Boolean {
+        if (raw.kind != "message") return false
+        val conversation = repo.conversation(raw.conversationId) ?: return false
+        return unlisted(raw.senderAccount, conversation, repo)
+    }
+
     private fun unlisted(account: String, conversation: ConversationRecord, repo: Repository): Boolean {
         if (repo.chat(conversation.chatId)?.kind != ChatKind.GROUP) return false
         if (repo.groupMembers(conversation.chatId).any { it.accountId == account }) return false

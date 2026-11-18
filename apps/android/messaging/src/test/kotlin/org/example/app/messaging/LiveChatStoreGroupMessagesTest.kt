@@ -135,6 +135,69 @@ class LiveChatStoreGroupMessagesTest {
     }
 
     @Test
+    fun aProfileNameOfSomeoneInMyRequestsShowsInTheGroupOnly() = runTest {
+        val w = joined()
+        val ana = w.device("ana1")
+        ana.repo.upsertChat(org.example.app.messaging.ports.ChatRecord("acc-cat", isRequest = true, unread = 0, muted = false, lastActivity = 1))
+        val s = store(ana)
+        val cat = w.device("cat1")
+        cat.outbox.enqueueControl(chatId) { id, at -> ContentEnvelope.Profile(id, at, "Cat Smith", null, 2) }
+        cat.outbox.flush()
+        ana.processor.sync()
+        s.refresh()
+        assertEquals("Cat Smith", s.personName("acc-cat"), "the group line uses the name")
+        assertNull(s.profiles.value["acc-cat"], "no profile (photo) goes out for the request's one-to-one row")
+    }
+
+    @Test
+    fun searchSkipsAGroupMessageFromABlockedSender() = runTest {
+        val w = joined()
+        val ana = w.device("ana1")
+        val s = store(ana)
+        w.send("m-1", from = "bob1")
+        w.send("m-2", from = "cat1")
+        ana.processor.sync()
+        assertEquals(2, s.searchMessages("hi", 10).size)
+        ana.repo.block("acc-cat", NOW)
+        val hits = s.searchMessages("hi", 10)
+        assertEquals(listOf("m-1"), hits.map { it.messageId })
+    }
+
+    @Test
+    fun theTicksOfAScreenOfMessagesAreReadInOneReceiptQuery() = runTest {
+        val w = joined()
+        val ana = w.device("ana1")
+        val counting = CountingRepo(ana.repo)
+        val s = LiveChatStore(
+            device = ana.me, mls = ana.mls, server = ana.api, repo = counting, lock = ana.lock, clock = ana.clock, conversations = ana.manager,
+            inbox = ana.processor, membership = ana.membership, sealer = ana.sealer(), escrow = ana.escrow,
+            readReceiptsEnabled = { ana.readReceiptsSwitch() }, maxAttachmentBytes = 1234L,
+            dirs = MediaDirs(tmp("blob"), tmp("open"), tmp("temp")),
+            social = object : SocialPort {
+                override suspend fun lookUpUser(username: String) = null
+                override suspend fun block(accountId: String) = Unit
+                override suspend fun unblock(accountId: String) = Unit
+                override suspend fun report(accountId: String, conversationId: String?, messages: List<ReportedLine>) = Unit
+            },
+            scope = scope, fold = { it.lowercase() }, mediaSweep = { },
+        )
+        for (i in 1..5) w.send("m-$i")
+        counting.singleCalls = 0
+        counting.batchCalls = 0
+        s.messages(chatId, null, 50)
+        assertEquals(0, counting.singleCalls, "never one query per message")
+        assertEquals(1, counting.batchCalls)
+    }
+
+    private class CountingRepo(val inner: org.example.app.messaging.ports.Repository) :
+        org.example.app.messaging.ports.Repository by inner {
+        var singleCalls = 0
+        var batchCalls = 0
+        override fun receipts(messageId: String): List<org.example.app.messaging.ports.ReceiptRecord> { singleCalls++; return inner.receipts(messageId) }
+        override fun receiptsFor(messageIds: List<String>): List<org.example.app.messaging.ports.ReceiptRecord> { batchCalls++; return inner.receiptsFor(messageIds) }
+    }
+
+    @Test
     fun aPlainMemberCannotSetTheTimerButAnOwnerCan() = runTest {
         val w = joined()
         val bob = w.device("bob1")

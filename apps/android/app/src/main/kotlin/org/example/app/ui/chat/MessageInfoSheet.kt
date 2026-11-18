@@ -19,7 +19,10 @@ import androidx.compose.ui.unit.dp
 import org.example.app.R
 import org.example.app.core.chats.MessageReceipt
 import org.example.app.ui.Avatar
-import org.example.app.ui.shortTime
+import java.text.DateFormat
+import java.time.Instant
+import java.time.ZoneId
+import java.util.Date
 
 /**
  * Message info for my message in a group: "Read by" and "Delivered to" with each member's name and time. A member who has
@@ -52,7 +55,14 @@ private fun Section(title: Int, people: List<Pair<String, java.time.Instant>>, n
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Avatar(name, size = 32.dp, colorKey = account)
             Text(name, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f), maxLines = 1)
-            Text(shortTime(at), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(infoTime(at), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
+}
+
+/** Time for today; date and time for any other day. */
+internal fun infoTime(at: Instant, now: Instant = Instant.now(), zone: ZoneId = ZoneId.systemDefault()): String {
+    val sameDay = at.atZone(zone).toLocalDate() == now.atZone(zone).toLocalDate()
+    val format = if (sameDay) DateFormat.getTimeInstance(DateFormat.SHORT) else DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
+    return format.format(Date.from(at))
 }

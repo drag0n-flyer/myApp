@@ -55,6 +55,7 @@ interface ChatDao {
     fun receiptCount(messageId: String, accountId: String, kind: String): Int
     /** Never over an existing receipt: the first one stays. */
     @Insert(onConflict = OnConflictStrategy.IGNORE) fun insertReceipt(r: ReceiptEntity)
+    @Query("SELECT * FROM receipts WHERE message_id IN (:messageIds) ORDER BY message_id, account_id, kind") fun receiptsForMessages(messageIds: List<String>): List<ReceiptEntity>
     @Query("SELECT * FROM receipts WHERE message_id = :messageId ORDER BY account_id, kind") fun receipts(messageId: String): List<ReceiptEntity>
 }
 

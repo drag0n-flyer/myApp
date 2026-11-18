@@ -81,6 +81,26 @@ class NotificationProcessorGroupTest {
     }
 
     @Test
+    fun aStoredItemFromAnUnlistedSenderIsNotDecryptedByThePushButLeftForTheSync() = runTest {
+        val s = setup()
+        val bob = s.w.device("bob1")
+        val cat = s.w.device("cat1")
+        cat.send(cat.repo.preferredConversation(chatId)!!, ContentEnvelope.Text("m-1", NOW, "hello"))
+        val item = s.w.server.pending("acc-bob/bob1").last()
+        // The inbox sync stored the row with the server's sender; bob's stored list does not have cat.
+        bob.repo.setGroupMembers(chatId, listOf(GroupMemberRecord("acc-ana", "owner"), GroupMemberRecord("acc-bob", "member")), 9)
+        bob.repo.insertRaw(listOf(org.example.app.messaging.ports.RawInboxRecord(
+            item.cursor, "message", "conv-0001", null, 1, "acc-cat", "cat1", item.payload, NOW,
+        )))
+        val outcome = bob.lock.withLock { s.np.onMessagePush(pad(item.payload)) }
+        assertIs<NotificationOutcome.FetchInbox>(outcome)
+        assertEquals(null, bob.repo.message("m-1"), "not decrypted, so nothing was consumed")
+        // Once the list has her, the sync can still read it.
+        bob.repo.setGroupMembers(chatId, listOf(GroupMemberRecord("acc-ana", "owner"), GroupMemberRecord("acc-bob", "member"), GroupMemberRecord("acc-cat", "member")), 10)
+        assertIs<NotificationOutcome.Message>(bob.lock.withLock { s.np.onMessagePush(pad(item.payload)) })
+    }
+
+    @Test
     fun controlMessagesAndAnUnlistedSenderShowNothing() = runTest {
         val s = setup()
         assertIs<NotificationOutcome.Nothing>(s.push("ana1", ContentEnvelope.Timer("t-1", NOW, 86_400)))
