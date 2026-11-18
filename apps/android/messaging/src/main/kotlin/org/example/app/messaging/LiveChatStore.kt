@@ -45,6 +45,7 @@ import org.example.app.core.chats.MessageHit
 import org.example.app.core.chats.MessagePreview
 import org.example.app.core.chats.SafetyNumber
 import org.example.app.core.chats.SendProblem
+import org.example.app.core.people.Expiry
 import org.example.app.core.settings.MediaKind
 import org.example.app.messaging.content.Att
 import org.example.app.messaging.content.ContentCodec
@@ -514,7 +515,7 @@ class LiveChatStore(
         if (text.isBlank()) return
         write {
             if (!ensureChatRow(chatId)) return@write
-            outbox.enqueue(ContentEnvelope.Text(freshId(), nowMs(), text, replyTo), chatId)
+            outbox.enqueue(ContentEnvelope.Text(freshId(), nowMs(), text, replyTo, ttl = ttlFor(chatId)), chatId)
             bumpActivity(chatId, nowMs())
             requestFlush()
         }
@@ -542,7 +543,7 @@ class LiveChatStore(
                 afterClaimForTest()
                 if (!ensureChatRow(chatId)) return@write
                 val id = freshId()
-                outbox.enqueue(ContentEnvelope.Text(id, nowMs(), body, replyTo), chatId)
+                outbox.enqueue(ContentEnvelope.Text(id, nowMs(), body, replyTo, ttl = ttlFor(chatId)), chatId)
                 // From here on the message is queued, whatever else fails: the caller must not send it again.
                 queued.complete(id)
                 bumpActivity(chatId, nowMs())
@@ -558,6 +559,16 @@ class LiveChatStore(
     /** Test seams for [sendReturningId]: run in the writer before and after it claims the message. */
     internal var beforeClaimForTest: () -> Unit = {}
     internal var afterClaimForTest: () -> Unit = {}
+
+    /** The chat's timer as the `ttl` of a new message; null when it is off. */
+    private fun ttlFor(chatId: String): Int? = repo.timerSeconds(chatId).takeIf { it > 0 }
+
+    private fun ttlOf(envelope: ByteArray?): Int? = when (val e = envelope?.let { ContentCodec.decode(it) }) {
+        is ContentEnvelope.Photo -> e.ttl
+        is ContentEnvelope.Voice -> e.ttl
+        is ContentEnvelope.File -> e.ttl
+        else -> null
+    }
 
     /** Messages that gave up sending (they show as [DeliveryStatus.Failed]; the UI offers [retrySend]). */
     fun failedMessageIds(chatId: String): Set<String> =
@@ -624,14 +635,15 @@ class LiveChatStore(
                 uploading += id
                 val staged = stage(id, path, chatId) ?: return@launch
                 val at = nowMs()
+                val ttl = ttlFor(chatId)
                 val pending = PendingUpload(kind.name, chatId, staged.path)
                 repo.transaction {
                     repo.insertMessage(
                         MessageRecord(
                             id = id, chatId = chatId, conversationId = null, senderAccount = device.accountId, senderDevice = device.deviceId,
                             sentAt = at, receivedAt = at,
-                            envelope = ContentCodec.encode(envelopeFor(kind, id, at, placeholderAtt(staged.length()), PreparedMedia(staged))),
-                            status = "sending", replyTo = null, folded = "",
+                            envelope = ContentCodec.encode(envelopeFor(kind, id, at, placeholderAtt(staged.length()), PreparedMedia(staged), ttl)),
+                            status = "sending", replyTo = null, folded = "", expiresAt = Expiry.expiresAt(at, ttl?.toLong()),
                         ),
                     )
                     repo.set(PENDING_UPLOAD_PREFIX + id, Json.encodeToString(PendingUpload.serializer(), pending).encodeToByteArray())
@@ -751,6 +763,8 @@ class LiveChatStore(
      */
     private suspend fun upload(id: String, at: Long, start: PendingUpload) {
         val kind = MediaKind.valueOf(start.kind)
+        // The timer chosen when the message was made stays with it, through a retry or a restart.
+        val ttl = ttlOf(repo.message(id)?.envelope)
         var pending = start
         val keptFile = pending.prepared.takeIf { it.isNotEmpty() }?.let(::File)?.takeIf { it.isFile }
         val prepared: PreparedMedia = if (keptFile != null) {
@@ -782,7 +796,7 @@ class LiveChatStore(
             val p = PreparedMedia(file, fresh.width, fresh.height, fresh.thumbnail, fresh.duration, fresh.name)
             pending = pending.copy(prepared = file.path)
             repo.transaction {
-                repo.replaceUnsentEnvelope(id, device.accountId, ContentCodec.encode(envelopeFor(kind, id, at, placeholderAtt(file.length()), p)), "", nowMs())
+                repo.replaceUnsentEnvelope(id, device.accountId, ContentCodec.encode(envelopeFor(kind, id, at, placeholderAtt(file.length()), p, ttl)), "", nowMs())
                 repo.set(PENDING_UPLOAD_PREFIX + id, Json.encodeToString(PendingUpload.serializer(), pending).encodeToByteArray())
             }
             reload()
@@ -798,7 +812,7 @@ class LiveChatStore(
             return
         }
         val att = uploaded.att
-        val envelope = envelopeFor(kind, id, at, att, prepared)
+        val envelope = envelopeFor(kind, id, at, att, prepared, ttl)
         val queued = try {
             repo.transaction {
                 // False when the message was deleted while it uploaded: then nothing is queued and no record is written.
@@ -884,12 +898,12 @@ class LiveChatStore(
     /** The stand-in until the upload gives the real one: no id, but the real size, so the bubble never shows 0 B. */
     private fun placeholderAtt(size: Long) = Att("", ByteArray(0), ByteArray(0), size, size)
 
-    private fun envelopeFor(kind: MediaKind, id: String, at: Long, att: Att, p: PreparedMedia): ContentEnvelope = when (kind) {
-        MediaKind.Photo -> ContentEnvelope.Photo(id, at, att, p.width, p.height, p.thumbnail)
+    private fun envelopeFor(kind: MediaKind, id: String, at: Long, att: Att, p: PreparedMedia, ttl: Int? = null): ContentEnvelope = when (kind) {
+        MediaKind.Photo -> ContentEnvelope.Photo(id, at, att, p.width, p.height, p.thumbnail, ttl = ttl)
         // A video is file content (the same on every platform): its name keeps the extension and the mime says video/.
-        MediaKind.Video -> ContentEnvelope.File(id, at, att, p.name, p.mime.ifEmpty { ChatMedia.videoMime(p.name) })
-        MediaKind.Voice -> ContentEnvelope.Voice(id, at, att, p.duration)
-        MediaKind.File -> ContentEnvelope.File(id, at, att, p.name, p.mime.ifEmpty { "application/octet-stream" })
+        MediaKind.Video -> ContentEnvelope.File(id, at, att, p.name, p.mime.ifEmpty { ChatMedia.videoMime(p.name) }, ttl = ttl)
+        MediaKind.Voice -> ContentEnvelope.Voice(id, at, att, p.duration, ttl = ttl)
+        MediaKind.File -> ContentEnvelope.File(id, at, att, p.name, p.mime.ifEmpty { "application/octet-stream" }, ttl = ttl)
     }
 
     /** What a retry knows about the prepared file: its length, size or name, from the stored envelope. */
@@ -1252,6 +1266,37 @@ class LiveChatStore(
         } catch (_: Exception) { }
         reload()
         return folder
+    }
+
+    // People base
+
+    override fun timerSeconds(chatId: String): Int = repo.timerSeconds(chatId)
+
+    override fun setTimer(chatId: String, seconds: Int) {
+        if (closed.get() || org.example.app.core.people.TimerChoice.from(seconds) == null) return
+        // Remembered with the time of the choice, so an older timer from the peer cannot override it.
+        repo.set("timer-at:$chatId", nowMs().toString().encodeToByteArray())
+        repo.setTimer(chatId, seconds)
+        reload()
+    }
+
+    override fun sweepExpired(now: Long): List<String> {
+        if (closed.get()) return emptyList()
+        val removed = repo.sweepExpired(now, device.accountId)
+        if (removed.isNotEmpty()) reload()
+        return removed
+    }
+
+    override fun profile(accountId: String): org.example.app.core.people.Profile? =
+        repo.profile(accountId)?.let { org.example.app.core.people.Profile(it.accountId, it.name, it.photo, it.ver) }
+
+    override fun saveProfile(accountId: String, name: String, photo: ByteArray?, ver: Int): Boolean {
+        // The same rules as the wire: a name that fails the display-name rule, or an oversized photo, is not kept.
+        if (org.example.app.core.profile.DisplayNameRule.clean(name) != name) return false
+        if (photo != null && photo.size > 24_576) return false
+        val saved = repo.saveProfile(accountId, name, photo, ver)
+        if (saved) reload()
+        return saved
     }
 
     override fun renameFolder(id: String, name: String) { repo.renameFolder(id, name); reload() }

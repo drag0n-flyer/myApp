@@ -7,6 +7,15 @@ import org.example.app.net.Base64UrlSerializer
 import org.example.app.net.InstantSerializer
 
 @Serializable
+class ContactLinkWire(
+    @SerialName("token") val token: String,
+    @SerialName("expiresAt") @Serializable(with = InstantSerializer::class) val expiresAt: Instant,
+)
+
+@Serializable
+internal class RedeemBody(@SerialName("token") val token: String)
+
+@Serializable
 class UserSummary(
     @SerialName("accountID") val accountID: String,
     @SerialName("username") val username: String,

@@ -42,6 +42,15 @@ internal fun decodeFrame(text: String): IncomingFrame? {
                 ServerEvent.Inbox(InboxItem(w.cursor, w.kind, w.conversationID, w.seq, w.epoch, w.senderAccountID, w.senderDeviceID, w.payload, w.sentAt))
             })
             "device.revoked" -> event(data?.str("deviceID")?.let { ServerEvent.DeviceRevoked(it) })
+            "conv.ephemeral" -> event(data?.let { d ->
+                val c = d.str("conversationID")
+                val epoch = (d["epoch"] as? JsonPrimitive)?.takeIf { !it.isString }?.content?.toLongOrNull()
+                val from = d["from"] as? JsonObject
+                val a = from?.str("account"); val dev = from?.str("device")
+                val ct = d.bytes("ciphertext")
+                if (c == null || epoch == null || a == null || dev == null || ct == null) null
+                else ServerEvent.ConvEphemeral(c, epoch, a, dev, ct)
+            })
             "call.ring" -> event(data?.let { d ->
                 val video = (d["video"] as? JsonPrimitive)?.booleanOrNull
                 val c = d.str("callID"); val a = d.str("fromAccountID"); val f = d.str("fromDeviceID")

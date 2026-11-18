@@ -21,6 +21,7 @@ import org.example.app.calls.session.MediaSessionFactory
 import org.example.app.contracts.CallSignalSealer
 import org.example.app.contracts.LiveSocket
 import org.example.app.contracts.ServerEvent
+import org.example.app.contracts.sendEphemeral
 import org.example.app.core.chats.Contact
 import org.example.app.core.settings.UserSettings
 import org.example.app.net.api.TurnApi
@@ -140,6 +141,11 @@ class LiveSession(
 
     /** The live socket for this session's host. */
     val socket: SocketHandle = platform.socket(client)
+
+    /** Typing and presence: plain frames over the socket, fed by the graph's dispatcher through `onFrame`. */
+    val ephemeral = org.example.app.messaging.EphemeralChannel(device, repo) { id, epoch, payload ->
+        socket.socket.sendEphemeral(id, epoch, payload)
+    }
 
     /** The socket's call frames. The socket has one collector (the graph's watcher), which passes them on here. */
     val callEvents = MutableSharedFlow<ServerEvent>(extraBufferCapacity = 64)
