@@ -61,7 +61,7 @@ struct MacRootView: View {
         }
         .overlay(alignment: .top) {
             if let caller = model.incomingCaller {
-                IncomingCallBanner(name: caller.displayName,
+                IncomingCallBanner(name: caller.displayName, colorKey: caller.id,
                                    accept: { model.macRinger?.answerFromBanner() },
                                    decline: { model.macRinger?.declineFromBanner() })
                     .padding(.top, 10)
@@ -142,12 +142,13 @@ struct MacRootView: View {
 /// Incoming call on the Mac (no CallKit on macOS): in-app banner plus a notification.
 private struct IncomingCallBanner: View {
     let name: String
+    let colorKey: String?
     let accept: () -> Void
     let decline: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
-            Avatar(name: name, size: 36)
+            Avatar(name: name, colorKey: colorKey, size: 36)
             VStack(alignment: .leading) {
                 Text(name).font(.headline)
                 Text("Incoming call").font(.caption).foregroundStyle(.secondary)

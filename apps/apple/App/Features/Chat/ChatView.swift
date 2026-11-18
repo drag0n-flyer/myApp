@@ -86,7 +86,7 @@ struct ChatView: View {
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
-                ChatHeaderView(name: contact?.displayName ?? "") {
+                ChatHeaderView(name: contact?.displayName ?? "", colorKey: contact?.id) {
                     open(.info(chatID: chatID))
                 }
             }
@@ -588,7 +588,7 @@ private struct ForwardPickerView: View {
             List(model.contacts.sorted { $0.displayName.localizedCompare($1.displayName) == .orderedAscending }) { person in
                 Button { choose(person.id) } label: {
                     HStack(spacing: 12) {
-                        Avatar(name: person.displayName, size: 36)
+                        Avatar(name: person.displayName, colorKey: person.id, size: 36)
                         VStack(alignment: .leading) {
                             Text(person.displayName).foregroundStyle(.primary)
                             Text("@\(person.username)").font(.caption).foregroundStyle(.secondary)

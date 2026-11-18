@@ -76,7 +76,7 @@ struct SearchView: View {
                     Section("Contacts") {
                         ForEach(people) { person in
                             Button { path.append(.chat(id: model.openChat(with: person.id))) } label: {
-                                Label { Text(person.displayName) } icon: { Avatar(name: person.displayName, size: 32) }
+                                Label { Text(person.displayName) } icon: { Avatar(name: person.displayName, colorKey: person.id, size: 32) }
                             }
                         }
                     }

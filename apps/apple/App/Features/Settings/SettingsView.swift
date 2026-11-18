@@ -17,7 +17,7 @@ struct SettingsView: View {
                 Section {
                     NavigationLink { ProfileView(model: model) } label: {
                         HStack(spacing: 12) {
-                            Avatar(name: model.me.displayName, size: 56)
+                            Avatar(name: model.me.displayName, colorKey: model.me.id, size: 56)
                             VStack(alignment: .leading) {
                                 Text(model.me.displayName).font(.title3.weight(.semibold))
                                 Text("@\(model.me.username)").foregroundStyle(.secondary)

@@ -11,7 +11,7 @@ struct ChatRowView: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 11) {
-            Avatar(name: name)
+            Avatar(name: name, colorKey: chat.contactID)
             VStack(alignment: .leading, spacing: 2) {
                 let nameLayout = typeSize.isAccessibilitySize
                     ? AnyLayout(VStackLayout(alignment: .leading, spacing: 2))
