@@ -5,6 +5,12 @@ import SwiftUI
 final class AppDelegate: NSObject, UIApplicationDelegate {
     @MainActor static weak var model: AppModel?
 
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        // Before launch finishes, so a notification button that starts the app is delivered.
+        MainActor.assumeIsolated { NotificationActions.shared.installOnLaunch() }
+        return true
+    }
+
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
         Task { @MainActor in await AppDelegate.model?.didReceivePushToken(deviceToken) }
     }

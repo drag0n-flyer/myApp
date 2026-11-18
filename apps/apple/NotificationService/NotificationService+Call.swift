@@ -1,5 +1,6 @@
 import AppCore
 import CallCore
+import Messaging
 import UserNotifications
 
 extension NotificationService {
@@ -12,12 +13,14 @@ extension NotificationService {
     ///   the time it started processing it.
     static func applyCall(
         _ payload: CallSignalPayload, from contact: Contact, to content: UNMutableNotificationContent,
-        ringedAt: Date, now: Date = Date()
+        ringedAt: Date, appLockOn: Bool, now: Date = Date()
     ) {
         let video = payload.video ?? false
         let text = CallNotificationText.content(
             callerName: contact.displayName, video: video, ringAge: now.timeIntervalSince(ringedAt))
-        content.title = text.title
+        // With app lock on (or settings unreadable) the caller is not named.
+        let title = NotificationPlan.callTitle(callerName: text.title, appLockOn: appLockOn)
+        content.title = title.isEmpty ? NotificationStrings.localized().fallbackTitle : title
         content.body = String(localized: String.LocalizationValue(text.body))
         content.threadIdentifier = contact.id
         content.userInfo = ["callID": payload.callID, "video": video, "ringedAt": ringedAt.timeIntervalSince1970]

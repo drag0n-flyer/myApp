@@ -137,7 +137,12 @@ final class AppModel {
     let isUITesting: Bool
 
     /// Bumped after every store change so views that read store data refresh.
-    private(set) var revision = 0
+    private(set) var revision = 0 {
+        didSet { NotificationActions.shared.storeChanged() }
+    }
+
+    /// The signed-in store is built (or this is sample data): a notification action can use it.
+    var notificationStoreReady: Bool { isSampleData || messaging != nil }
 
     init(launch: LaunchOptions = .current) {
         let config = AppConfig.current
@@ -223,6 +228,7 @@ final class AppModel {
         #if os(macOS)
         macRinger = MacRinger(handler: self, systemUI: !launch.isUITesting)
         #endif
+        NotificationActions.shared.attach(self)
         if mode.isLive {
             #if os(iOS)
             setUpVoIP()
@@ -269,9 +275,17 @@ final class AppModel {
 
     func send(_ content: MessageContent, in chatID: String) { chatStore.send(content, in: chatID); revision += 1 }
     func retrySend(messageID: String) { chatStore.retrySend(messageID: messageID); revision += 1 }
-    func markRead(chatID: String) { chatStore.markRead(chatID: chatID); revision += 1 }
+    func markRead(chatID: String) {
+        chatStore.markRead(chatID: chatID)
+        revision += 1
+        NotificationActions.shared.removeDelivered(chatID: chatID)
+    }
     func accept(requestID: String) { chatStore.accept(requestID: requestID); revision += 1 }
-    func block(contactID: String) { chatStore.block(contactID: contactID); revision += 1 }
+    func block(contactID: String) {
+        chatStore.block(contactID: contactID)
+        revision += 1
+        NotificationActions.shared.removeDelivered(chatID: contactID)
+    }
     func report(chatID: String) { chatStore.report(chatID: chatID); revision += 1 }
     /// False until the engine gives real member keys; chat info then hides Verify and the Verified seal.
     var supportsSafetyNumbers: Bool { _ = revision; return chatStore.supportsSafetyNumbers }
@@ -461,6 +475,7 @@ final class AppModel {
             empty.onChange = { [weak self] in self?.revision += 1 }
             chatStore = empty
             revision += 1
+            NotificationActions.shared.signedOut()
         }
         #if os(macOS)
         onboarding = OnboardingFlow(platform: .mac)
