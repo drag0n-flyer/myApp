@@ -119,6 +119,8 @@ private const val NEW_CHAT = "newchat"
 private const val SEARCH = "search"
 private const val PROFILE = "settings/profile"
 private const val MY_QR = "myqr"
+/** Stands in for the link while the invite text is built, so the link is only ever put in at the share. */
+private const val INVITE_URL_SLOT = "\u0001link\u0001"
 private const val SCAN_LINK = "scanlink"
 private const val CONFIRM_CONTACT = "confirmcontact/{username}?id={id}&name={name}"
 
@@ -168,6 +170,7 @@ fun AppRoot(
         if (sessionEnds != seenEnds) {
             // Signed out by the server or wiped after a revocation: back to onboarding.
             seenEnds = sessionEnds
+            graph.linkFlow.accountEnded()
             onboarding = true
         }
         if (onboarding) {
@@ -275,14 +278,17 @@ fun AppRoot(
         }
         // A contact link (app link, paste, scan) waits here while locked or signed out; once the app is ready it is
         // opened exactly once. What it leads to is acted on when the screens show: held while locked.
-        val pendingLink by graph.pendingLink.value.collectAsStateWithLifecycle()
-        LaunchedEffect(pendingLink, locked) { graph.openPendingLink(ready = !locked) }
-        val linkOutcome by graph.linkOutcome.collectAsStateWithLifecycle()
+        val flow = graph.linkFlow
+        val pendingLink by flow.pending.value.collectAsStateWithLifecycle()
+        val linkOutcome by flow.outcome.collectAsStateWithLifecycle()
+        val linkBusy by flow.busy.collectAsStateWithLifecycle()
         var linkProblem by remember { mutableStateOf<LinkProblem?>(null) }
+        // Keyed on everything that can make a waiting link startable again: a new link, the unlock, the end of the
+        // previous open, the previous outcome being acted on. No timers.
+        LaunchedEffect(pendingLink, locked, linkBusy, linkOutcome) { flow.start(ready = !locked) }
+        // The outcome is acted on at the root once unlocked, whatever dialog or screen is above the chats.
         LaunchedEffect(linkOutcome, locked) {
-            if (locked) return@LaunchedEffect
-            val outcome = linkOutcome ?: return@LaunchedEffect
-            graph.linkOutcome.value = null
+            val outcome = flow.takeOutcome(ready = !locked) ?: return@LaunchedEffect
             when (outcome) {
                 is LinkOutcome.Confirm -> nav.navigate(
                     "confirmcontact/${Uri.encode(outcome.username)}" +
@@ -419,6 +425,8 @@ fun AppRoot(
                 var makeMessage by remember { mutableStateOf<Int?>(null) }
                 val makeScope = rememberCoroutineScope()
                 val ctx = LocalContext.current
+                val appName = stringResource(R.string.app_name)
+                val inviteText = stringResource(R.string.invite_message, appName, INVITE_URL_SLOT)
                 AddContactScreen(
                     graph.chatStore, onBack = { nav.popBackStack() }, onAdded = { nav.popBackStack() },
                     links = AddContactLinks(
@@ -430,7 +438,7 @@ fun AppRoot(
                             makeScope.launch {
                                 try {
                                     val url = graph.createContactLinkUrl()
-                                    shareText(ctx, ctx.getString(R.string.invite_message, ctx.getString(R.string.app_name), url), graph.appLock::expectReturn)
+                                    shareText(ctx, inviteText.replace(INVITE_URL_SLOT, url), graph.appLock::expectReturn)
                                 } catch (e: kotlinx.coroutines.CancellationException) {
                                     throw e
                                 } catch (e: LinkProblemException) {

@@ -64,7 +64,7 @@ import org.example.app.calls.android.CallMedia
 import org.example.app.live.SessionCallEngine
 import org.example.app.core.chats.ChatStore
 import org.example.app.core.links.ContactLinkOpener
-import org.example.app.core.links.LinkOutcome
+import org.example.app.core.links.LinkFlow
 import org.example.app.core.links.LinkProblem
 import org.example.app.core.links.LinkProblemException
 import org.example.app.core.links.PendingLink
@@ -168,22 +168,17 @@ class AppGraph(
     /** A chat a notification tap asked to open; `AppRoot` opens it once the chats show, then clears it. */
     val requestedChat = MutableStateFlow<String?>(null)
 
-    /** A contact link that was opened, pasted or scanned: one, the latest; `AppRoot` handles it once the app is unlocked and signed in. */
-    val pendingLink = PendingLink()
-
-    /** Opens a contact link: nothing leaves the device for a link that is not for this server. */
+    /** Opens a contact link: the host is the signed-in server's, read when the link is handled; nothing leaves the device for another host. */
     val contactLinkOpener: ContactLinkOpener by lazy {
         ContactLinkOpener({ serverPolicy.host }, { chatStore.contacts.value }, ::redeemContactLink)
     }
 
-    /** What the last opened link led to, until the screen has acted on it (it survives a rotation; the token is already spent). */
-    val linkOutcome = MutableStateFlow<LinkOutcome?>(null)
-
-    /** Starts the waiting link, when [ready] (unlocked, signed in). Runs in the graph's scope, so leaving a screen does not cancel a redeem. */
-    fun openPendingLink(ready: Boolean) {
-        val url = pendingLink.take(ready) ?: return
-        scope.launch { linkOutcome.value = contactLinkOpener.open(url) }
-    }
+    /**
+     * Contact links: the raw URL waits (one, the latest) while locked or signed out; `AppRoot` starts it once ready. A redeem
+     * runs in the graph's scope (leaving a screen does not cancel it) and its result is dropped if the account ended meanwhile.
+     */
+    val linkFlow: LinkFlow by lazy { LinkFlow(contactLinkOpener, { sessionEnds.value }) { block -> scope.launch { block() } } }
+    val pendingLink: PendingLink get() = linkFlow.pending
 
     private suspend fun redeemContactLink(token: String): RedeemedContact {
         if (sampleData) throw LinkProblemException(LinkProblem.Expired)
