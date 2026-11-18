@@ -75,34 +75,82 @@ public struct ChatHistory: Sendable {
         return added
     }
 
-    /// Call when the store's newest messages changed. Keeps messages that slid out of the newest window,
-    /// fills a gap left by a burst of arrivals, and re-reads the loaded older range so edits, deletes and
-    /// reactions on older messages show. The store's copy always wins.
-    public mutating func sync(previousNewest: [Message], newest: [Message], loader: (String, Int) -> [Message]) {
-        older = MessageMerge.merged(newest: previousNewest, older: older)
-        guard let firstID = newest.first?.id else { return }
-        if let lastSeen = previousNewest.last?.id, !newest.contains(where: { $0.id == lastSeen }) {
-            var before = firstID
-            for _ in 0..<20 {
+    /// Most pages a gap fill or a jump may read before giving up.
+    static let maxGapPages = 20
+    static let maxJumpPages = 40
+    /// When more than this many older messages are loaded, only the newest `trimTo` are kept; paging reloads the rest.
+    static let trimAbove = 1000
+    static let trimTo = 500
+    static let refreshPageSize = 500
+
+    /// Call when the store's newest messages changed (or, with `refreshOlder`, when an older message may have
+    /// changed). Keeps messages that slid out of the newest window, fills the gap a burst of arrivals leaves,
+    /// and re-reads the loaded older range so edits, deletes and removals show. The store's copy always wins.
+    /// With nothing changed and `refreshOlder` false it reads nothing.
+    public mutating func sync(previousNewest: [Message], newest: [Message], refreshOlder: Bool = true,
+                              loader: (String, Int) -> [Message]) {
+        guard let first = newest.first else { return }
+        if previousNewest == newest && !refreshOlder { return }
+        let newestIDs = Set(newest.map(\.id))
+        // Only messages older than the newest window belong in `older`; this also drops anything the store removed
+        // from the newest window.
+        let slid = previousNewest.filter { !newestIDs.contains($0.id) && $0.sentAt <= first.sentAt }
+        older = MessageMerge.merged(newest: slid, older: older.filter { !newestIDs.contains($0.id) && $0.sentAt <= first.sentAt })
+
+        // A burst can push everything we knew out of the window: read back to what we knew.
+        if let knownLast = previousNewest.last, !previousNewest.contains(where: { newestIDs.contains($0.id) }),
+           first.sentAt > knownLast.sentAt {
+            var before = first.id
+            var closed = false
+            for _ in 0..<Self.maxGapPages {
                 let page = loader(before, HistoryPager.pageSize)
                 older = MessageMerge.merged(newest: page, older: older)
-                guard let oldestOfPage = page.first, !page.contains(where: { $0.id == lastSeen }) else { break }
-                before = oldestOfPage.id
+                guard let oldest = page.first else { closed = true; break }
+                if oldest.sentAt <= knownLast.sentAt { closed = true; break }
+                before = oldest.id
+            }
+            if !closed {
+                // Too big a burst to close: show the contiguous newest window and page from there.
+                older = []
+                pager = HistoryPager()
+                return
             }
         }
-        if !older.isEmpty {
-            let fresh = loader(firstID, min(older.count, 500))
-            older = MessageMerge.merged(newest: fresh, older: older)
+
+        if older.count > Self.trimAbove {
+            older = Array(older.suffix(Self.trimTo))
+            pager = HistoryPager()
+        }
+
+        guard refreshOlder, let oldestLoaded = older.first else { return }
+        var fresh: [Message] = []
+        var before = first.id
+        var complete = false
+        for _ in 0..<8 {
+            let limit = min(Self.refreshPageSize, max(1, older.count - fresh.count))
+            let page = loader(before, limit)
+            fresh = MessageMerge.merged(newest: page, older: fresh)
+            guard let oldest = page.first else { complete = true; break }
+            if oldest.sentAt <= oldestLoaded.sentAt { complete = true; break }
+            before = oldest.id
+        }
+        if complete {
+            older = fresh
+        } else {
+            older = []
+            pager = HistoryPager()
         }
     }
 
-    /// Loads older pages until `targetID` is known. False when history ends first; the caller then leaves the chat as it was.
+    /// Loads older pages until `targetID` is known. False when history ends first, or after `maxJumpPages`
+    /// pages; the caller then leaves the chat as it was.
     public mutating func load(until targetID: String, newest: [Message], loader: (String, Int) -> [Message]) -> Bool {
-        while true {
+        for _ in 0..<Self.maxJumpPages {
             if messages(newest: newest).contains(where: { $0.id == targetID }) { return true }
             if pager.reachedStart { return false }
             loadPage(newest: newest, loader: loader)
         }
+        return messages(newest: newest).contains(where: { $0.id == targetID })
     }
 }
 

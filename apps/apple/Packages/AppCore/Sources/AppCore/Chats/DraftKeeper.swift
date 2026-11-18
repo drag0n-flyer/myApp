@@ -21,9 +21,10 @@ public enum LinkDetector {
     /// `text` with web and e-mail links marked, so the system opens them when tapped.
     public static func attributed(_ text: String) -> AttributedString {
         var result = AttributedString(text)
+        // Direction controls anywhere in the message can change how a link is displayed.
+        if text.unicodeScalars.contains(where: isDirectionControl) { return result }
         for (range, url) in links(in: text) {
             guard let scheme = url.scheme?.lowercased(), ["http", "https", "mailto"].contains(scheme),
-                  !containsBidiControl(text[range]),
                   let lower = AttributedString.Index(range.lowerBound, within: result),
                   let upper = AttributedString.Index(range.upperBound, within: result) else { continue }
             result[lower..<upper].link = url
@@ -31,9 +32,12 @@ public enum LinkDetector {
         return result
     }
 
-    /// Text that reorders itself (U+202A-202E, U+2066-2069) could show one address and open another.
-    private static func containsBidiControl(_ text: Substring) -> Bool {
-        text.unicodeScalars.contains { (0x202A...0x202E).contains($0.value) || (0x2066...0x2069).contains($0.value) }
+    /// U+202A-202E, U+2066-2069, U+200E, U+200F, U+061C.
+    private static func isDirectionControl(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.value {
+        case 0x202A...0x202E, 0x2066...0x2069, 0x200E, 0x200F, 0x061C: true
+        default: false
+        }
     }
 
     #if canImport(Darwin)
@@ -78,4 +82,6 @@ public struct OwnerGuard: Sendable {
     }
 
     public mutating func clear() { ownerID = nil }
+
+    public func isOwner(_ id: String) -> Bool { ownerID == id }
 }

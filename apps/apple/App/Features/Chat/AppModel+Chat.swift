@@ -21,6 +21,9 @@ final class ChatScreenState {
         if owner.switchTo(id) { clearState() }
     }
 
+    /// Reads never change state (they run while a view draws): another account's values read as empty.
+    func isOwner(_ id: String) -> Bool { owner.isOwner(id) }
+
     /// For sign-out and account deletion.
     func reset() {
         owner.clear()
@@ -37,13 +40,19 @@ final class ChatScreenState {
 extension AppModel {
     /// Unsent composer text per chat for the life of the process.
     var drafts: DraftKeeper {
-        get { ChatScreenState.shared.ensureOwner(chatStore.me.id); return ChatScreenState.shared.drafts }
+        get {
+            let state = ChatScreenState.shared
+            return state.isOwner(chatStore.me.id) ? state.drafts : DraftKeeper()
+        }
         set { ChatScreenState.shared.ensureOwner(chatStore.me.id); ChatScreenState.shared.drafts = newValue }
     }
 
     /// Chat whose search field should open (set by chat info's Search button).
     var chatSearchRequest: String? {
-        get { ChatScreenState.shared.ensureOwner(chatStore.me.id); return ChatScreenState.shared.searchRequestChatID }
+        get {
+            let state = ChatScreenState.shared
+            return state.isOwner(chatStore.me.id) ? state.searchRequestChatID : nil
+        }
         set { ChatScreenState.shared.ensureOwner(chatStore.me.id); ChatScreenState.shared.searchRequestChatID = newValue }
     }
 

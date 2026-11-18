@@ -29,6 +29,8 @@ struct ChatView: View {
     @State private var history = ChatHistory()
     /// The store's newest messages as of the last sync, so ones that slide out of that window are kept.
     @State private var lastNewest: [Message] = []
+    /// Set when this screen reacts to, edits or deletes a message, which may be older than the newest window.
+    @State private var needsOlderRefresh = false
     @State private var hits: [MessageHit] = []
     /// The query `hits` answers; "No results" shows only once it matches what is typed.
     @State private var searchedQuery = ""
@@ -214,7 +216,7 @@ struct ChatView: View {
                 retry: { model.retrySend(messageID: message.id) },
                 actions: MessageActions.available(for: message, isMine: mine),
                 perform: { perform($0, on: message, all: all, indexByID: indexByID) },
-                react: { model.react($0, to: message.id, in: chatID, followedBy: nextID(after: message.id, all: all, indexByID: indexByID)) },
+                react: { needsOlderRefresh = true; model.react($0, to: message.id, in: chatID, followedBy: nextID(after: message.id, all: all, indexByID: indexByID)) },
                 isHighlighted: highlightID == message.id,
                 quoteTapped: { if let id = message.replyToID { jump = JumpRequest(messageID: id) } }
             )
@@ -269,13 +271,16 @@ struct ChatView: View {
     /// After a store change: keep messages that left the newest window, fill gaps, refresh loaded older ones.
     private func syncHistory() {
         guard let chat else { return }
-        guard chat.messages != lastNewest || !history.older.isEmpty else { return }
+        // Store changes in other chats (receipts and so on) cost this screen nothing.
+        let changed = chat.messages != lastNewest
+        guard changed || needsOlderRefresh else { return }
         var next = history
-        next.sync(previousNewest: lastNewest, newest: chat.messages) { before, limit in
+        next.sync(previousNewest: lastNewest, newest: chat.messages, refreshOlder: true) { before, limit in
             model.olderMessages(in: chatID, before: before, limit: limit)
         }
         history = next
         lastNewest = chat.messages
+        needsOlderRefresh = false
     }
 
     /// Loads the next older page and keeps `anchorID` (the row that triggered it) where it was on screen.
@@ -384,6 +389,7 @@ struct ChatView: View {
     private func confirmDelete() {
         guard let target = deleteTarget else { return }
         deleteTarget = nil
+        needsOlderRefresh = true
         model.delete(messageID: target.id, in: chatID, followedBy: nextLoadedID(after: target.id))
     }
 
@@ -403,6 +409,7 @@ struct ChatView: View {
         guard !text.isEmpty else { return }
         if let editing {
             // If the message changed under the edit, the edit is dropped; the bar closes either way.
+            needsOlderRefresh = true
             model.edit(messageID: editing.id, in: chatID, text: text, followedBy: nextLoadedID(after: editing.id))
             closeEditBar()
             return

@@ -74,7 +74,7 @@ struct MessageBubbleView: View {
     private static func underlinedLinks(_ text: String) -> AttributedString {
         var attributed = LinkDetector.attributed(text)
         for run in attributed.runs where run.link != nil {
-            attributed[run.range].underlineStyle = .single
+            attributed[run.range].swiftUI.underlineStyle = .single
         }
         return attributed
     }

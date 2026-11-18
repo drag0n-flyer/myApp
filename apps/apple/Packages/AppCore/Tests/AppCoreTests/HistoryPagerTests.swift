@@ -185,6 +185,101 @@ final class ChatHistoryTests: XCTestCase {
         XCTAssertEqual(shown?.reactions, ["👍"])
     }
 
+    // B-M1: unchanged windows cost nothing.
+    func testUnchangedSyncsReadNothing() {
+        let store = MutableStore((1...120).map(msg))
+        var history = ChatHistory()
+        let newest = store.newest(50)
+        _ = history.loadPage(newest: newest, loader: store.load)
+        let before = history.older.map(\.id)
+        var reads = 0
+        for _ in 0..<10 {
+            history.sync(previousNewest: newest, newest: newest, refreshOlder: false) { b, l in reads += 1; return store.load(b, l) }
+        }
+        XCTAssertEqual(reads, 0)
+        XCTAssertEqual(history.older.map(\.id), before)
+    }
+
+    func testOneNewMessageCostsOneRightSizedRead() {
+        let store = MutableStore((1...120).map(msg))
+        var history = ChatHistory()
+        let previous = store.newest(50)
+        _ = history.loadPage(newest: previous, loader: store.load)
+        store.all.append(msg(121))
+        let now = store.newest(50)
+        var limits: [Int] = []
+        history.sync(previousNewest: previous, newest: now) { b, l in limits.append(l); return store.load(b, l) }
+        XCTAssertEqual(limits, [51], "one read for the loaded older range (50 loaded + 1 that slid out)")
+        assertContiguous(history.messages(newest: now).map(\.id), from: 21, to: 121)
+        // Repeated changes do not make it grow.
+        for _ in 0..<5 {
+            history.sync(previousNewest: now, newest: now) { b, l in limits.append(l); return store.load(b, l) }
+        }
+        XCTAssertEqual(history.older.count, 51)
+    }
+
+    // B-M2: a message the store removed is gone, with no paging.
+    func testRemovedMessageDisappearsWithoutReads() {
+        let store = MutableStore((1...120).map(msg))
+        var history = ChatHistory()
+        let previous = store.newest(50)
+        store.all.removeLast()
+        let now = store.newest(50)
+        var reads = 0
+        history.sync(previousNewest: previous, newest: now) { b, l in reads += 1; return store.load(b, l) }
+        XCTAssertEqual(reads, 0)
+        let ids = history.messages(newest: now).map(\.id)
+        XCTAssertFalse(ids.contains("m120"))
+        assertContiguous(ids, from: 70, to: 119)
+    }
+
+    func testRemovedOlderMessageIsDropped() {
+        let store = MutableStore((1...120).map(msg))
+        var history = ChatHistory()
+        let newest = store.newest(50)
+        _ = history.loadPage(newest: newest, loader: store.load)
+        store.all.removeAll { $0.id == "m60" }
+        history.sync(previousNewest: newest, newest: newest) { b, l in store.load(b, l) }
+        XCTAssertFalse(history.messages(newest: newest).contains { $0.id == "m60" })
+    }
+
+    // B-S1: a huge loaded range is trimmed so paging reloads it fresh.
+    func testHugeLoadedRangeIsTrimmed() {
+        let store = MutableStore((1...3000).map(msg))
+        var history = ChatHistory()
+        let newest = store.newest(50)
+        for _ in 0..<30 { _ = history.loadPage(newest: newest, loader: store.load) }
+        XCTAssertGreaterThan(history.older.count, 1000)
+        history.sync(previousNewest: newest, newest: newest) { b, l in store.load(b, l) }
+        XCTAssertEqual(history.older.count, 500)
+        XCTAssertFalse(history.pager.reachedStart)
+        assertContiguous(history.messages(newest: newest).map(\.id), from: 2451, to: 3000)
+    }
+
+    // B-S2: a burst too big to close leaves no hole.
+    func testHugeBurstDiscardsOlderAndPagingContinues() {
+        let store = MutableStore((1...100).map(msg))
+        var history = ChatHistory()
+        let previous = store.newest(50)
+        _ = history.loadPage(newest: previous, loader: store.load)
+        store.all += (101...1600).map(msg)
+        let now = store.newest(50)
+        history.sync(previousNewest: previous, newest: now) { b, l in store.load(b, l) }
+        assertContiguous(history.messages(newest: now).map(\.id), from: 1551, to: 1600)
+        XCTAssertEqual(history.loadPage(newest: now, loader: store.load), 50)
+        assertContiguous(history.messages(newest: now).map(\.id), from: 1501, to: 1600)
+    }
+
+    // B-S3: looking for a message that is not there stops at the cap.
+    func testJumpToMissingMessageStopsAtCap() {
+        let store = MutableStore((1...5000).map(msg))
+        var history = ChatHistory()
+        var reads = 0
+        let found = history.load(until: "nope", newest: store.newest(50)) { b, l in reads += 1; return store.load(b, l) }
+        XCTAssertFalse(found)
+        XCTAssertLessThanOrEqual(reads, 40)
+    }
+
     func testBadStoreThatRepeatsItselfCannotLoopForever() {
         let page = (1...50).map(msg)
         var history = ChatHistory()

@@ -48,6 +48,13 @@ extension LinkDetectorTests {
         let text = LinkDetector.attributed("open https://exa\u{202E}mple.com now")
         XCTAssertTrue(text.runs.compactMap(\.link).isEmpty)
     }
+
+    func testNoLinksWhenDirectionControlIsOutsideTheLink() {
+        for control in ["\u{202E}", "\u{2066}", "\u{200F}", "\u{061C}"] {
+            let text = LinkDetector.attributed("\(control)https://example.com/a")
+            XCTAssertTrue(text.runs.compactMap(\.link).isEmpty, "control \(control.unicodeScalars.first!.value)")
+        }
+    }
 }
 
 final class OwnerGuardTests: XCTestCase {
@@ -56,7 +63,10 @@ final class OwnerGuardTests: XCTestCase {
         XCTAssertTrue(owner.switchTo("a"))
         XCTAssertFalse(owner.switchTo("a"))
         XCTAssertTrue(owner.switchTo("b"))
+        XCTAssertTrue(owner.isOwner("b"))
+        XCTAssertFalse(owner.isOwner("a"))
         owner.clear()
+        XCTAssertFalse(owner.isOwner("b"))
         XCTAssertTrue(owner.switchTo("b"))
     }
 }
