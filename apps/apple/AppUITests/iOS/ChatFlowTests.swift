@@ -31,16 +31,16 @@ final class ChatFlowTests: XCTestCase {
         XCTAssertFalse(app.element("chat.composer.send").exists, "Send turns back into the mic when the field is empty")
     }
 
-    func testPhotoNotAutoDownloadedOnMobile() {
+    /// Sample photos have no file and nothing to fetch, so on any network the bubble is a placeholder with the size
+    /// and never a Download button. When a photo is fetched by itself is decided by the auto-download rules, which
+    /// the package tests cover.
+    func testSamplePhotoShowsItsSizeAndNoDownloadButtonOnMobile() {
         let mobile = XCUIApplication.launched(network: "mobile")
         mobile.element("chatlist.row.chat-meera").tap()
-        XCTAssertTrue(mobile.buttons["Photo · 240 KB"].waitToExist())
-        mobile.terminate()
-
-        let wifi = XCUIApplication.launched(network: "wifi")
-        wifi.element("chatlist.row.chat-meera").tap()
-        XCTAssertTrue(wifi.element("chat.header").waitToExist())
-        XCTAssertFalse(wifi.buttons["Photo · 240 KB"].exists)
+        XCTAssertTrue(mobile.element("chat.header").waitToExist())
+        let photo = mobile.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Photo · 240 KB")).firstMatch
+        XCTAssertTrue(photo.waitToExist())
+        XCTAssertFalse(mobile.buttons["Photo · 240 KB"].exists)
     }
 
     func testEncryptionOnlyInInfo() {

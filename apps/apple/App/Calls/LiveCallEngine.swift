@@ -192,7 +192,7 @@ final class LiveCallEngine {
             }
         }
         #else
-        ringer?.ring(callID: callID, caller: contact)
+        ringer?.ring(callID: callID, caller: contact, video: video)
         #endif
     }
 
