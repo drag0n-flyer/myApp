@@ -7,7 +7,6 @@ import kotlinx.coroutines.test.runTest
 import org.example.app.contracts.NotificationOutcome
 import org.example.app.messaging.content.ContentEnvelope
 import org.example.app.messaging.ports.ContactRecord
-import org.example.app.messaging.ports.GroupMemberRecord
 import org.example.app.messaging.sync.GroupWorld
 import org.example.app.messaging.sync.NOW
 
@@ -26,11 +25,13 @@ class NotificationProcessorGroupTest {
         return Setup(w, w.device("bob1").notifications())
     }
 
+    /** A group push is never decrypted by the push: it asks for the sync, and the sync's outcomes are what shows. */
     private suspend fun Setup.push(from: String, env: ContentEnvelope): NotificationOutcome {
         val sender = w.device(from)
         sender.send(sender.repo.preferredConversation(chatId)!!, env)
         val item = w.server.pending("acc-bob/bob1").last()
-        return w.device("bob1").lock.withLock { np.onMessagePush(pad(item.payload)) }
+        assertIs<NotificationOutcome.FetchInbox>(w.device("bob1").lock.withLock { np.onMessagePush(pad(item.payload)) })
+        return np.fetchOutcomes().lastOrNull() ?: NotificationOutcome.Nothing
     }
 
     @Test
@@ -81,33 +82,35 @@ class NotificationProcessorGroupTest {
     }
 
     @Test
-    fun aStoredItemFromAnUnlistedSenderIsNotDecryptedByThePushButLeftForTheSync() = runTest {
+    fun aRawGroupPushIsNeverDecryptedByThePushAndGoesToTheSync() = runTest {
         val s = setup()
         val bob = s.w.device("bob1")
         val cat = s.w.device("cat1")
         cat.send(cat.repo.preferredConversation(chatId)!!, ContentEnvelope.Text("m-1", NOW, "hello"))
         val item = s.w.server.pending("acc-bob/bob1").last()
-        // The inbox sync stored the row with the server's sender; bob's stored list does not have cat.
-        bob.repo.setGroupMembers(chatId, listOf(GroupMemberRecord("acc-ana", "owner"), GroupMemberRecord("acc-bob", "member")), 9)
-        bob.repo.insertRaw(listOf(org.example.app.messaging.ports.RawInboxRecord(
-            item.cursor, "message", "conv-0001", null, 1, "acc-cat", "cat1", item.payload, NOW,
-        )))
         val outcome = bob.lock.withLock { s.np.onMessagePush(pad(item.payload)) }
         assertIs<NotificationOutcome.FetchInbox>(outcome)
-        assertEquals(null, bob.repo.message("m-1"), "not decrypted, so nothing was consumed")
-        // Once the list has her, the sync can still read it.
-        bob.repo.setGroupMembers(chatId, listOf(GroupMemberRecord("acc-ana", "owner"), GroupMemberRecord("acc-bob", "member"), GroupMemberRecord("acc-cat", "member")), 10)
-        assertIs<NotificationOutcome.Message>(bob.lock.withLock { s.np.onMessagePush(pad(item.payload)) })
+        assertEquals(null, bob.repo.message("m-1"), "not decrypted by the push")
+        assertEquals(false, bob.repo.isProcessed(org.example.app.messaging.ports.PayloadHash.of(item.payload)))
     }
 
     @Test
-    fun controlMessagesAndAnUnlistedSenderShowNothing() = runTest {
+    fun aMalformedOrShortPayloadNeverCrashesTheSniff() {
+        val bad = listOf(
+            byteArrayOf(), byteArrayOf(0), byteArrayOf(0, 1, 0, 2), byteArrayOf(0, 1, 0, 2, 0x40), byteArrayOf(0, 1, 0, 2, 0x7f.toByte(), 1, 2),
+            byteArrayOf(0, 1, 0, 2, 0xC0.toByte(), 1, 2, 3), byteArrayOf(0, 1, 0, 2, 0x80.toByte(), 0x7f, -1, -1, 1),
+            byteArrayOf(0, 1, 0, 2, 0x20, 1), ByteArray(3) { -1 },
+        )
+        for (p in bad) assertEquals(null, NotificationProcessor.sniffGroupId(p), p.toList().toString())
+        assertEquals(listOf<Byte>(7, 8), NotificationProcessor.sniffGroupId(byteArrayOf(0, 1, 0, 2, 2, 7, 8, 9))!!.toList())
+        assertEquals(null, NotificationProcessor.sniffGroupId(byteArrayOf(0, 1, 0, 3, 2, 7, 8)), "a Welcome is not a private message")
+        assertEquals(null, NotificationProcessor.sniffGroupId(byteArrayOf(0, 1, 0, 2, 0)), "an empty group id is nothing")
+    }
+
+    @Test
+    fun controlMessagesShowNothing() = runTest {
         val s = setup()
         assertIs<NotificationOutcome.Nothing>(s.push("ana1", ContentEnvelope.Timer("t-1", NOW, 86_400)))
         assertIs<NotificationOutcome.Nothing>(s.push("ana1", ContentEnvelope.Group("g-1", NOW, "Renamed", null, 2)))
-        val bob = s.w.device("bob1")
-        bob.repo.setGroupMembers(chatId, listOf(GroupMemberRecord("acc-ana", "owner"), GroupMemberRecord("acc-bob", "member")), 9)
-        assertIs<NotificationOutcome.Nothing>(s.push("cat1", ContentEnvelope.Text("m-1", NOW, "ghost")), "no network here: the sender stays unlisted")
-        assertEquals(null, bob.repo.message("m-1"))
     }
 }

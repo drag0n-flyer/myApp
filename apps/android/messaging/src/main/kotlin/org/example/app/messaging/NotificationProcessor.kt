@@ -92,7 +92,14 @@ class NotificationProcessor(
         if (repo.isProcessed(hash)) return NotificationOutcome.Nothing
         if (known != null && handler.isEchoedOwnCommit(known, repo)) return NotificationOutcome.Nothing
 
-        // A group message from a sender the stored list lacks is left undecrypted for the app's sync, which fetches the list once.
+        // A group message is never decrypted here: the push has no server-reported sender and cannot fetch the member
+        // list, so decrypting could consume a message the sync would then have to drop. The app's sync does it, with the list.
+        // The engine's own header read (`groupOf`, no decrypt, no state change) covers an engine that frames differently.
+        val groupId = sniffGroupId(payload) ?: try { mls.groupOf(payload)?.raw } catch (_: Exception) { null }
+        if (groupId != null) {
+            val conversation = repo.conversationByGroup(groupId)
+            if (conversation != null && repo.chat(conversation.chatId)?.kind == ChatKind.GROUP) return NotificationOutcome.FetchInbox
+        }
         if (known != null && handler.rawSenderUnlisted(known, repo)) return NotificationOutcome.FetchInbox
 
         // The engine's state change and its rows are one step, so a timeout never cuts it in half.
@@ -241,6 +248,23 @@ class NotificationProcessor(
         private val MISSED_REASONS = setOf("hangup", "missed")
 
         /** MLSMessage framing: version 1, wire format 3 (Welcome). */
+        /**
+         * The group ID of an MLS PrivateMessage (version 1, wire format 2, then a varint-length group_id), read without
+         * decrypting; null for anything else or for a payload too short or malformed. The input is hostile: every read is bounds-checked.
+         */
+        internal fun sniffGroupId(payload: ByteArray): ByteArray? {
+            if (payload.size < 5) return null
+            if (payload[0].toInt() != 0 || payload[1].toInt() != 1 || payload[2].toInt() != 0 || payload[3].toInt() != 2) return null
+            val first = payload[4].toInt() and 0xFF
+            val prefix = when (first ushr 6) { 0 -> 1; 1 -> 2; 2 -> 4; else -> return null }
+            if (payload.size < 4 + prefix) return null
+            var length = (first and 0x3F).toLong()
+            for (i in 1 until prefix) length = (length shl 8) or (payload[4 + i].toLong() and 0xFF)
+            val start = 4 + prefix
+            if (length <= 0 || length > payload.size - start) return null
+            return payload.copyOfRange(start, start + length.toInt())
+        }
+
         internal fun sniffsAsWelcome(payload: ByteArray): Boolean =
             payload.size >= 4 && payload[0].toInt() == 0 && payload[1].toInt() == 1 && payload[2].toInt() == 0 && payload[3].toInt() == 3
     }
