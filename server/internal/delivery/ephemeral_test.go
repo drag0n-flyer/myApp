@@ -1,6 +1,7 @@
 package delivery_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"strings"
@@ -8,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"crypto/hpke"
 	"github.com/drag0n-flyer/myApp/server/internal/core"
 	"github.com/drag0n-flyer/myApp/server/internal/delivery"
 	"github.com/drag0n-flyer/myApp/server/internal/httpx"
@@ -478,5 +480,76 @@ func TestEphemeralDeviceBudgetAcrossConversations(t *testing.T) {
 	}
 	if got := fr.to(w.bob1.DeviceID); len(got) != 122 {
 		t.Fatalf("relayed %d, want 122", len(got))
+	}
+}
+
+func TestExpiresAtEqualToNowIsNotDelivered(t *testing.T) {
+	w := newWorld(t)
+	id := w.joined(t)
+	exp := w.f.Clock.Now().Add(time.Hour).Format(time.RFC3339)
+	w.postExpiring(t, w.ana1, id, "m1", exp)
+	w.f.Clock.Advance(time.Hour) // now == expiresAt exactly
+	for _, it := range w.page(t, w.bob1, "").Items {
+		if it.Kind == "message" {
+			t.Fatalf("a row with expires_at == now was delivered: %+v", it)
+		}
+	}
+}
+
+// Escrow copies of an expiring message expire with it (lead's call).
+
+func (w world) postEscrowedExpiring(t *testing.T, priv hpke.PrivateKey, id, plaintext, clientID string, expiresAt any) {
+	t.Helper()
+	sealed, err := delivery.SealEscrow(priv.PublicKey(), []byte(plaintext))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := map[string]any{"epoch": 1, "ciphertext": "AAAA", "escrow": b64.EncodeToString(sealed), "clientMsgID": clientID}
+	if expiresAt != nil {
+		body["expiresAt"] = expiresAt
+	}
+	if r := w.c.Do(&w.ana1, "POST", "/v1/conversations/"+id+"/messages", body); r.Status != 200 {
+		t.Fatalf("post: %s", r)
+	}
+}
+
+func TestEscrowExpiresWithTheMessage(t *testing.T) {
+	w, id, _, priv := serverReadable(t)
+	exp := w.f.Clock.Now().Add(24 * time.Hour).UTC().Truncate(time.Second)
+	w.postEscrowedExpiring(t, priv, id, "gone", "m1", exp.Format(time.RFC3339))
+	w.postEscrowedExpiring(t, priv, id, "kept", "m2", nil)
+
+	var got *time.Time
+	if err := w.d.DB.QueryRow(context.Background(), `select expires_at from escrow where seq = 1`).Scan(&got); err != nil || got == nil || !got.Equal(exp) {
+		t.Fatalf("escrow expires_at = %v, %v", got, err)
+	}
+	if n := w.count(t, `select count(*) from escrow where expires_at is null`); n != 1 {
+		t.Fatalf("escrow rows without expiry = %d", n)
+	}
+
+	m := delivery.New(w.d)
+	export := func() []string {
+		var out bytes.Buffer
+		if err := m.Commands()["escrow export"](context.Background(), []string{"--conversation", id, "--reason", "test"}, &out); err != nil {
+			t.Fatal(err)
+		}
+		return strings.Fields(out.String())
+	}
+	if got := export(); len(got) != 2 {
+		t.Fatalf("before expiry: %d lines", len(got))
+	}
+	// Past the time, the row is never returned, sweep or no sweep.
+	w.f.Clock.Advance(24*time.Hour + time.Second)
+	if got := export(); len(got) != 1 || !strings.Contains(got[0], "kept") {
+		t.Fatalf("after expiry, before sweep: %v", got)
+	}
+	if err := m.PruneOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if n := w.escrowRows(t, id); n != 1 {
+		t.Fatalf("escrow rows after sweep = %d", n)
+	}
+	if got := export(); len(got) != 1 || !strings.Contains(got[0], "kept") {
+		t.Fatalf("after sweep: %v", got)
 	}
 }

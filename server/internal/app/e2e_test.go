@@ -443,3 +443,38 @@ func TestE2ESlowPushDoesNotSlowMessages(t *testing.T) {
 	}
 	e.wait()
 }
+
+// The ephemeral frame over the real wiring: ack to the sender, relay to the
+// peer's socket with from set to the sender's own device.
+func TestE2EEphemeralRelay(t *testing.T) {
+	e := newE2E(t)
+	ana, bob := e.signUp("ana"), e.signUp("bob")
+	conv := e.connect(ana, bob)
+	anaWS := e.dial(ana.SessionToken)
+	bobWS := e.dial(bob.SessionToken)
+
+	anaWS.send("conv.ephemeral", "e1", map[string]any{
+		"conversationID": conv, "epoch": 1, "ciphertext": b64.EncodeToString([]byte("typing")),
+	})
+	if f := anaWS.next("ack"); f.ID != "e1" {
+		t.Fatalf("ack = %+v", f)
+	}
+	f := bobWS.next("conv.ephemeral")
+	var got struct {
+		ConversationID string `json:"conversationID"`
+		Epoch          int64  `json:"epoch"`
+		Ciphertext     string `json:"ciphertext"`
+		From           struct{ Account, Device string }
+	}
+	if err := json.Unmarshal(f.Data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.ConversationID != conv || got.Epoch != 1 || got.Ciphertext != b64.EncodeToString([]byte("typing")) ||
+		got.From.Account != ana.AccountID || got.From.Device != ana.DeviceID {
+		t.Fatalf("relayed %+v", got)
+	}
+	// Nothing was stored for it.
+	if n := e.count(`select count(*) from inbox where kind = 'message'`); n != 0 {
+		t.Fatalf("inbox message rows = %d", n)
+	}
+}
