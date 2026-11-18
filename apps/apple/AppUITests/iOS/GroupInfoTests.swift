@@ -33,7 +33,9 @@ final class GroupInfoTests: XCTestCase {
         XCTAssertTrue(leave.scrollToExist(in: app))
         leave.tap()
         XCTAssertTrue(app.staticTexts["Leave this group?"].waitToExist())
-        app.buttons["Cancel"].firstMatch.tap()
+        // On iPhone the dialog is a popover without a Cancel button: tap outside it to dismiss.
+        let cancel = app.buttons["Cancel"].firstMatch
+        if cancel.exists { cancel.tap() } else { app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.06)).tap() }
         XCTAssertTrue(app.element("groupinfo.leave").waitToExist())
     }
 
@@ -67,7 +69,7 @@ final class GroupInfoTests: XCTestCase {
         XCTAssertTrue(leave.scrollToExist(in: app))
         leave.tap()
         XCTAssertTrue(app.staticTexts["Leave this group?"].waitToExist())
-        let confirm = app.buttons["groupinfo.leave.confirm"]
+        let confirm = app.buttons["groupinfo.leave.confirm"].firstMatch
         XCTAssertTrue(confirm.waitToExist())
         confirm.tap()
         XCTAssertTrue(app.staticTexts["Choose a new owner before you leave."].waitToExist())

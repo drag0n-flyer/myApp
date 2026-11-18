@@ -18,16 +18,19 @@ struct MessageInfoView: View {
                         .accessibilityIdentifier("messageinfo.empty")
                 }
                 if !lists.readBy.isEmpty {
-                    Section("Read by") {
+                    Section {
                         ForEach(lists.readBy, id: \.accountID) { row($0) }
+                    } header: {
+                        // The identifier sits on the header: on the Section it would hide the rows' identifiers.
+                        Text("Read by").accessibilityIdentifier("messageinfo.readBy")
                     }
-                    .accessibilityIdentifier("messageinfo.readBy")
                 }
                 if !lists.deliveredTo.isEmpty {
-                    Section("Delivered to") {
+                    Section {
                         ForEach(lists.deliveredTo, id: \.accountID) { row($0) }
+                    } header: {
+                        Text("Delivered to").accessibilityIdentifier("messageinfo.deliveredTo")
                     }
-                    .accessibilityIdentifier("messageinfo.deliveredTo")
                 }
             }
             .navigationTitle("Message info")

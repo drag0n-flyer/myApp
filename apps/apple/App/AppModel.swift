@@ -1044,7 +1044,7 @@ struct LaunchOptions {
     var sampleData = false
     /// `-fakeAuth success,cancel,...`: what the sample fake answers to the next lock prompts (then success).
     var fakeAuthResults: [AuthResult] = []
-    /// `-scriptedTyping`: the sample chat with Riya shows "typing…" for about ten seconds, then her message arrives.
+    /// `-scriptedTyping`: the sample chat with Riya shows "typing…" for about twenty-four seconds, then her message arrives.
     var scriptedTyping = false
     /// `-sampleMemberGroup`: the sample chats include a group where the person is a plain member.
     var memberGroup = false
