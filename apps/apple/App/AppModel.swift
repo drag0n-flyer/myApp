@@ -58,6 +58,10 @@ final class AppModel {
     /// the app starts again, which finishes the wipe first.
     private var wipeFailed = false
     private var liveTasks: [Task<Void, Never>] = []
+    /// Typing and presence (see `AppModel+People`).
+    @ObservationIgnored var people: PeopleSignals?
+    @ObservationIgnored var peopleTasks: [Task<Void, Never>] = []
+    @ObservationIgnored var peopleActive = true
     /// Gives the account service, built before this model, this device's link snapshot to send.
     private let linkSnapshots: LinkSnapshotBridge
     private var apnsToken: Data?
@@ -95,8 +99,11 @@ final class AppModel {
     var server: ServerPolicy {
         didSet { syncCalls() }
     }
+    /// Where the three privacy switches are kept (the app lock's defaults); `nil` in sample mode, which keeps nothing.
+    private let privacyStore: PrivacySwitchesStore?
     var settings: UserSettings {
         didSet {
+            savePrivacySwitches(oldValue)
             syncCalls()
             messaging?.autoDownload.value = settings.autoDownload
             if settings.readReceipts != oldValue.readReceipts, let messaging {
@@ -203,6 +210,14 @@ final class AppModel {
         let lock = AppModel.makeLock(sampleData: sampleData, launch: launch)
         settings.appLock = lock.appLockOn
         settings.lockAfterSeconds = lock.lockAfterSeconds
+        // The privacy switches are read before anything is sent or shown, so an Off survives a relaunch.
+        let privacyStore = sampleData ? nil : PrivacySwitchesStore(defaults: AppModel.lockDefaults())
+        if let loaded = privacyStore?.load() {
+            settings.typingIndicator = loaded.typingIndicator
+            settings.onlineAndLastSeen = loaded.onlineAndLastSeen
+            settings.readReceipts = loaded.readReceipts
+        }
+        self.privacyStore = privacyStore
         self.account = account
         self.live = live
         self.linkSnapshots = bridge
@@ -251,6 +266,7 @@ final class AppModel {
         if let url = launch.openURL { handle(url: url) }
         chatStore.onChange = { [weak self] in self?.revision += 1 }
         restartExpirySweeper()
+        makePeople(repo: nil, channel: nil, scripted: sampleData && launch.scriptedTyping)
         lock.onHeldChatReleased = { [weak self] id in self?.openChatID = id }
         // Switching the lock on hides the names and text of notifications already shown.
         lock.onLockSwitchedOn = { Task { await NotificationActions.shared.hideDeliveredContent() } }
@@ -271,6 +287,23 @@ final class AppModel {
     /// The sample fake and its in-memory settings exist only in sample-data mode (`-sampleData`, never a live account);
     /// a live session always gets the system prompt and the app group's defaults (the notification extension reads the
     /// switch there).
+    /// The app group's defaults when there is one (the notification extension reads the lock switch there).
+    private static func lockDefaults() -> UserDefaults {
+        let group = (Bundle.main.object(forInfoDictionaryKey: "AppGroupID") as? String)?.trimmingCharacters(in: .whitespaces)
+        return group.flatMap { $0.isEmpty ? nil : UserDefaults(suiteName: $0) } ?? .standard
+    }
+
+    private func savePrivacySwitches(_ old: UserSettings) {
+        guard let privacyStore, settings.typingIndicator != old.typingIndicator
+                || settings.onlineAndLastSeen != old.onlineAndLastSeen || settings.readReceipts != old.readReceipts else { return }
+        privacyStore.save(PrivacySwitches(
+            typingIndicator: settings.typingIndicator, onlineAndLastSeen: settings.onlineAndLastSeen,
+            readReceipts: settings.readReceipts))
+    }
+
+    /// For the extension files: `revision` can only be written here.
+    func bumpRevision() { revision += 1 }
+
     private static func makeLock(sampleData: Bool, launch: LaunchOptions) -> AppLock {
         #if os(iOS)
         let phone = true
@@ -281,9 +314,7 @@ final class AppModel {
             let auth = SampleDeviceAuth(results: launch.fakeAuthResults)
             return AppLock(store: MemoryLockSettingsStore(), auth: auth, coversWhenInactive: phone, inactiveCountsAsLeaving: !phone)
         }
-        let group = (Bundle.main.object(forInfoDictionaryKey: "AppGroupID") as? String)?.trimmingCharacters(in: .whitespaces)
-        let defaults = group.flatMap { $0.isEmpty ? nil : UserDefaults(suiteName: $0) } ?? .standard
-        return AppLock(store: DefaultsLockSettingsStore(defaults: defaults), auth: SystemDeviceAuth(),
+        return AppLock(store: DefaultsLockSettingsStore(defaults: lockDefaults()), auth: SystemDeviceAuth(),
                        coversWhenInactive: phone, inactiveCountsAsLeaving: !phone)
     }
 
@@ -621,6 +652,7 @@ final class AppModel {
         }
         if messaging != nil {
             messaging = nil
+            makePeople(repo: nil, channel: nil)
             callSealer.clear()
             let empty = AppStores.signedOutStore(sampleData: isSampleData)
             empty.onChange = { [weak self] in self?.revision += 1 }
@@ -629,6 +661,11 @@ final class AppModel {
             revision += 1
             NotificationActions.shared.signedOut()
         }
+        // The privacy switches belong to the account that left: the next one starts with them on. Set after the
+        // signal model is gone, so turning them back on here sends nothing.
+        settings.typingIndicator = true
+        settings.onlineAndLastSeen = true
+        settings.readReceipts = true
         #if os(macOS)
         onboarding = OnboardingFlow(platform: .mac)
         #else
@@ -678,6 +715,7 @@ final class AppModel {
 
     /// iPhone: the socket runs only while the app is active. Mac: whenever the app runs.
     func scenePhaseChanged(_ phase: ScenePhase) {
+        peopleScenePhase(phase)
         #if os(iOS)
         switch phase {
         case .active:
@@ -715,6 +753,7 @@ final class AppModel {
         }
         liveStoreUnavailable = false
         messaging = built
+        makePeople(repo: built.repo, channel: built.ephemeral)
         callSealer.use(built.store)
         built.store.onChange = { [weak self] in self?.revision += 1 }
         chatStore = built.store
@@ -765,6 +804,7 @@ final class AppModel {
         guard messaging != nil else { return }
         let c = LiveConnection(client: client, transport: URLSessionWebSocketTransport())
         connection = c
+        messaging?.ephemeralSender.use(c)
         let signaling = LiveCallSignaling(connection: c, client: client)
         // A VoIP push can wake a suspended iPhone whose socket was stopped: every call request first starts it.
         let gated = GatedCallSignaling(base: signaling, connection: AppCallConnection(
@@ -793,6 +833,7 @@ final class AppModel {
                     switch event {
                     case .deviceRevoked(let id): await self?.deviceRevoked(id)
                     case .inbox: await self?.syncInbox()
+                    case .conversationEphemeral: self?.messaging?.ephemeral.ingest(event)
                     default: break
                     }
                 }
@@ -854,6 +895,7 @@ final class AppModel {
     /// Every live connect: catch up on the inbox, then bring this account's devices in every chat in line with
     /// the device list (mls-profile "Removing a device"); the scheduler runs it once more 11 minutes later.
     private func didConnect() async {
+        peopleConnected()
         await syncInbox()
         await messaging?.reconciler.connected()
     }
@@ -871,6 +913,7 @@ final class AppModel {
     }
 
     private func stopLive(force: Bool = false) async {
+        await people?.flush()   // the `away` signal goes out before the socket closes
         let signedOut = force || live?.isSignedIn != true
         if signedOut {
             await callReady.close()
@@ -886,6 +929,7 @@ final class AppModel {
             for task in tasks { await task.value }   // none can touch the store afterwards
             liveTasks = []
             connection = nil
+            messaging?.ephemeralSender.use(nil)
             liveCalls = nil
         }
     }
@@ -970,6 +1014,8 @@ struct LaunchOptions {
     var sampleData = false
     /// `-fakeAuth success,cancel,...`: what the sample fake answers to the next lock prompts (then success).
     var fakeAuthResults: [AuthResult] = []
+    /// `-scriptedTyping`: the sample chat with Riya shows "typing…" for about ten seconds, then her message arrives.
+    var scriptedTyping = false
 
     static var current: LaunchOptions {
         let args = ProcessInfo.processInfo.arguments
@@ -977,6 +1023,7 @@ struct LaunchOptions {
         options.skipOnboarding = args.contains("-skipOnboarding")
         options.isUITesting = args.contains("-uiTesting")
         options.sampleData = args.contains("-sampleData")
+        options.scriptedTyping = args.contains("-scriptedTyping")
         if let i = args.firstIndex(of: "-network"), i + 1 < args.count {
             options.network = args[i + 1] == "wifi" ? .wifi : .mobile
         }

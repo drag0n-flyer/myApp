@@ -17,6 +17,9 @@ public struct UserSettings: Equatable, Codable, Sendable {
     public var ipHiding: IPHiding
     public var findByEmail = false
     public var readReceipts = true
+    /// Settings > Privacy > "Typing indicator" and "Online and last seen": off means nothing is sent and nothing is shown.
+    public var typingIndicator = true
+    public var onlineAndLastSeen = true
     public var noiseSuppression: NoiseSuppression = .standard
     /// App lock and its delay; mirrors `AppLock`, which owns the stored values.
     public var appLock = false
