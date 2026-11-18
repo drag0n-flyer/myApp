@@ -153,9 +153,11 @@ class LiveChatStore(
     override val blockedIds: StateFlow<Set<String>> = _blocked.asStateFlow()
     override val reportedChatIds: StateFlow<Set<String>> = _reported.asStateFlow()
 
-    @Volatile private var meContact = Contact(device.accountId, "You", "")
+    private val meFlow = MutableStateFlow(Contact(device.accountId, "You", ""))
+    private val meContact: Contact get() = meFlow.value
     @Volatile private var contactRows: Map<String, ContactRecord> = emptyMap()
     override val me: Contact get() = meContact
+    override val meState: StateFlow<Contact> = meFlow.asStateFlow()
 
     private val reloadLock = Any()
     private val writes = Channel<() -> Unit>(Channel.UNLIMITED)
@@ -236,7 +238,7 @@ class LiveChatStore(
     private fun reload() = synchronized(reloadLock) {
         val rows = runCatching { repo.contacts() }.getOrDefault(emptyList())
         contactRows = rows.associateBy { it.accountId }
-        contactRows[device.accountId]?.let { meContact = Contact(it.accountId, it.displayName.ifEmpty { "You" }, it.username) }
+        contactRows[device.accountId]?.let { meFlow.value = Contact(it.accountId, it.displayName.ifEmpty { "You" }, it.username) }
         _contacts.value = rows.filter { it.isContact }.sortedWith(compareBy({ it.displayName }, { it.accountId })).map(::contactOf)
 
         val folderRecords = runCatching { repo.folders() }.getOrDefault(emptyList())
@@ -295,6 +297,16 @@ class LiveChatStore(
     override fun chat(id: String): Chat? = _chats.value.firstOrNull { it.id == id } ?: _requests.value.firstOrNull { it.id == id }
 
     override fun contact(id: String): Contact? = if (id == device.accountId) meContact else contactRows[id]?.let(::contactOf)
+
+    /** Shown at once and stored with the person's own contact row, in the reload's lock so a reload cannot put the old name back. */
+    override fun setMyDisplayName(name: String) = synchronized(reloadLock) {
+        val row = contactRows[device.accountId] ?: runCatching { repo.contact(device.accountId) }.getOrNull()
+            ?: ContactRecord(device.accountId, meContact.username, name, false, nowMs())
+        val updated = row.copy(displayName = name)
+        runCatching { repo.upsertContact(updated) }
+        contactRows = contactRows + (device.accountId to updated)
+        meFlow.value = Contact(device.accountId, name.ifEmpty { "You" }, meContact.username)
+    }
 
     /** Reads the database: call it off the main thread. */
     override fun messages(chatId: String, before: String?, limit: Int): List<Message> {

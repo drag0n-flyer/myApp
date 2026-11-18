@@ -13,6 +13,10 @@ enum class IncomingCallDecision {
 /** Chats, contacts and message requests. `SampleChatStore` now; the real MLS-backed store later. */
 interface ChatStore {
     val me: Contact
+    /** [me] as it changes: the person's own name shows from here, so a new name appears without a restart. */
+    val meState: StateFlow<Contact>
+    /** Puts the person's own display name in the store (and on disk); the server call is the caller's. */
+    fun setMyDisplayName(name: String)
     val contacts: StateFlow<List<Contact>>
     val folders: StateFlow<List<ChatFolder>>
     /** Chats that are not message requests, newest first. */

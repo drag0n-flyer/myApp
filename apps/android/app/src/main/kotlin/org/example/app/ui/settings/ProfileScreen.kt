@@ -45,7 +45,9 @@ fun ProfileScreen(
 
     SettingsPage(stringResource(R.string.settings_profile), onBack, modifier) {
         item {
+            val editLabel = stringResource(R.string.profile_edit_name)
             ListItem(
+                modifier = Modifier.clickable(enabled = !busy, onClickLabel = editLabel, role = Role.Button) { confirm = EDIT },
                 leadingContent = { Avatar(me.displayName, size = 56.dp, colorKey = me.id) },
                 headlineContent = { Text(me.displayName, style = MaterialTheme.typography.titleMedium) },
                 supportingContent = { Text(usernameText(me.username)) },
@@ -77,6 +79,11 @@ fun ProfileScreen(
     }
 
     when (confirm) {
+        EDIT -> EditNameDialog(
+            current = me.displayName,
+            onSave = { confirm = null; viewModel.saveName(it) },
+            onCancel = { confirm = null },
+        )
         SIGN_OUT -> AlertDialog(
             onDismissRequest = { confirm = null },
             text = { Text(stringResource(R.string.profile_sign_out_confirm)) },
@@ -95,3 +102,4 @@ fun ProfileScreen(
 
 private const val SIGN_OUT = "signOut"
 private const val DELETE = "delete"
+private const val EDIT = "edit"

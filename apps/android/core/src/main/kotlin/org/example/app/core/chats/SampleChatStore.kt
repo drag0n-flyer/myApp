@@ -11,7 +11,11 @@ class SampleChatStore(
     data: SampleData = SampleData.default,
     private val clock: () -> Instant = Instant::now,
 ) : ChatStore {
-    override val me: Contact = data.me
+    private val meFlow = MutableStateFlow(data.me)
+    override val me: Contact get() = meFlow.value
+    override val meState: StateFlow<Contact> = meFlow.asStateFlow()
+
+    override fun setMyDisplayName(name: String) { meFlow.value = meFlow.value.copy(displayName = name) }
 
     private val lock = Any()
     private var allChats: List<Chat> = data.chats

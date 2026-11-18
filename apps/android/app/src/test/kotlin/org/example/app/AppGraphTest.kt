@@ -49,6 +49,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.test.fail
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
@@ -693,6 +694,70 @@ class AppGraphTest {
         assertTrue(a.isFailure)
         assertTrue(b.isSuccess)
         assertEquals(true, lastFindByEmail)
+    }
+
+    private fun patchedNames(): MutableList<String> = java.util.Collections.synchronizedList(mutableListOf())
+
+    @Test
+    fun aSavedDisplayNameGoesToTheServerAndShowsAtOnce() = runBlocking {
+        val (graph, session) = opened()
+        val bodies = patchedNames()
+        answer = { r ->
+            if (r.method == "PATCH" && r.url.encodedPath == "/v1/me/settings") {
+                val buffer = okio.Buffer(); r.body?.writeTo(buffer); bodies += buffer.readUtf8(); 204 to ""
+            } else null
+        }
+        graph.saveDisplayName("Asha")
+        assertEquals(listOf("""{"displayName":"Asha"}"""), bodies)
+        assertEquals("Asha", session.chatStore.me.displayName)
+        assertEquals("Asha", session.chatStore.meState.value.displayName)
+    }
+
+    @Test
+    fun aDisplayNameTheServerRefusesGoesBackAndTheScreenGetsAnError() = runBlocking {
+        val (graph, session) = opened()
+        val before = session.chatStore.me.displayName
+        answer = { r -> if (r.method == "PATCH" && r.url.encodedPath == "/v1/me/settings") 500 to """{"error":{"code":"internal"}}""" else null }
+        val result = runCatching { graph.saveDisplayName("Asha") }
+        assertTrue(result.exceptionOrNull() is org.example.app.core.account.AccountError.Server, "${result.exceptionOrNull()}")
+        assertEquals(before, session.chatStore.me.displayName)
+    }
+
+    @Test
+    fun aDisplayNameThatBreaksTheRuleNeverReachesTheServer() = runBlocking {
+        val (graph, session) = opened()
+        val bodies = patchedNames()
+        answer = { r -> if (r.method == "PATCH") { bodies += "patched"; 204 to "" } else null }
+        val before = session.chatStore.me.displayName
+        assertTrue(runCatching { graph.saveDisplayName("Evil\u202Ename") }.isFailure)
+        assertTrue(runCatching { graph.saveDisplayName("   ") }.isFailure)
+        assertEquals(emptyList(), bodies)
+        assertEquals(before, session.chatStore.me.displayName)
+    }
+
+    @Test
+    fun aDisplayNameSaveThatFinishesAfterSignOutChangesNothingInTheNextSession() = runBlocking {
+        val (graph, session) = opened()
+        val old = session.chatStore
+        val before = old.me.displayName
+        val gate = java.util.concurrent.CountDownLatch(1)
+        val seen = AtomicInteger(0)
+        answer = { r ->
+            if (r.method == "PATCH" && r.url.encodedPath == "/v1/me/settings") {
+                seen.incrementAndGet(); gate.await(10, java.util.concurrent.TimeUnit.SECONDS); 500 to """{"error":{"code":"internal"}}"""
+            } else null
+        }
+        val save = async(Dispatchers.IO) { runCatching { graph.saveDisplayName("Asha") } }
+        val deadline = System.nanoTime() + 5_000_000_000L
+        while (seen.get() == 0 && System.nanoTime() < deadline) Thread.sleep(10)
+        if (seen.get() == 0) { gate.countDown(); fail("the save never reached the server") }
+        assertEquals("Asha", old.me.displayName, "optimistic")
+        graph.settingsStore.reset(org.example.app.core.settings.UserSettings()) // sign-out resets the settings: the generation moves on
+        gate.countDown()
+        assertTrue(save.await().isFailure)
+        // The late failure must not run its revert: it belongs to the account that has gone.
+        assertEquals("Asha", old.me.displayName)
+        assertTrue(before != "Asha")
     }
 
     @Test
