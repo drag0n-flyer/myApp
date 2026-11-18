@@ -35,6 +35,8 @@ public final class SampleChatStore: ChatStore {
     public private(set) var blockedIDs: Set<String> = []
     public private(set) var reportedChatIDs: Set<String> = []
     private var allChats: [Chat]
+    /// Message info of the sample groups' own messages, by message ID.
+    private var sampleReceipts: [String: MessageReceiptLists] = [:]
     private let directory: [String: String]
     private var nextID = 0
 
@@ -364,9 +366,37 @@ public final class SampleChatStore: ChatStore {
         guard others.count <= GroupCreateRules.maxPeople else { return .failed(.tooManyPeople) }
         defer { onChange?() }
         let id = ChatID.group(makeID())
-        allChats.append(Chat(id: id, contactID: nil, encryption: .endToEnd, folderIDs: [], unreadCount: 0, messages: [],
+        // Two senders and one message of mine, so the sample group shows names and Message info.
+        var seeded: [Message] = []
+        let speakers = accounts.filter { $0 != me.id }.prefix(2)
+        let lines = ["Welcome to the group!", "Glad to be here"]
+        for (i, account) in speakers.enumerated() {
+            seeded.append(Message(id: makeID(), senderID: account, sentAt: Date().addingTimeInterval(-Double(4 - i) * 60), content: .text(lines[i]),
+                                  status: .delivered, replyToID: nil, reactions: []))
+        }
+        if speakers.count == 2 {
+            let mine = Message(id: makeID(), senderID: me.id, sentAt: Date().addingTimeInterval(-60), content: .text("Hello everyone"),
+                               status: .delivered, replyToID: nil, reactions: [])
+            seeded.append(mine)
+            let now = Date()
+            sampleReceipts[mine.id] = MessageReceiptLists(
+                readBy: [ReceiptEntry(accountID: speakers[0], name: memberName(speakers[0]), at: now)],
+                deliveredTo: [ReceiptEntry(accountID: speakers[1], name: memberName(speakers[1]), at: now)])
+        }
+        allChats.append(Chat(id: id, contactID: nil, encryption: .endToEnd, folderIDs: [], unreadCount: 0, messages: seeded,
                              isRequest: false, title: title))
         return .created(chatID: id, notAdded: [])
+    }
+
+    public func memberName(_ accountID: String) -> String {
+        accountID == me.id ? me.displayName : (contact(id: accountID)?.displayName ?? "Someone")
+    }
+
+    public func receiptLists(messageID: String, in chatID: String) -> MessageReceiptLists {
+        guard ChatID.isGroup(chatID), allChats.first(where: { $0.id == chatID })?.messages.contains(where: { $0.id == messageID }) == true else {
+            return MessageReceiptLists()
+        }
+        return sampleReceipts[messageID] ?? MessageReceiptLists()
     }
 
     public func addFolder(name: String, chatIDs: Set<String>) -> ChatFolder {
