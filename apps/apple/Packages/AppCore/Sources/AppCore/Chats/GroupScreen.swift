@@ -1,7 +1,7 @@
 import Foundation
 
 /// Where the person stands in a group chat. A chat that is not `member` is read-only and keeps its history.
-public enum GroupMyState: String, Sendable {
+public enum GroupMyState: String, Codable, Sendable {
     case member, removed, left
 
     /// A state string from the store; one this build does not know has no rights (it is treated as removed).
@@ -53,18 +53,21 @@ public enum GroupChangeFailure: Equatable, Sendable {
     case invalidName, invalidPhoto
     /// The server does not know the person or the group.
     case notFound
+    case rateLimited
     case offline
     case other
 }
 
 public enum GroupChangeOutcome: Equatable, Sendable {
     case done
+    /// People were added; `notAdded` are the account IDs that are members but not reachable yet ("%@ couldn't be added yet").
+    case added(notAdded: [String])
     case failed(GroupChangeFailure)
 
     /// Plain words for the person, or `nil` when it worked. These are keys of the string catalog.
     public var message: String? {
         switch self {
-        case .done: nil
+        case .done, .added: nil
         case .failed(let failure):
             switch failure {
             case .ownerMustTransfer: "Choose a new owner before you leave."
@@ -73,7 +76,7 @@ public enum GroupChangeOutcome: Equatable, Sendable {
             case .invalidName: "Choose a different name."
             case .invalidPhoto: "Choose a different photo."
             case .notFound: "This group or person could not be found."
-            case .offline, .other: "Couldn't change the group. Check your connection and try again."
+            case .rateLimited, .offline, .other: "Couldn't change the group. Check your connection and try again."
             }
         }
     }

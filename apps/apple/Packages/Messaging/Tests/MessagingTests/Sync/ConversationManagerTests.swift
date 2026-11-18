@@ -131,6 +131,26 @@ private func syncInbox(_ device: TestDevice, joinWith joiner: ConversationManage
         #expect(await rig.server.memberDevices(of: record.serverID).count == 3)
     }
 
+    @Test func theListsPostedAreThoseOfTheCommitThatWasRebuiltAfterAStaleEpoch() async throws {
+        final class Count: @unchecked Sendable { var builds = 0 }
+        let rig = try await Rig.make()
+        let syncs = Counter()
+        let mgr = manager(rig.ana1, syncs: syncs)
+        let record = try await mgr.create(with: "acc-bob")
+        let group = GroupID(raw: record.groupID)
+        let count = Count()
+        await rig.server.rejectNextCommits(1)
+        let ana2 = rig.ana2.deviceID
+        _ = try await mgr.postCommitWithRetry(serverID: record.serverID, group: group) {
+            count.builds += 1
+            // The first build claims a device that is not the one removed; only the rebuilt commit's list may be posted.
+            let list = count.builds == 1 ? ["no-such-device"] : [ana2]
+            return (try await rig.ana1.deps.mls.remove(members: ["acc-ana/\(ana2)"], from: group), [], list)
+        }
+        #expect(count.builds == 2)
+        #expect(await rig.server.memberDevices(of: record.serverID).count == 3)
+    }
+
     @Test func staleEpochGivesUp() async throws {
         let rig = try await Rig.make()
         let mgr = manager(rig.ana1)

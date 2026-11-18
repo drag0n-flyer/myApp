@@ -40,6 +40,9 @@ public actor InboxProcessor {
     /// Called for every new message from another account, after its rows are stored and outside the lock
     /// (the store starts the auto-download from here).
     private var onStored: (@Sendable (MessageRecord) async -> Void)?
+    /// `members` items seen during a drain: (conversation, the item's sender), reported after the drain.
+    private var pendingMembers: [(conversationID: String, actor: String)] = []
+    private var onMembers: (@Sendable (String, String?) async -> Void)?
     private var held: Set<Section> = []
     private var waiters: [Section: [CheckedContinuation<Void, Never>]] = [:]
 
@@ -52,6 +55,10 @@ public actor InboxProcessor {
         self.handler = handler
         self.controls = controls
     }
+
+    /// Called after a drain for every conversation that had a `members` item, outside the lock. It must not wait for the
+    /// group sync itself (that sync may read the inbox): start it and return.
+    public func setOnMembers(_ hook: (@Sendable (String, String?) async -> Void)?) { onMembers = hook }
 
     public func setOnStored(_ hook: (@Sendable (MessageRecord) async -> Void)?) { onStored = hook }
 
@@ -182,6 +189,13 @@ public actor InboxProcessor {
         }
         release(.drain)
         if let onStored { for message in storedFromOthers { await onStored(message) } }
+        let membersSeen = pendingMembers
+        pendingMembers = []
+        if let onMembers {
+            var last: [String: String] = [:]
+            for event in membersSeen { last[event.conversationID] = event.actor }
+            for id in last.keys.sorted() { await onMembers(id, last[id]) }
+        }
         // Messages the notification extension stored: it never sends, so their receipts go out now.
         let pendingReceipts = ((try? deps.repo.entries(prefix: NotificationProcessor.receiptPendingPrefix)) ?? [:])
             .filter { !$0.value.isEmpty }
@@ -249,6 +263,13 @@ public actor InboxProcessor {
             // A `members` item has an empty payload: nothing to decrypt, and the payload hash is the same for every one,
             // so it must never reach the processed-payload check. The group sync task acts on it.
             if raw.kind == "members" {
+                try repo.deleteRaw(cursor: raw.cursor)
+                pendingMembers.append((raw.conversationID, raw.senderAccount))
+                return (.done, nil)
+            }
+            // A group I was removed from or left: nothing more of it is read, so no late or replayed commit or message can
+            // show anything. Only a Welcome (a new add) gets through.
+            if raw.kind != "welcome", try repo.chat(id: "g:" + raw.conversationID)?.myState ?? "member" != "member" {
                 try repo.deleteRaw(cursor: raw.cursor)
                 return (.done, nil)
             }

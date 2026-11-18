@@ -86,8 +86,8 @@ private let jpeg4 = Data([0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x00, 0x10, 
         try await cy.sync()
         // cy is a plain member: refused.
         try await cy.post(.group(name: "Cy's club", photo: nil, ver: 5), in: made.chatID)
-        // The owner with the same version, then with a photo under 4 bytes: refused.
-        try await ana.post(.group(name: "Same ver", photo: nil, ver: 1), in: made.chatID)
+        // The owner with the same version and a lesser name (a greater one would win the tie), then with a photo under 4 bytes: refused.
+        try await ana.post(.group(name: "Aardvark", photo: nil, ver: 1), in: made.chatID)
         try await ana.post(.group(name: "Tiny photo", photo: Data([0xFF, 0xD8, 1]), ver: 2), in: made.chatID)
         try await bob.sync()
         var chat = try #require(try bob.repo.chat(id: made.chatID))

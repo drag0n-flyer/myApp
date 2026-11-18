@@ -719,6 +719,7 @@ final class AppModel {
         // The seed's session, store and signed-in guard makes a late write safe.
         Task { await seedOwnName() }
         await syncInbox()
+        await messaging?.store.reconcileGroups()
         await replenishKeyPackages()
         await registerForPushIfAllowed()
     }
@@ -918,6 +919,7 @@ final class AppModel {
     private func didConnect() async {
         peopleConnected()
         await syncInbox()
+        await messaging?.store.reconcileGroups()
         await messaging?.reconciler.connected()
     }
 

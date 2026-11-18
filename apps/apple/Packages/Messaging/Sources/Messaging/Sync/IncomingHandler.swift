@@ -68,6 +68,11 @@ public struct IncomingHandler: Sendable {
             return .joined(group: group, epoch: epoch)
         case .commit(let group, let newEpoch, let removedMe):
             guard var conversation = try db.conversation(serverID: raw.conversationID) else { return .ignored }
+            if removedMe, ChatID.isGroup(conversation.chatID) {
+                // A group: the chat stays read-only and the conversation row goes (a later Welcome is a fresh join).
+                try GroupLines.iAmOut(chatID: conversation.chatID, state: "removed", at: now(), db: db)
+                return .removedMe(conversationID: conversation.serverID)
+            }
             if removedMe {
                 conversation.active = false
                 try db.upsertConversation(conversation)
@@ -268,8 +273,25 @@ public struct IncomingHandler: Sendable {
               chat.myState == "member", GroupNameRule.clean(name) == name,
               photo.map({ ProfilePhotoRule.isAcceptable($0) }) ?? true else { return }
         let role = try db.groupMembers(chatID: chat.id).first { $0.accountID == account }.map { GroupRole(wire: $0.role) }
-        guard GroupMerge.accept(currentVer: chat.groupVer, incomingVer: ver, senderRole: role) else { return }
-        try db.setGroupInfo(chatID: chat.id, title: name, photo: photo, ver: ver)
+        let currentKey = chat.title.map { GroupLines.infoKey(name: $0, photo: chat.photo) }
+        let incomingKey = GroupLines.infoKey(name: name, photo: photo)
+        guard GroupMerge.accept(currentVer: chat.groupVer, incomingVer: ver, senderRole: role, current: currentKey, incoming: incomingKey) else { return }
+        let before = (title: chat.title, photo: chat.photo, ver: chat.groupVer)
+        // Two admins who changed the group at once both sent this version: the greater info won above, and its lines get an
+        // ID of their own so they are not lost behind the loser's.
+        let tie = ver == chat.groupVer
+        let suffix = tie ? "-" + String(PortableSHA256.hash(Data((name + (incomingKey.photoHash ?? "")).utf8)).map { String(format: "%02x", $0) }.joined().prefix(10)) : ""
+        guard try db.setGroupInfo(chatID: chat.id, title: name, photo: photo, ver: ver, orEqual: tie),
+              before.ver != nil, let conversationID = ChatID.conversationID(chat.id) else { return }
+        // The first name and photo a group gets say nothing; a later change is one line each, once (the ID carries the version).
+        if let old = before.title, old != name {
+            try GroupLines.insert(.nameChanged(by: account, name: name), id: "sys-group-name-\(conversationID)-\(ver)\(suffix)", chatID: chat.id,
+                                  conversationID: conversationID, at: now(), db: db)
+        }
+        if before.photo != photo {
+            try GroupLines.insert(.photoChanged(by: account), id: "sys-group-photo-\(conversationID)-\(ver)\(suffix)", chatID: chat.id,
+                                  conversationID: conversationID, at: now().addingTimeInterval(0.001), db: db)
+        }
     }
 
     static let timerSkewMs: Int64 = 5 * 60 * 1000
