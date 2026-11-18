@@ -1,9 +1,45 @@
 package identity
 
 import (
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 )
+
+func TestValidDisplayNameVectors(t *testing.T) {
+	raw, err := os.ReadFile("../vectors/display_names.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f struct {
+		Cases []struct {
+			Input string  `json:"input"`
+			Clean *string `json:"clean"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(raw, &f); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Cases) < 50 {
+		t.Fatalf("only %d cases", len(f.Cases))
+	}
+	for i, c := range f.Cases {
+		got, ok := ValidDisplayName(c.Input)
+		switch {
+		case c.Clean == nil && ok:
+			t.Errorf("case %d %q: accepted as %q, want refused", i, c.Input, got)
+		case c.Clean != nil && (!ok || got != *c.Clean):
+			t.Errorf("case %d %q: got %q, %v; want %q", i, c.Input, got, ok, *c.Clean)
+		}
+	}
+}
+
+func TestValidDisplayNameInvalidUTF8(t *testing.T) {
+	if _, ok := ValidDisplayName("A\xffB"); ok {
+		t.Fatal("invalid UTF-8 accepted")
+	}
+}
 
 func TestValidUsername(t *testing.T) {
 	for s, want := range map[string]bool{

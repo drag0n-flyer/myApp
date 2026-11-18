@@ -1,0 +1,349 @@
+{
+"comment": "Shared display-name vectors: clean is the trimmed name, or null when refused. Run by the Go server, AppCore (Swift) and the Android core tests.",
+"cases": [
+{
+"input": "  Asha  ",
+"clean": "Asha"
+},
+{
+"input": "Ana Mar\u00eda",
+"clean": "Ana Mar\u00eda"
+},
+{
+"input": "\u674e\u5c0f\u9f8d",
+"clean": "\u674e\u5c0f\u9f8d"
+},
+{
+"input": "",
+"clean": null
+},
+{
+"input": "    ",
+"clean": null
+},
+{
+"input": "\u00a0\u00a0",
+"clean": null
+},
+{
+"input": "\u00a0Asha\u00a0",
+"clean": "Asha"
+},
+{
+"input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+"clean": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+},
+{
+"input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+"clean": null
+},
+{
+"input": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00",
+"clean": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00"
+},
+{
+"input": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00a",
+"clean": null
+},
+{
+"input": "  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  ",
+"clean": null
+},
+{
+"input": "  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  ",
+"clean": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+},
+{
+"input": "e\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301",
+"clean": null
+},
+{
+"input": "e\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301",
+"clean": "e\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301\u0301"
+},
+{
+"input": "e\u0301",
+"clean": "e\u0301"
+},
+{
+"input": "A\u030a",
+"clean": "A\u030a"
+},
+{
+"input": "A\nB",
+"clean": null
+},
+{
+"input": "A\rB",
+"clean": null
+},
+{
+"input": "A\u0085B",
+"clean": null
+},
+{
+"input": "A\u2028B",
+"clean": null
+},
+{
+"input": "A\u2029B",
+"clean": null
+},
+{
+"input": "A\tB",
+"clean": null
+},
+{
+"input": "A\u0000B",
+"clean": null
+},
+{
+"input": "A\u001bB",
+"clean": null
+},
+{
+"input": "A\u007fB",
+"clean": null
+},
+{
+"input": "Ana\nMar\u00eda",
+"clean": null
+},
+{
+"input": "A\u202aB",
+"clean": null
+},
+{
+"input": "\u202aAB",
+"clean": null
+},
+{
+"input": "A\u202bB",
+"clean": null
+},
+{
+"input": "\u202bAB",
+"clean": null
+},
+{
+"input": "A\u202cB",
+"clean": null
+},
+{
+"input": "\u202cAB",
+"clean": null
+},
+{
+"input": "A\u202dB",
+"clean": null
+},
+{
+"input": "\u202dAB",
+"clean": null
+},
+{
+"input": "A\u202eB",
+"clean": null
+},
+{
+"input": "\u202eAB",
+"clean": null
+},
+{
+"input": "A\u2066B",
+"clean": null
+},
+{
+"input": "\u2066AB",
+"clean": null
+},
+{
+"input": "A\u2067B",
+"clean": null
+},
+{
+"input": "\u2067AB",
+"clean": null
+},
+{
+"input": "A\u2068B",
+"clean": null
+},
+{
+"input": "\u2068AB",
+"clean": null
+},
+{
+"input": "A\u2069B",
+"clean": null
+},
+{
+"input": "\u2069AB",
+"clean": null
+},
+{
+"input": "A\u200eB",
+"clean": null
+},
+{
+"input": "\u200eAB",
+"clean": null
+},
+{
+"input": "A\u200fB",
+"clean": null
+},
+{
+"input": "\u200fAB",
+"clean": null
+},
+{
+"input": "A\u061cB",
+"clean": null
+},
+{
+"input": "\u061cAB",
+"clean": null
+},
+{
+"input": "Asha\u202e",
+"clean": null
+},
+{
+"input": "\u200b",
+"clean": null
+},
+{
+"input": " \u200b\u200b ",
+"clean": null
+},
+{
+"input": "\u200c",
+"clean": null
+},
+{
+"input": " \u200c\u200c ",
+"clean": null
+},
+{
+"input": "\u200d",
+"clean": null
+},
+{
+"input": " \u200d\u200d ",
+"clean": null
+},
+{
+"input": "\u2060",
+"clean": null
+},
+{
+"input": " \u2060\u2060 ",
+"clean": null
+},
+{
+"input": "\ufeff",
+"clean": null
+},
+{
+"input": " \ufeff\ufeff ",
+"clean": null
+},
+{
+"input": "\u3164",
+"clean": null
+},
+{
+"input": " \u3164\u3164 ",
+"clean": null
+},
+{
+"input": "\u115f",
+"clean": null
+},
+{
+"input": " \u115f\u115f ",
+"clean": null
+},
+{
+"input": "\u1160",
+"clean": null
+},
+{
+"input": " \u1160\u1160 ",
+"clean": null
+},
+{
+"input": "\uffa0",
+"clean": null
+},
+{
+"input": " \uffa0\uffa0 ",
+"clean": null
+},
+{
+"input": "\u2800",
+"clean": null
+},
+{
+"input": " \u2800\u2800 ",
+"clean": null
+},
+{
+"input": "\u034f",
+"clean": null
+},
+{
+"input": " \u034f\u034f ",
+"clean": null
+},
+{
+"input": "A",
+"clean": "A"
+},
+{
+"input": "7",
+"clean": "7"
+},
+{
+"input": "!",
+"clean": "!"
+},
+{
+"input": "\u00a9",
+"clean": "\u00a9"
+},
+{
+"input": "\ud83d\ude00",
+"clean": "\ud83d\ude00"
+},
+{
+"input": "A\u200bB",
+"clean": "A\u200bB"
+},
+{
+"input": "\ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67",
+"clean": "\ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67"
+},
+{
+"input": "A\u0378B",
+"clean": "A\u0378B"
+},
+{
+"input": "\ud83d\udc4d\ud83c\udffd",
+"clean": "\ud83d\udc4d\ud83c\udffd"
+},
+{
+"input": "\ud83c\uddf5\ud83c\uddf1",
+"clean": "\ud83c\uddf5\ud83c\uddf1"
+},
+{
+"input": "   \u2028   ",
+"clean": null
+},
+{
+"input": "  Ana  Mar\u00eda  ",
+"clean": "Ana  Mar\u00eda"
+}
+]
+}
