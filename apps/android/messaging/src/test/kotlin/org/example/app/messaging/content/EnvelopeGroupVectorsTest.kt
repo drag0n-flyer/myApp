@@ -49,7 +49,7 @@ class EnvelopeGroupVectorsTest {
             """{"at":1,"id":"i","k":"group","name":"Book club","v":1,"ver":2}""",
             String(ContentCodec.encode(ContentEnvelope.Group("i", 1, "Book club", null, 2))),
         )
-        val withPhoto = ContentEnvelope.Group("i", 1, "Café", byteArrayOf(-1, -40, 1, 2), 7)
+        val withPhoto = ContentEnvelope.Group("i", 1, "Café", byteArrayOf(-1, -40, -1, -64, 0, 11, 8, 1, 0, 1, 0, 1, 1, 17, 0), 7)
         val bytes = ContentCodec.encode(withPhoto)
         assertEquals(withPhoto, ContentCodec.decode(bytes))
         assertEquals(String(bytes), String(ContentCodec.encode(ContentCodec.decode(bytes))))
@@ -63,10 +63,10 @@ class EnvelopeGroupVectorsTest {
         assertEquals("group", assertIs<ContentEnvelope.Unknown>(ContentCodec.decode(zero)).kind)
     }
 
-    @Test fun aGroupPhotoOfThreeBytesIsInvalidAndOfFourIsKept() {
+    @Test fun aGroupPhotoMustPassTheFrameHeaderRule() {
         fun json(bytes: ByteArray) = """{"k":"group","id":"i","at":1,"v":1,"name":"Ok","ver":1,"photo":"${java.util.Base64.getEncoder().encodeToString(bytes)}"}""".encodeToByteArray()
-        val three = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte())
-        assertEquals("group", assertIs<ContentEnvelope.Unknown>(ContentCodec.decode(json(three))).kind)
-        assertEquals(4, assertIs<ContentEnvelope.Group>(ContentCodec.decode(json(three + byteArrayOf(0)))).photo?.size)
+        val tall = byteArrayOf(-1, -40, -1, -64, 0, 11, 8, 4, 1, 0, 1, 1, 1, 17, 0)
+        assertEquals("group", assertIs<ContentEnvelope.Unknown>(ContentCodec.decode(json(tall))).kind)
+        assertEquals(15, assertIs<ContentEnvelope.Group>(ContentCodec.decode(json(byteArrayOf(-1, -40, -1, -64, 0, 11, 8, 1, 0, 1, 0, 1, 1, 17, 0)))).photo?.size)
     }
 }
