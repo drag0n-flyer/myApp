@@ -566,4 +566,157 @@ abstract class RepositoryContract {
         repo.wipe()
         assertNull(repo.profile("bob"))
     }
+
+    // Groups (version 5)
+
+    private val photo = byteArrayOf(-1, -40, 1, 2)
+    private fun member(id: String, role: String = "member") = org.example.app.messaging.ports.GroupMemberRecord(id, role)
+
+    private fun newGroup(chat: String = "g:c1", conversation: String = "c1") {
+        repo.upsertGroup(chat, conversation, "Book club", 5)
+    }
+
+    @Test fun existingChatsAreDirectWithNoGroupFields() {
+        val c = repo.chat("chat1")!!
+        assertEquals("direct", c.kind)
+        assertNull(c.conversationId); assertNull(c.title); assertNull(c.photo); assertNull(c.groupVer); assertNull(c.membersVersion)
+        assertEquals("member", c.myState)
+        assertTrue(repo.groupMembers("chat1").isEmpty())
+    }
+
+    @Test fun upsertGroupCreatesAGroupChatOnceAndKeepsLocalChoices() {
+        newGroup()
+        val g = repo.chat("g:c1")!!
+        assertEquals("group", g.kind); assertEquals("c1", g.conversationId); assertEquals("Book club", g.title)
+        assertEquals(5L, g.lastActivity); assertFalse(g.isRequest); assertEquals(0, g.unread); assertEquals("member", g.myState)
+        repo.setMuted("g:c1", true); repo.setPinnedAt("g:c1", 9)
+        repo.upsertGroup("g:c1", "c1", "Ignored", 99)
+        val again = repo.chat("g:c1")!!
+        assertTrue(again.muted); assertEquals(9L, again.pinnedAt); assertEquals("Book club", again.title); assertEquals(5L, again.lastActivity)
+    }
+
+    @Test fun upsertGroupRefusesADirectChatAndAnotherChatForTheSameConversation() {
+        assertFailsWith<IllegalArgumentException> { repo.upsertGroup("chat1", "c9", "X", 1) }
+        assertEquals("direct", repo.chat("chat1")!!.kind)
+        newGroup()
+        assertFailsWith<Exception> { repo.upsertGroup("g:other", "c1", "Y", 1) }
+        assertNull(repo.chat("g:other"))
+    }
+
+    @Test fun setGroupMembersReturnsTheOldListAndKeepsTheHighestVersion() {
+        newGroup()
+        assertEquals(emptyList(), repo.setGroupMembers("g:c1", listOf(member("b"), member("a", "owner")), 0))
+        assertEquals(listOf(member("a", "owner"), member("b")), repo.groupMembers("g:c1"))
+        assertEquals(0L, repo.chat("g:c1")!!.membersVersion)
+        val old = repo.setGroupMembers("g:c1", listOf(member("a", "owner"), member("c", "admin")), 3)
+        assertEquals(listOf(member("a", "owner"), member("b")), old)
+        assertEquals(listOf(member("a", "owner"), member("c", "admin")), repo.groupMembers("g:c1"))
+        assertEquals(3L, repo.chat("g:c1")!!.membersVersion)
+    }
+
+    @Test fun aStaleOrEqualMembersVersionIsIgnoredWhole() {
+        newGroup()
+        repo.setGroupMembers("g:c1", listOf(member("a", "owner"), member("b")), 4)
+        assertNull(repo.setGroupMembers("g:c1", listOf(member("z")), 4))
+        assertNull(repo.setGroupMembers("g:c1", listOf(member("z")), 2))
+        assertEquals(listOf(member("a", "owner"), member("b")), repo.groupMembers("g:c1"))
+        assertEquals(4L, repo.chat("g:c1")!!.membersVersion)
+    }
+
+    @Test fun setGroupMembersRefusesHostileListsAndChangesNothing() {
+        newGroup()
+        repo.setGroupMembers("g:c1", listOf(member("a", "owner")), 1)
+        assertFailsWith<IllegalArgumentException> { repo.setGroupMembers("g:c1", listOf(member("a", "root")), 2) }
+        assertFailsWith<IllegalArgumentException> { repo.setGroupMembers("g:c1", listOf(member("a"), member("a")), 2) }
+        assertFailsWith<IllegalArgumentException> { repo.setGroupMembers("g:c1", listOf(member("")), 2) }
+        assertFailsWith<IllegalArgumentException> { repo.setGroupMembers("g:c1", (1..101).map { member("m$it") }, 2) }
+        assertFailsWith<IllegalArgumentException> { repo.setGroupMembers("g:c1", listOf(member("a")), -1) }
+        assertEquals(listOf(member("a", "owner")), repo.groupMembers("g:c1"))
+        assertEquals(1L, repo.chat("g:c1")!!.membersVersion)
+        assertEquals(1, repo.setGroupMembers("g:c1", (1..100).map { member("m$it") }, 2)!!.size)
+        assertEquals(100, repo.groupMembers("g:c1").size)
+    }
+
+    @Test fun setGroupMembersIgnoresADirectOrUnknownChat() {
+        assertNull(repo.setGroupMembers("chat1", listOf(member("a")), 1))
+        assertNull(repo.setGroupMembers("nobody", listOf(member("a")), 1))
+        assertTrue(repo.groupMembers("chat1").isEmpty())
+    }
+
+    @Test fun groupInfoKeepsTheHighestVersionAndValidatesWhatIsStored() {
+        newGroup()
+        assertTrue(repo.setGroupInfo("g:c1", "New name", photo, 2))
+        var g = repo.chat("g:c1")!!
+        assertEquals("New name", g.title); assertContentEquals(photo, g.photo); assertEquals(2, g.groupVer)
+        assertFalse(repo.setGroupInfo("g:c1", "Same ver", null, 2))
+        assertFalse(repo.setGroupInfo("g:c1", "Older", null, 1))
+        assertFailsWith<IllegalArgumentException> { repo.setGroupInfo("g:c1", "", null, 3) }
+        assertFailsWith<IllegalArgumentException> { repo.setGroupInfo("g:c1", "a".repeat(51), null, 3) }
+        assertFailsWith<IllegalArgumentException> { repo.setGroupInfo("g:c1", "Ok", ByteArray(24_577).also { it[0] = -1; it[1] = -40 }, 3) }
+        assertFailsWith<IllegalArgumentException> { repo.setGroupInfo("g:c1", "Ok", byteArrayOf(1, 2, 3), 3) }
+        assertFalse(repo.setGroupInfo("chat1", "Direct", null, 1))
+        g = repo.chat("g:c1")!!
+        assertEquals("New name", g.title); assertEquals(2, g.groupVer)
+        assertTrue(repo.setGroupInfo("g:c1", "Third", null, 3))
+        assertNull(repo.chat("g:c1")!!.photo)
+    }
+
+    @Test fun myStateIsOneOfThreeAndNothingElseUndoesIt() {
+        newGroup()
+        repo.setMyState("g:c1", "removed")
+        repo.bumpChat("g:c1", 1, 50); repo.setMuted("g:c1", true)
+        assertEquals("removed", repo.chat("g:c1")!!.myState)
+        assertFailsWith<IllegalArgumentException> { repo.setMyState("g:c1", "gone") }
+        repo.setMyState("g:c1", "left")
+        assertEquals("left", repo.chat("g:c1")!!.myState)
+    }
+
+    @Test fun receiptsAreUniquePerMemberAndKindAndTheFirstOneStays() {
+        repo.insertMessage(message("m1", "x"))
+        assertTrue(repo.addReceipt("m1", "bob", "delivered", 100))
+        assertFalse(repo.addReceipt("m1", "bob", "delivered", 200))
+        assertTrue(repo.addReceipt("m1", "bob", "read", 300))
+        assertTrue(repo.addReceipt("m1", "carol", "delivered", 150))
+        val all = repo.receipts("m1")
+        assertEquals(3, all.size)
+        assertEquals(100L, all.single { it.accountId == "bob" && it.kind == "delivered" }.at)
+        assertEquals(setOf("bob" to "delivered", "bob" to "read", "carol" to "delivered"), all.map { it.accountId to it.kind }.toSet())
+        assertTrue(repo.receipts("nobody").isEmpty())
+    }
+
+    @Test fun aReceiptForNoMessageOrWithAnUnknownKindIsNotStored() {
+        assertFalse(repo.addReceipt("missing", "bob", "read", 1))
+        repo.insertMessage(message("m1", "x"))
+        assertFailsWith<IllegalArgumentException> { repo.addReceipt("m1", "bob", "seen", 1) }
+        assertTrue(repo.receipts("m1").isEmpty())
+    }
+
+    @Test fun deletingAChatRemovesItsMembersAndAMessagesReceipts() {
+        newGroup()
+        repo.setGroupMembers("g:c1", listOf(member("a", "owner")), 1)
+        repo.insertMessage(message("m1", "x", chat = "g:c1"))
+        repo.addReceipt("m1", "a", "read", 5)
+        repo.deleteChat("g:c1")
+        assertTrue(repo.groupMembers("g:c1").isEmpty())
+        assertTrue(repo.receipts("m1").isEmpty())
+        db.openHelper.writableDatabase.query("SELECT COUNT(*) FROM group_members").use { it.moveToFirst(); assertEquals(0, it.getInt(0)) }
+        db.openHelper.writableDatabase.query("SELECT COUNT(*) FROM receipts").use { it.moveToFirst(); assertEquals(0, it.getInt(0)) }
+    }
+
+    @Test fun wipeRemovesGroupsMembersAndReceipts() {
+        newGroup()
+        repo.setGroupMembers("g:c1", listOf(member("a", "owner")), 1)
+        repo.insertMessage(message("m1", "x", chat = "g:c1"))
+        repo.addReceipt("m1", "a", "read", 5)
+        repo.wipe()
+        db.openHelper.writableDatabase.query("SELECT COUNT(*) FROM group_members").use { it.moveToFirst(); assertEquals(0, it.getInt(0)) }
+        db.openHelper.writableDatabase.query("SELECT COUNT(*) FROM receipts").use { it.moveToFirst(); assertEquals(0, it.getInt(0)) }
+    }
+
+    @Test fun senderOfAGroupMessageIsStoredPerMessage() {
+        newGroup()
+        repo.insertMessage(message("m1", "x", chat = "g:c1").copy(senderAccount = "bob"))
+        repo.insertMessage(message("m2", "y", chat = "g:c1", sentAt = 2_000).copy(senderAccount = "carol"))
+        assertEquals(listOf("bob", "carol"), repo.messages("g:c1", null, 10).map { it.senderAccount })
+    }
 }

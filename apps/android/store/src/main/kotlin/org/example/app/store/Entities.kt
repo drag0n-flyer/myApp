@@ -15,7 +15,7 @@ data class ContactEntity(
     @ColumnInfo(name = "added_at") val addedAt: Long,
 )
 
-@Entity(tableName = "chats")
+@Entity(tableName = "chats", indices = [Index("conversation_id", unique = true)])
 data class ChatEntity(
     @PrimaryKey val id: String,
     @ColumnInfo(name = "is_request") val isRequest: Boolean,
@@ -28,6 +28,39 @@ data class ChatEntity(
     @ColumnInfo(defaultValue = "0") val archived: Boolean = false,
     /** Disappearing-message timer, seconds; 0 is off. Added in version 3. */
     @ColumnInfo(name = "timer_seconds", defaultValue = "0") val timerSeconds: Int = 0,
+    /** `direct` or `group`. Added in version 5, with the rest of the group columns. */
+    @ColumnInfo(defaultValue = "'direct'") val kind: String = "direct",
+    @ColumnInfo(name = "conversation_id") val conversationId: String? = null,
+    val title: String? = null,
+    val photo: ByteArray? = null,
+    @ColumnInfo(name = "group_ver") val groupVer: Int? = null,
+    @ColumnInfo(name = "members_version") val membersVersion: Long? = null,
+    @ColumnInfo(name = "my_state", defaultValue = "'member'") val myState: String = "member",
+)
+
+/** A member of a group chat and their role. Added in version 5. */
+@Entity(
+    tableName = "group_members",
+    primaryKeys = ["chat_id", "account_id"],
+    foreignKeys = [ForeignKey(ChatEntity::class, ["id"], ["chat_id"], onDelete = ForeignKey.CASCADE)],
+)
+data class GroupMemberEntity(
+    @ColumnInfo(name = "chat_id") val chatId: String,
+    @ColumnInfo(name = "account_id") val accountId: String,
+    val role: String,
+)
+
+/** One member's delivered or read receipt for one message. Added in version 5. */
+@Entity(
+    tableName = "receipts",
+    primaryKeys = ["message_id", "account_id", "kind"],
+    foreignKeys = [ForeignKey(MessageEntity::class, ["id"], ["message_id"], onDelete = ForeignKey.CASCADE)],
+)
+data class ReceiptEntity(
+    @ColumnInfo(name = "message_id") val messageId: String,
+    @ColumnInfo(name = "account_id") val accountId: String,
+    val kind: String,
+    val at: Long,
 )
 
 /** Unsent composer text, one row per chat. Whitespace-only text is never stored. Added in version 2. */

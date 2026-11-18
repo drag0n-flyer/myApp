@@ -39,6 +39,23 @@ interface ChatDao {
     @Query("SELECT timer_seconds FROM chats WHERE id = :id") fun timerSeconds(id: String): Int?
     @Query("DELETE FROM outbox WHERE chat_id = :id") fun deleteOutbox(id: String)
     @Query("DELETE FROM chats WHERE id = :id") fun delete(id: String)
+
+    // Groups (version 5)
+    /** Only for a chat that does not exist yet; an existing row is never replaced. */
+    @Insert(onConflict = OnConflictStrategy.ABORT) fun insertNew(c: ChatEntity)
+    @Query("UPDATE chats SET conversation_id = :conversationId WHERE id = :id") fun setConversationId(id: String, conversationId: String)
+    @Query("SELECT * FROM group_members WHERE chat_id = :id ORDER BY account_id") fun members(id: String): List<GroupMemberEntity>
+    @Query("DELETE FROM group_members WHERE chat_id = :id") fun clearMembers(id: String)
+    @Insert fun insertMembers(m: List<GroupMemberEntity>)
+    @Query("UPDATE chats SET members_version = :version WHERE id = :id") fun setMembersVersion(id: String, version: Long)
+    @Query("UPDATE chats SET title = :title, photo = :photo, group_ver = :ver WHERE id = :id") fun setInfo(id: String, title: String, photo: ByteArray?, ver: Int)
+    @Query("UPDATE chats SET my_state = :state WHERE id = :id") fun setMyState(id: String, state: String)
+    @Query("SELECT COUNT(*) FROM messages WHERE id = :messageId") fun messageCount(messageId: String): Int
+    @Query("SELECT COUNT(*) FROM receipts WHERE message_id = :messageId AND account_id = :accountId AND kind = :kind")
+    fun receiptCount(messageId: String, accountId: String, kind: String): Int
+    /** Never over an existing receipt: the first one stays. */
+    @Insert(onConflict = OnConflictStrategy.IGNORE) fun insertReceipt(r: ReceiptEntity)
+    @Query("SELECT * FROM receipts WHERE message_id = :messageId ORDER BY account_id, kind") fun receipts(messageId: String): List<ReceiptEntity>
 }
 
 data class DraftRow(
