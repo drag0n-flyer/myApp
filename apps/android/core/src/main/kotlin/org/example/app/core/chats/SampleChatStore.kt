@@ -129,7 +129,8 @@ class SampleChatStore(
                     chat
                 } else {
                     removed += gone.map { it.id }
-                    chat.copy(messages = chat.messages - gone.toSet())
+                    val unreadGone = gone.count { it.senderId != me.id && it.senderId != "system" && it.content !is MessageContent.System }
+                    chat.copy(messages = chat.messages - gone.toSet(), unreadCount = maxOf(0, chat.unreadCount - unreadGone))
                 }
             }
         }

@@ -30,7 +30,7 @@ class ExpirySweeperTest {
         s.setTimer(chat, 86_400)
         s.send(MessageContent.Text("secret"), chat)
         val sentAt = nowMs
-        val removed = mutableListOf<Pair<List<String>, Set<String>>>()
+        val removed = mutableListOf<Pair<List<String>, Map<String, Int>>>()
         val sweeper = ExpirySweeper(s, { nowMs }) { ids, chats -> removed += ids to chats }
 
         nowMs = sentAt + 86_399_999
@@ -42,7 +42,38 @@ class ExpirySweeperTest {
         assertNull(sweeper.sweep(), "nothing else is waiting")
         assertTrue("secret" !in texts(s))
         assertEquals(1, removed.size)
-        assertEquals(setOf(chat), removed.single().second, "the chat of the removed message is named, for its notification")
+        assertTrue(removed.single().second.isEmpty(), "my own message never touches a notification")
+    }
+
+    private fun storeWithIncoming(vararg theirs: Pair<String, Long>, unread: Int): SampleChatStore {
+        val data = SampleData.make(start)
+        val base = data.chats.first { it.id == chat }
+        val messages = theirs.map { (id, exp) ->
+            org.example.app.core.chats.Message(id, "riya", start, MessageContent.Text(id), org.example.app.core.chats.DeliveryStatus.Delivered, null, emptyList(), expiresAt = Instant.ofEpochMilli(exp))
+        } + org.example.app.core.chats.Message("sys", "system", start, MessageContent.System(org.example.app.core.chats.SystemEvent.Timer(86_400, null)), org.example.app.core.chats.DeliveryStatus.Sent, null, emptyList(), expiresAt = Instant.ofEpochMilli(start.toEpochMilli() + 1))
+        return SampleChatStore(data.copy(chats = listOf(base.copy(messages = messages, unreadCount = unread))), clock = { Instant.ofEpochMilli(nowMs) })
+    }
+
+    @Test fun anExpiredIncomingMessageReportsTheChatAndWhatIsStillUnread() {
+        val t = start.toEpochMilli()
+        val s = storeWithIncoming("a" to t + 10, "b" to t + 1_000, unread = 2)
+        val seen = mutableListOf<Map<String, Int>>()
+        val sweeper = ExpirySweeper(s, { nowMs }) { _, chats -> seen += chats }
+        nowMs = t + 10
+        sweeper.sweep()
+        assertEquals(listOf(mapOf(chat to 1)), seen, "one unread is left, so the notification must be re-posted, not cancelled")
+        nowMs = t + 1_000
+        sweeper.sweep()
+        assertEquals(mapOf(chat to 0), seen.last(), "nothing unread is left: the notification goes")
+    }
+
+    @Test fun aSystemLineExpiringNamesNoChat() {
+        val t = start.toEpochMilli()
+        val s = storeWithIncoming("a" to t + 100_000, unread = 1)
+        val seen = mutableListOf<Map<String, Int>>()
+        nowMs = t + 5 // only the system line (expires t+1) is due
+        ExpirySweeper(s, { nowMs }) { _, chats -> seen += chats }.sweep()
+        assertEquals(listOf(emptyMap()), seen)
     }
 
     @Test fun messagesWithoutATimerNeverGo() {

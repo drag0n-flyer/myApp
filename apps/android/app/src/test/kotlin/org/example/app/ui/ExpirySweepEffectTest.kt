@@ -17,13 +17,11 @@ class ExpirySweepEffectTest {
     @get:Rule val rule = createComposeRule()
 
     @Test fun onScreenItSweepsExpiredMessagesAndNamesTheirChatsForNotifications() {
-        val store = storeWith(listOf(msg("1", "riya", MessageContent.Text("keep"))))
-        val sent = Instant.now()
-        store.setTimer("chat-riya", 86_400)
-        store.send(MessageContent.Text("old"), "chat-riya")
+        val past = Instant.now().minusSeconds(5)
+        val store = storeWith(listOf(msg("1", "riya", MessageContent.Text("keep")), msg("2", "riya", MessageContent.Text("old")).copy(expiresAt = past)))
         val cancelled = java.util.concurrent.CopyOnWriteArrayList<String>()
         // A day and a second later, as the clock of the effect.
-        rule.setContent { ExpirySweepEffect(store, now = { sent.toEpochMilli() + 86_401_000 }) { ids -> cancelled += ids } }
+        rule.setContent { ExpirySweepEffect(store, now = System::currentTimeMillis) { left -> cancelled += left.keys } }
         rule.waitUntil(5_000) { cancelled.isNotEmpty() }
         assertEquals(listOf("chat-riya"), cancelled.toList())
         val texts = store.chat("chat-riya")!!.messages.mapNotNull { (it.content as? MessageContent.Text)?.text }

@@ -14,21 +14,21 @@ import org.example.app.core.people.ExpirySweeper
 /**
  * Disappearing messages while the app is on screen: sweeps when the app starts and each time it returns to the
  * foreground, then again at each next `expires_at`, and whenever a message with a timer arrives. Draws nothing.
- * [onRemoved] gets the IDs of the chats that lost messages, to take their delivered notifications away.
+ * [onUnreadLeft] gets, for each chat that lost an incoming message, its unread count after the sweep (see ExpirySweeper).
  */
 @Composable
 fun ExpirySweepEffect(
     store: ChatStore,
     now: () -> Long = System::currentTimeMillis,
-    onRemoved: (chatIds: Set<String>) -> Unit,
+    onUnreadLeft: (Map<String, Int>) -> Unit,
 ) {
     val owner = LocalLifecycleOwner.current
-    val removed = rememberUpdatedState(onRemoved)
+    val removed = rememberUpdatedState(onUnreadLeft)
     LaunchedEffect(store, owner) {
         owner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             // The sweep reads and writes the database: off the main thread.
             withContext(Dispatchers.IO) {
-                ExpirySweeper(store, now) { _, chatIds -> if (chatIds.isNotEmpty()) removed.value(chatIds) }.run()
+                ExpirySweeper(store, now) { _, left -> if (left.isNotEmpty()) removed.value(left) }.run()
             }
         }
     }

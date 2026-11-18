@@ -177,7 +177,7 @@ fun AppRoot(
         }
         // Disappearing messages: swept at start, on foreground and at each next expiry; notifications of swept chats go.
         val sweepContext = LocalContext.current
-        org.example.app.ui.ExpirySweepEffect(graph.chatStore) { chatIds -> PushRuntime.cancelChatNotifications(sweepContext, chatIds) }
+        org.example.app.ui.ExpirySweepEffect(graph.chatStore) { left -> org.example.app.live.ExpiryNotifications.apply(sweepContext, graph.chatStore, left) }
         val nav = rememberNavController()
         // From 840 dp the list sits beside the open chat. The open chat, its info page and the message to flash are
         // kept across rotation; below 840 dp nothing of this shows and a chat is a screen of its own.
