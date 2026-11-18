@@ -30,6 +30,7 @@ struct AddContactView: View {
                         .disabled(username.trimmingCharacters(in: .whitespaces).isEmpty)
                         .accessibilityIdentifier("addcontact.submit")
                 }
+                AddByLinkSection(model: model, finish: { dismiss() })
             }
             .navigationTitle("Add contact")
             .toolbar {
