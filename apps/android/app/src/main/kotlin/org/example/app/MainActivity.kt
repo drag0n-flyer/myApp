@@ -16,6 +16,13 @@ import org.example.app.push.MessageNotifier
 fun chatIdFrom(intent: Intent?): String? =
     intent?.getStringExtra(MessageNotifier.EXTRA_CHAT_ID)?.takeIf { it.isNotBlank() }
 
+/** The link an app link (`https://<host>/u/...` or `/c/...`) opened this activity with, or null. Anything else is not for the link handler. */
+fun contactLinkFrom(intent: Intent?): String? {
+    if (intent?.action != Intent.ACTION_VIEW) return null
+    val data = intent.data ?: return null
+    return if (data.scheme == "https") data.toString() else null
+}
+
 // FragmentActivity (a ComponentActivity) because androidx.biometric's prompt needs one.
 class MainActivity : FragmentActivity() {
     private lateinit var graph: AppGraph
@@ -31,6 +38,8 @@ class MainActivity : FragmentActivity() {
         keepWindowSecureWhileLockIsOn()
         // Held while locked: AppRoot follows it once after the unlock.
         chatIdFrom(intent)?.let { graph.requestedChat.value = it }
+        // A recreation (rotation) gets the same intent again: that link was already taken.
+        if (savedInstanceState == null) contactLinkFrom(intent)?.let { graph.pendingLink.offer(it) }
         setContent { AppRoot(graph) }
     }
 
@@ -48,6 +57,7 @@ class MainActivity : FragmentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         chatIdFrom(intent)?.let { graph.requestedChat.value = it }
+        contactLinkFrom(intent)?.let { graph.pendingLink.offer(it) }
     }
 
     override fun onStart() {
