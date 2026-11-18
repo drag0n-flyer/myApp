@@ -140,6 +140,17 @@ public struct NotificationProcessor: Sendable {
         return Self.sniffsAsWelcome(payload)
     }
 
+    /// A payload already fetched into the raw inbox names its conversation and sender (the server's word): in a group the sender
+    /// must be in the stored list. A payload not fetched yet says nothing, so a device that is in any group leaves it to the app.
+    private func mustLeaveToApp(_ payload: Data) throws -> Bool {
+        if let known = try deps.repo.rawItems(limit: 500).first(where: { $0.payload == payload }) {
+            guard known.kind == "message", let conversation = try deps.repo.conversation(serverID: known.conversationID),
+                  ChatID.isGroup(conversation.chatID) else { return false }
+            return try !deps.repo.groupMembers(chatID: conversation.chatID).contains { $0.accountID == known.senderAccount }
+        }
+        return try deps.repo.chats().contains { $0.kind == "group" }
+    }
+
     static func sniffsAsWelcome(_ payload: Data) -> Bool {
         let b = [UInt8](payload.prefix(4))
         if b == [0, 1, 0, 3] { return true }
@@ -156,6 +167,10 @@ public struct NotificationProcessor: Sendable {
         // A Welcome needs the inbox item's server conversation ID to register the conversation,
         // and the push does not carry it. Leave it for the full sync (never mark it processed here).
         if try isWelcome(payload) { return try await syncAndShowNewest() }
+
+        // Group messages are never decrypted here unless the stored member list holds the sender the server reported: decrypting
+        // and then dropping would lose the message. The app's own sync looks at the server's list.
+        if try mustLeaveToApp(payload) { return try await syncAndShowNewest() }
 
         let hash = PortableSHA256.hash(payload)
         if try deps.repo.isProcessed(hash: hash) { return .drop }

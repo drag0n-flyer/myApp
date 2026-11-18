@@ -53,12 +53,19 @@ private struct GroupPush {
         return padded(try await ana.deps.mls.encrypt(envelope, in: group).ciphertext)
     }
 
-    func process(_ body: ContentEnvelope.Body, id: String = "m1") async throws -> NotificationOutcome {
+    /// `rawSender`: the sender the server reported for the item already fetched into the raw inbox; `nil` = not fetched yet.
+    func process(_ body: ContentEnvelope.Body, id: String = "m1", rawSender: String? = "acc-ana") async throws -> NotificationOutcome {
         let deps = bob.deps
         let processor = NotificationProcessor(
             deps: deps, handler: IncomingHandler(me: deps.me, now: deps.now, log: { _ in }), inbox: GroupInbox(),
             conversations: NoConversationManager())
-        return await processor.process(pushData: try await push(body, id: id), deadline: testEpochDate.addingTimeInterval(20))
+        let data = try await push(body, id: id)
+        if let rawSender {
+            try deps.repo.insertRaw([RawInboxRecord(
+                cursor: Int64(id.utf8.reduce(1) { ($0 * 31 + Int($1)) % 100_000 }), kind: "message", conversationID: "conv-g", seq: nil, epoch: 1,
+                senderAccount: rawSender, senderDevice: "d", payload: try Padding.unpad(data), sentAt: testEpochDate)])
+        }
+        return await processor.process(pushData: data, deadline: testEpochDate.addingTimeInterval(20))
     }
 }
 
@@ -110,5 +117,27 @@ private struct GroupPush {
         try g.bob.deps.repo.setMyState(chatID: "g:conv-g", "removed")
         #expect(try await g.process(.text("hi", replyTo: nil)) == .drop)
         #expect(try g.bob.deps.repo.message(id: "m1") == nil)
+    }
+}
+
+@Suite("GroupNotificationLookup") struct GroupNotificationLookupTests {
+    @Test func aSenderTheStoredListDoesNotHoldIsLeftForTheAppBeforeAnythingIsDecrypted() async throws {
+        let g = try await GroupPush()
+        let outcome = try await g.process(.text("hi", replyTo: nil), rawSender: "acc-zed")
+        #expect(outcome == .fallback)
+        #expect(try g.bob.deps.repo.message(id: "m1") == nil)
+        #expect(try g.bob.deps.repo.rawItems(limit: 5).count == 1)   // still there for the app
+    }
+
+    @Test func aPushNotFetchedYetIsLeftForTheAppWhenThisDeviceIsInAGroup() async throws {
+        let g = try await GroupPush()
+        let data = try await g.push(.text("hi", replyTo: nil))
+        let deps = g.bob.deps
+        let processor = NotificationProcessor(
+            deps: deps, handler: IncomingHandler(me: deps.me, now: deps.now, log: { _ in }), inbox: GroupInbox(),
+            conversations: NoConversationManager())
+        #expect(await processor.process(pushData: data, deadline: testEpochDate.addingTimeInterval(20)) == .fallback)
+        #expect(try deps.repo.message(id: "m1") == nil)
+        #expect(try !deps.repo.isProcessed(hash: PortableSHA256.hash(try Padding.unpad(data))))
     }
 }
