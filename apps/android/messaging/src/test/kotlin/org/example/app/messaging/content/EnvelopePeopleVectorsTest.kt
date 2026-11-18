@@ -87,8 +87,20 @@ class EnvelopePeopleVectorsTest {
     }
 
     private fun caption(expect: JsonObject, got: String?, name: String) {
-        expect.int("cLen")?.let { assertEquals(it, got?.length, name); return }
-        assertEquals(expect.str("c"), got, name)
+        val len = expect.int("cLen")
+        if (len == null) {
+            assertEquals(expect.str("c"), got, name)
+            assertNull(expect.int("cScalars"), name)
+            return
+        }
+        assertEquals(len, graphemes(got!!), name)
+        expect.int("cScalars")?.let { assertEquals(it, got.codePointCount(0, got.length), name) }
+    }
+
+    /** Exactly [n] graphemes when keeping n whole changes nothing and keeping one fewer does. */
+    private fun graphemes(s: String): Int {
+        for (n in 1..TextLimit.MAX_GRAPHEMES) if (TextLimit.truncate(s, n) == s) return n
+        return TextLimit.MAX_GRAPHEMES + 1
     }
 
     @Test fun peopleEnvelopesRoundTripThroughTheEncoder() {
@@ -123,5 +135,19 @@ class EnvelopePeopleVectorsTest {
         assertEquals("HTTPS://Example.com/x", lp("HTTPS://Example.com/x").lp?.url)
         assertNull(lp("http://example.com/x").lp)
         assertNull(lp("HTTP://example.com/x").lp)
+    }
+
+    @Test fun photoAndPreviewImageAcceptPaddedAndUnpaddedBase64AndEncodeWithPadding() {
+        val jpeg = byteArrayOf(-1, -40, 1, 2) // base64 "/9gBAg==" padded, "/9gBAg" unpadded
+        for (b64 in listOf("/9gBAg==", "/9gBAg")) {
+            val prof = ContentCodec.decode("""{"v":1,"id":"p","at":1,"k":"profile","name":"Ann","photo":"$b64","ver":1}""".encodeToByteArray())
+            assertEquals(jpeg.toList(), assertIs<ContentEnvelope.Profile>(prof).photo?.toList(), b64)
+            val text = ContentCodec.decode(
+                """{"v":1,"id":"m","at":1,"k":"text","t":"see https://a.example/x","lp":{"url":"https://a.example/x","title":"T","img":"$b64"}}""".encodeToByteArray(),
+            )
+            assertEquals(jpeg.toList(), assertIs<ContentEnvelope.Text>(text).lp?.img?.toList(), b64)
+        }
+        val out = String(ContentCodec.encode(ContentEnvelope.Profile("p", 1, "Ann", jpeg, 1)))
+        assertTrue(out.contains("\"/9gBAg==\""), out)
     }
 }

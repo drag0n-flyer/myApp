@@ -19,9 +19,13 @@ object TextLimit {
         repeat(max) {
             var n = bi.next()
             while (n != BreakIterator.DONE && n < s.length && (s[n - 1] == ZWJ || s[n] == ZWJ)) n = bi.next()
+            // The test JVM also splits a flag (two regional indicators) in two; join the pair as ICU does.
+            if (n != BreakIterator.DONE && n - end == 2 && isRegional(s, end) && n < s.length && isRegional(s, n)) n = bi.next()
             if (n == BreakIterator.DONE) return s
             end = n
         }
         return s.substring(0, end)
     }
+
+    private fun isRegional(s: String, i: Int): Boolean = s.codePointAt(i) in 0x1F1E6..0x1F1FF
 }

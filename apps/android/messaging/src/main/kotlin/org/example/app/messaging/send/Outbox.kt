@@ -195,7 +195,8 @@ class Outbox(
         }
         // A message that has already expired never leaves: the sweep removes its row, and the server would refuse the time.
         if (Expiry.isExpired(expiryOf(envelope), clock.now())) {
-            repo.removeOutbox(item.messageId)
+            repo.completeSend(item.messageId, "failed") // the row stays until the sweep removes it; the outbox entry goes
+
             return true
         }
         // A control message has no message row; its envelope time is when it was queued.

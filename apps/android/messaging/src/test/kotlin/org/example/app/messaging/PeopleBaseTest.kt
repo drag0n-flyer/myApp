@@ -306,6 +306,8 @@ class PeopleBaseTest {
         st.outbox.flush()
         assertEquals(before, s.rig.server.messages.size)
         assertTrue(s.bob.repo.dueOutbox(Long.MAX_VALUE).isEmpty())
+        val row = s.bob.repo.messages(s.bob.repo.chats().first().id, null, 50).single { !it.id.startsWith("sys-") }
+        assertEquals("failed", row.status) // the row stays until the sweep removes it
     }
 
     @Test fun overlongCaptionIsRefusedOnSend() = runTest {
