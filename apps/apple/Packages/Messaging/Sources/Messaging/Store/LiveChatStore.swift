@@ -686,19 +686,25 @@ public final class LiveChatStore: ChatStore {
 
     public func edit(messageID: String, in chatID: String, text: String) {
         let newText = String(text.prefix(Self.maxTextLength))
-        guard let record = (try? repo.message(id: messageID)) ?? nil, record.chatID == chatID,
-              record.senderAccount == deps.me.accountID, !record.deleted else { return }
-        let old = ContentEnvelope.decode(record.envelope)
-        // Text and caption edits follow one rule, shared with the receiver (`ContentEnvelope.edited`).
-        guard let result = old.edited(text: newText, fold: fold) else { return }
-        guard (try? repo.applyEdit(id: messageID, sender: deps.me.accountID, envelope: result.envelope.encoded(), folded: result.folded,
-                                   at: deps.now(), caption: result.envelope.caption, linkPreview: result.envelope.preview?.json)) == true
-        else { return }
+        let me = deps.me.accountID
+        let now = deps.now()
+        let repo = repo
+        // One transaction reads the row, applies the edit and decides whether an edit control is needed, so the upload's
+        // commit (which also runs in a transaction) is either wholly before it or wholly after it. Before: the commit
+        // re-reads the row and carries the new caption, no control. After: the message is queued with the old caption
+        // and the control follows it.
+        let outcome: (queued: Bool, wireText: String)? = try? repo.transaction { () -> (queued: Bool, wireText: String)? in
+            guard let record = try repo.message(id: messageID), record.chatID == chatID, record.senderAccount == me, !record.deleted else { return nil }
+            // Text and caption edits follow one rule, shared with the receiver (`ContentEnvelope.edited`).
+            guard let result = ContentEnvelope.decode(record.envelope).edited(text: newText, fold: fold) else { return nil }
+            guard try repo.applyEdit(id: messageID, sender: me, envelope: result.envelope.encoded(), folded: result.folded, at: now,
+                                     caption: result.envelope.caption, linkPreview: result.envelope.preview?.json) else { return nil }
+            let queued = result.envelope.body.attachment.map { AttachmentID.isValid($0.id) } ?? true
+            return (queued, result.wireText)
+        } ?? nil
+        guard let outcome else { return }
         refresh()
-        // An attachment still uploading is not on the server: its commit reads the caption from the row, so no control.
-        if result.envelope.body.attachment.map({ AttachmentID.isValid($0.id) }) ?? true {
-            sendControl(.edit(target: messageID, text: result.wireText), chatID: chatID)
-        }
+        if outcome.queued { sendControl(.edit(target: messageID, text: outcome.wireText), chatID: chatID) }
     }
 
     public func delete(messageID: String, in chatID: String) {

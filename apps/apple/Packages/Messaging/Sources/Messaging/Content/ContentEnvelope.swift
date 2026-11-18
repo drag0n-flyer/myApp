@@ -73,7 +73,8 @@ public struct ContentEnvelope: Codable, Sendable, Equatable {
         case .text(let text, _):
             preview = wire.lp?.value.flatMap { $0.valid(in: text) ? $0.preview : nil }
         case .photo, .file:
-            caption = wire.c?.value.map { String($0.prefix(Self.maxCaptionLength)) }
+            // An empty caption is the same as none.
+            caption = wire.c?.value.map { String($0.prefix(Self.maxCaptionLength)) }.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
         default: break
         }
         switch body {
@@ -306,6 +307,9 @@ public struct LinkPreview: Sendable, Equatable {
             if let desc = clean.desc, desc.unicodeScalars.count > 300 { return false }
             if imgText != nil {
                 guard let img, LinkPreview.isJPEG(img, max: ContentEnvelope.maxPreviewImage) else { return false }
+                // The declared size is read from the header before anything decodes the picture: at most 1,024 x 1,024.
+                if let info = ImageHeader.inspect(img), info.size != nil,
+                   !ImageHeader.isWithin(info, maxPixels: 1_024 * 1_024, maxSide: 1_024) { return false }
             }
             return true
         }
@@ -319,7 +323,8 @@ public struct LinkPreview: Sendable, Equatable {
         for scalar in text.unicodeScalars {
             switch scalar.value {
             // The joiners U+200C and U+200D stay: emoji sequences need them.
-            case 0x00...0x1F, 0x7F...0x9F, 0x200B, 0x200E, 0x200F, 0x202A...0x202E, 0x2060...0x2069, 0x061C, 0xFEFF: continue
+            case 0x00...0x1F, 0x7F...0x9F, 0x200B, 0x200E, 0x200F, 0x2028, 0x2029, 0x202A...0x202E, 0x2060...0x2069, 0x061C, 0xFEFF,
+                 0x3164, 0x115F, 0x1160, 0xFFA0, 0x2800: continue
             default: out.append(scalar)
             }
         }

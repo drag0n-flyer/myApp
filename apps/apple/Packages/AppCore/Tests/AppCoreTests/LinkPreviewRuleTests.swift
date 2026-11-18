@@ -56,6 +56,23 @@ import Testing
         }
     }
 
+    @Test func ipv6IsAnAllowList() {
+        let refused = ["64:ff9b:1::1", "100::1", "100::", "::", "::1", "fe80::1", "fc00::1", "ff02::1", "1::1", "4000::1", "5f00::1",
+                       "2001:db8::1", "2001:0:1::1", "2001:1::1", "3fff::1", "2002:a00:1::1", "2002:7f00:1::", "64:ff9b::a00:1", "64:ff9b::7f00:1",
+                       "::ffff:10.0.0.1", "::ffff:169.254.169.254", "::10.0.0.1", "0:0:0:1::1", "200::1"]
+        for address in refused { #expect(!allowed("example.com", [address]), "\(address)") }
+        let public6 = ["2606:4700::1111", "2a00:1450:4001::200e", "2002:808:808::1", "64:ff9b::808:808", "::ffff:8.8.8.8", "2001:4860:4860::8888", "3000::1"]
+        for address in public6 { #expect(allowed("example.com", [address]), "\(address)") }
+    }
+
+    @Test func hostNamesAreLowerCaseASCIILettersDigitsDotsAndHyphens() {
+        for host in ["ex_ample.com", "ex\u{E4}mple.com", "\u{4F8B}\u{3048}.jp", "ex ample.com", "exa%6Dple.com", "example.com/", "example.com@evil.com", "a..b.com", ".example.com"] {
+            #expect(!allowed(host, ["93.184.216.34"]), "\(host)")
+        }
+        #expect(allowed("xn--e1afmkfd.xn--p1ai", ["93.184.216.34"]))
+        #expect(allowed("my-site.example.co.uk", ["93.184.216.34"]))
+    }
+
     @Test func oneBadAddressRefusesTheWholeAnswer() {
         #expect(!allowed("example.com", ["93.184.216.34", "192.168.1.1"]))
     }
@@ -137,6 +154,14 @@ import Testing
         #expect(parse(html, limit: 40)?.title == "Early")
         #expect(parse(html, limit: 40)?.desc == nil)
         #expect(parse(html, limit: 10) == nil)
+    }
+
+    @Test func lookAlikeBlankAndLineSeparatorCharactersAreDropped() {
+        let title = parse("<title>a\u{2028}b\u{2029}c\u{3164}d\u{115F}e\u{1160}f\u{FFA0}g\u{2800}h</title>")?.title
+        #expect(title == "a b cdefgh" || title == "abcdefgh", "\(String(describing: title))")
+        #expect(title?.contains("\u{3164}") == false && title?.contains("\u{2800}") == false)
+        #expect(parse("<title>\u{3164}\u{2800}\u{FFA0}</title>") == nil)
+        #expect(parse("<title>\u{1F468}\u{200D}\u{1F469}</title>")?.title == "\u{1F468}\u{200D}\u{1F469}")
     }
 
     @Test func controlAndDirectionCharactersAreDropped() {

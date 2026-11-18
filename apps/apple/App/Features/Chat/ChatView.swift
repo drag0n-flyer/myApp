@@ -154,11 +154,14 @@ struct ChatView: View {
         .onChange(of: scenePhase) { _, phase in if phase != .active { voice.stop(); model.flushDrafts() } }
         // Nothing is fetched while the app is not in front (so never behind the lock cover).
         .onChange(of: scenePhase) { _, phase in if phase != .active { previews.reset() } }
+        .onDisappear { previews.reset() }
+        // The lock cover: a fetch in flight is cancelled and nothing new starts while it is up.
+        .onChange(of: model.lock.coversContent || model.lock.showsPrivacyCover) { _, covered in if covered { previews.reset() } }
         .mediaPreview(preview)
         .mediaViewer($viewer)
         .onChange(of: searchRequest) { _, _ in openSearchIfRequested() }
         .onChange(of: draft) { _, text in
-            previews.draftChanged(text, enabled: model.settings.linkPreviews && editing == nil, fetcher: model.linkPreviewFetcher)
+            previews.draftChanged(text, enabled: model.settings.linkPreviews && editing == nil && !model.lock.coversContent, fetcher: model.linkPreviewFetcher)
         }
         .onChange(of: draft) { _, text in
             // The clearing after a send is the store's job (it clears the draft only once the message is queued).
@@ -545,7 +548,12 @@ struct ChatView: View {
 
     private func send(_ chat: Chat) {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        var editsAttachment = false
+        switch editing?.content {
+        case .photo?, .file?: editsAttachment = true   // an empty caption removes it
+        default: break
+        }
+        guard !text.isEmpty || editsAttachment else { return }
         if let editing {
             // If the message changed under the edit, the edit is dropped; the bar closes either way.
             needsOlderRefresh = true

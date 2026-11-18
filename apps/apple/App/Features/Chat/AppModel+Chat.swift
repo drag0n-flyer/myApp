@@ -105,8 +105,12 @@ extension AppModel {
     func edit(messageID: String, in chatID: String, text: String, followedBy nextID: String? = nil) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let current = currentMessage(id: messageID, in: chatID, followedBy: nextID),
-              MessageActions.isStillApplicable(.edit, current: current, isMine: isMine(current)),
-              !trimmed.isEmpty else { return false }
+              MessageActions.isStillApplicable(.edit, current: current, isMine: isMine(current)) else { return false }
+        // A text keeps today's rule (a blank edit is refused); a photo or file may lose its caption.
+        switch current.content {
+        case .photo, .file: break
+        default: if trimmed.isEmpty { return false }
+        }
         chatStore.edit(messageID: messageID, in: chatID, text: trimmed)
         return true
     }

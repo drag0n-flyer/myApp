@@ -17,6 +17,8 @@ private final class UploadGate: HTTPTransport, @unchecked Sendable {
     private var held = false
     private var waiting: [CheckedContinuation<Void, Never>] = []
     private var failures = 0
+    private var postsHeld = false
+    private var postWaiting: [CheckedContinuation<Void, Never>] = []
     private var sizeRefused = false
     private var reportFraction: Double?
     private var _uploads = 0
@@ -24,6 +26,16 @@ private final class UploadGate: HTTPTransport, @unchecked Sendable {
 
     var uploads: Int { lock.withLock { _uploads } }
     func hold() { lock.withLock { held = true } }
+    /// Holds every message POST (not uploads) until `releasePosts`.
+    func holdPosts() { lock.withLock { postsHeld = true } }
+    func releasePosts() {
+        let waiting = lock.withLock { () -> [CheckedContinuation<Void, Never>] in
+            postsHeld = false
+            defer { postWaiting = [] }
+            return postWaiting
+        }
+        waiting.forEach { $0.resume() }
+    }
     func failNext(_ count: Int = 1) { lock.withLock { failures = count } }
     /// Answers uploads with 413 too_large.
     func refuseForSize() { lock.withLock { sizeRefused = true } }
@@ -44,6 +56,15 @@ private final class UploadGate: HTTPTransport, @unchecked Sendable {
     }
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        if request.httpMethod == "POST", request.url?.path.hasSuffix("/messages") == true {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                let resumeNow = lock.withLock { () -> Bool in
+                    if postsHeld { postWaiting.append(continuation); return false }
+                    return true
+                }
+                if resumeNow { continuation.resume() }
+            }
+        }
         guard request.httpMethod == "POST", request.url?.path == "/v1/attachments" else { return try await inner.send(request) }
         lock.withLock { _uploads += 1 }
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
@@ -508,6 +529,26 @@ private struct Rig {
         #expect(rig.last?.caption == "after" && rig.last?.status == .sent)
         let peer = try #require(await rig.bobReceives())
         #expect(peer.caption == "after", "the receiver gets the edited caption: \(String(describing: peer.caption))")
+    }
+
+    @Test func anEditAfterTheUploadCommittedButBeforeThePostStillReachesTheReceiver() async throws {
+        let rig = try await Rig.make()
+        rig.gate.holdPosts()
+        rig.ana.store.sendMedia([OutgoingMedia(url: try rig.file(named: "a.bin", size: 2_000), kind: .file)], caption: "old", in: "acc-bob")
+        for _ in 0..<500 where (rig.ana.store.chat(id: "acc-bob")?.messages.count ?? 0) < 1 { try await Task.sleep(for: .milliseconds(10)) }
+        let id = try #require(rig.last?.id)
+        // Wait until the upload has committed: the row now holds the real attachment and is queued.
+        for _ in 0..<500 {
+            let queued = ((try? rig.ana.repo.dueOutbox(at: .distantFuture)) ?? []).contains { $0.messageID == id }
+            if queued { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(try rig.ana.repo.dueOutbox(at: .distantFuture).contains { $0.messageID == id }, "committed, queued, not posted")
+        rig.ana.store.edit(messageID: id, in: "acc-bob", text: "new")
+        rig.gate.releasePosts()
+        await rig.ana.store.settle()
+        let peer = try #require(await rig.bobReceives())
+        #expect(peer.caption == "new" && peer.editedAt != nil, "the edit control was queued after the commit: \(String(describing: peer.caption))")
     }
 
     @Test func aFailedUploadAndItsRetryKeepTheCaption() async throws {

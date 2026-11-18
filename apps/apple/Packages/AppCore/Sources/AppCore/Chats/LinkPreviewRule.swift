@@ -26,7 +26,8 @@ public enum LinkPreviewRule {
         var name = host.lowercased()
         if name.hasSuffix(".") { name.removeLast() }
         guard !name.isEmpty, name.unicodeScalars.count <= 253 else { return false }
-        if name.hasPrefix("[") || name.contains(":") { return false }
+        // Only a-z, 0-9, "-" and "." (no underscore, no non-ASCII): a lower-case ASCII name is what DNS and the checks agree on.
+        guard name.utf8.allSatisfy({ ($0 >= 0x61 && $0 <= 0x7A) || ($0 >= 0x30 && $0 <= 0x39) || $0 == 0x2D || $0 == 0x2E }) else { return false }
         let labels = name.split(separator: ".", omittingEmptySubsequences: false)
         guard labels.count >= 2, labels.allSatisfy({ !$0.isEmpty }) else { return false }
         // 127.1, 2130706433, 0x7f.0.0.1, 017700000001: the last label of a number is a number.
@@ -96,22 +97,21 @@ public enum LinkPreviewRule {
             return out
         }
 
-        /// Not an address an ordinary website has.
+        /// Not an address an ordinary website has. IPv6 is an allow-list: only 2000::/3 is public (minus the reserved
+        /// blocks inside it), plus IPv4-mapped, NAT64 64:ff9b::/96 and 6to4, whose embedded IPv4 is checked. Everything
+        /// else (including 64:ff9b:1::/48, 100::/64, ::, ::1, fc00::/7, fe80::/10, ff00::/8) is refused.
         public var isNonPublic: Bool {
             if bytes.count == 4 { return Self.nonPublicV4(bytes) }
             let b = bytes
             if b[0..<10].allSatisfy({ $0 == 0 }), b[10] == 0xFF, b[11] == 0xFF { return Self.nonPublicV4(Array(b[12..<16])) }  // ::ffff:v4
-            if b[0..<12].allSatisfy({ $0 == 0 }) { return true }                           // ::, ::1 and ::v4 (deprecated)
             if b[0] == 0x00, b[1] == 0x64, b[2] == 0xFF, b[3] == 0x9B, b[4..<12].allSatisfy({ $0 == 0 }) {
                 return Self.nonPublicV4(Array(b[12..<16]))                                  // 64:ff9b::/96 NAT64
             }
+            guard b[0] & 0xE0 == 0x20 else { return true }                                  // outside 2000::/3
             if b[0] == 0x20, b[1] == 0x02 { return Self.nonPublicV4(Array(b[2..<6])) }     // 2002::/16 6to4
-            if b[0] == 0x20, b[1] == 0x01, b[2] == 0x00, b[3] == 0x00 { return true }      // 2001::/32 Teredo
+            if b[0] == 0x20, b[1] == 0x01, b[2] & 0xFE == 0x00 { return true }             // 2001::/23 protocol assignments, Teredo
             if b[0] == 0x20, b[1] == 0x01, b[2] == 0x0D, b[3] == 0xB8 { return true }      // 2001:db8::/32 documentation
-            if b[0] & 0xFE == 0xFC { return true }                                          // fc00::/7 unique-local
-            if b[0] == 0xFE, b[1] & 0xC0 == 0x80 { return true }                            // fe80::/10 link-local
-            if b[0] == 0xFE, b[1] & 0xC0 == 0xC0 { return true }                            // fec0::/10 site-local
-            if b[0] == 0xFF { return true }                                                 // ff00::/8 multicast
+            if b[0] == 0x3F, b[1] == 0xFF, b[2] & 0xF0 == 0x00 { return true }             // 3fff::/20 documentation
             return false
         }
 

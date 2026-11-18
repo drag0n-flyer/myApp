@@ -669,6 +669,7 @@ final class AppModel {
         settings.typingIndicator = true
         settings.onlineAndLastSeen = true
         settings.readReceipts = true
+        settings.linkPreviews = false
         #if os(macOS)
         onboarding = OnboardingFlow(platform: .mac)
         #else

@@ -17,11 +17,11 @@ final class MessageActionsTests: XCTestCase {
     }
 
     func testPhoto() {
-        XCTAssertEqual(MessageActions.available(for: message(.photo(bytes: 10)), isMine: true), [.reply, .react, .delete])
+        XCTAssertEqual(MessageActions.available(for: message(.photo(bytes: 10)), isMine: true), [.reply, .react, .edit, .delete], "Edit adds a caption")
         XCTAssertEqual(MessageActions.available(for: message(.photo(bytes: 10)), isMine: false), [.reply, .react])
     }
 
-    func testOnlyACaptionedOwnPhotoOrFileCanBeEdited() {
+    func testOwnPhotoOrFileCanBeEditedAndCopyNeedsACaption() {
         var photo = message(.photo(bytes: 10))
         photo.caption = "hi"
         XCTAssertEqual(MessageActions.available(for: photo, isMine: true), [.reply, .react, .copy, .edit, .delete])
@@ -31,6 +31,10 @@ final class MessageActionsTests: XCTestCase {
         XCTAssertTrue(MessageActions.available(for: file, isMine: true).contains(.edit))
         photo.status = .failed
         XCTAssertEqual(MessageActions.available(for: photo, isMine: true), [.copy, .delete], "a failed upload keeps its caption")
+        var bare = message(.file(name: "a.pdf", bytes: 1))
+        XCTAssertFalse(MessageActions.available(for: bare, isMine: true).contains(.copy), "nothing to copy")
+        bare.status = .failed
+        XCTAssertEqual(MessageActions.available(for: bare, isMine: true), [.delete])
     }
 
     func testNothingForDeletedSystemCallUnsupported() {

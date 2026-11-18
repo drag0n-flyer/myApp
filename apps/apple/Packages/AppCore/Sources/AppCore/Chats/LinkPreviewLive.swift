@@ -34,7 +34,16 @@ public enum PreviewImageBudget {
     }
 }
 
-/// The system HTTP client set up for a preview: an ephemeral configuration (no cookies, no credentials, no cache, nothing
+/// The system HTTP client set up for a preview.
+///
+/// Accepted residual risk: URLSession cannot be pinned to the addresses `LinkPreviewFetcher` checked, so a host that
+/// changes its DNS answer between the check and the connection (DNS rebinding) can make the system connect to a
+/// private address. What then goes out is a blind TCP and TLS handshake to port 443 of that address, and the
+/// request. Nothing that comes back is used: when the system reports the connection's address it is checked afterwards
+/// and the answer is thrown away. Previews also do not work behind an HTTP proxy: proxy settings are ignored on
+/// purpose (a proxy resolves the name itself, so the address check would mean nothing), so such a network gives no preview.
+///
+/// Set up with: an ephemeral configuration (no cookies, no credentials, no cache, nothing
 /// kept on disk), no redirects followed (the fetcher decides), a body cap, a time limit, and HTTPS 1.2 or newer.
 public final class URLSessionPreviewTransport: PreviewTransport, @unchecked Sendable {
     public static func makeConfiguration() -> URLSessionConfiguration {
@@ -50,6 +59,8 @@ public final class URLSessionPreviewTransport: PreviewTransport, @unchecked Send
         configuration.httpAdditionalHeaders = [:]
         #if canImport(Darwin)
         configuration.waitsForConnectivity = false
+        // No proxy: a proxy would resolve the name itself and the address check would mean nothing.
+        configuration.connectionProxyDictionary = [:]
         configuration.tlsMinimumSupportedProtocolVersion = .TLSv12
         #endif
         return configuration

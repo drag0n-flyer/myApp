@@ -67,29 +67,79 @@ public struct LinkPreviewFetcher: Sendable {
         self.deadline = deadline
     }
 
+    /// The card, or `nil`. Gives up at the deadline without waiting for what is still running: a DNS lookup that the
+    /// system will not stop is abandoned, not awaited. Cancelling the caller gives up at once as well.
     public func preview(for url: URL) async -> LinkPreviewCard? {
         let deadline = deadline
-        return await withTaskGroup(of: Outcome.self) { group in
-            group.addTask { .card(await self.run(url)) }
-            group.addTask {
-                try? await Task.sleep(for: deadline)
-                return .timedOut
+        let once = Once()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<LinkPreviewCard?, Never>) in
+                let work = Task.detached { [self] in
+                    let card = await self.run(url)
+                    once.finish(card)
+                }
+                let timer = Task.detached {
+                    try? await Task.sleep(for: deadline)
+                    once.finish(nil)
+                }
+                once.keep([work, timer], continuation)
             }
-            let first = await group.next()
-            group.cancelAll()
-            if case .card(let card)? = first { return card }
-            return nil
+        } onCancel: {
+            once.cancel()
         }
     }
 
-    private enum Outcome: Sendable { case card(LinkPreviewCard?), timedOut }
+    /// Answers the continuation once; whoever comes second does nothing. Stops the other tasks when it is done.
+    private final class Once: @unchecked Sendable {
+        private let lock = NSLock()
+        private var done = false
+        private var resumed = false
+        private var cancelled = false
+        /// The answer that came before the continuation was handed over.
+        private var early: LinkPreviewCard??
+        private var continuation: CheckedContinuation<LinkPreviewCard?, Never>?
+        private var tasks: [Task<Void, Never>] = []
+
+        /// Called right after the tasks start. If the caller was cancelled before this, everything stops now.
+        func keep(_ tasks: [Task<Void, Never>], _ continuation: CheckedContinuation<LinkPreviewCard?, Never>) {
+            let answer = lock.withLock { () -> LinkPreviewCard?? in
+                self.tasks = tasks
+                self.continuation = continuation
+                if let early { resumed = true; return early }
+                if cancelled { resumed = true; done = true; return .some(nil) }
+                return nil
+            }
+            if let answer {
+                tasks.forEach { $0.cancel() }
+                continuation.resume(returning: answer)
+            }
+        }
+
+        func finish(_ card: LinkPreviewCard?) {
+            let (waiting, running) = lock.withLock { () -> (CheckedContinuation<LinkPreviewCard?, Never>?, [Task<Void, Never>]) in
+                if done { return (nil, []) }
+                done = true
+                guard let continuation else { early = .some(card); return (nil, tasks) }
+                resumed = true
+                return (continuation, tasks)
+            }
+            running.forEach { $0.cancel() }
+            waiting?.resume(returning: card)
+        }
+
+        func cancel() {
+            lock.withLock { cancelled = true }
+            finish(nil)
+        }
+    }
 
     private func run(_ url: URL) async -> LinkPreviewCard? {
         guard let page = await get(url, accept: "text/html,application/xhtml+xml"), isHTML(page.contentType) else { return nil }
         guard let parsed = LinkPreviewParse.fromHTML(page.body, limit: Self.maxBytes, base: url), let title = parsed.title else { return nil }
         var image: Data?
         if !Task.isCancelled, let imageURL = parsed.imageURL, let picture = await get(imageURL, accept: "image/*"),
-           picture.contentType?.lowercased().hasPrefix("image/") == true, picture.contentType?.lowercased().contains("svg") != true,
+           // The bytes decide, not the header: JPEG, PNG, WebP or GIF, with a declared size of at most 4,000,000 pixels.
+           let info = ImageHeader.inspect(picture.body), ImageHeader.isWithin(info, maxPixels: PreviewImageBudget.maxPixels),
            let small = shrink(picture.body), small.count <= Self.maxImageBytes, small.count >= 2, small[small.startIndex] == 0xFF, small[small.startIndex + 1] == 0xD8 {
             image = small
         }
@@ -97,7 +147,7 @@ public struct LinkPreviewFetcher: Sendable {
     }
 
     private func isHTML(_ contentType: String?) -> Bool {
-        guard let type = contentType?.lowercased() else { return true }
+        guard let type = contentType?.lowercased() else { return false }   // a page with no Content-Type is refused
         return type.hasPrefix("text/html") || type.hasPrefix("application/xhtml+xml")
     }
 

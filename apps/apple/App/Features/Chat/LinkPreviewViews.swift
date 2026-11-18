@@ -84,10 +84,19 @@ struct LinkPreviewCardView: View {
 
     var body: some View {
         if opensLink, let url {
+            // The label and value are on the Link itself: that is the one element VoiceOver and UI tests see.
             Link(destination: url) { cardBody }
                 .buttonStyle(.plain)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(Text("Link preview"))
+                .accessibilityValue(Text(card.title))
+                .accessibilityIdentifier("chat.linkpreview.card")
         } else {
             cardBody
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(Text("Link preview"))
+                .accessibilityValue(Text(card.title))
+                .accessibilityIdentifier("chat.linkpreview.card")
         }
     }
 
@@ -106,7 +115,7 @@ struct LinkPreviewCardView: View {
                     Text(desc).font(.footnote).lineLimit(3)
                 }
                 if let host = url?.host {
-                    Text(host).font(.caption).opacity(0.7).lineLimit(1)
+                    Text(host).font(.caption).foregroundStyle(isMine ? Color.white.opacity(0.8) : Color.secondary).lineLimit(1)
                 }
             }
             .padding(.horizontal, 8)
@@ -117,15 +126,40 @@ struct LinkPreviewCardView: View {
         .background(Color.primary.opacity(isMine ? 0 : 0.06), in: RoundedRectangle(cornerRadius: 12))
         .background(isMine ? Color.white.opacity(0.18) : Color.clear, in: RoundedRectangle(cornerRadius: 12))
         .clipShape(RoundedRectangle(cornerRadius: 12))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(Text("Link preview"))
-        .accessibilityValue(Text(card.title))
-        .accessibilityIdentifier("chat.linkpreview.card")
     }
 
-    private static func decode(_ data: Data) -> CGImage? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
-        return CGImageSourceCreateImageAtIndex(source, 0, nil)
+    /// The decoded picture comes from a cache: it is decoded once, as a thumbnail (never full-size), not on every pass of
+    /// the view's body. The envelope reader already refused a header declaring more than 1,024 x 1,024.
+    private static func decode(_ data: Data) -> CGImage? { PreviewThumbnailCache.shared.image(for: data) }
+}
+
+/// Decoded preview pictures, by their bytes. A picture that cannot be decoded is remembered as such.
+final class PreviewThumbnailCache: @unchecked Sendable {
+    static let shared = PreviewThumbnailCache()
+    private let cache = NSCache<NSData, Entry>()
+    private final class Entry { let image: CGImage?; init(_ image: CGImage?) { self.image = image } }
+
+    init() { cache.countLimit = 200 }
+
+    func image(for data: Data) -> CGImage? {
+        let key = data as NSData
+        if let hit = cache.object(forKey: key) { return hit.image }
+        let image = Self.thumbnail(data)
+        cache.setObject(Entry(image), forKey: key)
+        return image
+    }
+
+    /// At most 480 pixels on the long side; refused when the declared size is over the limit or the type is not a JPEG.
+    static func thumbnail(_ data: Data) -> CGImage? {
+        guard let info = ImageHeader.inspect(data), info.format == .jpeg,
+              info.size == nil || ImageHeader.isWithin(info, maxPixels: 1_024 * 1_024, maxSide: 1_024),
+              let source = CGImageSourceCreateWithData(data as CFData, nil), CGImageSourceGetCount(source) >= 1 else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: 480,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
     }
 }
 
@@ -155,7 +189,9 @@ private struct SampleLinkPreviewResolver: PreviewResolver {
 /// Metadata is not carried over, and the picture is decoded at thumbnail size only.
 enum PreviewImageShrinker {
     static func shrink(_ data: Data) -> Data? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil), CGImageSourceGetCount(source) >= 1 else { return nil }
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil), CGImageSourceGetCount(source) >= 1,
+              let type = CGImageSourceGetType(source) as String?,
+              [UTType.jpeg.identifier, UTType.png.identifier, UTType.webP.identifier, UTType.gif.identifier].contains(type) else { return nil }
         // The declared size is read first; a picture over 4,000,000 pixels is never decoded.
         guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               let width = properties[kCGImagePropertyPixelWidth] as? Int, let height = properties[kCGImagePropertyPixelHeight] as? Int,

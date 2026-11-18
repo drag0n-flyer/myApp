@@ -52,6 +52,13 @@ private func html(_ body: String, type: String? = "text/html; charset=utf-8", re
 private let page = "<title>Hello</title><meta property=\"og:description\" content=\"World\">"
 private let jpeg = Data([0xFF, 0xD8, 0xFF, 0xE0, 0x01, 0x02])
 
+/// A PNG signature and header declaring this size (the rest is padding).
+func fakePNG(_ width: Int, _ height: Int, extra: Int = 100) -> Data {
+    var d = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52])
+    for n in [width, height] { d += Data([UInt8(n >> 24 & 255), UInt8(n >> 16 & 255), UInt8(n >> 8 & 255), UInt8(n & 255)]) }
+    return d + Data(count: extra)
+}
+
 @Suite struct LinkPreviewFetcherTests {
     private func make(_ transport: FakeTransport, _ resolver: FakeResolver = FakeResolver(),
                       shrink: @escaping @Sendable (Data) -> Data? = { _ in nil }, deadline: Duration = .seconds(5)) -> LinkPreviewFetcher {
@@ -205,8 +212,9 @@ private let jpeg = Data([0xFF, 0xD8, 0xFF, 0xE0, 0x01, 0x02])
         let transport = FakeTransport()
         let withImage = "<title>T</title><meta property=\"og:image\" content=\"https://cdn.example.com/p.png\">"
         transport.route("https://example.com/a", html(withImage))
-        transport.route("https://cdn.example.com/p.png", PreviewResponse(status: 200, contentType: "image/png", body: Data(count: 50_000)))
-        let card = await make(transport, shrink: { $0.count == 50_000 ? jpeg : nil }).preview(for: URL(string: "https://example.com/a")!)
+        let picture = fakePNG(300, 200, extra: 50_000)
+        transport.route("https://cdn.example.com/p.png", PreviewResponse(status: 200, contentType: "image/png", body: picture))
+        let card = await make(transport, shrink: { $0 == picture ? jpeg : nil }).preview(for: URL(string: "https://example.com/a")!)
         #expect(card?.image == jpeg)
         // The shrinker cannot make it fit or fails: the card goes without a picture.
         #expect(await make(transport, shrink: { _ in nil }).preview(for: URL(string: "https://example.com/a")!)?.image == nil)
@@ -220,12 +228,61 @@ private let jpeg = Data([0xFF, 0xD8, 0xFF, 0xE0, 0x01, 0x02])
         for source in ["https://internal-cdn.example.com/p.jpg", "https://127.0.0.1/p.jpg", "http://cdn.example.com/p.jpg", "https://cdn.example.com/big.jpg"] {
             let transport = FakeTransport()
             transport.route("https://example.com/a", html("<title>T</title><meta property=\"og:image\" content=\"\(source)\">"))
-            transport.route(source, PreviewResponse(status: 200, contentType: "image/jpeg", body: jpeg))
+            transport.route(source, PreviewResponse(status: 200, contentType: "image/jpeg", body: fakePNG(10, 10)))
             transport.route("https://cdn.example.com/big.jpg", fails: PreviewTransportError.tooLarge)
             let card = await make(transport, resolver, shrink: { _ in jpeg }).preview(for: URL(string: "https://example.com/a")!)
             #expect(card?.title == "T" && card?.image == nil, "\(source)")
             #expect(!transport.requests.contains(source) || source.hasSuffix("big.jpg"), "\(source) not contacted")
         }
+    }
+
+    @Test func theBytesDecideNotTheContentType() async {
+        let cases: [(String, Data, Bool)] = [
+            ("html posing as an image", Data("<html>x</html>".utf8), false),
+            ("a pdf", Data("%PDF-1.4".utf8), false),
+            ("png in range", fakePNG(2_000, 2_000), true),
+            ("png over 4,000,000 pixels", fakePNG(2_001, 2_000), false),
+            ("png of 3000 x 3000", fakePNG(3_000, 3_000), false),
+            ("png with an unreadable header", Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]), false),
+        ]
+        for (name, body, ok) in cases {
+            let transport = FakeTransport()
+            transport.route("https://example.com/a", html("<title>T</title><meta property=\"og:image\" content=\"/p\">"))
+            transport.route("https://example.com/p", PreviewResponse(status: 200, contentType: "image/jpeg", body: body))
+            let card = await make(transport, shrink: { _ in jpeg }).preview(for: URL(string: "https://example.com/a")!)
+            #expect((card?.image != nil) == ok, "\(name)")
+            #expect(card?.title == "T", "\(name)")
+        }
+    }
+
+    @Test func aPageWithoutAContentTypeIsRefused() async {
+        let transport = FakeTransport()
+        transport.route("https://example.com/a", html(page, type: nil))
+        #expect(await make(transport).preview(for: URL(string: "https://example.com/a")!) == nil)
+    }
+
+    @Test func aLookupThatNeverReturnsIsAbandonedAtTheDeadline() async {
+        struct Stuck: PreviewResolver {
+            func addresses(for host: String) async -> [String] {
+                await withCheckedContinuation { (_: CheckedContinuation<[String], Never>) in }   // never resumed, cannot be cancelled
+            }
+        }
+        let fetcher = LinkPreviewFetcher(transport: FakeTransport(), resolver: Stuck(), shrink: { _ in nil }, deadline: .milliseconds(150))
+        let started = ContinuousClock.now
+        #expect(await fetcher.preview(for: URL(string: "https://example.com/")!) == nil)
+        #expect(ContinuousClock.now - started < .seconds(3))
+    }
+
+    @Test func cancellingTheCallerGivesUpAtOnce() async {
+        let transport = FakeTransport()
+        transport.hang = true
+        let fetcher = make(transport)
+        let started = ContinuousClock.now
+        let task = Task { await fetcher.preview(for: URL(string: "https://example.com/")!) }
+        try? await Task.sleep(for: .milliseconds(50))
+        task.cancel()
+        #expect(await task.value == nil)
+        #expect(ContinuousClock.now - started < .seconds(3))
     }
 
     @Test func anSVGImageIsNotUsed() async {
