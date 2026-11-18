@@ -149,10 +149,10 @@ final class PreviewThumbnailCache: @unchecked Sendable {
         return image
     }
 
-    /// At most 480 pixels on the long side; refused when the declared size is over the limit or the type is not a JPEG.
+    /// At most 480 pixels on the long side; refused when the declared size is missing or over the limit, or the type is not a JPEG.
     static func thumbnail(_ data: Data) -> CGImage? {
         guard let info = ImageHeader.inspect(data), info.format == .jpeg,
-              info.size == nil || ImageHeader.isWithin(info, maxPixels: 1_024 * 1_024, maxSide: 1_024),
+              info.size != nil, ImageHeader.isWithin(info, maxPixels: 1_024 * 1_024, maxSide: 1_024),
               let source = CGImageSourceCreateWithData(data as CFData, nil), CGImageSourceGetCount(source) >= 1 else { return nil }
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
