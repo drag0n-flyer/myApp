@@ -11,6 +11,8 @@ final class ChatScreenState {
     var reactionGate = ReactionGate()
     /// Set by chat info's Search button; the chat with this ID opens its search field and clears it.
     var searchRequestChatID: String?
+    /// The chat whose screen is showing, set by `ChatView` while it is on screen (for the Mac's Search command).
+    var visibleChatID: String?
     private var owner = OwnerGuard()
     private init() {}
 
@@ -32,6 +34,7 @@ final class ChatScreenState {
     private func clearState() {
         reactionGate = ReactionGate()
         searchRequestChatID = nil
+        visibleChatID = nil
     }
 }
 
@@ -125,8 +128,28 @@ extension AppModel {
         return chatID
     }
 
-    /// Message hits inside one chat.
+    /// Message hits inside one chat, newest first.
     func searchMessages(_ query: String, in chatID: String) -> [MessageHit] {
-        chatStore.searchMessages(query, in: chatID, limit: 100)
+        chatStore.searchMessages(query, in: chatID, limit: 500)
+    }
+
+    /// Opens the search bar of the chat on screen (the Mac's ⌘F calls this). Returns false, and does nothing,
+    /// when no chat is open or the app lock covers the content.
+    @discardableResult
+    func openSearchInOpenChat() -> Bool {
+        let state = ChatScreenState.shared
+        guard !lock.coversContent, state.isOwner(chatStore.me.id), let id = state.visibleChatID else { return false }
+        chatSearchRequest = id
+        return true
+    }
+
+    /// `ChatView` reports that it is on screen, and again when it leaves.
+    func chatAppeared(_ chatID: String) {
+        ChatScreenState.shared.ensureOwner(chatStore.me.id)
+        ChatScreenState.shared.visibleChatID = chatID
+    }
+
+    func chatDisappeared(_ chatID: String) {
+        if ChatScreenState.shared.visibleChatID == chatID { ChatScreenState.shared.visibleChatID = nil }
     }
 }

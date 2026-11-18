@@ -45,6 +45,8 @@ struct ChatView: View {
     @State private var hits: [MessageHit] = []
     /// The query `hits` answers; "No results" shows only once it matches what is typed.
     @State private var searchedQuery = ""
+    /// Index into `hits` (newest first) of the result the search bar is on.
+    @State private var currentHit: Int?
     @State private var tracker = NewestTracker()
     @State private var firstUnreadID: String?
     @State private var capturedUnread = false
@@ -66,7 +68,6 @@ struct ChatView: View {
         Group {
             if let chat {
                 messages(chat)
-                    .overlay { if searching { searchResults(chat) } }
                     .safeAreaInset(edge: .top, spacing: 0) {
                         if searching { searchBar }
                     }
@@ -117,6 +118,7 @@ struct ChatView: View {
                 firstUnreadID = ChatTimeline.firstUnreadID(messages: chat.messages, unreadCount: chat.unreadCount, myID: model.me.id)
             }
             model.markRead(chatID: chatID)
+            model.chatAppeared(chatID)
             openSearchIfRequested()
         }
         .onAppear {
@@ -125,7 +127,7 @@ struct ChatView: View {
             voice.callStateChanged(inCall: model.activeCall?.isEnded == false)
         }
         .onChange(of: model.activeCall?.isEnded == false) { _, inCall in voice.callStateChanged(inCall: inCall) }
-        .onDisappear { voice.stop(); preview.close(); model.flushDrafts() }
+        .onDisappear { voice.stop(); preview.close(); model.flushDrafts(); model.chatDisappeared(chatID) }
         .onChange(of: scenePhase) { _, phase in if phase != .active { voice.stop(); model.flushDrafts() } }
         .mediaPreview(preview)
         .onChange(of: searchRequest) { _, _ in openSearchIfRequested() }
@@ -512,6 +514,25 @@ struct ChatView: View {
         Task { @MainActor in searchFocused = true }
     }
 
+    private var trimmedQuery: String { query.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    /// True once the results on screen answer what is typed.
+    private var searchAnswered: Bool { !trimmedQuery.isEmpty && searchedQuery == trimmedQuery }
+
+    private func closeSearch() {
+        searching = false
+        query = ""
+        hits = []
+        searchedQuery = ""
+        currentHit = nil
+    }
+
+    private func moveSearch(_ direction: ChatSearch.Direction) {
+        guard let next = ChatSearch.step(hits, current: currentHit, direction: direction) else { return }
+        currentHit = next
+        jump = JumpRequest(messageID: hits[next].messageID)
+    }
+
     private var searchBar: some View {
         HStack(spacing: 8) {
             HStack(spacing: 6) {
@@ -519,66 +540,58 @@ struct ChatView: View {
                 TextField("Search in chat", text: $query)
                     .focused($searchFocused)
                     .submitLabel(.search)
+                    .onSubmit { moveSearch(.next) }
                     .autocorrectionDisabled()
                     .accessibilityLabel("Search in chat")
                     .accessibilityIdentifier("chat.search.field")
+                if searchAnswered {
+                    if hits.isEmpty {
+                        Text("No results")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("chat.search.empty")
+                    } else if let currentHit {
+                        Text("\(currentHit + 1) of \(hits.count)")
+                            .font(.footnote)
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("chat.search.count")
+                    }
+                }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
             .background(Color.secondaryBackground, in: RoundedRectangle(cornerRadius: 10))
-            Button("Cancel") {
-                searching = false
-                query = ""
-            }
-            .accessibilityIdentifier("chat.search.cancel")
+            Button { moveSearch(.previous) } label: { Image(systemName: "chevron.up") }
+                .disabled(hits.isEmpty || !searchAnswered)
+                .accessibilityLabel("Previous result")
+                .accessibilityIdentifier("chat.search.previous")
+            Button { moveSearch(.next) } label: { Image(systemName: "chevron.down") }
+                .disabled(hits.isEmpty || !searchAnswered)
+                .accessibilityLabel("Next result")
+                .accessibilityIdentifier("chat.search.next")
+            Button("Cancel") { closeSearch() }
+                .accessibilityIdentifier("chat.search.cancel")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(.bar)
-    }
-
-    private func searchResults(_ chat: Chat) -> some View {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let shown = trimmed == searchedQuery ? hits : []
-        return List {
-            if !trimmed.isEmpty, searchedQuery == trimmed, hits.isEmpty {
-                Text("No results")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity)
-                    .listRowBackground(Color.clear)
-                    .accessibilityIdentifier("chat.search.empty")
-            }
-            ForEach(shown, id: \.messageID) { hit in
-                Button {
-                    searching = false
-                    query = ""
-                    jump = JumpRequest(messageID: hit.messageID)
-                } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(hit.preview).lineLimit(2).foregroundStyle(.primary)
-                        if hit.sentAt != .distantPast {
-                            Text(hit.sentAt, format: .dateTime.day().month().year().hour().minute())
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                .accessibilityIdentifier("chat.search.hit.\(hit.messageID)")
-            }
-        }
-        .listStyle(.plain)
-        .background(Color.groupedBackground)
-        .accessibilityIdentifier("chat.search.results")
-        .task(id: trimmed) {
+        .task(id: trimmedQuery) {
             // Debounced, and kept in state so typing does not search on every redraw.
-            guard !trimmed.isEmpty else {
+            let text = trimmedQuery
+            guard !text.isEmpty else {
                 hits = []
                 searchedQuery = ""
+                currentHit = nil
                 return
             }
             try? await Task.sleep(for: .milliseconds(300))
             guard !Task.isCancelled else { return }
-            hits = model.searchMessages(trimmed, in: chatID)
-            searchedQuery = trimmed
+            hits = model.searchMessages(text, in: chatID)
+            searchedQuery = text
+            // Start on the newest result and show it.
+            currentHit = ChatSearch.step(hits, current: nil, direction: .next)
+            if let first = currentHit { jump = JumpRequest(messageID: hits[first].messageID) }
         }
     }
 }
