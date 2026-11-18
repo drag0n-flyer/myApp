@@ -7,10 +7,10 @@ import AppKit
 #endif
 
 /// Tells `AppLock` when the app leaves and returns.
-/// - iPhone: from the scene phase; and a separate privacy window covers everything while the scene is not active and
-///   the app is not locked (the screens underneath keep their state).
-/// - Mac: from `NSApplication` activation (the App-level scene phase often stays active on macOS), plus a timer that
-///   locks a window left visible behind other apps once the delay has passed.
+/// - iPhone: from the scene phase; and a separate privacy window covers everything while the scene is not active (the
+///   screens underneath keep their state).
+/// - Mac: nothing here; `AppDelegate` (`applicationDidResignActive` / `applicationDidBecomeActive`) drives the lock and
+///   a timer (`LockDueTimer`) that locks a window left visible behind other apps once the delay has passed.
 struct LockSceneDriver: ViewModifier {
     let lock: AppLock
     #if os(iOS)
@@ -30,19 +30,8 @@ struct LockSceneDriver: ViewModifier {
             }
     }
     #else
-    @State private var timer = LockDueTimer()
-
-    func body(content: Content) -> some View {
-        content
-            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
-                lock.phaseChanged(.inactive)
-                timer.start(lock)
-            }
-            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-                timer.cancel()
-                lock.phaseChanged(.active)
-            }
-    }
+    /// Mac: `AppDelegate` drives the lock from application activation, so it works with every window closed.
+    func body(content: Content) -> some View { content }
     #endif
 }
 
