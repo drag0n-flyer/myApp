@@ -10,16 +10,23 @@ struct NewChatView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showingAdd = false
     @State private var linkFromAdd: URL?
+    @State private var showingNewGroup = false
 
     var body: some View {
         NavigationStack {
-            List(model.contacts.sorted { $0.displayName.localizedCompare($1.displayName) == .orderedAscending }) { person in
-                Button { start(person.id) } label: {
-                    HStack(spacing: 12) {
-                        Avatar(name: person.displayName, colorKey: person.id, size: 36)
-                        VStack(alignment: .leading) {
-                            Text(person.displayName).foregroundStyle(.primary)
-                            Text("@\(person.username)").font(.caption).foregroundStyle(.secondary)
+            List {
+                Button { showingNewGroup = true } label: {
+                    Label("New group", systemImage: "person.3")
+                }
+                .accessibilityIdentifier("newchat.newgroup")
+                ForEach(model.contacts.sorted { $0.displayName.localizedCompare($1.displayName) == .orderedAscending }) { person in
+                    Button { start(person.id) } label: {
+                        HStack(spacing: 12) {
+                            Avatar(name: person.displayName, colorKey: person.id, size: 36)
+                            VStack(alignment: .leading) {
+                                Text(person.displayName).foregroundStyle(.primary)
+                                Text("@\(person.username)").font(.caption).foregroundStyle(.secondary)
+                            }
                         }
                     }
                 }
@@ -39,6 +46,13 @@ struct NewChatView: View {
                 if let url = linkFromAdd { linkFromAdd = nil; onLink(url) }
             }) {
                 AddContactView(model: model, onLink: { linkFromAdd = $0 })
+            }
+            .sheet(isPresented: $showingNewGroup) {
+                // A created group opens like a chat made from a contact: `start` takes the chat ID, which for a group is its own.
+                NewGroupView(model: model) { chatID in
+                    showingNewGroup = false
+                    start(chatID)
+                }
             }
             .navigationTitle("New chat")
             .toolbar {

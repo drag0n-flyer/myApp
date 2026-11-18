@@ -10,6 +10,7 @@ private let migrations: [Migration] = [
     Migration(version: 2, statements: schemaV2),
     Migration(version: 3, statements: schemaV3),
     Migration(version: 4, statements: schemaV4),
+    Migration(version: 5, statements: schemaV5),
 ]
 
 /// The schema version a fully migrated database has.

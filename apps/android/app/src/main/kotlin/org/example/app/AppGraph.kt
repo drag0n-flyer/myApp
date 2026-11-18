@@ -109,6 +109,10 @@ import org.example.app.push.PlayServices
 import org.example.app.push.PushTransport
 import org.example.app.push.UnifiedPushSetup
 import org.example.app.ui.lock.AppLock
+import org.example.app.ui.chat.AndroidImageShrinker
+import org.example.app.ui.chat.LinkPreviewSupport
+import org.example.app.core.chats.LinkPreviewCard
+import org.example.app.core.chats.LinkPreviewMaker
 import org.example.app.ui.lock.LockSwitch
 import org.example.app.ui.settings.SettingsStore
 
@@ -166,6 +170,22 @@ class AppGraph(
         // Live settings are kept on the device and survive a restart; sample data keeps them in memory.
         if (sampleData) SettingsStore()
         else SettingsStore(appContext.getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE), UserSettings.initial(serverPolicy), LockSwitch.shared)
+    }
+
+    /**
+     * What the composer needs to make link previews: the switch (Settings > Privacy > Link previews, off by default) and
+     * the maker. The live maker contacts the website, only on the sender's device; sample data answers with a canned card.
+     */
+    val linkPreviewSupport: LinkPreviewSupport by lazy {
+        val maker = if (sampleData) {
+            LinkPreviewMaker { url -> LinkPreviewCard(url, "Harbour guide", "Where to park, eat and watch the boats.", null) }
+        } else {
+            val fetcher = org.example.app.net.preview.systemLinkPreviewFetcher(AndroidImageShrinker())
+            LinkPreviewMaker { url -> fetcher.fetch(url) }
+        }
+        val on = settingsStore.settings.map { it.linkPreviews }.distinctUntilChanged()
+            .stateIn(scope, SharingStarted.Eagerly, settingsStore.settings.value.linkPreviews)
+        LinkPreviewSupport(maker, on)
     }
 
     /** The app lock's state for the process; starts locked when the setting is on (see [AppLock]). */
@@ -394,7 +414,14 @@ class AppGraph(
 
     private val guardedAccount: AccountService by lazy { WipeFirst(liveAccount) { finishPendingWipe(); accountActions.clearError() /* a sign-in starts clean */ } }
     private val sampleAccount by lazy { SampleAccountService() }
-    private val sampleChats by lazy { SampleChatStore() }
+    private val sampleChats by lazy {
+        SampleChatStore().also { store ->
+            // The first sample contact has a photo, so tiles and the profile screens can be seen with one.
+            val contact = store.contacts.value.firstOrNull()
+            val photo = org.example.app.profile.SamplePhoto.make()
+            if (contact != null && photo != null) store.putProfile(org.example.app.core.people.Profile(contact.id, contact.displayName, photo, 1))
+        }
+    }
 
     /** Decrypts a downloaded attachment for the chat screen. Nothing with sample data or while signed out. */
     val attachmentOpener = AttachmentOpener { messageId ->
@@ -592,6 +619,7 @@ class AppGraph(
         // First, while the socket can still carry the hang-up: no call (Telecom, ringtone, notification, service)
         // outlives the session into the next account.
         step { VoiceKeep.clear() } // kept voice previews belong to the account that is going
+        step { org.example.app.profile.ProfilePhotoCache.clear() } // so do the decoded profile photos
         step { session.calls.shutdown() }
         step { session.socket.stop() }
         step { withTimeoutOrNull(SHUTDOWN_MS) { session.chatStore.shutdown() } }
@@ -616,7 +644,7 @@ class AppGraph(
      * wipes nothing when the server was not reached, so the person can try again. Sample data just goes back.
      */
     suspend fun signOut() {
-        if (sampleData) { _sessionEnds.value += 1; return }
+        if (sampleData) { org.example.app.profile.ProfilePhotoCache.clear(); _sessionEnds.value += 1; return }
         // In the graph's scope: leaving the screen or a rotation must not stop it between the revoke and the wipe.
         scope.async {
             val own = accountService.devices().firstOrNull { it.isThisDevice }
@@ -651,6 +679,8 @@ class AppGraph(
             try {
                 val client = openSession()?.client ?: throw AccountError.Server
                 SocialApi(client).updateSettings(clean, null)
+                // Only now that the server has the name do the contacts hear about it.
+                if (current()) store.announceProfile()
             } catch (e: Exception) {
                 if (current()) store.setMyDisplayName(previous)
                 if (e is CancellationException) throw e

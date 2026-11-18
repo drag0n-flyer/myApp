@@ -148,7 +148,7 @@ class NotificationProcessor(
         if (repo.chat(message.chatId)?.muted == true) return NotificationOutcome.Nothing
         val contact = repo.contact(message.senderAccount)
         if (contact == null || !contact.isContact) return NotificationOutcome.Request(message.chatId)
-        val name = contact.displayName.ifEmpty { contact.username }
+        val name = ContactNames.shown(repo, contact)
         return NotificationOutcome.Message(message.chatId, name, preview(message), message.expiresAt)
     }
 
@@ -190,7 +190,7 @@ class NotificationProcessor(
         if (repo.isBlocked(from)) return RingOutcome.Ignore
         // A stranger never rings: a quiet "Missed call" notice.
         if (contact == null || !contact.isContact) return RingOutcome.SilentMissed(ring.callID, from)
-        val name = contact.displayName.ifEmpty { contact.username }
+        val name = ContactNames.shown(repo, contact)
         // Only a call that ended before anyone answered is a missed call. Answered or declined elsewhere is not.
         // The `call.status` check (design:226) runs after this returns Ring, outside MlsGate: LiveCallEngine.ring asks the
         // server before it rings, so a call that ended in the meantime never rings. D7 keeps the network out of the ring gate.

@@ -134,6 +134,7 @@ fun ChatScreen(
     var replying by rememberSaveable { mutableStateOf<String?>(null) }
     var editing by rememberSaveable { mutableStateOf<String?>(null) }
     var text by rememberSaveable { mutableStateOf(viewModel.draft()) }
+    val composerPreview = rememberComposerPreview(text, editing != null)
     var menuFor by remember { mutableStateOf<String?>(null) }
     var confirmDelete by rememberSaveable { mutableStateOf<String?>(null) }
     var forwardText by rememberSaveable { mutableStateOf<String?>(null) }
@@ -316,12 +317,18 @@ fun ChatScreen(
         val m = byIdRef[id]
         // The menu was built from an earlier copy: drop the action if it no longer applies.
         if (m == null || !MessageActions.stillApplies(action, m, m.senderId == myId)) return
-        val body = (m.content as? MessageContent.Text)?.text
+        val body = when (val c = m.content) {
+            is MessageContent.Text -> c.text
+            // An attachment with no caption still edits (to add one): the field starts empty.
+            is MessageContent.Photo -> c.caption.orEmpty()
+            is MessageContent.File -> c.caption.orEmpty()
+            else -> null
+        }
         when (action) {
             MessageAction.Reply -> { editing = null; replying = id }
             MessageAction.React -> Unit
             MessageAction.Copy -> if (body != null) scope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("", body))) }
-            MessageAction.Forward -> forwardText = body
+            MessageAction.Forward -> forwardText = (m.content as? MessageContent.Text)?.text
             MessageAction.Edit -> if (body != null) { replying = null; editing = id; text = body }
             MessageAction.Delete -> confirmDelete = id
         }
@@ -387,6 +394,9 @@ fun ChatScreen(
             } else {
                 Composer(
                     enabled = !state.sendingPaused,
+                    preview = composerPreview.card,
+                    onRemovePreview = composerPreview::remove,
+                    allowBlankSend = editing?.let { id -> byId[id]?.content.let { it is MessageContent.Photo || it is MessageContent.File } } == true,
                     text = text,
                     onTextChange = { text = it; if (editing == null) { viewModel.setDraft(it); viewModel.typed(it.isEmpty()) } },
                     onSend = { sent ->
@@ -396,8 +406,9 @@ fun ChatScreen(
                             viewModel.edit(target, sent)
                             editing = null
                             text = viewModel.draft()
-                        } else if (viewModel.send(sent, replying)) {
+                        } else if (viewModel.send(sent, replying, composerPreview.card)) {
                             replying = null
+                            composerPreview.reset()
                             text = ""
                             viewModel.setDraft("")
                         }

@@ -22,10 +22,13 @@ public protocol ConversationManaging: Sendable {
     func handleStaleEpoch(_ conversation: ConversationRecord) async throws
     /// Finishes every create whose add commit is not settled yet (a lost reply, a timeout or a kill).
     func resumePendingCreates() async
+    /// Makes a group chat (plan G2).
+    func createGroup(accounts: [String], name: String, photo: Data?) async throws -> GroupCreation
 }
 
 extension ConversationManaging {
     public func resumePendingCreates() async {}
+    public func createGroup(accounts: [String], name: String, photo: Data?) async throws -> GroupCreation { throw SyncError.noPeer }
 }
 
 /// Sends a control envelope (receipt, reaction...) that is not stored. Lane B's `Outbox` implements it.

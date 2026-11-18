@@ -75,6 +75,11 @@ fun Composer(
     showCamera: Boolean = true,
     /** The voice message in progress (hold bar, locked bar, preview) and the microphone's gesture callbacks. */
     voice: VoiceUi = VoiceUi.None,
+    /** The preview made for the first link of the text, shown above the field with a remove control. */
+    preview: org.example.app.core.chats.LinkPreviewCard? = null,
+    onRemovePreview: () -> Unit = {},
+    /** True while a photo's or file's caption is being edited: sending nothing then removes the caption. */
+    allowBlankSend: Boolean = false,
 ) {
     val haptic = LocalHapticFeedback.current
     val recordingPhase = (voice.state as? CaptureState.Recording)?.phase
@@ -113,6 +118,9 @@ fun Composer(
                 }
             }
         }
+        if (preview != null) {
+            LinkPreviewCardView(preview, Modifier.padding(horizontal = 12.dp, vertical = 4.dp), onRemove = onRemovePreview)
+        }
         val locked = voice.state as? CaptureState.Recording
         if (voice.hint && voice.state == CaptureState.Idle) VoiceHint()
         if (voice.state is CaptureState.Preview) {
@@ -145,7 +153,7 @@ fun Composer(
                     modifier = Modifier.weight(1f),
                 )
             }
-            if (text.isNotBlank()) {
+            if (text.isNotBlank() || allowBlankSend) {
                 IconButton(onClick = { onSend(text) }, enabled = enabled) {
                     Icon(painterResource(R.drawable.ic_send), contentDescription = stringResource(R.string.send))
                 }

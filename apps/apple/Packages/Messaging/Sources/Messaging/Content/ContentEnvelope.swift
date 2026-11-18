@@ -36,6 +36,7 @@ public struct ContentEnvelope: Codable, Sendable, Equatable {
         case presence(PresenceState)
         case timer(seconds: Int)
         case profile(name: String, photo: Data?, ver: Int)
+        case group(name: String, photo: Data?, ver: Int)
         case unsupported(kind: String)
     }
 
@@ -73,7 +74,8 @@ public struct ContentEnvelope: Codable, Sendable, Equatable {
         case .text(let text, _):
             preview = wire.lp?.value.flatMap { $0.valid(in: text) ? $0.preview : nil }
         case .photo, .file:
-            caption = wire.c?.value.map { String($0.prefix(Self.maxCaptionLength)) }
+            // An empty caption is the same as none.
+            caption = wire.c?.value.map { String($0.prefix(Self.maxCaptionLength)) }.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
         default: break
         }
         switch body {
@@ -86,8 +88,8 @@ public struct ContentEnvelope: Codable, Sendable, Equatable {
     /// A kind that is a signal or a profile update: never stored as a message, never notifies, even when malformed.
     public var isSignalOnly: Bool {
         switch body {
-        case .typing, .presence, .profile: true
-        case .unsupported(let kind): ["typing", "presence", "profile"].contains(kind)
+        case .typing, .presence, .profile, .group: true
+        case .unsupported(let kind): ["typing", "presence", "profile", "group"].contains(kind)
         default: false
         }
     }
@@ -115,10 +117,10 @@ public struct ContentEnvelope: Codable, Sendable, Equatable {
 
     private static let knownKinds: Set<String> = [
         "text", "photo", "voice", "file", "edit", "delete", "react", "receipt", "callsig", "mode",
-        "typing", "presence", "timer", "profile",
+        "typing", "presence", "timer", "profile", "group",
     ]
     /// Kinds whose bad field values are reported under their own name.
-    private static let invalidKinds: Set<String> = ["mode", "receipt", "typing", "presence", "timer", "profile"]
+    private static let invalidKinds: Set<String> = ["mode", "receipt", "typing", "presence", "timer", "profile", "group"]
 
     private struct Header: Decodable {
         let v: Int
@@ -180,6 +182,8 @@ public struct ContentEnvelope: Codable, Sendable, Equatable {
             case .timer(let secs): k = "timer"; seconds = Lenient(secs)
             case .profile(let profileName, let image, let version):
                 k = "profile"; name = profileName; photo = image.map { Lenient($0.base64EncodedString()) }; ver = Lenient(version)
+            case .group(let groupName, let image, let version):
+                k = "group"; name = groupName; photo = image.map { Lenient($0.base64EncodedString()) }; ver = Lenient(version)
             case .unsupported(let kind): k = kind
             }
         }
@@ -219,8 +223,13 @@ public struct ContentEnvelope: Codable, Sendable, Equatable {
             case "profile":
                 guard let name, DisplayNameRule.clean(name) == name, let ver = ver?.value, ver >= 1 else { return nil }
                 guard let photo else { return .profile(name: name, photo: nil, ver: ver) }
-                guard let text = photo.value, let image = LinkPreview.base64(text), LinkPreview.isJPEG(image, max: ContentEnvelope.maxProfilePhoto) else { return nil }
+                guard let text = photo.value, let image = LinkPreview.base64(text), ProfilePhotoRule.isAcceptable(image) else { return nil }
                 return .profile(name: name, photo: image, ver: ver)
+            case "group":
+                guard let name, GroupNameRule.clean(name) == name, let ver = ver?.value, ver >= 1 else { return nil }
+                guard let photo else { return .group(name: name, photo: nil, ver: ver) }
+                guard let text = photo.value, let image = LinkPreview.base64(text), LinkPreview.isJPEG(image, max: ContentEnvelope.maxProfilePhoto) else { return nil }
+                return .group(name: name, photo: image, ver: ver)
             default: return nil
             }
         }
@@ -286,18 +295,48 @@ public struct LinkPreview: Sendable, Equatable {
 
         var img: Data? { imgText.flatMap(LinkPreview.base64) }
 
+        /// A card from another device is not trusted: control and direction characters are stripped from the title and
+        /// description, and the title is trimmed.
+        var cleaned: Wire {
+            var copy = self
+            copy.title = LinkPreview.clean(title).trimmingCharacters(in: .whitespacesAndNewlines)
+            copy.desc = desc.map { LinkPreview.clean($0).trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 }
+            return copy
+        }
+
+        /// Valid for this text: an https link without a user name, password or odd port, found in the text, a non-blank
+        /// title of 1...200 and a description of up to 300 code points (after cleaning), a small JPEG.
         func valid(in text: String) -> Bool {
-            guard let parsed = URL(string: url), parsed.scheme?.lowercased() == "https", parsed.host?.isEmpty == false else { return false }
+            guard let parsed = URL(string: url), parsed.scheme?.lowercased() == "https", parsed.host?.isEmpty == false,
+                  parsed.user == nil, parsed.password == nil, parsed.port == nil || parsed.port == 443 else { return false }
             guard text.contains(url) else { return false }
-            guard (1...200).contains(title.unicodeScalars.count) else { return false }
-            if let desc, desc.unicodeScalars.count > 300 { return false }
+            let clean = cleaned
+            guard (1...200).contains(clean.title.unicodeScalars.count) else { return false }
+            if let desc = clean.desc, desc.unicodeScalars.count > 300 { return false }
             if imgText != nil {
                 guard let img, LinkPreview.isJPEG(img, max: ContentEnvelope.maxPreviewImage) else { return false }
+                // The declared size is read from the header before anything decodes the picture: at most 1,024 x 1,024.
+                if let info = ImageHeader.inspect(img), info.size != nil,
+                   !ImageHeader.isWithin(info, maxPixels: 1_024 * 1_024, maxSide: 1_024) { return false }
             }
             return true
         }
 
-        var preview: LinkPreview { LinkPreview(url: url, title: title, desc: desc, img: img) }
+        var preview: LinkPreview { let clean = cleaned; return LinkPreview(url: clean.url, title: clean.title, desc: clean.desc, img: clean.img) }
+    }
+
+    /// `text` without control, format and direction characters.
+    static func clean(_ text: String) -> String {
+        var out = String.UnicodeScalarView()
+        for scalar in text.unicodeScalars {
+            switch scalar.value {
+            // The joiners U+200C and U+200D stay: emoji sequences need them.
+            case 0x00...0x1F, 0x7F...0x9F, 0x200B, 0x200E, 0x200F, 0x2028, 0x2029, 0x202A...0x202E, 0x2060...0x2069, 0x061C, 0xFEFF,
+                 0x3164, 0x115F, 0x1160, 0xFFA0, 0x2800: continue
+            default: out.append(scalar)
+            }
+        }
+        return String(out)
     }
 
     var wire: Wire { Wire(url: url, title: title, desc: desc, img: img) }

@@ -105,6 +105,7 @@ final class AppModel {
         didSet {
             savePrivacySwitches(oldValue)
             syncCalls()
+            if settings.linkPreviews != oldValue.linkPreviews, !isSampleData { LinkPreviewSetting.save(settings.linkPreviews) }
             messaging?.autoDownload.value = settings.autoDownload
             if settings.readReceipts != oldValue.readReceipts, let messaging {
                 messaging.readReceipts.value = settings.readReceipts
@@ -210,6 +211,7 @@ final class AppModel {
         let lock = AppModel.makeLock(sampleData: sampleData, launch: launch)
         settings.appLock = lock.appLockOn
         settings.lockAfterSeconds = lock.lockAfterSeconds
+        settings.linkPreviews = !sampleData && LinkPreviewSetting.load()
         // The privacy switches are read before anything is sent or shown, so an Off survives a relaunch.
         let privacyStore = sampleData ? nil : PrivacySwitchesStore(defaults: AppModel.lockDefaults())
         if let loaded = privacyStore?.load() {
@@ -373,7 +375,7 @@ final class AppModel {
         // Message matches come from the store's search (the whole history), not only the loaded messages.
         let messageChatIDs = Set(chatStore.searchMessages(query, limit: 200).map(\.chatID))
         return chats.filter { chat in
-            let name = chatStore.contact(id: chat.contactID)?.displayName ?? ""
+            let name = chat.title ?? chat.contactID.flatMap { chatStore.contact(id: $0) }?.displayName ?? ""
             return name.localizedCaseInsensitiveContains(query) || messageChatIDs.contains(chat.id)
         }
     }
@@ -384,6 +386,8 @@ final class AppModel {
     var contacts: [Contact] { _ = revision; return chatStore.contacts }
     func chat(id: String) -> Chat? { _ = revision; return chatStore.chat(id: id) }
     func contact(id: String) -> Contact? { _ = revision; return chatStore.contact(id: id) }
+    /// A group chat has no contact: its `contactID` is `nil`, and so is the answer.
+    func contact(id: String?) -> Contact? { id.flatMap { contact(id: $0) } }
     func isContact(_ id: String) -> Bool { contacts.contains { $0.id == id } }
 
     func send(_ content: MessageContent, in chatID: String) { chatStore.send(content, in: chatID); revision += 1 }
@@ -430,6 +434,20 @@ final class AppModel {
     func openChat(with contactID: String) -> String {
         defer { revision += 1 }
         return chatStore.ensureChat(with: contactID)
+    }
+
+    /// Makes a group chat (New chat > New group).
+    func createGroup(accounts: [String], name: String, photo: Data?) async -> GroupCreateOutcome {
+        defer { revision += 1 }
+        return await chatStore.createGroup(accounts: accounts, name: name, photo: photo)
+    }
+
+    /// What a chat is called: a group's name, else its contact's name. A group whose name has not arrived yet is "Group".
+    func chatName(_ chat: Chat) -> String {
+        _ = revision
+        if let title = chat.title { return title }
+        if let name = contact(id: chat.contactID)?.displayName { return name }
+        return ChatID.isGroup(chat.id) ? String(localized: "Group") : ""
     }
 
     func chatID(for contactID: String) -> String? {
@@ -655,6 +673,7 @@ final class AppModel {
             messaging = nil
             makePeople(repo: nil, channel: nil)
             callSealer.clear()
+            ProfileImageCache.clear()   // the signed-out account's photos must not outlive it
             let empty = AppStores.signedOutStore(sampleData: isSampleData)
             empty.onChange = { [weak self] in self?.revision += 1 }
             chatStore = empty
@@ -667,6 +686,7 @@ final class AppModel {
         settings.typingIndicator = true
         settings.onlineAndLastSeen = true
         settings.readReceipts = true
+        settings.linkPreviews = false
         #if os(macOS)
         onboarding = OnboardingFlow(platform: .mac)
         #else

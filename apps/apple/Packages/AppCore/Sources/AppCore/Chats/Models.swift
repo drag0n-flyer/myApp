@@ -52,6 +52,8 @@ public enum SystemEvent: Hashable, Codable, Sendable {
     case messagesPaused
     /// Disappearing messages were set to `seconds` (0 = turned off) by `name` (`nil` = "You").
     case timer(seconds: Int, name: String?)
+    /// "%@ added you" when this device joined a group; `by` is the adder's account ID, or a name once shown.
+    case addedYou(by: String?)
 
     private static func timerText(seconds: Int, name: String?) -> String {
         let who = name ?? "You"
@@ -63,6 +65,8 @@ public enum SystemEvent: Hashable, Codable, Sendable {
     public var text: String {
         switch self {
         case .timer(let seconds, let name): Self.timerText(seconds: seconds, name: name)
+        case .addedYou(let name?): "\(name) added you"
+        case .addedYou(nil): "You were added"
         case .deviceAdded(let name?): "\(name) added a new device"
         case .deviceAdded(nil): "You added a new device"
         case .deviceRemoved(let name?): "\(name) removed a device"
@@ -124,6 +128,22 @@ public enum SendFailure: Hashable, Codable, Sendable {
     case tooBig
 }
 
+/// A link preview as a message carries it: shown from the message only, never fetched by the reader.
+public struct LinkPreviewCard: Hashable, Codable, Sendable {
+    public var url: String
+    public var title: String
+    public var desc: String?
+    /// A small JPEG.
+    public var image: Data?
+
+    public init(url: String, title: String, desc: String? = nil, image: Data? = nil) {
+        self.url = url
+        self.title = title
+        self.desc = desc
+        self.image = image
+    }
+}
+
 public struct Message: Identifiable, Hashable, Codable, Sendable {
     public var id: String
     public var senderID: String
@@ -139,6 +159,10 @@ public struct Message: Identifiable, Hashable, Codable, Sendable {
     public var uploadProgress: Double?
     /// Why a failed send will not work again as it is (kept while the app runs; a restart shows plain "Not sent").
     public var sendFailure: SendFailure?
+    /// The caption of a photo or file, as sent.
+    public var caption: String?
+    /// The preview of the first link of a text.
+    public var linkPreview: LinkPreviewCard?
     /// When the message disappears (`sentAt + ttl`); `nil` when it never does.
     public var expiresAt: Date?
 
@@ -147,7 +171,9 @@ public struct Message: Identifiable, Hashable, Codable, Sendable {
 
     public init(id: String, senderID: String, sentAt: Date, content: MessageContent, status: DeliveryStatus, replyToID: String?, reactions: [String],
                 editedAt: Date? = nil, media: MediaState? = nil, undecryptable: Bool = false, uploadProgress: Double? = nil,
-                sendFailure: SendFailure? = nil, expiresAt: Date? = nil) {
+                sendFailure: SendFailure? = nil, expiresAt: Date? = nil, caption: String? = nil, linkPreview: LinkPreviewCard? = nil) {
+        self.caption = caption
+        self.linkPreview = linkPreview
         self.expiresAt = expiresAt
         self.uploadProgress = uploadProgress
         self.sendFailure = sendFailure
@@ -193,7 +219,8 @@ public struct Message: Identifiable, Hashable, Codable, Sendable {
 
 public struct Chat: Identifiable, Hashable, Codable, Sendable {
     public var id: String
-    public var contactID: String
+    /// The other person of a one-to-one chat (its ID); `nil` for a group chat.
+    public var contactID: String?
     public var encryption: ChatEncryption
     public var folderIDs: Set<String>
     public var unreadCount: Int
@@ -209,9 +236,13 @@ public struct Chat: Identifiable, Hashable, Codable, Sendable {
     public var archived: Bool
     /// The unsent text saved for this chat; `nil` when there is none.
     public var draft: String?
+    /// A group's name; `nil` for a one-to-one chat (it is called by its contact).
+    public var title: String?
 
-    public init(id: String, contactID: String, encryption: ChatEncryption, folderIDs: Set<String>, unreadCount: Int, messages: [Message], isRequest: Bool,
-                modeMismatch: Bool = false, pinnedAt: Date? = nil, muted: Bool = false, archived: Bool = false, draft: String? = nil) {
+    public init(id: String, contactID: String?, encryption: ChatEncryption, folderIDs: Set<String>, unreadCount: Int, messages: [Message], isRequest: Bool,
+                modeMismatch: Bool = false, pinnedAt: Date? = nil, muted: Bool = false, archived: Bool = false, draft: String? = nil,
+                title: String? = nil) {
+        self.title = title
         self.id = id
         self.contactID = contactID
         self.encryption = encryption

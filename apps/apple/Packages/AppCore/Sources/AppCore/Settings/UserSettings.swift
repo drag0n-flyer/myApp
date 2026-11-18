@@ -17,6 +17,9 @@ public struct UserSettings: Equatable, Codable, Sendable {
     public var ipHiding: IPHiding
     public var findByEmail = false
     public var readReceipts = true
+    /// Settings > Privacy > Link previews: whether this device may contact a website to make a preview of a link it sends.
+    /// Off until the person turns it on.
+    public var linkPreviews = false
     /// Settings > Privacy > "Typing indicator" and "Online and last seen": off means nothing is sent and nothing is shown.
     public var typingIndicator = true
     public var onlineAndLastSeen = true

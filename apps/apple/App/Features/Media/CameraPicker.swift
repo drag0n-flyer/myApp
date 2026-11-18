@@ -5,6 +5,8 @@ import UIKit
 
 /// The system camera (iPhone only). Calls `onPhoto` with a JPEG or `onVideo` with a movie, both in the staging folder, or `onCancel`.
 struct CameraPicker: UIViewControllerRepresentable {
+    /// Only still photos (the profile photo): no video mode.
+    var photosOnly = false
     let onPhoto: (URL) -> Void
     let onVideo: (URL) -> Void
     let onCancel: () -> Void
@@ -26,7 +28,7 @@ struct CameraPicker: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> UIImagePickerController {
         let picker = UIImagePickerController()
         picker.sourceType = .camera
-        picker.mediaTypes = ["public.image", "public.movie"]
+        picker.mediaTypes = photosOnly ? ["public.image"] : ["public.image", "public.movie"]
         picker.delegate = context.coordinator
         return picker
     }

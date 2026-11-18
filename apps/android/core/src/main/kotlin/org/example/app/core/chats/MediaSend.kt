@@ -11,9 +11,11 @@ data class Picked(val path: String, val kind: MediaKind, val bytes: Long)
 object SendPlan {
     const val MAX_ITEMS = 10
 
+    /** One attachment to send; the [caption] (null for none) travels in the same message. */
     sealed interface Send {
-        data class Attachment(val picked: Picked) : Send
-        data class Text(val text: String) : Send
+        val picked: Picked
+        val caption: String?
+        data class Attachment(override val picked: Picked, override val caption: String? = null) : Send
     }
 
     enum class Refusal { TooMany, VideoTooBig }
@@ -23,15 +25,14 @@ object SendPlan {
         data class Refused(val reason: Refusal) : Result
     }
 
-    /** The items in order; the trimmed [caption] goes right after the first one as an ordinary text message, and not at all when blank. */
+    /** The items in order; the trimmed [caption] rides on the first one (its `c` field), and is no caption when blank. */
     fun plan(items: List<Picked>, caption: String, limitBytes: Long): Result {
         if (items.size > MAX_ITEMS) return Result.Refused(Refusal.TooMany)
         if (items.any { it.kind == MediaKind.Video && it.bytes > limitBytes }) return Result.Refused(Refusal.VideoTooBig)
         val text = caption.trim()
         val sends = buildList<Send> {
             items.forEachIndexed { index, picked ->
-                add(Send.Attachment(picked))
-                if (index == 0 && text.isNotEmpty()) add(Send.Text(text))
+                add(Send.Attachment(picked, if (index == 0 && text.isNotEmpty()) text else null))
             }
         }
         return Result.Ok(sends)

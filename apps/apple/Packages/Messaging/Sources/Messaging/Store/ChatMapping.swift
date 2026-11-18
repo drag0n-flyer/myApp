@@ -63,8 +63,11 @@ enum ChatMapping {
             return message
         }
 
-        switch ContentEnvelope.decode(record.envelope).body {
-        case .text(let text, _): message.content = .text(text)
+        let envelope = ContentEnvelope.decode(record.envelope)
+        switch envelope.body {
+        case .text(let text, _):
+            message.content = .text(text)
+            message.linkPreview = envelope.preview.map { LinkPreviewCard(url: $0.url, title: $0.title, desc: $0.desc, image: $0.img) }
         case .photo(let att, _, _, _, _): message.content = .photo(bytes: att.sz)
         case .voice(_, let duration, _): message.content = .voice(duration: duration)
         case .file(let att, let name, _, _): message.content = .file(name: name, bytes: att.sz)
@@ -72,6 +75,10 @@ enum ChatMapping {
         }
         switch message.content {
         case .photo, .voice, .file: message.media = attachment.map(mediaState)
+        default: break
+        }
+        switch message.content {
+        case .photo, .file: message.caption = envelope.caption
         default: break
         }
         return message
@@ -87,6 +94,7 @@ enum ChatMapping {
         case .deviceAdded(let account): return .deviceAdded(name: name(account))
         case .deviceRemoved(let account): return .deviceRemoved(name: name(account))
         case .timer(let seconds, let account): return .timer(seconds: seconds, name: name(account))
+        case .addedYou(let account): return .addedYou(by: name(account))
         case .safetyNumberChanged, .messagesPaused: return event
         }
     }
@@ -102,10 +110,10 @@ enum ChatMapping {
         messages: [Message], draft: String? = nil
     ) -> Chat {
         Chat(
-            id: record.id, contactID: record.id, encryption: encryption(preferred: preferred), folderIDs: folderIDs,
+            id: record.id, contactID: record.kind == "group" ? nil : record.id, encryption: encryption(preferred: preferred), folderIDs: folderIDs,
             unreadCount: record.unread, messages: messages, isRequest: record.isRequest,
             modeMismatch: conversations.contains { $0.modeMismatch }, pinnedAt: record.pinnedAt, muted: record.muted,
-            archived: record.archived, draft: draft)
+            archived: record.archived, draft: draft, title: record.kind == "group" ? record.title : nil)
     }
 
     /// A stored `current` number (12 groups of 5 digits, joined) split into its groups.

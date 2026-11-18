@@ -209,13 +209,12 @@ public struct IncomingHandler: Sendable {
             return try store()
         case .edit(let target, let text):
             guard let message = try db.message(id: target), message.chatID == chatID, !message.deleted,
-                  case .text(_, let reply) = ContentEnvelope.decode(message.envelope).body else { return .ignored }
-            let old = ContentEnvelope.decode(message.envelope)
-            let edited = ContentEnvelope(id: old.id, at: old.at, body: .text(text, replyTo: reply), ttl: old.ttl).encoded()
+                  let result = ContentEnvelope.decode(message.envelope).edited(text: text, fold: fold) else { return .ignored }
             // The sender check is in the SQL, so an edit by anyone else changes nothing.
             try db.applyEdit(
-                id: target, sender: account, envelope: edited, folded: fold(text),
-                at: Date(timeIntervalSince1970: Double(envelope.at) / 1000))
+                id: target, sender: account, envelope: result.envelope.encoded(), folded: result.folded,
+                at: Date(timeIntervalSince1970: Double(envelope.at) / 1000),
+                caption: result.envelope.caption, linkPreview: result.envelope.preview?.json)
             return .ignored
         case .delete(let target):
             guard let message = try db.message(id: target), message.chatID == chatID else { return .ignored }
@@ -239,16 +238,38 @@ public struct IncomingHandler: Sendable {
         case .typing, .presence:
             // Signals travel as ephemeral frames; one that arrives as a stored message is dropped.
             return .ignored
+        case .group(let name, let photo, let ver):
+            // Never a message. The sender is the MLS sender's account, and counts only as an owner or admin of the stored list.
+            try applyGroup(name: name, photo: photo, ver: ver, from: account, conversation: conversation, db: db)
+            return .ignored
         case .timer(let seconds):
             try applyTimer(seconds, id: envelope.id, at: envelope.at, from: account, conversation: conversation, db: db)
             return .ignored
         case .profile(let name, let photo, let ver):
             // Only what a contact says about themselves; my own devices do not write a contact profile for me.
-            guard account != me.accountID else { return .ignored }
+            if account == me.accountID {
+                // Another device of mine changed the profile: adopt it when it is newer; this device sends nothing.
+                try OwnProfile.adopt(name: name, photo: photo, ver: ver, repo: db, me: me.accountID)
+                return .ignored
+            }
+            // Only the chat's own peer, and never a blocked account.
+            guard account == chatID, try !db.isBlocked(account) else { return .ignored }
             guard ProfileMerge.accept(current: try db.profile(for: account)?.ver, incoming: ver) else { return .ignored }
             try db.saveProfile(accountID: account, name: name, photo: photo, ver: ver)
             return .ignored
         }
+    }
+
+    /// A `group` envelope sets the name and photo when an owner or admin of the stored member list sent it and its version
+    /// is higher than the stored one (`GroupMerge`). Anything else, a bad name, or a photo under 4 or over 24,576 bytes
+    /// changes nothing. A chat that is not a group this account is still in is left alone.
+    private func applyGroup(name: String, photo: Data?, ver: Int, from account: String, conversation: ConversationRecord, db: Repository) throws {
+        guard ChatID.isGroup(conversation.chatID), let chat = try db.chat(id: conversation.chatID), chat.kind == "group",
+              chat.myState == "member", GroupNameRule.clean(name) == name,
+              photo.map({ $0.count >= GroupLimits.minPhoto && $0.count <= GroupLimits.maxPhoto }) ?? true else { return }
+        let role = try db.groupMembers(chatID: chat.id).first { $0.accountID == account }.map { GroupRole(wire: $0.role) }
+        guard GroupMerge.accept(currentVer: chat.groupVer, incomingVer: ver, senderRole: role) else { return }
+        try db.setGroupInfo(chatID: chat.id, title: name, photo: photo, ver: ver)
     }
 
     static let timerSkewMs: Int64 = 5 * 60 * 1000
@@ -259,7 +280,7 @@ public struct IncomingHandler: Sendable {
     static func timerIDKey(_ chatID: String) -> String { "timer-id:" + chatID }
 
     /// Kinds that never become a message row, whether valid or not.
-    static let silentKinds: Set<String> = ["typing", "presence", "profile", "timer"]
+    static let silentKinds: Set<String> = ["typing", "presence", "profile", "timer", "group"]
 
     /// `timer`: the chat's timer changes and one system line says so. It is not a message, so nothing is counted as
     /// unread and nothing notifies. The line's ID comes from the envelope, so a repeat adds no second line.

@@ -12,6 +12,7 @@ import org.example.app.core.chats.ChatEncryption
 import org.example.app.core.chats.DeliveryStatus
 import org.example.app.core.chats.MediaState
 import org.example.app.core.chats.Message
+import org.example.app.core.chats.LinkPreviewCard
 import org.example.app.core.chats.MessageContent
 import org.example.app.core.chats.SystemEvent
 import org.example.app.messaging.content.ContentCodec
@@ -74,10 +75,10 @@ internal object ChatMapping {
             return message
         }
         val content = when (val e = ContentCodec.decode(record.envelope)) {
-            is ContentEnvelope.Text -> MessageContent.Text(e.t)
-            is ContentEnvelope.Photo -> MessageContent.Photo(e.a.sz)
+            is ContentEnvelope.Text -> MessageContent.Text(e.t, e.lp?.let { LinkPreviewCard(it.url, it.title, it.desc, it.img) })
+            is ContentEnvelope.Photo -> MessageContent.Photo(e.a.sz, e.c?.takeIf { it.isNotEmpty() })
             is ContentEnvelope.Voice -> MessageContent.Voice(e.dur)
-            is ContentEnvelope.File -> MessageContent.File(e.name, e.a.sz, e.mime)
+            is ContentEnvelope.File -> MessageContent.File(e.name, e.a.sz, e.mime, e.c?.takeIf { it.isNotEmpty() })
             else -> MessageContent.Unsupported // control kinds are never stored as messages
         }
         message = message.copy(content = content)

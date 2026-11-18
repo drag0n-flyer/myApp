@@ -18,6 +18,15 @@ class SampleChatStore(
     override val myStoredName: String get() = me.displayName
     override fun setMyDisplayName(name: String) { meFlow.value = meFlow.value.copy(displayName = name) }
 
+    private val _profiles = MutableStateFlow<Map<String, org.example.app.core.people.Profile>>(emptyMap())
+    override val profiles: StateFlow<Map<String, org.example.app.core.people.Profile>> = _profiles.asStateFlow()
+    /** Gives a sample person a profile (a photo for the tiles). Sample data only. */
+    fun putProfile(profile: org.example.app.core.people.Profile) { _profiles.value = _profiles.value + (profile.accountId to profile) }
+    override fun setMyPhoto(photo: ByteArray?) {
+        _profiles.value = if (photo == null) _profiles.value - me.id
+        else _profiles.value + (me.id to org.example.app.core.people.Profile(me.id, me.displayName, photo, 1))
+    }
+
     private val lock = Any()
     private var allChats: List<Chat> = data.chats
     private val directory: Map<String, String> = data.directory
@@ -137,12 +146,15 @@ class SampleChatStore(
         return removed
     }
 
-    override fun sendAttachment(path: String, kind: MediaKind, chatId: String) {
+    override fun sendAttachment(path: String, kind: MediaKind, chatId: String) = sendAttachment(path, kind, chatId, null)
+
+    override fun sendAttachment(path: String, kind: MediaKind, chatId: String, caption: String?) {
+        val c = caption?.takeIf { it.isNotBlank() }
         val content = when (kind) {
-            MediaKind.Photo -> MessageContent.Photo(0)
-            MediaKind.Video -> MessageContent.File(ChatMedia.videoFileName(path.substringAfterLast('/'), null), 0, "video/mp4")
+            MediaKind.Photo -> MessageContent.Photo(0, c)
+            MediaKind.Video -> MessageContent.File(ChatMedia.videoFileName(path.substringAfterLast('/'), null), 0, "video/mp4", c)
             MediaKind.Voice -> MessageContent.Voice(0.0)
-            MediaKind.File -> MessageContent.File(path.substringAfterLast('/'), 0)
+            MediaKind.File -> MessageContent.File(path.substringAfterLast('/'), 0, caption = c)
         }
         send(content, chatId, null)
     }
@@ -163,7 +175,14 @@ class SampleChatStore(
     }
 
     override fun edit(messageId: String, chatId: String, text: String) = updateMessage(messageId, chatId) {
-        if (it.senderId == me.id && it.content is MessageContent.Text) it.copy(content = MessageContent.Text(text), editedAt = clock()) else it
+        val c = it.content
+        if (it.senderId != me.id) it
+        else when {
+            c is MessageContent.Text -> it.copy(content = MessageContent.Text(text, c.preview?.takeIf { p -> p.url in text }), editedAt = clock())
+            c is MessageContent.Photo && c.caption != null -> it.copy(content = c.copy(caption = text), editedAt = clock())
+            c is MessageContent.File && c.caption != null -> it.copy(content = c.copy(caption = text), editedAt = clock())
+            else -> it
+        }
     }
 
     override fun delete(messageId: String, chatId: String) = updateMessage(messageId, chatId) {

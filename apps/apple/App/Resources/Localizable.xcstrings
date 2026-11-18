@@ -12,6 +12,17 @@
         }
       }
     },
+    "%@ added you" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ added you"
+          }
+        }
+      }
+    },
     "%@ can now read your new messages. If this wasn't you, remove it in Settings > Linked devices." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -19,6 +30,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@ can now read your new messages. If this wasn't you, remove it in Settings > Linked devices."
+          }
+        }
+      }
+    },
+    "%@ couldn't be added yet" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ couldn't be added yet"
           }
         }
       }
@@ -267,6 +289,17 @@
         }
       }
     },
+    "Add people" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add people"
+          }
+        }
+      }
+    },
     "Android" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -487,6 +520,17 @@
         }
       }
     },
+    "Change photo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Change photo"
+          }
+        }
+      }
+    },
     "Chat" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -516,6 +560,61 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Check your connection, then try again."
+          }
+        }
+      }
+    },
+    "Choose a different name." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose a different name."
+          }
+        }
+      }
+    },
+    "Choose a different photo." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose a different photo."
+          }
+        }
+      }
+    },
+    "Choose at least 2 people" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose at least 2 people"
+          }
+        }
+      }
+    },
+    "Choose group photo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose group photo"
+          }
+        }
+      }
+    },
+    "Choose photo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose photo"
           }
         }
       }
@@ -641,6 +740,17 @@
         }
       }
     },
+    "Couldn't create the group. Check your connection and try again." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't create the group. Check your connection and try again."
+          }
+        }
+      }
+    },
     "Couldn't download" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -725,6 +835,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Couldn't sign out"
+          }
+        }
+      }
+    },
+    "Couldn't use that photo. Try another." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't use that photo. Try another."
+          }
+        }
+      }
+    },
+    "Create" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Create"
           }
         }
       }
@@ -1059,6 +1191,28 @@
         }
       }
     },
+    "Group" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Group"
+          }
+        }
+      }
+    },
+    "Group name" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Group name"
+          }
+        }
+      }
+    },
     "Hold to record, release to send" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1187,6 +1341,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Link a device"
+          }
+        }
+      }
+    },
+    "Link preview" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Link preview"
+          }
+        }
+      }
+    },
+    "Link previews" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Link previews"
           }
         }
       }
@@ -1385,6 +1561,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "New device added"
+          }
+        }
+      }
+    },
+    "New group" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New group"
           }
         }
       }
@@ -1594,6 +1781,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "OK"
+          }
+        }
+      }
+    },
+    "One of these people could not be found." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "One of these people could not be found."
           }
         }
       }
@@ -1913,6 +2111,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Recording locked"
+          }
+        }
+      }
+    },
+    "Remove photo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove photo"
+          }
+        }
+      }
+    },
+    "Remove preview" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove preview"
           }
         }
       }
@@ -2280,6 +2500,17 @@
         }
       }
     },
+    "Someone" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Someone"
+          }
+        }
+      }
+    },
     "Something went wrong on the server. Try again later." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2320,6 +2551,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Stop recording"
+          }
+        }
+      }
+    },
+    "Take photo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Take photo"
           }
         }
       }
@@ -2423,6 +2665,17 @@
         }
       }
     },
+    "These people can't be added yet. Try again later." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "These people can't be added yet. Try again later."
+          }
+        }
+      }
+    },
     "This code has expired. Start again on the new device." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2500,6 +2753,17 @@
         }
       }
     },
+    "This group is full." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This group is full."
+          }
+        }
+      }
+    },
     "This is your own link." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2573,6 +2837,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Through your server"
+          }
+        }
+      }
+    },
+    "To make a preview, your device contacts the website, which learns your IP address." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "To make a preview, your device contacts the website, which learns your IP address."
           }
         }
       }
@@ -3006,6 +3281,28 @@
         }
       }
     },
+    "You were added" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You were added"
+          }
+        }
+      }
+    },
+    "You've made too many groups. Try again later." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You've made too many groups. Try again later."
+          }
+        }
+      }
+    },
     "Your chats couldn't be opened" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3046,6 +3343,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Your link is ready. It works once and lasts 7 days."
+          }
+        }
+      }
+    },
+    "Your profile photo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your profile photo"
           }
         }
       }

@@ -254,13 +254,12 @@ class ChatMediaSendTest {
         assertEquals(emptyList(), store.batches)
     }
 
-    @Test fun theCaptionTravelsAsATextRightAfterTheFirstItem() {
+    @Test fun theCaptionRidesOnTheFirstItemAndNoTextIsPlanned() {
         pick(3)
         rule.onNodeWithText("Add a caption").performTextInput(" hi ")
         rule.onNodeWithText("Send").performClick()
         rule.waitUntil(5_000) { store.batches.isNotEmpty() }
-        val kinds = store.batches.single().map { if (it is org.example.app.core.chats.SendPlan.Send.Text) "text:" + it.text else "item" }
-        assertEquals(listOf("item", "text:hi", "item", "item"), kinds)
+        assertEquals(listOf<String?>("hi", null, null), store.batches.single().map { it.caption })
     }
 
     @Test fun moreThanTenItemsAreRefusedBeforeAnythingIsSent() {

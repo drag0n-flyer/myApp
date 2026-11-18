@@ -29,7 +29,7 @@ public final class LiveChatStore: ChatStore {
     }
 
     let deps: MessagingDeps
-    private let outbox: Outbox
+    let outbox: Outbox
     let inbox: InboxProcessor
     let conversations: ConversationManaging
     private let attachments: AttachmentService?
@@ -37,6 +37,10 @@ public final class LiveChatStore: ChatStore {
 
     private var meContact: Contact
     private var contactRows: [String: ContactRecord] = [:]
+    /// What contacts said about themselves (`profile`), by account, read at every reload.
+    var profileRows: [String: StoredProfile] = [:]
+    /// Tests only: replaces how the own profile is queued for a chat.
+    var profileEnqueueOverride: ((ContentEnvelope.Body, String) throws -> Void)?
     private var allChats: [Chat] = []
     /// Draft texts not yet in the database: typed before the chat had a row, or a write that failed. They are laid
     /// over the saved drafts on every reload and written as soon as the row exists.
@@ -165,6 +169,10 @@ public final class LiveChatStore: ChatStore {
     private func reload() {
         let rows = (try? repo.contacts()) ?? []
         contactRows = Dictionary(rows.map { ($0.accountID, $0) }, uniquingKeysWith: { $1 })
+        // A message request is not shown by its profile (name or photo) until it is accepted.
+        profileRows = Dictionary(((try? repo.profiles()) ?? []).filter { contactRows[$0.accountID]?.isContact == true }.map {
+            ($0.accountID, StoredProfile(accountID: $0.accountID, name: $0.name, photo: $0.photo, ver: $0.ver))
+        }, uniquingKeysWith: { $1 })
         if let mine = contactRows[deps.me.accountID] {
             // No stored name shows the placeholder; the placeholder itself is never stored.
             let name = DisplayNameRule.forDisplay(mine.displayName, fallback: "")
@@ -194,6 +202,7 @@ public final class LiveChatStore: ChatStore {
                 record, conversations: all, preferred: preferred, folderIDs: folderIDs[record.id] ?? [], messages: map(latest),
                 draft: drafts[record.id])
         }
+        sendOwnProfileIfNeeded()
     }
 
     private func map(_ records: [MessageRecord]) -> [Message] {
@@ -207,7 +216,11 @@ public final class LiveChatStore: ChatStore {
                 record,
                 attachment: plain ? (try? repo.attachment(messageID: record.id)) ?? nil : nil,
                 reactions: plain && !record.deleted ? (try? repo.reactions(messageID: record.id)) ?? [] : [],
-                displayName: { [contactRows] in Self.name(of: contactRows[$0]) },
+                displayName: { [contactRows, profileRows] id in
+                    guard let row = contactRows[id] else { return nil }
+                    let name = ProfileDisplay.name(lookup: Self.name(of: row) ?? "", profile: profileRows[id], nickname: nil)
+                    return name.isEmpty ? nil : name
+                },
                 showRead: showRead || record.senderAccount != me)
             if record.status == "failed", tooBig.contains(record.id) { message.sendFailure = .tooBig }
             if record.status == "sending", uploading.contains(record.id) { message.uploadProgress = uploadFraction[record.id] ?? 0 }
@@ -228,7 +241,10 @@ public final class LiveChatStore: ChatStore {
     }
 
     private func contact(from row: ContactRecord) -> Contact {
-        Contact(id: row.accountID, displayName: Self.name(of: row) ?? "Unknown", username: row.username)
+        // The name the person sent about themselves wins over the lookup name (no local nicknames exist yet).
+        Contact(id: row.accountID,
+                displayName: ProfileDisplay.name(lookup: Self.name(of: row) ?? "Unknown", profile: profileRows[row.accountID], nickname: nil),
+                username: row.username)
     }
 
     private func nowMillis() -> Int64 { Int64((deps.now().timeIntervalSince1970 * 1000).rounded()) }
@@ -332,17 +348,24 @@ public final class LiveChatStore: ChatStore {
     // MARK: - Sending
 
     public func send(_ content: MessageContent, in chatID: String, replyTo: String?) {
+        send(content, in: chatID, replyTo: replyTo, preview: nil)
+    }
+
+    /// The preview goes along only when it is valid for this text (an https link found in the text, a title, a small
+    /// JPEG); otherwise the text is sent alone.
+    public func send(_ content: MessageContent, in chatID: String, replyTo: String?, preview card: LinkPreviewCard?) {
         guard case .text(let raw) = content else { return }
         let text = String(raw.prefix(Self.maxTextLength))
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        enqueue(.text(text, replyTo: replyTo), chatID: chatID)
+        let preview = card.map { LinkPreview(url: $0.url, title: $0.title, desc: $0.desc, img: $0.image) }.flatMap { $0.wire.valid(in: text) ? $0.wire.preview : nil }
+        enqueue(.text(text, replyTo: replyTo), chatID: chatID, preview: preview)
     }
 
-    private func enqueue(_ body: ContentEnvelope.Body, chatID: String) {
+    private func enqueue(_ body: ContentEnvelope.Body, chatID: String, preview: LinkPreview? = nil) {
         guard ensureChatRow(chatID) != nil else { return }
         let at = stamp()
         let envelope = ContentEnvelope(
-            id: freshID(), at: Int64((at.timeIntervalSince1970 * 1000).rounded()), body: body, ttl: currentTTL(chatID))
+            id: freshID(), at: Int64((at.timeIntervalSince1970 * 1000).rounded()), body: body, ttl: currentTTL(chatID), preview: preview)
         do {
             try outbox.enqueue(envelope, chatID: chatID)
             bumpActivity(chatID, at: at)
@@ -381,6 +404,16 @@ public final class LiveChatStore: ChatStore {
         sendMedia(fileURL, kind: kind, duration: 0, chatID: chatID)
     }
 
+    public func sendAttachment(_ fileURL: URL, kind: MediaKind, caption: String?, in chatID: String) {
+        sendMedia(fileURL, kind: kind, duration: 0, chatID: chatID, caption: Self.cleanCaption(caption))
+    }
+
+    /// Trimmed, cut to 4,096 characters, `nil` when blank.
+    static func cleanCaption(_ raw: String?) -> String? {
+        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
+        return String(trimmed.prefix(ContentEnvelope.maxCaptionLength))
+    }
+
     public func sendVoice(_ fileURL: URL, duration: Double, in chatID: String) {
         sendMedia(fileURL, kind: .voice, duration: duration, chatID: chatID)
     }
@@ -395,7 +428,8 @@ public final class LiveChatStore: ChatStore {
     /// `media/pending/<id>/` with a small description, and the row gets a placeholder envelope (no attachment ID yet)
     /// that is never queued. The upload then runs in the background (`AttachmentService.uploadPending`): a failure
     /// makes the row "failed" with the files kept, and "Try again" really uploads again.
-    private func sendMedia(_ fileURL: URL, kind: MediaKind, duration: Double, chatID: String, then: (@MainActor (_ staged: Bool) -> Void)? = nil) {
+    private func sendMedia(_ fileURL: URL, kind: MediaKind, duration: Double, chatID: String, caption: String? = nil,
+                           then: (@MainActor (_ staged: Bool) -> Void)? = nil) {
         guard attachments != nil, !closed, ensureChatRow(chatID) != nil else { then?(false); return }
         let id = freshID()
         guard let folder = pendingFolder(id) else { then?(false); return }
@@ -425,7 +459,7 @@ public final class LiveChatStore: ChatStore {
                 await self?.stagingDone(then, staged: false)
                 return
             }
-            let ok = await self?.stagedForUpload(id: id, meta: meta, size: size, staged: staged, folder: folder) ?? false
+            let ok = await self?.stagedForUpload(id: id, meta: meta, size: size, staged: staged, folder: folder, caption: caption) ?? false
             await self?.stagingDone(then, staged: ok)
         }
     }
@@ -434,7 +468,7 @@ public final class LiveChatStore: ChatStore {
 
     /// The picked file is staged: the message shows as "sending" with its real name and size, and the upload starts.
     /// True when the row is in and the upload started.
-    private func stagedForUpload(id: String, meta: PendingUpload, size: Int64, staged: URL, folder: URL) -> Bool {
+    private func stagedForUpload(id: String, meta: PendingUpload, size: Int64, staged: URL, folder: URL, caption: String? = nil) -> Bool {
         guard !closed else { PendingUpload.removeFolder(folder); return false }
         let placeholder = Att(id: "", key: Data(), dg: Data(), sz: size, csz: size)
         let body: ContentEnvelope.Body
@@ -445,12 +479,14 @@ public final class LiveChatStore: ChatStore {
         }
         let at = stamp()
         let envelope = ContentEnvelope(
-            id: id, at: Int64((at.timeIntervalSince1970 * 1000).rounded()), body: body, ttl: currentTTL(meta.chatID))
+            id: id, at: Int64((at.timeIntervalSince1970 * 1000).rounded()), body: body, ttl: currentTTL(meta.chatID),
+            caption: meta.kind == "voice" ? nil : caption)
         let record = MessageRecord(
             id: id, chatID: meta.chatID, conversationID: nil, senderAccount: deps.me.accountID, senderDevice: deps.me.deviceID,
             sentAt: at, receivedAt: at, envelope: envelope.encoded(), status: "sending", replyTo: nil, editedAt: nil,
-            deleted: false, undecryptable: false, folded: meta.kind == "file" ? fold(meta.name) : "",
-            expiresAt: Outbox.expiry(of: envelope))
+            deleted: false, undecryptable: false,
+            folded: fold([meta.kind == "file" ? meta.name : "", envelope.caption ?? ""].filter { !$0.isEmpty }.joined(separator: " ")),
+            expiresAt: Outbox.expiry(of: envelope), caption: envelope.caption)
         do {
             try repo.transaction {
                 guard try repo.insertMessage(record) else { throw AttachmentServiceError.pendingMissing }
@@ -617,17 +653,14 @@ public final class LiveChatStore: ChatStore {
         }
     }
 
-    /// Several photos or videos from the preview screen: each row shows in order, and the caption is sent as a text
-    /// message once the first one is staged, so it follows the first item.
+    /// Several photos or videos from the preview screen: each row shows in order, and the caption travels in the
+    /// first item (`c`), so no text message follows it. A first item that cannot be staged takes the caption with it.
     public func sendMedia(_ items: [OutgoingMedia], caption: String, in chatID: String) {
-        let text = caption.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = Self.cleanCaption(caption)
         func step(_ index: Int) {
             guard index < items.count, !closed else { return }
-            sendMedia(items[index].url, kind: items[index].kind, duration: 0, chatID: chatID) { [weak self] staged in
+            sendMedia(items[index].url, kind: items[index].kind, duration: 0, chatID: chatID, caption: index == 0 ? text : nil) { staged in
                 if items[index].deleteAfterStaging { try? FileManager.default.removeItem(at: items[index].url) }
-                // The caption belongs to the first item: no caption when that item could not be staged. If the item
-                // is cancelled or fails later, the caption already sent stays.
-                if index == 0, staged, !text.isEmpty { self?.send(.text(text), in: chatID, replyTo: nil) }
                 step(index + 1)
             }
         }
@@ -669,16 +702,25 @@ public final class LiveChatStore: ChatStore {
 
     public func edit(messageID: String, in chatID: String, text: String) {
         let newText = String(text.prefix(Self.maxTextLength))
-        guard !newText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              let record = (try? repo.message(id: messageID)) ?? nil, record.chatID == chatID,
-              record.senderAccount == deps.me.accountID, !record.deleted,
-              case .text(_, let reply) = ContentEnvelope.decode(record.envelope).body else { return }
-        let old = ContentEnvelope.decode(record.envelope)
-        let edited = ContentEnvelope(id: old.id, at: old.at, body: .text(newText, replyTo: reply), ttl: old.ttl).encoded()
-        guard (try? repo.applyEdit(id: messageID, sender: deps.me.accountID, envelope: edited, folded: fold(newText), at: deps.now())) == true
-        else { return }
+        let me = deps.me.accountID
+        let now = deps.now()
+        let repo = repo
+        // One transaction reads the row, applies the edit and decides whether an edit control is needed, so the upload's
+        // commit (which also runs in a transaction) is either wholly before it or wholly after it. Before: the commit
+        // re-reads the row and carries the new caption, no control. After: the message is queued with the old caption
+        // and the control follows it.
+        let outcome: (queued: Bool, wireText: String)? = try? repo.transaction { () -> (queued: Bool, wireText: String)? in
+            guard let record = try repo.message(id: messageID), record.chatID == chatID, record.senderAccount == me, !record.deleted else { return nil }
+            // Text and caption edits follow one rule, shared with the receiver (`ContentEnvelope.edited`).
+            guard let result = ContentEnvelope.decode(record.envelope).edited(text: newText, fold: fold) else { return nil }
+            guard try repo.applyEdit(id: messageID, sender: me, envelope: result.envelope.encoded(), folded: result.folded, at: now,
+                                     caption: result.envelope.caption, linkPreview: result.envelope.preview?.json) else { return nil }
+            let queued = result.envelope.body.attachment.map { AttachmentID.isValid($0.id) } ?? true
+            return (queued, result.wireText)
+        } ?? nil
+        guard let outcome else { return }
         refresh()
-        sendControl(.edit(target: messageID, text: newText), chatID: chatID)
+        if outcome.queued { sendControl(.edit(target: messageID, text: outcome.wireText), chatID: chatID) }
     }
 
     public func delete(messageID: String, in chatID: String) {
@@ -774,15 +816,33 @@ public final class LiveChatStore: ChatStore {
     @discardableResult
     public func saveProfile(accountID: String, name: String, photo: Data?, ver: Int) -> Bool {
         guard !closed, DisplayNameRule.clean(name) == name,
-              photo.map({ LinkPreview.isJPEG($0, max: ContentEnvelope.maxProfilePhoto) }) ?? true,
+              photo.map(ProfilePhotoRule.isAcceptable) ?? true,
               ProfileMerge.accept(current: (try? repo.profile(for: accountID))?.ver, incoming: ver),
               (try? repo.saveProfile(accountID: accountID, name: name, photo: photo, ver: ver)) == true else { return false }
         refresh()
         return true
     }
 
-    private func sendControl(_ body: ContentEnvelope.Body, chatID: String, id: String? = nil) {
+    /// Makes a group chat. The outbox then sends what the create queued (the `group` envelope, the own `profile`).
+    public func createGroup(accounts: [String], name: String, photo: Data?) async -> GroupCreateOutcome {
+        guard !closed else { return .failed(.other) }
+        defer { refresh() }
+        do {
+            let made = try await conversations.createGroup(accounts: accounts, name: name, photo: photo)
+            let outbox = outbox
+            background { try? await outbox.flush() }
+            return .created(chatID: made.chatID, notAdded: made.notAdded)
+        } catch {
+            return .failed(GroupCreateFailure(error: error))
+        }
+    }
+
+    func sendControl(_ body: ContentEnvelope.Body, chatID: String, id: String? = nil) {
         guard (try? outbox.enqueueControl(body, chatID: chatID, id: id)) != nil else { return }
+        flushOutboxSoon()
+    }
+
+    func flushOutboxSoon() {
         let outbox = outbox
         background { try? await outbox.flush() }
     }
@@ -790,7 +850,7 @@ public final class LiveChatStore: ChatStore {
     // MARK: - Calls
 
     public func recordCall(_ summary: CallSummary, contactID: String, outgoing: Bool, at date: Date) {
-        guard let chatID = ensureChatRow(contactID),
+        guard !ChatID.isGroup(contactID), let chatID = ensureChatRow(contactID),
               let envelope = try? JSONEncoder().encode(summary) else { return }
         let id = ChatMapping.callPrefix + freshID()
         let (video, outcome, duration): (Bool, String, Double) = switch summary {
@@ -909,6 +969,7 @@ public final class LiveChatStore: ChatStore {
     }
 
     public func block(contactID: String) {
+        guard !ChatID.isGroup(contactID) else { return }   // a group is not a person
         do {
             try repo.transaction {
                 try repo.block(contactID)
@@ -926,6 +987,7 @@ public final class LiveChatStore: ChatStore {
     }
 
     public func unblock(contactID: String) {
+        guard !ChatID.isGroup(contactID) else { return }
         do {
             try repo.transaction {
                 try repo.unblock(contactID)
@@ -939,6 +1001,7 @@ public final class LiveChatStore: ChatStore {
     }
 
     public func report(chatID: String) {
+        guard !ChatID.isGroup(chatID) else { return }   // a report names a person, not a group
         let records = (try? repo.messages(chatID: chatID, before: nil, limit: 40)) ?? []
         let lines = map(records).filter { message in
             if case .system = message.content { return false }
@@ -996,6 +1059,7 @@ public final class LiveChatStore: ChatStore {
 
     /// The chat with this contact, created empty if there is none yet. A chat with a non-contact is a request.
     public func ensureChat(with contactID: String) -> String {
+        guard !ChatID.isGroup(contactID) else { return contactID }
         let id = ensureChatRow(contactID) ?? contactID
         refresh()
         return id
@@ -1005,6 +1069,8 @@ public final class LiveChatStore: ChatStore {
     private func ensureChatRow(_ contactID: String) -> String? {
         do {
             if try repo.chat(id: contactID) != nil { return contactID }
+            // A group chat is made only from its conversation; a `g:` ID never becomes a contact's chat.
+            guard !ChatID.isGroup(contactID) else { return nil }
             let known = try repo.contact(id: contactID)
             if known == nil {
                 try repo.upsertContact(ContactRecord(

@@ -28,7 +28,7 @@ import org.example.app.messaging.sync.Rig
 import org.example.app.messaging.sync.TestDevice
 
 private val DAY = 86_400
-private val JPEG = byteArrayOf(-1, -40, 1, 2, 3)
+private val JPEG = TestJpeg.of()
 
 /** Disappearing messages, timers and profiles through the real store, handler and notification path (task P1). */
 class PeopleBaseTest {

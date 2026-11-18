@@ -14,6 +14,9 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import org.example.app.contracts.CallSignalPayload
+import org.example.app.core.chats.LinkPreviewParse
+import org.example.app.core.chats.ImageHeader
+import org.example.app.core.chats.LinkPreviewRule
 import org.example.app.core.groups.GroupNameRule
 import org.example.app.core.people.Expiry
 import org.example.app.core.people.TimerChoice
@@ -195,18 +198,37 @@ object ContentCodec {
     private fun ttl(o: JsonObject): Int? = o["ttl"].long()?.takeIf { it in 1..Expiry.MAX_TTL_SECONDS }?.toInt()
 
     /** A caption longer than a text message is cut to the same limit. */
-    private fun caption(o: JsonObject): String? = o["c"].str()?.let { TextLimit.truncate(it) }
+    private fun caption(o: JsonObject): String? = o["c"].str()?.let { TextLimit.truncate(it) }?.takeIf { it.isNotBlank() }
 
     // Lengths: title and description count code points; a caption uses the same grapheme limit as a text message
     // ([TextLimit], applied by `caption` on receive and refused over it on send).
-    private const val PHOTO_MAX = 24_576
     private const val PREVIEW_IMAGE_MAX = 8_192
+    private const val PREVIEW_IMAGE_SIDE = 1_024
     private const val TITLE_MAX = 200
     private const val DESC_MAX = 300
 
-    private fun jpeg(b64: String, max: Int, min: Int = 2): ByteArray? {
+    /** A profile photo: base64 of bytes that pass the profile-photo rule (JPEG, 4..24,576 bytes, frame header 1..1024 per side). */
+    private fun photo(b64: String): ByteArray? {
         val bytes = try { Base64.getDecoder().decode(b64) } catch (_: IllegalArgumentException) { return null }
-        return bytes.takeIf { it.size in min..max && it[0] == 0xFF.toByte() && it[1] == 0xD8.toByte() }
+        return bytes.takeIf { org.example.app.core.people.ProfilePhotoRule.isAcceptable(it) }
+    }
+
+    /** A group photo's size limit (the same as a profile photo's). */
+    private const val PHOTO_MAX = 24_576
+
+    private fun jpeg(b64: String, max: Int): ByteArray? {
+        val bytes = try { Base64.getDecoder().decode(b64) } catch (_: IllegalArgumentException) { return null }
+        return bytes.takeIf { it.size in 2..max && it[0] == 0xFF.toByte() && it[1] == 0xD8.toByte() }
+    }
+
+    /**
+     * A received preview picture: a JPEG of at most 8 KiB. When its header declares a size, that is at most 1,024 x 1,024
+     * (read before any decode); one whose size cannot be read is kept as bytes but the screen never decodes it.
+     */
+    private fun previewJpeg(b64: String): ByteArray? {
+        val bytes = jpeg(b64, PREVIEW_IMAGE_MAX) ?: return null
+        val info = ImageHeader.read(bytes) ?: return bytes
+        return bytes.takeIf { info.format == ImageHeader.Format.Jpeg && info.width <= PREVIEW_IMAGE_SIDE && info.height <= PREVIEW_IMAGE_SIDE }
     }
 
     /** The whole profile is invalid (null) when the name, photo or version is. */
@@ -214,32 +236,38 @@ object ContentCodec {
         val name = o["name"].str()?.takeIf { DisplayNameRule.clean(it) == it } ?: return null
         val ver = o["ver"].int()?.takeIf { it >= 1 } ?: return null
         val photoEl = o["photo"]
-        val photo = if (photoEl == null || photoEl is JsonNull) null else jpeg(photoEl.str() ?: return null, PHOTO_MAX) ?: return null
+        val photo = if (photoEl == null || photoEl is JsonNull) null else photo(photoEl.str() ?: return null) ?: return null
         return ContentEnvelope.Profile(id, at, name, photo, ver)
     }
 
     /**
      * The whole `group` envelope is invalid (null) when the name, photo or version is: the name is 1 to 50 code points
      * under the display-name character rules and must already be clean (as a profile name must); the photo is a JPEG
-     * of at most 24,576 bytes (the profile-photo rule's frame-header size check is not in this build yet).
+     * that passes the profile-photo rule (frame-header size included).
      */
     private fun group(o: JsonObject, id: String, at: Long): ContentEnvelope? {
         val name = o["name"].str()?.takeIf { GroupNameRule.clean(it) == it } ?: return null
         val ver = o["ver"].int()?.takeIf { it >= 1 } ?: return null
         val photoEl = o["photo"]
-        val photo = if (photoEl == null || photoEl is JsonNull) null else jpeg(photoEl.str() ?: return null, PHOTO_MAX, min = 4) ?: return null
+        val photo = if (photoEl == null || photoEl is JsonNull) null else photo(photoEl.str() ?: return null) ?: return null
         return ContentEnvelope.Group(id, at, name, photo, ver)
     }
 
     /** An invalid preview is dropped (null) and the text kept. */
     private fun linkPreview(e: JsonElement?, text: String): LinkPreview? {
         val o = e as? JsonObject ?: return null
-        val url = o["url"].str()?.takeIf { it.startsWith("https://", ignoreCase = true) && it in text } ?: return null
-        val title = o["title"].str()?.takeIf { it.codePointCount(0, it.length) in 1..TITLE_MAX } ?: return null
+        // The url must be one the sender could have fetched from: https, port 443, no user, a public-looking name.
+        val url = o["url"].str()?.takeIf { it.startsWith("https://", ignoreCase = true) && it in text && LinkPreviewRule.checkUrl(it) != null } ?: return null
+        val rawTitle = o["title"].str()?.takeIf { it.codePointCount(0, it.length) in 1..TITLE_MAX } ?: return null
+        // What is shown is cleaned: no control or direction characters, one-space white space; nothing visible left drops the preview.
+        val title = LinkPreviewParse.sanitize(rawTitle, TITLE_MAX) ?: return null
         val descEl = o["desc"]
-        val desc = if (descEl == null || descEl is JsonNull) null else descEl.str()?.takeIf { it.codePointCount(0, it.length) <= DESC_MAX } ?: return null
+        val desc = if (descEl == null || descEl is JsonNull) null else {
+            val raw = descEl.str()?.takeIf { it.codePointCount(0, it.length) <= DESC_MAX } ?: return null
+            LinkPreviewParse.sanitize(raw, DESC_MAX)
+        }
         val imgEl = o["img"]
-        val img = if (imgEl == null || imgEl is JsonNull) null else jpeg(imgEl.str() ?: return null, PREVIEW_IMAGE_MAX) ?: return null
+        val img = if (imgEl == null || imgEl is JsonNull) null else previewJpeg(imgEl.str() ?: return null) ?: return null
         return LinkPreview(url, title, desc, img)
     }
 

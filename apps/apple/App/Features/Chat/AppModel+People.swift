@@ -30,7 +30,7 @@ extension AppModel {
         }
         let targets: @MainActor () -> [String] = { [weak self] in
             // Only chats with a message in the last 7 days, 30 at most, most recent first.
-            let chats = self?.chatStore.chats(in: .all).filter { !$0.isRequest } ?? []
+            let chats = self?.chatStore.chats(in: .all).filter { !$0.isRequest && !ChatID.isGroup($0.id) } ?? []
             return PresenceFanOut.targets(
                 chats.map { PresenceFanOut.Candidate(id: $0.id, lastMessageMs: $0.lastMessage.map { Int64($0.sentAt.timeIntervalSince1970 * 1000) }) },
                 nowMs: now())
@@ -115,7 +115,7 @@ extension AppModel {
     /// The line under the name in the chat header: "typing…", "online", "last seen 9:38", or nothing.
     func headerStatus(chatID: String) -> String? {
         _ = revision
-        guard !peopleHidden, let people, chatStore.chat(id: chatID)?.contactID != chatStore.me.id else { return nil }
+        guard !peopleHidden, let people, !ChatID.isGroup(chatID), chatStore.chat(id: chatID)?.contactID != chatStore.me.id else { return nil }
         if people.isTyping(chatID: chatID) { return String(localized: "typing…") }
         switch people.presence(chatID: chatID) {
         case .online: return String(localized: "online")

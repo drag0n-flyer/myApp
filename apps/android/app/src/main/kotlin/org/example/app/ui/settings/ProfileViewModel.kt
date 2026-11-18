@@ -81,7 +81,11 @@ class AccountActions(
 }
 
 /** Shows [AccountActions] to the profile screen: its state is the graph's running action and the failure to show. */
-class ProfileViewModel(private val actions: AccountActions) : ViewModel() {
+class ProfileViewModel(
+    private val actions: AccountActions,
+    /** Takes the prepared JPEG of the person's own photo, or null to remove it. */
+    private val photoSink: (ByteArray?) -> Unit = {},
+) : ViewModel() {
     private val shownError = MutableStateFlow<Int?>(null)
     private val editing = MutableStateFlow(false)
 
@@ -110,6 +114,20 @@ class ProfileViewModel(private val actions: AccountActions) : ViewModel() {
     }
 
     fun closeNameEditor() { editing.value = false }
+
+    /** Makes [source] (any picture the system can read) into the profile photo off the main thread; a picture that cannot be used shows an error. */
+    fun setPhoto(source: ByteArray) {
+        shownError.value = null
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+            val jpeg = org.example.app.profile.ProfilePhoto.prepare(source)
+            if (jpeg == null) shownError.value = R.string.profile_photo_error else photoSink(jpeg)
+        }
+    }
+
+    fun removePhoto() {
+        shownError.value = null
+        photoSink(null)
+    }
 
     fun signOut() = run(ProfileAction.SigningOut)
     fun deleteAccount() = run(ProfileAction.Deleting)

@@ -30,10 +30,11 @@ public enum DisplayNameRule {
     }
 
     /// The trimmed name, or `nil` when it is not acceptable.
-    public static func clean(_ input: String) -> String? {
+    /// `limit` is the longest name accepted (a group name uses 50).
+    public static func clean(_ input: String, limit: Int = DisplayNameRule.max) -> String? {
         let name = trimmed(Array(input.unicodeScalars))
         if name.isEmpty { return nil }
-        if name.count > max { return nil }
+        if name.count > limit { return nil }
         for s in name {
             if isRefused(s) { return nil }
         }

@@ -9,7 +9,7 @@ private let statusRank = ["sending": 0, "sent": 1, "delivered": 2, "read": 3]
 
 /// Typed access to the tables. Timestamps are stored as milliseconds since 1970.
 public final class Repository: @unchecked Sendable {
-    private let db: Database
+    let db: Database
     private let now: @Sendable () -> Date
 
     public init(db: Database, now: @escaping @Sendable () -> Date) {
@@ -44,10 +44,13 @@ public final class Repository: @unchecked Sendable {
 
     // MARK: chats
 
-    private let chatCols = "id, is_request, unread, muted, last_activity, pinned_at, archived, timer_seconds"
+    private let chatCols = "id, is_request, unread, muted, last_activity, pinned_at, archived, timer_seconds, kind, conversation_id, title, photo, group_ver, members_version, my_state"
     private func chatRow(_ r: Row) -> ChatRecord {
         ChatRecord(id: r.text(0), isRequest: r.int(1) != 0, unread: Int(r.int(2)), muted: r.int(3) != 0, lastActivity: date(r.int(4)),
-                   pinnedAt: r.isNull(5) ? nil : date(r.int(5)), archived: r.int(6) != 0, timerSeconds: Int(r.int(7)))
+                   pinnedAt: r.isNull(5) ? nil : date(r.int(5)), archived: r.int(6) != 0, timerSeconds: Int(r.int(7)),
+                   kind: r.text(8), conversationID: r.isNull(9) ? nil : r.text(9), title: r.isNull(10) ? nil : r.text(10),
+                   photo: r.isNull(11) ? nil : r.blob(11), groupVer: r.isNull(12) ? nil : Int(r.int(12)),
+                   membersVersion: r.isNull(13) ? nil : r.int(13), myState: r.text(14))
     }
 
     /// Inserts the chat, or updates `is_request`, `unread` and `last_activity` of an existing one. Pin, mute and
@@ -142,6 +145,13 @@ public final class Repository: @unchecked Sendable {
         try db.query("SELECT account_id, name, photo, ver FROM profiles WHERE account_id=?", [.text(accountID)]) {
             ProfileRecord(accountID: $0.text(0), name: $0.text(1), photo: $0.isNull(2) ? nil : $0.blob(2), ver: Int($0.int(3)))
         }.first
+    }
+
+    /// Every stored contact profile (read once per reload, not once per screen row).
+    public func profiles() throws -> [ProfileRecord] {
+        try db.query("SELECT account_id, name, photo, ver FROM profiles") {
+            ProfileRecord(accountID: $0.text(0), name: $0.text(1), photo: $0.isNull(2) ? nil : $0.blob(2), ver: Int($0.int(3)))
+        }
     }
 
     /// Keeps the profile only when `ver` is at least 1 and strictly higher than the stored one; `false` otherwise,
@@ -431,9 +441,10 @@ public final class Repository: @unchecked Sendable {
 
     /// Replaces the envelope and folded text and sets `edited_at`, only when `sender` is the message's sender.
     @discardableResult
-    public func applyEdit(id: String, sender: String, envelope: Data, folded: String, at: Date) throws -> Bool {
-        try db.run("UPDATE messages SET envelope=?, folded=?, edited_at=? WHERE id=? AND sender_account=? AND deleted=0",
-                   [.blob(envelope), .text(folded), .int(ms(at)), .text(id), .text(sender)]) > 0
+    public func applyEdit(id: String, sender: String, envelope: Data, folded: String, at: Date,
+                          caption: String? = nil, linkPreview: String? = nil) throws -> Bool {
+        try db.run("UPDATE messages SET envelope=?, folded=?, edited_at=?, caption=?, link_preview=? WHERE id=? AND sender_account=? AND deleted=0",
+                   [.blob(envelope), .text(folded), .int(ms(at)), opt(caption), opt(linkPreview), .text(id), .text(sender)]) > 0
     }
 
     /// Marks the message deleted and drops its content (envelope and search text), only when `sender` matches.

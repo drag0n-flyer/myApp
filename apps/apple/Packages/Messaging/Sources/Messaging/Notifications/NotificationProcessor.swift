@@ -228,8 +228,8 @@ public struct NotificationProcessor: Sendable {
         case .callSignal(let payload, let sender):
             let account = Self.account(of: sender)
             let contact = try deps.repo.contact(id: account).map {
-                // Stored names came from other people's devices: cleaned like every other screen.
-                let name = DisplayNameRule.forDisplay($0.displayName, fallback: $0.username)
+                // The same display rule as every other screen (profile name once a contact, else the cleaned lookup name).
+                let name = ContactNames.display($0, repo: deps.repo)
                 return Contact(id: $0.accountID, displayName: name.isEmpty ? strings.unknownCaller : name, username: $0.username)
             } ?? Contact(id: account, displayName: strings.unknownCaller, username: "")
             return .incomingCall(payload, from: contact)
@@ -243,7 +243,7 @@ public struct NotificationProcessor: Sendable {
             guard account != deps.me.accountID else { return .drop }
             let chatID = try deps.repo.conversation(groupID: group.raw)?.chatID ?? account
             guard try shouldNotify(chatID: chatID, sender: account) else { return .drop }
-            let name = try deps.repo.contact(id: account).flatMap { $0.isContact ? $0.displayName : nil }
+            let name = try deps.repo.contact(id: account).flatMap { $0.isContact ? ContactNames.display($0, repo: deps.repo) : nil }
             guard let name else { return requestOutcome(chatID: chatID) }
             return .show(title: name, body: String(format: strings.reactedFormat, emoji), threadID: chatID)
         }
@@ -256,7 +256,7 @@ public struct NotificationProcessor: Sendable {
         guard let contact = try deps.repo.contact(id: message.senderAccount), contact.isContact else {
             return requestOutcome(chatID: message.chatID, messageID: message.id)
         }
-        return .show(title: contact.displayName, body: preview(message), threadID: message.chatID, messageID: message.id)
+        return .show(title: ContactNames.display(contact, repo: deps.repo), body: preview(message), threadID: message.chatID, messageID: message.id)
     }
 
     private func requestOutcome(chatID: String, messageID: String? = nil) -> NotificationOutcome {

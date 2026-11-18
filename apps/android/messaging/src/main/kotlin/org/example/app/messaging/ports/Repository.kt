@@ -91,7 +91,7 @@ object GroupStoreRules {
     /** The name must pass the group name rule as it is; a photo is a JPEG of at most 24,576 bytes. */
     fun requireInfo(title: String, photo: ByteArray?) {
         require(org.example.app.core.groups.GroupNameRule.clean(title) == title) { "Bad group name" }
-        if (photo != null) require(photo.size in PHOTO_MIN..PHOTO_MAX && photo[0] == 0xFF.toByte() && photo[1] == 0xD8.toByte()) { "Bad group photo" }
+        if (photo != null) require(org.example.app.core.people.ProfilePhotoRule.isAcceptable(photo)) { "Bad group photo" }
     }
 }
 
@@ -364,7 +364,11 @@ interface Repository {
     fun messages(chatId: String, before: MessageRecord?, limit: Int): List<MessageRecord>
     /** Never lowers a status along sending < sent < delivered < read. Other targets are set unconditionally. */
     fun updateStatus(ids: List<String>, status: String)
-    fun applyEdit(id: String, sender: String, envelope: ByteArray, folded: String, at: Long): Boolean
+    /**
+     * Applies an edit: new envelope, search text and edit time. [caption] and [linkPreview] are the new values of those
+     * columns, stored as given (null removes the caption or preview; a caption can be added where there was none).
+     */
+    fun applyEdit(id: String, sender: String, envelope: ByteArray, folded: String, at: Long, caption: String?, linkPreview: String?): Boolean
     /**
      * Replaces the envelope of one's own message that has not left yet (`sending` or `failed`), without marking it edited.
      * An attachment is stored before its upload, with what is known then; this puts in what the upload returned.

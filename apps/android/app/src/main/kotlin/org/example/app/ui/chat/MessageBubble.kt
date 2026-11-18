@@ -165,22 +165,28 @@ private fun Ticks(status: DeliveryStatus) {
     Icon(painterResource(icon), contentDescription = label, tint = tint, modifier = Modifier.size(14.dp))
 }
 
+/** The caption under a photo, video or file: formatted like message text. */
+@Composable
+private fun Caption(caption: String?) {
+    if (!caption.isNullOrEmpty()) FormattedText(caption)
+}
+
 @Composable
 private fun Body(message: Message, autoDownloads: (MediaKind) -> Boolean, onDownload: () -> Unit, media: MediaHost?) {
     // A message of mine that has not uploaded has nothing to download; it shows as sending or failed with its own retry.
     val unsent = message.media == null && (message.status == DeliveryStatus.Sending || message.status == DeliveryStatus.Failed)
     when (val c = message.content) {
-        is MessageContent.Text -> FormattedText(c.text)
+        is MessageContent.Text -> { FormattedText(c.text); c.preview?.let { LinkPreviewCardView(it) } }
         is MessageContent.Voice -> VoiceBubble(message, c.duration, media, onDownload)
-        is MessageContent.Photo -> PhotoBubble(
+        is MessageContent.Photo -> { PhotoBubble(
             message = message,
             title = stringResource(R.string.photo_with_size, dataSizeText(DataFormat.size(c.bytes))),
             wait = !autoDownloads(MediaKind.Photo) && !unsent,
             host = media,
             onDownload = onDownload,
-        )
+        ); Caption(c.caption) }
         // The sender's name is never shown raw: what is shown is what open and share use.
-        is MessageContent.File -> if (c.isVideo) PhotoBubble(
+        is MessageContent.File -> { if (c.isVideo) PhotoBubble(
             message = message,
             title = stringResource(R.string.video_with_length, dataSizeText(DataFormat.size(c.bytes))),
             wait = !autoDownloads(MediaKind.Video) && !unsent,
@@ -194,7 +200,7 @@ private fun Body(message: Message, autoDownloads: (MediaKind) -> Boolean, onDown
             wait = !autoDownloads(MediaKind.File) && !unsent,
             host = media,
             onDownload = onDownload,
-        )
+        ); Caption(c.caption) }
         is MessageContent.Call, MessageContent.Deleted, MessageContent.Unsupported ->
             Text(previewText(message.preview), style = MaterialTheme.typography.bodyMedium)
         is MessageContent.System -> Unit

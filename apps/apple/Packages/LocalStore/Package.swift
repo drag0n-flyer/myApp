@@ -7,6 +7,9 @@ let package = Package(
     products: [
         .library(name: "LocalStore", targets: ["LocalStore"]),
     ],
+    dependencies: [
+        .package(path: "../AppCore"),
+    ],
     targets: [
         .systemLibrary(
             name: "CSQLite",
@@ -15,7 +18,10 @@ let package = Package(
         ),
         .target(
             name: "LocalStore",
-            dependencies: [.target(name: "CSQLite", condition: .when(platforms: [.linux]))]
+            dependencies: [
+                .target(name: "CSQLite", condition: .when(platforms: [.linux])),
+                .product(name: "AppCore", package: "AppCore"),
+            ]
         ),
         .testTarget(name: "LocalStoreTests", dependencies: ["LocalStore"]),
     ]

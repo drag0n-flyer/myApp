@@ -57,7 +57,7 @@ func msg(_ c: MessageContent) -> Message {
 @MainActor @Test func blockRemovesChatAndContact() {
     let s = SampleChatStore()
     let req = s.messageRequests[0]
-    s.block(contactID: req.contactID)
+    s.block(contactID: req.contactID!)
     #expect(s.messageRequests.isEmpty && s.messageRequestsRowTitle == nil)
 }
 
@@ -213,13 +213,30 @@ func msg(_ c: MessageContent) -> Message {
     #expect(s.chat(id: "chat-riya")!.messages.count == before)
 }
 
-@MainActor @Test func sampleMediaBatchPutsTheCaptionAfterTheFirstItem() {
+@MainActor @Test func sampleMediaBatchPutsTheCaptionOnTheFirstItem() {
     let s = SampleChatStore()
     s.sampleUploadDuration = .seconds(60)
     s.sendMedia([OutgoingMedia(url: URL(fileURLWithPath: "/tmp/a.jpg"), kind: .photo), OutgoingMedia(url: URL(fileURLWithPath: "/tmp/b.jpg"), kind: .photo)],
                 caption: " hi ", in: "chat-riya")
-    let tail = s.chat(id: "chat-riya")!.messages.suffix(3).map(\.content)
-    #expect(tail == [.photo(bytes: 0), .text("hi"), .photo(bytes: 0)])
+    let tail = Array(s.chat(id: "chat-riya")!.messages.suffix(2))
+    #expect(tail.map(\.content) == [.photo(bytes: 0), .photo(bytes: 0)])
+    #expect(tail.map(\.caption) == ["hi", nil])
+}
+
+@MainActor @Test func sampleEditOfACaptionChangesTheCaption() {
+    let s = SampleChatStore()
+    s.sampleUploadDuration = .seconds(60)
+    s.sendMedia([OutgoingMedia(url: URL(fileURLWithPath: "/tmp/a.jpg"), kind: .photo)], caption: "old", in: "chat-riya")
+    let id = s.chat(id: "chat-riya")!.messages.last!.id
+    s.edit(messageID: id, in: "chat-riya", text: "new")
+    #expect(s.chat(id: "chat-riya")!.messages.last!.caption == "new")
+}
+
+@MainActor @Test func aTextSentWithAPreviewKeepsIt() {
+    let s = SampleChatStore()
+    let card = LinkPreviewCard(url: "https://example.com", title: "Example")
+    s.send(.text("see https://example.com"), in: "chat-riya", replyTo: nil, preview: card)
+    #expect(s.chat(id: "chat-riya")!.messages.last!.linkPreview == card)
 }
 
 @MainActor @Test func onChangeFires() {

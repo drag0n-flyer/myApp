@@ -267,8 +267,8 @@ class RoomRepository(
         if (replaced) outbox.clearCiphertext(id)
         replaced
     }
-    override fun applyEdit(id: String, sender: String, envelope: ByteArray, folded: String, at: Long) =
-        messages.applyEdit(id, sender, envelope, folded, at) > 0
+    override fun applyEdit(id: String, sender: String, envelope: ByteArray, folded: String, at: Long, caption: String?, linkPreview: String?) =
+        messages.applyEdit(id, sender, envelope, folded, at, caption, linkPreview) > 0
     override fun markDeleted(id: String, sender: String) = messages.markDeleted(id, sender) > 0
     override fun setReaction(messageId: String, accountId: String, emoji: String) {
         if (emoji.isEmpty()) messages.removeReaction(messageId, accountId)
