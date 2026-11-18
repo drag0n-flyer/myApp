@@ -140,8 +140,12 @@ class PhotoBubbleTest {
         rule.onNodeWithContentDescription("Photo").assertIsDisplayed()
     }
 
-    @Test fun myOwnSentPhotoHasNothingToDownload() {
-        show(photo(null, sender = "me"), host(null), wait = true)
+    @Test fun myOwnSentPhotoIsShownFromMyCopyWithoutADownload() {
+        val opener = FakeOpener(mapOf("m1" to png()))
+        show(photo(MediaState("a1", MediaState.Phase.Local("/blob")), sender = "me"), host(opener), wait = true)
+        rule.waitUntil(5_000) { rule.onAllNodes(loaded).fetchSemanticsNodes().isNotEmpty() }
+        rule.onNode(loaded).assertIsDisplayed()
         rule.onNodeWithContentDescription("Download").assertDoesNotExist()
+        assertEquals(0, downloads)
     }
 }

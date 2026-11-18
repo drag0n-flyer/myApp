@@ -86,7 +86,6 @@ private val BUBBLE_PHOTO_HEIGHT = 320.dp
 fun PhotoBubble(
     message: Message,
     title: String,
-    isOwn: Boolean,
     wait: Boolean,
     host: MediaHost?,
     onDownload: () -> Unit,
@@ -96,7 +95,7 @@ fun PhotoBubble(
         if (state is MediaBubbleState.Ready) {
             PhotoImage(message, host)
         } else {
-            MediaPlaceholder(state, nothingToDownload = isOwn && message.media == null, wait = wait, blurred = true, onDownload = onDownload)
+            MediaPlaceholder(state, wait = wait, blurred = true, onDownload = onDownload)
         }
         Text(title, style = MaterialTheme.typography.labelMedium)
     }
@@ -109,7 +108,7 @@ private val NO_VOICE = MutableStateFlow(VoiceState())
  * downloaded, the play button downloads it. A message that cannot be played says "Couldn't download" and offers to try again.
  */
 @Composable
-fun VoiceBubble(message: Message, seconds: Double, isOwn: Boolean, host: MediaHost?, onDownload: () -> Unit) {
+fun VoiceBubble(message: Message, seconds: Double, host: MediaHost?, onDownload: () -> Unit) {
     val state = rememberBubbleState(message.media, host)
     val voice = host?.voice
     val ui by (voice?.state ?: NO_VOICE).collectAsState()
@@ -118,8 +117,6 @@ fun VoiceBubble(message: Message, seconds: Double, isOwn: Boolean, host: MediaHo
     val failedHere = ui.failedId == message.id
     val totalMs = if (mine && ui.durationMs > 0) ui.durationMs else seconds.roundToInt() * 1000
     val positionMs = if (mine) ui.positionMs else 0
-    // A voice message I sent is not kept on this phone in a form that can be played.
-    val nothingToPlay = isOwn && message.media == null
     val downloadingLabel = stringResource(R.string.downloading)
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         when {
@@ -134,7 +131,6 @@ fun VoiceBubble(message: Message, seconds: Double, isOwn: Boolean, host: MediaHo
             }
             else -> IconButton(
                 onClick = { if (state is MediaBubbleState.Ready) voice?.toggle(message.id) else onDownload() },
-                enabled = !nothingToPlay,
             ) {
                 Icon(
                     painterResource(if (playing) R.drawable.ic_pause else R.drawable.ic_play),
@@ -160,13 +156,11 @@ fun FileBubble(
     message: Message,
     name: String,
     title: String,
-    isOwn: Boolean,
     wait: Boolean,
     host: MediaHost?,
     onDownload: () -> Unit,
 ) {
     val state = rememberBubbleState(message.media, host)
-    val nothingToDownload = isOwn && message.media == null
     val ready = state is MediaBubbleState.Ready
     val downloadingLabel = stringResource(R.string.downloading)
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -194,7 +188,7 @@ fun FileBubble(
                 progress = { state.fraction.toFloat() },
                 modifier = Modifier.semantics { contentDescription = downloadingLabel }.size(24.dp),
             )
-            state is MediaBubbleState.NotDownloaded && wait && !nothingToDownload -> IconButton(onClick = onDownload) {
+            state is MediaBubbleState.NotDownloaded && wait -> IconButton(onClick = onDownload) {
                 Icon(painterResource(R.drawable.ic_download), contentDescription = stringResource(R.string.download))
             }
         }
@@ -203,9 +197,9 @@ fun FileBubble(
 
 /** The neutral box for a photo or file that is not shown: a download button, progress, "Couldn't download", or nothing yet. */
 @Composable
-fun MediaPlaceholder(state: MediaBubbleState, nothingToDownload: Boolean, wait: Boolean, blurred: Boolean, onDownload: () -> Unit) {
+fun MediaPlaceholder(state: MediaBubbleState, wait: Boolean, blurred: Boolean, onDownload: () -> Unit) {
     val downloadingLabel = stringResource(R.string.downloading)
-    val needsTap = state is MediaBubbleState.NotDownloaded && wait && !nothingToDownload
+    val needsTap = state is MediaBubbleState.NotDownloaded && wait
     Box(
         Modifier.fillMaxWidth().heightIn(min = 120.dp).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp)),
         contentAlignment = Alignment.Center,
@@ -226,7 +220,6 @@ fun MediaPlaceholder(state: MediaBubbleState, nothingToDownload: Boolean, wait: 
                 progress = { state.fraction.toFloat() },
                 modifier = Modifier.semantics { contentDescription = downloadingLabel }.size(32.dp),
             )
-            nothingToDownload -> Icon(painterResource(R.drawable.ic_image), contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

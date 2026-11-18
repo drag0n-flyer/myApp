@@ -1,7 +1,7 @@
 package org.example.app.ui.media
 
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -116,8 +116,10 @@ class VoiceBubbleTest {
         assertEquals(1, downloads)
     }
 
-    @Test fun aVoiceMessageISentCannotBePlayedHere() {
-        show(voice(null, sender = "me"))
-        rule.onNodeWithContentDescription("Play voice message").assertIsNotEnabled()
+    @Test fun aVoiceMessageISentPlaysWithoutADownload() {
+        show(voice(ready, sender = "me"))
+        rule.onNodeWithContentDescription("Play voice message").assertIsEnabled().performClick()
+        assertEquals(1, engines.size)
+        assertEquals(0, downloads)
     }
 }

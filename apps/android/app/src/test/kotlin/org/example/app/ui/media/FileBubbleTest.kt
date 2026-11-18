@@ -102,10 +102,13 @@ class FileBubbleTest {
         rule.onNode(hasText("y".repeat(200), substring = true)).assertDoesNotExist()
     }
 
-    @Test fun myOwnSentFileHasNothingToDownloadOrOpen() {
-        show(file(null, sender = "me"), wait = true)
-        rule.onNodeWithText("report.pdf", substring = true).assertIsDisplayed()
+    @Test fun myOwnSentFileOpensAndSharesWithoutADownload() {
+        show(file(ready, sender = "me"), wait = true)
+        rule.onNode(hasText("report.pdf", substring = true) and hasClickAction()).performClick()
+        assertEquals(listOf("m1" to "report.pdf"), opened)
+        rule.onNodeWithContentDescription("Share").performClick()
+        assertEquals(listOf("m1" to "report.pdf"), shared)
         rule.onNodeWithContentDescription("Download").assertDoesNotExist()
-        rule.onNodeWithContentDescription("Share").assertDoesNotExist()
+        assertEquals(0, downloads)
     }
 }

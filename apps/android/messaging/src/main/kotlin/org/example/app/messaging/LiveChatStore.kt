@@ -39,6 +39,7 @@ import org.example.app.messaging.content.TextLimit
 import org.example.app.messaging.media.Downloader
 import org.example.app.messaging.media.OpenedAttachment
 import org.example.app.messaging.media.Uploader
+import org.example.app.messaging.ports.AttachmentRecord
 import org.example.app.messaging.ports.AttachmentState
 import org.example.app.messaging.ports.CallRecord
 import org.example.app.messaging.ports.ChatRecord
@@ -128,7 +129,8 @@ class LiveChatStore(
     )
     val receipts = Receipts(outbox, readReceiptsEnabled)
     val downloader = Downloader(server, dirs.blobDir, dirs.openDir, maxAttachmentBytes)
-    private val uploader = Uploader(server, dirs.tempDir)
+    private val uploader = Uploader(server, dirs.tempDir, dirs.blobDir)
+    private val blobDir = dirs.blobDir
 
     private val _contacts = MutableStateFlow<List<Contact>>(emptyList())
     private val _folders = MutableStateFlow(listOf(ChatFolder.All, ChatFolder.Unread))
@@ -347,7 +349,13 @@ class LiveChatStore(
                     MediaKind.File -> ContentEnvelope.File(id, at, att, prepared.name, "application/octet-stream")
                 }
                 if (!ensureChatRow(chatId)) return@launch
-                outbox.enqueue(envelope, chatId)
+                // The sender's own copy: the same record a received file gets, LOCAL at the ciphertext the upload kept.
+                repo.transaction {
+                    outbox.enqueue(envelope, chatId)
+                    repo.upsertAttachment(
+                        AttachmentRecord(att.id, id, attachmentKind(kind), att.key, att.dg, att.sz, att.csz, AttachmentState.LOCAL, att.csz, Uploader.blobFile(blobDir, att).path),
+                    )
+                }
                 bumpActivity(chatId, at)
                 reload()
                 requestFlush()
@@ -359,6 +367,12 @@ class LiveChatStore(
                 inFlight.update { it - 1 }
             }
         }
+    }
+
+    private fun attachmentKind(kind: MediaKind) = when (kind) {
+        MediaKind.Photo, MediaKind.Video -> "photo"
+        MediaKind.Voice -> "voice"
+        MediaKind.File -> "file"
     }
 
     override fun download(messageId: String, chatId: String) {

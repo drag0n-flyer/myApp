@@ -104,7 +104,7 @@ fun MessageBubble(
             Surface(shape = shape, color = fill, border = outline, modifier = Modifier.widthIn(max = 300.dp).then(press)) {
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     if (message.replyToId != null) ReplyQuote(replyTo, replyAuthor, onQuoteClick)
-                    Body(message, isOwn, autoDownloads, onDownload, media)
+                    Body(message, autoDownloads, onDownload, media)
                     if (message.reactions.isNotEmpty()) Text(message.reactions.joinToString(" "))
                     Row(Modifier.align(Alignment.End), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         if (message.editedAt != null) Text(stringResource(R.string.edited), style = MaterialTheme.typography.labelSmall)
@@ -196,14 +196,13 @@ private fun LinkedText(text: String) {
 }
 
 @Composable
-private fun Body(message: Message, isOwn: Boolean, autoDownloads: (MediaKind) -> Boolean, onDownload: () -> Unit, media: MediaHost?) {
+private fun Body(message: Message, autoDownloads: (MediaKind) -> Boolean, onDownload: () -> Unit, media: MediaHost?) {
     when (val c = message.content) {
         is MessageContent.Text -> LinkedText(c.text)
-        is MessageContent.Voice -> VoiceBubble(message, c.duration, isOwn, media, onDownload)
+        is MessageContent.Voice -> VoiceBubble(message, c.duration, media, onDownload)
         is MessageContent.Photo -> PhotoBubble(
             message = message,
             title = stringResource(R.string.photo_with_size, dataSizeText(DataFormat.size(c.bytes))),
-            isOwn = isOwn,
             wait = !autoDownloads(MediaKind.Photo),
             host = media,
             onDownload = onDownload,
@@ -213,7 +212,6 @@ private fun Body(message: Message, isOwn: Boolean, autoDownloads: (MediaKind) ->
             message = message,
             name = SafeFileName.of(c.name, "file"),
             title = stringResource(R.string.file_with_size, SafeFileName.of(c.name, "file"), dataSizeText(DataFormat.size(c.bytes))),
-            isOwn = isOwn,
             wait = !autoDownloads(MediaKind.File),
             host = media,
             onDownload = onDownload,
