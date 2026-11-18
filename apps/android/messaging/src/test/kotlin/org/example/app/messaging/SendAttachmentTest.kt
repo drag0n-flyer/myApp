@@ -70,12 +70,16 @@ class SendAttachmentTest {
         @Volatile var width = 0
         @Volatile var height = 0
         @Volatile var thumbnail: ByteArray? = null
+        /** Runs right after a prepared copy is written, to hold two sends at the same point. */
+        @Volatile var afterCopy: () -> Unit = {}
         val preparer = MediaPreparer { path, _ ->
             prepares.incrementAndGet()
             if (prepareFails) null else {
                 preparedDir.mkdirs()
-                val copy = File(preparedDir, File(path).name + ".prepared")
+                // A unique name, like `PhotoPrep` (`createTempFile`): two sends in flight never share one prepared file.
+                val copy = File.createTempFile("prepared", ".bin", preparedDir)
                 File(path).copyTo(copy, overwrite = true)
+                afterCopy()
                 PreparedMedia(copy, width, height, thumbnail, duration, name = File(path).name)
             }
         }
@@ -283,6 +287,21 @@ class SendAttachmentTest {
         s.store.settle()
         assertTrue(sneaky.exists())
         sneaky.delete()
+    }
+
+    @Test
+    fun twoSendsPreparedAtTheSameMomentEachKeepTheirOwnCopyAndLeaveNothingBehind() = runBlocking<Unit> {
+        val f = fixture()
+        val s = session(f)
+        val both = java.util.concurrent.CyclicBarrier(2)
+        f.afterCopy = { both.await(10, java.util.concurrent.TimeUnit.SECONDS) }
+        s.store.sendAttachment(source(tmp("one")).path, MediaKind.File, "acc-ana")
+        s.store.sendAttachment(source(tmp("two")).path, MediaKind.File, "acc-ana")
+        s.store.settle()
+        assertEquals(2, f.prepares.get())
+        assertEquals(emptyList(), f.d.repo.messages("acc-ana", null, 50).filter { it.status != "sent" && it.status != "sending" })
+        assertEquals(emptyList(), f.preparedDir.listFiles()!!.toList())
+        assertEquals(emptyList(), f.pendingRoot.list().orEmpty().toList())
     }
 
     @Test
