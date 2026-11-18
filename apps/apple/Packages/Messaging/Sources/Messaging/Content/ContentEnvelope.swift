@@ -228,7 +228,7 @@ public struct ContentEnvelope: Codable, Sendable, Equatable {
             case "group":
                 guard let name, GroupNameRule.clean(name) == name, let ver = ver?.value, ver >= 1 else { return nil }
                 guard let photo else { return .group(name: name, photo: nil, ver: ver) }
-                guard let text = photo.value, let image = LinkPreview.base64(text), LinkPreview.isJPEG(image, max: ContentEnvelope.maxProfilePhoto) else { return nil }
+                guard let text = photo.value, let image = LinkPreview.base64(text), ProfilePhotoRule.isAcceptable(image) else { return nil }
                 return .group(name: name, photo: image, ver: ver)
             default: return nil
             }

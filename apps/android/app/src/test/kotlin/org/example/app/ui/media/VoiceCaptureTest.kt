@@ -541,7 +541,13 @@ class VoiceCaptureTest {
         recorder.stopResult = StopResult.Success(Recording(file, 6.0))
         val job = kotlinx.coroutines.Job()
         val madeIn = VoiceKeep.currentGeneration()
-        val first = VoiceCapture(screenScope(job), recorder, { notes += it }, { notices += it }, StandardTestDispatcher(testScheduler), keep = { VoiceKeep.put("acct/chat", it, madeIn) })
+        // The keep runs on a real thread; the test waits for it so the next screen's request cannot overtake it
+        // (take() holds one waiter per key, so a late put would be handed to the next screen instead of the leaving one).
+        val kept = java.util.concurrent.CountDownLatch(1)
+        val first = VoiceCapture(screenScope(job), recorder, { notes += it }, { notices += it }, StandardTestDispatcher(testScheduler), keep = {
+            VoiceKeep.put("acct/chat", it, madeIn)
+            kept.countDown()
+        })
         val waiter: (CaptureState.Preview) -> Unit = { first.adopt(it) }
         VoiceKeep.take("acct/chat", waiter)
         first.activate()
@@ -550,10 +556,11 @@ class VoiceCaptureTest {
         first.release()          // onDispose
         job.cancel()             // Compose cancels the screen's scope right after
         runCurrent()
+        assertTrue(kept.await(5, java.util.concurrent.TimeUnit.SECONDS), "the stopped recording was kept")
         val got = java.util.concurrent.LinkedBlockingQueue<CaptureState.Preview>()
         // The next screen of the same chat asks; the stopped recording is kept (or arrives a moment later).
         VoiceKeep.take("acct/chat") { got.add(it) }
-        return got.poll(1, java.util.concurrent.TimeUnit.SECONDS)
+        return got.poll(if (forget) 5_000L else 200L, java.util.concurrent.TimeUnit.MILLISECONDS)
     }
 
     @Test fun aLeavingScreenDoesNotReceiveItsOwnKeptPreview() = runTest {
