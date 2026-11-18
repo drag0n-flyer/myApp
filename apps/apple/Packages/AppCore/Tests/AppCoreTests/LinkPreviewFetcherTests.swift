@@ -267,6 +267,13 @@ private let jpeg = Data([0xFF, 0xD8, 0xFF, 0xE0, 0x01, 0x02])
         #expect(await SystemPreviewResolver().addresses(for: "definitely-not-a-real-name.invalid").isEmpty)
     }
 
+    @Test func theDeclaredPixelCountIsCapped() {
+        #expect(PreviewImageBudget.isWithinPixelLimit(width: 2_000, height: 2_000))
+        #expect(!PreviewImageBudget.isWithinPixelLimit(width: 2_001, height: 2_000))
+        #expect(!PreviewImageBudget.isWithinPixelLimit(width: 0, height: 10))
+        #expect(!PreviewImageBudget.isWithinPixelLimit(width: Int.max, height: 2))
+    }
+
     @Test func theImageBudgetPicksTheBiggestThatFits() {
         var tried: [[Double]] = []
         let jpegStart = Data([0xFF, 0xD8])
@@ -340,6 +347,19 @@ private let jpeg = Data([0xFF, 0xD8, 0xFF, 0xE0, 0x01, 0x02])
         // A different link is a new question.
         #expect(draft.textChanged("https://example.org/b", enabled: true) != nil)
         // The draft ends (sent): the same link may be previewed again in the next one.
+        draft.reset()
+        #expect(draft.textChanged("https://example.com/a", enabled: true) == link)
+    }
+
+    @Test func aLinkIsFetchedOnlyOncePerDraftEvenWhenItFailed() {
+        var draft = LinkPreviewDraft()
+        #expect(draft.textChanged("https://example.com/a", enabled: true) == link)
+        draft.fetched(nil, for: link)
+        #expect(draft.textChanged("https://example.com/a x", enabled: true) == nil)
+        #expect(draft.textChanged("https://example.com/a xy", enabled: true) == nil)
+        // Another link, then back: still once.
+        #expect(draft.textChanged("https://example.org/b", enabled: true) != nil)
+        #expect(draft.textChanged("https://example.com/a", enabled: true) == nil)
         draft.reset()
         #expect(draft.textChanged("https://example.com/a", enabled: true) == link)
     }

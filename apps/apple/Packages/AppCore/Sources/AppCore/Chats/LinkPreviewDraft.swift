@@ -11,6 +11,8 @@ public struct LinkPreviewDraft: Equatable, Sendable {
     /// The link being fetched now.
     public private(set) var loading: URL?
     private var removed: Set<String> = []
+    /// Links already asked about in this draft, so one link is fetched once, however the text changes.
+    private var attempted: Set<String> = []
 
     public init() {}
 
@@ -21,13 +23,15 @@ public struct LinkPreviewDraft: Equatable, Sendable {
         guard let link = LinkPreviewRule.firstLink(text) else {
             clearCurrent()
             // An empty field ends the draft, so a removed preview may come back for the next one.
-            if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { removed = [] }
+            if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { removed = []; attempted = [] }
             return nil
         }
         let key = link.absoluteString
         if removed.contains(key) { clearCurrent(); return nil }
         if card?.url == key || loading?.absoluteString == key { return nil }
         card = nil
+        if attempted.contains(key) { loading = nil; return nil }
+        attempted.insert(key)
         loading = link
         return link
     }
@@ -49,6 +53,7 @@ public struct LinkPreviewDraft: Equatable, Sendable {
     public mutating func reset() {
         clearCurrent()
         removed = []
+        attempted = []
     }
 
     /// The card to send with `text`: only when it belongs to the first link of exactly this text.

@@ -341,7 +341,7 @@ public final class LiveChatStore: ChatStore {
         guard case .text(let raw) = content else { return }
         let text = String(raw.prefix(Self.maxTextLength))
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        let preview = card.map { LinkPreview(url: $0.url, title: $0.title, desc: $0.desc, img: $0.image) }.flatMap { $0.wire.valid(in: text) ? $0 : nil }
+        let preview = card.map { LinkPreview(url: $0.url, title: $0.title, desc: $0.desc, img: $0.image) }.flatMap { $0.wire.valid(in: text) ? $0.wire.preview : nil }
         enqueue(.text(text, replyTo: replyTo), chatID: chatID, preview: preview)
     }
 
@@ -695,7 +695,10 @@ public final class LiveChatStore: ChatStore {
                                    at: deps.now(), caption: result.envelope.caption, linkPreview: result.envelope.preview?.json)) == true
         else { return }
         refresh()
-        sendControl(.edit(target: messageID, text: result.wireText), chatID: chatID)
+        // An attachment still uploading is not on the server: its commit reads the caption from the row, so no control.
+        if result.envelope.body.attachment.map({ AttachmentID.isValid($0.id) }) ?? true {
+            sendControl(.edit(target: messageID, text: result.wireText), chatID: chatID)
+        }
     }
 
     public func delete(messageID: String, in chatID: String) {

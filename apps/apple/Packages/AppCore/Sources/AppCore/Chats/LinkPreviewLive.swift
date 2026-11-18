@@ -12,6 +12,12 @@ import Glibc
 /// passed in, so the search itself is plain and tested.
 public enum PreviewImageBudget {
     public static let maxBytes = 8_192
+    /// A picture declaring more pixels than this is refused before it is decoded.
+    public static let maxPixels = 4_000_000
+
+    public static func isWithinPixelLimit(width: Int, height: Int) -> Bool {
+        width > 0 && height > 0 && width <= maxPixels && height <= maxPixels && width * height <= maxPixels
+    }
     /// Longest side in points, biggest first.
     public static let sides = [160, 128, 96, 72, 56, 40]
     public static let qualities: [Double] = [0.7, 0.5, 0.35, 0.2]

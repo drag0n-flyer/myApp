@@ -24,13 +24,13 @@ final class MessageActionsTests: XCTestCase {
     func testOnlyACaptionedOwnPhotoOrFileCanBeEdited() {
         var photo = message(.photo(bytes: 10))
         photo.caption = "hi"
-        XCTAssertEqual(MessageActions.available(for: photo, isMine: true), [.reply, .react, .edit, .delete])
-        XCTAssertEqual(MessageActions.available(for: photo, isMine: false), [.reply, .react])
+        XCTAssertEqual(MessageActions.available(for: photo, isMine: true), [.reply, .react, .copy, .edit, .delete])
+        XCTAssertEqual(MessageActions.available(for: photo, isMine: false), [.reply, .react, .copy])
         var file = message(.file(name: "a.pdf", bytes: 10))
         file.caption = "hi"
         XCTAssertTrue(MessageActions.available(for: file, isMine: true).contains(.edit))
         photo.status = .failed
-        XCTAssertEqual(MessageActions.available(for: photo, isMine: true), [.delete])
+        XCTAssertEqual(MessageActions.available(for: photo, isMine: true), [.copy, .delete], "a failed upload keeps its caption")
     }
 
     func testNothingForDeletedSystemCallUnsupported() {

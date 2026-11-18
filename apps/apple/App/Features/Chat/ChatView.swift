@@ -152,6 +152,8 @@ struct ChatView: View {
         .onChange(of: model.activeCall?.isEnded == false) { _, inCall in voice.callStateChanged(inCall: inCall) }
         .onDisappear { voice.stop(); preview.close(); model.flushDrafts(); model.chatDisappeared(chatID) }
         .onChange(of: scenePhase) { _, phase in if phase != .active { voice.stop(); model.flushDrafts() } }
+        // Nothing is fetched while the app is not in front (so never behind the lock cover).
+        .onChange(of: scenePhase) { _, phase in if phase != .active { previews.reset() } }
         .mediaPreview(preview)
         .mediaViewer($viewer)
         .onChange(of: searchRequest) { _, _ in openSearchIfRequested() }
@@ -474,7 +476,7 @@ struct ChatView: View {
         case .react:
             break
         case .copy:
-            if case .text(let text) = current.content { copy(text) }
+            if case .text(let text) = current.content { copy(text) } else if let caption = current.caption { copy(caption) }
         case .forward:
             if case .text(let text) = current.content { forwardItem = ForwardItem(text: text) }
         case .edit:

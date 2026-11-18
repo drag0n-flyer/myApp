@@ -494,6 +494,36 @@ private struct Rig {
         #expect(peer.caption == nil)
     }
 
+    @Test func aCaptionEditedWhileTheUploadRunsIsNotLost() async throws {
+        let rig = try await Rig.make()
+        rig.gate.hold()
+        rig.ana.store.sendMedia([OutgoingMedia(url: try rig.file(named: "a.bin", size: 2_000), kind: .file)], caption: "before", in: "acc-bob")
+        for _ in 0..<500 where (rig.ana.store.chat(id: "acc-bob")?.messages.count ?? 0) < 1 { try await Task.sleep(for: .milliseconds(10)) }
+        await rig.gate.waitForUploads(1)
+        let id = try #require(rig.last?.id)
+        rig.ana.store.edit(messageID: id, in: "acc-bob", text: "after")
+        #expect(rig.last?.caption == "after")
+        rig.gate.release()
+        await rig.ana.store.settle()
+        #expect(rig.last?.caption == "after" && rig.last?.status == .sent)
+        let peer = try #require(await rig.bobReceives())
+        #expect(peer.caption == "after", "the receiver gets the edited caption: \(String(describing: peer.caption))")
+    }
+
+    @Test func aFailedUploadAndItsRetryKeepTheCaption() async throws {
+        let rig = try await Rig.make()
+        rig.gate.failNext()
+        rig.ana.store.sendMedia([OutgoingMedia(url: try rig.file(named: "a.bin", size: 2_000), kind: .file)], caption: "keep me", in: "acc-bob")
+        for _ in 0..<500 where rig.last?.status != .failed { try await Task.sleep(for: .milliseconds(10)) }
+        await rig.ana.store.settle()
+        #expect(rig.last?.status == .failed && rig.last?.caption == "keep me")
+        let id = try #require(rig.last?.id)
+        rig.ana.store.retrySend(messageID: id)
+        await rig.ana.store.settle()
+        #expect(rig.last?.status == .sent && rig.last?.caption == "keep me")
+        #expect(try #require(await rig.bobReceives()).caption == "keep me")
+    }
+
     @Test func aTextWithAPreviewSendsItAndTheReceiverShowsIt() async throws {
         let rig = try await Rig.make()
         let card = LinkPreviewCard(url: "https://example.com/a", title: "Example", desc: "About", image: Data([0xFF, 0xD8, 0x01]))

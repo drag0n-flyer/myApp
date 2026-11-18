@@ -17,11 +17,13 @@ public enum MessageActions {
         case .photo, .file: isText = false; canEdit = message.caption != nil
         case .voice: isText = false
         }
+        // A caption can be copied like a text.
+        let hasCaption = message.caption != nil
         if isMine, message.status == .failed {
-            return isText ? [.copy, .delete] : [.delete]
+            return isText || hasCaption ? [.copy, .delete] : [.delete]
         }
         var actions: [MessageAction] = [.reply, .react]
-        if isText { actions += [.copy, .forward] }
+        if isText { actions += [.copy, .forward] } else if hasCaption { actions.append(.copy) }
         if isMine, canEdit { actions.append(.edit) }
         if isMine { actions.append(.delete) }
         return actions

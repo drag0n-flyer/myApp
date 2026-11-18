@@ -11,7 +11,7 @@ final class LinkPreviewComposerModel {
     @ObservationIgnored private var task: Task<Void, Never>?
 
     /// A person pauses this long after the link before the website is contacted, so half-typed addresses are not.
-    static let pause: Duration = .seconds(1)
+    static let pause: Duration = .milliseconds(800)
 
     func draftChanged(_ text: String, enabled: Bool, fetcher: LinkPreviewFetcher) {
         if let url = draft.textChanged(text, enabled: enabled) {
@@ -156,6 +156,10 @@ private struct SampleLinkPreviewResolver: PreviewResolver {
 enum PreviewImageShrinker {
     static func shrink(_ data: Data) -> Data? {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil), CGImageSourceGetCount(source) >= 1 else { return nil }
+        // The declared size is read first; a picture over 4,000,000 pixels is never decoded.
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int, let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              PreviewImageBudget.isWithinPixelLimit(width: width, height: height) else { return nil }
         return PreviewImageBudget.fit { side, quality in
             let options: [CFString: Any] = [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
