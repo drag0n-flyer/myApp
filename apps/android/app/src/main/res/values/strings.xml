@@ -132,6 +132,13 @@
     <string name="sending_paused_hint">Sending is paused. Open chat info for details.</string>
 
     <!-- Chat info -->
+    <string name="info_disappearing">Disappearing messages</string>
+    <string name="info_disappearing_explainer">New messages disappear from this chat after the time you choose. People can still copy or photograph them.</string>
+    <string name="timer_off">Off</string>
+    <string name="timer_day">1 day</string>
+    <string name="timer_week">7 days</string>
+    <string name="timer_quarter">90 days</string>
+    <string name="timer_glyph">Disappearing message</string>
     <string name="info_title">Info</string>
     <string name="info_audio">Audio</string>
     <string name="info_video">Video</string>
