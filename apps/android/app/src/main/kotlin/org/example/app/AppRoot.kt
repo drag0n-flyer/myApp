@@ -7,7 +7,19 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Text
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
+import org.example.app.core.layout.PaneLayout
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,6 +29,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
@@ -29,6 +42,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.compose.foundation.layout.Box
@@ -56,6 +70,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.example.app.ui.nav.MainTab
 import org.example.app.ui.nav.MainTabs
+import org.example.app.ui.nav.PaneChats
 import org.example.app.ui.nav.TabPlaceholder
 import org.example.app.ui.onboarding.LinkApprovalFlow
 import org.example.app.ui.onboarding.LinkApprovalViewModel
@@ -75,6 +90,9 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+
+/** The open chat saved with the window: see `carried` in [AppRoot]. */
+private class CarriedChat(var id: String? = null, var info: Boolean = false)
 
 private const val MAIN = "main"
 /** `highlight` is a message ID to scroll to and flash (a search hit); the chat screen reads it as `highlightMessageId`. */
@@ -158,12 +176,78 @@ fun AppRoot(
             return@AppTheme
         }
         val nav = rememberNavController()
+        // From 840 dp the list sits beside the open chat. The open chat, its info page and the message to flash are
+        // kept across rotation; below 840 dp nothing of this shows and a chat is a screen of its own.
+        val wide = PaneLayout.forWidth(LocalConfiguration.current.screenWidthDp) == PaneLayout.TwoPane
+        var paneChat by rememberSaveable { mutableStateOf<String?>(null) }
+        var paneInfo by rememberSaveable { mutableStateOf(false) }
+        var paneHighlight by rememberSaveable { mutableStateOf<String?>(null) }
+        val openChat = rememberUpdatedState<(String, String?) -> Unit> { id, highlight ->
+            if (wide) {
+                paneChat = id; paneInfo = false; paneHighlight = highlight
+                // Any full-screen page over the main screen (new chat, search, ...) closes: the chat opens beside the list.
+                if (nav.currentDestination?.route != MAIN) nav.popBackStack(MAIN, inclusive = false)
+            } else {
+                nav.navigate("chat/${Uri.encode(id)}" + if (highlight != null) "?highlight=${Uri.encode(highlight)}" else "")
+            }
+        }
         val idArg = listOf(navArgument("id") { type = NavType.StringType })
         val chatArgs = idArg + navArgument("highlight") { type = NavType.StringType; nullable = true; defaultValue = null }
         // While the app lock is on and locked, only the cover (and a ringing or active call) is composed.
         val lockSetting by graph.settingsStore.settings.collectAsState()
         val lockState by graph.appLock.locked.collectAsState()
         val locked = lockSetting.appLock && lockState
+        // The pane's chat view models: one chat's at a time, cleared when another chat opens or the pane closes.
+        val pane = viewModel<PaneChats>(key = PaneChats.key(sessionEnds))
+        LaunchedEffect(paneChat, wide) { if (!wide || paneChat == null) pane.select(null) }
+        // The chat that was open when the window was last saved, read from the live state at save time. The nav
+        // back stack alone does not always come back (a rotation while the lock cover is up loses it), so this is
+        // applied once after the unlock and only when the stack came back without the chat.
+        val carried = rememberSaveable(
+            saver = Saver<CarriedChat, List<Any?>>(
+                save = { old ->
+                    val top = nav.currentBackStackEntry
+                    val onStack = top?.takeIf { it.destination.route == CHAT || it.destination.route == INFO }
+                    when {
+                        wide && paneChat != null -> listOf(paneChat, paneInfo)
+                        onStack != null -> listOf(onStack.arguments?.getString("id"), onStack.destination.route == INFO)
+                        else -> listOf(old.id, old.info) // not applied yet (still locked): keep it for the next recreation
+                    }
+                },
+                restore = { CarriedChat(it[0] as String?, it[1] as Boolean) },
+            ),
+        ) { CarriedChat() }
+        // A rotation or resize across the threshold carries the open chat (and its info page) into the other layout.
+        // The destination is a key too: a restored back stack can arrive after the first composition, and a wide window
+        // never keeps a chat as a screen of its own.
+        val currentRoute = nav.currentBackStackEntryAsState().value?.destination?.route
+        LaunchedEffect(wide, locked, currentRoute) {
+            // Locked, no NavHost is composed (it has no graph yet): carry the chat over once the app is unlocked.
+            if (locked) return@LaunchedEffect
+            if (carried.id != null) {
+                val id = carried.id
+                val info = carried.info
+                carried.id = null
+                val hasChatOnStack = nav.currentBackStackEntry?.destination?.route.let { it == CHAT || it == INFO }
+                if (paneChat == null && !hasChatOnStack && graph.chatStore.chat(id!!) != null) { paneChat = id; paneInfo = info; paneHighlight = null }
+            }
+            val route = nav.currentBackStackEntry?.destination?.route
+            if (wide) {
+                if (route == CHAT || route == INFO) {
+                    paneChat = nav.currentBackStackEntry?.arguments?.getString("id")
+                    paneInfo = route == INFO
+                    paneHighlight = null
+                    nav.popBackStack(MAIN, inclusive = false)
+                }
+            } else {
+                paneChat?.let { id ->
+                    paneChat = null
+                    nav.navigate("chat/${Uri.encode(id)}")
+                    if (paneInfo) nav.navigate("chatinfo/${Uri.encode(id)}")
+                }
+                paneInfo = false
+            }
+        }
         // A message notification was tapped (also while the app was running): open that chat. Locked, it is held
         // until the unlock, then followed once (the key changes, and the request is cleared after it is followed).
         val requestedChat by graph.requestedChat.collectAsStateWithLifecycle()
@@ -171,7 +255,7 @@ fun AppRoot(
             if (locked) return@LaunchedEffect
             requestedChat?.let { id ->
                 // Only a chat this account has: another app could send any ID.
-                graph.openableChat(id)?.let { nav.navigate("chat/${Uri.encode(it)}") }
+                graph.openableChat(id)?.let { openChat.value(it, null) }
                 graph.requestedChat.value = null
             }
         }
@@ -203,15 +287,17 @@ fun AppRoot(
                 LinkApprovalFlow(vm, onDone = { nav.popBackStack() })
             }
             composable(MAIN) {
-                MainTabs(tabs = if (graph.callsAvailable) MainTab.entries else MainTab.entries - MainTab.Calls) { tab ->
+                val panes: @Composable (Modifier) -> Unit = { paneModifier ->
+                MainTabs(modifier = paneModifier, tabs = if (graph.callsAvailable) MainTab.entries else MainTab.entries - MainTab.Calls) { tab ->
                     if (tab == MainTab.Chats) {
                         val vm = viewModel<ChatListViewModel>(
                             factory = factory { ChatListViewModel(graph.chatStore, graph.serverPolicy, graph.settingsStore.settings, graph.network, graph.connectionStatus) },
                         )
                         ChatListScreen(
-                            vm, onOpenChat = { nav.navigate("chat/$it") }, onOpenRequests = { nav.navigate(REQUESTS) },
+                            vm, onOpenChat = { openChat.value(it, null) }, onOpenRequests = { nav.navigate(REQUESTS) },
                             onNewChat = { nav.navigate(NEW_CHAT) }, onSearch = { nav.navigate(SEARCH) },
                             onOpenArchive = { nav.navigate(ARCHIVE) },
+                            selectedChatId = if (wide) paneChat else null,
                         )
                     } else if (tab == MainTab.Calls) {
                         val vm = viewModel<CallHistoryViewModel>(factory = factory { CallHistoryViewModel(graph.chatStore) })
@@ -220,7 +306,7 @@ fun AppRoot(
                         val context = LocalContext.current
                         ContactsScreen(
                             graph.chatStore, graph.inviteUrl,
-                            onOpenChat = { nav.navigate("chat/$it") },
+                            onOpenChat = { openChat.value(it, null) },
                             onAddContact = { nav.navigate(ADD_CONTACT) },
                             onInvite = { shareInvite(context, it, graph.appLock::expectReturn) },
                         )
@@ -232,15 +318,67 @@ fun AppRoot(
                         TabPlaceholder(tab)
                     }
                 }
+                }
+                if (!wide) panes(Modifier) else {
+                    // Back closes the info page, then the chat, before it leaves the app.
+                    BackHandler(enabled = paneChat != null) { if (paneInfo) paneInfo = false else paneChat = null }
+                    Row(Modifier.fillMaxSize()) {
+                        panes(Modifier.width(PaneLayout.LIST_PANE_DP.dp))
+                        VerticalDivider()
+                        Box(Modifier.weight(1f).fillMaxSize()) {
+                            // Read so the pane follows the store: a chat that no longer exists (blocked, removed, a
+                            // restored id from before) shows the empty state.
+                            graph.chatStore.chats.collectAsState().value
+                            graph.chatStore.requests.collectAsState().value
+                            val shown = paneChat
+                            val id = shown?.takeIf { graph.chatStore.chat(it) != null }
+                            // Judged on what this composition saw: a chat opened a moment later is not this one's to drop.
+                            LaunchedEffect(shown, id) { if (shown != null && id == null && paneChat == shown) { paneChat = null; paneInfo = false } }
+                            if (id == null) {
+                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(stringResource(R.string.select_a_chat)) }
+                            } else key(id) {
+                                if (paneInfo) {
+                                    ChatInfoScreen(
+                                        graph.chatStore, id,
+                                        onBack = { paneInfo = false },
+                                        onCall = if (graph.callsAvailable) { video -> callVm.start(id, video) } else null,
+                                        // Search goes back to the chat through ChatSearchRequests, which the chat takes.
+                                        onSearch = {},
+                                        onBlocked = { paneInfo = false; paneChat = null },
+                                    )
+                                } else {
+                                    pane.select(id)
+                                    val vm = viewModel<ChatViewModel>(
+                                        viewModelStoreOwner = pane.owner,
+                                        key = "chat-$id",
+                                        factory = factory { ChatViewModel(graph.chatStore, id, graph.network) { graph.settingsStore.settings.value.autoDownload } },
+                                    )
+                                    ChatScreen(
+                                        vm, myId = graph.chatStore.me.id,
+                                        onBack = { paneChat = null },
+                                        onOpenInfo = { paneInfo = true },
+                                        onCall = if (graph.callsAvailable) { video -> callVm.start(id, video) } else null,
+                                        onAccept = { graph.chatStore.accept(id) },
+                                        onBlock = { contactId -> graph.chatStore.block(contactId); paneChat = null },
+                                        onReport = { graph.chatStore.report(id) },
+                                        onForward = { target -> if (target != id) openChat.value(target, null) },
+                                        highlightMessageId = paneHighlight?.takeIf { it.isNotBlank() },
+                                        opener = graph.attachmentOpener,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
             composable(ARCHIVE) {
                 val vm = viewModel<ChatListViewModel>(
                     factory = factory { ChatListViewModel(graph.chatStore, graph.serverPolicy, graph.settingsStore.settings, graph.network, graph.connectionStatus) },
                 )
-                ArchiveScreen(vm, onOpenChat = { nav.navigate("chat/$it") }, onBack = { nav.popBackStack() })
+                ArchiveScreen(vm, onOpenChat = { openChat.value(it, null) }, onBack = { nav.popBackStack() })
             }
             composable(REQUESTS) {
-                MessageRequestsScreen(graph.chatStore, onOpenChat = { nav.navigate("chat/$it") }, onBack = { nav.popBackStack() })
+                MessageRequestsScreen(graph.chatStore, onOpenChat = { openChat.value(it, null) }, onBack = { nav.popBackStack() })
             }
             composable(ADD_CONTACT) {
                 AddContactScreen(graph.chatStore, onBack = { nav.popBackStack() }, onAdded = { nav.popBackStack() })
@@ -250,7 +388,8 @@ fun AppRoot(
                     graph.chatStore,
                     onChoose = { contactId ->
                         val chatId = graph.chatStore.ensureChat(contactId)
-                        nav.navigate("chat/${Uri.encode(chatId)}") { popUpTo(NEW_CHAT) { inclusive = true } }
+                        if (wide) openChat.value(chatId, null)
+                        else nav.navigate("chat/${Uri.encode(chatId)}") { popUpTo(NEW_CHAT) { inclusive = true } }
                     },
                     onAddContact = { nav.navigate(ADD_CONTACT) },
                     onBack = { nav.popBackStack() },
@@ -260,8 +399,8 @@ fun AppRoot(
                 val vm = viewModel<SearchViewModel>(factory = factory { SearchViewModel(graph.chatStore) })
                 SearchScreen(
                     vm,
-                    onOpenContact = { contactId -> nav.navigate("chat/${Uri.encode(graph.chatStore.ensureChat(contactId))}") },
-                    onOpenMessage = { chatId, messageId -> nav.navigate("chat/${Uri.encode(chatId)}?highlight=${Uri.encode(messageId)}") },
+                    onOpenContact = { contactId -> openChat.value(graph.chatStore.ensureChat(contactId), null) },
+                    onOpenMessage = { chatId, messageId -> openChat.value(chatId, messageId) },
                     onBack = { nav.popBackStack() },
                 )
             }
@@ -308,7 +447,7 @@ fun AppRoot(
                         nav.popBackStack(MAIN, inclusive = false)
                     },
                     onReport = { graph.chatStore.report(id) },
-                    onForward = { target -> if (target != id) nav.navigate("chat/${Uri.encode(target)}") },
+                    onForward = { target -> if (target != id) openChat.value(target, null) },
                     // Set by a search hit in the chat list; absent from routes that do not declare it.
                     highlightMessageId = entry.arguments?.getString("highlight")?.takeIf { it.isNotBlank() },
                     opener = graph.attachmentOpener,

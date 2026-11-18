@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -52,12 +54,10 @@ fun IncomingCallContent(name: String, onDecline: () -> Unit, onAnswer: () -> Uni
     CallTheme {
         CallBackHandler(onMinimise = null)
         Box(modifier.fillMaxSize().background(Backdrop).consumeTouches()) {
-            Column(
-                Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
+            val landscape = isLandscape()
+            val stage: @Composable (Modifier) -> Unit = { m ->
                 Column(
-                    Modifier.weight(1f).fillMaxWidth().padding(top = 64.dp),
+                    m.verticalScroll(rememberScrollState()).padding(top = if (landscape) 8.dp else 64.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
@@ -65,10 +65,25 @@ fun IncomingCallContent(name: String, onDecline: () -> Unit, onAnswer: () -> Uni
                     Text(name, style = MaterialTheme.typography.headlineMedium, color = Color.White, textAlign = TextAlign.Center)
                     Text(stringResource(R.string.call_incoming), style = MaterialTheme.typography.titleMedium, color = Color.White.copy(alpha = 0.7f))
                 }
-                Row(Modifier.fillMaxWidth().padding(bottom = 24.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    CallControl(stringResource(R.string.call_decline), R.drawable.ic_call_end, tint = EndRed, onClick = onDecline)
-                    CallControl(stringResource(R.string.call_answer), R.drawable.ic_call, tint = AnswerGreen, onClick = onAnswer)
+            }
+            val decline: @Composable () -> Unit = { CallControl(stringResource(R.string.call_decline), R.drawable.ic_call_end, tint = EndRed, onClick = onDecline) }
+            val answer: @Composable () -> Unit = { CallControl(stringResource(R.string.call_answer), R.drawable.ic_call, tint = AnswerGreen, onClick = onAnswer) }
+            if (landscape) {
+                // The two buttons sit along the short edge, beside the name.
+                Row(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(24.dp), verticalAlignment = Alignment.CenterVertically) {
+                    stage(Modifier.weight(1f).fillMaxWidth())
+                    Column(
+                        Modifier.verticalScroll(rememberScrollState()),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                    ) { decline(); answer() }
                 }
+            } else Column(
+                Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                stage(Modifier.weight(1f).fillMaxWidth())
+                Row(Modifier.fillMaxWidth().padding(bottom = 24.dp), horizontalArrangement = Arrangement.SpaceEvenly) { decline(); answer() }
             }
         }
     }
