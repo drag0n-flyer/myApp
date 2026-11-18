@@ -21,6 +21,7 @@ struct ChatListView: View {
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var path: [ChatRoute] = []
     @State private var showingNewChat = false
+    @State private var linkFromNewChat: URL?
 
     var body: some View {
         // Switching layouts rebuilds the views below, so `path` is the only state carried over (the chat's scroll
@@ -28,8 +29,10 @@ struct ChatListView: View {
         Group {
             if sizeClass == .regular { splitLayout } else { stackLayout }
         }
-        .sheet(isPresented: $showingNewChat) {
-            NewChatView(model: model) { contactID in
+        .sheet(isPresented: $showingNewChat, onDismiss: {
+            if let url = linkFromNewChat { linkFromNewChat = nil; model.handle(url: url) }
+        }) {
+            NewChatView(model: model, onLink: { url in linkFromNewChat = url; showingNewChat = false }) { contactID in
                 showingNewChat = false
                 path = [.chat(id: model.openChat(with: contactID))]
             }
@@ -140,7 +143,7 @@ struct SearchView: View {
                 let chats = model.searchText.isEmpty ? [] : model.chats(in: .all, matching: model.searchText)
                 ForEach(chats) { chat in
                     Button { path.append(.chat(id: chat.id)) } label: {
-                        ChatRowView(chat: chat, name: model.contact(id: chat.contactID)?.displayName ?? "")
+                        ChatRowView(chat: chat, name: model.contact(id: chat.contactID)?.displayName ?? "", isTyping: model.isTyping(chatID: chat.id))
                     }
                     .buttonStyle(.plain)
                 }
@@ -246,7 +249,7 @@ struct ChatListContent: View {
 
             ForEach(model.chats(in: model.selectedFolder, matching: model.chatListQuery)) { chat in
                 Button { open(.chat(id: chat.id)) } label: {
-                    ChatRowView(chat: chat, name: model.contact(id: chat.contactID)?.displayName ?? "")
+                    ChatRowView(chat: chat, name: model.contact(id: chat.contactID)?.displayName ?? "", isTyping: model.isTyping(chatID: chat.id))
                 }
                 .buttonStyle(.plain)
                 .modifier(ChatRowActions(chat: chat, model: model, inArchive: chat.archived, pinLimit: { showingPinLimit = true }))

@@ -7,6 +7,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import org.example.app.contracts.DeliveryApi
+import org.example.app.contracts.Encrypted
 import org.example.app.contracts.GroupId
 import org.example.app.contracts.MlsEngine
 import org.example.app.contracts.ServerException
@@ -28,6 +29,9 @@ import org.example.app.messaging.sync.EscrowSealer
 import org.example.app.messaging.sync.LocalDevice
 import org.example.app.messaging.sync.ModePin
 import org.example.app.messaging.sync.SyncException
+
+/** The ciphertext an earlier attempt made for a queued envelope, the conversation it was made for and its epoch. */
+class StoredCiphertext(val conversationId: String, val epoch: Long, val ciphertext: ByteArray)
 
 /** Why a send did not happen. */
 sealed class OutboxError(message: String) : Exception(message) {
@@ -51,7 +55,7 @@ interface ControlSender {
 
 /**
  * The send queue (Design 3, 6, 18): one outbox row per stored message, retried with backoff. Port of the iPhone
- * `Outbox`. Every attempt encrypts afresh and posts with the envelope ID as `clientMsgId`, so a retry (also after a
+ * `Outbox`. A queued message is encrypted once per epoch (the ciphertext is kept on its outbox row) and every attempt posts with the envelope ID as `clientMsgId`, so a retry (also after a
  * kill between the server's answer and the local write) is idempotent on the server. Never logs content, only IDs.
  *
  * Crash points: the message row and the outbox row are one transaction, and the outbox row is removed only after the
@@ -205,7 +209,8 @@ class Outbox(
             repo.completeSend(item.messageId, "failed")
             return true
         }
-        return when (attempt(envelope, item.chatId)) {
+        val stored = if (item.ciphertext != null && item.cipherEpoch != null && item.cipherConversation != null) StoredCiphertext(item.cipherConversation, item.cipherEpoch, item.ciphertext) else null
+        return when (attempt(envelope, item.chatId, item.messageId, stored)) {
             Outcome.Sent -> true.also { repo.completeSend(item.messageId, "sent") }
             Outcome.Failed -> true.also { repo.completeSend(item.messageId, "failed") }
             Outcome.Waiting -> false
@@ -238,8 +243,8 @@ class Outbox(
 
     private enum class Outcome { Sent, Failed, Waiting, Retry }
 
-    private suspend fun attempt(envelope: ContentEnvelope, chatId: String): Outcome = try {
-        send(envelope, conversations.preferredConversation(chatId))
+    private suspend fun attempt(envelope: ContentEnvelope, chatId: String, rowId: String, stored: StoredCiphertext?): Outcome = try {
+        send(envelope, conversations.preferredConversation(chatId), stored) { conversationId, e -> repo.storeCiphertext(rowId, conversationId, e.epoch, e.ciphertext) }
         Outcome.Sent
     } catch (e: OutboxError) {
         when (e) {
@@ -273,12 +278,22 @@ class Outbox(
      * Encrypts, adds the escrow copy when Design 18 says so, and posts. Throws [OutboxError]. The envelope ID is the
      * `clientMsgId`, so calling it again for the same envelope is idempotent on the server.
      *
+     * Every encrypt advances this device's MLS generation and a receiver skips at most 1,024 of them, so a ciphertext
+     * is made once per conversation and epoch: [stored] (what an earlier attempt made for this same envelope) is posted again while
+     * the same conversation is chosen and the group is still in the epoch it was made in (the epoch number alone cannot
+     * tell two conversations with one peer apart); otherwise it is dropped and the envelope is
+     * encrypted afresh. [onEncrypted] is called with each new ciphertext, under the lock and before the post, to keep
+     * it for the next attempt. A caller without a row (`sendControl`) passes neither.
+     *
      * A `stale_epoch` reads the inbox and tries once more. `escrow_required` and `escrow_forbidden` refresh the server's
      * mode with `GET /v1/conversations/{id}`, decide again by the table and try once more; that cannot make an
      * `e2ee`-pinned conversation send escrow.
      */
-    suspend fun send(envelope: ContentEnvelope, start: ConversationRecord) {
+    suspend fun send(
+        envelope: ContentEnvelope, start: ConversationRecord, stored: StoredCiphertext? = null, onEncrypted: (conversationId: String, Encrypted) -> Unit = { _, _ -> },
+    ) {
         var conversation = start
+        var reusable = stored
         var staleRetried = false
         var modeRetried = false
         val plaintext = try {
@@ -303,7 +318,13 @@ class Outbox(
 
             val group = GroupId(conversation.groupId)
             val encrypted = try {
-                withContext(NonCancellable) { lock.withLock { mls.encrypt(plaintext, group) } }
+                withContext(NonCancellable) {
+                    lock.withLock {
+                        // The epoch is read under the same lock as the encrypt, so a commit cannot slip in between.
+                        reusable?.takeIf { it.conversationId == conversation.serverId && it.epoch == mls.epoch(group) }?.let { Encrypted(it.ciphertext, it.epoch) }
+                            ?: mls.encrypt(plaintext, group).also { reusable = StoredCiphertext(conversation.serverId, it.epoch, it.ciphertext); onEncrypted(conversation.serverId, it) }
+                    }
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {

@@ -19,8 +19,16 @@ object ModePin {
 
     fun isPending(repo: Repository, serverId: String): Boolean = repo.get(pendingKey(serverId))?.isNotEmpty() == true
 
-    fun setPending(repo: Repository, serverId: String, pending: Boolean) =
+    /** The ciphertext of a `mode` envelope whose post failed (see `ConversationManager.announceMode`); empty = none. */
+    fun announceKey(serverId: String) = "mode-announce:$serverId"
+
+    fun clearAnnounce(repo: Repository, serverId: String) = repo.set(announceKey(serverId), ByteArray(0))
+
+    /** Marking the mode pending again starts a new announce: a ciphertext saved for an earlier one is dropped. */
+    fun setPending(repo: Repository, serverId: String, pending: Boolean) {
+        if (pending) clearAnnounce(repo, serverId)
         repo.set(pendingKey(serverId), if (pending) byteArrayOf(1) else ByteArray(0))
+    }
 
     /** Pins [mode] on [conversation]. Returns false on a mismatch (logged with the ID only, line added once). */
     fun pin(repo: Repository, conversation: ConversationRecord, mode: String, now: Long, log: (String) -> Unit): Boolean {
