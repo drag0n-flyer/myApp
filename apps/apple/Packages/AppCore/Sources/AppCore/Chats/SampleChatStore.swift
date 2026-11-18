@@ -88,8 +88,40 @@ public final class SampleChatStore: ChatStore {
     public func send(_ content: MessageContent, in chatID: String, replyTo: String?) {
         defer { onChange?() }
         if case .text = content, let i = index(of: chatID) { allChats[i].draft = nil }
-        append(Message(id: makeID(), senderID: me.id, sentAt: Date(), content: content, status: .sent, replyToID: replyTo, reactions: []), to: chatID)
+        let sentAt = Date()
+        let ttl = timers[chatID] ?? 0
+        append(Message(id: makeID(), senderID: me.id, sentAt: sentAt, content: content, status: .sent, replyToID: replyTo, reactions: [],
+                       expiresAt: ttl > 0 ? sentAt.addingTimeInterval(TimeInterval(ttl)) : nil), to: chatID)
     }
+
+    // MARK: Disappearing messages (in memory)
+
+    private var timers: [String: Int] = [:]
+
+    public func timerSeconds(_ chatID: String) -> Int { timers[chatID] ?? 0 }
+
+    public func setTimer(_ chatID: String, seconds: Int) {
+        guard TimerChoice.from(seconds: seconds) != nil, index(of: chatID) != nil, timerSeconds(chatID) != seconds else { return }
+        timers[chatID] = seconds
+        append(Message(id: makeID(), senderID: "system", sentAt: Date(), content: .system(.timer(seconds: seconds, name: nil)), status: .sent,
+                       replyToID: nil, reactions: []), to: chatID)
+        onChange?()
+    }
+
+    @discardableResult
+    public func sweepExpired(now: Date) -> [String] {
+        var removed: [String] = []
+        for i in allChats.indices {
+            let gone = allChats[i].messages.filter { $0.expiresAt.map { $0 <= now } ?? false }.map(\.id)
+            guard !gone.isEmpty else { continue }
+            allChats[i].messages.removeAll { gone.contains($0.id) }
+            removed += gone
+        }
+        if !removed.isEmpty { onChange?() }
+        return removed
+    }
+
+    public func nextExpiry() -> Date? { allChats.flatMap(\.messages).compactMap(\.expiresAt).min() }
 
     /// How long a sample upload stays "uploading" (with its Cancel control) before it counts as sent.
     public var sampleUploadDuration: Duration = .seconds(6)

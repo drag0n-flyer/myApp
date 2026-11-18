@@ -34,6 +34,50 @@
         }
       }
     },
+    "%@ set messages to disappear after 1 day" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ set messages to disappear after 1 day"
+          }
+        }
+      }
+    },
+    "%@ set messages to disappear after 7 days" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ set messages to disappear after 7 days"
+          }
+        }
+      }
+    },
+    "%@ set messages to disappear after 90 days" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ set messages to disappear after 90 days"
+          }
+        }
+      }
+    },
+    "%@ turned off disappearing messages" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ turned off disappearing messages"
+          }
+        }
+      }
+    },
     "%@ · %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -102,6 +146,17 @@
         }
       }
     },
+    "1 day" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 day"
+          }
+        }
+      }
+    },
     "1 hour" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -131,6 +186,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "5 minutes"
+          }
+        }
+      }
+    },
+    "7 days" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "7 days"
+          }
+        }
+      }
+    },
+    "90 days" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "90 days"
           }
         }
       }
@@ -795,6 +872,28 @@
         }
       }
     },
+    "Disappearing message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Disappearing message"
+          }
+        }
+      }
+    },
+    "Disappearing messages" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Disappearing messages"
+          }
+        }
+      }
+    },
     "Don't approve" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1334,6 +1433,17 @@
         }
       }
     },
+    "New messages disappear from this chat after the time you choose. People can still copy or photograph them." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New messages disappear from this chat after the time you choose. People can still copy or photograph them."
+          }
+        }
+      }
+    },
     "Next" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1495,6 +1605,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Notification settings"
+          }
+        }
+      }
+    },
+    "Off" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Off"
           }
         }
       }
@@ -2892,6 +3013,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "You removed a device"
+          }
+        }
+      }
+    },
+    "You set messages to disappear after 1 day" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You set messages to disappear after 1 day"
+          }
+        }
+      }
+    },
+    "You set messages to disappear after 7 days" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You set messages to disappear after 7 days"
+          }
+        }
+      }
+    },
+    "You set messages to disappear after 90 days" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You set messages to disappear after 90 days"
+          }
+        }
+      }
+    },
+    "You turned off disappearing messages" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You turned off disappearing messages"
           }
         }
       }

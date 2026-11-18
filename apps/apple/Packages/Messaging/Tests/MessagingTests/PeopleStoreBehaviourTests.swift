@@ -429,3 +429,39 @@ private let jpeg = Data([0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x01, 0x00, 0
         #expect(rig.bob.store.timerSeconds("acc-ana") == 0)
     }
 }
+
+@Suite("TestPeopleStoreTimerTie") @MainActor struct TestPeopleStoreTimerTie {
+    private func stored(_ rig: Rig) throws -> (at: Int64, id: String) {
+        let at = try #require(try rig.bob.repo.get("timer-at:acc-ana").flatMap { Int64(String(decoding: $0, as: UTF8.self)) })
+        let id = try #require(try rig.bob.repo.get("timer-id:acc-ana").map { String(decoding: $0, as: UTF8.self) })
+        return (at, id)
+    }
+
+    /// Both sides set a different value in the same millisecond: the greater envelope id wins on both.
+    @Test func theGreaterIDWinsAtTheSameMillisecond() async throws {
+        let rig = try await Rig.make()
+        rig.bob.store.setTimer("acc-ana", seconds: 86_400)
+        let local = try stored(rig)
+        try await rig.ana.sendRaw(rig.envelope(local.id + "z", .timer(seconds: 604_800), at: local.at), to: "acc-bob")
+        await rig.bobSync()
+        #expect(rig.bob.store.timerSeconds("acc-ana") == 604_800)
+        #expect(try stored(rig).id == local.id + "z")
+    }
+
+    @Test func aSmallerIDLosesAtTheSameMillisecond() async throws {
+        let rig = try await Rig.make()
+        rig.bob.store.setTimer("acc-ana", seconds: 86_400)
+        let local = try stored(rig)
+        try await rig.ana.sendRaw(rig.envelope("-", .timer(seconds: 604_800), at: local.at), to: "acc-bob")
+        await rig.bobSync()
+        #expect(rig.bob.store.timerSeconds("acc-ana") == 86_400)
+        #expect(try rig.bob.repo.message(id: "sys-timer--") == nil)
+        #expect(try stored(rig).id == local.id)
+    }
+
+    @Test func aControlCanBeQueuedUnderAGivenID() async throws {
+        let rig = try await Rig.make()
+        try rig.ana.outbox.enqueueControl(.timer(seconds: 86_400), chatID: "acc-bob", id: "fixed-id")
+        #expect(try rig.ana.repo.dueOutbox(at: .distantFuture).contains { $0.messageID == "fixed-id" })
+    }
+}

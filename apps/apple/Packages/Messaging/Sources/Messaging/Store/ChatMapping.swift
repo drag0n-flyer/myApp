@@ -42,7 +42,8 @@ enum ChatMapping {
         var message = Message(
             id: record.id, senderID: record.senderAccount, sentAt: record.sentAt, content: .unsupported,
             status: status(record.status, showRead: showRead), replyToID: record.replyTo,
-            reactions: reactions.map(\.emoji), editedAt: record.editedAt, media: nil, undecryptable: record.undecryptable)
+            reactions: reactions.map(\.emoji), editedAt: record.editedAt, media: nil, undecryptable: record.undecryptable,
+            expiresAt: record.expiresAt)
 
         if record.deleted {
             message.content = .deleted

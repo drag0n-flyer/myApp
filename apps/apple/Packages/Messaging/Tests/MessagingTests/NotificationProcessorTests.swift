@@ -127,7 +127,7 @@ private struct NSEPair {
     @Test func testShowsSenderAndPreview() async throws {
         let pair = try await NSEPair()
         let outcome = await pair.processor().process(pushData: try await pair.push(.text("Lunch?", replyTo: nil)), deadline: NSEPair.deadline)
-        #expect(outcome == .show(title: "Ana", body: "Lunch?", threadID: "acc-ana"))
+        #expect(outcome == .show(title: "Ana", body: "Lunch?", threadID: "acc-ana", messageID: "m1"))
         #expect(try pair.bob.deps.repo.message(id: "m1") != nil)
     }
 
@@ -135,7 +135,7 @@ private struct NSEPair {
         let pair = try await NSEPair()
         let text = "*" + String(repeating: "a", count: 150) + "*"
         let outcome = await pair.processor().process(pushData: try await pair.push(.text(text, replyTo: nil)), deadline: NSEPair.deadline)
-        #expect(outcome == .show(title: "Ana", body: String(repeating: "a", count: 140), threadID: "acc-ana"))
+        #expect(outcome == .show(title: "Ana", body: String(repeating: "a", count: 140), threadID: "acc-ana", messageID: "m1"))
     }
 
     @Test func testDuplicatePushDropsAndStoresOnce() async throws {
@@ -154,7 +154,7 @@ private struct NSEPair {
     @Test func testStrangerShowsRequest() async throws {
         let pair = try await NSEPair(contact: false)
         let outcome = await pair.processor().process(pushData: try await pair.push(.text("hi", replyTo: nil)), deadline: NSEPair.deadline)
-        #expect(outcome == .show(title: "Message request", body: "Open [App] to see it", threadID: "acc-ana"))
+        #expect(outcome == .show(title: "Message request", body: "Open [App] to see it", threadID: "acc-ana", messageID: "m1"))
     }
 
     @Test func testMutedStillShowsSoItCanBeSilent() async throws {
@@ -163,7 +163,7 @@ private struct NSEPair {
         try pair.bob.deps.repo.upsertChat(ChatRecord(id: "acc-ana", isRequest: false, unread: 0, muted: false, lastActivity: testEpochDate))
         try pair.bob.deps.repo.setMuted(chatID: "acc-ana", true)
         let outcome = await pair.processor().process(pushData: try await pair.push(.text("hi", replyTo: nil)), deadline: NSEPair.deadline)
-        #expect(outcome == .show(title: "Ana", body: "hi", threadID: "acc-ana"))
+        #expect(outcome == .show(title: "Ana", body: "hi", threadID: "acc-ana", messageID: "m1"))
         #expect(try pair.bob.deps.repo.message(id: "m1") != nil)   // still stored
     }
 
@@ -230,7 +230,7 @@ private struct NSEPair {
         }
         let outcome = await pair.processor().process(pushData: padded(Data()), deadline: NSEPair.deadline)
         #expect(pair.inbox.recorded == [20])
-        #expect(outcome == .show(title: "Ana", body: "Newest", threadID: "acc-ana"))
+        #expect(outcome == .show(title: "Ana", body: "Newest", threadID: "acc-ana", messageID: "n1"))
     }
 
     @Test func testEmptyPayloadWithNothingNewFallsBack() async throws {
@@ -380,7 +380,7 @@ private struct NSEPair {
             }
         }
         let outcome = await pair.processor().process(pushData: padded(Data()), deadline: NSEPair.deadline)
-        #expect(outcome == .show(title: "Ana", body: "new", threadID: "acc-ana"))
+        #expect(outcome == .show(title: "Ana", body: "new", threadID: "acc-ana", messageID: "new"))
     }
 
     @Test func testWelcomeKindFromFetchedInboxItemBeatsSniffing() async throws {
