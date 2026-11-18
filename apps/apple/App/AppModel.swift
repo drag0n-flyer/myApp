@@ -420,6 +420,8 @@ final class AppModel {
     /// keeps its data when it records its device; the next sign-in, always a new device, wipes it before opening it
     /// (`LocalAccountData`). Steps and their order: `SignOutPlan`.
     private func resetToWelcome(revoked: Bool = true) {
+        // Drafts and the pending in-chat search belong to the account that is leaving.
+        ChatScreenState.shared.reset()
         // The live store belongs to the signed-out account. An empty store stands in until the next sign-in.
         if !isSampleData {
             let old = messaging

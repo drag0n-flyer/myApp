@@ -13,10 +13,10 @@ final class MacLayoutTests: XCTestCase {
         XCTAssertTrue(app.element("chat.composer.field").waitToExist())
     }
 
-    func testMacOnboardingIsLinkOnly() {
+    func testMacOnboardingOffersStartAndLink() {
         let app = XCUIApplication.launched(skipOnboarding: false)
         XCTAssertTrue(app.element("welcome.haveaccount").waitToExist())
-        XCTAssertFalse(app.element("welcome.start").exists)
+        XCTAssertTrue(app.element("welcome.start").exists)   // the Mac can create an account too
         app.element("welcome.haveaccount").click()
         XCTAssertTrue(app.element("link.qr").waitToExist())
     }

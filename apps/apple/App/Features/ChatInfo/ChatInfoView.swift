@@ -24,7 +24,11 @@ struct ChatInfoView: View {
                         HStack(spacing: 12) {
                             action("Audio", "phone") { model.startCall(contactID: contact.id, video: false) }
                             action("Video", "video") { model.startCall(contactID: contact.id, video: true) }
-                            action("Search", "magnifyingglass") { model.searchChats(for: contact.displayName) }
+                            action("Search", "magnifyingglass") {
+                                // Back to the chat, which opens its own search field.
+                                model.chatSearchRequest = chatID
+                                dismiss()
+                            }
                         }
                         .padding(.top, 6)
                     }

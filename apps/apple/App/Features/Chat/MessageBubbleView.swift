@@ -10,6 +10,14 @@ struct MessageBubbleView: View {
     let download: () -> Void
     /// Sends a message that is marked "Not sent" again.
     var retry: () -> Void = {}
+    /// Context menu items for this message, from `MessageActions.available`.
+    var actions: [MessageAction] = []
+    var perform: (MessageAction) -> Void = { _ in }
+    var react: (String) -> Void = { _ in }
+    /// Briefly true after a jump to this message.
+    var isHighlighted = false
+    /// Jumps to the quoted message.
+    var quoteTapped: () -> Void = {}
 
     var body: some View {
         if case .system(let event) = message.content {
@@ -28,18 +36,8 @@ struct MessageBubbleView: View {
         HStack {
             if isMine { Spacer(minLength: 60) }
             VStack(alignment: .leading, spacing: 4) {
-                if let reply {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(replySenderName(reply.senderID)).font(.caption.weight(.semibold))
-                        Text(reply.previewText).font(.caption).lineLimit(1)
-                    }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.white.opacity(isMine ? 0.18 : 0), in: RoundedRectangle(cornerRadius: 6))
-                    .overlay(alignment: .leading) {
-                        Rectangle().fill(isMine ? Color.white.opacity(0.8) : Color.accentColor).frame(width: 3)
-                    }
+                if reply != nil || message.replyToID != nil {
+                    quote
                 }
                 content
                 MetaLine(message: message, isMine: isMine, retry: retry)
@@ -48,9 +46,13 @@ struct MessageBubbleView: View {
             .padding(.top, 7)
             .padding(.bottom, 5)
             .foregroundStyle(isMine ? Color.white : Color.primary)
-            .background(bubbleBackground, in: UnevenRoundedRectangle(
-                topLeadingRadius: 18, bottomLeadingRadius: isMine ? 18 : 6,
-                bottomTrailingRadius: isMine ? 6 : 18, topTrailingRadius: 18))
+            .background(bubbleBackground, in: bubbleShape)
+            .overlay {
+                // Accent on your own accent-coloured bubble would not show.
+                bubbleShape.stroke(isMine ? Color.primary : Color.accentColor, lineWidth: 3).opacity(isHighlighted ? 1 : 0)
+            }
+            .animation(.easeInOut(duration: 0.3), value: isHighlighted)
+            .contextMenu { menu }
             .overlay(alignment: .bottomLeading) {
                 if !message.reactions.isEmpty {
                     Text(message.reactions.joined())
@@ -68,6 +70,74 @@ struct MessageBubbleView: View {
         }
     }
 
+    /// Detected links, underlined so they look like links on both bubble colours.
+    private static func underlinedLinks(_ text: String) -> AttributedString {
+        var attributed = LinkDetector.attributed(text)
+        for run in attributed.runs where run.link != nil {
+            attributed[run.range].swiftUI.underlineStyle = .single
+        }
+        return attributed
+    }
+
+    private var bubbleShape: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(
+            topLeadingRadius: 18, bottomLeadingRadius: isMine ? 18 : 6,
+            bottomTrailingRadius: isMine ? 6 : 18, topTrailingRadius: 18)
+    }
+
+    /// The quoted message; tapping it jumps to the original. When the original is not loaded the quote still shows.
+    private var quote: some View {
+        Button(action: quoteTapped) {
+            VStack(alignment: .leading, spacing: 1) {
+                if let reply {
+                    Text(replySenderName(reply.senderID)).font(.caption.weight(.semibold))
+                    Text(reply.previewText).font(.caption).lineLimit(1)
+                } else {
+                    Text("Earlier message").font(.caption.weight(.semibold))
+                }
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.white.opacity(isMine ? 0.18 : 0), in: RoundedRectangle(cornerRadius: 6))
+            .overlay(alignment: .leading) {
+                Rectangle().fill(isMine ? Color.white.opacity(0.8) : Color.accentColor).frame(width: 3)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Shows the original message")
+        .accessibilityIdentifier("chat.quote.\(message.id)")
+    }
+
+    @ViewBuilder
+    private var menu: some View {
+        if actions.contains(.react) {
+            ControlGroup {
+                ForEach(MessageActions.reactionEmoji, id: \.self) { emoji in
+                    Button(emoji) { react(emoji) }
+                        .accessibilityLabel(Text("React \(emoji)"))
+                }
+            }
+            .controlGroupStyle(.palette)
+        }
+        if actions.contains(.reply) {
+            Button("Reply", systemImage: "arrowshape.turn.up.left") { perform(.reply) }
+        }
+        if actions.contains(.copy) {
+            Button("Copy", systemImage: "doc.on.doc") { perform(.copy) }
+        }
+        if actions.contains(.forward) {
+            Button("Forward", systemImage: "arrowshape.turn.up.right") { perform(.forward) }
+        }
+        if actions.contains(.edit) {
+            Button("Edit", systemImage: "pencil") { perform(.edit) }
+        }
+        if actions.contains(.delete) {
+            Button("Delete", systemImage: "trash", role: .destructive) { perform(.delete) }
+        }
+    }
+
     private var bubbleBackground: AnyShapeStyle {
         isMine ? AnyShapeStyle(Color.accentColor.gradient) : AnyShapeStyle(Color.secondaryBackground)
     }
@@ -76,7 +146,7 @@ struct MessageBubbleView: View {
     private var content: some View {
         switch message.content {
         case .text(let text):
-            Text(text).font(.body)
+            Text(Self.underlinedLinks(text)).font(.body).tint(isMine ? Color.white : Color.accentColor)
         case .voice(let duration):
             VoiceMessageView(duration: duration, isMine: isMine)
         case .photo(let bytes):
@@ -132,14 +202,24 @@ private struct MetaLine: View {
                     .accessibilityHint(Text("Sends this message again"))
                     .accessibilityIdentifier("chat.retry.\(message.id)")
             }
+            if message.editedAt != nil { Text("edited") }
             Text(message.sentAt, format: .dateTime.hour().minute())
             if isMine, message.status != .failed {
-                Image(systemName: message.status == .sent || message.status == .sending ? "checkmark" : "checkmark.circle.fill")
+                Image(systemName: statusSymbol)
                     .accessibilityLabel(statusLabel)
             }
         }
         .font(.caption2)
         .opacity(0.75)
+    }
+
+    /// Sent: a check. Delivered: an outline check circle. Read: a filled one.
+    private var statusSymbol: String {
+        switch message.status {
+        case .sending, .sent, .failed: "checkmark"
+        case .delivered: "checkmark.circle"
+        case .read: "checkmark.circle.fill"
+        }
     }
 
     private var statusLabel: Text {
