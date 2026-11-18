@@ -254,6 +254,11 @@ private struct MetaLine: View {
             }
             if isMine, message.status == .sending { Text("Sending…") }
             if message.editedAt != nil { Text("edited") }
+            if message.disappears {
+                Image(systemName: "timer")
+                    .accessibilityLabel(Text("Disappearing message"))
+                    .accessibilityIdentifier("chat.timer.\(message.id)")
+            }
             Text(message.sentAt, format: .dateTime.hour().minute())
             if isMine, message.status != .failed {
                 Image(systemName: statusSymbol)

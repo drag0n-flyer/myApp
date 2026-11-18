@@ -66,6 +66,8 @@ final class AppModel {
     private let callSealer = SwitchableCallSealer()
     private var pathMonitor: PathMonitor?
     private var isBackground = false
+    /// Removes expired messages (and their notifications): at start, on foreground, and when the next one is due.
+    @ObservationIgnored private var expirySweeper: ExpirySweeper?
     private var connectionState: ConnectionState = .idle
     /// False when the device has no network path (`NetworkReachability`); true until the first report.
     private var hasNetwork = true
@@ -248,6 +250,7 @@ final class AppModel {
         if live?.isSignedIn == true { Task { await didSignIn() } }
         if let url = launch.openURL { handle(url: url) }
         chatStore.onChange = { [weak self] in self?.revision += 1 }
+        restartExpirySweeper()
         lock.onHeldChatReleased = { [weak self] id in self?.openChatID = id }
         // Switching the lock on hides the names and text of notifications already shown.
         lock.onLockSwitchedOn = { Task { await NotificationActions.shared.hideDeliveredContent() } }
@@ -622,6 +625,7 @@ final class AppModel {
             let empty = AppStores.signedOutStore(sampleData: isSampleData)
             empty.onChange = { [weak self] in self?.revision += 1 }
             chatStore = empty
+            restartExpirySweeper()
             revision += 1
             NotificationActions.shared.signedOut()
         }
@@ -661,12 +665,24 @@ final class AppModel {
         await registerForPushIfAllowed()
     }
 
+    /// A sweeper for the current store; the old one stops. It runs now unless an iPhone app is in the background.
+    private func restartExpirySweeper() {
+        expirySweeper?.stop()
+        let sweeper = ExpirySweeper(store: chatStore) { ids in NotificationActions.shared.removeDelivered(messageIDs: ids) }
+        expirySweeper = sweeper
+        #if os(iOS)
+        if isBackground { return }
+        #endif
+        sweeper.start()
+    }
+
     /// iPhone: the socket runs only while the app is active. Mac: whenever the app runs.
     func scenePhaseChanged(_ phase: ScenePhase) {
         #if os(iOS)
         switch phase {
         case .active:
             isBackground = false
+            expirySweeper?.start()
             Task {
                 await startLive()
                 await syncInbox()
@@ -674,6 +690,7 @@ final class AppModel {
             }
         case .background:
             isBackground = true
+            expirySweeper?.stop()
             // A running call keeps its signaling; `callStateChanged` closes the socket when the call ends.
             if activeCall?.isEnded == false { return }
             Task { await stopLive() }
@@ -701,6 +718,7 @@ final class AppModel {
         callSealer.use(built.store)
         built.store.onChange = { [weak self] in self?.revision += 1 }
         chatStore = built.store
+        restartExpirySweeper()
         revision += 1
     }
 
