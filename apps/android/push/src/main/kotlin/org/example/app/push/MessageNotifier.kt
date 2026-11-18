@@ -78,6 +78,15 @@ class MessageNotifier(
         refreshSummary()
     }
 
+    /** The reply was queued: the chat's notification gets the sent line. */
+    fun showSent(chatId: String, text: String) = Unit
+
+    /** The reply could not be sent: "Not sent", which opens the chat (the text is its draft). */
+    fun showNotSent(chatId: String) = Unit
+
+    /** Posts the chat's notification again as it is, with a fresh Reply token. */
+    fun refreshChat(chatId: String) = Unit
+
     /** Removes the generic notice once the real notification is shown. */
     fun cancelGeneric() = NotificationManagerCompat.from(context).cancel("generic", 0)
 

@@ -18,15 +18,35 @@ import kotlinx.coroutines.launch
 interface NotificationActionSink {
     /** Marks the chat read (and sends the read receipt when the setting allows). False when no such chat exists. */
     suspend fun markRead(chatId: String): Boolean
+
+    /**
+     * Puts [text] in the chat's outbox, the same durable queue the composer uses, through the session the app already
+     * holds. True only when it is queued. False when the chat is unknown or a message request, the text is too long to
+     * send whole, or there is no session; nothing was queued then.
+     */
+    suspend fun reply(chatId: String, text: String): Boolean
+
+    /** Keeps [text] as the chat's unsent draft. */
+    suspend fun saveDraft(chatId: String, text: String)
+}
+
+/** Reply tokens already used, so a broadcast delivered twice sends once. */
+internal object ReplyClaims {
+    fun claim(nonce: String): Boolean = true
+
+    fun clear() = Unit
 }
 
 internal class NotificationActionHandler(
     private val sink: () -> NotificationActionSink?,
     private val notifier: MessageNotifier,
+    private val appLockOn: () -> Boolean = { PushRuntime.appLockOn() },
 ) {
     /** A chat ID is a short, non-blank string. Whether it names a chat is the store's answer. */
     private fun valid(chatId: String?): Boolean =
         chatId != null && chatId.isNotBlank() && chatId.length <= NotificationActions.MAX_ID_LENGTH
+
+    suspend fun reply(chatId: String?, text: String?, nonce: String?) = Unit
 
     suspend fun markRead(chatId: String?) {
         if (chatId == null || !valid(chatId)) return
@@ -55,6 +75,9 @@ class NotificationActionReceiver : BroadcastReceiver() {
 
 object NotificationActions {
     const val ACTION_MARK_READ = "org.example.app.push.MARK_READ"
+    const val ACTION_REPLY = "org.example.app.push.REPLY"
+    const val KEY_REPLY_TEXT = "org.example.app.push.REPLY_TEXT"
+    const val EXTRA_NONCE = "org.example.app.push.NONCE"
     internal const val MAX_ID_LENGTH = 256
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

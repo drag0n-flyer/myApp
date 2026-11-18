@@ -22,12 +22,26 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
-private class FakeSink(private val known: Set<String> = setOf("c1")) : NotificationActionSink {
+internal class FakeSink(private val known: Set<String> = setOf("c1")) : NotificationActionSink {
     val marked = mutableListOf<String>()
+    val replies = mutableListOf<Pair<String, String>>()
+    val drafts = mutableListOf<Pair<String, String>>()
+    var replyResult: Boolean = true
+    var replyFails: Boolean = false
 
     override suspend fun markRead(chatId: String): Boolean {
         marked += chatId
         return chatId in known
+    }
+
+    override suspend fun reply(chatId: String, text: String): Boolean {
+        replies += chatId to text
+        if (replyFails) throw IllegalStateException("boom")
+        return replyResult && chatId in known
+    }
+
+    override suspend fun saveDraft(chatId: String, text: String) {
+        drafts += chatId to text
     }
 }
 
