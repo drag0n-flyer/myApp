@@ -50,7 +50,7 @@ public final class LiveChatStore: ChatStore {
         self.inbox = inbox
         self.conversations = conversations
         self.attachments = attachments
-        meContact = Contact(id: deps.me.accountID, displayName: "You", username: "")
+        meContact = Contact(id: deps.me.accountID, displayName: Self.placeholderName, username: "")
         recoverPendingUploads()
         reload()
         if let attachments {
@@ -129,7 +129,9 @@ public final class LiveChatStore: ChatStore {
         let rows = (try? repo.contacts()) ?? []
         contactRows = Dictionary(rows.map { ($0.accountID, $0) }, uniquingKeysWith: { $1 })
         if let mine = contactRows[deps.me.accountID] {
-            meContact = Contact(id: mine.accountID, displayName: mine.displayName, username: mine.username)
+            // No stored name shows the placeholder; the placeholder itself is never stored.
+            let name = DisplayNameRule.forDisplay(mine.displayName, fallback: "")
+            meContact = Contact(id: mine.accountID, displayName: name.isEmpty ? Self.placeholderName : name, username: mine.username)
         }
         let folderRecords = (try? repo.folders()) ?? []
         customFolders = folderRecords.map { ChatFolder(id: $0.id, name: $0.name, kind: .custom) }
@@ -164,10 +166,14 @@ public final class LiveChatStore: ChatStore {
         .filter { showSafety || $0.content != .system(.safetyNumberChanged) }
     }
 
+    /// Display only: shown while no own name is stored. Never stored, never sent.
+    static let placeholderName = "You"
+
     private nonisolated static func name(of row: ContactRecord?) -> String? {
         guard let row else { return nil }
-        if !row.displayName.isEmpty { return row.displayName }
-        return row.username.isEmpty ? nil : row.username
+        // Names come from the server and from other people's devices: cleaned for every screen.
+        let name = DisplayNameRule.forDisplay(row.displayName, fallback: row.username)
+        return name.isEmpty ? nil : name
     }
 
     private func contact(from row: ContactRecord) -> Contact {
@@ -181,6 +187,18 @@ public final class LiveChatStore: ChatStore {
     // MARK: - Reads
 
     public var me: Contact { meContact }
+
+    public var myStoredName: String { contactRows[deps.me.accountID]?.displayName ?? "" }
+
+    /// Shown at once and stored in the own contact row (never as a contact, never as the placeholder).
+    public func setMyDisplayName(_ name: String) {
+        let id = deps.me.accountID
+        var row = contactRows[id] ?? ((try? repo.contact(id: id)) ?? nil)
+            ?? ContactRecord(accountID: id, username: meContact.username, displayName: name, isContact: false, addedAt: deps.now())
+        row.displayName = name
+        guard (try? repo.upsertContact(row)) != nil else { return }
+        refresh()
+    }
 
     public var contacts: [Contact] {
         contactRows.values.filter(\.isContact).sorted { ($0.displayName, $0.accountID) < ($1.displayName, $1.accountID) }

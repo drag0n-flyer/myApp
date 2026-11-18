@@ -201,3 +201,21 @@ func msg(_ c: MessageContent) -> Message {
     s.send(.text("a"), in: "chat-riya")
     #expect(n == 1)
 }
+
+@MainActor @Test func settingMyNameChangesMeAndNotifies() {
+    let store = SampleChatStore()
+    var changes = 0
+    store.onChange = { changes += 1 }
+    #expect(store.myStoredName == store.me.displayName)
+    store.setMyDisplayName("Asha")
+    #expect(store.me.displayName == "Asha")
+    #expect(store.myStoredName == "Asha")
+    #expect(changes == 1)
+}
+
+@MainActor @Test func emptyStoreHasNoStoredName() {
+    let store = EmptyChatStore()
+    #expect(store.myStoredName == "")
+    store.setMyDisplayName("Asha")
+    #expect(store.myStoredName == "")
+}

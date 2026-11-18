@@ -5,7 +5,13 @@ import Foundation
 public final class SampleChatStore: ChatStore {
     public var onChange: (@MainActor () -> Void)?
     private var verifiedChatIDs: Set<String> = []
-    public let me: Contact
+    public private(set) var me: Contact
+    public var myStoredName: String { me.displayName }
+
+    public func setMyDisplayName(_ name: String) {
+        me.displayName = name
+        onChange?()
+    }
     public private(set) var contacts: [Contact]
     public private(set) var folders: [ChatFolder]
     public private(set) var blockedIDs: Set<String> = []
