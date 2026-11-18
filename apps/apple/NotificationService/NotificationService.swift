@@ -89,15 +89,31 @@ private final class Delivery: @unchecked Sendable {
                 handler(UNNotificationContent())
             case .content(let title, let body, let threadID, let sound):
                 let content = content ?? UNMutableNotificationContent()
-                content.title = title
-                content.body = body
-                if let threadID { content.threadIdentifier = threadID }
-                content.sound = sound ? UNNotificationSound.default : nil
+                let settings = NSESettings.read()
+                if let threadID, threadID != NotificationProcessor.devicesThreadID {
+                    // A chat's message: one thread per chat, Reply only when unlocked, silent when muted.
+                    let plan = NotificationPlan.content(
+                        chatID: threadID, sender: title, text: body,
+                        muted: settings.mutedChatIDs.contains(threadID), appLockOn: settings.appLockOn)
+                    content.title = plan.hidesContent ? strings.fallbackTitle : plan.title
+                    content.body = plan.hidesContent ? strings.fallbackBody : plan.body
+                    content.threadIdentifier = plan.threadIdentifier
+                    content.categoryIdentifier = plan.category
+                    content.sound = sound && !plan.silent ? UNNotificationSound.default : nil
+                } else {
+                    content.title = title
+                    content.body = body
+                    if let threadID { content.threadIdentifier = threadID }
+                    // The generic fallback names nobody and has no Reply.
+                    if threadID == nil { content.categoryIdentifier = NotificationPlan.lockedCategory }
+                    content.sound = sound ? UNNotificationSound.default : nil
+                }
                 handler(content)
             case .call(let payload, let contact):
                 let content = content ?? UNMutableNotificationContent()
                 let ringedAt = lock.withLock { startedAt }
-                NotificationService.applyCall(payload, from: contact, to: content, ringedAt: ringedAt)
+                NotificationService.applyCall(
+                    payload, from: contact, to: content, ringedAt: ringedAt, appLockOn: NSESettings.read().appLockOn)
                 handler(content)
             }
         }

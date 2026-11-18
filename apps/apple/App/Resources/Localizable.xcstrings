@@ -684,6 +684,17 @@
         }
       }
     },
+    "Mark as read" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mark as read"
+          }
+        }
+      }
+    },
     "Marked as verified" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -691,6 +702,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Marked as verified"
+          }
+        }
+      }
+    },
+    "Message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Message"
           }
         }
       }
@@ -746,6 +768,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "New device added"
+          }
+        }
+      }
+    },
+    "New message" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New message"
           }
         }
       }

@@ -50,7 +50,7 @@ final class MacRinger: NSObject, UNUserNotificationCenterDelegate {
         let decline = UNNotificationAction(identifier: Self.declineID, title: String(localized: "Decline"), options: [.destructive])
         let category = UNNotificationCategory(identifier: Self.categoryID, actions: [answer, decline],
                                               intentIdentifiers: [], options: [])
-        center.setNotificationCategories([category])
+        center.setNotificationCategories(Set([category]).union(NotificationActions.categories))
     }
 
     // MARK: Ringing
@@ -168,6 +168,11 @@ final class MacRinger: NSObject, UNUserNotificationCenterDelegate {
     }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
+        // Reply and Mark as read on a message notification belong to `NotificationActions`.
+        guard response.notification.request.content.categoryIdentifier == Self.categoryID else {
+            await NotificationActions.shared.handle(response)
+            return
+        }
         let info = response.notification.request.content.userInfo
         let callID = info["callID"] as? String
         let video = info["video"] as? Bool ?? false
