@@ -20,14 +20,18 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SmallFloatingActionButton
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,12 +46,15 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -64,6 +71,17 @@ import org.example.app.core.chats.MessageActions
 import org.example.app.core.chats.MessageContent
 import org.example.app.core.settings.MediaKind
 import org.example.app.ui.Avatar
+import org.example.app.ui.media.AttachmentOpener
+import org.example.app.ui.media.AudioManagerFocus
+import org.example.app.ui.media.CaptureState
+import org.example.app.ui.media.rememberAttachmentPickers
+import org.example.app.ui.media.rememberVoiceControls
+import org.example.app.ui.media.MediaActions
+import org.example.app.ui.media.MediaHost
+import org.example.app.ui.media.PhotoCache
+import org.example.app.ui.media.MediaPlayerEngine
+import org.example.app.ui.media.PhotoViewerScreen
+import org.example.app.ui.media.VoicePlayer
 import org.example.app.ui.previewText
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -76,8 +94,6 @@ fun ChatScreen(
     /** Null hides the call buttons (no live calls before E6). */
     onCall: ((video: Boolean) -> Unit)?,
     modifier: Modifier = Modifier,
-    onAttach: (MediaKind) -> Unit = {},
-    onRecordVoice: () -> Unit = {},
     /** Message request bar. */
     onAccept: () -> Unit = {},
     /** Called with the contact to block; the screen shows an error instead when the chat cannot be resolved. */
@@ -87,6 +103,8 @@ fun ChatScreen(
     onForward: (chatId: String) -> Unit = {},
     /** A message to scroll to and highlight when the screen opens (a search hit). */
     highlightMessageId: String? = null,
+    /** Decrypts a downloaded photo, file or voice message so it can be shown; null shows placeholders only. */
+    opener: AttachmentOpener? = null,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val list = rememberLazyListState()
@@ -112,6 +130,37 @@ fun ChatScreen(
     var blockError by remember { mutableStateOf(false) }
     var searching by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
+
+    // Media: the decoded photos live as long as this screen, and so does the one-line notice at the bottom.
+    val context = LocalContext.current
+    val snackbar = remember { SnackbarHostState() }
+    var notice by remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(notice) {
+        notice?.let {
+            snackbar.showSnackbar(context.getString(it))
+            notice = null
+        }
+    }
+    val photos = remember { PhotoCache() }
+    DisposableEffect(photos) { onDispose { photos.clear() } }
+    var viewingPhoto by rememberSaveable { mutableStateOf<String?>(null) }
+    val mediaActions = remember(context, opener) { MediaActions(context, opener, scope, notify = { notice = it }) }
+    val pickers = rememberAttachmentPickers(onAttachment = viewModel::sendAttachment, notify = { notice = it })
+    val voiceControls = rememberVoiceControls(onNote = { viewModel.sendAttachment(it.path, MediaKind.Voice) }, notify = { notice = it })
+    val capture by voiceControls.capture.state.collectAsState()
+    // One voice message plays at a time; it stops when the screen is left or the app goes to the background.
+    val voice = remember(opener) { VoicePlayer(scope, opener, MediaPlayerEngine.factory, focus = AudioManagerFocus(context)) }
+    DisposableEffect(voice) { onDispose { voice.release() } }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { voice.stop() }
+    val mediaHost = remember(opener, photos, mediaActions, voice) {
+        MediaHost(
+            opener, photos,
+            onOpenPhoto = { viewingPhoto = it },
+            onOpenFile = mediaActions::openFile,
+            onShareFile = mediaActions::shareFile,
+            voice = voice,
+        )
+    }
 
     // Jump to a message, loading older pages first if it is not loaded. Gives up quietly when history ends before it.
     suspend fun jumpTo(id: String) {
@@ -218,6 +267,7 @@ fun ChatScreen(
 
     Scaffold(
         modifier = modifier,
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             if (searching) {
                 SearchBar(query, onQuery = { query = it }, onClose = { searching = false; query = "" })
@@ -266,8 +316,12 @@ fun ChatScreen(
                             viewModel.setDraft("")
                         }
                     },
-                    onAttach = onAttach,
-                    onRecordVoice = onRecordVoice,
+                    onAttach = pickers::start,
+                    onRecordVoice = voiceControls.requestStart,
+                    showCamera = pickers.cameraAvailable,
+                    recording = capture as? CaptureState.Recording,
+                    onCancelRecording = voiceControls.capture::cancel,
+                    onSendRecording = voiceControls.capture::send,
                     bar = bar,
                     onCloseBar = {
                         if (editing != null) text = viewModel.draft()
@@ -308,6 +362,7 @@ fun ChatScreen(
                             val autoKind = when (message.content) {
                                 is MessageContent.Photo -> MediaKind.Photo
                                 is MessageContent.File -> MediaKind.File
+                                is MessageContent.Voice -> MediaKind.Voice
                                 else -> null
                             }
                             // The item re-enters composition on scroll-back and rotation; the ViewModel asks the store only once per id.
@@ -336,6 +391,7 @@ fun ChatScreen(
                                 onQuoteClick = { message.replyToId?.let { id -> scope.launch { jumpTo(id) } } },
                                 onRetry = { viewModel.retry(message.id) },
                                 highlighted = highlighted == message.id,
+                                media = mediaHost,
                             )
                         }
                     }
@@ -362,6 +418,9 @@ fun ChatScreen(
                 title = { Text(stringResource(R.string.err_server)) },
                 confirmButton = { TextButton(onClick = { blockError = false }) { Text(stringResource(R.string.close)) } },
             )
+        }
+        viewingPhoto?.let { id ->
+            PhotoViewerScreen(id, opener, onDismiss = { viewingPhoto = null }, onShare = { mediaActions.sharePhoto(id) })
         }
         confirmDelete?.let { id ->
             DeleteDialog(onConfirm = { confirmDelete = null; viewModel.delete(id) }, onDismiss = { confirmDelete = null })

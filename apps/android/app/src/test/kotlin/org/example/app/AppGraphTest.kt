@@ -285,6 +285,23 @@ class AppGraphTest {
         assertFalse("TOPSECRET" in message, message)
     }
 
+    /** The FileProvider's folders are under the app's own cache, which is not the profile's cache; the wipe takes them too. */
+    @Test
+    fun aWipeRemovesTheSharedAndCameraCopiesUnderTheAppCache() {
+        val appCache = context.cacheDir
+        val leftovers = listOf("open/share/a/report.pdf", "outgoing/camera/p.jpg", "outgoing/files/b/notes.txt").map { File(appCache, it) }
+        leftovers.forEach { it.parentFile!!.mkdirs(); it.writeText("PLAINTEXT") }
+        try {
+            val failure = org.example.app.live.LocalData(context, platform()) { org.example.app.contracts.MemorySecretStore() }
+                .deleteAll(org.example.app.live.LocalData.FULL)
+            assertEquals(null, failure)
+            assertEquals(emptyList(), leftovers.filter { it.exists() })
+        } finally {
+            File(appCache, "open").deleteRecursively()
+            File(appCache, "outgoing").deleteRecursively()
+        }
+    }
+
     /** A kill after the marker: the next launch finishes the wipe before any data or key is opened. */
     @Test
     fun killAfterMarkerResumesWipe() = runBlocking {

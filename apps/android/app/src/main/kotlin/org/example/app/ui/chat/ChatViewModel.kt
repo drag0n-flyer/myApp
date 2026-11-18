@@ -367,6 +367,9 @@ class ChatViewModel(
 
     fun download(messageId: String) = store.download(messageId, chatId)
 
+    /** Sends a picked, photographed or recorded file; [path] is a file the sender can read, or a `content:` URI for a photo. */
+    fun sendAttachment(path: String, kind: MediaKind) = store.sendAttachment(path, kind, chatId)
+
     /** Photos and files wait for a tap when the rules say not to download on this network. */
     fun autoDownloads(kind: MediaKind): Boolean = AutoDownloadPolicy.shouldDownload(kind, network, autoDownload())
 

@@ -10,14 +10,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -27,7 +24,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -50,12 +46,16 @@ import org.example.app.R
 import org.example.app.core.calls.DataFormat
 import org.example.app.core.chats.DeliveryStatus
 import org.example.app.core.chats.LinkFinder
-import org.example.app.core.chats.MediaState
 import org.example.app.core.chats.Message
+import org.example.app.core.chats.SafeFileName
 import org.example.app.core.chats.MessageContent
 import org.example.app.core.chats.MessagePreview
 import org.example.app.core.settings.MediaKind
 import org.example.app.ui.dataSizeText
+import org.example.app.ui.media.FileBubble
+import org.example.app.ui.media.MediaHost
+import org.example.app.ui.media.PhotoBubble
+import org.example.app.ui.media.VoiceBubble
 import org.example.app.ui.previewText
 
 /** What a message in the chat needs from outside: who is "you", who it replies to, and the download rule. */
@@ -78,6 +78,8 @@ fun MessageBubble(
     onRetry: () -> Unit = {},
     /** Briefly true after a jump to this message. */
     highlighted: Boolean = false,
+    /** What photo, file and voice bubbles need from the screen; null shows them without opening anything. */
+    media: MediaHost? = null,
 ) {
     val content = message.content
     if (content is MessageContent.System) {
@@ -102,10 +104,14 @@ fun MessageBubble(
             Surface(shape = shape, color = fill, border = outline, modifier = Modifier.widthIn(max = 300.dp).then(press)) {
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     if (message.replyToId != null) ReplyQuote(replyTo, replyAuthor, onQuoteClick)
-                    Body(message, autoDownloads, onDownload)
+                    Body(message, autoDownloads, onDownload, media)
                     if (message.reactions.isNotEmpty()) Text(message.reactions.joinToString(" "))
                     Row(Modifier.align(Alignment.End), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         if (message.editedAt != null) Text(stringResource(R.string.edited), style = MaterialTheme.typography.labelSmall)
+                        // A photo, file or voice message that is still on its way says so in words, with the clock mark after it.
+                        if (isOwn && message.status == DeliveryStatus.Sending && content.isAttachment()) {
+                            Text(stringResource(R.string.media_sending), style = MaterialTheme.typography.labelSmall)
+                        }
                         Text(clockTime(message.sentAt), style = MaterialTheme.typography.labelSmall)
                         if (isOwn) Ticks(message.status)
                     }
@@ -122,6 +128,8 @@ fun MessageBubble(
         }
     }
 }
+
+private fun MessageContent.isAttachment() = this is MessageContent.Photo || this is MessageContent.File || this is MessageContent.Voice
 
 private fun clockTime(at: Instant): String = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date.from(at))
 
@@ -152,7 +160,12 @@ private fun Ticks(status: DeliveryStatus) {
             DeliveryStatus.Failed -> R.string.chat_not_sent
         },
     )
-    val icon = if (status == DeliveryStatus.Sent || status == DeliveryStatus.Sending) R.drawable.ic_check else R.drawable.ic_done_all
+    // The clock while it is on its way, one tick when sent, two when delivered or read.
+    val icon = when (status) {
+        DeliveryStatus.Sending -> R.drawable.ic_schedule
+        DeliveryStatus.Sent -> R.drawable.ic_check
+        else -> R.drawable.ic_done_all
+    }
     val tint = if (status == DeliveryStatus.Read) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
     Icon(painterResource(icon), contentDescription = label, tint = tint, modifier = Modifier.size(14.dp))
 }
@@ -183,26 +196,26 @@ private fun LinkedText(text: String) {
 }
 
 @Composable
-private fun Body(message: Message, autoDownloads: (MediaKind) -> Boolean, onDownload: () -> Unit) {
+private fun Body(message: Message, autoDownloads: (MediaKind) -> Boolean, onDownload: () -> Unit, media: MediaHost?) {
+    // A message of mine that has not uploaded has nothing to download; it shows as sending or failed with its own retry.
+    val unsent = message.media == null && (message.status == DeliveryStatus.Sending || message.status == DeliveryStatus.Failed)
     when (val c = message.content) {
         is MessageContent.Text -> LinkedText(c.text)
-        is MessageContent.Voice -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            // Voice messages download by themselves on every network, so there is no download button.
-            Icon(painterResource(R.drawable.ic_play), contentDescription = stringResource(R.string.play_voice))
-            Text((message.preview as? MessagePreview.Resource)?.args?.firstOrNull().orEmpty())
-        }
-        is MessageContent.Photo -> MediaTile(
+        is MessageContent.Voice -> VoiceBubble(message, c.duration, media, onDownload)
+        is MessageContent.Photo -> PhotoBubble(
+            message = message,
             title = stringResource(R.string.photo_with_size, dataSizeText(DataFormat.size(c.bytes))),
-            media = message.media,
-            wait = !autoDownloads(MediaKind.Photo),
-            blurred = true,
+            wait = !autoDownloads(MediaKind.Photo) && !unsent,
+            host = media,
             onDownload = onDownload,
         )
-        is MessageContent.File -> MediaTile(
-            title = stringResource(R.string.file_with_size, c.name, dataSizeText(DataFormat.size(c.bytes))),
-            media = message.media,
-            wait = !autoDownloads(MediaKind.File),
-            blurred = false,
+        // The sender's name is never shown raw: what is shown is what open and share use.
+        is MessageContent.File -> FileBubble(
+            message = message,
+            name = SafeFileName.of(c.name, "file"),
+            title = stringResource(R.string.file_with_size, SafeFileName.of(c.name, "file"), dataSizeText(DataFormat.size(c.bytes))),
+            wait = !autoDownloads(MediaKind.File) && !unsent,
+            host = media,
             onDownload = onDownload,
         )
         is MessageContent.Call, MessageContent.Deleted, MessageContent.Unsupported ->
@@ -210,32 +223,4 @@ private fun Body(message: Message, autoDownloads: (MediaKind) -> Boolean, onDown
         is MessageContent.System -> Unit
     }
     if (message.undecryptable) Text(stringResource(R.string.cannot_open_message), style = MaterialTheme.typography.labelSmall)
-}
-
-@Composable
-private fun MediaTile(title: String, media: MediaState?, wait: Boolean, blurred: Boolean, onDownload: () -> Unit) {
-    val phase = media?.phase ?: MediaState.Phase.Remote
-    val downloadingLabel = stringResource(R.string.downloading)
-    val needsTap = phase is MediaState.Phase.Failed || (phase is MediaState.Phase.Remote && wait)
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Box(
-            Modifier.fillMaxWidth().heightIn(min = 120.dp).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp)),
-            contentAlignment = Alignment.Center,
-        ) {
-            // Stand-in for the blurred preview; the real image is loaded only after the download.
-            if (blurred && needsTap) {
-                Box(Modifier.size(96.dp).blur(16.dp).background(MaterialTheme.colorScheme.outline.copy(alpha = 0.4f), RoundedCornerShape(12.dp)))
-            }
-            when {
-                needsTap -> IconButton(onClick = onDownload) {
-                    Icon(painterResource(R.drawable.ic_download), contentDescription = stringResource(R.string.download))
-                }
-                phase is MediaState.Phase.Downloading -> CircularProgressIndicator(
-                    progress = { phase.progress.toFloat() },
-                    modifier = Modifier.semantics { contentDescription = downloadingLabel }.size(32.dp),
-                )
-            }
-        }
-        Text(title, style = MaterialTheme.typography.labelMedium)
-    }
 }

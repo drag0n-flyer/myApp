@@ -98,7 +98,7 @@ data class Message(
             is MessageContent.Text -> MessagePreview.Text(c.text)
             is MessageContent.Voice -> MessagePreview.Resource("preview_voice", listOf(clock(c.duration)))
             is MessageContent.Photo -> MessagePreview.Resource("preview_photo")
-            is MessageContent.File -> MessagePreview.Text(c.name)
+            is MessageContent.File -> MessagePreview.Text(SafeFileName.of(c.name, "file"))
             is MessageContent.Call -> when (val s = c.summary) {
                 CallSummary.MissedAudio -> MessagePreview.Resource("preview_missed_audio_call")
                 CallSummary.MissedVideo -> MessagePreview.Resource("preview_missed_video_call")

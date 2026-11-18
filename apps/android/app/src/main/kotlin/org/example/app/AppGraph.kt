@@ -11,6 +11,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.job
 import kotlinx.coroutines.withTimeoutOrNull
@@ -70,6 +72,8 @@ import org.example.app.live.LivePlatform
 import org.example.app.live.LocalData
 import org.example.app.live.WipeFirst
 import org.example.app.live.LiveSession
+import org.example.app.ui.media.AttachmentOpener
+import org.example.app.ui.media.asOpenedMedia
 import org.example.app.messaging.sync.DeviceSync
 import org.example.app.messaging.sync.LocalDevice
 import org.example.app.messaging.sync.OwnDeviceWatcher
@@ -323,6 +327,19 @@ class AppGraph(
     private val guardedAccount: AccountService by lazy { WipeFirst(liveAccount) { finishPendingWipe(); accountActions.clearError() /* a sign-in starts clean */ } }
     private val sampleAccount by lazy { SampleAccountService() }
     private val sampleChats by lazy { SampleChatStore() }
+
+    /** Decrypts a downloaded attachment for the chat screen. Nothing with sample data or while signed out. */
+    val attachmentOpener = AttachmentOpener { messageId ->
+        val session = liveSession ?: return@AttachmentOpener null
+        // Runs in the session's scope, so the sign-out wipe waits for it. A caller that gave up closes what it was about to get.
+        val job = session.scope.async { session.chatStore.openAttachment(messageId)?.asOpenedMedia() }
+        try {
+            job.await()
+        } catch (e: CancellationException) {
+            job.invokeOnCompletion { if (it == null) runCatching { job.getCompleted()?.close() } }
+            if (currentCoroutineContext().isActive) null else throw e
+        }
+    }
 
     /** Sample accounts, or the live ones; a live sign-in first finishes any pending wipe. */
     val accountService: AccountService get() = if (sampleData) sampleAccount else guardedAccount
