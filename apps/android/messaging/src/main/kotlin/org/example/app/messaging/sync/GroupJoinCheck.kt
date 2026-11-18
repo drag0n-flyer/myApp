@@ -3,6 +3,7 @@ package org.example.app.messaging.sync
 import org.example.app.contracts.ConversationInfo
 import org.example.app.messaging.ports.GroupMemberRecord
 import org.example.app.messaging.ports.GroupStoreRules
+import org.example.app.messaging.ports.MyState
 import org.example.app.messaging.ports.Repository
 
 /**
@@ -26,7 +27,8 @@ internal object GroupJoinCheck {
             return Decision.Drop("group_list_invalid")
         }
         if (members.none { it.accountId == me }) return Decision.Drop(null)
-        if (repo.chats().any { it.conversationId == info.conversationId }) return Decision.Drop(null)
+        // Already joined: a chat for this conversation in which this account is still a member. One it left or was removed from is joined again.
+        if (repo.chats().any { it.conversationId == info.conversationId && it.myState == MyState.MEMBER }) return Decision.Drop(null)
         // The sender of a welcome is the server's claim: it is named in the line only when it is a listed member.
         val addedBy = claimedSender.takeIf { s -> s != me && members.any { it.accountId == s } }
         return Decision.Join(ConversationManager.GroupJoin(members, info.membersVersion ?: 0, addedBy))

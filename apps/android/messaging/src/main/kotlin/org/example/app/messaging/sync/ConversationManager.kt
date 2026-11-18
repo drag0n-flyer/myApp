@@ -268,14 +268,19 @@ class ConversationManager(
             if (group != null) {
                 repo.upsertGroup(chat.id, conversation.serverId, null, chat.lastActivity)
                 repo.setGroupMembers(chat.id, group.members, group.version)
+                // A welcome for a group this account had left or been removed from: it is a member again.
+                if (repo.chat(chat.id)?.myState != org.example.app.messaging.ports.MyState.MEMBER) {
+                    repo.setMyState(chat.id, org.example.app.messaging.ports.MyState.MEMBER)
+                }
             } else if (repo.chat(chat.id) == null) {
                 repo.upsertChat(chat)
             }
             repo.upsertConversation(conversation)
-            group?.addedBy?.let { by ->
+            if (group != null) {
+                val by = group.addedBy
                 repo.insertMessage(
                     MessageRecord(
-                        id = "sys-added-${conversation.serverId}", chatId = chat.id, conversationId = conversation.serverId,
+                        id = "sys-added-${conversation.serverId}-${conversation.epoch}", chatId = chat.id, conversationId = conversation.serverId,
                         senderAccount = "system", senderDevice = null, sentAt = chat.lastActivity, receivedAt = chat.lastActivity,
                         envelope = Membership.lineEnvelope("addedYou", by), status = "sent",
                     ),
@@ -295,7 +300,10 @@ class ConversationManager(
         // A server ID already bound to another group is never rebound (it would move that chat's messages), and a group
         // already bound to another server ID is never bound twice (`group_id` is unique: the write would fail on every
         // retry and stall the inbox). Anyone who shares a chat with me knows its group ID and can build such a Welcome.
-        repo.conversation(serverConversationId)?.let { if (!it.groupId.contentEquals(group.raw)) throw SyncException.ConversationRebound }
+        // A group I left or was removed from (its conversation row is inactive) may be joined again with a new MLS group.
+        repo.conversation(serverConversationId)?.let {
+            if (!it.groupId.contentEquals(group.raw) && !(groupJoin != null && !it.active)) throw SyncException.ConversationRebound
+        }
         repo.conversationByGroup(group.raw)?.let { if (it.serverId != serverConversationId) throw SyncException.ConversationRebound }
         val keys = membership.keys(group)
         if (groupJoin != null) {

@@ -26,8 +26,8 @@ sealed interface SystemEvent {
     data object MessagesPaused : SystemEvent
     /** The disappearing-message timer was set to [seconds] (0 = off) by [name]; a null name is "You". */
     data class Timer(val seconds: Int, val name: String?) : SystemEvent
-    /** [name] added this account to a group ("%1$s added you"). */
-    data class AddedYou(val name: String) : SystemEvent
+    /** [name] added this account to a group ("%1$s added you"); a null name is "You were added". */
+    data class AddedYou(val name: String?) : SystemEvent
 }
 
 sealed interface MessageContent {
@@ -121,7 +121,8 @@ data class Message(
                 SystemEvent.SafetyNumberChanged -> MessagePreview.Resource("system_safety_number_changed")
                 SystemEvent.MessagesPaused -> MessagePreview.Resource("system_messages_paused")
                 is SystemEvent.Timer -> timerLine(e)
-                is SystemEvent.AddedYou -> MessagePreview.Resource("system_added_you", listOf(e.name))
+                is SystemEvent.AddedYou ->
+                    if (e.name == null) MessagePreview.Resource("system_you_were_added") else MessagePreview.Resource("system_added_you", listOf(e.name))
             }
         }
     }

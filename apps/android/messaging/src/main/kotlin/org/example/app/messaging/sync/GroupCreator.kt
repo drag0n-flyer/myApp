@@ -62,7 +62,9 @@ class GroupCreator(
         }
         val reachable = accounts - withoutPackages.toSet()
         if (reachable.isEmpty()) throw SyncException.NoKeyPackages
-        val mine = server.claimKeyPackages(me).filterKeys { it != manager.localDeviceId }
+        // My other devices, by ID: this device's own KeyPackage is never claimed (and wasted).
+        val otherOwn = server.devices().map { it.id }.filter { it != manager.localDeviceId }
+        val mine = if (otherOwn.isEmpty()) emptyMap() else server.claimKeyPackages(me, otherOwn).filterKeys { it in otherOwn }
         mine.forEach { (device, kp) -> claimed[device] = kp; deviceAccount[device] = me }
 
         // 2. The server conversation, then its member list (an account that blocked me is silently absent).
@@ -89,21 +91,58 @@ class GroupCreator(
                 repo.setGroupInfo(chatId, title, photo, 1)
                 repo.setGroupMembers(chatId, members, info.membersVersion ?: 0)
                 ModePin.setPending(repo, record.serverId, true)
+                repo.set(INIT_PREFIX + record.serverId, byteArrayOf(1)) // the group and profile envelopes still to queue
                 repo.upsertConversation(record)
                 PendingCreate.save(repo, record.serverId, PendingCreate(bundle.commit, bundle.welcome, devices.keys.toList()))
             }
         }
 
-        // 4. Post, activate, announce the mode; then the group envelope and my profile, queued in one transaction.
+        // 4. Post, activate, announce the mode; then the group envelope and my profile.
         manager.finishCreate(created.conversationId, resumed = false)
-        outbox.enqueueControl(chatId) { id, at -> ContentEnvelope.Group(id, at, title, photo, 1) }
-        val profile = ownProfile(java.util.UUID.randomUUID().toString().lowercase(), manager.clock.now())
-        if (profile != null) outbox.enqueueControl(chatId) { _, _ -> profile }
+        finishInit(created.conversationId)
         return GroupCreation(chatId, (withoutPackages + skipped).distinct())
     }
 
-    private companion object {
-        const val MIN_OTHERS = 2
-        const val MAX_OTHERS = 99
+    /**
+     * Queues the `group` envelope and this account's `profile` behind the mode envelope, and clears the marker in the
+     * same transaction, so a kill leaves either the marker (done again) or both envelopes queued (never twice). A
+     * failed mode post leaves the marker; [resumeInit] finishes it.
+     */
+    suspend fun finishInit(serverId: String) {
+        if (repo.get(INIT_PREFIX + serverId)?.isNotEmpty() != true) return
+        val chat = repo.chats().firstOrNull { it.conversationId == serverId }
+        if (chat == null) {
+            repo.set(INIT_PREFIX + serverId, ByteArray(0))
+            return
+        }
+        manager.preferredConversation(chat.id) // sends the mode envelope first when it is still pending
+        val title = chat.title
+        val profile = ownProfile(java.util.UUID.randomUUID().toString().lowercase(), manager.clock.now())
+        repo.transaction {
+            if (title != null) outbox.enqueueControl(chat.id) { id, at -> ContentEnvelope.Group(id, at, title, chat.photo, chat.groupVer ?: 1) }
+            if (profile != null) outbox.enqueueControl(chat.id) { _, _ -> profile }
+            repo.set(INIT_PREFIX + serverId, ByteArray(0))
+        }
+    }
+
+    /** Finishes every group whose envelopes were not queued yet (run at start-up after the pending creates). Failures stay marked. */
+    suspend fun resumeInit() {
+        for ((key, value) in repo.entries(INIT_PREFIX)) {
+            if (value.isEmpty()) continue
+            try {
+                finishInit(key.removePrefix(INIT_PREFIX))
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Still marked: the next start-up tries again.
+            }
+        }
+    }
+
+    companion object {
+        /** `kv` marker per group: the `group` and `profile` envelopes are not queued yet. Empty = done. */
+        const val INIT_PREFIX = "group-init:"
+        private const val MIN_OTHERS = 2
+        private const val MAX_OTHERS = 99
     }
 }

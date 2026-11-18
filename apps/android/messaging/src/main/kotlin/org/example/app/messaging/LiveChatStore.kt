@@ -1015,6 +1015,8 @@ class LiveChatStore(
     /** Finishes every conversation create that was cut short. Call it at start-up after the first inbox sync. */
     suspend fun resumePendingCreates() {
         conversations.resumePendingCreates()
+        groupCreator.resumeInit()
+        requestFlush()
         reload()
     }
 

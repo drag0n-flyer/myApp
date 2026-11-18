@@ -204,7 +204,8 @@ class InboxProcessor(
                 } catch (e: ServerException) {
                     if (!ConversationManager.isDefiniteRejection(e.status)) return Step.Stop
                     accepted.remove(raw.cursor)
-                    repo.transaction { placeholderOrPark(raw, "welcome_lookup_${e.status}"); markAndDelete(raw, hash) }
+                    // The server says this account has no such conversation: kept (parked) for the owner, never a "couldn't join" chat.
+                    repo.transaction { handler.park(raw, repo, "welcome_lookup_${e.status}"); markAndDelete(raw, hash) }
                     return Step.Done(null)
                 }
                 // A value outside the allowed set would fail the conversation write on every retry: never guess.

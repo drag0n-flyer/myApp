@@ -36,7 +36,7 @@ class GroupJoinTest {
         )
         assertNull(bob.repo.chat("acc-ana"), "no one-to-one chat with the creator")
         assertEquals(listOf(chatId), bob.repo.chats().map { it.id })
-        val line = bob.repo.messages(chatId, null, 20).single { it.id == "sys-added-conv-0001" }
+        val line = bob.repo.messages(chatId, null, 20).single { it.id.startsWith("sys-added-conv-0001") }
         assertEquals("""{"addedYou":{"name":"acc-ana"}}""", line.envelope.decodeToString())
         val conversation = assertNotNull(bob.repo.preferredConversation(chatId))
         assertTrue(conversation.active)
