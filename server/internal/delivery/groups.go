@@ -3,8 +3,11 @@ package delivery
 import (
 	"context"
 	"errors"
+	"github.com/drag0n-flyer/myApp/server/internal/ratelimit"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/drag0n-flyer/myApp/server/internal/core"
 	"github.com/drag0n-flyer/myApp/server/internal/httpx"
@@ -108,6 +111,147 @@ func (m *Module) blockersIn(ctx context.Context, kind string, devs []devAcct, se
 	return m.blockers(ctx, devs, sender)
 }
 
+// takeTokens charges n tokens to key and refuses with rate_limited (and a
+// Retry-After header) when the bucket cannot cover them.
+func takeTokens(w http.ResponseWriter, l *ratelimit.Limiter, key string, n int) error {
+	if ok, retry := l.AllowN(key, n); !ok {
+		secs := max(1, int((retry+time.Second-1)/time.Second))
+		w.Header().Set("Retry-After", strconv.Itoa(secs))
+		return httpx.Err("rate_limited", "too many requests")
+	}
+	return nil
+}
+
+// dropBlockers removes the accounts that have blocked caller. It says nothing
+// about it: the caller sees the same success either way.
+func (m *Module) dropBlockers(ctx context.Context, accts []string, caller string) ([]string, error) {
+	out := make([]string, 0, len(accts))
+	for _, a := range accts {
+		b, err := m.d.Blocks.IsBlocked(ctx, a, caller)
+		if err != nil {
+			return nil, err
+		}
+		if !b {
+			out = append(out, a)
+		}
+	}
+	return out, nil
+}
+
+// LeaveAllGroups implements core.GroupLeaver. For every group the account is
+// in it does what a leave does: the account's devices leave delivery, the
+// members version rises by one, the remaining member devices get a "members"
+// item. A departing owner hands ownership to the longest-standing admin, else
+// the longest-standing member (conversation_accounts.joined_at, then account
+// ID); the last member leaving deletes the group. Direct conversations are
+// left to the row cascade. All conversation rows are locked first, in ID
+// order, then every device involved once in sorted order, matching the lock
+// order of commits and messages.
+func (m *Module) LeaveAllGroups(ctx context.Context, tx pgx.Tx, accountID string) (func(context.Context), error) {
+	p := &pending{}
+	ctx = context.WithValue(ctx, pendingKey{}, p)
+	announce := func(c context.Context) { m.notifyAll(context.WithoutCancel(c), p) }
+
+	ids, err := queryStrings(ctx, tx,
+		`select ca.conversation_id::text from conversation_accounts ca join conversations c on c.id = ca.conversation_id
+		 where ca.account_id = $1 and c.kind = 'group' order by ca.conversation_id`, accountID)
+	if err != nil || len(ids) == 0 {
+		return announce, err
+	}
+	rows, err := tx.Query(ctx, `select id::text, epoch from conversations where id = any($1::uuid[]) order by id for update`, ids)
+	if err != nil {
+		return announce, err
+	}
+	type grp struct {
+		id         string
+		epoch      int64
+		role       string
+		others     int
+		recipients []string
+	}
+	var groups []*grp
+	for rows.Next() {
+		g := &grp{}
+		if err := rows.Scan(&g.id, &g.epoch); err != nil {
+			rows.Close()
+			return announce, err
+		}
+		groups = append(groups, g)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return announce, err
+	}
+	// Re-read membership under the locks.
+	lock, err := queryStrings(ctx, tx, `select id::text from devices where account_id = $1`, accountID)
+	if err != nil {
+		return announce, err
+	}
+	ownDevice := accountID
+	if len(lock) > 0 {
+		ownDevice = lock[0]
+	}
+	live := groups[:0]
+	for _, g := range groups {
+		err := tx.QueryRow(ctx, `select role from conversation_accounts where conversation_id = $1 and account_id = $2`, g.id, accountID).Scan(&g.role)
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return announce, err
+		}
+		if err := tx.QueryRow(ctx, `select count(*) from conversation_accounts where conversation_id = $1 and account_id <> $2`, g.id, accountID).Scan(&g.others); err != nil {
+			return announce, err
+		}
+		if g.others > 0 {
+			g.recipients, err = queryStrings(ctx, tx,
+				`select cd.device_id::text from conversation_devices cd join devices d on d.id = cd.device_id
+				 where cd.conversation_id = $1 and d.account_id <> $2 order by cd.device_id`, g.id, accountID)
+			if err != nil {
+				return announce, err
+			}
+			lock = append(lock, g.recipients...)
+		}
+		live = append(live, g)
+	}
+	if err := lockDevices(ctx, tx, lock); err != nil {
+		return announce, err
+	}
+	for _, g := range live {
+		if g.others == 0 {
+			if _, err := tx.Exec(ctx, `delete from conversations where id = $1`, g.id); err != nil {
+				return announce, err
+			}
+			continue
+		}
+		if _, err := tx.Exec(ctx, `delete from conversation_devices cd using devices d where cd.conversation_id = $1 and d.id = cd.device_id and d.account_id = $2`, g.id, accountID); err != nil {
+			return announce, err
+		}
+		if _, err := tx.Exec(ctx, `delete from conversation_accounts where conversation_id = $1 and account_id = $2`, g.id, accountID); err != nil {
+			return announce, err
+		}
+		if g.role == "owner" {
+			if _, err := tx.Exec(ctx,
+				`update conversation_accounts set role = 'owner' where conversation_id = $1 and account_id = (
+				   select account_id from conversation_accounts where conversation_id = $1
+				   order by (role = 'admin') desc, joined_at, account_id limit 1)`, g.id); err != nil {
+				return announce, err
+			}
+		}
+		var v int64
+		if err := tx.QueryRow(ctx, `update conversations set members_version = members_version + 1 where id = $1 returning members_version`, g.id).Scan(&v); err != nil {
+			return announce, err
+		}
+		if err := m.deliver(ctx, tx, g.recipients, InboxItem{
+			Kind: "members", ConversationID: g.id, Epoch: g.epoch, MembersVersion: &v,
+			SenderAccountID: accountID, SenderDeviceID: ownDevice, SentAt: m.d.Now(),
+		}); err != nil {
+			return announce, err
+		}
+	}
+	return announce, nil
+}
+
 func (m *Module) groupRoutes(r *httpx.Router) {
 	r.Authed("POST /v1/conversations/{id}/accounts", m.addAccounts)
 	r.Authed("DELETE /v1/conversations/{id}/accounts/{account}", m.removeAccount)
@@ -148,12 +292,21 @@ func (m *Module) addAccounts(w http.ResponseWriter, r *http.Request) error {
 		if len(accts) < 1 || len(accts) > maxGroupMembers-1 {
 			return httpx.Err("bad_request", "accounts must hold 1 to 99 accounts")
 		}
+		// Charged by the size of the request, so the answer never depends on
+		// who was skipped.
+		if err := takeTokens(w, m.groupAddLimit, p.AccountID, len(accts)); err != nil {
+			return err
+		}
 		var found int
 		if err := tx.QueryRow(ctx, `select count(*) from accounts where id = any($1::uuid[])`, accts).Scan(&found); err != nil {
 			return err
 		}
 		if found != len(accts) {
 			return httpx.Err("not_found", "no such account")
+		}
+		// An account that blocked the caller is left out without a word.
+		if accts, err = m.dropBlockers(ctx, accts, p.AccountID); err != nil {
+			return err
 		}
 		// Already-members are skipped, so a retry is harmless.
 		var current int

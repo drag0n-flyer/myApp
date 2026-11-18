@@ -71,6 +71,9 @@ func (m *Module) createConversation(w http.ResponseWriter, r *http.Request) erro
 		if len(others) < 1 || len(others) > maxGroupMembers-1 {
 			return httpx.Err("bad_request", "accounts must hold 1 to 99 other accounts")
 		}
+		if err := takeTokens(w, m.groupCreateLimit, p.AccountID, 1); err != nil {
+			return err
+		}
 	default:
 		return httpx.Err("bad_request", "kind must be direct or group")
 	}
@@ -80,6 +83,13 @@ func (m *Module) createConversation(w http.ResponseWriter, r *http.Request) erro
 	}
 	if found != len(others) {
 		return httpx.Err("not_found", "no such account")
+	}
+	if kind == "group" {
+		// An account that blocked the caller is left out without a word.
+		var err error
+		if others, err = m.dropBlockers(ctx, others, p.AccountID); err != nil {
+			return err
+		}
 	}
 
 	id := core.NewID()
@@ -244,19 +254,22 @@ func (m *Module) postCommit(w http.ResponseWriter, r *http.Request) error {
 		var added []string
 		var allowed []string
 		if kind == "group" && len(remove) > 0 {
-			// In a group a commit may drop only the sender's own account's
-			// devices, or devices of accounts that are no longer members.
-			// Accounts are removed through the account endpoint instead.
-			var foreign bool
+			// In a group every named device must be a device of the sender's
+			// own account, or a device of a non-member account that is still
+			// in conversation_devices. Unknown IDs and everything else are
+			// refused, so the list cannot be used to probe. Accounts are
+			// removed through the account endpoint instead.
+			var ok int
 			if err := tx.QueryRow(ctx,
-				`select exists (select 1 from devices d
-				 where d.id::text = any($1) and d.account_id <> $2
-				   and exists (select 1 from conversation_accounts ca where ca.conversation_id = $3 and ca.account_id = d.account_id))`,
-				remove, p.AccountID, id).Scan(&foreign); err != nil {
+				`select count(*) from devices d
+				 where d.id::text = any($1) and (d.account_id = $2 or (
+				   not exists (select 1 from conversation_accounts ca where ca.conversation_id = $3 and ca.account_id = d.account_id)
+				   and exists (select 1 from conversation_devices cd where cd.conversation_id = $3 and cd.device_id = d.id)))`,
+				remove, p.AccountID, id).Scan(&ok); err != nil {
 				return err
 			}
-			if foreign {
-				return httpx.Err("forbidden", "a device belongs to another member of this group")
+			if ok != len(remove) {
+				return httpx.Err("forbidden", "a device may not be removed by this commit")
 			}
 		}
 		if len(add) > 0 {

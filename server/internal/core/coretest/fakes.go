@@ -68,6 +68,13 @@ func (b *Blocklist) Block(blocker, blocked string) {
 	b.blocked[[2]string{blocker, blocked}] = true
 }
 
+// Unblock undoes Block.
+func (b *Blocklist) Unblock(blocker, blocked string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.blocked, [2]string{blocker, blocked})
+}
+
 // IsBlocked reports whether blocker has blocked blocked.
 func (b *Blocklist) IsBlocked(_ context.Context, blocker, blocked string) (bool, error) {
 	b.mu.Lock()

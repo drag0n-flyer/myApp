@@ -422,15 +422,16 @@ func TestGroupCommitRules(t *testing.T) {
 	if r = w.commit(t, w.carol, id, 2, nil, []string{carol2.DeviceID}, false); r.Status != 200 || w.deviceIn(t, id, carol2.DeviceID) {
 		t.Fatalf("own device remove: %s", r)
 	}
-	// Devices of removed accounts: any member's commit may name them.
+	// A removed account's devices already left delivery with the account, so
+	// naming them is refused (they are no longer in the conversation).
 	if r := w.removeAcct(t, w.ana1, id, w.dan.AccountID); r.Status != 200 {
 		t.Fatal(r)
 	}
-	if r = w.commit(t, w.carol, id, 3, nil, []string{w.dan.DeviceID}, false); r.Status != 200 {
-		t.Fatalf("remove removed account's device: %s", r)
+	if r = w.commit(t, w.carol, id, 3, nil, []string{w.dan.DeviceID}, false); r.Status != 403 {
+		t.Fatalf("name removed account's device: %s", r)
 	}
 	// Welcomes go only to devices of current members.
-	if r = w.commit(t, w.ana1, id, 4, []string{w.dan.DeviceID}, nil, true); r.Status != 403 {
+	if r = w.commit(t, w.ana1, id, 3, []string{w.dan.DeviceID}, nil, true); r.Status != 403 {
 		t.Fatalf("add removed account's device: %s", r)
 	}
 	// Direct conversations keep today's rules: any member device may remove any device.

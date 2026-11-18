@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/drag0n-flyer/myApp/server/internal/config"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -98,6 +99,14 @@ type Disconnector interface {
 	Disconnect(deviceID string, code int, reason string)
 }
 
+// GroupLeaver takes an account out of every group conversation it is in.
+// Account deletion calls it inside its own transaction, before the account
+// row is deleted. The returned function announces what was delivered and must
+// be called once the transaction has committed (and only then).
+type GroupLeaver interface {
+	LeaveAllGroups(ctx context.Context, tx pgx.Tx, accountID string) (announce func(context.Context), err error)
+}
+
 // Command is an admin CLI subcommand.
 type Command func(ctx context.Context, args []string, out io.Writer) error
 
@@ -115,4 +124,5 @@ type Deps struct {
 	Notify    Notifier
 	Push      Pusher
 	Live      Disconnector
+	Groups    GroupLeaver // may be nil (modules that never delete accounts)
 }
