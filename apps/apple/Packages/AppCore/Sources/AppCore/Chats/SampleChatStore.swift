@@ -317,6 +317,7 @@ public final class SampleChatStore: ChatStore {
 
     public func ensureChat(with contactID: String) -> String {
         defer { onChange?() }
+        if ChatID.isGroup(contactID) { return contactID }   // a group chat is opened by its own ID
         if let existing = allChats.first(where: { $0.contactID == contactID }) { return existing.id }
         guard let contact = contact(id: contactID) else { return "chat-\(contactID)" }
         return chatIDCreatingRequestIfNeeded(for: contact)

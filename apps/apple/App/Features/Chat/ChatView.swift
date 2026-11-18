@@ -109,7 +109,7 @@ struct ChatView: View {
         }
         .toolbar {
             ToolbarItem(placement: .principal) {
-                ChatHeaderView(name: contact?.displayName ?? "", colorKey: contact?.id, status: model.headerStatus(chatID: chatID)) {
+                ChatHeaderView(name: chat.map { model.chatName($0) } ?? "", colorKey: contact?.id ?? (ChatID.isGroup(chatID) ? chatID : nil), status: model.headerStatus(chatID: chatID)) {
                     open(.info(chatID: chatID))
                 }
             }

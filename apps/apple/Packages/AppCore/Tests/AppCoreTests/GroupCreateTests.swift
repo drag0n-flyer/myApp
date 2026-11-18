@@ -41,3 +41,10 @@ import Testing
     let chat = Chat(id: "g:1", contactID: nil, encryption: .endToEnd, folderIDs: [], unreadCount: 0, messages: [], isRequest: false, title: "Club")
     #expect(chat.title == "Club")
 }
+
+@MainActor @Test func openingAGroupByItsIDKeepsTheID() async {
+    let store = SampleChatStore(data: .make(now: Date()))
+    let people = Array(store.contacts.prefix(2)).map(\.id)
+    guard case .created(let chatID, _) = await store.createGroup(accounts: people, name: "Club", photo: nil) else { Issue.record("expected created"); return }
+    #expect(store.ensureChat(with: chatID) == chatID)
+}
