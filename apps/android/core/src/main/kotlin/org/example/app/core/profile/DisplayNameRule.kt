@@ -28,4 +28,7 @@ object DisplayNameRule {
         }
         return name
     }
+
+    /** A name for showing, from data this device did not check (the server only refuses control characters). */
+    fun forDisplay(name: String, fallback: String): String = name
 }
