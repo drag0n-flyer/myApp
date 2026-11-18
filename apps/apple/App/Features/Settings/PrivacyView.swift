@@ -3,8 +3,10 @@ import SwiftUI
 
 struct PrivacyView: View {
     @Bindable var model: AppModel
+    @State private var findByEmailError: AccountError?
 
     var body: some View {
+        let _ = model.revision
         Form {
             Section("Hide my IP address in calls") {
                 ForEach(IPHiding.allCases, id: \.self) { option in
@@ -28,19 +30,14 @@ struct PrivacyView: View {
             }
 
             Section("Who can find me") {
-                Toggle("By username", isOn: $model.settings.findByUsername)
-                Toggle("By email", isOn: $model.settings.findByEmail)
+                Toggle("By email", isOn: Binding(
+                    get: { model.settings.findByEmail },
+                    set: { on in Task { findByEmailError = await model.setFindByEmail(on) } }))
                     .accessibilityIdentifier("privacy.findemail")
             }
 
             Section("Messages") {
                 Toggle("Read receipts", isOn: $model.settings.readReceipts)
-                Picker("Disappearing messages", selection: $model.settings.disappearingMessages) {
-                    Text("Off").tag(Double?.none)
-                    Text("1 day").tag(Double?.some(86_400))
-                    Text("1 week").tag(Double?.some(604_800))
-                    Text("4 weeks").tag(Double?.some(2_419_200))
-                }
                 NavigationLink {
                     BlockedListView(model: model)
                 } label: {
@@ -50,15 +47,39 @@ struct PrivacyView: View {
         }
         .formStyle(.grouped)
         .navigationTitle("Privacy")
+        .task { await model.loadFindByEmail() }
+        .alert("Couldn't save", isPresented: Binding(
+            get: { findByEmailError != nil }, set: { if !$0 { findByEmailError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(findByEmailError?.message ?? "")
+        }
     }
 }
 
 private struct BlockedListView: View {
     let model: AppModel
 
+    /// Name, then username, then the ID (a person never seen before has only the ID).
+    private func label(for id: String) -> String {
+        if let contact = model.contact(id: id) {
+            if !contact.displayName.isEmpty { return contact.displayName }
+            if !contact.username.isEmpty { return "@\(contact.username)" }
+        }
+        return id
+    }
+
     var body: some View {
+        let _ = model.revision   // the store is not observable: re-read after every change
         List(Array(model.chatStore.blockedIDs).sorted(), id: \.self) { id in
-            Text(id)
+            HStack {
+                Text(label(for: id))
+                Spacer()
+                Button("Unblock") { model.unblock(contactID: id) }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel(Text("Unblock \(label(for: id))"))
+                    .accessibilityIdentifier("blocked.unblock.\(id)")
+            }
         }
         .overlay {
             if model.chatStore.blockedIDs.isEmpty {

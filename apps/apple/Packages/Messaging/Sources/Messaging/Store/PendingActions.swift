@@ -2,11 +2,12 @@ import Foundation
 import LocalStore
 import ServerKit
 
-/// Block and report requests that the server has not acknowledged yet. They live in `kv` (a cleared entry has an
+/// Block, unblock and report requests that the server has not acknowledged yet. They live in `kv` (a cleared entry has an
 /// empty value), so they survive a restart; `LiveChatStore` retries them on every flush and inbox sync. The local
 /// effect (blocked, hidden) is already applied when the entry is written.
 enum PendingActions {
     static let blockPrefix = "pending.block."
+    static let unblockPrefix = "pending.unblock."
     static let reportPrefix = "pending.report."
 
     struct Report: Codable {
@@ -49,6 +50,11 @@ enum PendingActions {
         let blocks = ((try? repo.entries(prefix: blockPrefix)) ?? [:]).filter { !$0.value.isEmpty }
         for key in blocks.keys.sorted() {
             do { try await server.block(accountID: String(key.dropFirst(blockPrefix.count))) } catch { continue }
+            try? repo.set(key, Data())
+        }
+        let unblocks = ((try? repo.entries(prefix: unblockPrefix)) ?? [:]).filter { !$0.value.isEmpty }
+        for key in unblocks.keys.sorted() {
+            do { try await server.unblock(accountID: String(key.dropFirst(unblockPrefix.count))) } catch { continue }
             try? repo.set(key, Data())
         }
         let reports = ((try? repo.entries(prefix: reportPrefix)) ?? [:]).filter { !$0.value.isEmpty }

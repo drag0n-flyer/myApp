@@ -1,5 +1,10 @@
 import AppCore
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 #if os(iOS)
 /// The Settings tab.
@@ -23,7 +28,9 @@ struct SettingsView: View {
                 Section {
                     NavigationLink { ServerInfoView(model: model) } label: {
                         row("Server", "house.fill", .indigo) {
-                            Label { Text(model.server.host) } icon: { Circle().fill(.green).frame(width: 7, height: 7) }
+                            Label { Text(model.server.host) } icon: {
+                                Circle().fill(model.connectionStatus.dotColor).frame(width: 7, height: 7)
+                            }
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
@@ -40,7 +47,13 @@ struct SettingsView: View {
                         row("Data & Storage", "circle.lefthalf.filled", .green, value: model.stripLabel)
                     }
                     .accessibilityIdentifier("settings.data")
-                    NavigationLink { NotificationsView() } label: { row("Notifications", "bell.badge.fill", .red) }
+                    Button { openNotificationSettings() } label: {
+                        row("Notification settings", "bell.badge.fill", .red) {
+                            Image(systemName: "arrow.up.forward.app").foregroundStyle(.secondary).accessibilityHidden(true)
+                        }
+                    }
+                    .foregroundStyle(.primary)
+                    .accessibilityIdentifier("settings.notifications")
                     NavigationLink { ChatFoldersView(model: model) } label: { row("Chat folders", "folder.fill", .orange) }
                     NavigationLink { CallsAudioView(model: model) } label: { row("Calls & Audio", "waveform", .teal) }
                     NavigationLink { AppearanceView() } label: { row("Appearance", "paintbrush.fill", .purple) }
@@ -87,6 +100,7 @@ struct MacSettingsView: View {
     var body: some View {
         TabView {
             DataStorageView(model: model).tabItem { Label("Data & Storage", systemImage: "circle.lefthalf.filled") }
+            NotificationSettingsForm().tabItem { Label("Notifications", systemImage: "bell") }
             PrivacyView(model: model).tabItem { Label("Privacy", systemImage: "lock") }
             CallsAudioView(model: model).tabItem { Label("Calls & Audio", systemImage: "waveform") }
             ChatFoldersView(model: model).tabItem { Label("Chat folders", systemImage: "folder") }
@@ -103,12 +117,19 @@ struct ProfileView: View {
     @Bindable var model: AppModel
     @State private var confirmDelete = false
     @State private var deleteError: AccountError?
+    @State private var confirmSignOut = false
+    @State private var signOutError: SignOutDecision?
 
     var body: some View {
         Form {
             Section {
                 LabeledContent("Name", value: model.me.displayName)
                 LabeledContent("Username", value: "@\(model.me.username)")
+            }
+            Section {
+                Button("Sign out", role: .destructive) { confirmSignOut = true }
+                    .disabled(model.isSigningOut)
+                    .accessibilityIdentifier("profile.signout")
             }
             Section {
                 Button("Delete account", role: .destructive) { confirmDelete = true }
@@ -120,6 +141,27 @@ struct ProfileView: View {
         }
         .formStyle(.grouped)
         .navigationTitle("Account")
+        .confirmationDialog("Sign out?", isPresented: $confirmSignOut, titleVisibility: .visible) {
+            Button("Sign out", role: .destructive) {
+                guard !model.isSigningOut else { return }
+                Task {
+                    let result = await model.signOut()
+                    signOutError = result == .wipe ? nil : result
+                }
+            }
+        } message: {
+            Text("Sign out of this device? Your messages on this device will be removed.")
+        }
+        .alert(signOutError == .noConnection ? Text("No connection") : Text("Couldn't sign out"),
+               isPresented: Binding(get: { signOutError != nil }, set: { if !$0 { signOutError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            if signOutError == .noConnection {
+                Text("Connect to the internet and try again. Nothing was removed from this device.")
+            } else {
+                Text("Something went wrong on the server. Try again later.")
+            }
+        }
         .confirmationDialog("Delete your account?", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("Delete account", role: .destructive) {
                 Task { deleteError = await model.deleteAccount() }
@@ -138,7 +180,10 @@ struct ServerInfoView: View {
             Section {
                 LabeledContent("Address", value: model.server.host)
                 LabeledContent("Status") {
-                    Label { Text("Connected") } icon: { Circle().fill(.green).frame(width: 8, height: 8) }
+                    Label { Text(model.connectionStatus.title) } icon: {
+                        Circle().fill(model.connectionStatus.dotColor).frame(width: 8, height: 8)
+                    }
+                    .accessibilityIdentifier("server.status")
                 }
             } footer: {
                 Text("Switching to another server doesn't move your contacts or chats.")
@@ -149,24 +194,40 @@ struct ServerInfoView: View {
     }
 }
 
-struct NotificationsView: View {
-    @AppStorage("notify.messages") private var messages = true
-    @AppStorage("notify.calls") private var calls = true
-    @AppStorage("notify.preview") private var preview = true
+/// Opens the system settings page for this app's notifications (the app has no switches of its own).
+@MainActor
+func openNotificationSettings() {
+    #if os(iOS)
+    if let url = URL(string: UIApplication.openNotificationSettingsURLString) { UIApplication.shared.open(url) }
+    #else
+    if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
+        NSWorkspace.shared.open(url)
+    }
+    #endif
+}
 
+/// The Mac settings tab for notifications: one button to System Settings.
+struct NotificationSettingsForm: View {
     var body: some View {
         Form {
-            Toggle("Message notifications", isOn: $messages)
-            Toggle("Ring for calls", isOn: $calls)
-            Section {
-                Toggle("Show message text", isOn: $preview)
-            } footer: {
-                Text("When off, notifications only say \"New message\".")
-            }
+            Button("Notification settings") { openNotificationSettings() }
+                .accessibilityIdentifier("settings.notifications")
         }
         .formStyle(.grouped)
         .navigationTitle("Notifications")
     }
+}
+
+extension ConnectionStatus {
+    var title: LocalizedStringKey {
+        switch self {
+        case .connected: "Connected"
+        case .connecting: "Connecting…"
+        case .offline: "No connection"
+        }
+    }
+
+    var dotColor: Color { self == .connected ? .green : .gray }
 }
 
 enum AppearanceChoice: String, CaseIterable {
@@ -214,7 +275,7 @@ struct HelpView: View {
                 Text("Turn on Voice Isolation in Settings → Calls & Audio.")
             }
             Section("Lost your phone?") {
-                Text("Sign in again with your passkey or your email. Old messages come back only from a backup.")
+                Text("Sign in again with your passkey or your email. A new device starts with empty history unless you link it from a device that still has your messages.")
             }
         }
         .formStyle(.grouped)

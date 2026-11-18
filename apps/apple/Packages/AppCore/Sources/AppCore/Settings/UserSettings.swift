@@ -15,10 +15,8 @@ public struct UserSettings: Equatable, Codable, Sendable {
     public var call: CallSettings
     public var autoDownload: AutoDownloadSettings
     public var ipHiding: IPHiding
-    public var findByUsername = true
     public var findByEmail = false
     public var readReceipts = true
-    public var disappearingMessages: Double? = nil
     public var noiseSuppression: NoiseSuppression = .standard
 
     public init(call: CallSettings = .init(), autoDownload: AutoDownloadSettings = .init(), ipHiding: IPHiding = .nonContacts) {

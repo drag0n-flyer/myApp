@@ -6,12 +6,12 @@ public enum SettingScope: Sendable {
 }
 
 public enum SettingKey: CaseIterable, Sendable {
-    case chatFolders, contacts, blockedList, privacy, callDataMode, mobileDataLimit, readState, disappearingMessages
+    case chatFolders, contacts, blockedList, privacy, callDataMode, mobileDataLimit, readState
     case autoDownload, storage, noiseSuppression, notificationSounds, appearance
 
     public var scope: SettingScope {
         switch self {
-        case .chatFolders, .contacts, .blockedList, .privacy, .callDataMode, .mobileDataLimit, .readState, .disappearingMessages:
+        case .chatFolders, .contacts, .blockedList, .privacy, .callDataMode, .mobileDataLimit, .readState:
             .account
         case .autoDownload, .storage, .noiseSuppression, .notificationSounds, .appearance:
             .device

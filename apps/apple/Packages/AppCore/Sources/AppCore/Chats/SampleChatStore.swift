@@ -173,6 +173,11 @@ public final class SampleChatStore: ChatStore {
         requestSenders[contactID] = nil
     }
 
+    public func unblock(contactID: String) {
+        defer { onChange?() }
+        blockedIDs.remove(contactID)
+    }
+
     public func report(chatID: String) {
         defer { onChange?() }
         reportedChatIDs.insert(chatID)

@@ -33,6 +33,7 @@ public final class EmptyChatStore: ChatStore {
     public func receive(_ content: MessageContent, from contact: Contact) {}
     public func accept(requestID: String) {}
     public func block(contactID: String) {}
+    public func unblock(contactID: String) {}
     public func report(chatID: String) {}
     public func markRead(chatID: String) {}
     public func incomingCall(from contact: Contact, video: Bool) -> IncomingCallDecision { .silentMissed }

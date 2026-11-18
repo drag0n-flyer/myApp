@@ -497,6 +497,20 @@ public final class LiveChatStore: ChatStore {
                     try repo.upsertContact(row)
                 }
                 try repo.set(PendingActions.blockPrefix + contactID, Data([1]))
+                try repo.set(PendingActions.unblockPrefix + contactID, Data())   // a later block cancels an unsent unblock
+            }
+        } catch { return }
+        refresh()
+        kickPending()
+    }
+
+    public func unblock(contactID: String) {
+        do {
+            try repo.transaction {
+                try repo.unblock(contactID)
+                // An unsent block is dropped; the server is told to lift any block it has (idempotent).
+                try repo.set(PendingActions.blockPrefix + contactID, Data())
+                try repo.set(PendingActions.unblockPrefix + contactID, Data([1]))
             }
         } catch { return }
         refresh()

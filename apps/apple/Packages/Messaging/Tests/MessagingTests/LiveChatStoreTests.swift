@@ -163,6 +163,72 @@ private func text(_ message: Message?) -> String? {
         #expect(try rig.ana.repo.isBlocked("acc-bob"))
     }
 
+    @Test func unblockLiftsTheBlockAndCallsServer() async throws {
+        let rig = try await Rig.make()
+        try await rig.anaChatsWithBob()
+        rig.ana.store.block(contactID: "acc-bob")
+        await rig.ana.store.settle()
+        #expect(rig.ana.store.blockedIDs == ["acc-bob"])
+        rig.ana.store.unblock(contactID: "acc-bob")
+        #expect(rig.ana.store.blockedIDs.isEmpty)
+        await rig.ana.store.settle()
+        #expect(await rig.server.requests().contains("DELETE /v1/blocks/acc-bob"))
+        #expect(try !rig.ana.repo.isBlocked("acc-bob"))
+    }
+
+    /// An unsent block followed by an unblock: the block is never sent afterwards (only the idempotent DELETE goes out,
+    /// in case the server got the block but its answer was lost).
+    @Test func unsentBlockThenUnblockNeverSendsTheBlockAgain() async throws {
+        let rig = try await Rig.make()
+        try await rig.anaChatsWithBob()
+        let store = rig.ana.store
+        await rig.server.failNextRequests("PUT /v1/blocks", count: 1)
+        store.block(contactID: "acc-bob")
+        await store.settle()
+        store.unblock(contactID: "acc-bob")
+        await store.settle()
+        await store.flushOutbox()
+        await store.flushOutbox()
+        let blockRequests = await rig.server.requests().filter { $0.hasSuffix("/v1/blocks/acc-bob") }
+        #expect(blockRequests.filter { $0.hasPrefix("PUT") }.isEmpty)   // failed requests are not logged
+        #expect(blockRequests.last == "DELETE /v1/blocks/acc-bob")
+        #expect(try !rig.ana.repo.isBlocked("acc-bob"))
+    }
+
+    @Test func blockAfterAQueuedUnblockCancelsTheUnblock() async throws {
+        let rig = try await Rig.make()
+        try await rig.anaChatsWithBob()
+        let store = rig.ana.store
+        await rig.server.failNextRequests("DELETE /v1/blocks", count: 1)
+        store.unblock(contactID: "acc-bob")
+        await store.settle()
+        store.block(contactID: "acc-bob")
+        await store.settle()
+        await store.flushOutbox()
+        let blockRequests = await rig.server.requests().filter { $0.hasSuffix("/v1/blocks/acc-bob") }
+        #expect(blockRequests.filter { $0.hasPrefix("DELETE") }.isEmpty)
+        #expect(blockRequests.last == "PUT /v1/blocks/acc-bob")
+        #expect(try rig.ana.repo.isBlocked("acc-bob"))
+    }
+
+    @Test func unblockRetriesAfterAServerFailureAndSendsOnce() async throws {
+        let rig = try await Rig.make()
+        try await rig.anaChatsWithBob()
+        let store = rig.ana.store
+        store.block(contactID: "acc-bob")
+        await store.settle()
+        await rig.server.failNextRequests("DELETE /v1/blocks", count: 1)
+        store.unblock(contactID: "acc-bob")
+        #expect(store.blockedIDs.isEmpty)   // local state applies at once
+        await store.settle()
+        await store.flushOutbox()
+        await store.flushOutbox()
+        let deletes = await rig.server.requests().filter { $0 == "DELETE /v1/blocks/acc-bob" }
+        #expect(deletes.count == 1)   // the failed try is not logged; the retry got through
+        await store.flushOutbox()
+        #expect(await rig.server.requests().filter { $0 == "DELETE /v1/blocks/acc-bob" }.count == 1)
+    }
+
     @Test func reportSendsLastTen() async throws {
         let rig = try await Rig.make()
         try await rig.anaChatsWithBob()

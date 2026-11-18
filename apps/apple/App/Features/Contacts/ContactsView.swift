@@ -52,14 +52,29 @@ struct ContactsContent: View {
     var body: some View {
         List {
             Section {
-                ShareLink(item: inviteURL, message: Text("Join me on \(AppBrand.name)")) {
-                    Label("Invite people", systemImage: "person.badge.plus")
+                // Sample invite codes are not real: a live account has no invite row.
+                if model.isSampleData {
+                    ShareLink(item: inviteURL, message: Text("Join me on \(AppBrand.name)")) {
+                        Label("Invite people", systemImage: "person.badge.plus")
+                    }
+                    .accessibilityIdentifier("contacts.invite")
                 }
-                .accessibilityIdentifier("contacts.invite")
                 Button { showingAdd = true } label: {
                     Label("Add contact", systemImage: "plus.circle")
                 }
                 .accessibilityIdentifier("contacts.add")
+            }
+            if model.contacts.isEmpty {
+                ContentUnavailableView {
+                    Label("No contacts yet", systemImage: "person.2")
+                } actions: {
+                    Button("Add contact") { showingAdd = true }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("contacts.empty.add")
+                }
+                .frame(maxWidth: .infinity)
+                .listRowSeparator(.hidden)
+                .accessibilityIdentifier("contacts.empty")
             }
             ForEach(sections, id: \.letter) { section in
                 Section(section.letter) {

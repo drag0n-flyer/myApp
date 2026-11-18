@@ -6,7 +6,6 @@ struct ChatInfoView: View {
     let chatID: String
     @Bindable var model: AppModel
     @Environment(\.dismiss) private var dismiss
-    @State private var muted = false
     @State private var showingVerify = false
     @State private var confirmBlock = false
     @State private var confirmReport = false
@@ -25,7 +24,6 @@ struct ChatInfoView: View {
                         HStack(spacing: 12) {
                             action("Audio", "phone") { model.startCall(contactID: contact.id, video: false) }
                             action("Video", "video") { model.startCall(contactID: contact.id, video: true) }
-                            action(muted ? "Unmute" : "Mute", muted ? "bell.slash" : "bell") { muted.toggle() }
                             action("Search", "magnifyingglass") { model.searchChats(for: contact.displayName) }
                         }
                         .padding(.top, 6)
@@ -62,10 +60,6 @@ struct ChatInfoView: View {
                     } else if model.supportsSafetyNumbers {
                         Button("Verify", systemImage: "checkmark.shield") { showingVerify = true }
                     }
-                }
-
-                Section {
-                    LabeledContent("Disappearing messages", value: String(localized: "Off"))
                 }
 
                 Section {
