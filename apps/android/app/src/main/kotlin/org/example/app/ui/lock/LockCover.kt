@@ -13,6 +13,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -34,8 +37,12 @@ fun LockCover(lock: AppLock, auth: DeviceAuth, modifier: Modifier = Modifier) {
         else auth.authenticate(title) { result -> if (result == AuthResult.Success) lock.unlock() }
     }
     // A phone with no screen lock has nothing to ask with (it was removed after the lock was switched on): do not lock the person out.
-    LaunchedEffect(requests) {
-        if (lock.takePrompt() || !auth.available) ask()
+    // Only while resumed: on a cold start the first composition can come before the activity is resumed, and the system may refuse the sheet.
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(requests, lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            if (lock.takePrompt() || !auth.available) ask()
+        }
     }
     Surface(modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(

@@ -7,6 +7,8 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextClearance
+import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ApplicationProvider
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -91,6 +93,26 @@ class AppRootLockTest {
         rule.waitForIdle()
         rule.onNodeWithText("Riya").assertIsDisplayed()
         assertEquals(0, rule.onAllNodesWithTextCount("Message")) // no chat open
+    }
+
+    @Test fun theChatThePersonWasInIsStillOpenWithItsTextAfterALockAndUnlock() {
+        show(lockOn = true, seconds = 0)
+        rule.onNodeWithText("Unlock").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithText("Riya").performClick()
+        rule.onNodeWithText("Message").performTextInput("half written")
+        rule.waitForIdle()
+        auth.answerWith(AuthResult.Cancelled)
+        rule.runOnUiThread { graph.appLock.onStop(); graph.appLock.onStart() }
+        rule.waitForIdle()
+        assertEquals(0, rule.onAllNodesWithTextCount("half written")) // nothing of the chat while locked
+        rule.onNodeWithText("Unlock").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithText("half written").assertIsDisplayed()
+        rule.onNodeWithContentDescription("Send").assertIsDisplayed()
+        // Drafts live in a process-wide keeper: leave none behind for the next test in this JVM.
+        rule.onNodeWithText("half written").performTextClearance()
+        rule.waitForIdle()
     }
 
     @Test fun aChatThatIsNotTheAccountsIsDroppedAfterTheUnlock() {

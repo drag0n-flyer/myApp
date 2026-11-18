@@ -162,7 +162,6 @@ private fun AppLockRows(settings: SettingsStore, appLock: AppLock, auth: DeviceA
     }
     ListItem(
         modifier = Modifier
-            .semantics { contentDescription = title }
             .toggleable(value = on, enabled = canChange, role = Role.Switch, onValueChange = ::change),
         headlineContent = { Text(title) },
         supportingContent = {

@@ -10,6 +10,7 @@ import androidx.compose.ui.test.performClick
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import androidx.compose.ui.semantics.getOrNull
 import org.example.app.core.chats.SampleChatStore
 import org.example.app.core.settings.UserSettings
 import org.example.app.ui.lock.AppLock
@@ -38,6 +39,16 @@ class PrivacyAppLockTest {
         rule.onNodeWithText("App lock").assertIsDisplayed()
         rule.onNodeWithText("Ask for your fingerprint, face or screen lock to open [App]").assertIsDisplayed()
         assertEquals(0, rule.onAllNodes(hasText("Lock after")).fetchSemanticsNodes().size)
+    }
+
+    @Test fun theRowReadsTitleExplanationAndStateTogether() {
+        show(SampleDeviceAuth())
+        val node = rule.onNode(hasText("App lock")).fetchSemanticsNode()
+        val texts = node.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.Text).orEmpty().map { it.text }
+        assertTrue("App lock" in texts && "Ask for your fingerprint, face or screen lock to open [App]" in texts, "$texts")
+        // No description override that would hide the explanation from TalkBack.
+        assertEquals(null, node.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.ContentDescription))
+        assertEquals(androidx.compose.ui.state.ToggleableState.Off, node.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.ToggleableState))
     }
 
     @Test fun turningItOnNeedsOnePassedPrompt() {

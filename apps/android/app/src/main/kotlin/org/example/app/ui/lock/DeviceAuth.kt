@@ -38,7 +38,16 @@ interface DeviceAuth {
  * asked for differently by API level: `setDeviceCredentialAllowed` on 29 (deprecated from 30) and
  * `setAllowedAuthenticators` from 30. The sheet needs an Activity [context] to attach to.
  */
-class PlatformDeviceAuth(private val context: Context, private val sdk: Int = Build.VERSION.SDK_INT) : DeviceAuth {
+class PlatformDeviceAuth(
+    private val context: Context,
+    private val sdk: Int = Build.VERSION.SDK_INT,
+    /** Builds and shows the system sheet; tests replace it (Robolectric has no biometric service). */
+    private val show: (title: String, cancel: CancellationSignal, callback: BiometricPrompt.AuthenticationCallback) -> Unit =
+        { title, cancel, callback ->
+            BiometricPrompt.Builder(context).setTitle(title).also { allowDeviceCredential(it, sdk) }.build()
+                .authenticate(cancel, context.mainExecutor, callback)
+        },
+) : DeviceAuth {
     private var signal: CancellationSignal? = null
 
     override val available: Boolean
@@ -58,19 +67,10 @@ class PlatformDeviceAuth(private val context: Context, private val sdk: Int = Bu
             signal = null
             onResult(result)
         }
-        val callback = object : BiometricPrompt.AuthenticationCallback() {
-            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult?) = answer(AuthResult.Success)
-
-            // Every error ends the sheet: the person cancelled, locked out, or the app left the screen.
-            override fun onAuthenticationError(errorCode: Int, errString: CharSequence?) = answer(AuthResult.Cancelled)
-
-            // A finger that did not match: the sheet stays open and the person tries again.
-            override fun onAuthenticationFailed() {}
-        }
+        val callback = PromptCallback(::answer)
         try {
-            val prompt = BiometricPrompt.Builder(context).setTitle(title).also(::allowDeviceCredential).build()
             signal = cancel
-            prompt.authenticate(cancel, context.mainExecutor, callback)
+            show(title, cancel, callback)
         } catch (e: RuntimeException) {
             signal = null
             answer(AuthResult.Unavailable)
@@ -81,16 +81,23 @@ class PlatformDeviceAuth(private val context: Context, private val sdk: Int = Bu
         signal?.cancel()
         signal = null
     }
+}
 
-    private fun allowDeviceCredential(builder: BiometricPrompt.Builder) {
-        if (sdk >= 30) {
-            // Weak biometrics (many phones' face unlock) are enough: this only decides who sees the screen.
-            builder.setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_WEAK or BiometricManager.Authenticators.DEVICE_CREDENTIAL)
-        } else {
-            @Suppress("DEPRECATION")
-            builder.setDeviceCredentialAllowed(true)
-        }
-    }
+/** How device credential as a fallback is asked for. */
+internal enum class CredentialRequest { DeviceCredentialAllowed, AllowedAuthenticators }
+
+/** `setDeviceCredentialAllowed` on API 29 (deprecated from 30), `setAllowedAuthenticators` from 30. */
+internal fun credentialRequestFor(sdk: Int): CredentialRequest =
+    if (sdk >= 30) CredentialRequest.AllowedAuthenticators else CredentialRequest.DeviceCredentialAllowed
+
+/** The system's callbacks as results. Only a success is a pass: every error (cancel, lockout, no biometrics, ...) is Cancelled. */
+internal class PromptCallback(private val answer: (AuthResult) -> Unit) : BiometricPrompt.AuthenticationCallback() {
+    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult?) = answer(AuthResult.Success)
+
+    override fun onAuthenticationError(errorCode: Int, errString: CharSequence?) = answer(AuthResult.Cancelled)
+
+    // A finger that did not match: the sheet stays open and the person tries again.
+    override fun onAuthenticationFailed() {}
 }
 
 /** For sample data and tests: no system sheet. Answers with the next of [results] (default Success) at once. */
@@ -110,4 +117,14 @@ class SampleDeviceAuth(override var available: Boolean = true, results: List<Aut
     }
 
     override fun cancel() {}
+}
+
+private fun allowDeviceCredential(builder: BiometricPrompt.Builder, sdk: Int) {
+    if (credentialRequestFor(sdk) == CredentialRequest.AllowedAuthenticators) {
+        // Weak biometrics (many phones' face unlock) are enough: this only decides who sees the screen.
+        builder.setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_WEAK or BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+    } else {
+        @Suppress("DEPRECATION")
+        builder.setDeviceCredentialAllowed(true)
+    }
 }
