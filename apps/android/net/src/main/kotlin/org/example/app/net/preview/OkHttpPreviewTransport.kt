@@ -11,6 +11,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withContext
 import okhttp3.Authenticator
+import org.example.app.core.chats.LinkPreviewRule
 import okhttp3.ConnectionPool
 import okhttp3.ConnectionSpec
 import okhttp3.CookieJar
@@ -77,12 +78,16 @@ class OkHttpPreviewTransport(private val base: OkHttpClient = OkHttpClient()) : 
         }
     }
 
-    override suspend fun get(url: String, addresses: List<InetAddress>, maxBytes: Int, timeoutMs: Long, accept: String): PreviewResponse =
+    override suspend fun get(url: String, host: String, addresses: List<InetAddress>, maxBytes: Int, timeoutMs: Long, accept: String): PreviewResponse =
         withContext(Dispatchers.IO) {
             val httpUrl = url.toHttpUrlOrNull()
             // OkHttp's reading of the address must agree with ours: https, no user, the checked host, port 443.
             if (httpUrl == null || !httpUrl.isHttps || httpUrl.port != 443 || httpUrl.username.isNotEmpty() || httpUrl.password.isNotEmpty()) {
                 throw IOException("not a plain https address")
+            }
+            // OkHttp must read the same host the fetcher checked, and it must be a name: never an address in any notation.
+            if (httpUrl.host != host.lowercase().removeSuffix(".") || !LinkPreviewRule.hostNameAllowed(httpUrl.host)) {
+                throw IOException("not the host that was checked")
             }
             val call = configure(base, httpUrl.host, addresses, timeoutMs).newCall(request(httpUrl, accept))
             val handle = currentCoroutineContext()[Job]?.invokeOnCompletion { if (it != null) call.cancel() }

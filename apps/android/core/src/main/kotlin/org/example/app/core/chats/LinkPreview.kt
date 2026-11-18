@@ -250,10 +250,15 @@ object LinkPreviewParse {
         return -1
     }
 
-    /** Entities decoded, white space collapsed, control and format characters (direction marks, zero width) removed, cut to [max] code points. */
-    private fun clean(raw: String?, max: Int): String? {
-        if (raw == null) return null
-        val text = decodeEntities(raw)
+    /** Entities decoded, then [sanitize]d. */
+    private fun clean(raw: String?, max: Int): String? = if (raw == null) null else sanitize(decodeEntities(raw), max)
+
+    /**
+     * [text] as it may be shown: white space collapsed to single spaces, control, format (direction marks, zero width),
+     * private-use and unassigned characters removed, trimmed, cut to [max] code points. Null when nothing visible is left.
+     * No entities are decoded. The receiver of a preview runs this on the title and description it gets.
+     */
+    fun sanitize(text: String, max: Int): String? {
         val sb = StringBuilder()
         var pendingSpace = false
         var count = 0

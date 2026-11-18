@@ -30,4 +30,16 @@ class AndroidImageShrinkerTest {
         assertEquals(0xFF.toByte(), jpeg[0])
         assertEquals(0xD8.toByte(), jpeg[1])
     }
+
+    @Test fun theDeclaredPixelCapIsTighterForEverythingButJpeg() {
+        // JPEG can be decoded at a reduced size without building the whole picture, so it keeps the large cap.
+        assertTrue(AndroidImageShrinker.pixelsAllowed("image/jpeg", 5_000, 5_000))
+        assertTrue(!AndroidImageShrinker.pixelsAllowed("image/jpeg", 5_001, 5_000))
+        for (mime in listOf("image/png", "image/webp", "image/gif", null, "image/x-unknown")) {
+            assertTrue(AndroidImageShrinker.pixelsAllowed(mime, 2_000, 2_000), mime.toString())
+            assertTrue(!AndroidImageShrinker.pixelsAllowed(mime, 2_001, 2_000), mime.toString())
+        }
+        assertTrue(!AndroidImageShrinker.pixelsAllowed("image/png", 0, 10))
+        assertTrue(!AndroidImageShrinker.pixelsAllowed("image/jpeg", -1, 10))
+    }
 }

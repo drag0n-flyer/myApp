@@ -833,11 +833,13 @@ class LiveChatStore(
             return
         }
         val att = uploaded.att
-        val envelope = envelopeFor(kind, id, at, att, prepared, ttl, caption)
         val queued = try {
             repo.transaction {
+                // The caption is read again from the row now: an edit made while the upload ran is the one that is sent.
+                val finalCaption = captionOf(repo.message(id)?.envelope) ?: caption
+                val envelope = envelopeFor(kind, id, at, att, prepared, ttl, finalCaption)
                 // False when the message was deleted while it uploaded: then nothing is queued and no record is written.
-                if (!repo.replaceUnsentEnvelope(id, device.accountId, ContentCodec.encode(envelope), foldedFor(prepared.name.takeIf { kind == MediaKind.File || kind == MediaKind.Video }, caption), nowMs())) {
+                if (!repo.replaceUnsentEnvelope(id, device.accountId, ContentCodec.encode(envelope), foldedFor(prepared.name.takeIf { kind == MediaKind.File || kind == MediaKind.Video }, finalCaption), nowMs())) {
                     false
                 } else {
                     outbox.enqueue(envelope, pending.chatId)
@@ -1067,10 +1069,14 @@ class LiveChatStore(
         val record = repo.message(messageId) ?: return@write
         if (record.chatId != chatId || record.senderAccount != device.accountId || record.deleted) return@write
         val result = EditRule.apply(ContentCodec.decode(record.envelope), newText, fold) ?: return@write
-        if (!repo.applyEdit(messageId, device.accountId, ContentCodec.encode(result.envelope), result.folded, nowMs(), result.caption, result.linkPreview)) return@write
-        // A photo or file that has not gone out yet sends its edited caption itself: the upload reads it from this row.
-        val notSent = record.status == "sending" || record.status == "failed"
-        if (result.envelope is ContentEnvelope.Text || !notSent) sendControl(chatId) { id, at -> ContentEnvelope.Edit(id, at, messageId, newText) }
+        // The edit and the look at the pending-upload marker are one step, so an upload cannot commit between them unseen.
+        val uploadStillPending = repo.transaction {
+            if (!repo.applyEdit(messageId, device.accountId, ContentCodec.encode(result.envelope), result.folded, nowMs(), result.caption, result.linkPreview)) return@transaction null
+            repo.get(PENDING_UPLOAD_PREFIX + messageId)?.isNotEmpty() == true
+        } ?: return@write
+        // While the upload has not committed, it reads the edited caption from this row and carries it itself. Once it has
+        // (even if not yet posted) the Edit control goes behind the message in the queue.
+        if (result.envelope is ContentEnvelope.Text || !uploadStillPending) sendControl(chatId) { id, at -> ContentEnvelope.Edit(id, at, messageId, newText) }
     }
 
     override fun delete(messageId: String, chatId: String) = write {

@@ -9,8 +9,10 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.runBlocking
 import org.example.app.core.chats.LinkPreviewCard
+import org.example.app.core.chats.LinkPreviewRule
 
 class LinkPreviewFetcherTest {
     private val page = """<html><head><title>Plain</title>
@@ -42,7 +44,8 @@ class LinkPreviewFetcherTest {
                 resolved += host
                 (dns[host] ?: throw UnknownHostException(host)).map { InetAddress.getByName(it) }
             },
-            transport = { url, addresses, maxBytes, timeoutMs, _ ->
+            transport = { url, host, addresses, maxBytes, timeoutMs, _ ->
+                check(LinkPreviewRule.checkUrl(url) == host) { "the transport is told the checked host" }
                 requests += url
                 pinned += addresses.map { it.hostAddress!! }
                 check(maxBytes == 524_288) { "the body cap is 512 KiB" }
@@ -145,7 +148,7 @@ class LinkPreviewFetcherTest {
         var calls = 0
         val tricky = LinkPreviewFetcher(
             resolver = { host -> calls++; listOf(InetAddress.getByName(if (calls == 1) "93.184.216.34" else "127.0.0.1")) },
-            transport = { url, _, _, _, _ -> rig.requests += url; rig.handler(url) },
+            transport = { url, _, _, _, _, _ -> rig.requests += url; rig.handler(url) },
             shrinker = { null },
             nowMs = { 0 },
         )
@@ -260,7 +263,7 @@ class LinkPreviewFetcherTest {
 
     @Test fun aShrinkerThatThrowsDropsOnlyTheImage() {
         val rig = Rig(::standard)
-        val fetcher = LinkPreviewFetcher({ listOf(InetAddress.getByName("93.184.216.34")) }, { url, _, _, _, _ -> rig.handler(url) }, { throw OutOfMemoryError() }, { 0 })
+        val fetcher = LinkPreviewFetcher({ listOf(InetAddress.getByName("93.184.216.34")) }, { url, _, _, _, _, _ -> rig.handler(url) }, { throw OutOfMemoryError() }, { 0 })
         assertNull(assertNotNull(runBlocking { fetcher.fetch("https://example.org/a") }).image)
     }
 
@@ -271,5 +274,48 @@ class LinkPreviewFetcherTest {
         assertEquals(200, card.title.length)
         assertEquals(300, card.desc!!.length)
         assertTrue(org.example.app.core.chats.LinkPreviewRule.cardFor("https://example.org/a", card) != null)
+    }
+
+    // Off the caller's thread, and a lookup that blocks is abandoned
+
+    @Test fun parsingAndShrinkingHappenOffTheCallersDispatcher() {
+        val callers = mutableListOf<String>()
+        val others = mutableListOf<String>()
+        val rig = Rig { url -> others += "transport:" + Thread.currentThread().name; standard(url) }
+        val fetcher = LinkPreviewFetcher(
+            resolver = { listOf(InetAddress.getByName("93.184.216.34")) },
+            transport = { url, _, _, _, _, _ -> others += "transport:" + Thread.currentThread().name; rig.handler(url) },
+            shrinker = { others += "shrink:" + Thread.currentThread().name; byteArrayOf(-1, -40, 1, 2) },
+            nowMs = { 0 },
+        )
+        val executor = java.util.concurrent.Executors.newSingleThreadExecutor { Thread(it, "caller-main") }
+        try {
+            val dispatcher = executor.asCoroutineDispatcher()
+            runBlocking(dispatcher) {
+                callers += Thread.currentThread().name
+                assertNotNull(fetcher.fetch("https://example.org/a"))
+            }
+        } finally {
+            executor.shutdown()
+        }
+        assertEquals(listOf("caller-main"), callers)
+        assertTrue(others.any { it.startsWith("shrink:") } && others.none { it.endsWith("caller-main") }, others.toString())
+    }
+
+    @Test fun aLookupThatBlocksIsAbandonedAtTheDeadline() {
+        val release = java.util.concurrent.CountDownLatch(1)
+        val fetcher = LinkPreviewFetcher(
+            resolver = { release.await(); listOf(InetAddress.getByName("93.184.216.34")) }, // not cancellable, like a system lookup
+            transport = { _, _, _, _, _, _ -> error("never reached") },
+            shrinker = { null },
+            totalMs = 300,
+        )
+        val started = System.nanoTime()
+        try {
+            assertNull(runBlocking { fetcher.fetch("https://example.org/a") })
+        } finally {
+            release.countDown()
+        }
+        assertTrue((System.nanoTime() - started) / 1_000_000 < 3_000, "returned at the deadline, not when the lookup ended")
     }
 }

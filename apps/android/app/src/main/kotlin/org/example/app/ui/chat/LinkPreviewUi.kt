@@ -19,6 +19,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,6 +63,13 @@ class ComposerPreview {
     /** Links whose preview the person removed in this draft: they are not looked up again. */
     internal var dismissed by mutableStateOf<Set<String>>(emptySet())
 
+    companion object {
+        val Saver = listSaver<ComposerPreview, String>(
+            save = { it.dismissed.toList() },
+            restore = { saved -> ComposerPreview().also { it.dismissed = saved.toSet() } },
+        )
+    }
+
     fun remove() {
         card?.let { dismissed = dismissed + it.url }
         card = null
@@ -79,7 +88,8 @@ class ComposerPreview {
  */
 @Composable
 fun rememberComposerPreview(text: String, editing: Boolean): ComposerPreview {
-    val state = remember { ComposerPreview() }
+    // The removed links survive a rotation or a process restart; the card itself is looked up again only for links not removed.
+    val state = rememberSaveable(saver = ComposerPreview.Saver) { ComposerPreview() }
     val support = LocalLinkPreviews.current
     val on by (support?.enabled ?: remember { kotlinx.coroutines.flow.MutableStateFlow(false) }).collectAsStateWithLifecycle()
     val url = remember(text) { LinkPreviewRule.firstLink(text) }

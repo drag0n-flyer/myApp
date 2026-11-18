@@ -240,4 +240,49 @@ class CaptionsTest {
         assertNull(sent.lp)
         assertFalse(String(ContentCodec.encode(sent)).contains("\"lp\""))
     }
+
+    @Test fun anEditOfAMediaMessageThatIsQueuedButNotPostedStillQueuesTheEdit() = runTest {
+        val s = setup()
+        val me = s.ana.me.accountId
+        // Committed by the upload (the pending marker is cleared) but not yet posted: status is still sending.
+        s.ana.repo.insertMessage(
+            MessageRecord(
+                id = "p8", chatId = "acc-bob", conversationId = null, senderAccount = me, senderDevice = s.ana.me.deviceId,
+                sentAt = NOW, receivedAt = NOW, envelope = ContentCodec.encode(photo("p8", "old")), status = "sending", folded = "old", caption = "old",
+            ),
+        )
+        val anaStore = store(s.ana)
+        anaStore.edit("p8", "acc-bob", "fresh")
+        anaStore.awaitWrites()
+        val sent = s.ana.repo.dueOutbox(Long.MAX_VALUE).map { ContentCodec.decode(it.envelope) }
+        assertTrue(sent.any { it is ContentEnvelope.Edit && it.target == "p8" && it.t == "fresh" })
+    }
+
+    // A hostile preview is cleaned or dropped when it is decoded
+
+    private fun decodedPreview(text: String, lp: LinkPreview): LinkPreview? =
+        (ContentCodec.decode(ContentCodec.encode(ContentEnvelope.Text("t", NOW, text, lp = lp))) as ContentEnvelope.Text).lp
+
+    @Test fun aTitleWithDirectionAndControlCharactersIsCleaned() {
+        val got = decodedPreview("see https://example.org/a", LinkPreview("https://example.org/a", "ab\u202Ec\u200Bd\u0007e", "x\u2066y\nz"))!!
+        assertEquals("abcde", got.title)
+        assertEquals("xy z", got.desc)
+    }
+
+    @Test fun aBlankOrInvisibleTitleDropsThePreviewButKeepsTheText() {
+        for (title in listOf("   ", "\u200B\u200B", "\u202E", "\n\t")) {
+            assertNull(decodedPreview("see https://example.org/a", LinkPreview("https://example.org/a", title)), title)
+        }
+    }
+
+    @Test fun aPreviewUrlThatCheckUrlRefusesIsDropped() {
+        for (url in listOf("https://user@example.org/a", "https://user:pw@example.org/a", "https://127.0.0.1/a", "https://example.org:8443/a", "https://localhost/a")) {
+            assertNull(decodedPreview("see $url", LinkPreview(url, "Title")), url)
+        }
+    }
+
+    @Test fun aCleanPreviewIsKeptAsItWas() {
+        val lp = LinkPreview("https://example.org/a", "Title", "Desc", JPEG)
+        assertEquals(lp, decodedPreview("see https://example.org/a", lp))
+    }
 }

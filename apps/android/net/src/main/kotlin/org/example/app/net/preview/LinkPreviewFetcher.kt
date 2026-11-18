@@ -3,6 +3,11 @@ package org.example.app.net.preview
 import java.net.InetAddress
 import java.net.URI
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.example.app.core.chats.LinkPreviewCard
 import org.example.app.core.chats.LinkPreviewParse
@@ -17,11 +22,11 @@ fun interface PreviewResolver {
 }
 
 /**
- * One GET of [url]. It connects only to [addresses] (the ones the fetcher checked), over TLS only, sends no cookies and no
+ * One GET of [url], whose host must be [host] (the one the fetcher checked). It connects only to [addresses] (the ones the fetcher checked), over TLS only, sends no cookies and no
  * credentials, does not follow redirects, reads at most [maxBytes] and gives up after [timeoutMs].
  */
 fun interface PreviewTransport {
-    suspend fun get(url: String, addresses: List<InetAddress>, maxBytes: Int, timeoutMs: Long, accept: String): PreviewResponse
+    suspend fun get(url: String, host: String, addresses: List<InetAddress>, maxBytes: Int, timeoutMs: Long, accept: String): PreviewResponse
 }
 
 /** Re-encodes any picture the system can read as a JPEG (the caller checks its size), or null when it cannot. */
@@ -43,6 +48,7 @@ class LinkPreviewFetcher(
     private val transport: PreviewTransport,
     private val shrinker: ImageShrinker,
     private val nowMs: () -> Long = { System.nanoTime() / 1_000_000 },
+    private val totalMs: Long = TOTAL_MS,
 ) {
     companion object {
         const val TOTAL_MS = 5_000L
@@ -54,13 +60,15 @@ class LinkPreviewFetcher(
         private val IMAGE_TYPES = setOf("image/jpeg", "image/png", "image/webp", "image/gif")
     }
 
+    private val lookupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     private class Loaded(val url: String, val response: PreviewResponse)
 
+    /** Everything runs off the caller's dispatcher (parsing and picture work included), so a caller on the main thread is never held. */
     suspend fun fetch(url: String): LinkPreviewCard? {
         if (LinkPreviewRule.checkUrl(url) == null) return null
-        val deadline = nowMs() + TOTAL_MS
         return try {
-            run(url, deadline)
+            withContext(Dispatchers.Default) { run(url, nowMs() + totalMs) }
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
@@ -90,17 +98,28 @@ class LinkPreviewFetcher(
         }
     }
 
+    /**
+     * The lookup runs detached on the IO threads and is awaited with the time that is left. A system lookup cannot be
+     * interrupted, so a slow one is abandoned: this returns null at the deadline and the lookup finishes (or not) alone.
+     */
+    private suspend fun lookup(host: String, timeoutMs: Long): List<InetAddress>? {
+        val job = lookupScope.async { resolver.resolve(host) }
+        val found = withTimeoutOrNull(timeoutMs) { job.await() }
+        if (found == null) job.cancel()
+        return found
+    }
+
     private suspend fun load(start: String, accept: String, deadline: Long, types: Set<String>): Loaded? {
         var current = start
         for (hop in 0..MAX_REDIRECTS) {
             val host = LinkPreviewRule.checkUrl(current) ?: return null
             val resolveTime = deadline - nowMs()
             if (resolveTime <= 0) return null
-            val addresses = withTimeoutOrNull(resolveTime) { resolver.resolve(host) } ?: return null
+            val addresses = lookup(host, resolveTime) ?: return null
             if (!LinkPreviewRule.allowedHost(host, addresses.map { it.address })) return null
             val requestTime = deadline - nowMs()
             if (requestTime <= 0) return null
-            val response = transport.get(current, addresses, MAX_BODY, requestTime, accept)
+            val response = transport.get(current, host, addresses, MAX_BODY, requestTime, accept)
             if (response.status in REDIRECTS) {
                 current = LinkPreviewRule.redirectTarget(current, response.location ?: return null) ?: return null
                 continue
@@ -120,7 +139,7 @@ class LinkPreviewFetcher(
 /** Resolves names with the system resolver, off the calling thread. Every answer goes through the address checks before anything connects. */
 object SystemPreviewResolver : PreviewResolver {
     override suspend fun resolve(host: String): List<InetAddress> =
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { InetAddress.getAllByName(host).toList() }
+        InetAddress.getAllByName(host).toList() // the fetcher runs this detached on IO and abandons it at the deadline
 }
 
 /** The fetcher on the HTTP client in the build and the system resolver; the platform gives the image encoder. */

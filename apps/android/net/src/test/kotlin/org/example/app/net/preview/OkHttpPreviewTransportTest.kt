@@ -74,9 +74,26 @@ class OkHttpPreviewTransportTest {
             for (url in listOf(
                 "http://127.0.0.1:${server.port}/", "http://example.org/", "https://example.org:${server.port}/", "https://user@example.org/", "ftp://example.org/", "not a url",
             )) {
-                assertFailsWith<IOException>(url) { transport.get(url, listOf(local), 524_288, 2_000, "text/html") }
+                assertFailsWith<IOException>(url) { transport.get(url, url.substringAfter("//").substringBefore("/").substringBefore(":").substringAfter("@"), listOf(local), 524_288, 2_000, "text/html") }
             }
             assertEquals(0, server.requestCount, "nothing was sent")
+        }
+    }
+
+    @Test fun theUrlMustHaveTheHostThatWasChecked() = runBlocking<Unit> {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setBody("<title>x</title>"))
+            server.start()
+            val local = InetAddress.getByName("127.0.0.1")
+            val transport = OkHttpPreviewTransport()
+            // A different host than the one the fetcher checked and resolved.
+            assertFailsWith<IOException> { transport.get("https://other.example/", "example.org", listOf(local), 524_288, 2_000, "text/html") }
+            assertFailsWith<IOException> { transport.get("https://example.org/", "EXAMPLE.org.x", listOf(local), 524_288, 2_000, "text/html") }
+            // An address in any notation, even when it is the "checked" host.
+            for (ip in listOf("127.0.0.1", "10.0.0.1", "[::1]", "0x7f.1", "2130706433", "1.2.3.4")) {
+                assertFailsWith<IOException>(ip) { transport.get("https://$ip/", ip, listOf(local), 524_288, 2_000, "text/html") }
+            }
+            assertEquals(0, server.requestCount)
         }
     }
 }

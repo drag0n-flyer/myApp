@@ -992,4 +992,25 @@ class SendAttachmentTest {
         assertNull(assertIs<ContentEnvelope.File>(peerGot(f, sentId(f))).c)
         assertNull(f.d.repo.message(sentId(f))!!.caption)
     }
+
+    @Test
+    fun aCaptionEditedWhileTheUploadRunsIsTheOneThatIsSent() = runBlocking<Unit> {
+        val f = fixture()
+        val s = session(f)
+        val gate = CompletableDeferred<Unit>()
+        s.api.gate = gate
+        s.store.sendAttachment(staged(f).path, MediaKind.File, "acc-ana", "old words")
+        waitUntil("the upload to start") { s.api.attempts.get() == 1 }
+        val id = sentId(f)
+        s.store.edit(id, "acc-ana", "new words")
+        s.store.awaitWrites()
+        gate.complete(Unit)
+        s.store.settle()
+        val row = f.d.repo.message(id)!!
+        assertEquals("new words", (ContentCodec.decode(row.envelope) as ContentEnvelope.File).c)
+        assertEquals("new words", row.caption)
+        assertTrue(row.folded.contains("new words") && !row.folded.contains("old words"))
+        assertEquals("new words", assertIs<ContentEnvelope.File>(peerGot(f, id)).c)
+        assertEquals(1, s.api.posts.get(), "no Edit control: the upload itself carried the new caption")
+    }
 }

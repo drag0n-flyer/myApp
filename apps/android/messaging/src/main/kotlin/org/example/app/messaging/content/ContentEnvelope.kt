@@ -14,6 +14,10 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import org.example.app.contracts.CallSignalPayload
+import org.example.app.core.chats.LinkPreviewParse
+import org.example.app.core.chats.LinkPreviewRule
+import org.example.app.core.chats.LinkPreviewParse
+import org.example.app.core.chats.LinkPreviewRule
 import org.example.app.core.people.Expiry
 import org.example.app.core.people.TimerChoice
 import org.example.app.core.profile.DisplayNameRule
@@ -204,10 +208,16 @@ object ContentCodec {
     /** An invalid preview is dropped (null) and the text kept. */
     private fun linkPreview(e: JsonElement?, text: String): LinkPreview? {
         val o = e as? JsonObject ?: return null
-        val url = o["url"].str()?.takeIf { it.startsWith("https://", ignoreCase = true) && it in text } ?: return null
-        val title = o["title"].str()?.takeIf { it.codePointCount(0, it.length) in 1..TITLE_MAX } ?: return null
+        // The url must be one the sender could have fetched from: https, port 443, no user, a public-looking name.
+        val url = o["url"].str()?.takeIf { it.startsWith("https://", ignoreCase = true) && it in text && LinkPreviewRule.checkUrl(it) != null } ?: return null
+        val rawTitle = o["title"].str()?.takeIf { it.codePointCount(0, it.length) in 1..TITLE_MAX } ?: return null
+        // What is shown is cleaned: no control or direction characters, one-space white space; nothing visible left drops the preview.
+        val title = LinkPreviewParse.sanitize(rawTitle, TITLE_MAX) ?: return null
         val descEl = o["desc"]
-        val desc = if (descEl == null || descEl is JsonNull) null else descEl.str()?.takeIf { it.codePointCount(0, it.length) <= DESC_MAX } ?: return null
+        val desc = if (descEl == null || descEl is JsonNull) null else {
+            val raw = descEl.str()?.takeIf { it.codePointCount(0, it.length) <= DESC_MAX } ?: return null
+            LinkPreviewParse.sanitize(raw, DESC_MAX)
+        }
         val imgEl = o["img"]
         val img = if (imgEl == null || imgEl is JsonNull) null else jpeg(imgEl.str() ?: return null, PREVIEW_IMAGE_MAX) ?: return null
         return LinkPreview(url, title, desc, img)
