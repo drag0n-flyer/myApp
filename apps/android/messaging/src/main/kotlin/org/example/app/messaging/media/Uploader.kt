@@ -23,6 +23,8 @@ class Uploader(private val api: DeliveryApi, private val tempDir: File, private 
         try {
             val blob = AttachmentCipher.encrypt(plaintext, temp)
             val ref = FileInputStream(temp).use { api.uploadAttachment(it, temp.length()) }
+            // The server chose the id; it becomes a file name, so it is held to the rule a received id is.
+            AttachmentIds.check(ref.id)
             val att = Att(id = ref.id, key = blob.key, dg = blob.digest, sz = blob.size, csz = blob.cipherSize)
             blobDir?.let { dir ->
                 dir.mkdirs()

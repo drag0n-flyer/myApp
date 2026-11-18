@@ -35,13 +35,15 @@ private class UploadApi(private val inner: DeliveryApi) : DeliveryApi by inner {
     val uploads = AtomicInteger()
     val downloads = AtomicInteger()
     @Volatile var failUploads = false
+    /** When set, the server answers uploads with this id. */
+    @Volatile var answerId: String? = null
     @Volatile var gate: CompletableDeferred<Unit>? = null
     override suspend fun uploadAttachment(bytes: InputStream, length: Long): AttachmentRef {
         attempts.incrementAndGet()
         bytes.readBytes()
         gate?.await()
         if (failUploads) throw IOException("offline")
-        return AttachmentRef("up${uploads.incrementAndGet()}", Instant.EPOCH)
+        return AttachmentRef(answerId ?: "up${uploads.incrementAndGet()}", Instant.EPOCH)
     }
     override suspend fun downloadAttachment(id: String, fromByte: Long): InputStream {
         downloads.incrementAndGet()
@@ -72,7 +74,7 @@ class SendAttachmentTest {
         rig.bob1.repo.upsertContact(ContactRecord("acc-ana", "ana", "Ana", true, NOW))
         rig.ana1.manager.create("acc-bob")
         rig.bob1.processor.sync()
-        return Fixture(rig, rig.bob1, MediaDirs(tmp("blob"), tmp("open"), tmp("temp")), tmp("prepared"))
+        return Fixture(rig, rig.bob1, MediaDirs(File(tmp("media"), "blobs"), tmp("open"), tmp("temp")), tmp("prepared"))
     }
 
     /** One app session over the fixture's database; a second one models the app started again. */
@@ -223,6 +225,23 @@ class SendAttachmentTest {
         second.store.settle()
         assertEquals(1, second.api.uploads.get())
         assertEquals(AttachmentState.LOCAL, f.d.repo.attachmentForMessage(id)!!.state)
+    }
+
+    @Test
+    fun anAttachmentIdThatCouldBecomeAPathFailsTheUploadAndWritesNothing() = runBlocking<Unit> {
+        for (bad in listOf("../x", "a/b", "x".repeat(200), "")) {
+            val f = fixture()
+            val s = session(f)
+            s.api.answerId = bad
+            s.store.sendAttachment(source(tmp("src")).path, MediaKind.File, "acc-ana")
+            s.store.settle()
+            val id = sentId(f)
+            assertEquals("failed", statusOf(f, id), "id '$bad'")
+            assertNull(f.d.repo.attachmentForMessage(id))
+            assertEquals(emptyList(), f.dirs.blobDir.list().orEmpty().toList())
+            assertEquals(emptyList(), f.dirs.blobDir.parentFile.list()!!.filter { it != "blobs" && it != "pending" })
+            assertEquals(emptyList(), f.dirs.tempDir.list().orEmpty().filter { it.endsWith(".enc") }, "no ciphertext left in the temp folder")
+        }
     }
 
     @Test
