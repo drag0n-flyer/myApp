@@ -28,6 +28,18 @@ sealed interface SystemEvent {
     data class Timer(val seconds: Int, val name: String?) : SystemEvent
     /** [name] added this account to a group ("%1$s added you"); a null name is "You were added". */
     data class AddedYou(val name: String?) : SystemEvent
+    /** [by] added [who] (display names); [byYou] means this account did it; neither is an unknown actor. */
+    data class GroupAdded(val by: String?, val who: String, val byYou: Boolean = false) : SystemEvent
+    data class GroupRemoved(val by: String?, val who: String, val byYou: Boolean = false) : SystemEvent
+    /** A null name is "You left". */
+    data class GroupLeft(val who: String?) : SystemEvent
+    data object YouWereRemoved : SystemEvent
+    /** A null name is "You". */
+    data class MadeAdmin(val who: String?) : SystemEvent
+    data class NoLongerAdmin(val who: String?) : SystemEvent
+    /** [by] changed the group name to [name]; a null [by] is "You". */
+    data class GroupRenamed(val by: String?, val name: String) : SystemEvent
+    data class GroupPhotoChanged(val by: String?) : SystemEvent
 }
 
 sealed interface MessageContent {
@@ -124,6 +136,27 @@ data class Message(
                 is SystemEvent.Timer -> timerLine(e)
                 is SystemEvent.AddedYou ->
                     if (e.name == null) MessagePreview.Resource("system_you_were_added") else MessagePreview.Resource("system_added_you", listOf(e.name))
+                is SystemEvent.GroupAdded -> when {
+                    e.byYou -> MessagePreview.Resource("system_group_added_by_you", listOf(e.who))
+                    e.by != null -> MessagePreview.Resource("system_group_added", listOf(e.by, e.who))
+                    else -> MessagePreview.Resource("system_group_added_plain", listOf(e.who))
+                }
+                is SystemEvent.GroupRemoved -> when {
+                    e.byYou -> MessagePreview.Resource("system_group_removed_by_you", listOf(e.who))
+                    e.by != null -> MessagePreview.Resource("system_group_removed", listOf(e.by, e.who))
+                    else -> MessagePreview.Resource("system_group_removed_plain", listOf(e.who))
+                }
+                is SystemEvent.GroupLeft ->
+                    if (e.who == null) MessagePreview.Resource("system_you_left") else MessagePreview.Resource("system_group_left", listOf(e.who))
+                SystemEvent.YouWereRemoved -> MessagePreview.Resource("system_you_were_removed")
+                is SystemEvent.MadeAdmin ->
+                    if (e.who == null) MessagePreview.Resource("system_you_made_admin") else MessagePreview.Resource("system_made_admin", listOf(e.who))
+                is SystemEvent.NoLongerAdmin ->
+                    if (e.who == null) MessagePreview.Resource("system_you_no_longer_admin") else MessagePreview.Resource("system_no_longer_admin", listOf(e.who))
+                is SystemEvent.GroupRenamed ->
+                    if (e.by == null) MessagePreview.Resource("system_group_renamed_you", listOf(e.name)) else MessagePreview.Resource("system_group_renamed", listOf(e.by, e.name))
+                is SystemEvent.GroupPhotoChanged ->
+                    if (e.by == null) MessagePreview.Resource("system_group_photo_you") else MessagePreview.Resource("system_group_photo", listOf(e.by))
             }
         }
     }
@@ -173,6 +206,10 @@ data class Chat(
     val title: String? = null,
     /** The chat's disappearing-message time in seconds; 0 is off. */
     val timerSeconds: Int = 0,
+    /** A group this account left or was removed from: nothing can be sent, the history stays until the chat is deleted. */
+    val readOnly: Boolean = false,
+    /** A group chat's member list and whether this account is still in it; null for a one-to-one chat. */
+    val group: org.example.app.core.groups.GroupInfo? = null,
 ) {
     /** True for a group chat (`g:<conversationID>`). */
     val isGroup: Boolean get() = org.example.app.core.groups.ChatID.isGroup(id)

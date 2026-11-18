@@ -385,6 +385,8 @@ fun ChatScreen(
         bottomBar = {
             if (searching) {
                 // The search field is the only input while searching.
+            } else if (state.chat?.readOnly == true) {
+                GroupReadOnlyBar()
             } else if (state.isRequest) {
                 RequestBar(
                     onAccept = onAccept,

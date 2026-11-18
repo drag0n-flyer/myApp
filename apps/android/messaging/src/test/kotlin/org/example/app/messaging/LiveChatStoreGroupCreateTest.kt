@@ -77,4 +77,35 @@ class LiveChatStoreGroupCreateTest {
         s.settle()
         assertTrue(w.device("ana1").repo.contact(made.chatId) == null)
     }
+
+    @Test
+    fun theChatCarriesTheMemberListAndTheGroupPhotoShowsThroughProfilesUnderTheChatId() = runTest {
+        val w = GroupWorld.trio()
+        val s = store(w.device("ana1"))
+        val photo = TestJpeg.of()
+        val made = s.createGroup(listOf("acc-bob", "acc-cat"), "Trio", photo)
+        s.settle()
+        val info = s.chats.value.single { it.id == made.chatId }.group!!
+        assertEquals(setOf("acc-ana", "acc-bob", "acc-cat"), info.members.map { it.accountId }.toSet())
+        assertEquals(org.example.app.core.groups.GroupRole.Owner, info.roleOf("acc-ana"))
+        assertEquals(org.example.app.core.groups.MyGroupState.Member, info.myState)
+        assertTrue(photo.contentEquals(s.profiles.value[made.chatId]?.photo))
+    }
+
+    @Test
+    fun deleteChatRemovesAGroupOnlyOnceThePersonIsOutOfIt() = runTest {
+        val w = GroupWorld.trio()
+        val d = w.device("ana1")
+        val s = store(d)
+        val made = s.createGroup(listOf("acc-bob", "acc-cat"), "Trio", null)
+        s.settle()
+        s.deleteChat(made.chatId); s.settle()
+        assertTrue(s.chats.value.any { it.id == made.chatId }, "still a member")
+        d.repo.setMyState(made.chatId, org.example.app.messaging.ports.MyState.LEFT)
+        s.setMuted(made.chatId, true); s.settle() // any write reloads the lists
+        assertEquals(org.example.app.core.groups.MyGroupState.Left, s.chats.value.single { it.id == made.chatId }.group!!.myState)
+        s.deleteChat(made.chatId); s.settle()
+        assertTrue(s.chats.value.none { it.id == made.chatId })
+        assertNull(d.repo.chat(made.chatId))
+    }
 }

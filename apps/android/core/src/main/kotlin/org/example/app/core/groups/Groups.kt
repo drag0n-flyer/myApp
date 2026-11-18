@@ -109,4 +109,34 @@ object GroupMerge {
         if (senderRole == null || !senderRole.canEditInfo) return false
         return incomingVer >= 1 && (currentVer == null || incomingVer > currentVer)
     }
+
+    /**
+     * Two admins who changed the group at the same moment both wrote the same `ver`. On equal versions the info whose
+     * (name, photo) is greater wins, so every device ends on one value whatever order the messages arrive in: the name
+     * is compared as a plain string by Unicode code points; when the names are equal, by the photo's SHA-256 in lower-case
+     * hex, where no photo is the least. True when the incoming info beats the stored one.
+     */
+    fun beats(currentName: String, currentPhoto: ByteArray?, incomingName: String, incomingPhoto: ByteArray?): Boolean {
+        val byName = compareCodePoints(incomingName, currentName)
+        if (byName != 0) return byName > 0
+        val a = photoKey(incomingPhoto)
+        val b = photoKey(currentPhoto)
+        return a != null && (b == null || a > b)
+    }
+
+    private fun photoKey(photo: ByteArray?): String? =
+        photo?.let { java.security.MessageDigest.getInstance("SHA-256").digest(it).joinToString("") { b -> "%02x".format(b) } }
+
+    private fun compareCodePoints(a: String, b: String): Int {
+        var i = 0
+        var j = 0
+        while (i < a.length && j < b.length) {
+            val x = a.codePointAt(i)
+            val y = b.codePointAt(j)
+            if (x != y) return x.compareTo(y)
+            i += Character.charCount(x)
+            j += Character.charCount(y)
+        }
+        return (a.length - i).compareTo(b.length - j)
+    }
 }

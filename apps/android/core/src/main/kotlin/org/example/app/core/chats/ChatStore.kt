@@ -128,6 +128,23 @@ interface ChatStore {
     suspend fun createGroup(contactIds: List<String>, name: String, photo: ByteArray?): GroupCreated =
         throw GroupCreateFailed(GroupCreateFailed.Reason.Other)
 
+    // Group membership. Each throws [GroupChangeFailed] and changes nothing on this device when it fails.
+
+    /** Adds people to the group. Returns the accounts that are not in it yet (no device ready, or the server skipped them). */
+    suspend fun addMembers(chatId: String, accounts: List<String>): List<String> = throw GroupChangeFailed(GroupChangeFailed.Reason.Other)
+    suspend fun removeMember(chatId: String, account: String): Unit = throw GroupChangeFailed(GroupChangeFailed.Reason.Other)
+    /** The owner must first hand the group over ([setRole] with the owner role): [GroupChangeFailed.Reason.OwnerMustTransfer]. */
+    suspend fun leaveGroup(chatId: String): Unit = throw GroupChangeFailed(GroupChangeFailed.Reason.Other)
+    /** Owner only. Setting someone else to owner makes this account an admin. */
+    suspend fun setRole(chatId: String, account: String, role: org.example.app.core.groups.GroupRole): Unit =
+        throw GroupChangeFailed(GroupChangeFailed.Reason.Other)
+    /** Owner and admins. */
+    suspend fun renameGroup(chatId: String, name: String): Unit = throw GroupChangeFailed(GroupChangeFailed.Reason.Other)
+    /** Owner and admins; a JPEG that passes `ProfilePhotoRule`, or null for no photo. */
+    suspend fun setGroupPhoto(chatId: String, photo: ByteArray?): Unit = throw GroupChangeFailed(GroupChangeFailed.Reason.Other)
+    /** Removes a group chat this account is no longer in (left or removed), with its history. Anything else does nothing. */
+    fun deleteChat(chatId: String) {}
+
     // People base (disappearing messages and profiles). Defaults suit stores that keep none of it.
 
     /** The chat's disappearing-message timer in seconds; 0 is off. */

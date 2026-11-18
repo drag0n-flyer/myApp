@@ -216,6 +216,15 @@ fun AppRoot(
                 nav.navigate("chat/${Uri.encode(id)}" + if (highlight != null) "?highlight=${Uri.encode(highlight)}" else "")
             }
         }
+        // A group's member menu: that person's chat, or its info page for the safety number.
+        val openMember = rememberUpdatedState<(String, Boolean) -> Unit> { accountId, safetyNumber ->
+            val memberChat = graph.chatStore.ensureChat(accountId)
+            when {
+                !safetyNumber -> openChat.value(memberChat, null)
+                wide -> { paneChat = memberChat; paneInfo = true; paneHighlight = null }
+                else -> nav.navigate("chatinfo/${Uri.encode(memberChat)}")
+            }
+        }
         val idArg = listOf(navArgument("id") { type = NavType.StringType })
         val chatArgs = idArg + navArgument("highlight") { type = NavType.StringType; nullable = true; defaultValue = null }
         // While the app lock is on and locked, only the cover (and a ringing or active call) is composed.
@@ -405,6 +414,8 @@ fun AppRoot(
                                         // Search goes back to the chat through ChatSearchRequests, which the chat takes.
                                         onSearch = {},
                                         onBlocked = { paneInfo = false; paneChat = null },
+                                        onOpenMember = { who, safety -> openMember.value(who, safety) },
+                                        onDeleted = { paneInfo = false; paneChat = null },
                                     )
                                 } else {
                                     pane.select(id)
@@ -600,6 +611,8 @@ fun AppRoot(
                     onSearch = {},
                     onBlocked = { nav.popBackStack(MAIN, inclusive = false) },
                     onOpenGallery = { nav.navigate("gallery/$id") },
+                    onOpenMember = { who, safety -> openMember.value(who, safety) },
+                    onDeleted = { nav.popBackStack(MAIN, inclusive = false) },
                 )
             }
             composable(GALLERY, idArg) { entry ->

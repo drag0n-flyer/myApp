@@ -189,6 +189,7 @@ class LiveSession(
         chatStore.sweepStartup()
         chatStore.syncInbox()
         chatStore.resumePendingCreates()
+        chatStore.syncGroups()
     }
 
     /** Stops the store and closes the database; the files stay. */
