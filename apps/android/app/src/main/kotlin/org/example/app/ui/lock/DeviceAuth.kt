@@ -6,6 +6,7 @@ import android.hardware.biometrics.BiometricManager
 import android.hardware.biometrics.BiometricPrompt
 import android.os.Build
 import android.os.CancellationSignal
+import androidx.annotation.RequiresApi
 
 /** How a request to the phone's own authentication ended. */
 enum class AuthResult {
@@ -120,11 +121,16 @@ class SampleDeviceAuth(override var available: Boolean = true, results: List<Aut
 }
 
 private fun allowDeviceCredential(builder: BiometricPrompt.Builder, sdk: Int) {
-    if (credentialRequestFor(sdk) == CredentialRequest.AllowedAuthenticators) {
-        // Weak biometrics (many phones' face unlock) are enough: this only decides who sees the screen.
-        builder.setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_WEAK or BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+    if (credentialRequestFor(sdk) == CredentialRequest.AllowedAuthenticators && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        allowWeakBiometricOrCredential(builder)
     } else {
         @Suppress("DEPRECATION")
         builder.setDeviceCredentialAllowed(true)
     }
+}
+
+/** Weak biometrics (many phones' face unlock) are enough: this only decides who sees the screen. */
+@RequiresApi(Build.VERSION_CODES.R)
+private fun allowWeakBiometricOrCredential(builder: BiometricPrompt.Builder) {
+    builder.setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_WEAK or BiometricManager.Authenticators.DEVICE_CREDENTIAL)
 }
