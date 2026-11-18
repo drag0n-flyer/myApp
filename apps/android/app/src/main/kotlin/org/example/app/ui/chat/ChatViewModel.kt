@@ -33,7 +33,8 @@ import org.example.app.core.chats.MessageHit
 import org.example.app.core.chats.Picked
 import org.example.app.core.chats.SendPlan
 import org.example.app.core.chats.SendProblem
-import org.example.app.ui.media.ChatMedia
+import org.example.app.ui.media.ChatMediaIndex
+import org.example.app.ui.media.ViewerItem
 import org.example.app.core.settings.AutoDownloadPolicy
 import org.example.app.core.settings.AutoDownloadSettings
 import org.example.app.core.settings.MediaKind
@@ -399,7 +400,7 @@ class ChatViewModel(
     fun cancelUpload(messageId: String) = store.cancelUpload(messageId)
 
     /** The photos and videos on this device from the whole chat, oldest first: what the viewer swipes over. */
-    suspend fun viewerIds(): List<String> = withContext(io) { ChatMedia.viewerIds(ChatMedia.load(store, chatId)) }
+    suspend fun viewerItems(): List<ViewerItem> = withContext(io) { ChatMediaIndex.viewerItems(ChatMediaIndex.load(store, chatId)) }
 
     /** Why the last attachment sent from this chat was dropped (too big, unreadable), until it has been shown; null when none. */
     val sendProblem: kotlinx.coroutines.flow.Flow<SendProblem.Reason?> = store.sendProblem(chatId)

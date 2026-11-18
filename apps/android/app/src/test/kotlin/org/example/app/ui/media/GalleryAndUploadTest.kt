@@ -22,6 +22,8 @@ import org.example.app.ui.chatinfo.ChatInfoScreen
 import org.example.app.ui.msg
 import org.example.app.ui.storeWith
 import org.example.app.ui.theme.AppTheme
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -97,5 +99,39 @@ class GalleryAndUploadTest {
         rule.onNodeWithContentDescription("Cancel upload").performClick()
         rule.waitUntil(5_000) { rule.onAllNodesWithContentDescription("Cancel upload").fetchSemanticsNodes().isEmpty() }
         assertEquals(listOf("1"), store.chat("chat-riya")!!.messages.map { it.id })
+    }
+    @Test fun aVideoFileIsInTheMediaTabAndNotInTheFilesTab() {
+        val store = storeWith(
+            listOf(
+                msg("1", "riya", MessageContent.File("clip.MP4", 2_000_000)),
+                msg("2", "riya", MessageContent.File("notes.txt", 1_000)),
+            ),
+        )
+        rule.setContent { AppTheme { GalleryScreen(store, "chat-riya", opener = null, onBack = {}) } }
+        // One square in Media (the video, not downloaded: Download), and only the text file under Files.
+        rule.waitUntil(5_000) { rule.onAllNodes(hasContentDescription("Download")).fetchSemanticsNodes().size == 1 }
+        rule.onNodeWithText("Files").performClick()
+        waitForText("notes.txt")
+        assertEquals(0, rule.onAllNodes(hasText("clip.MP4")).fetchSemanticsNodes().size)
+    }
+
+    @Test fun aVideoBubbleSaysVideoAndItsSizeBeforeDownload() {
+        val store = storeWith(listOf(msg("1", "riya", MessageContent.File("a.mov", 2_000_000, "video/quicktime"))))
+        val vm = ChatViewModel(store, "chat-riya", NetworkType.Mobile) { AutoDownloadSettings() }
+        rule.setContent { AppTheme { ChatScreen(vm, myId = "me", onBack = {}, onOpenInfo = {}, onCall = null) } }
+        rule.onNode(hasText("Video", substring = true)).assertIsDisplayed()
+    }
+
+    @Test fun thePreviewAndViewerDialogsAreGoneWhenTheirParentLeavesTheComposition() {
+        // The app lock composes only the cover (AppRoot returns before the NavHost), so a Dialog inside the NavHost is disposed.
+        var locked by androidx.compose.runtime.mutableStateOf(false)
+        rule.setContent {
+            AppTheme {
+                if (!locked) SendPreviewScreen(items = listOf(org.example.app.core.chats.Picked("content://x", org.example.app.core.settings.MediaKind.Photo, 1)), onCancel = {}, onSend = {})
+            }
+        }
+        rule.waitUntil(5_000) { rule.onAllNodes(hasText("Add a caption")).fetchSemanticsNodes().isNotEmpty() }
+        locked = true
+        rule.waitUntil(5_000) { rule.onAllNodes(hasText("Add a caption")).fetchSemanticsNodes().isEmpty() }
     }
 }

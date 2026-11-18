@@ -107,7 +107,8 @@ class SampleChatStore(
 
     override fun sendAttachment(path: String, kind: MediaKind, chatId: String) {
         val content = when (kind) {
-            MediaKind.Photo, MediaKind.Video -> MessageContent.Photo(0)
+            MediaKind.Photo -> MessageContent.Photo(0)
+            MediaKind.Video -> MessageContent.File(ChatMedia.videoFileName(path.substringAfterLast('/'), null), 0, "video/mp4")
             MediaKind.Voice -> MessageContent.Voice(0.0)
             MediaKind.File -> MessageContent.File(path.substringAfterLast('/'), 0)
         }

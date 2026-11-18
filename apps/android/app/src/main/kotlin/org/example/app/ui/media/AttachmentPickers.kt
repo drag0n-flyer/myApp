@@ -164,11 +164,12 @@ private fun describePicked(context: Context, uri: Uri): Picked {
     } catch (e: Exception) {
         0L
     }
-    return Picked(uri.toString(), if (type?.startsWith("video/") == true) MediaKind.Video else MediaKind.Photo, size)
+    val video = org.example.app.core.chats.ChatMedia.isVideo(displayName(context, uri).orEmpty(), type.orEmpty())
+    return Picked(uri.toString(), if (video) MediaKind.Video else MediaKind.Photo, size)
 }
 
 /** What the document provider calls the file; null when it does not say. The caller cleans it before use. */
-private fun displayName(context: Context, uri: Uri): String? = try {
+internal fun displayName(context: Context, uri: Uri): String? = try {
     context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
         if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getString(0) else null
     } ?: uri.lastPathSegment

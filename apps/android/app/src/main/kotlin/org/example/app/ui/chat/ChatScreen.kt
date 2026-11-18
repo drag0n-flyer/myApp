@@ -84,6 +84,8 @@ import org.example.app.ui.media.MediaHost
 import org.example.app.ui.media.PhotoCache
 import org.example.app.ui.media.MediaPlayerEngine
 import org.example.app.ui.media.MediaViewerScreen
+import org.example.app.ui.media.ViewerItem
+import org.example.app.core.chats.isVideo
 import org.example.app.ui.media.SendPreviewScreen
 import org.example.app.core.chats.Picked
 import org.example.app.core.chats.SendPlan
@@ -391,7 +393,7 @@ fun ChatScreen(
                             val actions = MessageActions.available(message, own)
                             val autoKind = when (message.content) {
                                 is MessageContent.Photo -> MediaKind.Photo
-                                is MessageContent.File -> MediaKind.File
+                                is MessageContent.File -> if ((message.content as MessageContent.File).isVideo) MediaKind.Video else MediaKind.File
                                 is MessageContent.Voice -> MediaKind.Voice
                                 else -> null
                             }
@@ -451,8 +453,8 @@ fun ChatScreen(
         }
         viewingPhoto?.let { id ->
             // Every photo and video of the chat that is on this device, in order, starting at the tapped one.
-            val ids by produceState<List<String>?>(null, id) { value = viewModel.viewerIds().let { if (id in it) it else it + id } }
-            ids?.let {
+            val items by produceState<List<ViewerItem>?>(null, id) { value = viewModel.viewerItems().let { all -> if (all.any { it.id == id }) all else all + ViewerItem(id, false) } }
+            items?.let {
                 MediaViewerScreen(it, id, opener, onDismiss = { viewingPhoto = null }, onShare = mediaActions::sharePhoto, onSave = mediaActions::save)
             }
         }

@@ -10,6 +10,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
+import org.example.app.core.chats.ChatMedia
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -85,7 +88,7 @@ interface SocialPort {
 /** A photo, voice note or file ready to upload. `:app` makes it (`PhotoPrep`, `VoiceRecorder`). */
 class PreparedMedia(
     val file: File, val width: Int = 0, val height: Int = 0, val thumbnail: ByteArray? = null,
-    val duration: Double = 0.0, val name: String = file.name,
+    val duration: Double = 0.0, val name: String = file.name, val mime: String = "",
 )
 
 fun interface MediaPreparer {
@@ -147,8 +150,14 @@ class LiveChatStore(
     onEscrowRejected: () -> Unit = {},
 ) : ChatStore, CallSignalSealer by sealer {
 
+    /** Every time this store takes is later than the last one, so messages made one after the other keep that order. */
+    private val storeClock = object : Clock {
+        private var last = Long.MIN_VALUE
+        override fun now(): Long = synchronized(this) { maxOf(clock.now(), last + 1).also { last = it } }
+    }
+
     val outbox = Outbox(
-        device, mls, server, repo, lock, clock, conversations, escrow, syncOnce = { inbox.sync() },
+        device, mls, server, repo, lock, storeClock, conversations, escrow, syncOnce = { inbox.sync() },
         readReceiptsEnabled = readReceiptsEnabled, fold = fold, onEscrowRejected = onEscrowRejected,
     )
     val receipts = Receipts(outbox, readReceiptsEnabled)
@@ -309,7 +318,7 @@ class LiveChatStore(
         }
     }
 
-    private fun nowMs() = clock.now()
+    private fun nowMs() = storeClock.now()
     private fun freshId() = UUID.randomUUID().toString().lowercase()
     private val showRead get() = readReceiptsEnabled()
 
@@ -590,10 +599,12 @@ class LiveChatStore(
                             startAttachment(item.picked.path, item.picked.kind, chatId, created)
                             created.await()
                         }
-                        is SendPlan.Send.Text -> send(MessageContent.Text(item.text), chatId)
+                        is SendPlan.Send.Text -> {
+                            send(MessageContent.Text(item.text), chatId)
+                            // The text is written by the writer: the next item must be made after it, not before.
+                            awaitWrites()
+                        }
                     }
-                    // The next message must carry a later time than this one: the chat is ordered by it.
-                    kotlinx.coroutines.delay(2)
                 }
             } finally {
                 inFlight.update { it - 1 }
@@ -757,6 +768,11 @@ class LiveChatStore(
                 if (File(pending.path).isFile) throw e
                 null
             }
+            if (fresh != null && !currentCoroutineContext().isActive) {
+                // Cancelled while it was being prepared (a blocking step that cannot stop half way): what it made goes too.
+                if (isInsideTemp(fresh.file) || isInside(fresh.file, pendingDir(id))) fresh.file.delete()
+                throw CancellationException("cancelled while preparing")
+            }
             if (fresh == null) {
                 // Nothing to retry from: it can never send, so it is removed instead of offering a dead "Try again".
                 dropUnsendable(id, pending.chatId)
@@ -786,7 +802,7 @@ class LiveChatStore(
         val queued = try {
             repo.transaction {
                 // False when the message was deleted while it uploaded: then nothing is queued and no record is written.
-                if (!repo.replaceUnsentEnvelope(id, device.accountId, ContentCodec.encode(envelope), fold(prepared.name.takeIf { kind == MediaKind.File } ?: ""), nowMs())) {
+                if (!repo.replaceUnsentEnvelope(id, device.accountId, ContentCodec.encode(envelope), fold(prepared.name.takeIf { kind == MediaKind.File || kind == MediaKind.Video } ?: ""), nowMs())) {
                     false
                 } else {
                     outbox.enqueue(envelope, pending.chatId)
@@ -869,16 +885,18 @@ class LiveChatStore(
     private fun placeholderAtt(size: Long) = Att("", ByteArray(0), ByteArray(0), size, size)
 
     private fun envelopeFor(kind: MediaKind, id: String, at: Long, att: Att, p: PreparedMedia): ContentEnvelope = when (kind) {
-        MediaKind.Photo, MediaKind.Video -> ContentEnvelope.Photo(id, at, att, p.width, p.height, p.thumbnail)
+        MediaKind.Photo -> ContentEnvelope.Photo(id, at, att, p.width, p.height, p.thumbnail)
+        // A video is file content (the same on every platform): its name keeps the extension and the mime says video/.
+        MediaKind.Video -> ContentEnvelope.File(id, at, att, p.name, p.mime.ifEmpty { ChatMedia.videoMime(p.name) })
         MediaKind.Voice -> ContentEnvelope.Voice(id, at, att, p.duration)
-        MediaKind.File -> ContentEnvelope.File(id, at, att, p.name, "application/octet-stream")
+        MediaKind.File -> ContentEnvelope.File(id, at, att, p.name, p.mime.ifEmpty { "application/octet-stream" })
     }
 
     /** What a retry knows about the prepared file: its length, size or name, from the stored envelope. */
     private fun preparedFrom(envelope: ByteArray?, file: File): PreparedMedia = when (val e = envelope?.let { ContentCodec.decode(it) }) {
         is ContentEnvelope.Photo -> PreparedMedia(file, e.w, e.h, e.th)
         is ContentEnvelope.Voice -> PreparedMedia(file, duration = e.dur)
-        is ContentEnvelope.File -> PreparedMedia(file, name = e.name)
+        is ContentEnvelope.File -> PreparedMedia(file, name = e.name, mime = e.mime)
         else -> PreparedMedia(file)
     }
 
@@ -924,9 +942,9 @@ class LiveChatStore(
     }
 
     private fun attachmentKind(kind: MediaKind) = when (kind) {
-        MediaKind.Photo, MediaKind.Video -> "photo"
+        MediaKind.Photo -> "photo"
         MediaKind.Voice -> "voice"
-        MediaKind.File -> "file"
+        MediaKind.File, MediaKind.Video -> "file"
     }
 
     override fun download(messageId: String, chatId: String) {

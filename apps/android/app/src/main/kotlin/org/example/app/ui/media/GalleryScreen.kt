@@ -72,7 +72,6 @@ import org.example.app.core.chats.MediaBubbleState
 import org.example.app.core.chats.Message
 import org.example.app.core.chats.MessageContent
 import org.example.app.core.chats.SafeFileName
-import org.example.app.media.VideoMeta
 import org.example.app.media.videoClock
 import org.example.app.ui.dataSizeText
 import org.example.app.ui.lock.LocalExpectReturn
@@ -95,9 +94,9 @@ fun GalleryScreen(
     val requests by store.requests.collectAsStateWithLifecycle()
     val chat = remember(chats, requests) { chats.firstOrNull { it.id == chatId } ?: requests.firstOrNull { it.id == chatId } }
     // Read again when the chat's messages change (a download finishing, a new photo).
-    val media by produceState(emptyList<Message>(), chat?.messages) { value = withContext(Dispatchers.IO) { ChatMedia.load(store, chatId) } }
-    val photos = media.filter { it.content is MessageContent.Photo }
-    val files = media.filter { it.content is MessageContent.File }
+    val media by produceState(emptyList<Message>(), chat?.messages) { value = withContext(Dispatchers.IO) { ChatMediaIndex.load(store, chatId) } }
+    val photos = media.filter { ChatMediaIndex.isMedia(it) }
+    val files = media.filter { it.content is MessageContent.File && !ChatMediaIndex.isVideo(it) }
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -134,8 +133,8 @@ fun GalleryScreen(
         }
     }
     viewing?.let { id ->
-        val ids = remember(media) { ChatMedia.viewerIds(media).let { if (id in it) it else it + id } }
-        MediaViewerScreen(ids, id, opener, onDismiss = { viewing = null }, onShare = actions::sharePhoto, onSave = actions::save)
+        val items = remember(media) { ChatMediaIndex.viewerItems(media).let { all -> if (all.any { it.id == id }) all else all + ViewerItem(id, false) } }
+        MediaViewerScreen(items, id, opener, onDismiss = { viewing = null }, onShare = actions::sharePhoto, onSave = actions::save)
     }
 }
 
@@ -211,15 +210,7 @@ private fun Thumbnail(message: Message, opener: AttachmentOpener?, cache: PhotoC
             return@produceState
         }
         try {
-            val result = withContext(Dispatchers.IO) {
-                val photo = PhotoDecoder.decodeFit(opened.file, side, side)
-                if (photo != null) {
-                    photo to null
-                } else {
-                    val info = VideoMeta.probe(opened.file)
-                    if (info == null) null to null else VideoMeta.frame(opened.file, side, side) to info.durationMs
-                }
-            }
+            val result = withContext(Dispatchers.IO) { decodeMedia(opened.file, ChatMediaIndex.isVideo(message), side, side) }
             result.first?.let { cache[key] = it }
             result.second?.let { cache.setVideoLengthMs(key, it) }
             value = result

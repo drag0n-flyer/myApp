@@ -59,7 +59,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.example.app.R
-import org.example.app.media.VideoMeta
 
 /** Most the viewer decodes: a photo is zoomed in on, so it gets more than the screen needs, but never a 40-megapixel bitmap. */
 private const val VIEWER_MAX_PIXELS = 12_000_000L
@@ -80,14 +79,15 @@ private sealed interface ViewerPage {
  */
 @Composable
 fun MediaViewerScreen(
-    messageIds: List<String>,
+    items: List<ViewerItem>,
     startId: String,
     opener: AttachmentOpener?,
     onDismiss: () -> Unit,
     onShare: (messageId: String) -> Unit,
     onSave: suspend (messageId: String) -> Boolean,
 ) {
-    if (messageIds.isEmpty()) return
+    if (items.isEmpty()) return
+    val messageIds = items.map { it.id }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         val start = messageIds.indexOf(startId).coerceAtLeast(0)
         val pager = rememberPagerState(initialPage = start, pageCount = { messageIds.size })
@@ -101,7 +101,7 @@ fun MediaViewerScreen(
         }
         Box(Modifier.fillMaxSize().background(Color.Black)) {
             HorizontalPager(pager, Modifier.fillMaxSize(), key = { messageIds[it] }) { page ->
-                ViewerPage(messageIds[page], opener, active = pager.currentPage == page)
+                ViewerPage(items[page], opener, active = pager.currentPage == page)
             }
             val current = messageIds[pager.currentPage.coerceIn(0, messageIds.lastIndex)]
             Row(Modifier.fillMaxWidth().statusBarsPadding().padding(8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -132,7 +132,8 @@ fun MediaViewerScreen(
 }
 
 @Composable
-private fun ViewerPage(messageId: String, opener: AttachmentOpener?, active: Boolean) {
+private fun ViewerPage(item: ViewerItem, opener: AttachmentOpener?, active: Boolean) {
+    val messageId = item.id
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val width = constraints.maxWidth
         val height = constraints.maxHeight
@@ -145,11 +146,10 @@ private fun ViewerPage(messageId: String, opener: AttachmentOpener?, active: Boo
             }
             try {
                 val loaded = withContext(Dispatchers.IO) {
-                    val photo = PhotoDecoder.decodeFit(opened.file, width, height, oversample = 2, maxPixels = VIEWER_MAX_PIXELS)
-                    when {
-                        photo != null -> ViewerPage.Photo(photo)
-                        VideoMeta.probe(opened.file) != null -> ViewerPage.Video(opened.file)
-                        else -> ViewerPage.Failed
+                    if (item.video) {
+                        ViewerPage.Video(opened.file)
+                    } else {
+                        PhotoDecoder.decodeFit(opened.file, width, height, oversample = 2, maxPixels = VIEWER_MAX_PIXELS)?.let { ViewerPage.Photo(it) } ?: ViewerPage.Failed
                     }
                 }
                 value = loaded

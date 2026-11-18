@@ -30,7 +30,7 @@ sealed interface MessageContent {
     data class Text(val text: String) : MessageContent
     data class Voice(val duration: Double) : MessageContent
     data class Photo(val bytes: Long) : MessageContent
-    data class File(val name: String, val bytes: Long) : MessageContent
+    data class File(val name: String, val bytes: Long, val mime: String = "") : MessageContent
     data class Call(val summary: CallSummary) : MessageContent
     /** The sender deleted it. */
     data object Deleted : MessageContent

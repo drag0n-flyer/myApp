@@ -19,7 +19,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import kotlinx.coroutines.flow.StateFlow
 import org.example.app.core.chats.DeliveryStatus
-import org.example.app.media.VideoMeta
 import org.example.app.media.videoClock
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -134,13 +133,15 @@ fun PhotoBubble(
     wait: Boolean,
     host: MediaHost?,
     onDownload: () -> Unit,
+    /** A video (file content): shown as a frame with a play mark; a photo whose bytes are not an image shows the broken-photo state. */
+    video: Boolean = false,
 ) {
     val state = rememberBubbleState(message.media, host)
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         if (message.isUploading()) {
             UploadBox(message, host)
         } else if (state is MediaBubbleState.Ready) {
-            PhotoImage(message, host)
+            PhotoImage(message, host, video)
         } else {
             MediaPlaceholder(state, wait = wait, blurred = true, onDownload = onDownload)
         }
@@ -282,11 +283,11 @@ private sealed interface PhotoLoad {
 
 /** A downloaded photo, decoded at the size it is shown, off the main thread, from the cache when it is there. */
 @Composable
-private fun PhotoImage(message: Message, host: MediaHost?) {
+private fun PhotoImage(message: Message, host: MediaHost?, video: Boolean) {
     val density = LocalDensity.current
     val boxWidth = with(density) { BUBBLE_PHOTO_WIDTH.roundToPx() }
     val boxHeight = with(density) { BUBBLE_PHOTO_HEIGHT.roundToPx() }
-    val key = "${message.id}/${message.media?.attachmentId}/$boxWidth"
+    val key = "${message.id}/${message.media?.attachmentId}/$boxWidth/$video"
     // Restarts, and so cancels the older load, when the key changes: a stale picture never replaces a newer one.
     val load by produceState<PhotoLoad>(PhotoLoad.Loading, key, host) {
         val cached = host?.photos?.get(key)
@@ -300,16 +301,7 @@ private fun PhotoImage(message: Message, host: MediaHost?) {
             return@produceState
         }
         try {
-            // A photo is decoded; what is not a photo may be a video, shown as one of its frames.
-            val (bitmap, videoMs) = withContext(Dispatchers.IO) {
-                val photo = PhotoDecoder.decodeFit(opened.file, boxWidth, boxHeight)
-                if (photo != null) {
-                    photo to null
-                } else {
-                    val info = VideoMeta.probe(opened.file)
-                    if (info == null) null to null else VideoMeta.frame(opened.file, boxWidth, boxHeight) to info.durationMs
-                }
-            }
+            val (bitmap, videoMs) = withContext(Dispatchers.IO) { decodeMedia(opened.file, video, boxWidth, boxHeight) }
             if (bitmap == null) {
                 value = PhotoLoad.Unreadable
             } else {

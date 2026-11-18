@@ -219,7 +219,9 @@ class LiveSession(
             MediaKind.File -> PreparedMedia(File(path))
             MediaKind.Voice -> VoicePrep.prepare(File(path))
             // A video goes as picked (no re-encoding); only its size is read. Not a video the platform can read: it can never be sent.
-            MediaKind.Video -> org.example.app.media.VideoMeta.probe(File(path))?.let { PreparedMedia(File(path), it.width, it.height) }
+            MediaKind.Video -> org.example.app.media.VideoMeta.probe(File(path))?.let {
+                PreparedMedia(File(path), it.width, it.height, name = File(path).name, mime = org.example.app.core.chats.ChatMedia.videoMime(File(path).name))
+            }
         }
     }
 }

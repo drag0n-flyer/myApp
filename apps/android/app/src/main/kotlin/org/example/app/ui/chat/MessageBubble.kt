@@ -49,6 +49,7 @@ import org.example.app.core.chats.LinkFinder
 import org.example.app.core.chats.Message
 import org.example.app.core.chats.SafeFileName
 import org.example.app.core.chats.MessageContent
+import org.example.app.core.chats.isVideo
 import org.example.app.core.chats.MessagePreview
 import org.example.app.core.settings.MediaKind
 import org.example.app.ui.dataSizeText
@@ -210,7 +211,14 @@ private fun Body(message: Message, autoDownloads: (MediaKind) -> Boolean, onDown
             onDownload = onDownload,
         )
         // The sender's name is never shown raw: what is shown is what open and share use.
-        is MessageContent.File -> FileBubble(
+        is MessageContent.File -> if (c.isVideo) PhotoBubble(
+            message = message,
+            title = stringResource(R.string.video_with_length, dataSizeText(DataFormat.size(c.bytes))),
+            wait = !autoDownloads(MediaKind.Video) && !unsent,
+            host = media,
+            onDownload = onDownload,
+            video = true,
+        ) else FileBubble(
             message = message,
             name = SafeFileName.of(c.name, "file"),
             title = stringResource(R.string.file_with_size, SafeFileName.of(c.name, "file"), dataSizeText(DataFormat.size(c.bytes))),

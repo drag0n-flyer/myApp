@@ -22,7 +22,9 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import org.example.app.core.chats.SendProblem
+import org.example.app.core.chats.ChatMedia
 import org.example.app.core.chats.Picked
+import org.example.app.core.chats.isVideo
 import org.example.app.core.chats.SendPlan
 import kotlinx.coroutines.runBlocking
 import org.example.app.contracts.AttachmentRef
@@ -85,7 +87,7 @@ class SendAttachmentTest {
         @Volatile var thumbnail: ByteArray? = null
         /** Runs right after a prepared copy is written, to hold two sends at the same point. */
         @Volatile var afterCopy: () -> Unit = {}
-        val preparer = MediaPreparer { path, _ ->
+        val preparer = MediaPreparer { path, kind ->
             prepares.incrementAndGet()
             prepareThrows?.invoke()
             if (prepareFails) null else {
@@ -94,7 +96,7 @@ class SendAttachmentTest {
                 val copy = File.createTempFile("prepared", ".bin", preparedDir)
                 File(path).copyTo(copy, overwrite = true)
                 afterCopy()
-                PreparedMedia(copy, width, height, thumbnail, duration, name = File(path).name)
+                PreparedMedia(copy, width, height, thumbnail, duration, name = File(path).name, mime = if (kind == MediaKind.Video) ChatMedia.videoMime(File(path).name) else "")
             }
         }
     }
@@ -225,7 +227,7 @@ class SendAttachmentTest {
         assertEquals("sending", statusOf(f, id))
         val line = s.store.chat("acc-ana")!!.messages.last { it.id == id }
         assertEquals(DeliveryStatus.Sending, line.status)
-        assertEquals(MessageContent.File("notes.txt", 11), line.content)
+        assertEquals(MessageContent.File("notes.txt", 11, "application/octet-stream"), line.content)
         // The staged copy now lives in the media folder, where a restart's sweep does not reach it.
         assertFalse(file.exists())
         assertTrue(pendingDir(f, id).listFiles()!!.isNotEmpty())
@@ -547,6 +549,70 @@ class SendAttachmentTest {
     }
 
     @Test
+    fun aVideoTravelsAsFileContentWithItsNameAndMime() = runBlocking<Unit> {
+        val f = fixture()
+        val s = session(f)
+        val clip = File(tmp("clip"), "holiday.MOV").also { it.writeText("video bytes") }
+        s.store.sendAttachment(clip.path, MediaKind.Video, "acc-ana")
+        s.store.settle()
+        val id = sentId(f)
+        val sent = assertIs<ContentEnvelope.File>(peerGot(f, id))
+        assertEquals("holiday.MOV", sent.name)
+        assertEquals("video/quicktime", sent.mime)
+        assertEquals("file", f.d.repo.attachmentForMessage(id)!!.kind)
+        val mine = assertIs<MessageContent.File>(s.store.chat("acc-ana")!!.messages.last { it.id == id }.content)
+        assertTrue(mine.isVideo)
+        assertTrue(ChatMedia.isVideo(sent.name, sent.mime))
+    }
+
+    @Test
+    fun aCancelDuringPreparationRemovesWhatWasPrepared() = runBlocking<Unit> {
+        val f = fixture()
+        val s = session(f)
+        val started = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        f.afterCopy = { started.countDown(); release.await(10, java.util.concurrent.TimeUnit.SECONDS) }
+        s.store.sendAttachment(staged(f).path, MediaKind.File, "acc-ana")
+        check(started.await(10, java.util.concurrent.TimeUnit.SECONDS)) { "preparation never started" }
+        val id = sentId(f)
+        s.store.cancelUpload(id)
+        s.store.awaitWrites()
+        release.countDown()
+        s.store.settle()
+        assertNull(f.d.repo.message(id))
+        assertEquals(emptyList(), f.preparedDir.listFiles()!!.toList(), "the prepared copy is removed")
+        assertFalse(pendingDir(f, id).exists())
+        assertFalse(pendingKey(f, id))
+        assertEquals(0, s.api.attempts.get(), "nothing was uploaded")
+    }
+
+    @Test
+    fun aBatchGivesEveryMessageALaterTimeThanTheOneBefore() = runBlocking<Unit> {
+        val f = fixture()
+        val s = session(f) { src, into ->
+            val name = src.removePrefix("file:")
+            StageResult.Copied(File(name).copyTo(File(into, File(name).name), overwrite = true))
+        }
+        val dir = tmp("mono")
+        val a = File(dir, "a.txt").also { it.writeText("aaa") }
+        val b = File(dir, "b.txt").also { it.writeText("bbb") }
+        s.store.sendBatch(
+            listOf(
+                SendPlan.Send.Attachment(Picked("file:${a.path}", MediaKind.File, 3)),
+                SendPlan.Send.Text("hi"),
+                SendPlan.Send.Attachment(Picked("file:${b.path}", MediaKind.File, 3)),
+            ),
+            "acc-ana",
+        )
+        s.store.settle()
+        // The test clock does not move; the store still orders the three as sent.
+        val kinds = f.d.repo.messages("acc-ana", null, 50).filter { it.senderAccount == f.d.me.accountId }
+            .sortedBy { it.sentAt }.map { ContentCodec.decode(it.envelope) }
+        assertEquals(listOf("file", "text", "file"), kinds.map { if (it is ContentEnvelope.Text) "text" else "file" })
+        assertEquals(3, f.d.repo.messages("acc-ana", null, 50).filter { it.senderAccount == f.d.me.accountId }.map { it.sentAt }.toSet().size)
+    }
+
+    @Test
     fun openingNeverDownloadsAndDoesNothingAfterClose() = runBlocking<Unit> {
         val f = fixture()
         val s = session(f)
@@ -698,6 +764,7 @@ class SendAttachmentTest {
         s.store.sendAttachment(staged(f).path, MediaKind.File, "acc-ana")
         s.store.settle()
         assertEquals(emptyList(), f.d.repo.messages("acc-ana", null, 50).filter { it.senderAccount == f.d.me.accountId })
+        waitUntil("the problem to be collected") { s.problems.isNotEmpty() }
         assertEquals(listOf(SendProblem("acc-ana", SendProblem.Reason.Unreadable)), s.problems)
     }
 
@@ -726,9 +793,12 @@ class SendAttachmentTest {
         val s = session(f) { _, into -> into.resolve("half").writeText("partial"); answer }
         s.store.sendAttachment("content://provider/1", MediaKind.Photo, "acc-ana")
         s.store.settle()
+        // The problems flow is conflated: the first one must have been collected before the second replaces it.
+        waitUntil("the first problem to be collected") { s.problems.size == 1 }
         answer = StageResult.Unreadable
         s.store.sendAttachment("content://provider/2", MediaKind.Photo, "acc-ana")
         s.store.settle()
+        waitUntil("the second problem to be collected") { s.problems.size == 2 }
         assertEquals(emptyList(), f.d.repo.messages("acc-ana", null, 50).filter { it.senderAccount == f.d.me.accountId })
         assertEquals(
             listOf(SendProblem("acc-ana", SendProblem.Reason.TooBig), SendProblem("acc-ana", SendProblem.Reason.Unreadable)),
