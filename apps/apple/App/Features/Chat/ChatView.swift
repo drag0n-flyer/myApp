@@ -157,12 +157,12 @@ struct ChatView: View {
             }
             .onChange(of: newestID) { _, new in
                 if tracker.messagesChanged(newestID: new), let new {
-                    DispatchQueue.main.async { proxy.scrollTo(new, anchor: .bottom) }
+                    Task { @MainActor in proxy.scrollTo(new, anchor: .bottom) }
                 }
             }
             .onChange(of: firstUnreadID) { _, new in
                 guard new != nil else { return }
-                DispatchQueue.main.async { proxy.scrollTo(ChatRow.unreadMarker.id, anchor: .top) }
+                Task { @MainActor in proxy.scrollTo(ChatRow.unreadMarker.id, anchor: .top) }
             }
             .onChange(of: jump) { _, request in
                 guard let request else { return }
@@ -265,7 +265,7 @@ struct ChatView: View {
         let added = next.loadPage(newest: chat.messages) { model.olderMessages(in: chatID, before: $0) }
         history = next
         if added > 0 {
-            DispatchQueue.main.async { proxy.scrollTo(anchorID, anchor: .top) }
+            Task { @MainActor in proxy.scrollTo(anchorID, anchor: .top) }
         }
     }
 
@@ -275,7 +275,7 @@ struct ChatView: View {
         guard trial.load(until: id, newest: chat.messages, loader: { model.olderMessages(in: chatID, before: $0) }) else { return }
         history = trial
         highlightID = id
-        DispatchQueue.main.async { withAnimation { proxy.scrollTo(id, anchor: .center) } }
+        Task { @MainActor in withAnimation { proxy.scrollTo(id, anchor: .center) } }
         Task {
             try? await Task.sleep(for: .seconds(1.5))
             if highlightID == id { highlightID = nil }
@@ -405,7 +405,7 @@ struct ChatView: View {
         guard ChatScreenState.shared.searchRequestChatID == chatID else { return }
         ChatScreenState.shared.searchRequestChatID = nil
         searching = true
-        DispatchQueue.main.async { searchFocused = true }
+        Task { @MainActor in searchFocused = true }
     }
 
     private var searchBar: some View {
