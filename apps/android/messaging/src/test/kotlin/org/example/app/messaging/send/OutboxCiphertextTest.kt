@@ -3,6 +3,7 @@ package org.example.app.messaging.send
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -12,6 +13,7 @@ import org.example.app.contracts.GroupId
 import org.example.app.messaging.content.ContentCodec
 import org.example.app.messaging.content.ContentEnvelope
 import org.example.app.messaging.ports.ConversationRecord
+import org.example.app.messaging.sync.ModePin
 import org.example.app.messaging.sync.NOW
 import org.example.app.messaging.sync.Rig
 import org.example.app.messaging.sync.TestDevice
@@ -165,6 +167,36 @@ class OutboxCiphertextTest {
         rig.ana1.outbox.flush()
         assertEquals("failed", rig.ana1.repo.message("m-1")?.status)
         assertTrue(rig.ana1.repo.dueOutbox(Long.MAX_VALUE).isEmpty())
+    }
+
+    /** A `mode` envelope that did not get through is retried by every later send; it must not burn a generation each time. */
+    @Test
+    fun pendingModeEnvelopeIsEncryptedOncePerEpochToo() = runTest {
+        val (rig, record) = joined()
+        ModePin.setPending(rig.ana1.repo, record.serverId, true)
+        val before = rig.ana1.mls.encryptCalls
+        val postsBefore = rig.server.postAttempts.size
+        rig.server.failNextMessages = 4
+        repeat(4) { assertFailsWith<Exception> { rig.ana1.manager.preferredConversation("acc-bob") } }
+        rig.ana1.restart()
+        assertFailsWith<Exception> { rig.server.failNextMessages = 1; rig.ana1.manager.preferredConversation("acc-bob") }
+        rig.ana1.manager.preferredConversation("acc-bob")
+        assertEquals(1, rig.ana1.mls.encryptCalls - before, "one encrypt for six attempts")
+        val attempts = rig.server.postAttempts.drop(postsBefore)
+        assertEquals(6, attempts.size)
+        attempts.forEach {
+            assertContentEquals(attempts[0].payload, it.payload)
+            assertEquals(attempts[0].clientMsgId, it.clientMsgId)
+        }
+        assertFalse(ModePin.isPending(rig.ana1.repo, record.serverId))
+
+        // After a change of epoch a new ciphertext is made (same envelope ID, so the server still deduplicates).
+        ModePin.setPending(rig.ana1.repo, record.serverId, true)
+        rig.server.failNextMessages = 1
+        assertFailsWith<Exception> { rig.ana1.manager.preferredConversation("acc-bob") }
+        advanceEpoch(rig, record)
+        rig.ana1.manager.preferredConversation("acc-bob")
+        assertEquals(3, rig.ana1.mls.encryptCalls - before)
     }
 
     @Test
