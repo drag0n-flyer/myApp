@@ -117,7 +117,7 @@ func TestAASA(t *testing.T) {
 		t.Fatalf("%s %v", res, res.Header)
 	}
 	want := decode(t, `{"applinks":{"details":[{"appIDs":["T.a.b","T.a.b.mac"],
-	  "components":[{"/":"/invite/*"},{"/":"/link/*"}]}]},
+	  "components":[{"/":"/invite/*"},{"/":"/link/*"},{"/":"/u/*"},{"/":"/c/*"}]}]},
 	  "webcredentials":{"apps":["T.a.b","T.a.b.mac"]}}`)
 	if got := decode(t, string(res.Body)); !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %s", res.Body)
@@ -172,5 +172,30 @@ func TestServerInfoVapidKey(t *testing.T) {
 	want := base64.RawURLEncoding.EncodeToString(pub.Bytes())
 	if got["push"].(map[string]any)["vapidKey"] != want {
 		t.Fatalf("push %v", got["push"])
+	}
+}
+
+func TestProfileAndContactLinkPages(t *testing.T) {
+	c := serve(t)
+	for _, path := range []string{"/u/ana", "/c/AAAAAAAAAAAAAAAAAAAAAA"} {
+		res := c.Do(nil, "GET", path, nil)
+		if res.Status != 200 || !strings.HasPrefix(res.Header.Get("Content-Type"), "text/html") ||
+			!strings.Contains(string(res.Body), "[App]") {
+			t.Fatalf("%s: %s %v", path, res, res.Header)
+		}
+		if res.Header.Get("Cache-Control") != "no-store" || res.Header.Get("Referrer-Policy") != "no-referrer" ||
+			res.Header.Get("Content-Security-Policy") != "default-src 'none'" {
+			t.Fatalf("%s headers: %v", path, res.Header)
+		}
+		// No account data, and the path value is not echoed.
+		if strings.Contains(string(res.Body), "ana") || strings.Contains(string(res.Body), "AAAA") {
+			t.Fatalf("%s echoes the path: %s", path, res.Body)
+		}
+	}
+	// The page is the same for a name that exists and one that does not.
+	a := c.Do(nil, "GET", "/u/ana", nil)
+	b := c.Do(nil, "GET", "/u/nobody", nil)
+	if string(a.Body) != string(b.Body) {
+		t.Fatal("page differs by username")
 	}
 }

@@ -1,4 +1,4 @@
-// Package serverinfo is lane E: GET /v1/server, the /invite/{code} page,
+// Package serverinfo is lane E: GET /v1/server, the /invite/{code}, /u/{username} and /c/{token} pages,
 // the operator documents (security.txt, legal pages) and
 // apple-app-site-association and assetlinks.json.
 package serverinfo
@@ -32,6 +32,8 @@ func New(d core.Deps) *Module { return &Module{d: d} }
 func (m *Module) Routes(r *httpx.Router) {
 	r.Public("GET /v1/server", m.info)
 	r.Public("GET /invite/{code}", m.invite)
+	r.Public("GET /u/{username}", m.staticPage(profilePage))
+	r.Public("GET /c/{token}", m.staticPage(contactLinkPage))
 	r.Public("GET /.well-known/apple-app-site-association", m.aasa)
 	r.Public("GET /.well-known/assetlinks.json", m.assetlinks)
 	r.Public("GET /.well-known/security.txt", m.doc("security.txt", "text/plain; charset=utf-8"))
@@ -112,6 +114,40 @@ func (m *Module) invite(w http.ResponseWriter, r *http.Request) error {
 	return invitePage.Execute(w, r.PathValue("code"))
 }
 
+// profilePage and contactLinkPage are fixed text: they show no account data
+// and do not echo the path, so the page is the same for a name or token that
+// exists and one that does not.
+var (
+	profilePage     = pageHTML("Add contact", "Open this contact in [App]")
+	contactLinkPage = pageHTML("Contact link", "Open this contact link in [App]")
+)
+
+func pageHTML(title, heading string) []byte {
+	return []byte(`<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>` + title + `</title>
+</head>
+<body>
+<h1>` + heading + `</h1>
+</body>
+</html>
+`)
+}
+
+func (m *Module) staticPage(body []byte) httpx.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) error {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'")
+		_, err := w.Write(body)
+		return err
+	}
+}
+
 func (m *Module) aasa(w http.ResponseWriter, _ *http.Request) error {
 	ids := m.d.Config.AppleAppIDs
 	if ids == nil {
@@ -122,7 +158,7 @@ func (m *Module) aasa(w http.ResponseWriter, _ *http.Request) error {
 	httpx.JSON(w, http.StatusOK, obj{
 		"applinks": obj{"details": []obj{{
 			"appIDs":     ids,
-			"components": []obj{{"/": "/invite/*"}, {"/": "/link/*"}},
+			"components": []obj{{"/": "/invite/*"}, {"/": "/link/*"}, {"/": "/u/*"}, {"/": "/c/*"}},
 		}}},
 		"webcredentials": obj{"apps": ids},
 	})

@@ -148,7 +148,8 @@ func (m *Module) postMessage(w http.ResponseWriter, r *http.Request) error {
 }
 
 // PruneOnce deletes inbox rows older than retention.inboxDays, escrow copies
-// older than retention.escrowDays, and idempotency records older than 7 days.
+// older than retention.escrowDays, idempotency records older than 7 days and
+// expired contact links.
 // A failing delete does not stop the others; the errors are joined.
 func (m *Module) PruneOnce(ctx context.Context) error {
 	now := m.d.Now()
@@ -166,5 +167,6 @@ func (m *Module) PruneOnce(ctx context.Context) error {
 		del(`delete from escrow where created_at < $1`, now.Add(-time.Duration(d)*day))
 	}
 	del(`delete from client_messages where created_at < $1`, now.Add(-clientMsgTTL))
+	del(`delete from contact_links where expires_at <= $1`, now)
 	return errors.Join(errs...)
 }
