@@ -8,6 +8,7 @@ struct EditNameView: View {
     let onSave: (String) -> Void
     let onCancel: () -> Void
     @State private var text: String
+    @FocusState private var fieldFocused: Bool
 
     init(current: String, onSave: @escaping (String) -> Void, onCancel: @escaping () -> Void) {
         self.current = current
@@ -24,6 +25,11 @@ struct EditNameView: View {
             Form {
                 Section {
                     TextField("Name", text: $text)
+                        .focused($fieldFocused)
+                        #if os(iOS)
+                        .textInputAutocapitalization(.words)
+                        #endif
+                        .autocorrectionDisabled()
                         .accessibilityIdentifier("profile.name.field")
                         .submitLabel(.done)
                         .onSubmit { if let accepted { onSave(accepted) } }
@@ -35,6 +41,7 @@ struct EditNameView: View {
                 }
             }
             .formStyle(.grouped)
+            .task { fieldFocused = true }
             .navigationTitle("Edit name")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)

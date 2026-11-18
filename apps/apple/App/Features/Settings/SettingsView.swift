@@ -163,7 +163,8 @@ struct ProfileView: View {
         .navigationTitle("Account")
         .sheet(isPresented: $editingName) {
             EditNameView(
-                current: model.myStoredName,
+                // The cleaned form, so a stored name the rule refuses does not leave Save stuck off.
+                current: DisplayNameRule.forDisplay(model.myStoredName, fallback: ""),
                 onSave: { name in
                     editingName = false
                     nameSaveFailed = false

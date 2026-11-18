@@ -38,6 +38,6 @@ final class ProfileNameTests: XCTestCase {
         field.tap()
         field.typeText("zzz")
         app.buttons["profile.name.cancel"].tap()
-        XCTAssertFalse(app.staticTexts["Your Name" + "zzz"].exists)
+        XCTAssertTrue(app.staticTexts["Your Name"].waitToExist())
     }
 }

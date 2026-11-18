@@ -545,8 +545,10 @@ final class AppModel {
         guard !wipeFailed else { return }
         await refreshDevices()
         await installLiveStore()
-        await seedOwnName()
         await startLive()
+        // Not awaited: offline, the read would hold up the inbox sync and key top-up below until it times out.
+        // The seed's session, store and signed-in guard makes a late write safe.
+        Task { await seedOwnName() }
         await syncInbox()
         await replenishKeyPackages()
         await registerForPushIfAllowed()

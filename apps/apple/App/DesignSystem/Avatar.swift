@@ -31,7 +31,7 @@ struct Avatar: View {
             .fill(Color.avatarTile(for: colorKey, dark: colorScheme == .dark))
             .frame(width: size, height: size)
             .overlay {
-                Text(String(name.first ?? "?"))
+                Text(String(name.first ?? "?").uppercased())
                     .font(.system(size: size * 0.38, weight: .semibold))
                     .foregroundStyle(.white)
             }
