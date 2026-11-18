@@ -33,6 +33,9 @@ jobs:
         working-directory: apps/apple/Packages/SecureMessaging
         run: scripts/build-mlsffi.sh
 
+      - name: Fetch the noise model
+        run: apps/apple/Packages/CallMedia/scripts/fetch-rnnoise-model.sh
+
       - name: Generate Xcode project
         run: |
           brew install xcodegen
