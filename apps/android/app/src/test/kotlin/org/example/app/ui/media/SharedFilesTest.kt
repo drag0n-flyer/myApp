@@ -98,6 +98,9 @@ class SharedFilesTest {
     }
 
     @Test fun theProviderServesAStagedFileAndNothingElse() = runBlocking {
+        // FileProvider remembers the folders it serves for the whole process; every Robolectric test has a cache folder of its own.
+        androidx.core.content.FileProvider::class.java.getDeclaredField("sCache").also { it.isAccessible = true }
+            .let { (it.get(null) as MutableMap<*, *>).clear() }
         val dir = SharedFiles.shareDir(context)
         val staged = SharedFiles.stage(dir, source("pdf"), "a.pdf", "file")
         val uri = SharedFiles.uriFor(context, staged)

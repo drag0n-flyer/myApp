@@ -1,9 +1,12 @@
 package org.example.app.ui.media
 
+import android.app.Activity
 import android.content.ActivityNotFoundException
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.graphics.BitmapFactory
+import android.util.AndroidRuntimeException
 import android.webkit.MimeTypeMap
 import java.io.File
 import java.io.IOException
@@ -74,11 +77,15 @@ class MediaActions(
                     notify(R.string.media_no_app)
                     return@launch
                 }
+                // From the application context (not from the screen) an activity can only start in a task of its own.
+                if (!context.isActivity()) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 try {
                     context.startActivity(intent)
                 } catch (e: ActivityNotFoundException) {
                     notify(R.string.media_no_app)
                 } catch (e: SecurityException) {
+                    notify(R.string.media_no_app)
+                } catch (e: AndroidRuntimeException) {
                     notify(R.string.media_no_app)
                 }
             } finally {
@@ -88,6 +95,15 @@ class MediaActions(
     }
 
     private companion object {
+        fun Context.isActivity(): Boolean {
+            var c: Context = this
+            while (c is ContextWrapper) {
+                if (c is Activity) return true
+                c = c.baseContext
+            }
+            return false
+        }
+
         fun imageExtension(file: File): String {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeFile(file.path, bounds)

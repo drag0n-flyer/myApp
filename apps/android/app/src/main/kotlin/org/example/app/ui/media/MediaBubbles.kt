@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -51,6 +52,8 @@ class MediaHost(
     val opener: AttachmentOpener?,
     val photos: PhotoCache,
     val onOpenPhoto: (messageId: String) -> Unit = {},
+    val onOpenFile: (messageId: String, name: String) -> Unit = { _, _ -> },
+    val onShareFile: (messageId: String, name: String) -> Unit = { _, _ -> },
     val fileExists: (String) -> Boolean = { File(it).exists() },
 )
 
@@ -90,6 +93,53 @@ fun PhotoBubble(
             MediaPlaceholder(state, nothingToDownload = isOwn && message.media == null, wait = wait, blurred = true, onDownload = onDownload)
         }
         Text(title, style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+/** A file: its name and size, and what can be done with it. Opens with another app when downloaded; shares. */
+@Composable
+fun FileBubble(
+    message: Message,
+    name: String,
+    title: String,
+    isOwn: Boolean,
+    wait: Boolean,
+    host: MediaHost?,
+    onDownload: () -> Unit,
+) {
+    val state = rememberBubbleState(message.media, host)
+    val nothingToDownload = isOwn && message.media == null
+    val ready = state is MediaBubbleState.Ready
+    val downloadingLabel = stringResource(R.string.downloading)
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            Modifier
+                .weight(1f, fill = false)
+                .then(if (ready) Modifier.clickable(role = Role.Button) { host?.onOpenFile?.invoke(message.id, name) } else Modifier),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(painterResource(R.drawable.ic_file), contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Column {
+                Text(title, style = MaterialTheme.typography.bodyMedium)
+                if (state is MediaBubbleState.Failed) {
+                    Text(stringResource(R.string.media_couldnt_download), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
+                }
+            }
+        }
+        when {
+            ready -> IconButton(onClick = { host?.onShareFile?.invoke(message.id, name) }) {
+                Icon(painterResource(R.drawable.ic_share), contentDescription = stringResource(R.string.media_share))
+            }
+            state is MediaBubbleState.Failed -> TextButton(onClick = onDownload) { Text(stringResource(R.string.chat_try_again)) }
+            state is MediaBubbleState.Downloading -> CircularProgressIndicator(
+                progress = { state.fraction.toFloat() },
+                modifier = Modifier.semantics { contentDescription = downloadingLabel }.size(24.dp),
+            )
+            state is MediaBubbleState.NotDownloaded && wait && !nothingToDownload -> IconButton(onClick = onDownload) {
+                Icon(painterResource(R.drawable.ic_download), contentDescription = stringResource(R.string.download))
+            }
+        }
     }
 }
 

@@ -138,7 +138,14 @@ fun ChatScreen(
     DisposableEffect(photos) { onDispose { photos.clear() } }
     var viewingPhoto by rememberSaveable { mutableStateOf<String?>(null) }
     val mediaActions = remember(context, opener) { MediaActions(context, opener, scope, notify = { notice = it }) }
-    val mediaHost = remember(opener, photos) { MediaHost(opener, photos, onOpenPhoto = { viewingPhoto = it }) }
+    val mediaHost = remember(opener, photos, mediaActions) {
+        MediaHost(
+            opener, photos,
+            onOpenPhoto = { viewingPhoto = it },
+            onOpenFile = mediaActions::openFile,
+            onShareFile = mediaActions::shareFile,
+        )
+    }
 
     // Jump to a message, loading older pages first if it is not loaded. Gives up quietly when history ends before it.
     suspend fun jumpTo(id: String) {

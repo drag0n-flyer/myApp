@@ -10,14 +10,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -27,7 +24,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -50,12 +46,12 @@ import org.example.app.R
 import org.example.app.core.calls.DataFormat
 import org.example.app.core.chats.DeliveryStatus
 import org.example.app.core.chats.LinkFinder
-import org.example.app.core.chats.MediaState
 import org.example.app.core.chats.Message
 import org.example.app.core.chats.MessageContent
 import org.example.app.core.chats.MessagePreview
 import org.example.app.core.settings.MediaKind
 import org.example.app.ui.dataSizeText
+import org.example.app.ui.media.FileBubble
 import org.example.app.ui.media.MediaHost
 import org.example.app.ui.media.PhotoBubble
 import org.example.app.ui.previewText
@@ -203,11 +199,13 @@ private fun Body(message: Message, isOwn: Boolean, autoDownloads: (MediaKind) ->
             host = media,
             onDownload = onDownload,
         )
-        is MessageContent.File -> MediaTile(
+        is MessageContent.File -> FileBubble(
+            message = message,
+            name = c.name,
             title = stringResource(R.string.file_with_size, c.name, dataSizeText(DataFormat.size(c.bytes))),
-            media = message.media,
+            isOwn = isOwn,
             wait = !autoDownloads(MediaKind.File),
-            blurred = false,
+            host = media,
             onDownload = onDownload,
         )
         is MessageContent.Call, MessageContent.Deleted, MessageContent.Unsupported ->
@@ -215,32 +213,4 @@ private fun Body(message: Message, isOwn: Boolean, autoDownloads: (MediaKind) ->
         is MessageContent.System -> Unit
     }
     if (message.undecryptable) Text(stringResource(R.string.cannot_open_message), style = MaterialTheme.typography.labelSmall)
-}
-
-@Composable
-private fun MediaTile(title: String, media: MediaState?, wait: Boolean, blurred: Boolean, onDownload: () -> Unit) {
-    val phase = media?.phase ?: MediaState.Phase.Remote
-    val downloadingLabel = stringResource(R.string.downloading)
-    val needsTap = phase is MediaState.Phase.Failed || (phase is MediaState.Phase.Remote && wait)
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Box(
-            Modifier.fillMaxWidth().heightIn(min = 120.dp).background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp)),
-            contentAlignment = Alignment.Center,
-        ) {
-            // Stand-in for the blurred preview; the real image is loaded only after the download.
-            if (blurred && needsTap) {
-                Box(Modifier.size(96.dp).blur(16.dp).background(MaterialTheme.colorScheme.outline.copy(alpha = 0.4f), RoundedCornerShape(12.dp)))
-            }
-            when {
-                needsTap -> IconButton(onClick = onDownload) {
-                    Icon(painterResource(R.drawable.ic_download), contentDescription = stringResource(R.string.download))
-                }
-                phase is MediaState.Phase.Downloading -> CircularProgressIndicator(
-                    progress = { phase.progress.toFloat() },
-                    modifier = Modifier.semantics { contentDescription = downloadingLabel }.size(32.dp),
-                )
-            }
-        }
-        Text(title, style = MaterialTheme.typography.labelMedium)
-    }
 }
