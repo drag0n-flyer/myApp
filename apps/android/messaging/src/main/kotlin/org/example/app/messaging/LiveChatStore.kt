@@ -1234,6 +1234,15 @@ class LiveChatStore(
         return contactOf(row)
     }
 
+    override suspend fun addKnownContact(accountId: String, username: String, displayName: String): Contact? {
+        val user = username.trim().lowercase(Locale.ROOT)
+        if (accountId.isBlank() || user.isEmpty()) return null
+        val row = ContactRecord(accountId, user, displayName, true, contactRows[accountId]?.addedAt ?: nowMs())
+        repo.upsertContact(row)
+        reload()
+        return contactOf(row)
+    }
+
     override fun ensureChat(contactId: String): String {
         ensureChatRow(contactId)
         reload()
