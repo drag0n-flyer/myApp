@@ -14,6 +14,7 @@ import (
 const (
 	maxClientMsgIDLen = 128
 	clientMsgTTL      = 7 * 24 * time.Hour
+	maxExpiry         = 366 * 24 * time.Hour
 )
 
 func (m *Module) messageRoutes(r *httpx.Router) {
@@ -30,6 +31,7 @@ func (m *Module) postMessage(w http.ResponseWriter, r *http.Request) error {
 		Ciphertext  string  `json:"ciphertext"`
 		Escrow      *string `json:"escrow"`
 		ClientMsgID string  `json:"clientMsgID"`
+		ExpiresAt   *string `json:"expiresAt"`
 	}
 	if err := httpx.Decode(r, &in); err != nil {
 		return err
@@ -47,6 +49,16 @@ func (m *Module) postMessage(w http.ResponseWriter, r *http.Request) error {
 		if escrow, err = b64.DecodeString(*in.Escrow); err != nil || len(escrow) == 0 {
 			return httpx.Err("bad_request", "escrow must be non-empty base64url")
 		}
+	}
+
+	var expiresAt *time.Time
+	if in.ExpiresAt != nil {
+		t, err := time.Parse(time.RFC3339, *in.ExpiresAt)
+		now := m.d.Now()
+		if err != nil || !t.After(now) || t.After(now.Add(maxExpiry)) {
+			return httpx.Err("bad_request", "expiresAt must be a time in the future, at most 366 days ahead")
+		}
+		expiresAt = &t
 	}
 
 	var seq int64
@@ -135,7 +147,7 @@ func (m *Module) postMessage(w http.ResponseWriter, r *http.Request) error {
 		s := seq
 		return m.deliver(ctx, tx, to, InboxItem{
 			Kind: "message", ConversationID: id, Seq: &s, Epoch: *in.Epoch,
-			SenderAccountID: p.AccountID, SenderDeviceID: p.DeviceID, Payload: ciphertext, SentAt: now,
+			SenderAccountID: p.AccountID, SenderDeviceID: p.DeviceID, Payload: ciphertext, SentAt: now, ExpiresAt: expiresAt,
 		})
 	})
 	if err != nil {
@@ -165,6 +177,7 @@ func (m *Module) PruneOnce(ctx context.Context) error {
 	if d := m.d.Policy.Retention.EscrowDays; d > 0 {
 		del(`delete from escrow where created_at < $1`, now.Add(-time.Duration(d)*day))
 	}
+	del(`delete from inbox where expires_at <= $1`, now)
 	del(`delete from client_messages where created_at < $1`, now.Add(-clientMsgTTL))
 	return errors.Join(errs...)
 }
