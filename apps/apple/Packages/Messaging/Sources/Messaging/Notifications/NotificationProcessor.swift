@@ -5,7 +5,8 @@ import SecureMessagingCore
 
 /// What the notification extension shows for one push.
 public enum NotificationOutcome: Equatable, Sendable {
-    case show(title: String, body: String, threadID: String)
+    /// `messageID` is the stored message, so a later sweep can remove this notification; `nil` for a reaction or a device notice.
+    case show(title: String, body: String, threadID: String, messageID: String? = nil)
     /// Only honored when `NSE_FILTERING` is on; otherwise the extension shows `fallback`.
     case drop
     /// The generic "[App]" / "New message".
@@ -253,13 +254,13 @@ public struct NotificationProcessor: Sendable {
         else { return .drop }
         guard try shouldNotify(chatID: message.chatID, sender: message.senderAccount) else { return .drop }
         guard let contact = try deps.repo.contact(id: message.senderAccount), contact.isContact else {
-            return requestOutcome(chatID: message.chatID)
+            return requestOutcome(chatID: message.chatID, messageID: message.id)
         }
-        return .show(title: contact.displayName, body: preview(message), threadID: message.chatID)
+        return .show(title: contact.displayName, body: preview(message), threadID: message.chatID, messageID: message.id)
     }
 
-    private func requestOutcome(chatID: String) -> NotificationOutcome {
-        .show(title: strings.requestTitle, body: strings.requestBody, threadID: chatID)
+    private func requestOutcome(chatID: String, messageID: String? = nil) -> NotificationOutcome {
+        .show(title: strings.requestTitle, body: strings.requestBody, threadID: chatID, messageID: messageID)
     }
 
     /// False for a blocked sender. A muted chat still notifies; whoever shows the notification makes it silent.

@@ -4,7 +4,7 @@ import Foundation
 /// What the extension puts on the notification, decided from a `NotificationOutcome`.
 public enum NotificationPresentation: Equatable, Sendable {
     /// `threadID` is nil for the generic fallback.
-    case content(title: String, body: String, threadID: String?, sound: Bool)
+    case content(title: String, body: String, threadID: String?, sound: Bool, messageID: String? = nil)
     /// An empty notification (the system shows nothing). Only with `NSE_FILTERING`.
     case empty
     /// Plan 8's call branch fills the content.
@@ -14,8 +14,8 @@ public enum NotificationPresentation: Equatable, Sendable {
     /// requires a visible notification, so `drop` shows the generic fallback instead.
     public init(outcome: NotificationOutcome, filtering: Bool, strings: NotificationStrings) {
         switch outcome {
-        case .show(let title, let body, let threadID):
-            self = .content(title: title, body: body, threadID: threadID, sound: true)
+        case .show(let title, let body, let threadID, let messageID):
+            self = .content(title: title, body: body, threadID: threadID, sound: true, messageID: messageID)
         case .drop:
             self = filtering ? .empty : .fallback(strings)
         case .fallback:
