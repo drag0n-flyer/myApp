@@ -69,6 +69,7 @@ import org.example.app.core.chats.MediaState
 import org.example.app.core.chats.MessageAction
 import org.example.app.core.chats.MessageActions
 import org.example.app.core.chats.MessageContent
+import org.example.app.core.chats.SendProblem
 import org.example.app.core.settings.MediaKind
 import org.example.app.ui.Avatar
 import org.example.app.ui.lock.LocalExpectReturn
@@ -140,6 +141,14 @@ fun ChatScreen(
         notice?.let {
             snackbar.showSnackbar(context.getString(it))
             notice = null
+        }
+    }
+    LaunchedEffect(viewModel) {
+        viewModel.sendProblem.collect {
+            if (it != null) {
+                notice = if (it == SendProblem.Reason.TooBig) R.string.media_file_too_big else R.string.media_file_unreadable
+                viewModel.sendProblemShown()
+            }
         }
     }
     val photos = remember { PhotoCache() }

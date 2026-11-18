@@ -58,6 +58,14 @@ interface ChatStore {
     fun searchMessages(query: String, limit: Int): List<MessageHit>
     fun send(content: MessageContent, chatId: String, replyTo: String? = null)
     fun sendAttachment(path: String, kind: MediaKind, chatId: String)
+    /**
+     * The last attachment in [chatId] that was dropped (too big, unreadable) and not yet shown, or null. It is kept until
+     * the chat screen has shown it and calls [takeSendProblem], so leaving the chat early loses nothing. A message that
+     * failed but is kept shows as [DeliveryStatus.Failed] instead.
+     */
+    fun sendProblem(chatId: String): kotlinx.coroutines.flow.Flow<SendProblem.Reason?> = kotlinx.coroutines.flow.flowOf(null)
+    /** Forgets the problem of [chatId] once it has been shown. */
+    fun takeSendProblem(chatId: String) {}
     fun react(emoji: String, messageId: String, chatId: String)
     fun edit(messageId: String, chatId: String, text: String)
     fun delete(messageId: String, chatId: String)
@@ -95,4 +103,9 @@ interface ChatStore {
     fun renameFolder(id: String, name: String)
     fun deleteFolder(id: String)
     fun moveFolder(id: String, toCustomIndex: Int)
+}
+
+/** An attachment in [chatId] that was dropped, and why. */
+data class SendProblem(val chatId: String, val reason: Reason) {
+    enum class Reason { TooBig, Unreadable }
 }

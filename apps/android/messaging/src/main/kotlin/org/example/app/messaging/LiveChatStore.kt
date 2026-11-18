@@ -11,6 +11,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
@@ -32,6 +35,7 @@ import org.example.app.core.chats.MessageContent
 import org.example.app.core.chats.MessageHit
 import org.example.app.core.chats.MessagePreview
 import org.example.app.core.chats.SafetyNumber
+import org.example.app.core.chats.SendProblem
 import org.example.app.core.settings.MediaKind
 import org.example.app.messaging.content.Att
 import org.example.app.messaging.content.ContentCodec
@@ -83,6 +87,13 @@ fun interface MediaPreparer {
     suspend fun prepare(path: String, kind: MediaKind): PreparedMedia?
 }
 
+/** What [LiveChatStore]'s `stageSource` makes of a `content:` or `file:` source. */
+sealed interface StageResult {
+    class Copied(val file: File) : StageResult
+    data object TooBig : StageResult
+    data object Unreadable : StageResult
+}
+
 /** Where attachments live. [blobDir] holds encrypted downloads, [openDir] decrypted files in view, [tempDir] outgoing ciphertext. */
 class MediaDirs(val blobDir: File, val openDir: File, val tempDir: File)
 
@@ -121,10 +132,11 @@ class LiveChatStore(
     private val fold: (String) -> String = { it.lowercase(Locale.ROOT) },
     private val mediaPreparer: MediaPreparer = MediaPreparer { path, kind -> if (kind == MediaKind.File) PreparedMedia(File(path)) else null },
     /**
-     * Copies a `content:` or `file:` source into the given folder and returns the copy (null when it cannot be read or is
-     * too large). A URI permission ends with the process, so the copy is made when the message is created.
+     * Copies a `content:` or `file:` source into the given folder and returns the copy, or why it cannot (too large, not
+     * readable); the person is told through [sendProblem]. A URI permission ends with the process, so the copy is made
+     * when the message is created.
      */
-    private val stageSource: suspend (source: String, into: File) -> File? = { _, _ -> null },
+    private val stageSource: suspend (source: String, into: File) -> StageResult = { _, _ -> StageResult.Unreadable },
     private val mediaSweep: () -> Unit = {},
     onEscrowRejected: () -> Unit = {},
 ) : ChatStore, CallSignalSealer by sealer {
@@ -155,6 +167,12 @@ class LiveChatStore(
     override val blockedIds: StateFlow<Set<String>> = _blocked.asStateFlow()
     override val reportedChatIds: StateFlow<Set<String>> = _reported.asStateFlow()
     override val mutedChatIds: StateFlow<Set<String>> = _muted.asStateFlow()
+
+    /** The last dropped attachment per chat, kept until the chat screen has shown it ([takeSendProblem]). */
+    private val problems = MutableStateFlow<Map<String, SendProblem.Reason>>(emptyMap())
+    override fun sendProblem(chatId: String): Flow<SendProblem.Reason?> = problems.map { it[chatId] }.distinctUntilChanged()
+    override fun takeSendProblem(chatId: String) = problems.update { it - chatId }
+    private fun raise(chatId: String, reason: SendProblem.Reason) { if (!closed.get()) problems.update { it + (chatId to reason) } }
 
     private val meFlow = MutableStateFlow(Contact(device.accountId, "You", ""))
     private val meContact: Contact get() = meFlow.value
@@ -214,6 +232,7 @@ class LiveChatStore(
     suspend fun shutdown() {
         closed.set(true)
         settle()
+        problems.value = emptyMap() // nothing of this account is kept past sign-out
     }
 
     private fun write(reload: Boolean = true, job: () -> Unit) {
@@ -514,7 +533,7 @@ class LiveChatStore(
             try {
                 if (!ensureChatRow(chatId)) return@launch
                 uploading += id
-                val staged = stage(id, path) ?: return@launch
+                val staged = stage(id, path, chatId) ?: return@launch
                 val at = nowMs()
                 val pending = PendingUpload(kind.name, chatId, staged.path)
                 repo.transaction {
@@ -546,23 +565,30 @@ class LiveChatStore(
     }
 
     /** The file as it is kept for this message: null when there is nothing to send. */
-    private suspend fun stage(id: String, path: String): File? {
+    private suspend fun stage(id: String, path: String, chatId: String): File? {
         if (path.startsWith("content:") || path.startsWith("file:")) {
             val dir = pendingDir(id)
             dir.mkdirs()
-            val copy = try {
+            val result = try {
                 stageSource(path, dir)
             } catch (e: CancellationException) {
                 dir.deleteRecursively()
                 throw e
             } catch (_: Exception) {
-                null
+                StageResult.Unreadable
             }
-            if (copy == null || !copy.isFile) dir.deleteRecursively()
-            return copy?.takeIf { it.isFile }
+            val copy = (result as? StageResult.Copied)?.file?.takeIf { it.isFile }
+            if (copy == null) {
+                dir.deleteRecursively()
+                raise(chatId, if (result is StageResult.TooBig) SendProblem.Reason.TooBig else SendProblem.Reason.Unreadable)
+            }
+            return copy
         }
         val file = File(path)
-        if (!file.isFile) return null
+        if (!file.isFile) {
+            raise(chatId, SendProblem.Reason.Unreadable)
+            return null
+        }
         return if (isInsideTemp(file)) moveInto(pendingDir(id), file) else file
     }
 
@@ -630,10 +656,20 @@ class LiveChatStore(
         val prepared: PreparedMedia = if (keptFile != null) {
             preparedFrom(repo.message(id)?.envelope, keptFile)
         } else {
-            val fresh = mediaPreparer.prepare(pending.path, kind)?.takeIf { it.file.isFile }
+            // A null answer means the file can never be sent (it cannot be decoded). A throw is an I/O error: when the kept
+            // source is still there it may work next time, so the message stays failed (the caller marks it); when the
+            // source is gone there is nothing to retry from.
+            val fresh = try {
+                mediaPreparer.prepare(pending.path, kind)?.takeIf { it.file.isFile }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (File(pending.path).isFile) throw e
+                null
+            }
             if (fresh == null) {
                 // Nothing to retry from: it can never send, so it is removed instead of offering a dead "Try again".
-                dropUnsendable(id)
+                dropUnsendable(id, pending.chatId)
                 return
             }
             val file = if (isInside(fresh.file, pendingDir(id))) fresh.file else if (isInsideTemp(fresh.file)) moveInto(pendingDir(id), fresh.file) else fresh.file
@@ -668,12 +704,16 @@ class LiveChatStore(
                     repo.upsertAttachment(
                         AttachmentRecord(att.id, id, attachmentKind(kind), att.key, att.dg, att.sz, att.csz, AttachmentState.LOCAL, att.csz, Uploader.blobFile(blobDir, att).path),
                     )
+                    // The blob goes into place before the commit: if it cannot, nothing is queued and the send fails with its files kept.
+                    uploaded.moveTo(blobDir)
                     repo.set(PENDING_UPLOAD_PREFIX + id, ByteArray(0))
                     true
                 }
             }
         } catch (e: Throwable) {
             uploaded.discard()
+            // A blob already moved (or half copied) before the failure has no record: it goes.
+            try { Uploader.blobFile(blobDir, att).delete() } catch (_: Exception) { }
             throw e
         }
         if (!queued) {
@@ -681,12 +721,6 @@ class LiveChatStore(
             discardPending(id, prepared.file, pending.path)
             reload()
             return
-        }
-        try {
-            uploaded.moveTo(blobDir)
-        } catch (e: Exception) {
-            uploaded.discard()
-            try { repo.setAttachmentState(att.id, AttachmentState.FAILED, 0, null) } catch (_: Exception) { }
         }
         discardPending(id, prepared.file, pending.path)
         bumpActivity(pending.chatId, at)
@@ -699,7 +733,7 @@ class LiveChatStore(
     }
 
     /** A message that can never be sent: its row, its pending key and its kept files go. No "Try again" is left for it. */
-    private fun dropUnsendable(id: String) {
+    private fun dropUnsendable(id: String, chatId: String) {
         try {
             repo.transaction {
                 repo.deleteUnsentMessage(id, device.accountId)
@@ -709,6 +743,7 @@ class LiveChatStore(
             failUpload(id)
         }
         pendingDir(id).deleteRecursively()
+        raise(chatId, SendProblem.Reason.Unreadable)
         reload()
     }
 
@@ -730,6 +765,14 @@ class LiveChatStore(
         file.canonicalFile.toPath().startsWith(dir.canonicalFile.toPath())
     } catch (_: java.io.IOException) {
         false
+    }
+
+    /** True for an attachment envelope that still holds the placeholder: nothing about it was ever queued. */
+    private fun isPlaceholder(envelope: ByteArray): Boolean = when (val e = runCatching { ContentCodec.decode(envelope) }.getOrNull()) {
+        is ContentEnvelope.Photo -> e.a.id.isEmpty()
+        is ContentEnvelope.Voice -> e.a.id.isEmpty()
+        is ContentEnvelope.File -> e.a.id.isEmpty()
+        else -> false
     }
 
     /** The stand-in until the upload gives the real one: no id, but the real size, so the bubble never shows 0 B. */
@@ -757,10 +800,36 @@ class LiveChatStore(
         for ((key, value) in repo.entries(PENDING_UPLOAD_PREFIX).filterValues { it.isNotEmpty() }) {
             val id = key.removePrefix(PENDING_UPLOAD_PREFIX)
             if (id in uploading) continue
-            if (repo.message(id)?.status == "sending") repo.updateStatus(listOf(id), "failed")
+            val row = repo.message(id)
+            if (row == null || row.deleted) {
+                // Nobody can send or retry it: the staged file, the prepared copy, the folder and the key all go.
+                val pending = runCatching { Json.decodeFromString(PendingUpload.serializer(), value.decodeToString()) }.getOrNull()
+                discardPending(id, pending?.prepared?.takeIf { it.isNotEmpty() }?.let(::File), pending?.path)
+            } else if (row.status == "sending") {
+                repo.updateStatus(listOf(id), "failed")
+            }
         }
         File(blobDir.parentFile ?: blobDir, "pending").listFiles()?.forEach { dir ->
             if (dir.name !in uploading && repo.get(PENDING_UPLOAD_PREFIX + dir.name)?.isNotEmpty() != true) dir.deleteRecursively()
+        }
+    }
+
+    /**
+     * Removes finished blobs (`<id>-<digest>.enc`) in the blob folder that nothing points to: a process killed after the
+     * ciphertext was moved in but before the message was stored leaves one. Kept: a blob an attachment record points to,
+     * one a pending-upload key mentions, and anything younger than [ORPHAN_BLOB_AGE_MS], so a send in progress in this
+     * process is never touched.
+     */
+    private fun sweepOrphanBlobs() {
+        val files = blobDir.listFiles { f -> f.isFile && f.name.endsWith(".enc") } ?: return
+        val now = System.currentTimeMillis()
+        val pendingText = repo.entries(PENDING_UPLOAD_PREFIX).values.filter { it.isNotEmpty() }.joinToString("\n") { it.decodeToString() }
+        for (file in files) {
+            if (uploading.isNotEmpty() || now - file.lastModified() < ORPHAN_BLOB_AGE_MS) continue
+            val id = file.name.removeSuffix(".enc").substringBeforeLast('-')
+            val record = try { repo.attachment(id) } catch (_: Exception) { continue }
+            if (record != null || pendingText.contains(file.name) || pendingText.contains(file.path)) continue
+            file.delete()
         }
     }
 
@@ -823,6 +892,7 @@ class LiveChatStore(
     /** Removes decrypted files and partial downloads a killed process left: `Downloader.sweepOpen`, then `MediaCache.sweep`. */
     fun sweepStartup() {
         failInterruptedUploads()
+        sweepOrphanBlobs()
         reload()
         downloader.sweepOpen()
         mediaSweep()
@@ -860,12 +930,18 @@ class LiveChatStore(
     }
 
     override fun delete(messageId: String, chatId: String) = write {
-        val record = repo.message(messageId) ?: return@write
-        if (record.chatId != chatId || record.senderAccount != device.accountId || record.deleted || record.id.startsWith(ChatMapping.CALL_PREFIX)) return@write
-        if (!repo.markDeleted(messageId, device.accountId)) return@write
+        // Whether it was ever queued and the deletion are decided in one transaction, so a delete racing the upload's
+        // commit (which only writes to a row that is not deleted) sends the Delete control if and only if the message went out.
+        val queued: Boolean = repo.transaction {
+            val record = repo.message(messageId) ?: return@transaction null
+            if (record.chatId != chatId || record.senderAccount != device.accountId || record.deleted || record.id.startsWith(ChatMapping.CALL_PREFIX)) return@transaction null
+            val left = !isPlaceholder(record.envelope)
+            if (!repo.markDeleted(messageId, device.accountId)) null else left
+        } ?: return@write
         // An attachment that never uploaded keeps nothing; one that is uploading cleans up when it finishes.
         if (messageId !in uploading && repo.get(PENDING_UPLOAD_PREFIX + messageId)?.isNotEmpty() == true) discardPending(messageId)
-        sendControl(chatId) { id, at -> ContentEnvelope.Delete(id, at, messageId) }
+        // A message that never left the device has nothing to delete on the other side.
+        if (queued) sendControl(chatId) { id, at -> ContentEnvelope.Delete(id, at, messageId) }
     }
 
     private fun sendControl(chatId: String, make: (String, Long) -> ContentEnvelope) {
@@ -1123,6 +1199,7 @@ class LiveChatStore(
 
     companion object {
         const val CACHED_MESSAGES = 50
+        private const val ORPHAN_BLOB_AGE_MS = 10 * 60 * 1000L
         private const val WRITE_WAIT_MS = 10_000L
         private const val REPORTED_MESSAGES = 10
         const val BLOCK_PREFIX = "pending.block."

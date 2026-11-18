@@ -19,6 +19,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import org.example.app.core.chats.SendProblem
 import kotlinx.coroutines.runBlocking
 import org.example.app.contracts.AttachmentRef
 import org.example.app.contracts.DeliveryApi
@@ -40,6 +43,12 @@ private class UploadApi(private val inner: DeliveryApi) : DeliveryApi by inner {
     val attempts = AtomicInteger()
     val uploads = AtomicInteger()
     val downloads = AtomicInteger()
+    /** Messages and controls this device put on the wire. */
+    val posts = AtomicInteger()
+    override suspend fun postMessage(id: String, epoch: Long, ciphertext: ByteArray, escrow: ByteArray?, clientMsgId: String): Long {
+        posts.incrementAndGet()
+        return inner.postMessage(id, epoch, ciphertext, escrow, clientMsgId)
+    }
     @Volatile var failUploads = false
     /** When set, the server answers uploads with this id. */
     @Volatile var answerId: String? = null
@@ -66,6 +75,8 @@ class SendAttachmentTest {
         val pendingRoot = File(dirs.blobDir.parentFile, "pending")
         val prepares = AtomicInteger()
         @Volatile var prepareFails = false
+        /** Throws from the preparer, as a source that is briefly unreadable does. */
+        @Volatile var prepareThrows: (() -> Unit)? = null
         @Volatile var duration = 0.0
         @Volatile var width = 0
         @Volatile var height = 0
@@ -74,6 +85,7 @@ class SendAttachmentTest {
         @Volatile var afterCopy: () -> Unit = {}
         val preparer = MediaPreparer { path, _ ->
             prepares.incrementAndGet()
+            prepareThrows?.invoke()
             if (prepareFails) null else {
                 preparedDir.mkdirs()
                 // A unique name, like `PhotoPrep` (`createTempFile`): two sends in flight never share one prepared file.
@@ -85,7 +97,10 @@ class SendAttachmentTest {
         }
     }
 
-    private class Session(val store: LiveChatStore, val api: UploadApi, val scope: CoroutineScope)
+    private class Session(val store: LiveChatStore, val api: UploadApi, val scope: CoroutineScope) {
+        /** What the store told the person, in order. */
+        val problems = java.util.concurrent.CopyOnWriteArrayList<SendProblem>()
+    }
 
     private suspend fun fixture(): Fixture {
         val rig = Rig().start()
@@ -96,7 +111,7 @@ class SendAttachmentTest {
     }
 
     /** One app session over the fixture's database; a second one models the app started again (with the start-up sweep). */
-    private fun session(f: Fixture): Session {
+    private fun session(f: Fixture, stage: suspend (String, File) -> StageResult = { _, _ -> StageResult.Unreadable }): Session {
         val d = f.d
         val api = UploadApi(d.api)
         val scope = CoroutineScope(Dispatchers.Default + Job())
@@ -110,11 +125,13 @@ class SendAttachmentTest {
                 override suspend fun unblock(accountId: String) = Unit
                 override suspend fun report(accountId: String, conversationId: String?, messages: List<ReportedLine>) = Unit
             },
-            scope = scope, mediaPreparer = f.preparer,
+            scope = scope, mediaPreparer = f.preparer, stageSource = stage,
             // What `MediaCache.sweep` does at app start: the outgoing (temp) folder is emptied.
             mediaSweep = { f.dirs.tempDir.listFiles()?.forEach { it.deleteRecursively() } },
         )
-        return Session(store, api, scope)
+        return Session(store, api, scope).also { s ->
+            scope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { store.sendProblem("acc-ana").collect { r -> if (r != null) s.problems += SendProblem("acc-ana", r) } }
+        }
     }
 
     private fun sentId(f: Fixture) = f.d.repo.messages("acc-ana", null, 50).last { it.senderAccount == f.d.me.accountId }.id
@@ -405,6 +422,8 @@ class SendAttachmentTest {
         s.store.settle()
         f.rig.ana1.processor.sync()
         assertNull(f.rig.ana1.repo.message(id), "the peer never gets the attachment")
+        assertEquals(emptyList(), f.d.repo.dueOutbox(Long.MAX_VALUE), "no Delete control is queued for a message that never left")
+        assertEquals(0, s.api.posts.get(), "nothing was sent")
         assertNull(f.d.repo.attachmentForMessage(id))
         assertEquals(emptyList(), f.dirs.blobDir.list().orEmpty().toList())
         assertFalse(file.exists(), "the staged copy is removed")
@@ -434,5 +453,266 @@ class SendAttachmentTest {
         s.store.shutdown()
         assertNull(s.store.openAttachment(id))
         assertEquals(emptyList(), f.dirs.openDir.list()!!.toList())
+    }
+
+    // ---- Follow-ups ----
+
+    private fun writePending(f: Fixture, id: String, staged: File, prepared: File) {
+        val json = """{"kind":"File","chatId":"acc-ana","path":"${staged.path}","prepared":"${prepared.path}"}"""
+        f.d.repo.set("pending.upload.$id", json.encodeToByteArray())
+        File(f.pendingRoot, id).also { it.mkdirs() }.resolve("kept.bin").writeText("kept")
+    }
+
+    private fun insertRow(f: Fixture, id: String, status: String, deleted: Boolean) {
+        val placeholder = ContentEnvelope.File(id, NOW, Att("", ByteArray(0), ByteArray(0), 5, 5), "a.txt", "application/octet-stream")
+        f.d.repo.insertMessage(
+            MessageRecord(
+                id = id, chatId = "acc-ana", conversationId = null, senderAccount = f.d.me.accountId, senderDevice = f.d.me.deviceId,
+                sentAt = NOW, receivedAt = NOW, envelope = ContentCodec.encode(placeholder), status = status, replyTo = null, folded = "",
+            ),
+        )
+        if (deleted) f.d.repo.markDeleted(id, f.d.me.accountId)
+    }
+
+    @Test
+    fun atStartAPendingFolderWithNoRowOrADeletedRowIsDiscardedAndALiveOneIsKeptAndFailed() = runBlocking<Unit> {
+        val f = fixture()
+        val s = session(f)
+        val files = File(f.dirs.tempDir, "files").also { it.mkdirs() }
+        f.preparedDir.mkdirs()
+        val ids = listOf("ghost", "gone", "live")
+        val stagedFiles = ids.associateWith { File(files, "$it.txt").also { file -> file.writeText("plain") } }
+        val preparedFiles = ids.associateWith { File(f.preparedDir, "$it.bin").also { file -> file.writeText("prep") } }
+        for (id in ids) writePending(f, id, stagedFiles.getValue(id), preparedFiles.getValue(id))
+        insertRow(f, "gone", "failed", deleted = true)
+        insertRow(f, "live", "sending", deleted = false)
+
+        s.store.sweepStartup()
+
+        for (id in listOf("ghost", "gone")) {
+            assertFalse(pendingDir(f, id).exists(), "$id: the kept folder is removed")
+            assertFalse(pendingKey(f, id), "$id: the key is removed")
+            assertFalse(stagedFiles.getValue(id).exists(), "$id: the staged plaintext is removed")
+            assertFalse(preparedFiles.getValue(id).exists(), "$id: the prepared copy is removed")
+        }
+        assertTrue(pendingDir(f, "live").exists())
+        assertTrue(pendingKey(f, "live"))
+        assertEquals("failed", statusOf(f, "live"))
+    }
+
+    @Test
+    fun aMessageDeletedBeforeItWasQueuedSendsNoDeleteControl() = runBlocking<Unit> {
+        val f = fixture()
+        val s = session(f)
+        s.api.failUploads = true
+        val file = staged(f)
+        s.store.sendAttachment(file.path, MediaKind.File, "acc-ana")
+        s.store.settle()
+        val id = sentId(f)
+        assertEquals("failed", statusOf(f, id))
+        s.store.delete(id, "acc-ana")
+        s.store.awaitWrites()
+        assertTrue(f.d.repo.message(id)!!.deleted)
+        assertEquals(emptyList(), f.d.repo.dueOutbox(Long.MAX_VALUE), "nothing about the message left the device, so nothing is queued")
+        s.store.settle()
+        assertEquals(0, s.api.posts.get(), "nothing about the message left the device, so no Delete control is sent")
+        assertFalse(pendingDir(f, id).exists())
+        assertFalse(file.exists())
+        f.rig.ana1.processor.sync()
+        assertNull(f.rig.ana1.repo.message(id))
+    }
+
+    @Test
+    fun aMessageDeletedAfterItWasQueuedSendsTheMessageThenTheDeleteControl() = runBlocking<Unit> {
+        val f = fixture()
+        val s = session(f)
+        s.store.sendAttachment(staged(f).path, MediaKind.File, "acc-ana")
+        s.store.settle()
+        val id = sentId(f)
+        s.store.delete(id, "acc-ana")
+        s.store.awaitWrites()
+        waitUntil("the outbox to empty") { f.d.repo.dueOutbox(Long.MAX_VALUE).isEmpty() }
+        waitUntil("both to be sent") { s.api.posts.get() >= 2 }
+        assertEquals(2, s.api.posts.get(), "the message, then the Delete control")
+        f.rig.ana1.processor.sync()
+        val got = assertNotNull(f.rig.ana1.repo.message(id), "the peer got the message, never only the Delete")
+        assertTrue(got.deleted, "and then the Delete control")
+    }
+
+    @Test
+    fun aPrepareThatFailsWhileTheSourceStillExistsKeepsTheMessageFailedAndTryAgainSendsIt() = runBlocking<Unit> {
+        val f = fixture()
+        val s = session(f)
+        f.prepareThrows = { throw IOException("briefly unreadable") }
+        s.store.sendAttachment(staged(f).path, MediaKind.File, "acc-ana")
+        s.store.settle()
+        val id = sentId(f)
+        assertEquals("failed", statusOf(f, id))
+        assertTrue(pendingDir(f, id).listFiles()!!.isNotEmpty() || f.d.repo.get("pending.upload.$id")!!.isNotEmpty(), "the staged file is kept")
+        assertTrue(pendingKey(f, id))
+        assertEquals(emptyList(), s.problems, "a kept message shows as failed, not as a notice")
+        f.prepareThrows = null
+        s.store.retrySend(id)
+        s.store.awaitWrites()
+        s.store.settle()
+        assertEquals(AttachmentState.LOCAL, f.d.repo.attachmentForMessage(id)!!.state)
+        assertEquals("up1", assertIs<ContentEnvelope.File>(peerGot(f, id)).a.id)
+    }
+
+    @Test
+    fun aPrepareThatFailsBecauseTheSourceIsGoneRemovesTheMessageAndTellsThePerson() = runBlocking<Unit> {
+        val f = fixture()
+        val s = session(f)
+        val file = staged(f)
+        f.prepareThrows = {
+            f.pendingRoot.listFiles()!!.forEach { it.deleteRecursively() } // the kept source disappears
+            file.delete()
+            throw IOException("gone")
+        }
+        s.store.sendAttachment(file.path, MediaKind.File, "acc-ana")
+        s.store.settle()
+        assertEquals(emptyList(), f.d.repo.messages("acc-ana", null, 50).filter { it.senderAccount == f.d.me.accountId })
+        assertEquals(listOf(SendProblem("acc-ana", SendProblem.Reason.Unreadable)), s.problems)
+        assertEquals(emptyList(), f.pendingRoot.list().orEmpty().toList())
+    }
+
+    @Test
+    fun aFileThatCannotBeDecodedRemovesTheMessageAndTellsThePerson() = runBlocking<Unit> {
+        val f = fixture()
+        val s = session(f)
+        f.prepareFails = true
+        s.store.sendAttachment(staged(f).path, MediaKind.File, "acc-ana")
+        s.store.settle()
+        assertEquals(emptyList(), f.d.repo.messages("acc-ana", null, 50).filter { it.senderAccount == f.d.me.accountId })
+        assertEquals(listOf(SendProblem("acc-ana", SendProblem.Reason.Unreadable)), s.problems)
+    }
+
+    @Test
+    fun aContentSourceIsCopiedIntoThePendingFolderAndSent() = runBlocking<Unit> {
+        val f = fixture()
+        var asked: String? = null
+        val s = session(f) { source, into ->
+            asked = source
+            StageResult.Copied(File(into, "photo").also { it.writeText("from a provider") })
+        }
+        s.store.sendAttachment("content://provider/42", MediaKind.File, "acc-ana")
+        s.store.settle()
+        val id = sentId(f)
+        assertEquals("content://provider/42", asked)
+        assertEquals(AttachmentState.LOCAL, f.d.repo.attachmentForMessage(id)!!.state)
+        assertEquals("up1", assertIs<ContentEnvelope.File>(peerGot(f, id)).a.id)
+        assertEquals(emptyList(), f.pendingRoot.list().orEmpty().toList())
+        assertEquals(emptyList(), s.problems)
+    }
+
+    @Test
+    fun aContentSourceThatIsTooBigOrUnreadableCreatesNoRowAndTellsThePerson() = runBlocking<Unit> {
+        val f = fixture()
+        var answer: StageResult = StageResult.TooBig
+        val s = session(f) { _, into -> into.resolve("half").writeText("partial"); answer }
+        s.store.sendAttachment("content://provider/1", MediaKind.Photo, "acc-ana")
+        s.store.settle()
+        answer = StageResult.Unreadable
+        s.store.sendAttachment("content://provider/2", MediaKind.Photo, "acc-ana")
+        s.store.settle()
+        assertEquals(emptyList(), f.d.repo.messages("acc-ana", null, 50).filter { it.senderAccount == f.d.me.accountId })
+        assertEquals(
+            listOf(SendProblem("acc-ana", SendProblem.Reason.TooBig), SendProblem("acc-ana", SendProblem.Reason.Unreadable)),
+            s.problems,
+        )
+        assertEquals(emptyList(), f.pendingRoot.list().orEmpty().toList())
+    }
+
+    @Test
+    fun ifTheCiphertextCannotBeMovedIntoTheBlobFolderTheSendFailsAndKeepsItsFiles() = runBlocking<Unit> {
+        val f = fixture()
+        val s = session(f)
+        f.dirs.blobDir.parentFile.mkdirs()
+        f.dirs.blobDir.writeText("not a folder") // moving the ciphertext in cannot work
+        s.store.sendAttachment(staged(f).path, MediaKind.File, "acc-ana")
+        s.store.settle()
+        val id = sentId(f)
+        assertEquals("failed", statusOf(f, id))
+        assertTrue(pendingDir(f, id).listFiles()!!.isNotEmpty(), "the files are kept for Try again")
+        assertTrue(pendingKey(f, id))
+        assertEquals(emptyList(), f.d.repo.dueOutbox(Long.MAX_VALUE), "nothing was queued")
+        assertNull(f.d.repo.attachmentForMessage(id), "no record of a blob that is not there")
+        f.rig.ana1.processor.sync()
+        assertNull(f.rig.ana1.repo.message(id), "the peer never got a message whose file the sender lacks")
+        assertEquals(emptyList(), f.dirs.tempDir.list().orEmpty().filter { it.endsWith(".enc") })
+
+        f.dirs.blobDir.delete()
+        s.store.retrySend(id)
+        s.store.awaitWrites()
+        s.store.settle()
+        assertTrue(File(f.d.repo.attachmentForMessage(id)!!.localPath!!).isFile)
+        assertIs<ContentEnvelope.File>(peerGot(f, id))
+    }
+
+    @Test
+    fun aDroppedAttachmentIsKeptUntilTheChatShowsItThenForgottenSeenByNoOtherChatAndClearedOnSignOut() = runBlocking<Unit> {
+        val f = fixture()
+        // Nothing has collected anything yet: the chat is not open.
+        val s = session(f) { _, _ -> StageResult.TooBig }
+        s.store.sendAttachment("content://provider/1", MediaKind.Photo, "acc-ana")
+        s.store.settle()
+        assertEquals(SendProblem.Reason.TooBig, s.store.sendProblem("acc-ana").first(), "shown when the chat is opened later")
+        assertNull(s.store.sendProblem("acc-other").first(), "another chat does not see it")
+        s.store.takeSendProblem("acc-ana")
+        assertNull(s.store.sendProblem("acc-ana").first(), "and only once")
+        s.store.sendAttachment("content://provider/2", MediaKind.Photo, "acc-ana")
+        s.store.settle()
+        assertEquals(SendProblem.Reason.TooBig, s.store.sendProblem("acc-ana").first())
+        s.store.shutdown()
+        assertNull(s.store.sendProblem("acc-ana").first(), "sign-out clears it")
+    }
+
+    private fun aged(file: File, ageMs: Long) = file.also { it.writeText("blob"); it.setLastModified(System.currentTimeMillis() - ageMs) }
+
+    @Test
+    fun atStartOnlyOldUnreferencedBlobsAreSwept() = runBlocking<Unit> {
+        val f = fixture()
+        val s = session(f)
+        val hex = "ab".repeat(32)
+        val hour = 3_600_000L
+        f.dirs.blobDir.mkdirs()
+        val orphan = aged(File(f.dirs.blobDir, "orphan-$hex.enc"), hour)
+        val referenced = aged(File(f.dirs.blobDir, "kept-$hex.enc"), hour)
+        val pendingRef = aged(File(f.dirs.blobDir, "waiting-$hex.enc"), hour)
+        val fresh = aged(File(f.dirs.blobDir, "fresh-$hex.enc"), 1_000)
+        val partial = aged(File(f.dirs.blobDir, "part.partial"), hour)
+        f.d.repo.upsertAttachment(
+            org.example.app.messaging.ports.AttachmentRecord("kept", "m-x", "file", ByteArray(32), ByteArray(32), 4, 4, AttachmentState.LOCAL, 4, referenced.path),
+        )
+        f.d.repo.set("pending.upload.p1", """{"kind":"File","chatId":"acc-ana","path":"${pendingRef.path}"}""".encodeToByteArray())
+        insertRow(f, "p1", "failed", deleted = false)
+
+        s.store.sweepStartup()
+
+        assertFalse(orphan.exists(), "an old blob nothing points to is removed")
+        assertTrue(referenced.exists(), "a blob an attachment record points to stays")
+        assertTrue(pendingRef.exists(), "a blob a pending upload refers to stays")
+        assertTrue(fresh.exists(), "a recent file may belong to a send in progress")
+        assertTrue(partial.exists(), "only finished blobs are judged")
+    }
+
+    @Test
+    fun aRetriedUploadKeepsTheOriginalSentAt() = runBlocking<Unit> {
+        val f = fixture()
+        val s = session(f)
+        s.api.failUploads = true
+        s.store.sendAttachment(staged(f).path, MediaKind.File, "acc-ana")
+        s.store.settle()
+        val id = sentId(f)
+        val original = f.d.repo.message(id)!!.sentAt
+        s.api.failUploads = false
+        f.d.nowMs += 60_000
+        s.store.retrySend(id)
+        s.store.awaitWrites()
+        s.store.settle()
+        assertEquals(original, f.d.repo.message(id)!!.sentAt, "the message keeps its place in the chat")
+        val sent = assertIs<ContentEnvelope.File>(peerGot(f, id))
+        assertEquals(original, sent.at)
+        assertEquals(original, f.rig.ana1.repo.message(id)!!.sentAt)
     }
 }

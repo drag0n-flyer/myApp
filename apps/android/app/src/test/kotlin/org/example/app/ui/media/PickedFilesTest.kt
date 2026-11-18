@@ -99,4 +99,22 @@ class PickedFilesTest {
         // The app's own FileProvider (the copies it shares and the camera file) is not a source to attach from.
         assertFalse(PickedFiles.isFromPicker(context, Uri.parse("content://${SharedFiles.authority(context)}/shared/open/x.pdf")))
     }
+
+    private val app = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.app.Application>()
+
+    @Test fun aPickedPhotoIsStagedFromItsContentUri() = runBlocking<Unit> {
+        val uri = Uri.parse("content://photos.example/picker/1")
+        org.robolectric.Shadows.shadowOf(app.contentResolver).registerInputStream(uri, ByteArrayInputStream("jpeg".toByteArray()))
+        val staged = assertIs<org.example.app.messaging.StageResult.Copied>(PickedFiles.stage(app, uri.toString(), out))
+        assertEquals("jpeg", staged.file.readText())
+    }
+
+    @Test fun aPickedPhotoThatIsTooBigOrUnreadableOrNotFromAPickerSaysWhy() = runBlocking<Unit> {
+        val big = Uri.parse("content://photos.example/picker/2")
+        org.robolectric.Shadows.shadowOf(app.contentResolver).registerInputStream(big, ByteArrayInputStream(ByteArray(2_000)))
+        assertEquals(org.example.app.messaging.StageResult.TooBig, PickedFiles.stage(app, big.toString(), out, maxBytes = 1_000))
+        assertEquals(org.example.app.messaging.StageResult.Unreadable, PickedFiles.stage(app, "content://photos.example/picker/none", out))
+        assertEquals(org.example.app.messaging.StageResult.Unreadable, PickedFiles.stage(app, "file:///data/data/x/db", out))
+        assertTrue(out.listFiles().orEmpty().isEmpty())
+    }
 }
