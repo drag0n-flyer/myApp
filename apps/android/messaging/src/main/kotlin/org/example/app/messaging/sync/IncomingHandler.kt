@@ -216,7 +216,7 @@ class IncomingHandler(
             if (fromMe && kind == ReceiptKind.Read && message.senderAccount != me.accountId && message.status != "read") unreadCleared += 1
         }
         repo.updateStatus(valid, kind.wire)
-        if (unreadCleared > 0) repo.chat(chatId)?.let { repo.setUnread(chatId, maxOf(0, it.unread - unreadCleared)) }
+        if (unreadCleared > 0) repo.reduceUnread(chatId, unreadCleared)
     }
 
     /** An incoming message from someone else counts as unread and moves the chat up. */

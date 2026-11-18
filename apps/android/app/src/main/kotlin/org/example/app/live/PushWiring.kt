@@ -100,7 +100,7 @@ object PushWiring {
      * anything and never waits). A plain in-memory read: no disk, no blocking, safe under the notifier's lock.
      */
     internal fun wireSwitches(store: () -> ChatStore) {
-        PushRuntime.mutedChatIds = { emptySet() } // stub
+        PushRuntime.mutedChatIds = { store().mutedChatIds.value }
     }
 
     /**
@@ -157,6 +157,8 @@ object PushWiring {
 
 /** Adds [text] to the chat's unsent draft, after what is already typed there, never replacing it. */
 internal suspend fun saveReplyDraft(store: NotificationStore, chatId: String, text: String) {
+    val typed = store.chat(chatId)?.draft.orEmpty()
+    store.setDraft(chatId, if (typed.isBlank()) text else typed + "\n" + text)
 }
 
 /** The live store as the notification buttons see it. */
@@ -164,7 +166,10 @@ private class SessionNotificationStore(private val store: LiveChatStore) : Notif
     override val meId: String get() = store.me.id
     override fun chat(chatId: String) = store.chat(chatId)
     override fun blocked(): Set<String> = store.blockedIds.value
-    override suspend fun setDraft(chatId: String, text: String?) = Unit
+    override suspend fun setDraft(chatId: String, text: String?) {
+        store.setDraft(chatId, text)
+        store.awaitWrites()
+    }
     override suspend fun markRead(chatId: String) {
         store.markRead(chatId)
         store.awaitWrites()

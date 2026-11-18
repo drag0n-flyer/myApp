@@ -19,6 +19,7 @@ interface ChatDao {
     @Query("SELECT * FROM chats WHERE id = :id") fun get(id: String): ChatEntity?
     @Query("SELECT * FROM chats ORDER BY last_activity DESC, id") fun all(): List<ChatEntity>
     @Query("UPDATE chats SET unread = :n WHERE id = :id") fun setUnread(id: String, n: Int)
+    @Query("UPDATE chats SET unread = MAX(0, unread - :n) WHERE id = :id") fun reduceUnread(id: String, n: Int)
     @Query("UPDATE chats SET is_request = :v WHERE id = :id") fun setRequest(id: String, v: Boolean)
     @Query("UPDATE chats SET pinned_at = :at WHERE id = :id") fun setPinnedAt(id: String, at: Long?)
     @Query("UPDATE chats SET muted = :v WHERE id = :id") fun setMuted(id: String, v: Boolean)

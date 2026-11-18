@@ -119,7 +119,8 @@ fun ChatListScreen(
                 if (state.archivedRows.isNotEmpty()) {
                     item(key = "archived") {
                         // One item for a screen reader: "Archived, N".
-                        val archivedLabel = stringResource(R.string.archived_row) + ", " + state.archivedRows.size
+                        val archivedLabel = stringResource(R.string.archived_row) + ", " + state.archivedRows.size +
+                            if (state.archivedUnread > 0) ", " + stringResource(R.string.unread_badge, state.archivedUnread) else ""
                         ListItem(
                             modifier = Modifier.clickable(role = Role.Button, onClick = onOpenArchive)
                                 .clearAndSetSemantics {

@@ -329,6 +329,7 @@ class LiveChatStore(
     override fun setPinned(chatId: String, pinned: Boolean): Boolean {
         synchronized(pinLock) {
             if (pinned) {
+                if ((_chats.value + _requests.value).any { it.id == chatId && it.archived }) return false // an archived chat is never pinned
                 // An archived chat is never pinned, so it never counts.
                 val shown = (_chats.value + _requests.value).filter { it.pinnedAt != null && !it.archived }.map { it.id }.toMutableSet()
                 for ((id, on) in pinsPending) if (on) shown += id else shown -= id
@@ -339,6 +340,7 @@ class LiveChatStore(
         val at = nowMs()
         write {
             val current = repo.chat(chatId) ?: return@write
+            if (pinned && current.archived) return@write // archived after the check: nothing is written
             // Pinning an already pinned chat keeps its pin time.
             if (pinned) { if (current.pinnedAt == null) repo.setPinnedAt(chatId, at) } else repo.setPinnedAt(chatId, null)
         }

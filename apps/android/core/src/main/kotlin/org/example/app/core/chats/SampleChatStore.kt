@@ -52,6 +52,7 @@ class SampleChatStore(
             mutate { change(chatId) { it.copy(pinnedAt = null) } }
             return true
         }
+        if (chat.archived) return false // an archived chat is never pinned
         if (chat.pinnedAt != null) return true
         if (allChats.count { it.pinnedAt != null && !it.archived } >= ChatListOrder.MAX_PINS) return false
         mutate { change(chatId) { it.copy(pinnedAt = clock()) } }
