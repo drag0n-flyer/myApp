@@ -34,6 +34,50 @@
         }
       }
     },
+    "%@ set messages to disappear after 1 day" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ set messages to disappear after 1 day"
+          }
+        }
+      }
+    },
+    "%@ set messages to disappear after 7 days" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ set messages to disappear after 7 days"
+          }
+        }
+      }
+    },
+    "%@ set messages to disappear after 90 days" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ set messages to disappear after 90 days"
+          }
+        }
+      }
+    },
+    "%@ turned off disappearing messages" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ turned off disappearing messages"
+          }
+        }
+      }
+    },
     "%@ · %@" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2595,6 +2639,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "You removed a device"
+          }
+        }
+      }
+    },
+    "You set messages to disappear after 1 day" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You set messages to disappear after 1 day"
+          }
+        }
+      }
+    },
+    "You set messages to disappear after 7 days" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You set messages to disappear after 7 days"
+          }
+        }
+      }
+    },
+    "You set messages to disappear after 90 days" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You set messages to disappear after 90 days"
+          }
+        }
+      }
+    },
+    "You turned off disappearing messages" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You turned off disappearing messages"
           }
         }
       }
