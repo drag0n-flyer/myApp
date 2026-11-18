@@ -16,6 +16,7 @@ import org.example.app.core.chats.MessageFormat
 import org.example.app.messaging.content.ContentCodec
 import org.example.app.messaging.content.ContentEnvelope
 import org.example.app.messaging.content.TextLimit
+import org.example.app.messaging.ports.ChatKind
 import org.example.app.messaging.ports.Clock
 import org.example.app.messaging.ports.MessageRecord
 import org.example.app.messaging.ports.PayloadHash
@@ -42,6 +43,12 @@ data class NotificationStrings(
     val voiceMessage: String = "Voice message",
     val file: String = "File",
     val unsupported: String = "Update ${AppBrand.NAME} to see this message",
+    /** A group message's body: the sender's name, then the text. */
+    val groupLine: String = "%1\$s: %2\$s",
+    /** A member whose name nothing here knows. */
+    val someone: String = "Someone",
+    /** The title of a group that has no name yet. */
+    val untitledGroup: String = "Group",
 )
 
 /**
@@ -145,7 +152,15 @@ class NotificationProcessor(
     private fun outcomeFor(message: MessageRecord): NotificationOutcome {
         if (message.senderAccount == me.accountId || message.senderAccount == "system" || message.deleted) return NotificationOutcome.Nothing
         if (repo.isBlocked(message.senderAccount)) return NotificationOutcome.Nothing
-        if (repo.chat(message.chatId)?.muted == true) return NotificationOutcome.Nothing
+        val chat = repo.chat(message.chatId)
+        if (chat?.muted == true) return NotificationOutcome.Nothing
+        // A group: titled with its name, the body names the sender, and a sender who is no contact is no message request.
+        if (chat?.kind == ChatKind.GROUP) {
+            val name = ContactNames.member(repo, message.senderAccount) ?: strings.someone
+            return NotificationOutcome.Message(
+                message.chatId, chat.title ?: strings.untitledGroup, String.format(strings.groupLine, name, preview(message)), message.expiresAt,
+            )
+        }
         val contact = repo.contact(message.senderAccount)
         if (contact == null || !contact.isContact) return NotificationOutcome.Request(message.chatId)
         val name = ContactNames.shown(repo, contact)
