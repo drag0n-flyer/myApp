@@ -70,6 +70,7 @@ import org.example.app.core.settings.UserSettings
 import org.example.app.live.EmptyChatStore
 import org.example.app.live.LivePlatform
 import org.example.app.live.LocalData
+import org.example.app.ui.media.VoiceKeep
 import org.example.app.live.WipeFirst
 import org.example.app.live.LiveSession
 import org.example.app.ui.media.AttachmentOpener
@@ -509,6 +510,7 @@ class AppGraph(
     private suspend fun stop(session: LiveSession, step: suspend (suspend () -> Unit) -> Unit, wipeRows: Boolean) {
         // First, while the socket can still carry the hang-up: no call (Telecom, ringtone, notification, service)
         // outlives the session into the next account.
+        step { VoiceKeep.clear() } // kept voice previews belong to the account that is going
         step { session.calls.shutdown() }
         step { session.socket.stop() }
         step { withTimeoutOrNull(SHUTDOWN_MS) { session.chatStore.shutdown() } }

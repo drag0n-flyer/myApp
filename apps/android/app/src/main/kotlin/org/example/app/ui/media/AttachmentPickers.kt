@@ -153,36 +153,65 @@ private fun displayName(context: Context, uri: Uri): String? = try {
     uri.lastPathSegment
 }
 
-/** The microphone button's side of recording: the capture, and the tap that asks for the permission first. */
-class VoiceControls(val capture: VoiceCapture, val requestStart: () -> Unit)
+/**
+ * The microphone button's side of recording: the capture, [press] (finger down: asks for the permission first, and a
+ * press that triggers the system prompt does not record) and [activate] (TalkBack, keyboard: a locked recording).
+ */
+class VoiceControls(val capture: VoiceCapture, val press: (rtl: Boolean) -> Unit, val activate: () -> Unit)
 
 /**
- * A [VoiceCapture] on the real recorder. A tap on the microphone starts recording after the microphone permission (asked
- * on first use); refusing it says so in one line. Leaving the screen, or the app going to the background, throws a
- * recording in progress away: a note recorded with the microphone cut off would be silence.
+ * A [VoiceCapture] on the real recorder. Holding the microphone records after the microphone permission (asked on first
+ * use, and that first press records nothing); refusing it says so in one line. The app going to the background, or a call,
+ * stops a recording in progress and keeps what was captured as a preview; so does leaving the chat or a rotation (the preview
+ * comes back with the next screen of the same [chatKey]). The 30-minute limit does the same.
  */
 @Composable
-fun rememberVoiceControls(onNote: (File) -> Unit, notify: (Int) -> Unit): VoiceControls {
+fun rememberVoiceControls(
+    /** "<accountId>/<chatId>": a kept recording is only ever shown again in the same chat of the same account. */
+    chatKey: String,
+    onNote: (File) -> Unit,
+    notify: (Int) -> Unit,
+    /** The recorder behind the capture; tests pass a fake. [onLimit] is called on the recording thread. */
+    recorderFor: (Context, File, onLimit: () -> Unit) -> RecorderPort = { ctx, dir, onLimit ->
+        VoiceRecorderPort(VoiceRecorder(ctx, dir) { onLimit() }, dir)
+    },
+    /** Run on a finished note before it is sent; tests pass their own. */
+    check: (File) -> Boolean = { VoicePrep.prepare(it) != null },
+): VoiceControls {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val note by rememberUpdatedState(onNote)
     val say by rememberUpdatedState(notify)
-    val capture = remember(context) {
+    val capture = remember(context, chatKey) {
         val dir = MediaCache.outgoingDir(context)
-        VoiceCapture(scope, VoiceRecorderPort(VoiceRecorder(context, dir), dir), { note(it) }, { say(it) }, check = { VoicePrep.prepare(it) != null })
+        var self: VoiceCapture? = null
+        val madeIn = VoiceKeep.currentGeneration()
+        VoiceCapture(
+            scope, recorderFor(context, dir) { self?.limitReached() }, { note(it) }, { say(it) },
+            check = check,
+            keep = { VoiceKeep.put(chatKey, it, madeIn) },
+        ).also { self = it }
     }
-    DisposableEffect(capture) { onDispose { capture.release() } }
-    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { capture.cancel() }
+    DisposableEffect(capture) {
+        // Asks for a recording kept by the previous screen of this chat. When this screen leaves it stops asking first, so
+        // its own recording is kept for the next screen and not handed to a screen that is already gone.
+        val waiter: (CaptureState.Preview) -> Unit = { capture.adopt(it) }
+        VoiceKeep.take(chatKey, waiter)
+        onDispose {
+            VoiceKeep.forget(chatKey, waiter)
+            capture.release()
+        }
+    }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { capture.interrupted() }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) capture.begin() else say(R.string.media_mic_off)
+        if (!granted) say(R.string.media_mic_off)
     }
     return remember(capture, permission) {
-        VoiceControls(capture) {
-            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                capture.begin()
-            } else {
-                permission.launch(Manifest.permission.RECORD_AUDIO)
-            }
+        fun allowed(): Boolean {
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) return true
+            permission.launch(Manifest.permission.RECORD_AUDIO)
+            return false
         }
+        VoiceControls(capture, press = { rtl -> if (allowed()) capture.press(rtl) }, activate = { if (allowed()) capture.activate() })
     }
 }

@@ -75,7 +75,6 @@ import org.example.app.ui.Avatar
 import org.example.app.ui.lock.LocalExpectReturn
 import org.example.app.ui.media.AttachmentOpener
 import org.example.app.ui.media.AudioManagerFocus
-import org.example.app.ui.media.CaptureState
 import org.example.app.ui.media.rememberAttachmentPickers
 import org.example.app.ui.media.rememberVoiceControls
 import org.example.app.ui.media.MediaActions
@@ -162,8 +161,9 @@ fun ChatScreen(
     val expectReturn by rememberUpdatedState(LocalExpectReturn.current)
     val mediaActions = remember(context, opener) { MediaActions(context, opener, scope, notify = { notice = it }, expectReturn = { expectReturn() }) }
     val pickers = rememberAttachmentPickers(onAttachment = viewModel::sendAttachment, notify = { notice = it })
-    val voiceControls = rememberVoiceControls(onNote = { viewModel.sendAttachment(it.path, MediaKind.Voice) }, notify = { notice = it })
+    val voiceControls = rememberVoiceControls(chatKey = "$myId/${viewModel.chatId}", onNote = { viewModel.sendAttachment(it.path, MediaKind.Voice) }, notify = { notice = it })
     val capture by voiceControls.capture.state.collectAsState()
+    val voiceHint by voiceControls.capture.hint.collectAsState()
     // One voice message plays at a time; it stops when the screen is left or the app goes to the background.
     val voice = remember(opener) { VoicePlayer(scope, opener, MediaPlayerEngine.factory, focus = AudioManagerFocus(context)) }
     DisposableEffect(voice) { onDispose { voice.release() } }
@@ -376,11 +376,19 @@ fun ChatScreen(
                         }
                     },
                     onAttach = pickers::start,
-                    onRecordVoice = voiceControls.requestStart,
+                    onRecordVoice = voiceControls.activate,
                     showCamera = pickers.cameraAvailable,
-                    recording = capture as? CaptureState.Recording,
-                    onCancelRecording = voiceControls.capture::cancel,
-                    onSendRecording = voiceControls.capture::send,
+                    voice = VoiceUi(
+                        state = capture,
+                        hint = voiceHint,
+                        onPress = voiceControls.press,
+                        onDrag = voiceControls.capture::drag,
+                        onLift = voiceControls.capture::lift,
+                        onInterrupt = voiceControls.capture::interrupted,
+                        onStop = voiceControls.capture::stop,
+                        onDelete = voiceControls.capture::delete,
+                        onSend = voiceControls.capture::send,
+                    ),
                     bar = bar,
                     onCloseBar = {
                         if (editing != null) text = viewModel.draft()

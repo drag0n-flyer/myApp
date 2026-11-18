@@ -29,6 +29,7 @@ class VoiceRecorder(
     private class Session(val record: AudioRecord, val encoder: VoiceEncoder) {
         @Volatile var stopRequested = false
         @Volatile var samples = 0L
+        @Volatile var level = 0f
         val slot = NoteSlot()
         lateinit var thread: Thread
         val packets = ArrayList<ByteArray>()
@@ -40,6 +41,9 @@ class VoiceRecorder(
 
     /** Seconds of audio captured so far (0 until the microphone delivers its first frame, which can be late). */
     val capturedSeconds: Double get() = (session?.samples ?: 0L).toDouble() / RATE
+
+    /** The input level of the latest audio frame, 0 to 1 (see [InputLevel]); 0 when not recording. */
+    val level: Float get() = session?.level ?: 0f
 
     /** The encoder of the last successful [start]. */
     @Volatile var lastEncoder: VoiceEncoderKind? = null
@@ -123,6 +127,7 @@ class VoiceRecorder(
                 val n = s.record.read(buf, 0, buf.size)
                 if (n < 0) { failure = VoiceFailure.Microphone; break }
                 if (n == 0) continue
+                s.level = InputLevel.of(buf, n)
                 s.encoder.encode(buf, n, s.samples * 1_000_000L / RATE, s.packets)
                 s.samples += n / 2
             }

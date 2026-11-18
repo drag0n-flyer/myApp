@@ -5,6 +5,7 @@ import java.io.File
 import java.io.FileOutputStream
 import org.example.app.contracts.SecretNames
 import org.example.app.contracts.SecretStore
+import org.example.app.ui.media.VoiceKeep
 
 /**
  * The account's data on this device and its crash-safe wipe (mirrors the iPhone's `LocalAccountData`).
@@ -54,6 +55,7 @@ class LocalData(private val context: Context, private val platform: LivePlatform
     fun deleteAll(kind: String): Exception? {
         var failure: Exception? = null
         fun step(body: () -> Unit) = try { body() } catch (e: Exception) { failure = failure ?: e }
+        step { VoiceKeep.clear() } // kept voice previews (plain files) go with the rest
         step { platform.cancelNotifications() }
         step { if (!context.deleteDatabase(platform.databaseName) && databaseFile().exists()) error("database not deleted") }
         for (dir in dirs()) step { if (dir.exists() && !dir.deleteRecursively()) error("${dir.name} not deleted") }
