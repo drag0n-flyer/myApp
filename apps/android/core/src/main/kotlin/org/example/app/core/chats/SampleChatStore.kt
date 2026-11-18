@@ -33,11 +33,17 @@ class SampleChatStore(
     override val requests: StateFlow<List<Chat>> = _requests.asStateFlow()
     override val blockedIds: StateFlow<Set<String>> = _blocked.asStateFlow()
     override val reportedChatIds: StateFlow<Set<String>> = _reported.asStateFlow()
+    override val mutedChatIds: StateFlow<Set<String>> = MutableStateFlow(emptySet())
     override val supportsSafetyNumbers: Boolean = true
 
     init {
         publish()
     }
+
+    override fun setPinned(chatId: String, pinned: Boolean): Boolean = true
+    override fun setMuted(chatId: String, muted: Boolean) = Unit
+    override fun setArchived(chatId: String, archived: Boolean) = Unit
+    override fun setDraft(chatId: String, text: String?) = Unit
 
     override fun chat(id: String): Chat? = synchronized(lock) { allChats.firstOrNull { it.id == id } }
 

@@ -292,6 +292,12 @@ class LiveChatStore(
 
     // Reads
 
+    override val mutedChatIds: StateFlow<Set<String>> = MutableStateFlow(emptySet())
+    override fun setPinned(chatId: String, pinned: Boolean): Boolean = true
+    override fun setMuted(chatId: String, muted: Boolean) = Unit
+    override fun setArchived(chatId: String, archived: Boolean) = Unit
+    override fun setDraft(chatId: String, text: String?) = Unit
+
     override fun chat(id: String): Chat? = _chats.value.firstOrNull { it.id == id } ?: _requests.value.firstOrNull { it.id == id }
 
     override fun contact(id: String): Contact? = if (id == device.accountId) meContact else contactRows[id]?.let(::contactOf)

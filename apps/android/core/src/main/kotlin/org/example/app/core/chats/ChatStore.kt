@@ -21,6 +21,8 @@ interface ChatStore {
     /** Account IDs this device has blocked. */
     val blockedIds: StateFlow<Set<String>>
     val reportedChatIds: StateFlow<Set<String>>
+    /** Chats muted on this device (requests included): notifications stay quiet and the launcher badge skips them. */
+    val mutedChatIds: StateFlow<Set<String>>
 
     fun chats(folder: ChatFolder): List<Chat> = chats.value.filter { chat ->
         when (folder.kind) {
@@ -32,6 +34,14 @@ interface ChatStore {
 
     /** Number shown on the Unread chip. */
     fun unreadChatCount(): Int = chats.value.count { it.unreadCount > 0 }
+
+    /** Pins or unpins. Returns false, changing nothing, when pinning would make more than [ChatListOrder.MAX_PINS]. */
+    fun setPinned(chatId: String, pinned: Boolean): Boolean
+    fun setMuted(chatId: String, muted: Boolean)
+    /** An archived chat still receives, stores and counts messages; it just leaves the main list. */
+    fun setArchived(chatId: String, archived: Boolean)
+    /** Saves the unsent composer text for the chat; null or blank removes it. */
+    fun setDraft(chatId: String, text: String?)
 
     fun chat(id: String): Chat?
     fun contact(id: String): Contact?

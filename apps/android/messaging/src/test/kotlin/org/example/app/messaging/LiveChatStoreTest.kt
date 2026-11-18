@@ -348,4 +348,111 @@ class LiveChatStoreTest {
         s.setVerified(false, "acc-ana")
         assertEquals(verified, d.repo.safety("acc-ana")?.verified, "unchanged, cannot be re-verified")
     }
+
+    // Chat list actions and saved drafts
+
+    private fun extraChats(repo: org.example.app.messaging.ports.Repository, n: Int) =
+        (1..n).map { "other-$it" }.onEach { repo.upsertChat(ChatRecord(it, isRequest = false, unread = 0, muted = false, lastActivity = NOW + 1)) }
+
+    @Test
+    fun pinMuteAndArchiveAreSavedAndSurviveARestart() = runTest {
+        val (rig, s, _) = joined()
+        s.setPinned("acc-ana", true)
+        s.setMuted("acc-ana", true)
+        s.setArchived("acc-ana", true)
+        s.settle()
+        val row = rig.bob1.repo.chat("acc-ana")!!
+        assertNotNull(row.pinnedAt)
+        assertTrue(row.muted)
+        assertTrue(row.archived)
+        assertEquals(setOf("acc-ana"), s.mutedChatIds.value)
+        val again = store(rig.bob1).chat("acc-ana")!!
+        assertNotNull(again.pinnedAt)
+        assertTrue(again.muted)
+        assertTrue(again.archived)
+        s.setPinned("acc-ana", false); s.setMuted("acc-ana", false); s.setArchived("acc-ana", false); s.settle()
+        assertNull(rig.bob1.repo.chat("acc-ana")!!.pinnedAt)
+        assertTrue(s.mutedChatIds.value.isEmpty())
+    }
+
+    @Test
+    fun theSixthPinIsRefused() = runTest {
+        val (rig, s, _) = joined()
+        val others = extraChats(rig.bob1.repo, 5)
+        s.refresh()
+        // No settle between the calls: the limit holds for pins that are still queued.
+        assertTrue(s.setPinned("acc-ana", true))
+        others.take(4).forEach { assertTrue(s.setPinned(it, true)) }
+        assertFalse(s.setPinned(others[4], true))
+        s.settle()
+        assertEquals(5, rig.bob1.repo.chats().count { it.pinnedAt != null })
+        assertNull(rig.bob1.repo.chat(others[4])!!.pinnedAt)
+        assertTrue(s.setPinned("acc-ana", true), "pinning a pinned chat again is not a sixth pin")
+        assertTrue(s.setPinned("acc-ana", false))
+        assertTrue(s.setPinned(others[4], true))
+        s.settle()
+        assertNotNull(rig.bob1.repo.chat(others[4])!!.pinnedAt)
+    }
+
+    @Test
+    fun pinnedChatSortsFirst() = runTest {
+        val (rig, s, _) = joined()
+        val others = extraChats(rig.bob1.repo, 2) // newer than the chat with Ana
+        s.refresh()
+        assertEquals("acc-ana", s.chats.value.last().id)
+        s.setPinned("acc-ana", true); s.settle()
+        assertEquals("acc-ana", s.chats.value.first().id)
+        assertTrue(others.all { id -> s.chats.value.any { it.id == id } })
+    }
+
+    @Test
+    fun anIncomingMessageNeverChangesArchivedOrMutedButIsStoredAndCounted() = runTest {
+        val (rig, s, conv) = joined()
+        s.setArchived("acc-ana", true); s.setMuted("acc-ana", true); s.setPinned("acc-ana", true); s.settle()
+        rig.ana1.send(conv, ContentEnvelope.Text("m-new", NOW + 10, "are you there"))
+        rig.bob1.processor.sync()
+        s.refresh()
+        val row = rig.bob1.repo.chat("acc-ana")!!
+        assertTrue(row.archived)
+        assertTrue(row.muted)
+        assertNotNull(row.pinnedAt)
+        assertEquals(1, row.unread)
+        assertNotNull(rig.bob1.repo.message("m-new"))
+        val chat = s.chat("acc-ana")!!
+        assertTrue(chat.archived && chat.muted)
+        assertEquals(1, chat.unreadCount)
+    }
+
+    @Test
+    fun draftsAreSavedInTheDatabaseAndBlankRemovesThem() = runTest {
+        val (rig, s, _) = joined()
+        s.setDraft("acc-ana", "half a thought"); s.settle()
+        assertEquals("half a thought", rig.bob1.repo.draft("acc-ana"))
+        assertEquals("half a thought", s.chat("acc-ana")!!.draft)
+        assertEquals("half a thought", store(rig.bob1).chat("acc-ana")!!.draft, "survives a restart")
+        s.setDraft("acc-ana", "   "); s.settle()
+        assertNull(rig.bob1.repo.draft("acc-ana"))
+        assertNull(s.chat("acc-ana")!!.draft)
+    }
+
+    @Test
+    fun aDraftShowsAtOnceAndTheLastOneWinsWhenTypingFast() = runTest {
+        val (rig, s, _) = joined()
+        "hello".indices.forEach { s.setDraft("acc-ana", "hello".substring(0, it + 1)) }
+        assertEquals("hello", s.chat("acc-ana")!!.draft)
+        s.settle()
+        assertEquals("hello", rig.bob1.repo.draft("acc-ana"))
+    }
+
+    @Test
+    fun draftsAreWipedWithTheAccountAndNeverSeenByAnotherAccount() = runTest {
+        val (rig, s, _) = joined()
+        s.setDraft("acc-ana", "private"); s.settle()
+        assertEquals("private", rig.bob1.repo.draft("acc-ana"))
+        assertNull(rig.ana1.repo.draft("acc-bob"), "another account's database has no such draft")
+        s.shutdown()
+        rig.bob1.repo.wipe()
+        assertTrue(rig.bob1.repo.drafts().isEmpty())
+        assertNull(store(rig.bob1).chat("acc-ana")?.draft)
+    }
 }
