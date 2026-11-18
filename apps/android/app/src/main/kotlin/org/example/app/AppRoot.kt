@@ -42,6 +42,7 @@ import org.example.app.ui.calls.CallHistoryViewModel
 import org.example.app.ui.chat.ChatScreen
 import org.example.app.ui.chat.ChatViewModel
 import org.example.app.ui.chatinfo.ChatInfoScreen
+import org.example.app.ui.chatlist.ArchiveScreen
 import org.example.app.ui.chatlist.ChatListScreen
 import org.example.app.ui.chatlist.ChatListViewModel
 import org.example.app.ui.chatlist.NewChatScreen
@@ -72,6 +73,7 @@ private const val INFO = "chatinfo/{id}"
 /** The approving phone scans a new device's code (opened from Linked devices). */
 const val LINK_SCAN = "linkscan"
 private const val REQUESTS = "requests"
+private const val ARCHIVE = "archive"
 private const val ADD_CONTACT = "addcontact"
 private const val NEW_CHAT = "newchat"
 private const val SEARCH = "search"
@@ -180,6 +182,7 @@ fun AppRoot(
                         ChatListScreen(
                             vm, onOpenChat = { nav.navigate("chat/$it") }, onOpenRequests = { nav.navigate(REQUESTS) },
                             onNewChat = { nav.navigate(NEW_CHAT) }, onSearch = { nav.navigate(SEARCH) },
+                            onOpenArchive = { nav.navigate(ARCHIVE) },
                         )
                     } else if (tab == MainTab.Calls) {
                         val vm = viewModel<CallHistoryViewModel>(factory = factory { CallHistoryViewModel(graph.chatStore) })
@@ -200,6 +203,12 @@ fun AppRoot(
                         TabPlaceholder(tab)
                     }
                 }
+            }
+            composable(ARCHIVE) {
+                val vm = viewModel<ChatListViewModel>(
+                    factory = factory { ChatListViewModel(graph.chatStore, graph.serverPolicy, graph.settingsStore.settings, graph.network, graph.connectionStatus) },
+                )
+                ArchiveScreen(vm, onOpenChat = { nav.navigate("chat/$it") }, onBack = { nav.popBackStack() })
             }
             composable(REQUESTS) {
                 MessageRequestsScreen(graph.chatStore, onOpenChat = { nav.navigate("chat/$it") }, onBack = { nav.popBackStack() })
