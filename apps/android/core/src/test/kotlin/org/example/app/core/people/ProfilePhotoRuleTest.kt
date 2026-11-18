@@ -8,15 +8,23 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ProfilePhotoRuleTest {
-    private fun jpeg(size: Int) = ByteArray(size).also { it[0] = 0xFF.toByte(); it[1] = 0xD8.toByte() }
+    /** A JPEG start with a 256x256 baseline frame header, padded with zeros to [size] bytes (at least 15). */
+    private fun jpeg(size: Int, side: Int = 256): ByteArray {
+        val head = byteArrayOf(
+            -1, -40, -1, -64, 0, 11, 8, (side shr 8).toByte(), side.toByte(), (side shr 8).toByte(), side.toByte(), 1, 1, 0x11, 0,
+        )
+        return head.copyOf(maxOf(size, head.size))
+    }
 
-    @Test fun acceptableIsAJpegWithinTheLimit() {
-        assertTrue(ProfilePhotoRule.isAcceptable(jpeg(2)))
+    @Test fun acceptableIsAJpegWithAFrameHeaderWithinTheLimit() {
+        assertTrue(ProfilePhotoRule.isAcceptable(jpeg(15)))
         assertTrue(ProfilePhotoRule.isAcceptable(jpeg(24_576)))
         assertFalse(ProfilePhotoRule.isAcceptable(jpeg(24_577)))
         assertFalse(ProfilePhotoRule.isAcceptable(ByteArray(100)))
         assertFalse(ProfilePhotoRule.isAcceptable(byteArrayOf(0xFF.toByte())))
         assertFalse(ProfilePhotoRule.isAcceptable(null))
+        assertTrue(ProfilePhotoRule.isAcceptable(jpeg(100, side = 1024)))
+        assertFalse(ProfilePhotoRule.isAcceptable(jpeg(100, side = 1025)))
     }
 
     @Test fun fitStepsTheQualityDownUntilItFits() {
