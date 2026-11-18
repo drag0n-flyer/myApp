@@ -10,7 +10,10 @@ struct RootView: View {
 
     var body: some View {
         Group {
-            if model.hasBrokenSetup {
+            if model.lock.coversContent {
+                // Locked: only the cover. No chat view exists in the hierarchy (the call screen below is separate).
+                LockCoverView(lock: model.lock)
+            } else if model.hasBrokenSetup {
                 // Blocking: a build without its shared groups can neither sign in nor show sample chats.
                 ContentUnavailableView {
                     Label("This copy of the app is set up incorrectly", systemImage: "exclamationmark.triangle")
@@ -28,6 +31,7 @@ struct RootView: View {
                 OnboardingView(model: model)
             }
         }
+        .environment(\.expectReturn, { [lock = model.lock] in lock.expectReturn() })
         .preferredColorScheme(AppearanceChoice(rawValue: appearance)?.colorScheme)
         .alert("This device was removed from your account.", isPresented: $model.deviceRemovedAlert) {
             Button("OK", role: .cancel) {}

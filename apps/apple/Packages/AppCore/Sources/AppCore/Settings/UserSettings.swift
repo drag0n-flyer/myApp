@@ -18,6 +18,9 @@ public struct UserSettings: Equatable, Codable, Sendable {
     public var findByEmail = false
     public var readReceipts = true
     public var noiseSuppression: NoiseSuppression = .standard
+    /// App lock and its delay; mirrors `AppLock`, which owns the stored values.
+    public var appLock = false
+    public var lockAfterSeconds = AppLockPolicy.defaultSeconds
 
     public init(call: CallSettings = .init(), autoDownload: AutoDownloadSettings = .init(), ipHiding: IPHiding = .nonContacts) {
         self.call = call

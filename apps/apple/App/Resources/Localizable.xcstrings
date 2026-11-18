@@ -46,6 +46,39 @@
         }
       }
     },
+    "1 hour" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 hour"
+          }
+        }
+      }
+    },
+    "1 minute" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 minute"
+          }
+        }
+      }
+    },
+    "5 minutes" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "5 minutes"
+          }
+        }
+      }
+    },
     "Accept" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -90,6 +123,17 @@
         }
       }
     },
+    "App lock" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "App lock"
+          }
+        }
+      }
+    },
     "Approve" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -97,6 +141,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Approve"
+          }
+        }
+      }
+    },
+    "Ask for your fingerprint, face or screen lock to open %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ask for your fingerprint, face or screen lock to open %@"
           }
         }
       }
@@ -607,6 +662,17 @@
         }
       }
     },
+    "Immediately" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Immediately"
+          }
+        }
+      }
+    },
     "Incoming call" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -669,6 +735,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Link this device?"
+          }
+        }
+      }
+    },
+    "Lock after" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lock after"
           }
         }
       }
@@ -1146,6 +1223,17 @@
         }
       }
     },
+    "Set a screen lock in your phone's settings first." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Set a screen lock in your phone's settings first."
+          }
+        }
+      }
+    },
     "Settings" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1560,6 +1648,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Unknown"
+          }
+        }
+      }
+    },
+    "Unlock" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unlock"
+          }
+        }
+      }
+    },
+    "Unlock %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unlock %@"
           }
         }
       }

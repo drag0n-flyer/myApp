@@ -1,3 +1,4 @@
+import AppCore
 import SwiftUI
 
 #if os(iOS)
@@ -33,9 +34,15 @@ struct AppMain: App {
         WindowGroup {
             RootView(model: model)
                 .onOpenURL { model.handle(url: $0) }
-                .onAppear { AppDelegate.model = model }
+                .onAppear {
+                    AppDelegate.model = model
+                    model.lock.phaseChanged(LockPhase(scenePhase))   // a launch that starts in the background
+                }
         }
-        .onChange(of: scenePhase) { _, phase in model.scenePhaseChanged(phase) }
+        .onChange(of: scenePhase) { _, phase in
+            model.lock.phaseChanged(LockPhase(phase))   // first: the cover must be up before anything else reacts
+            model.scenePhaseChanged(phase)
+        }
         #if os(macOS)
         Window("Call", id: "call") {
             MacCallWindow(model: model)
@@ -43,8 +50,18 @@ struct AppMain: App {
         .defaultSize(width: 420, height: 720)
 
         Settings {
-            MacSettingsView(model: model)
+            LockGate(lock: model.lock) { MacSettingsView(model: model) }
         }
         #endif
+    }
+}
+
+extension LockPhase {
+    init(_ phase: ScenePhase) {
+        switch phase {
+        case .active: self = .active
+        case .background: self = .background
+        default: self = .inactive   // inactive, and any phase added later: the safe side
+        }
     }
 }

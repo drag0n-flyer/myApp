@@ -107,6 +107,7 @@ extension View {
     func mediaPreview(_ preview: MediaPreview) -> some View {
         @Bindable var preview = preview
         return self
+            .expectsReturn(when: preview.url != nil)
             .quickLookPreview($preview.url)
             .alert("No app can open this file.", isPresented: $preview.failed) {
                 Button("OK", role: .cancel) {}

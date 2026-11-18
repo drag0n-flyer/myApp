@@ -135,6 +135,9 @@ final class AppModel {
     @ObservationIgnored private(set) var macRinger: MacRinger?
     #endif
     let isUITesting: Bool
+    /// The app lock (Face ID, Touch ID or the device passcode in front of the UI). Created in `init`; the root shows
+    /// only the cover while `lock.coversContent`.
+    let lock: AppLock
 
     /// Bumped after every store change so views that read store data refresh.
     private(set) var revision = 0
@@ -173,7 +176,10 @@ final class AppModel {
             sessionStore = sessions
         }
         let server = account.defaultServer
-        let settings = UserSettings.initial(from: server)
+        var settings = UserSettings.initial(from: server)
+        let lock = AppModel.makeLock(sampleData: sampleData, launch: launch)
+        settings.appLock = lock.appLockOn
+        settings.lockAfterSeconds = lock.lockAfterSeconds
         self.account = account
         self.live = live
         self.linkSnapshots = bridge
@@ -184,6 +190,7 @@ final class AppModel {
         self.settings = settings
         self.network = launch.network
         self.isUITesting = launch.isUITesting
+        self.lock = lock
         let stores = AppStores(sampleData: sampleData, server: server, settings: settings.call, network: launch.network)
         let chatStore = stores.chatStore
         self.chatStore = chatStore
@@ -218,6 +225,7 @@ final class AppModel {
         if live?.isSignedIn == true { Task { await didSignIn() } }
         if let url = launch.openURL { handle(url: url) }
         chatStore.onChange = { [weak self] in self?.revision += 1 }
+        lock.onHeldChatReleased = { [weak self] id in self?.openChatID = id }
         sampleCalls?.onChange = { [weak self] state in self?.callStateChanged(state) }
         Task { await refreshDevices() }
         #if os(macOS)
@@ -229,6 +237,46 @@ final class AppModel {
             #endif
             startPathMonitor()
         }
+    }
+
+    /// The sample fake and its in-memory settings exist only in sample-data mode (`-sampleData`, never a live account);
+    /// a live session always gets the system prompt and the app group's defaults (the notification extension reads the
+    /// switch there).
+    private static func makeLock(sampleData: Bool, launch: LaunchOptions) -> AppLock {
+        #if os(iOS)
+        let phone = true
+        #else
+        let phone = false
+        #endif
+        if sampleData {
+            let auth = SampleDeviceAuth(results: launch.fakeAuthResults)
+            return AppLock(store: MemoryLockSettingsStore(), auth: auth, coversWhenInactive: phone, inactiveCountsAsLeaving: !phone)
+        }
+        let group = (Bundle.main.object(forInfoDictionaryKey: "AppGroupID") as? String)?.trimmingCharacters(in: .whitespaces)
+        let defaults = group.flatMap { $0.isEmpty ? nil : UserDefaults(suiteName: $0) } ?? .standard
+        return AppLock(store: DefaultsLockSettingsStore(defaults: defaults), auth: SystemDeviceAuth(),
+                       coversWhenInactive: phone, inactiveCountsAsLeaving: !phone)
+    }
+
+    /// App lock on or off, a plain non-blocking read for the notifications (A5). Unknown counts as on.
+    var appLockOn: Bool { lock.appLockOn }
+
+    /// The Privacy switch: needs one passed prompt. Mirrors the result into `settings`.
+    func setAppLock(_ on: Bool) async -> LockSwitchOutcome {
+        let outcome = await lock.requestSetEnabled(on, reason: String(localized: "Unlock \(AppBrand.name)"))
+        if outcome == .changed { settings.appLock = lock.appLockOn }
+        return outcome
+    }
+
+    func setLockAfter(_ seconds: Int) {
+        lock.setLockAfter(seconds)
+        settings.lockAfterSeconds = lock.lockAfterSeconds
+    }
+
+    /// A chat that something outside the screens wants open (a notification tap): kept while the app is locked and
+    /// opened once, after unlock.
+    func openChatFromOutside(_ chatID: String) {
+        if let id = lock.openChatWhenUnlocked(chatID) { openChatID = id }
     }
 
     private func callStateChanged(_ state: CallState?) {
@@ -422,6 +470,10 @@ final class AppModel {
     private func resetToWelcome(revoked: Bool = true) {
         // Drafts and the pending in-chat search belong to the account that is leaving.
         ChatScreenState.shared.reset()
+        // App lock goes back to off with its default delay; a prompt still open changes nothing.
+        lock.reset()
+        settings.appLock = false
+        settings.lockAfterSeconds = AppLockPolicy.defaultSeconds
         // Decoded pictures and plaintext copies made for previews and sends belong to it too.
         MediaPreview.removeTemporaryFolders()
         Task { await ThumbnailLoader.shared.clear() }
@@ -775,7 +827,7 @@ private enum LinkSnapshotError: Error { case noLiveStore }
     func export() async -> Data { await model?.exportLinkSnapshot() ?? Data() }
 }
 
-/// Launch arguments used by UI tests: `-skipOnboarding`, `-uiTesting`, `-network mobile|wifi`, `-openURL <url>`, `-sampleData`.
+/// Launch arguments used by UI tests: `-skipOnboarding`, `-uiTesting`, `-network mobile|wifi`, `-openURL <url>`, `-sampleData`, `-fakeAuth success,cancel,...`.
 struct LaunchOptions {
     var skipOnboarding = false
     /// Skips system permission prompts so UI tests aren't blocked by alerts.
@@ -784,6 +836,8 @@ struct LaunchOptions {
     var openURL: URL?
     /// `-sampleData`: sample accounts and chats, no server. UI tests always pass it.
     var sampleData = false
+    /// `-fakeAuth success,cancel,...`: what the sample fake answers to the next lock prompts (then success).
+    var fakeAuthResults: [AuthResult] = []
 
     static var current: LaunchOptions {
         let args = ProcessInfo.processInfo.arguments
@@ -793,6 +847,9 @@ struct LaunchOptions {
         options.sampleData = args.contains("-sampleData")
         if let i = args.firstIndex(of: "-network"), i + 1 < args.count {
             options.network = args[i + 1] == "wifi" ? .wifi : .mobile
+        }
+        if let i = args.firstIndex(of: "-fakeAuth"), i + 1 < args.count {
+            options.fakeAuthResults = args[i + 1].split(separator: ",").map { (word: Substring) -> AuthResult in word == "cancel" ? .cancelled : .success }
         }
         if let i = args.firstIndex(of: "-openURL"), i + 1 < args.count {
             options.openURL = URL(string: args[i + 1])

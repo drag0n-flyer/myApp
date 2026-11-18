@@ -103,7 +103,8 @@ struct ComposerView: View {
                     .glassBackground(in: Circle())
             }
             .accessibilityLabel("Attach")
-            .photosPicker(isPresented: $showPhotos, selection: $photoItem, matching: .images)
+            .expectsReturn(when: showPhotos || showFiles || showCamera)
+            .photosPicker(isPresented: $showPhotos,selection: $photoItem, matching: .images)
             .fileImporter(isPresented: $showFiles, allowedContentTypes: [.item]) { result in
                 guard case .success(let url) = result else { return }
                 importFile(url)
