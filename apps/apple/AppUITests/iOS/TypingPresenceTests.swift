@@ -6,8 +6,8 @@ import XCTest
 final class TypingPresenceTests: XCTestCase {
     override func setUp() { continueAfterFailure = false }
 
-    private func waitForLabel(_ element: XCUIElement, contains text: String, timeout: TimeInterval = 8) {
-        let predicate = NSPredicate(format: "label CONTAINS %@", text)
+    private func waitForLabel(_ element: XCUIElement, contains text: String, key: String = "label", timeout: TimeInterval = 8) {
+        let predicate = NSPredicate(format: "\(key) CONTAINS %@", text)
         let result = XCTWaiter().wait(for: [expectation(for: predicate, evaluatedWith: element)], timeout: timeout)
         XCTAssertEqual(result, .completed, "Label of \(element) never contained \(text): \(element.label)")
     }
@@ -20,10 +20,10 @@ final class TypingPresenceTests: XCTestCase {
         row.tap()
         let header = app.element("chat.header")
         XCTAssertTrue(header.waitToExist())
-        waitForLabel(header, contains: "typing…")
+        waitForLabel(header, contains: "typing…", key: "value")
         // The message ends the typing line.
         XCTAssertTrue(app.staticTexts["On my way!"].waitToExist(20))
-        let notTyping = NSPredicate(format: "NOT (label CONTAINS %@)", "typing…")
+        let notTyping = NSPredicate(format: "NOT (value CONTAINS %@)", "typing…")
         let result = XCTWaiter().wait(for: [expectation(for: notTyping, evaluatedWith: header)], timeout: 5)
         XCTAssertEqual(result, .completed)
     }

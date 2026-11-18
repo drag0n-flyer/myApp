@@ -92,6 +92,16 @@ private final class Rig {
         #expect(sent.isEmpty)
     }
 
+    @Test func openingAndClosingAChatSendsNoFrame() async {
+        let rig = Rig()
+        // The chat screen calls `composerSent` when it goes away, and an empty composer reports itself empty.
+        rig.signals.composerChanged(chatID: "acc-bob", isEmpty: true)
+        rig.signals.composerSent(chatID: "acc-bob")
+        rig.signals.tick()
+        let sent = await rig.sentBodies()
+        #expect(sent.isEmpty)
+    }
+
     @Test func aSignalQueuedBeforeABlockOrSwitchOffIsNotSent() async {
         let rig = Rig()
         rig.signals.composerChanged(chatID: "acc-bob", isEmpty: false)

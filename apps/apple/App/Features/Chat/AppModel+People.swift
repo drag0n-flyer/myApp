@@ -104,7 +104,7 @@ extension AppModel {
     /// The line under the name in the chat header: "typing…", "online", "last seen 9:38", or nothing.
     func headerStatus(chatID: String) -> String? {
         _ = revision
-        guard !peopleHidden, let people else { return nil }
+        guard !peopleHidden, let people, chatStore.chat(id: chatID)?.contactID != chatStore.me.id else { return nil }
         if people.isTyping(chatID: chatID) { return String(localized: "typing…") }
         switch people.presence(chatID: chatID) {
         case .online: return String(localized: "online")

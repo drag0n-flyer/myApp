@@ -23,7 +23,8 @@ struct ChatHeaderView: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(status.map { "\(name), \($0)" } ?? name))
+        .accessibilityLabel(Text(name))
+        .accessibilityValue(Text(status ?? ""))
         .accessibilityHint("Shows chat info")
         .accessibilityAddTraits(.isButton)
         .accessibilityIdentifier("chat.header")
