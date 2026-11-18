@@ -262,10 +262,9 @@ public struct NotificationProcessor: Sendable {
         .show(title: strings.requestTitle, body: strings.requestBody, threadID: chatID)
     }
 
-    /// False for a muted chat or a blocked sender.
+    /// False for a blocked sender. A muted chat still notifies; whoever shows the notification makes it silent.
     private func shouldNotify(chatID: String, sender: String) throws -> Bool {
         if try deps.repo.isBlocked(sender) { return false }
-        if try deps.repo.chat(id: chatID)?.muted == true { return false }
         return true
     }
 

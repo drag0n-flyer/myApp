@@ -150,13 +150,13 @@ private struct NSEPair {
         #expect(outcome == .show(title: "Message request", body: "Open [App] to see it", threadID: "acc-ana"))
     }
 
-    @Test func testMutedDrops() async throws {
+    @Test func testMutedStillShowsSoItCanBeSilent() async throws {
         let pair = try await NSEPair()
         // An existing row is muted with its own write (`upsertChat` no longer writes `muted` for an existing row).
         try pair.bob.deps.repo.upsertChat(ChatRecord(id: "acc-ana", isRequest: false, unread: 0, muted: false, lastActivity: testEpochDate))
         try pair.bob.deps.repo.setMuted(chatID: "acc-ana", true)
         let outcome = await pair.processor().process(pushData: try await pair.push(.text("hi", replyTo: nil)), deadline: NSEPair.deadline)
-        #expect(outcome == .drop)
+        #expect(outcome == .show(title: "Ana", body: "hi", threadID: "acc-ana"))
         #expect(try pair.bob.deps.repo.message(id: "m1") != nil)   // still stored
     }
 

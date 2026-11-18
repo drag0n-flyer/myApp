@@ -78,6 +78,7 @@ final class NotificationActions: NSObject, UNUserNotificationCenterDelegate {
     private enum Action: Sendable {
         case reply(requestID: String, chatID: String, text: String)
         case markRead(chatID: String)
+        case open(chatID: String)
     }
 
     nonisolated func handle(_ response: UNNotificationResponse) async {
@@ -92,8 +93,10 @@ final class NotificationActions: NSObject, UNUserNotificationCenterDelegate {
             await perform(.reply(requestID: request.identifier, chatID: chatID, text: text))
         case Self.markReadActionID:
             await perform(.markRead(chatID: chatID))
+        case UNNotificationDefaultActionIdentifier:
+            await perform(.open(chatID: chatID))   // a tap on the body opens the chat (after unlock, when locked)
         default:
-            break   // a tap on the body only brings the app forward
+            break
         }
     }
 
@@ -103,6 +106,7 @@ final class NotificationActions: NSObject, UNUserNotificationCenterDelegate {
         switch action {
         case .reply(let requestID, let chatID, let text): await reply(requestID, chatID, text, budget)
         case .markRead(let chatID): await markRead(chatID, budget)
+        case .open(let chatID): await open(chatID, budget)
         }
     }
 
@@ -154,6 +158,11 @@ final class NotificationActions: NSObject, UNUserNotificationCenterDelegate {
     private func markRead(_ chatID: String, _ budget: ActionBudget) async {
         guard let model = await readyModel(budget), model.chat(id: chatID) != nil else { return }
         model.markRead(chatID: chatID)   // also removes the chat's delivered notifications
+    }
+
+    private func open(_ chatID: String, _ budget: ActionBudget) async {
+        guard let model = await readyModel(budget), model.chat(id: chatID) != nil else { return }
+        model.openChatFromOutside(chatID)
     }
 
     /// The model once the signed-in store is built (a notification action can cold-start the app), or nil at the deadline.
@@ -266,7 +275,7 @@ final class NotificationActions: NSObject, UNUserNotificationCenterDelegate {
         lastBlocked = blocked
         for chatID in gone { await Self.removeDeliveredNow(chatID: chatID) }
         publishSettings(force: !settingsPublished)   // the first time as soon as the store is ready
-        // MERGE(A4): archived chats are already left out of `chats(in: .all)`; nothing else to pass.
+        // Archived chats are already left out of `chats(in: .all)`; nothing else to pass.
         let count = NotificationPlan.badgeCount(unread: unread, muted: NotificationHooks.mutedChatIDs(), archived: [])
         if count != lastBadge {
             lastBadge = count

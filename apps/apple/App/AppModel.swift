@@ -236,6 +236,8 @@ final class AppModel {
         if let url = launch.openURL { handle(url: url) }
         chatStore.onChange = { [weak self] in self?.revision += 1 }
         lock.onHeldChatReleased = { [weak self] id in self?.openChatID = id }
+        // Switching the lock on hides the names and text of notifications already shown.
+        lock.onLockSwitchedOn = { Task { await NotificationActions.shared.hideDeliveredContent() } }
         sampleCalls?.onChange = { [weak self] state in self?.callStateChanged(state) }
         Task { await refreshDevices() }
         #if os(macOS)
@@ -275,7 +277,10 @@ final class AppModel {
     /// The Privacy switch: needs one passed prompt. Mirrors the result into `settings`.
     func setAppLock(_ on: Bool) async -> LockSwitchOutcome {
         let outcome = await lock.requestSetEnabled(on, reason: String(localized: "Unlock \(AppBrand.name)"))
-        if outcome == .changed { settings.appLock = lock.appLockOn }
+        if outcome == .changed {
+            settings.appLock = lock.appLockOn
+            NotificationActions.shared.storeChanged()   // the notification extension reads the new setting
+        }
         return outcome
     }
 
