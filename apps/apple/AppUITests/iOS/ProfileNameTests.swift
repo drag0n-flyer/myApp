@@ -4,6 +4,11 @@ import XCTest
 final class ProfileNameTests: XCTestCase {
     override func setUp() { continueAfterFailure = false }
 
+    /// The name sits inside a row that reads as one element ("Name, Asha Rao"), so look for it in any label.
+    private func shows(_ name: String, in app: XCUIApplication) -> Bool {
+        app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", name)).firstMatch.waitToExist()
+    }
+
     func testEditingTheNameShowsItOnTheProfileAndInSettings() {
         let app = XCUIApplication.launched()
         app.tab("Settings").tap()
@@ -23,9 +28,9 @@ final class ProfileNameTests: XCTestCase {
         XCTAssertTrue(app.buttons["profile.name.save"].isEnabled)
         app.buttons["profile.name.save"].tap()
 
-        XCTAssertTrue(app.staticTexts["Asha Rao"].waitToExist())
+        XCTAssertTrue(shows("Asha Rao", in: app))
         app.navigationBars.buttons.firstMatch.tap()
-        XCTAssertTrue(app.staticTexts["Asha Rao"].waitToExist())
+        XCTAssertTrue(shows("Asha Rao", in: app))
     }
 
     func testCancelKeepsTheName() {
@@ -38,6 +43,6 @@ final class ProfileNameTests: XCTestCase {
         field.tap()
         field.typeText("zzz")
         app.buttons["profile.name.cancel"].tap()
-        XCTAssertTrue(app.staticTexts["Your Name"].waitToExist())
+        XCTAssertTrue(shows("Your Name", in: app))
     }
 }

@@ -13,7 +13,8 @@ final class AppLockTests: XCTestCase {
         app.element("settings.privacy").tap()
         let toggle = app.switches["privacy.applock"]
         XCTAssertTrue(toggle.waitToExist())
-        toggle.tap()
+        // The switch sits at the trailing edge of its row.
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
         XCTAssertTrue(app.element("privacy.lockafter").waitToExist())   // on: the delay picker appears
         app.element("privacy.lockafter").tap()
         app.buttons["Immediately"].tap()

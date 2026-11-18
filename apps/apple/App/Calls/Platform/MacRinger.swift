@@ -24,7 +24,7 @@ protocol MacRingHandling: AnyObject, Sendable {
 /// the 45 s cap, stale or ended calls, each action once) live in `MacRingTracker`.
 @MainActor
 final class MacRinger: NSObject, UNUserNotificationCenterDelegate {
-    static let categoryID = "CALL"
+    nonisolated static let categoryID = "CALL"
     static let answerID = "ANSWER"
     static let declineID = "DECLINE"
 
