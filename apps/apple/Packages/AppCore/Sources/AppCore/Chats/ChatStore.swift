@@ -13,7 +13,7 @@ public typealias AttachmentPager = @Sendable (_ before: String?, _ limit: Int) -
 
 /// Chats, contacts, and message requests. `SampleChatStore` now; the real MLS-backed store later.
 @MainActor
-public protocol ChatStore: AnyObject {
+public protocol ChatStore: PeopleStore {
     var me: Contact { get }
     /// The own name as stored on this device, or "" when none is stored. `me.displayName` shows the placeholder
     /// "You" in that case; the placeholder is display only and is never offered, sent or stored.
@@ -110,6 +110,50 @@ public struct OutgoingMedia: Equatable, Sendable {
         self.kind = kind
         self.deleteAfterStaging = deleteAfterStaging
     }
+}
+
+/// The name and photo a contact sent in a `profile` message, with its version.
+public struct StoredProfile: Equatable, Sendable {
+    public var accountID: String
+    public var name: String
+    /// A JPEG of at most 24,576 bytes.
+    public var photo: Data?
+    public var ver: Int
+
+    public init(accountID: String, name: String, photo: Data?, ver: Int) {
+        self.accountID = accountID
+        self.name = name
+        self.photo = photo
+        self.ver = ver
+    }
+}
+
+/// Disappearing messages and contact profiles. A separate protocol so stores without a database keep working
+/// through the defaults below.
+@MainActor
+public protocol PeopleStore: AnyObject {
+    /// Seconds a new message in the chat lives: 0 (off), 86,400, 604,800 or 7,776,000.
+    func timerSeconds(_ chatID: String) -> Int
+    /// Sets the chat's timer on this device, writes the system line and tells the other side (`timer` message).
+    /// A number that is not a `TimerChoice` is ignored.
+    func setTimer(_ chatID: String, seconds: Int)
+    /// Removes every message whose time has come (row, attachment files, search entry), and returns their IDs so the
+    /// caller can remove delivered notifications.
+    @discardableResult func sweepExpired(now: Date) -> [String]
+    /// The earliest time a message will expire, for the sweep timer; `nil` when none will.
+    func nextExpiry() -> Date?
+    func profile(for accountID: String) -> StoredProfile?
+    /// Keeps the profile when `ver` is strictly higher than the stored one; `false` (nothing changes) otherwise.
+    @discardableResult func saveProfile(accountID: String, name: String, photo: Data?, ver: Int) -> Bool
+}
+
+extension PeopleStore {
+    public func timerSeconds(_ chatID: String) -> Int { 0 }
+    public func setTimer(_ chatID: String, seconds: Int) {}
+    @discardableResult public func sweepExpired(now: Date) -> [String] { [] }
+    public func nextExpiry() -> Date? { nil }
+    public func profile(for accountID: String) -> StoredProfile? { nil }
+    @discardableResult public func saveProfile(accountID: String, name: String, photo: Data?, ver: Int) -> Bool { false }
 }
 
 extension ChatStore {

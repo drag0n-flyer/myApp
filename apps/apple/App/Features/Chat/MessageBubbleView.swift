@@ -195,6 +195,8 @@ struct SystemEventText: View {
         case .deviceRemoved(nil): Text("You removed a device")
         case .safetyNumberChanged: Text("Safety number changed")
         case .messagesPaused: Text("Messages in this chat are paused. Open chat info for details.")
+        // Placeholder wording until the disappearing-messages screens (P3) add the catalog strings.
+        case .timer: Text(verbatim: event.text)
         }
     }
 }

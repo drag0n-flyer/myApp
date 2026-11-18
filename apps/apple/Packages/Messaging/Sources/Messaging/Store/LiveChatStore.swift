@@ -335,7 +335,8 @@ public final class LiveChatStore: ChatStore {
     private func enqueue(_ body: ContentEnvelope.Body, chatID: String) {
         guard ensureChatRow(chatID) != nil else { return }
         let at = stamp()
-        let envelope = ContentEnvelope(id: freshID(), at: Int64((at.timeIntervalSince1970 * 1000).rounded()), body: body)
+        let envelope = ContentEnvelope(
+            id: freshID(), at: Int64((at.timeIntervalSince1970 * 1000).rounded()), body: body, ttl: currentTTL(chatID))
         do {
             try outbox.enqueue(envelope, chatID: chatID)
             bumpActivity(chatID, at: at)
@@ -437,11 +438,13 @@ public final class LiveChatStore: ChatStore {
         default: body = .file(placeholder, name: meta.name, mime: meta.mime, replyTo: nil)
         }
         let at = stamp()
-        let envelope = ContentEnvelope(id: id, at: Int64((at.timeIntervalSince1970 * 1000).rounded()), body: body)
+        let envelope = ContentEnvelope(
+            id: id, at: Int64((at.timeIntervalSince1970 * 1000).rounded()), body: body, ttl: currentTTL(meta.chatID))
         let record = MessageRecord(
             id: id, chatID: meta.chatID, conversationID: nil, senderAccount: deps.me.accountID, senderDevice: deps.me.deviceID,
             sentAt: at, receivedAt: at, envelope: envelope.encoded(), status: "sending", replyTo: nil, editedAt: nil,
-            deleted: false, undecryptable: false, folded: meta.kind == "file" ? fold(meta.name) : "")
+            deleted: false, undecryptable: false, folded: meta.kind == "file" ? fold(meta.name) : "",
+            expiresAt: Outbox.expiry(of: envelope))
         do {
             try repo.transaction {
                 guard try repo.insertMessage(record) else { throw AttachmentServiceError.pendingMissing }
@@ -665,7 +668,7 @@ public final class LiveChatStore: ChatStore {
               record.senderAccount == deps.me.accountID, !record.deleted,
               case .text(_, let reply) = ContentEnvelope.decode(record.envelope).body else { return }
         let old = ContentEnvelope.decode(record.envelope)
-        let edited = ContentEnvelope(id: old.id, at: old.at, body: .text(newText, replyTo: reply)).encoded()
+        let edited = ContentEnvelope(id: old.id, at: old.at, body: .text(newText, replyTo: reply), ttl: old.ttl).encoded()
         guard (try? repo.applyEdit(id: messageID, sender: deps.me.accountID, envelope: edited, folded: fold(newText), at: deps.now())) == true
         else { return }
         refresh()
@@ -698,6 +701,76 @@ public final class LiveChatStore: ChatStore {
     }
 
     /// Queued in the chat's outbox, behind the message it refers to; retried like a message.
+    /// The life a new message gets: the chat's timer, or none while it is off.
+    private func currentTTL(_ chatID: String) -> Int? {
+        let seconds = (try? repo.timerSeconds(chatID: chatID)) ?? 0
+        return seconds > 0 ? seconds : nil
+    }
+
+    // MARK: - Disappearing messages and profiles
+
+    public func timerSeconds(_ chatID: String) -> Int {
+        (try? repo.timerSeconds(chatID: chatID)) ?? 0
+    }
+
+    /// Sets the timer here at once, writes the system line, and queues one `timer` message behind what is already
+    /// queued in the chat, so the next message carries the new `ttl` on both sides. Refuses a number that is not a
+    /// choice, and does nothing when the timer already has that value.
+    public func setTimer(_ chatID: String, seconds: Int) {
+        guard !closed, TimerChoice.from(seconds: seconds) != nil, ensureChatRow(chatID) != nil,
+              timerSeconds(chatID) != seconds else { return }
+        let at = deps.now()
+        let line = MessageRecord(
+            id: "sys-timer-\(freshID())", chatID: chatID, conversationID: nil, senderAccount: ChatMapping.systemSender,
+            senderDevice: nil, sentAt: at, receivedAt: at,
+            envelope: (try? JSONEncoder().encode(SystemEvent.timer(seconds: seconds, name: nil))) ?? Data(), status: "sent",
+            replyTo: nil, editedAt: nil, deleted: false, undecryptable: false, folded: "")
+        let repo = repo
+        guard (try? repo.transaction { () throws -> Void in
+            try repo.setTimer(chatID: chatID, seconds: seconds)
+            try repo.insertMessage(line)
+        }) != nil else { return }
+        bumpActivity(chatID, at: at)
+        refresh()
+        sendControl(.timer(seconds: seconds), chatID: chatID)
+    }
+
+    /// Removes what has expired and returns the IDs (so delivered notifications can go too). Files are deleted
+    /// after the database commit, only inside the media folder; an unfinished upload's folder goes with its row.
+    @discardableResult
+    public func sweepExpired(now: Date) -> [String] {
+        guard !closed, let removed = try? repo.sweepExpired(now: now), !removed.isEmpty else { return [] }
+        for message in removed {
+            for path in message.localPaths where MediaPathGuard.isInside(URL(fileURLWithPath: path), directory: deps.mediaDirectory) {
+                try? FileManager.default.removeItem(atPath: path)
+            }
+            if let folder = pendingFolder(message.id) { PendingUpload.removeFolder(folder) }
+            uploadFraction[message.id] = nil
+            tooBig.remove(message.id)
+        }
+        refresh()
+        return removed.map(\.id)
+    }
+
+    public func nextExpiry() -> Date? { (try? repo.nextExpiry()) ?? nil }
+
+    public func profile(for accountID: String) -> StoredProfile? {
+        guard let record = (try? repo.profile(for: accountID)) ?? nil else { return nil }
+        return StoredProfile(accountID: record.accountID, name: record.name, photo: record.photo, ver: record.ver)
+    }
+
+    /// The same rules as a received `profile`: a name that passes `DisplayNameRule.clean` unchanged, a JPEG photo of
+    /// at most 24,576 bytes, and a version strictly higher than the stored one.
+    @discardableResult
+    public func saveProfile(accountID: String, name: String, photo: Data?, ver: Int) -> Bool {
+        guard !closed, DisplayNameRule.clean(name) == name,
+              photo.map({ LinkPreview.isJPEG($0, max: ContentEnvelope.maxProfilePhoto) }) ?? true,
+              ProfileMerge.accept(current: (try? repo.profile(for: accountID))?.ver, incoming: ver),
+              (try? repo.saveProfile(accountID: accountID, name: name, photo: photo, ver: ver)) == true else { return false }
+        refresh()
+        return true
+    }
+
     private func sendControl(_ body: ContentEnvelope.Body, chatID: String) {
         guard (try? outbox.enqueueControl(body, chatID: chatID)) != nil else { return }
         let outbox = outbox

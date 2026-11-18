@@ -285,6 +285,19 @@ public struct LinkPreview: Sendable, Equatable {
 
     var wire: Wire { Wire(url: url, title: title, desc: desc, img: img) }
 
+    /// The preview as stored in `messages.link_preview` (sorted keys, binary as base64).
+    public var json: String? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        return (try? encoder.encode(wire)).map { String(decoding: $0, as: UTF8.self) }
+    }
+
+    /// Reads what `json` wrote; `nil` for anything else.
+    public init?(json: String) {
+        guard let wire = try? JSONDecoder().decode(Wire.self, from: Data(json.utf8)) else { return nil }
+        self.init(url: wire.url, title: wire.title, desc: wire.desc, img: wire.img)
+    }
+
     /// Starts with FF D8 and is not empty or over `max` bytes.
     static func isJPEG(_ data: Data, max: Int) -> Bool {
         data.count >= 2 && data.count <= max && data[data.startIndex] == 0xFF && data[data.startIndex + 1] == 0xD8
