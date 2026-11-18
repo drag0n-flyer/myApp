@@ -8,7 +8,6 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.example.app.core.chats.Chat
-import org.example.app.core.chats.DraftKeeper
 import org.example.app.messaging.content.TextLimit
 import org.example.app.push.Deadline
 import org.example.app.push.NotificationActionSink
@@ -19,6 +18,8 @@ interface NotificationStore {
     fun chat(chatId: String): Chat?
     /** Account IDs this device has blocked; a chat's ID is its contact's account ID. */
     fun blocked(): Set<String>
+    /** Saves the chat's unsent text (blank or null removes it) and returns once it is written. */
+    suspend fun setDraft(chatId: String, text: String?)
     suspend fun markRead(chatId: String)
     /** The new message's id once it is in the outbox; null when nothing was queued. */
     suspend fun sendReturningId(chatId: String, text: String, waitMs: Long): String?
@@ -32,7 +33,6 @@ interface NotificationStore {
  */
 class LiveNotificationActions(
     private val store: suspend () -> NotificationStore?,
-    private val drafts: (accountId: String) -> DraftKeeper,
     /** The longest to wait for the new message's id, and for the outbox's first send attempt. Both also end at the deadline. */
     private val idWaitMs: Long = 4_000,
     private val settleMs: Long = 3_000,
@@ -86,6 +86,6 @@ class LiveNotificationActions(
 
     override suspend fun saveDraft(chatId: String, text: String) = withContext(Dispatchers.IO) {
         val s = store() ?: return@withContext
-        saveReplyDraft(drafts(s.meId), chatId, text)
+        saveReplyDraft(s, chatId, text)
     }
 }

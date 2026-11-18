@@ -8,7 +8,6 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.test.runTest
 import org.example.app.core.chats.Chat
 import org.example.app.core.chats.ChatEncryption
-import org.example.app.core.chats.DraftKeeper
 import org.example.app.push.Deadline
 
 private class Clock { var ms = 0L; fun nanos() = ms * 1_000_000 }
@@ -25,7 +24,11 @@ private class FakeStore(
     val waitsAsked = mutableListOf<Long>()
     var onSend: () -> Unit = {}
 
-    override fun chat(chatId: String) = chats[chatId]
+    val drafts = mutableMapOf<String, String>()
+    override fun chat(chatId: String) = chats[chatId]?.copy(draft = drafts[chatId])
+    override suspend fun setDraft(chatId: String, text: String?) {
+        if (text.isNullOrBlank()) drafts.remove(chatId) else drafts[chatId] = text
+    }
     override fun blocked() = blocked
     override suspend fun markRead(chatId: String) { calls += "read:$chatId" }
     override suspend fun sendReturningId(chatId: String, text: String, waitMs: Long): String? {
@@ -47,11 +50,10 @@ private fun chat(id: String, request: Boolean = false) = Chat(
 )
 
 class LiveNotificationActionsTest {
-    private val keeper = DraftKeeper()
     private fun fresh() = Deadline.after(9_000)
 
     private fun actions(store: NotificationStore?, settleMs: Long = 50) =
-        LiveNotificationActions({ store }, { keeper }, settleMs = settleMs)
+        LiveNotificationActions({ store }, settleMs = settleMs)
 
     @Test
     fun aKnownChatIsMarkedRead() = runTest {
@@ -129,21 +131,32 @@ class LiveNotificationActionsTest {
 
     @Test
     fun aDraftIsAppendedWithANewlineToWhatIsAlreadyTyped() = runTest {
-        keeper.set("half a thought", "c1")
-        actions(FakeStore()).saveDraft("c1", "my reply")
-        assertEquals("half a thought\nmy reply", keeper.draft("c1"))
+        val s = FakeStore().apply { drafts["c1"] = "half a thought" }
+        actions(s).saveDraft("c1", "my reply")
+        assertEquals("half a thought\nmy reply", s.drafts["c1"])
+        actions(s).saveDraft("c1", "and again")
+        assertEquals("half a thought\nmy reply\nand again", s.drafts["c1"], "never replaced")
+    }
+
+    @Test
+    fun aRefusedReplyLeavesItsTextAsADraftInTheStore() = runTest {
+        val s = FakeStore(blocked = setOf("c1"))
+        val a = actions(s)
+        assertFalse(a.reply("c1", "lost words", fresh()))
+        a.saveDraft("c1", "lost words")
+        assertEquals("lost words", s.drafts["c1"])
     }
 
     @Test
     fun aDraftIsJustTheTextWhenNothingWasTyped() = runTest {
-        actions(FakeStore()).saveDraft("c1", "my reply")
-        assertEquals("my reply", keeper.draft("c1"))
+        val s = FakeStore()
+        actions(s).saveDraft("c1", "my reply")
+        assertEquals("my reply", s.drafts["c1"])
     }
 
     @Test
     fun noSessionKeepsNoDraftAndDoesNotCrash() = runTest {
         actions(null).saveDraft("c1", "my reply")
-        assertEquals("", keeper.draft("c1"))
     }
 
     // ---- the time budget: the whole reply must end before the deadline the receiver set
@@ -155,7 +168,6 @@ class LiveNotificationActionsTest {
         var queueCost = 0L
         val sink = LiveNotificationActions(
             store = { clock.ms += openCost; store },
-            drafts = { DraftKeeper() },
             bounded = { ms, block -> waits += ms; block() },
         )
         fun deadline() = Deadline.after(9_000, clock::nanos)
@@ -195,7 +207,7 @@ class LiveNotificationActionsTest {
 
     @Test
     fun aSessionThatNeverOpensEndsAtTheDeadlineAsNotSent() = runTest {
-        val hung = LiveNotificationActions(store = { CompletableDeferred<NotificationStore?>().await() }, drafts = { DraftKeeper() })
+        val hung = LiveNotificationActions(store = { CompletableDeferred<NotificationStore?>().await() })
         assertFalse(hung.reply("c1", "hello", Deadline.after(50)))
     }
 }

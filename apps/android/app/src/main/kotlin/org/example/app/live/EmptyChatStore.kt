@@ -30,8 +30,13 @@ object EmptyChatStore : ChatStore {
     override val requests: StateFlow<List<Chat>> = MutableStateFlow(emptyList())
     override val blockedIds: StateFlow<Set<String>> = MutableStateFlow(emptySet())
     override val reportedChatIds: StateFlow<Set<String>> = MutableStateFlow(emptySet())
+    override val mutedChatIds: StateFlow<Set<String>> = MutableStateFlow(emptySet())
     override val supportsSafetyNumbers = false
 
+    override fun setPinned(chatId: String, pinned: Boolean) = false
+    override fun setMuted(chatId: String, muted: Boolean) = Unit
+    override fun setArchived(chatId: String, archived: Boolean) = Unit
+    override fun setDraft(chatId: String, text: String?) = Unit
     override fun chat(id: String): Chat? = null
     override fun contact(id: String): Contact? = null
     override fun messages(chatId: String, before: String?, limit: Int): List<Message> = emptyList()

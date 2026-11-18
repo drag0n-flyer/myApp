@@ -22,6 +22,21 @@ data class ChatEntity(
     val unread: Int,
     val muted: Boolean,
     @ColumnInfo(name = "last_activity") val lastActivity: Long,
+    /** Epoch milliseconds when pinned on this device; null when not pinned. Added in version 2. */
+    @ColumnInfo(name = "pinned_at") val pinnedAt: Long? = null,
+    /** Added in version 2. Never changed by an incoming message. */
+    @ColumnInfo(defaultValue = "0") val archived: Boolean = false,
+)
+
+/** Unsent composer text, one row per chat. Whitespace-only text is never stored. Added in version 2. */
+@Entity(
+    tableName = "drafts",
+    foreignKeys = [ForeignKey(ChatEntity::class, ["id"], ["chat_id"], onDelete = ForeignKey.CASCADE)],
+)
+data class DraftEntity(
+    @PrimaryKey @ColumnInfo(name = "chat_id") val chatId: String,
+    val text: String,
+    @ColumnInfo(name = "updated_at") val updatedAt: Long,
 )
 
 @Entity(

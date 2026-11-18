@@ -27,6 +27,7 @@ class InMemoryRepository : Repository {
     private data class State(
         val contacts: MutableMap<String, ContactRecord> = linkedMapOf(),
         val chats: MutableMap<String, ChatRecord> = linkedMapOf(),
+        val drafts: MutableMap<String, String> = linkedMapOf(),
         val conversations: MutableMap<String, ConversationRecord> = sortedMapOf(),
         val members: MutableMap<String, List<MemberRecord>> = linkedMapOf(),
         val safety: MutableMap<String, SafetyRecord> = linkedMapOf(),
@@ -43,7 +44,7 @@ class InMemoryRepository : Repository {
         val kv: MutableMap<String, ByteArray> = sortedMapOf(),
     ) {
         fun copy(): State = State(
-            LinkedHashMap(contacts), LinkedHashMap(chats), java.util.TreeMap(conversations), LinkedHashMap(members),
+            LinkedHashMap(contacts), LinkedHashMap(chats), LinkedHashMap(drafts), java.util.TreeMap(conversations), LinkedHashMap(members),
             LinkedHashMap(safety), LinkedHashMap(messages), LinkedHashMap(reactions), LinkedHashMap(attachments),
             LinkedHashMap(outbox), java.util.TreeMap(raw), LinkedHashMap(processed), LinkedHashMap(folders),
             LinkedHashMap(folderChats), LinkedHashMap(blocked), ArrayList(calls), java.util.TreeMap(kv),
@@ -100,8 +101,24 @@ class InMemoryRepository : Repository {
     override fun chats() = tx { s.chats.values.sortedByDescending { it.lastActivity } }
     override fun setUnread(chatId: String, n: Int) = tx { s.chats[chatId]?.let { s.chats[chatId] = it.copy(unread = n) }; Unit }
     override fun setRequest(chatId: String, value: Boolean) = tx { s.chats[chatId]?.let { s.chats[chatId] = it.copy(isRequest = value) }; Unit }
+    override fun bumpActivity(chatId: String, at: Long) = tx { s.chats[chatId]?.let { if (at > it.lastActivity) s.chats[chatId] = it.copy(lastActivity = at) }; Unit }
+    override fun reduceUnread(chatId: String, n: Int) = tx { s.chats[chatId]?.let { s.chats[chatId] = it.copy(unread = maxOf(0, it.unread - n)) }; Unit }
+    override fun bumpChat(chatId: String, unreadDelta: Int, at: Long) = tx {
+        s.chats[chatId]?.let { s.chats[chatId] = it.copy(unread = it.unread + unreadDelta, lastActivity = maxOf(it.lastActivity, at)) }
+        Unit
+    }
+    override fun setPinnedAt(chatId: String, at: Long?) = tx { s.chats[chatId]?.let { s.chats[chatId] = it.copy(pinnedAt = at) }; Unit }
+    override fun setMuted(chatId: String, muted: Boolean) = tx { s.chats[chatId]?.let { s.chats[chatId] = it.copy(muted = muted) }; Unit }
+    override fun setArchived(chatId: String, archived: Boolean) = tx { s.chats[chatId]?.let { s.chats[chatId] = it.copy(archived = archived, pinnedAt = if (archived) null else it.pinnedAt) }; Unit }
+    override fun draft(chatId: String) = tx { s.drafts[chatId] }
+    override fun drafts() = tx { s.drafts.toMap() }
+    override fun setDraft(chatId: String, text: String?, at: Long) = tx {
+        if (text.isNullOrBlank()) s.drafts.remove(chatId) else if (chatId in s.chats) s.drafts[chatId] = text
+        Unit
+    }
     override fun deleteChat(id: String) = tx {
         s.chats.remove(id)
+        s.drafts.remove(id)
         val convs = s.conversations.values.filter { it.chatId == id }.map { it.serverId }
         convs.forEach { s.conversations.remove(it); s.members.remove(it) }
         val msgs = s.messages.values.filter { it.chatId == id }.map { it.id }.toSet()

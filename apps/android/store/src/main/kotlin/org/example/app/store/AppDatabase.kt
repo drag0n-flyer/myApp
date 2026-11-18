@@ -16,9 +16,9 @@ import net.zetetic.database.sqlcipher.SupportOpenHelperFactory
         ContactEntity::class, ChatEntity::class, ConversationEntity::class, MemberEntity::class, SafetyEntity::class,
         MessageEntity::class, ReactionEntity::class, AttachmentEntity::class, OutboxEntity::class, InboxRawEntity::class,
         ProcessedEntity::class, FolderEntity::class, FolderChatEntity::class, BlockedEntity::class, CallEntity::class,
-        KvEntity::class,
+        KvEntity::class, DraftEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -31,6 +31,9 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun misc(): MiscDao
 
     companion object {
+        /** Every schema upgrade, in order. There is no destructive fallback: a gap here fails the open instead of erasing messages. */
+        val MIGRATIONS = arrayOf(Migration1To2)
+
         const val FILE_NAME = "messages.db"
         private const val FTS_TABLE = "messages_fts"
 
@@ -41,6 +44,7 @@ abstract class AppDatabase : RoomDatabase() {
             return Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, name)
                 .openHelperFactory(ForeignKeysOnEveryConnection(factory))
                 .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
+                .addMigrations(*MIGRATIONS)
                 .addCallback(callback(allowNoFts = false))
                 .build()
         }

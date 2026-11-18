@@ -9,10 +9,8 @@ import org.example.app.AppGraph
 import org.example.app.contracts.NotificationOutcome
 import org.example.app.core.chats.ChatStore
 import org.example.app.messaging.LiveChatStore
-import org.example.app.core.chats.DraftKeeper
 import org.example.app.core.notify.NotificationPlan
 import org.example.app.push.MessageNotifier
-import org.example.app.ui.chat.ProcessDrafts
 import org.example.app.ui.lock.LockSwitch
 import org.example.app.ui.settings.SettingsStore
 import org.example.app.SETTINGS_PREFS
@@ -74,12 +72,12 @@ object PushWiring {
                 graph().openSession()?.chatStore?.recordStrangerMissedCall(callId, fromAccountId)
             }
         }
-        // The two switches the notifications read. Wired here and nowhere else. App lock is a plain in-memory read (the notifier calls it with its lock held); ON until loaded.
-        PushRuntime.mutedChatIds = { emptySet() }
+        // The two switches the notifications read. Wired here and nowhere else. Both are plain in-memory reads (the notifier calls them with its lock held).
+        // App lock is ON until loaded. The mute list is the current session's, already loaded because every entry point opens the session first.
+        wireSwitches { graph().chatStore }
         PushRuntime.appLockOn = { lock.on }
         PushRuntime.notificationActions = LiveNotificationActions(
             store = { graph().openSession()?.chatStore?.let(::SessionNotificationStore) },
-            drafts = { ProcessDrafts.keeperFor(it) },
         )
         PushRuntime.dispatcher = PushDispatcher(handler, ring, AndroidPushEffects(app, missed))
         PushRuntime.inboxFetcher = object : InboxFetcher {
@@ -95,6 +93,14 @@ object PushWiring {
                 registrar(graph())?.register(PushTransport.Fcm, PushRegistration.Fcm(token))
             }
         }
+    }
+
+    /**
+     * The mute switch. [store] is the current session's store, or an empty one while no session is open (it never opens
+     * anything and never waits). A plain in-memory read: no disk, no blocking, safe under the notifier's lock.
+     */
+    internal fun wireSwitches(store: () -> ChatStore) {
+        PushRuntime.mutedChatIds = { store().mutedChatIds.value }
     }
 
     /**
@@ -149,10 +155,10 @@ object PushWiring {
     }
 }
 
-/** Adds [text] to the chat's unsent draft, after what is already typed there, never replacing it. N4's `ChatStore.setDraft` replaces the body of this function. */
-internal fun saveReplyDraft(keeper: DraftKeeper, chatId: String, text: String) {
-    val typed = keeper.draft(chatId)
-    keeper.set(if (typed.isBlank()) text else typed + "\n" + text, chatId)
+/** Adds [text] to the chat's unsent draft, after what is already typed there, never replacing it. */
+internal suspend fun saveReplyDraft(store: NotificationStore, chatId: String, text: String) {
+    val typed = store.chat(chatId)?.draft.orEmpty()
+    store.setDraft(chatId, if (typed.isBlank()) text else typed + "\n" + text)
 }
 
 /** The live store as the notification buttons see it. */
@@ -160,6 +166,10 @@ private class SessionNotificationStore(private val store: LiveChatStore) : Notif
     override val meId: String get() = store.me.id
     override fun chat(chatId: String) = store.chat(chatId)
     override fun blocked(): Set<String> = store.blockedIds.value
+    override suspend fun setDraft(chatId: String, text: String?) {
+        store.setDraft(chatId, text)
+        store.awaitWrites()
+    }
     override suspend fun markRead(chatId: String) {
         store.markRead(chatId)
         store.awaitWrites()

@@ -24,7 +24,6 @@ import org.example.app.core.chats.Chat
 import org.example.app.core.chats.ChatEncryption
 import org.example.app.core.chats.ChatStore
 import org.example.app.core.chats.DeliveryStatus
-import org.example.app.core.chats.DraftKeeper
 import org.example.app.core.chats.Message
 import org.example.app.core.chats.MessageContent
 import org.example.app.core.chats.MessageHit
@@ -84,8 +83,8 @@ class ChatScreenActionsTest {
     private var blocks = 0
     private var reports = 0
 
-    private fun launch(store: ChatStore, highlight: String? = null, drafts: DraftKeeper = DraftKeeper()): ChatViewModel {
-        val vm = ChatViewModel(store, "chat-riya", NetworkType.Wifi, drafts, Dispatchers.Unconfined) { AutoDownloadSettings() }
+    private fun launch(store: ChatStore, highlight: String? = null): ChatViewModel {
+        val vm = ChatViewModel(store, "chat-riya", NetworkType.Wifi, Dispatchers.Unconfined) { AutoDownloadSettings() }
         rule.setContent {
             AppTheme {
                 ChatScreen(
@@ -438,11 +437,12 @@ class ChatScreenActionsTest {
 
     @Test
     fun aDraftIsKeptWhenTheChatIsClosedAndReopened() {
-        val keeper = DraftKeeper()
-        val first = launch(sampleWith(listOf(m(1))), drafts = keeper)
+        val store = sampleWith(listOf(m(1)))
+        val first = launch(store)
         rule.onNodeWithText("Message").performTextInput("unsent thought")
         rule.waitForIdle()
         assertEquals("unsent thought", first.draft())
+        assertEquals("unsent thought", store.chat("chat-riya")?.draft)
     }
 
     @Test

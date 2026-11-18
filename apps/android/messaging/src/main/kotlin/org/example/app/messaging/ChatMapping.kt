@@ -126,6 +126,7 @@ internal object ChatMapping {
     ) = Chat(
         id = record.id, contactId = record.id, encryption = encryption(preferred), folderIds = folderIds, unreadCount = record.unread,
         messages = messages, isRequest = record.isRequest, modeMismatch = conversations.any { it.modeMismatch },
+        pinnedAt = record.pinnedAt?.let(java.time.Instant::ofEpochMilli), muted = record.muted, archived = record.archived,
     )
 
     /** A stored number (12 groups of 5 digits, joined) split into its groups. */

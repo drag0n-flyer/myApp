@@ -45,11 +45,21 @@ class RoomRepository(private val db: AppDatabase, allowLikeFallback: Boolean = f
     override fun contacts() = contacts.all().map { it.toRecord() }
 
     // chats
-    override fun upsertChat(c: ChatRecord) = chats.upsert(ChatEntity(c.id, c.isRequest, c.unread, c.muted, c.lastActivity))
+    override fun upsertChat(c: ChatRecord) = chats.upsert(ChatEntity(c.id, c.isRequest, c.unread, c.muted, c.lastActivity, c.pinnedAt, c.archived))
     override fun chat(id: String) = chats.get(id)?.toRecord()
     override fun chats() = chats.all().map { it.toRecord() }
     override fun setUnread(chatId: String, n: Int) = chats.setUnread(chatId, n)
     override fun setRequest(chatId: String, value: Boolean) = chats.setRequest(chatId, value)
+    override fun bumpActivity(chatId: String, at: Long) = chats.bumpActivity(chatId, at)
+    override fun reduceUnread(chatId: String, n: Int) = chats.reduceUnread(chatId, n)
+    override fun bumpChat(chatId: String, unreadDelta: Int, at: Long) = chats.bumpChat(chatId, unreadDelta, at)
+    override fun setPinnedAt(chatId: String, at: Long?) = chats.setPinnedAt(chatId, at)
+    override fun setMuted(chatId: String, muted: Boolean) = chats.setMuted(chatId, muted)
+    override fun setArchived(chatId: String, archived: Boolean) = chats.setArchived(chatId, archived)
+    override fun draft(chatId: String) = chats.draft(chatId)
+    override fun drafts() = chats.drafts().associate { it.chatId to it.text }
+    override fun setDraft(chatId: String, text: String?, at: Long) =
+        if (text.isNullOrBlank()) chats.deleteDraft(chatId) else chats.putDraft(chatId, text, at)
     override fun deleteChat(id: String) = transaction {
         chats.deleteOutbox(id)
         chats.delete(id)
@@ -240,7 +250,7 @@ class RoomRepository(private val db: AppDatabase, allowLikeFallback: Boolean = f
             // Children go with their chats, folders and messages by cascade.
             db.openHelper.writableDatabase.execSQL("DELETE FROM outbox")
             db.openHelper.writableDatabase.let { w ->
-                listOf("messages", "chats", "contacts", "inbox_raw", "processed", "folders", "blocked", "kv", "calls").forEach {
+                listOf("drafts", "messages", "chats", "contacts", "inbox_raw", "processed", "folders", "blocked", "kv", "calls").forEach {
                     w.execSQL("DELETE FROM $it")
                 }
             }
@@ -258,7 +268,7 @@ class RoomRepository(private val db: AppDatabase, allowLikeFallback: Boolean = f
 }
 
 private fun ContactEntity.toRecord() = ContactRecord(accountId, username, displayName, isContact, addedAt)
-private fun ChatEntity.toRecord() = ChatRecord(id, isRequest, unread, muted, lastActivity)
+private fun ChatEntity.toRecord() = ChatRecord(id, isRequest, unread, muted, lastActivity, pinnedAt, archived)
 private fun ConversationEntity.toRecord() = ConversationRecord(serverId, chatId, groupId, mode, innerMode, modeMismatch, epoch, active, createdAt)
 private fun MessageRecord.toEntity() = MessageEntity(
     id, chatId, conversationId, senderAccount, senderDevice, sentAt, receivedAt, envelope, status, replyTo, editedAt,

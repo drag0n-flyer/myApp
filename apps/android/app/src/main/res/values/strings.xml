@@ -469,4 +469,17 @@
     <string name="media_record_failed">Couldn\'t record the voice message.</string>
     <string name="media_file_unreadable">Couldn\'t read that file.</string>
     <string name="media_file_too_big">That file is too big to send.</string>
+
+    <!-- Chat list actions and drafts -->
+    <string name="chat_action_pin">Pin</string>
+    <string name="chat_action_unpin">Unpin</string>
+    <string name="chat_action_archive">Archive</string>
+    <string name="chat_action_unarchive">Unarchive</string>
+    <string name="chat_action_mark_read">Mark as read</string>
+    <string name="archived_row">Archived</string>
+    <string name="archive_empty">No archived chats</string>
+    <string name="pin_limit">You can pin up to 5 chats.</string>
+    <string name="chat_draft_label">Draft:</string>
+    <string name="chat_pinned">Pinned</string>
+    <string name="chat_muted">Muted</string>
 </resources>

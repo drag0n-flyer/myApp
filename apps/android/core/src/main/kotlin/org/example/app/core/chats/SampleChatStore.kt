@@ -38,10 +38,36 @@ class SampleChatStore(
     override val requests: StateFlow<List<Chat>> = _requests.asStateFlow()
     override val blockedIds: StateFlow<Set<String>> = _blocked.asStateFlow()
     override val reportedChatIds: StateFlow<Set<String>> = _reported.asStateFlow()
+    private val _muted = MutableStateFlow<Set<String>>(emptySet())
+    override val mutedChatIds: StateFlow<Set<String>> = _muted.asStateFlow()
     override val supportsSafetyNumbers: Boolean = true
 
     init {
         publish()
+    }
+
+    override fun setPinned(chatId: String, pinned: Boolean): Boolean = synchronized(lock) {
+        val chat = allChats.firstOrNull { it.id == chatId } ?: return false
+        if (!pinned) {
+            mutate { change(chatId) { it.copy(pinnedAt = null) } }
+            return true
+        }
+        if (chat.archived) return false // an archived chat is never pinned
+        if (chat.pinnedAt != null) return true
+        if (allChats.count { it.pinnedAt != null && !it.archived } >= ChatListOrder.MAX_PINS) return false
+        mutate { change(chatId) { it.copy(pinnedAt = clock()) } }
+        true
+    }
+
+    override fun setMuted(chatId: String, muted: Boolean) = mutate { change(chatId) { it.copy(muted = muted) } }
+
+    /** Archiving also unpins; unarchiving does not pin again. */
+    override fun setArchived(chatId: String, archived: Boolean) = mutate {
+        change(chatId) { it.copy(archived = archived, pinnedAt = if (archived) null else it.pinnedAt) }
+    }
+
+    override fun setDraft(chatId: String, text: String?) = mutate {
+        change(chatId) { it.copy(draft = text?.takeIf { t -> t.isNotBlank() }) }
     }
 
     override fun chat(id: String): Chat? = synchronized(lock) { allChats.firstOrNull { it.id == id } }
@@ -221,8 +247,8 @@ class SampleChatStore(
     }
 
     private fun publish() {
-        _chats.value = allChats.filterNot { it.isRequest }
-            .sortedByDescending { it.lastMessage?.sentAt ?: Instant.MIN }
+        _chats.value = ChatListOrder.sorted(allChats.filterNot { it.isRequest })
+        _muted.value = allChats.filter { it.muted }.map { it.id }.toSet()
         _requests.value = allChats.filter { it.isRequest }
     }
 

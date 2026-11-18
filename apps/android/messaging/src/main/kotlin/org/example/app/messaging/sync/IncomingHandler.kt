@@ -216,18 +216,13 @@ class IncomingHandler(
             if (fromMe && kind == ReceiptKind.Read && message.senderAccount != me.accountId && message.status != "read") unreadCleared += 1
         }
         repo.updateStatus(valid, kind.wire)
-        if (unreadCleared > 0) repo.chat(chatId)?.let { repo.setUnread(chatId, maxOf(0, it.unread - unreadCleared)) }
+        if (unreadCleared > 0) repo.reduceUnread(chatId, unreadCleared)
     }
 
     /** An incoming message from someone else counts as unread and moves the chat up. */
     private fun bumpChat(message: MessageRecord, repo: Repository) {
-        val chat = repo.chat(message.chatId) ?: return
-        repo.upsertChat(
-            chat.copy(
-                unread = chat.unread + if (message.senderAccount != me.accountId) 1 else 0,
-                lastActivity = maxOf(chat.lastActivity, minOf(message.sentAt, clock.now())),
-            ),
-        )
+        // One statement: reading the row and writing it back could undo a pin, mute or archive made in between.
+        repo.bumpChat(message.chatId, if (message.senderAccount != me.accountId) 1 else 0, minOf(message.sentAt, clock.now()))
     }
 }
 
