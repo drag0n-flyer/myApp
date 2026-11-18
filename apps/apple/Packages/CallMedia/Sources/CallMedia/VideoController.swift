@@ -7,7 +7,7 @@ import CoreMedia
 
 /// Camera capture and sender limits for a video tier. UNVERIFIED against WebRTC M156 (not compiled here).
 /// Tier values come from CallCore (`MediaLogic.videoParameters`, which reads `VideoLadder`).
-// @unchecked Sendable: all stored properties are immutable `let`s, and WebRTC's sender, source and capturer accept calls from any thread.
+// @unchecked Sendable: the mutable fields (`position`, `running`, `lastTierStore`) are only touched under `lock`, the rest are immutable `let`s, and WebRTC's sender, source and capturer accept calls from any thread.
 final class VideoController: @unchecked Sendable {
     private let source: RTCVideoSource
     private let track: RTCVideoTrack

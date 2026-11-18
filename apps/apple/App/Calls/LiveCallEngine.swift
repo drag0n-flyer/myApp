@@ -88,7 +88,13 @@ final class LiveCallEngine {
         pushContext()
     }
 
-    func pathChanged() { runner?.pathChanged() }
+    /// The path change that follows a network change is delivered by `setNetwork` itself; this skips the repeat.
+    private var pathDeliveredByNetworkChange = false
+
+    func pathChanged() {
+        if pathDeliveredByNetworkChange { pathDeliveredByNetworkChange = false; return }
+        runner?.pathChanged()
+    }
 
     private func context(for contactID: String?) -> CallContext {
         let isContact = contactID.map { id in chat.contacts.contains { $0.id == id } } ?? true
@@ -266,9 +272,21 @@ extension LiveCallEngine: @MainActor CallEngine {
         runner?.handle(input)
     }
 
+    /// `network` is always the device's current network (the app model feeds every change), so a call that begins
+    /// starts from it, not from where the last call left off.
     func setNetwork(_ type: NetworkType) {
+        // A repeat changes nothing and must not restart the media path again.
+        guard type != network else { return }
         network = type
-        pushContext()
+        // No connection: record it only. Nothing can be offered over it, and a mode-change offer made now would
+        // block the restart that the network's return needs.
+        guard type != .offline, let runner, !runner.isFinished else { return }
+        // The new network may change the data ceiling. On a path change that offer is the ICE restart itself
+        // (CallRunner.networkChanged), sent at once in the new profile; the path change is delivered with it.
+        runner.networkChanged(context: context(for: runner.contactID))
+        // The app model reports the path change right after the network; it is already handled.
+        pathDeliveredByNetworkChange = true
+        Task { @MainActor [weak self] in self?.pathDeliveredByNetworkChange = false }
     }
 
     func reset() {

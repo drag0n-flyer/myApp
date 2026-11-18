@@ -50,8 +50,9 @@ public final class CallRunner {
     // MARK: - Inputs
 
     /// Feeds the machine and runs what it asks for. State changes and history go out at once; I/O is queued in order.
-    public func handle(_ input: CallInput) {
-        let effects = machine.handle(input)
+    public func handle(_ input: CallInput) { process(machine.handle(input)) }
+
+    private func process(_ effects: [CallEffect]) {
         var queued: [CallEffect] = []
         var publishState = false
         for effect in effects {
@@ -85,6 +86,30 @@ public final class CallRunner {
     }
 
     public func pathChanged() { handle(.pathChanged) }
+
+    /// The network type changed while the call runs (never to "no connection": the engine only records that).
+    /// A new data ceiling asks for a mode-change offer; on a path change that offer must BE the ICE restart
+    /// (same new profile, sent at once). A plain offer would be outstanding when the restart is asked for, and the
+    /// machine would drop the restart, leaving audio dead on the new path for several seconds. The path change is
+    /// delivered afterwards either way; while our offer is outstanding it adds nothing, and the callee's separate
+    /// "please restart" request is left out when the rewrite already sent a restart offer.
+    public func networkChanged(context: CallContext) {
+        var restarted = false
+        let effects = machine.handle(.contextChanged(context)).map { effect -> CallEffect in
+            guard case .makeOffer(let receive, _) = effect else { return effect }
+            restarted = true
+            return .makeOffer(receive: receive, iceRestart: true)
+        }
+        process(effects)
+        var path = machine.handle(.pathChanged)
+        if restarted {
+            path.removeAll { effect in
+                if case .sendSignal(let p) = effect { return p.kind == .renegotiate && p.sdp == nil }
+                return false
+            }
+        }
+        process(path)
+    }
     public func update(context: CallContext) { handle(.contextChanged(context)) }
 
     /// Waits until every queued effect (and the inputs they cause) has run.
