@@ -61,6 +61,14 @@
     <string name="system_device_removed">%1$s removed a device</string>
     <string name="system_safety_number_changed">Safety number changed</string>
     <string name="system_messages_paused">Messages in this chat are paused. Open chat info for details.</string>
+    <string name="system_timer_set_you_day">You set messages to disappear after 1 day</string>
+    <string name="system_timer_set_you_week">You set messages to disappear after 7 days</string>
+    <string name="system_timer_set_you_quarter">You set messages to disappear after 90 days</string>
+    <string name="system_timer_set_other_day">%1$s set messages to disappear after 1 day</string>
+    <string name="system_timer_set_other_week">%1$s set messages to disappear after 7 days</string>
+    <string name="system_timer_set_other_quarter">%1$s set messages to disappear after 90 days</string>
+    <string name="system_timer_off_you">You turned off disappearing messages</string>
+    <string name="system_timer_off_other">%1$s turned off disappearing messages</string>
 
     <!-- Chat list -->
     <string name="folder_all">All</string>
