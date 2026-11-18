@@ -73,4 +73,27 @@ class TimerChoiceSendTest {
         assertEquals(0, st.timerSeconds("acc-ana"))
         assertEquals(2, st.messages("acc-ana", null, 20).count { it.content is MessageContent.System })
     }
+
+    @Test fun bothDevicesViewsExpireAtSentTimePlusTtlNotAtArrival() = runTest {
+        val rig = Rig().start()
+        rig.bob1.repo.upsertContact(ContactRecord("acc-ana", "ana", "Ana", true, NOW))
+        val conv = rig.ana1.manager.create("acc-bob")
+        rig.bob1.processor.sync()
+        val bob = store(rig.bob1)
+        rig.bob1.nowMs = NOW + 50_000 // arrives 50 s after it was sent
+        rig.ana1.send(conv, ContentEnvelope.Text("m1", NOW, "hi", ttl = 100))
+        rig.bob1.processor.sync()
+        bob.refresh()
+        val gone = mutableListOf<String>()
+        val sweeper = org.example.app.core.people.ExpirySweeper(bob, { rig.bob1.nowMs }) { ids, _ -> gone += ids }
+
+        rig.bob1.nowMs = NOW + 99_999
+        assertEquals(NOW + 100_000, sweeper.sweep(), "counted from the sent time, not from arrival")
+        assertNotNull(rig.bob1.repo.message("m1"))
+        rig.bob1.nowMs = NOW + 100_000
+        assertEquals(null, sweeper.sweep())
+        assertEquals(listOf("m1"), gone)
+        assertEquals(null, rig.bob1.repo.message("m1"))
+        assertEquals(0, bob.chat("acc-ana")!!.messages.count { it.id == "m1" }, "the open chat's list no longer has it")
+    }
 }
