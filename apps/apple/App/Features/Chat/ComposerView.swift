@@ -11,6 +11,14 @@ struct ComposerView: View {
     let sendSample: (MessageContent) -> Void
     /// Real attachments and voice notes. When nil, the sample stand-ins above are used.
     var sendAttachment: ((ComposerAttachment) -> Void)?
+    /// The message a reply is being written to; shows the reply bar.
+    var replyingTo: Message?
+    /// Display name of the person `replyingTo` is from.
+    var replyingToName = ""
+    /// The own message being edited; shows the "Editing" bar.
+    var editing: Message?
+    /// Closes whichever bar is showing.
+    var cancelBar: () -> Void = {}
 
     @State private var voice = VoiceRecordingController()
     @State private var showPhotos = false
@@ -20,6 +28,48 @@ struct ComposerView: View {
     private var isEmpty: Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     var body: some View {
+        VStack(spacing: 6) {
+            bar
+            controls
+        }
+        .padding(.horizontal, 10)
+        .padding(.bottom, 6)
+    }
+
+    /// Reply or edit bar above the field.
+    @ViewBuilder
+    private var bar: some View {
+        if editing != nil || replyingTo != nil {
+            HStack(spacing: 10) {
+                Image(systemName: editing != nil ? "pencil" : "arrowshape.turn.up.left")
+                    .foregroundStyle(.tint)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 1) {
+                    if let editing {
+                        Text("Editing").font(.caption.weight(.semibold))
+                        Text(editing.previewText).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    } else if let replyingTo {
+                        Text("Replying to \(replyingToName)").font(.caption.weight(.semibold))
+                        Text(replyingTo.previewText).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .combine)
+                Button(action: cancelBar) {
+                    Image(systemName: "xmark.circle.fill").font(.title3).foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Cancel")
+                .accessibilityIdentifier("chat.bar.close")
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .glassBackground(in: RoundedRectangle(cornerRadius: 16))
+            .accessibilityIdentifier(editing != nil ? "chat.editbar" : "chat.replybar")
+        }
+    }
+
+    private var controls: some View {
         HStack(alignment: .bottom, spacing: 7) {
             Menu {
                 Button("Photo", systemImage: "photo") {
@@ -29,7 +79,6 @@ struct ComposerView: View {
                 Button("File", systemImage: "doc") {
                     if sendAttachment == nil { sendSample(.file(name: "Notes.pdf", bytes: 180_000)) } else { showFiles = true }
                 }
-                Button("Location", systemImage: "location") { sendSample(.text(String(localized: "📍 Shared location"))) }
             } label: {
                 Image(systemName: "plus")
                     .font(.title3.weight(.medium))
@@ -110,8 +159,6 @@ struct ComposerView: View {
                 .accessibilityIdentifier("chat.composer.send")
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.bottom, 6)
         .onDisappear { voice.cancel() }
         .alert("Microphone access is off", isPresented: Binding(get: { voice.denied }, set: { _ in voice.dismissDenied() })) {
             Button("OK", role: .cancel) {}
