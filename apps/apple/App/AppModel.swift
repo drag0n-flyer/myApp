@@ -370,7 +370,7 @@ final class AppModel {
         // Message matches come from the store's search (the whole history), not only the loaded messages.
         let messageChatIDs = Set(chatStore.searchMessages(query, limit: 200).map(\.chatID))
         return chats.filter { chat in
-            let name = chatStore.contact(id: chat.contactID)?.displayName ?? ""
+            let name = chat.contactID.flatMap { chatStore.contact(id: $0) }?.displayName ?? ""
             return name.localizedCaseInsensitiveContains(query) || messageChatIDs.contains(chat.id)
         }
     }
@@ -381,6 +381,8 @@ final class AppModel {
     var contacts: [Contact] { _ = revision; return chatStore.contacts }
     func chat(id: String) -> Chat? { _ = revision; return chatStore.chat(id: id) }
     func contact(id: String) -> Contact? { _ = revision; return chatStore.contact(id: id) }
+    /// A group chat has no contact: its `contactID` is `nil`, and so is the answer.
+    func contact(id: String?) -> Contact? { id.flatMap { contact(id: $0) } }
     func isContact(_ id: String) -> Bool { contacts.contains { $0.id == id } }
 
     func send(_ content: MessageContent, in chatID: String) { chatStore.send(content, in: chatID); revision += 1 }

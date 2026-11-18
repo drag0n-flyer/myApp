@@ -123,7 +123,7 @@ final class NotificationActions: NSObject, UNUserNotificationCenterDelegate {
         let chat = store.chat(id: chatID)
         let decision = NotificationPlan.replyDecision(
             chatKnown: chat != nil, isRequest: chat?.isRequest ?? false,
-            isBlocked: chat.map { store.blockedIDs.contains($0.contactID) } ?? false,
+            isBlocked: chat.flatMap(\.contactID).map { store.blockedIDs.contains($0) } ?? false,
             textLength: text.count, appLockOn: locked)
         var queued = false
         var queuedID: String?

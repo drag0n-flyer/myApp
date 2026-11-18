@@ -1,3 +1,4 @@
+import AppCore
 import Foundation
 import LocalStore
 import SecureMessagingCore
@@ -72,6 +73,8 @@ public actor ConversationManager: ConversationManaging {
             try await ensureModeAnnounced(existing)
             return existing
         }
+        // A group chat has no peer to open a one-to-one conversation with.
+        guard !ChatID.isGroup(peer) else { throw SyncError.noPeer }
         // Reentrancy: a second caller must wait for the first create, not start another.
         if let running = creating[peer] { return try await running.value }
         let task = Task { try await self.create(with: peer) }

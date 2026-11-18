@@ -246,6 +246,12 @@ public actor InboxProcessor {
     private func process(_ raw: RawInboxRecord) async -> (Step, AppliedResult?) {
         let repo = deps.repo
         do {
+            // A `members` item has an empty payload: nothing to decrypt, and the payload hash is the same for every one,
+            // so it must never reach the processed-payload check. The group sync task acts on it.
+            if raw.kind == "members" {
+                try repo.deleteRaw(cursor: raw.cursor)
+                return (.done, nil)
+            }
             let hash = PortableSHA256.hash(raw.payload)
             if try repo.isProcessed(hash: hash) {
                 try repo.deleteRaw(cursor: raw.cursor)

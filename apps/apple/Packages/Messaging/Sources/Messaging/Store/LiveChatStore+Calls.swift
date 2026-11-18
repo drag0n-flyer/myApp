@@ -14,6 +14,7 @@ extension LiveChatStore {
     /// MLS-encrypts `payload` in the preferred conversation with `contactID`, creating it if there is none.
     /// Nothing is stored and nothing is posted to the server: the caller sends the returned bytes.
     nonisolated public func seal(_ payload: CallSignalPayload, to contactID: String) async throws -> Data {
+        guard !ChatID.isGroup(contactID) else { throw CallSealError.wrongSender }   // no calls in a group
         let conversation = try await conversations.preferredConversation(with: contactID)
         // A chat whose mode does not match what it started with is paused: nothing goes into it.
         guard !conversation.modeMismatch else { throw OutboxError.modeMismatch }
@@ -34,7 +35,7 @@ extension LiveChatStore {
         _ data: Data, from contactID: String
     ) async throws -> (payload: CallSignalPayload, senderDeviceID: String) {
         let opened = try await openRecoveringSender(data)
-        guard opened.senderAccountID == contactID else { throw CallSealError.wrongSender }
+        guard !ChatID.isGroup(contactID), opened.senderAccountID == contactID else { throw CallSealError.wrongSender }
         return (opened.payload, opened.senderDeviceID)
     }
 
