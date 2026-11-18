@@ -21,6 +21,7 @@ struct ChatListView: View {
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var path: [ChatRoute] = []
     @State private var showingNewChat = false
+    @State private var linkFromNewChat: URL?
 
     var body: some View {
         // Switching layouts rebuilds the views below, so `path` is the only state carried over (the chat's scroll
@@ -28,8 +29,10 @@ struct ChatListView: View {
         Group {
             if sizeClass == .regular { splitLayout } else { stackLayout }
         }
-        .sheet(isPresented: $showingNewChat) {
-            NewChatView(model: model) { contactID in
+        .sheet(isPresented: $showingNewChat, onDismiss: {
+            if let url = linkFromNewChat { linkFromNewChat = nil; model.handle(url: url) }
+        }) {
+            NewChatView(model: model, onLink: { url in linkFromNewChat = url; showingNewChat = false }) { contactID in
                 showingNewChat = false
                 path = [.chat(id: model.openChat(with: contactID))]
             }
