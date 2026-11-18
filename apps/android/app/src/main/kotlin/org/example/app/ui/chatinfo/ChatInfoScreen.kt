@@ -153,7 +153,7 @@ fun ChatInfoScreen(
             val number = store.safetyNumber(chatId)
             if (number != null) {
                 ModalBottomSheet(onDismissRequest = { showVerify = false }) {
-                    Column(Modifier.padding(16.dp).padding(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp).padding(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(stringResource(R.string.info_verify), style = MaterialTheme.typography.titleLarge)
                         number.groups.chunked(3).forEach { rowGroups ->
                             Text(rowGroups.joinToString("  "), style = MaterialTheme.typography.titleMedium)
