@@ -57,6 +57,10 @@ class NotificationProcessorTest {
         assertIs<NotificationOutcome.Message>(message)
         assertEquals("Ana", message.senderName); assertEquals("hello there", message.preview); assertEquals("acc-ana", message.chatId)
 
+        val formatted = s.push(ContentEnvelope.Text("m-f", NOW, "*bold* and _soft_, 2*3*4"))
+        assertIs<NotificationOutcome.Message>(formatted)
+        assertEquals("bold and soft, 2*3*4", formatted.preview)
+
         assertIs<NotificationOutcome.Nothing>(s.push(ContentEnvelope.Receipt("r-1", NOW, ReceiptKind.Delivered, listOf("x"))))
         assertIs<NotificationOutcome.Nothing>(s.push(ContentEnvelope.Edit("e-1", NOW, "m-1", "changed")))
         assertIs<NotificationOutcome.Nothing>(s.push(ContentEnvelope.React("x-1", NOW, "m-1", "+")))

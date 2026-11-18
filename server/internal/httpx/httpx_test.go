@@ -69,7 +69,7 @@ func TestErrStatuses(t *testing.T) {
 		"unauthorized": 401, "forbidden": 403, "not_found": 404, "username_taken": 409,
 		"stale_epoch": 409, "invite_required": 403, "invite_invalid": 403, "expired": 410,
 		"too_large": 413, "rate_limited": 429, "escrow_required": 400, "escrow_forbidden": 400,
-		"calls_disabled": 503, "internal": 500,
+		"calls_disabled": 503, "internal": 500, "too_many": 429, "own_link": 409,
 	}
 	for code, status := range want {
 		if e := Err(code, "m"); e.Status != status || e.Code != code {

@@ -166,6 +166,21 @@ class ChatScreenActionsTest {
     }
 
     @Test
+    fun formattedTextShowsWithoutMarkersButEditStartsFromTheTypedText() {
+        val store = sampleWith(listOf(m(1, "me", "say *hello* now", DeliveryStatus.Sent)))
+        launch(store)
+        rule.onNodeWithText("say hello now").assertIsDisplayed()
+        rule.onNodeWithText("say *hello* now").assertDoesNotExist()
+        longPress("say hello now")
+        rule.onNodeWithText("Edit").performClick()
+        // The composer holds the stored text, markers included; sending it unchanged keeps the markers.
+        rule.onNodeWithText("say *hello* now").assertIsDisplayed()
+        rule.onNodeWithContentDescription("Send").performClick()
+        rule.waitForIdle()
+        assertEquals(MessageContent.Text("say *hello* now"), store.chat("chat-riya")!!.messages.single().content)
+    }
+
+    @Test
     fun deleteAsksForConfirmationThenDeletes() {
         val store = sampleWith(listOf(m(1, "me", "oops", DeliveryStatus.Sent)))
         launch(store)
@@ -369,24 +384,50 @@ class ChatScreenActionsTest {
     // Search
 
     @Test
-    fun inChatSearchShowsHitsOfThisChatAndTappingOneScrollsToIt() {
+    fun inChatSearchCountsThisChatsHitsAndNextMovesToTheOlderOne() {
         val all = (1..180).map { m(it) }
         val inner = sampleWith(all.takeLast(50))
         val store = object : ChatStore by PagedStore(inner, all) {
             override fun searchMessages(query: String, limit: Int) = listOf(
                 MessageHit("chat-riya", "m30", "message 30 has the needle", Instant.now()),
                 MessageHit("chat-other", "x1", "needle in another chat", Instant.now()),
+                MessageHit("chat-riya", "m12", "message 12 has the needle", Instant.now()),
             )
         }
         ChatSearchRequests.request("chat-riya")
         launch(store)
         rule.onNodeWithText("Search in chat").assertIsDisplayed()
         rule.onNode(androidx.compose.ui.test.hasSetTextAction()).performTextInput("needle")
-        rule.waitUntil(10_000) { rule.onAllNodes(hasText("message 30 has the needle")).fetchSemanticsNodes().isNotEmpty() }
-        rule.onNodeWithText("needle in another chat").assertDoesNotExist()
-        rule.onNodeWithText("message 30 has the needle").performClick()
+        // The newest hit of this chat is shown first and the chat jumps to it.
+        rule.waitUntil(10_000) { rule.onAllNodes(hasText("1 of 2")).fetchSemanticsNodes().isNotEmpty() }
         rule.waitUntil(10_000) { rule.onAllNodes(hasText("message 30")).fetchSemanticsNodes().isNotEmpty() }
         rule.onNodeWithText("message 30").assertIsDisplayed()
+        rule.onNodeWithContentDescription("Next result").performClick()
+        rule.waitUntil(10_000) { rule.onAllNodes(hasText("2 of 2")).fetchSemanticsNodes().isNotEmpty() }
+        rule.waitUntil(10_000) { rule.onAllNodes(hasText("message 12")).fetchSemanticsNodes().isNotEmpty() }
+        rule.onNodeWithText("message 12").assertIsDisplayed()
+        // Next at the oldest wraps to the newest; Previous goes back.
+        rule.onNodeWithContentDescription("Next result").performClick()
+        rule.waitUntil(10_000) { rule.onAllNodes(hasText("1 of 2")).fetchSemanticsNodes().isNotEmpty() }
+        rule.onNodeWithContentDescription("Previous result").performClick()
+        rule.waitUntil(10_000) { rule.onAllNodes(hasText("2 of 2")).fetchSemanticsNodes().isNotEmpty() }
+    }
+
+    @Test
+    fun closingSearchBringsTheChatBackToWhereItWas() {
+        val all = (1..180).map { m(it) }
+        val store = object : ChatStore by PagedStore(sampleWith(all.takeLast(50)), all) {
+            override fun searchMessages(query: String, limit: Int) = listOf(MessageHit("chat-riya", "m20", "message 20", Instant.now()))
+        }
+        launch(store)
+        rule.onNodeWithText("message 180").assertIsDisplayed()
+        rule.onNodeWithContentDescription("Search in chat").performClick()
+        rule.onNode(androidx.compose.ui.test.hasSetTextAction()).performTextInput("message")
+        rule.waitUntil(10_000) { rule.onAllNodes(hasText("1 of 1")).fetchSemanticsNodes().isNotEmpty() }
+        rule.waitUntil(10_000) { rule.onAllNodes(hasText("message 20")).fetchSemanticsNodes().isNotEmpty() }
+        rule.onNodeWithContentDescription("Back").performClick()
+        rule.waitUntil(10_000) { rule.onAllNodes(hasText("message 180")).fetchSemanticsNodes().isNotEmpty() }
+        rule.onNodeWithText("message 180").assertIsDisplayed()
     }
 
     @Test

@@ -4,14 +4,11 @@ import (
 	"errors"
 	"net/http"
 	"strings"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/drag0n-flyer/myApp/server/internal/httpx"
+	"github.com/drag0n-flyer/myApp/server/internal/identity"
 	"github.com/jackc/pgx/v5"
 )
-
-const maxDisplayName = 64
 
 type userInfo struct {
 	AccountID   string `json:"accountID"`
@@ -67,11 +64,12 @@ func (m *Module) patchSettings(w http.ResponseWriter, r *http.Request) error {
 	if err := httpx.Decode(r, &req); err != nil {
 		return err
 	}
-	if n := req.DisplayName; n != nil {
-		if !utf8.ValidString(*n) || utf8.RuneCountInString(*n) > maxDisplayName ||
-			strings.IndexFunc(*n, unicode.IsControl) >= 0 {
-			return httpx.Err("bad_request", "display name is at most 64 characters with no control characters")
+	if req.DisplayName != nil {
+		clean, ok := identity.ValidDisplayName(*req.DisplayName)
+		if !ok {
+			return httpx.Err("bad_request", "display name is 1 to 40 characters, visible, with no control or direction characters")
 		}
+		req.DisplayName = &clean
 	}
 	_, err := m.d.DB.Exec(r.Context(),
 		`update accounts set display_name = coalesce($2, display_name),

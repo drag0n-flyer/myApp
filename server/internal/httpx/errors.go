@@ -26,6 +26,8 @@ var statuses = map[string]int{
 	"expired":          http.StatusGone,
 	"too_large":        http.StatusRequestEntityTooLarge,
 	"rate_limited":     http.StatusTooManyRequests,
+	"too_many":         http.StatusTooManyRequests,
+	"own_link":         http.StatusConflict,
 	"internal":         http.StatusInternalServerError,
 	"calls_disabled":   http.StatusServiceUnavailable,
 }

@@ -12,6 +12,7 @@ import org.example.app.contracts.PushPadding
 import org.example.app.contracts.PushPayloadHandler
 import org.example.app.contracts.RingOutcome
 import org.example.app.core.AppBrand
+import org.example.app.core.chats.MessageFormat
 import org.example.app.messaging.content.ContentCodec
 import org.example.app.messaging.content.ContentEnvelope
 import org.example.app.messaging.content.TextLimit
@@ -152,7 +153,7 @@ class NotificationProcessor(
     }
 
     private fun preview(message: MessageRecord): String = when (val e = ContentCodec.decode(message.envelope)) {
-        is ContentEnvelope.Text -> TextLimit.truncate(e.t, PREVIEW_LIMIT)
+        is ContentEnvelope.Text -> TextLimit.truncate(MessageFormat.plain(e.t), PREVIEW_LIMIT)
         is ContentEnvelope.Photo -> strings.photo
         is ContentEnvelope.Voice -> strings.voiceMessage
         is ContentEnvelope.File -> if (e.name.isEmpty()) strings.file else TextLimit.truncate(e.name, PREVIEW_LIMIT)
