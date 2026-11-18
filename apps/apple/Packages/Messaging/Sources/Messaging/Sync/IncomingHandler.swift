@@ -226,6 +226,8 @@ public struct IncomingHandler: Sendable {
                 try addPausedLine(conversation, db: db)
             }
             return .ignored
+        case .typing, .presence, .timer, .profile:
+            return .ignored
         }
     }
 
