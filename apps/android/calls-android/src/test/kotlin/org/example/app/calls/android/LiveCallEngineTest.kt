@@ -103,7 +103,8 @@ class LiveCallEngineTest {
         @Volatile var configured = false
         override suspend fun configure(iceServers: List<IceServer>, policy: IceTransportPolicy, video: Boolean) { configured = true }
         val offers = mutableListOf<Boolean>()
-        override suspend fun makeOffer(receive: AudioProfile, iceRestart: Boolean): String { offers += iceRestart; return SDP }
+        val offerProfiles = mutableListOf<AudioProfile>()
+        override suspend fun makeOffer(receive: AudioProfile, iceRestart: Boolean): String { offers += iceRestart; offerProfiles += receive; return SDP }
         override suspend fun acceptOffer(sdp: String, send: AudioProfile, receive: AudioProfile) = SDP
         override suspend fun acceptAnswer(sdp: String, send: AudioProfile) = Unit
         override suspend fun rollback() = Unit
@@ -471,9 +472,8 @@ class LiveCallEngineTest {
     }
 
     /** An outgoing call to Bob that is negotiated and connected, so an ICE restart can happen. */
-    private suspend fun TestScope.activeCall(): Harness {
-        // Mobile data is not limited: the network change itself must not start a mode-change offer that blocks the restart.
-        val h = harness(mobileLimit = CoreMode.High)
+    private suspend fun TestScope.activeCall(mobileLimit: CoreMode = CoreMode.High): Harness {
+        val h = harness(mobileLimit = mobileLimit)
         h.engine.start("bob", video = false)
         runCurrent()
         val sealer = PlainSealer()
@@ -513,6 +513,36 @@ class LiveCallEngineTest {
         h.engine.setNetwork(NetworkType.Mobile)
         runCurrent()
         assertEquals(1, h.restarts())
+    }
+
+    @Test
+    fun wifiToMobileWithDataSaverRestartsAtOnceInTheNewProfile() = runTest(UnconfinedTestDispatcher()) {
+        val h = activeCall(mobileLimit = CoreMode.DataSaver)
+        h.engine.setNetwork(NetworkType.Mobile)
+        runCurrent()
+        // One offer, at once (the clock has not moved), and it is the restart, in the Data saver profile.
+        assertEquals(listOf(true), h.session.offers)
+        assertEquals(AudioProfile.forMode(DataMode.DataSaver), h.session.offerProfiles.single())
+    }
+
+    @Test
+    fun wifiOfflineMobileWithDataSaverSendsNothingOfflineAndOneRestartOnMobile() = runTest(UnconfinedTestDispatcher()) {
+        val h = activeCall(mobileLimit = CoreMode.DataSaver)
+        h.engine.setNetwork(NetworkType.Offline)
+        runCurrent()
+        assertTrue(h.session.offers.isEmpty())
+        h.engine.setNetwork(NetworkType.Mobile)
+        runCurrent()
+        assertEquals(listOf(true), h.session.offers)
+        assertEquals(AudioProfile.forMode(DataMode.DataSaver), h.session.offerProfiles.single())
+    }
+
+    @Test
+    fun aModeChangeWithoutAPathChangeStillRenegotiates() = runTest(UnconfinedTestDispatcher()) {
+        val h = activeCall()
+        h.engine.setMode(ModePreference.Fixed(CoreMode.DataSaver))
+        runCurrent()
+        assertEquals(listOf(false), h.session.offers) // a plain offer, no ICE restart
     }
 
     @Test

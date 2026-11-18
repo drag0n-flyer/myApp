@@ -153,9 +153,16 @@ class LiveCallEngine(
             return@enqueue
         }
         network = type
-        run(machine.handle(CallEvent.ContextChanged(callContext(isContact))))
-        // No network: nothing to restart over, and a restart now would block the useful one when a network returns.
-        if (type != NetworkType.Offline && live) run(machine.handle(CallEvent.PathChanged))
+        // No network: record it only. Nothing can be offered over it, and a mode-change offer made now would block the
+        // restart that the network's return needs.
+        if (type == NetworkType.Offline) return@enqueue
+        // The new network may change the data-mode ceiling, which asks for a mode-change offer. On a path change that
+        // offer must be the ICE restart itself (same new profile, sent at once), not a plain offer that makes the
+        // restart wait for its answer.
+        val fx = machine.handle(CallEvent.ContextChanged(callContext(isContact)))
+            .map { if (it is CallEffect.CreateOffer) CallEffect.RestartIce(it.receive) else it }
+        run(fx)
+        if (live) run(machine.handle(CallEvent.PathChanged))
     }
 
     override fun reset() = enqueue {

@@ -48,13 +48,19 @@ class CallService : Service() {
         fun cameraGranted(context: Context) {
             val call = running ?: return
             try {
-                start(context, ACTION_CAMERA, call, sendVideo = true)
+                // A plain start: the service is already in the foreground, and a stale one may stop itself at once.
+                val intent = Intent(context, CallService::class.java)
+                    .setAction(ACTION_CAMERA)
+                    .putExtras(CallExtras.bundle(call))
+                    .putExtra(EXTRA_SEND_VIDEO, true)
+                context.startService(intent)
             } catch (_: RuntimeException) {
                 // The system refused the restart: the call goes on as it was.
             }
         }
 
         fun stop(context: Context) {
+            running = null // before the stop, so a camera restart racing it finds no call
             context.stopService(Intent(context, CallService::class.java))
         }
 
@@ -80,6 +86,10 @@ class CallService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+        if (intent?.action == ACTION_CAMERA && running == null) {
+            stopSelf() // the call ended before this start arrived: no notification for a dead call
+            return START_NOT_STICKY
+        }
         if (intent?.action == ACTION_ANSWERED || intent?.action == ACTION_CAMERA) {
             running = call
             val video = intent.getBooleanExtra(EXTRA_SEND_VIDEO, false)
@@ -101,11 +111,16 @@ class CallService : Service() {
         ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
 
     private fun foreground(notification: android.app.Notification, types: Int) {
-        try {
-            ServiceCompat.startForeground(this, CallNotifications.ID, notification, types)
-            return
-        } catch (_: RuntimeException) {
-            // A microphone or camera type not allowed here (SecurityException): try as a phone call only.
+        // Without the camera type the call keeps its microphone; as a phone call only is the last resort.
+        @SuppressLint("InlinedApi") // the camera bit is only ever set from R on
+        val withoutCamera = types and ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA.inv()
+        for (candidate in listOf(types, withoutCamera).distinct()) {
+            try {
+                ServiceCompat.startForeground(this, CallNotifications.ID, notification, candidate)
+                return
+            } catch (_: RuntimeException) {
+                // A microphone or camera type not allowed here (SecurityException): try with less.
+            }
         }
         try {
             ServiceCompat.startForeground(this, CallNotifications.ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)

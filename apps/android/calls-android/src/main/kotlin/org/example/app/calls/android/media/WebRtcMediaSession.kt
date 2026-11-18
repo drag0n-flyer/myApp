@@ -143,7 +143,9 @@ class WebRtcMediaSession(context: Context, private val settings: UserSettings) :
     /** What the call screen draws and controls; published while the call has video. */
     private val surface = object : CallVideoSurface {
         // Once per session: the AAR's getEglBaseContext() returns a new object on every read, and the screen keys on it.
-        override val eglContext: EglBase.Context? by lazy(LazyThreadSafetyMode.NONE) { WebRtcFactory.eglContext() }
+        private var egl: EglBase.Context? = null
+        override val eglContext: EglBase.Context?
+            get() = egl ?: WebRtcFactory.eglContext()?.also { egl = it } // a null read is retried, not kept
         override val remote = feed(remoteSinks) { remoteTrack }
         override val local = feed(localSinks) { videoTrack }
         override val remoteVideoOn: StateFlow<Boolean> = remoteOn.asStateFlow()
