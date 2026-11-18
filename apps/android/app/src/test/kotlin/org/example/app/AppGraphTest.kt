@@ -49,6 +49,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.test.fail
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
@@ -693,6 +694,149 @@ class AppGraphTest {
         assertTrue(a.isFailure)
         assertTrue(b.isSuccess)
         assertEquals(true, lastFindByEmail)
+    }
+
+    private fun patchedNames(): MutableList<String> = java.util.Collections.synchronizedList(mutableListOf())
+
+    @Test
+    fun aSavedDisplayNameGoesToTheServerAndShowsAtOnce() = runBlocking {
+        val (graph, session) = opened()
+        val bodies = patchedNames()
+        answer = { r ->
+            if (r.method == "PATCH" && r.url.encodedPath == "/v1/me/settings") {
+                val buffer = okio.Buffer(); r.body?.writeTo(buffer); bodies += buffer.readUtf8(); 204 to ""
+            } else null
+        }
+        graph.saveDisplayName("Asha")
+        assertEquals(listOf("""{"displayName":"Asha"}"""), bodies)
+        assertEquals("Asha", session.chatStore.me.displayName)
+        assertEquals("Asha", session.chatStore.meState.value.displayName)
+    }
+
+    @Test
+    fun aDisplayNameTheServerRefusesGoesBackAndTheScreenGetsAnError() = runBlocking {
+        val (graph, session) = opened()
+        assertEquals("", session.chatStore.myStoredName, "no own row: nothing is stored")
+        answer = { r -> if (r.method == "PATCH" && r.url.encodedPath == "/v1/me/settings") 500 to """{"error":{"code":"internal"}}""" else null }
+        val result = runCatching { graph.saveDisplayName("Asha") }
+        assertTrue(result.exceptionOrNull() is org.example.app.core.account.AccountError.Server, "${result.exceptionOrNull()}")
+        // Back to nothing stored, never the literal fallback "You" (which would be saved and exported).
+        assertEquals("", session.chatStore.myStoredName)
+        assertEquals("You", session.chatStore.me.displayName)
+    }
+
+    @Test
+    fun aFailedSaveAfterASuccessfulOneGoesBackToTheStoredName() = runBlocking {
+        val (graph, session) = opened()
+        session.chatStore.setMyDisplayName("Asha")
+        answer = { r -> if (r.method == "PATCH" && r.url.encodedPath == "/v1/me/settings") 500 to """{"error":{"code":"internal"}}""" else null }
+        assertTrue(runCatching { graph.saveDisplayName("Bela") }.isFailure)
+        assertEquals("Asha", session.chatStore.myStoredName)
+        assertEquals("Asha", session.chatStore.me.displayName)
+    }
+
+    /** A signed-in graph whose session is open but whose own name is not read by itself, so the test decides when. */
+    private fun openedWithoutSeeding(): Pair<AppGraph, org.example.app.live.LiveSession> = runBlocking {
+        val graph = signedIn()
+        graph.seedNameOnOpen = false
+        val session = assertNotNull(graph.openSession())
+        session.chatStore.settle()
+        graph to session
+    }
+
+    private val meJson = """{"accountID":"acc","username":"ana","email":"a@b.c","displayName":"Asha Rao","findByEmail":false}"""
+
+    @Test
+    fun seedingFillsAnOwnNameThatIsMissing() = runBlocking {
+        val (graph, session) = openedWithoutSeeding()
+        answer = { r -> if (r.method == "GET" && r.url.encodedPath == "/v1/me") 200 to meJson else null }
+        graph.seedOwnName(session)
+        assertEquals("Asha Rao", session.chatStore.myStoredName)
+        assertEquals("Asha Rao", session.chatStore.me.displayName)
+    }
+
+    @Test
+    fun seedingNeverOverwritesANameThatIsAlreadyStored() = runBlocking {
+        val (graph, session) = openedWithoutSeeding()
+        session.chatStore.setMyDisplayName("Local")
+        answer = { r -> if (r.method == "GET" && r.url.encodedPath == "/v1/me") 200 to meJson else null }
+        graph.seedOwnName(session)
+        assertEquals("Local", session.chatStore.myStoredName)
+    }
+
+    @Test
+    fun seedingThatCannotReachTheServerIsSilent() = runBlocking {
+        val (graph, session) = openedWithoutSeeding()
+        answer = { r -> if (r.url.encodedPath == "/v1/me") 500 to """{"error":{"code":"internal"}}""" else null }
+        graph.seedOwnName(session)
+        assertEquals("", session.chatStore.myStoredName)
+    }
+
+    @Test
+    fun seedingCleansAnUntidyServerName() = runBlocking {
+        val (graph, session) = openedWithoutSeeding()
+        answer = { r -> if (r.url.encodedPath == "/v1/me") 200 to meJson.replace("Asha Rao", "Asha\u202E Rao") else null }
+        graph.seedOwnName(session)
+        assertEquals("Asha Rao", session.chatStore.myStoredName)
+    }
+
+    @Test
+    fun seedingThatFinishesAfterTheAccountWasWipedChangesNothing() = runBlocking {
+        val (graph, session) = openedWithoutSeeding()
+        val old = session.chatStore
+        val gate = java.util.concurrent.CountDownLatch(1)
+        val seen = AtomicInteger(0)
+        answer = { r ->
+            if (r.method == "GET" && r.url.encodedPath == "/v1/me") {
+                seen.incrementAndGet(); gate.await(10, java.util.concurrent.TimeUnit.SECONDS); 200 to meJson
+            } else null
+        }
+        val seeding = async(Dispatchers.IO) { runCatching { graph.seedOwnName(session) } }
+        val deadline = System.nanoTime() + 5_000_000_000L
+        while (seen.get() == 0 && System.nanoTime() < deadline) Thread.sleep(10)
+        if (seen.get() == 0) { gate.countDown(); fail("the seed never reached the server") }
+        graph.settingsStore.reset(org.example.app.core.settings.UserSettings()) // a sign-out moves the generation on
+        gate.countDown()
+        seeding.await()
+        assertEquals("", old.myStoredName)
+    }
+
+    @Test
+    fun aDisplayNameThatBreaksTheRuleNeverReachesTheServer() = runBlocking {
+        val (graph, session) = opened()
+        val bodies = patchedNames()
+        answer = { r -> if (r.method == "PATCH") { bodies += "patched"; 204 to "" } else null }
+        assertTrue(runCatching { graph.saveDisplayName("Evil\u202Ename") }.isFailure)
+        assertTrue(runCatching { graph.saveDisplayName("   ") }.isFailure)
+        assertTrue(runCatching { graph.saveDisplayName("\u200B\u3164") }.isFailure)
+        assertEquals(emptyList(), bodies)
+        assertEquals("", session.chatStore.myStoredName)
+    }
+
+    @Test
+    fun aDisplayNameSaveThatFinishesAfterTheAccountWasWipedWritesNothing() = runBlocking {
+        val (graph, session) = opened()
+        val old = session.chatStore
+        old.setMyDisplayName("Before")
+        val gate = java.util.concurrent.CountDownLatch(1)
+        val seen = AtomicInteger(0)
+        answer = { r ->
+            if (r.method == "PATCH" && r.url.encodedPath == "/v1/me/settings") {
+                seen.incrementAndGet(); gate.await(10, java.util.concurrent.TimeUnit.SECONDS); 500 to """{"error":{"code":"internal"}}"""
+            } else null
+        }
+        val save = async(Dispatchers.IO) { runCatching { graph.saveDisplayName("Asha") } }
+        val deadline = System.nanoTime() + 5_000_000_000L
+        while (seen.get() == 0 && System.nanoTime() < deadline) Thread.sleep(10)
+        if (seen.get() == 0) { gate.countDown(); fail("the save never reached the server") }
+        assertEquals("Asha", old.me.displayName, "optimistic")
+        graph.wipeAfterRevocation() // the account is gone: data, settings (generation moves on) and session
+        assertTrue(graph.chatStore !== old, "the next session starts with another store")
+        gate.countDown()
+        assertTrue(save.await().isFailure)
+        // The late failure must not run its revert on the old store, and nothing reaches the store that replaced it.
+        assertEquals("Asha", old.me.displayName)
+        assertEquals("", graph.chatStore.myStoredName)
     }
 
     @Test

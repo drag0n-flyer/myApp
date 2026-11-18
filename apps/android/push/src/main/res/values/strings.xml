@@ -12,4 +12,9 @@
     <string name="push_new_device_body_unnamed">A new device was added to your account</string>
     <string name="push_missed_call_body">Missed call</string>
     <string name="push_fetch_title">Checking for new messages</string>
+    <string name="push_channel_muted">Muted chats</string>
+    <string name="push_you">You</string>
+    <string name="push_action_mark_read">Mark as read</string>
+    <string name="push_action_reply">Reply</string>
+    <string name="push_not_sent">Not sent</string>
 </resources>

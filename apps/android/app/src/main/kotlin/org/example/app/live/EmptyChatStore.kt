@@ -21,6 +21,9 @@ import org.example.app.core.settings.MediaKind
  */
 object EmptyChatStore : ChatStore {
     override val me = Contact("", "", "")
+    override val meState: StateFlow<Contact> = MutableStateFlow(me)
+    override fun setMyDisplayName(name: String) = Unit
+    override val myStoredName: String = ""
     override val contacts: StateFlow<List<Contact>> = MutableStateFlow(emptyList())
     override val folders: StateFlow<List<ChatFolder>> = MutableStateFlow(listOf(ChatFolder.All, ChatFolder.Unread))
     override val chats: StateFlow<List<Chat>> = MutableStateFlow(emptyList())

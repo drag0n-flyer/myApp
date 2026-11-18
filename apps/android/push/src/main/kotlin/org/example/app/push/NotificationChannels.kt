@@ -10,6 +10,7 @@ object NotificationChannels {
     const val CALLS = "calls"
     const val DEVICES = "devices"
     const val SERVICE = "service"
+    const val MUTED = "muted"
 
     /** Idempotent. minSdk is 29, so channels always exist. */
     fun ensure(context: Context) {
@@ -22,6 +23,7 @@ object NotificationChannels {
                 channel(REQUESTS, R.string.push_channel_requests, NotificationManager.IMPORTANCE_DEFAULT),
                 channel(CALLS, R.string.push_channel_calls, NotificationManager.IMPORTANCE_HIGH),
                 channel(DEVICES, R.string.push_channel_devices, NotificationManager.IMPORTANCE_DEFAULT),
+                channel(MUTED, R.string.push_channel_muted, NotificationManager.IMPORTANCE_LOW),
                 channel(SERVICE, R.string.push_channel_service, NotificationManager.IMPORTANCE_LOW),
             ),
         )

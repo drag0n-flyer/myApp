@@ -39,6 +39,7 @@ fun IncomingCallScreen(viewModel: CallViewModel, modifier: Modifier = Modifier) 
         onDecline = viewModel::decline,
         onAnswer = { viewModel.answer(current.isVideoCall) },
         modifier = modifier,
+        colorKey = current.contactId,
     )
 }
 
@@ -47,7 +48,7 @@ fun IncomingCallScreen(viewModel: CallViewModel, modifier: Modifier = Modifier) 
  * of the iPhone's CallKit screen).
  */
 @Composable
-fun IncomingCallContent(name: String, onDecline: () -> Unit, onAnswer: () -> Unit, modifier: Modifier = Modifier) {
+fun IncomingCallContent(name: String, onDecline: () -> Unit, onAnswer: () -> Unit, modifier: Modifier = Modifier, colorKey: String? = null) {
     CallTheme {
         CallBackHandler(onMinimise = null)
         Box(modifier.fillMaxSize().background(Backdrop).consumeTouches()) {
@@ -60,7 +61,7 @@ fun IncomingCallContent(name: String, onDecline: () -> Unit, onAnswer: () -> Uni
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    Avatar(name, size = 110.dp, modifier = Modifier.padding(bottom = 8.dp))
+                    Avatar(name, size = 110.dp, modifier = Modifier.padding(bottom = 8.dp), colorKey = colorKey)
                     Text(name, style = MaterialTheme.typography.headlineMedium, color = Color.White, textAlign = TextAlign.Center)
                     Text(stringResource(R.string.call_incoming), style = MaterialTheme.typography.titleMedium, color = Color.White.copy(alpha = 0.7f))
                 }

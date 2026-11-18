@@ -83,7 +83,7 @@ fun ContactsScreen(
                 items(people, key = { it.id }) { person ->
                     ListItem(
                         modifier = Modifier.clickable(role = Role.Button) { onOpenChat(store.ensureChat(person.id)) },
-                        leadingContent = { Avatar(person.displayName) },
+                        leadingContent = { Avatar(person.displayName, colorKey = person.id) },
                         headlineContent = { Text(person.displayName, maxLines = 1) },
                         supportingContent = { Text(usernameText(person.username)) },
                     )
