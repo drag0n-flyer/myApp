@@ -30,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import org.example.app.ui.lock.LocalExpectReturn
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -165,6 +166,7 @@ private fun Context.findActivity(): Activity? {
 fun PermissionedQrScanner(onResult: (String) -> Unit) {
     val context = LocalContext.current
     val owner = LocalLifecycleOwner.current
+    val expectReturn by rememberUpdatedState(LocalExpectReturn.current)
     fun held() = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
     fun canAskAgain() = context.findActivity()?.let { ActivityCompat.shouldShowRequestPermissionRationale(it, Manifest.permission.CAMERA) } ?: false
     var granted by remember { mutableStateOf(held()) }
@@ -192,6 +194,7 @@ fun PermissionedQrScanner(onResult: (String) -> Unit) {
         onOpenSettings = {
             val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            expectReturn()
             try { context.startActivity(intent) } catch (_: ActivityNotFoundException) { }
         },
     ) {

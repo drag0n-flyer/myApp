@@ -61,6 +61,8 @@ import org.example.app.ui.onboarding.OnboardingViewModel
 import org.example.app.ui.lock.AuthResult
 import org.example.app.ui.lock.DeviceAuth
 import org.example.app.ui.lock.LockCover
+import org.example.app.ui.lock.LocalExpectReturn
+import androidx.compose.runtime.CompositionLocalProvider
 import org.example.app.ui.lock.PlatformDeviceAuth
 import org.example.app.ui.lock.SampleDeviceAuth
 import org.example.app.ui.theme.AppTheme
@@ -83,9 +85,10 @@ private const val NEW_CHAT = "newchat"
 private const val SEARCH = "search"
 private const val PROFILE = "settings/profile"
 
-private fun shareInvite(context: Context, url: String) {
+private fun shareInvite(context: Context, url: String, expectReturn: () -> Unit) {
     val send = Intent(Intent.ACTION_SEND).setType("text/plain")
         .putExtra(Intent.EXTRA_TEXT, context.getString(R.string.invite_message, context.getString(R.string.app_name), url))
+    expectReturn()
     context.startActivity(Intent.createChooser(send, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
 }
 
@@ -93,10 +96,11 @@ private fun shareInvite(context: Context, url: String) {
 private fun canUseFullScreenIntent(context: Context): Boolean =
     Build.VERSION.SDK_INT < 34 || context.getSystemService(NotificationManager::class.java).canUseFullScreenIntent()
 
-private fun openFullScreenSettings(context: Context) {
+private fun openFullScreenSettings(context: Context, expectReturn: () -> Unit) {
     if (Build.VERSION.SDK_INT < 34) return
     val intent = Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, Uri.parse("package:${context.packageName}"))
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    expectReturn()
     runCatching { context.startActivity(intent) }
 }
 
@@ -185,6 +189,7 @@ fun AppRoot(
             }
             return@AppTheme
         }
+        CompositionLocalProvider(LocalExpectReturn provides graph.appLock::expectReturn) {
         Box {
         NavHost(nav, startDestination = MAIN) {
             composable(LINK_SCAN) {
@@ -210,7 +215,7 @@ fun AppRoot(
                             graph.chatStore, graph.inviteUrl,
                             onOpenChat = { nav.navigate("chat/$it") },
                             onAddContact = { nav.navigate(ADD_CONTACT) },
-                            onInvite = { shareInvite(context, it) },
+                            onInvite = { shareInvite(context, it, graph.appLock::expectReturn) },
                         )
                     } else if (tab == MainTab.Settings) {
                         var devices by remember { mutableIntStateOf(0) }
@@ -268,7 +273,7 @@ fun AppRoot(
                 NotificationsScreen(
                     transport,
                     canUseFullScreenIntent = fullScreenAllowed,
-                    onOpenFullScreenSettings = { openFullScreenSettings(context) },
+                    onOpenFullScreenSettings = { openFullScreenSettings(context, graph.appLock::expectReturn) },
                     onBack = { nav.popBackStack() },
                 )
             }
@@ -307,6 +312,7 @@ fun AppRoot(
             }
         }
         CallOverlay(call?.phase, callVm)
+        }
         }
     }
 }

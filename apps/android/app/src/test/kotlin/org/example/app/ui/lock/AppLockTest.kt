@@ -98,3 +98,50 @@ class AppLockTest {
         assertEquals(false, l.locked.value)
     }
 }
+
+class AppLockExpectReturnTest {
+    private var now = 1_000L
+    private val settings = UserSettings(appLock = true, lockAfterSeconds = 0)
+    private fun lock() = AppLock({ settings }, { now }).also { it.unlock() }
+
+    @Test fun anExpectedReturnWithinTwoMinutesStaysUnlockedEvenImmediately() {
+        val l = lock()
+        l.expectReturn()
+        l.onStop()
+        assertFalse(l.locked.value)
+        now += 120_000
+        l.onStart()
+        assertFalse(l.locked.value)
+    }
+
+    @Test fun anExpectedReturnAfterSixMinutesLocks() {
+        val l = lock()
+        l.expectReturn()
+        l.onStop()
+        now += 360_000
+        l.onStart()
+        assertTrue(l.locked.value)
+    }
+
+    @Test fun theNextAbsenceIsNotExpected() {
+        val l = lock()
+        l.expectReturn()
+        l.onStop(); now += 1_000; l.onStart()
+        l.onStop()
+        assertTrue(l.locked.value)
+    }
+
+    @Test fun aLaunchThatNeverLeftTheScreenDoesNotStretchALaterAbsence() {
+        val l = lock()
+        l.expectReturn() // a permission dialog: the app never stopped
+        now += 400_000
+        l.onStop()
+        assertTrue(l.locked.value)
+    }
+
+    @Test fun withoutExpectReturnImmediatelyLocks() {
+        val l = lock()
+        l.onStop()
+        assertTrue(l.locked.value)
+    }
+}

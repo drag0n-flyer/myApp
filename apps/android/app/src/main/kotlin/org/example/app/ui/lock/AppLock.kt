@@ -23,6 +23,7 @@ class AppLock(
     private val state = MutableStateFlow(policy.locked)
     private var promptsAnswered = 0
     private var left = false
+    private var expectedAtMs: Long? = null
 
     /** True while the cover must show. The caller also checks the setting: a signed-out account has none. */
     val locked: StateFlow<Boolean> = state.asStateFlow()
@@ -37,16 +38,31 @@ class AppLock(
         sync()
         val returned = left
         left = false
+        expectedAtMs = null
         val lockedNow = policy.onForeground(clock())
         if (returned && lockedNow) request()
         state.value = policy.locked
+    }
+
+    /**
+     * The app is about to open a picker, the camera or a viewer itself and the person will come back from it. Call right
+     * before the launch. The next absence, if it starts within [AppLockPolicy.EXPECTED_RETURN_SECONDS], is measured with
+     * the longer allowance (see [AppLockPolicy.effectiveDelaySeconds]); a launch that never takes the app off the screen
+     * expires and does not stretch a later absence.
+     */
+    fun expectReturn() {
+        expectedAtMs = clock()
     }
 
     /** The activity left the screen for good (not for a rotation: then there is nothing to measure). */
     fun onStop() {
         sync()
         left = true
-        policy.onBackground(clock())
+        val now = clock()
+        val asked = expectedAtMs
+        expectedAtMs = null
+        val expected = asked != null && now - asked in 0..AppLockPolicy.EXPECTED_RETURN_SECONDS * 1000L
+        policy.onBackground(now, expected)
         state.value = policy.locked
     }
 
@@ -77,3 +93,6 @@ class AppLock(
         policy.lockAfterSeconds = AppLockPolicy.validDelay(settings().lockAfterSeconds)
     }
 }
+
+/** Provided by `AppRoot`: call before the app itself launches a picker, camera or viewer ([AppLock.expectReturn]). Does nothing by default. */
+val LocalExpectReturn = androidx.compose.runtime.staticCompositionLocalOf<() -> Unit> { {} }
