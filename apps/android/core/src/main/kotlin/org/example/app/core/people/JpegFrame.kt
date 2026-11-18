@@ -9,7 +9,7 @@ package org.example.app.core.people
  * must be at least 8 and fit the file; the bytes after the precision are height then width, 16 bits each. The walk stops
  * with null at the start of a scan (FF DA), at the end of the image (FF D9), at a truncated segment or at the end of the
  * file, so an SOF-looking byte pair inside another segment (an EXIF block, a thumbnail) is never mistaken for the header.
- * Other frame types (lossless, arithmetic, hierarchical) are not read: null.
+ * The first start-of-frame marker of any type (C0-C3, C5-C7, C9-CB, CD-CF) is the frame header; if it is not C0, C1 or C2 the result is null.
  */
 object JpegFrame {
     /** (width, height) as declared, or null when no frame header is found or the data is truncated. Either side may be 0. */
@@ -23,13 +23,14 @@ object JpegFrame {
             val marker = bytes[i].toInt() and 0xFF
             i++
             if (marker == 0x00) return null
-            if (marker in 0xD0..0xD7 || marker == 0x01) continue
+            if (marker in 0xD0..0xD8 || marker == 0x01) continue
             if (marker == 0xD9 || marker == 0xDA) return null
             if (i + 2 > bytes.size) return null
             val length = ((bytes[i].toInt() and 0xFF) shl 8) or (bytes[i + 1].toInt() and 0xFF)
             if (length < 2 || i + length > bytes.size) return null
-            if (marker == 0xC0 || marker == 0xC1 || marker == 0xC2) {
-                if (length < 8) return null
+            if (isFrameMarker(marker)) {
+                // The first frame header decides: only SOF0, SOF1 and SOF2 are read; any other frame type is refused.
+                if (marker > 0xC2 || length < 8) return null
                 val height = ((bytes[i + 3].toInt() and 0xFF) shl 8) or (bytes[i + 4].toInt() and 0xFF)
                 val width = ((bytes[i + 5].toInt() and 0xFF) shl 8) or (bytes[i + 6].toInt() and 0xFF)
                 return width to height
@@ -38,4 +39,7 @@ object JpegFrame {
         }
         return null
     }
+
+    /** C0-C3, C5-C7, C9-CB and CD-CF: every start-of-frame marker (C4, C8 and CC are not). */
+    private fun isFrameMarker(m: Int) = m in 0xC0..0xC3 || m in 0xC5..0xC7 || m in 0xC9..0xCB || m in 0xCD..0xCF
 }

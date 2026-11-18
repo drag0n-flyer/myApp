@@ -109,8 +109,8 @@ class ProfileSender(
 
         /**
          * A `profile` that arrived from another device of the person's own account. With a version higher than the stored
-         * one (and a photo that passes the rule) it replaces the stored own profile, and every chat is marked as sent at
-         * that version: the device that made the change sends it to the chats. Returns whether it was taken.
+         * one (and a photo that passes the rule) it replaces the stored own profile (name, photo, published copy and own contact
+         * name). Nothing is marked as sent: this device sends that version to its own pending chats. Returns whether it was taken.
          */
         fun adopt(repo: Repository, ownAccountId: String, name: String, photo: ByteArray?, ver: Int): Boolean {
             if (ver <= (repo.get(VER)?.decodeToString()?.toIntOrNull() ?: 0)) return false
@@ -119,7 +119,6 @@ class ProfileSender(
             repo.set(PHOTO, photo ?: ByteArray(0))
             repo.set(VER, ver.toString().encodeToByteArray())
             repo.set(FP, fingerprint(name, photo).encodeToByteArray())
-            for (chat in repo.chats()) repo.set(SENT + chat.id, ver.toString().encodeToByteArray())
             repo.contact(ownAccountId)?.let { repo.upsertContact(it.copy(displayName = name)) }
             return true
         }

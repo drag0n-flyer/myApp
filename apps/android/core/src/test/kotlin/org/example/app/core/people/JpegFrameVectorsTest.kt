@@ -36,4 +36,16 @@ class JpegFrameVectorsTest {
         assertEquals(false, ProfilePhotoRule.isAcceptable(byteArrayOf(-1, -40, -1)))
         assertEquals(false, ProfilePhotoRule.isAcceptable(byteArrayOf(-1, -40)))
     }
+
+    // Amendment A2 (also in the shared table once Apple adds the rows): the first frame marker of any type decides.
+    @Test fun theFirstFrameMarkerOfAnyTypeDecides() {
+        fun sof(marker: Int, w: Int, h: Int) = byteArrayOf(-1, marker.toByte(), 0, 11, 8, (h shr 8).toByte(), h.toByte(), (w shr 8).toByte(), w.toByte(), 1, 1, 0x11, 0)
+        val soi = byteArrayOf(-1, -40)
+        assertEquals(null, JpegFrame.dimensions(soi + sof(0xC9, 65000, 65000) + sof(0xC0, 16, 16)))
+        assertEquals(false, ProfilePhotoRule.isAcceptable(soi + sof(0xC9, 65000, 65000) + sof(0xC0, 16, 16)))
+        for (m in listOf(0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF)) {
+            assertEquals(null, JpegFrame.dimensions(soi + sof(m, 16, 16) + sof(0xC0, 16, 16)), "marker ${Integer.toHexString(m)}")
+        }
+        for (m in listOf(0xC0, 0xC1, 0xC2)) assertEquals(16 to 16, JpegFrame.dimensions(soi + sof(m, 16, 16)))
+    }
 }

@@ -66,7 +66,7 @@ class ProfileReceiveTest {
         assertNull(rig.bob1.repo.profile("acc-ana"))
     }
 
-    // Ruling E: a profile from my own other device replaces my stored profile and nobody is sent it again.
+    // Ruling E: a profile from my own other device replaces my stored profile; this device sends it on to its pending chats.
 
     @Test fun myOtherDeviceProfileIsAdoptedWithoutSendingAnything() = runTest {
         val (rig, conv) = setup()
@@ -79,8 +79,13 @@ class ProfileReceiveTest {
         assertEquals("1700000000", rig.bob1.repo.get("profile.ver")!!.decodeToString())
         assertContentEquals(JPEG, rig.bob1.repo.get("profile.photo"))
         assertEquals("Bobby", rig.bob1.repo.contact("acc-bob")?.displayName)
-        assertEquals("1700000000", rig.bob1.repo.get("profile-sent:acc-ana")!!.decodeToString())
-        assertEquals(before, rig.server.pending("acc-ana/ana1").size)
+        assertNull(rig.bob1.repo.get("profile-sent:acc-ana"), "adopting marks nothing as sent")
+        assertEquals(before, rig.server.pending("acc-ana/ana1").size, "the handler queues nothing")
+        // This device then sends that version to its own pending chats, once.
+        val sentTo = mutableListOf<Pair<String, Int>>()
+        val sender = org.example.app.messaging.send.ProfileSender(rig.bob1.repo, "acc-bob", { "Bobby" }) { chat, _, _, ver -> sentTo += chat to ver }
+        sender.sync(); sender.sync()
+        assertEquals(listOf("acc-ana" to 1_700_000_000), sentTo)
         // A lower or equal version from the other device changes nothing.
         rig.bob2.send(conv, ContentEnvelope.Profile("o2", NOW + 1, "Old", null, 1_700_000_000))
         rig.bob2.send(conv, ContentEnvelope.Profile("o3", NOW + 2, "Older", null, 5))
