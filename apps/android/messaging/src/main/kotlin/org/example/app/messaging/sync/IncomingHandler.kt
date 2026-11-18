@@ -213,10 +213,17 @@ class IncomingHandler(
             // Typing and presence travel only in the ephemeral frame. One that arrives as a stored message is dropped.
             is ContentEnvelope.Typing, is ContentEnvelope.Presence -> AppliedResult.Ignored
             is ContentEnvelope.Profile -> {
-                // My own profile is kept in the settings; the sender is the MLS credential, never a field of the message.
-                // Applied only for the chat's own peer, and whole or not at all: a photo that does not decode drops the name too.
-                if (account != me.accountId && account == chatId && envelope.photo.let { it == null || photoDecodable(it) }) {
-                    repo.saveProfile(account, envelope.name, envelope.photo, envelope.ver)
+                // The sender is the MLS credential, never a field of the message. A photo is checked (JPEG, size, declared
+                // pixel size from the frame header, then the platform decoder) before anything is stored; whole or not at all.
+                val photoOk = envelope.photo.let { it == null || (org.example.app.core.people.ProfilePhotoRule.isAcceptable(it) && photoDecodable(it)) }
+                if (photoOk) {
+                    if (account == me.accountId) {
+                        // From another device of my own account: a higher version replaces my stored profile.
+                        org.example.app.messaging.send.ProfileSender.adopt(repo, me.accountId, envelope.name, envelope.photo, envelope.ver)
+                    } else if (account == chatId && !repo.isBlocked(account)) {
+                        // Applied only for the chat's own peer, and never for a blocked account.
+                        repo.saveProfile(account, envelope.name, envelope.photo, envelope.ver)
+                    }
                 }
                 AppliedResult.Ignored
             }

@@ -401,17 +401,18 @@ class LiveChatStore(
         if (row == null) return null
         // Names come from the server and from other people's devices: cleaned for every screen and notification.
         // A contact's own profile name comes first; the lookup name is the fallback.
-        val own = if (row.accountId == device.accountId) null else profileNames[row.accountId]
-        own?.let { org.example.app.core.profile.DisplayNameRule.forDisplay(it, "") }?.ifEmpty { null }?.let { return it }
-        return org.example.app.core.profile.DisplayNameRule.forDisplay(row.displayName, row.username).ifEmpty { null }
+        val profileName = if (row.accountId == device.accountId) null else profileNames[row.accountId]
+        return org.example.app.core.people.ContactDisplay.name(null, profileName, row.displayName, row.username).ifEmpty { null }
     }
 
     // Profiles: contacts' newest, and the person's own, kept for the tile and name helpers.
 
     private fun loadProfiles() {
         val loaded = HashMap<String, org.example.app.core.people.Profile>()
+        // A profile from a blocked account is never shown, and one from a message request waits until it is accepted.
+        val hidden = runCatching { repo.blockedIds().toSet() + repo.chats().filter { it.isRequest }.map { it.id } }.getOrDefault(emptySet())
         for (id in contactRows.keys) {
-            if (id == device.accountId) continue
+            if (id == device.accountId || id in hidden) continue
             runCatching { repo.profile(id) }.getOrNull()?.let { loaded[id] = org.example.app.core.people.Profile(it.accountId, it.name, it.photo, it.ver) }
         }
         runCatching { profileSender.photo() }.getOrNull()?.let {
@@ -1328,7 +1329,7 @@ class LiveChatStore(
     override fun saveProfile(accountId: String, name: String, photo: ByteArray?, ver: Int): Boolean {
         // The same rules as the wire: a name that fails the display-name rule, or an oversized photo, is not kept.
         if (org.example.app.core.profile.DisplayNameRule.clean(name) != name) return false
-        if (photo != null && photo.size > 24_576) return false
+        if (photo != null && !org.example.app.core.people.ProfilePhotoRule.isAcceptable(photo)) return false
         val saved = repo.saveProfile(accountId, name, photo, ver)
         if (saved) reload()
         return saved

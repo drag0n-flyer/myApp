@@ -17,7 +17,10 @@ class ProfileSenderTest {
     private val sent = mutableListOf<Triple<String, String, Int>>()
     private val photos = mutableListOf<ByteArray?>()
     private var name = "Me"
-    private val sender = ProfileSender(repo, "acc-me", { name }) { chat, n, photo, ver ->
+    private var failNext = false
+    private var nowSeconds = 0L
+    private val sender = ProfileSender(repo, "acc-me", { name }, { nowSeconds }) { chat, n, photo, ver ->
+        if (failNext) { failNext = false; error("queue is full") }
         sent += Triple(chat, n, ver); photos += photo
     }
 
@@ -118,5 +121,44 @@ class ProfileSenderTest {
         chat("acc-me"); chat("a")
         sender.announce()
         assertEquals(listOf("a"), sent.map { it.first })
+    }
+
+    // Ruling D: the sent marker is written only after the message was queued.
+
+    @Test fun aFailingQueueLeavesTheChatPendingAndTheNextPassSendsIt() {
+        chat("a"); chat("b")
+        failNext = true
+        sender.announce()
+        assertEquals(listOf("b"), sent.map { it.first }, "the other chat is still served")
+        assertTrue(sender.hasPending())
+        sender.sync()
+        assertEquals(listOf("b", "a"), sent.map { it.first })
+        assertEquals(false, sender.hasPending())
+    }
+
+    // Ruling E: a new version is max(stored + 1, now in seconds).
+
+    @Test fun aNewVersionIsAtLeastTheCurrentUnixTime() {
+        chat("a")
+        nowSeconds = 1_800_000_000
+        sender.announce()
+        assertEquals(1_800_000_000, sender.ver())
+        name = "Mia"
+        sender.announce()
+        assertEquals(1_800_000_001, sender.ver(), "stored + 1 when the clock has not moved on")
+        nowSeconds = 1_800_000_500
+        name = "Max"
+        sender.announce()
+        assertEquals(1_800_000_500, sender.ver())
+    }
+
+    @Test fun aSecondDevicesFirstChangeBeatsAnOldCounter() {
+        chat("a")
+        repo.set("profile.ver", "3".encodeToByteArray()) // the phone's old counter
+        nowSeconds = 1_800_000_000
+        name = "New"
+        sender.announce()
+        assertEquals(1_800_000_000, sender.ver())
+        assertEquals(1_800_000_000, sent.last().third)
     }
 }

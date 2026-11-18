@@ -10,13 +10,16 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.test.runTest
+import org.example.app.contracts.NotificationOutcome
 import org.example.app.messaging.content.ContentEnvelope
+import kotlin.test.assertIs
+import kotlin.test.assertTrue
 import org.example.app.messaging.ports.ContactRecord
 import org.example.app.messaging.sync.NOW
 import org.example.app.messaging.sync.Rig
 import org.example.app.messaging.sync.TestDevice
 
-private val JPEG = byteArrayOf(-1, -40, 1, 2, 3)
+private val JPEG = TestJpeg.of()
 
 /** The store shows a contact's current profile everywhere and sends the person's own (task P5). */
 class ProfileStoreTest {
@@ -65,7 +68,7 @@ class ProfileStoreTest {
         assertContentEquals(JPEG, st.profiles.value["acc-bob"]!!.photo)
         rig.ana1.processor.sync()
         val got = rig.ana1.repo.profile("acc-bob")!!
-        assertEquals("Bob", got.name); assertContentEquals(JPEG, got.photo); assertEquals(1, got.ver)
+        assertEquals("Bob", got.name); assertContentEquals(JPEG, got.photo); assertTrue(got.ver >= 1_700_000_000, "a version is at least the Unix time")
         assertNull(rig.ana1.repo.message("none"))
     }
 
@@ -74,10 +77,11 @@ class ProfileStoreTest {
         val st = store(rig.bob1)
         st.setMyDisplayName("Bob")
         st.setMyPhoto(JPEG); st.settle()
+        val first = rig.bob1.repo.get("profile.ver")!!.decodeToString().toInt()
         st.setMyPhoto(null); st.settle()
         rig.ana1.processor.sync()
         val got = rig.ana1.repo.profile("acc-bob")!!
-        assertNull(got.photo); assertEquals(2, got.ver)
+        assertNull(got.photo); assertTrue(got.ver > first)
         assertNull(st.profiles.value["acc-bob"]?.photo)
     }
 
@@ -88,11 +92,45 @@ class ProfileStoreTest {
         st.announceProfile(); st.settle()
         st.announceProfile(); st.settle()
         rig.ana1.processor.sync()
-        assertEquals(1, rig.ana1.repo.profile("acc-bob")!!.ver)
+        val first = rig.ana1.repo.profile("acc-bob")!!.ver
+        assertTrue(first >= 1_700_000_000)
         st.setMyDisplayName("Robert")
         st.announceProfile(); st.settle()
         rig.ana1.processor.sync()
         assertEquals("Robert", rig.ana1.repo.profile("acc-bob")!!.name)
-        assertEquals(2, rig.ana1.repo.profile("acc-bob")!!.ver)
+        assertTrue(rig.ana1.repo.profile("acc-bob")!!.ver > first)
+    }
+
+    // Ruling B
+
+    @Test fun aProfileFromARequestIsStoredButNotShownUntilAccepted() = runTest {
+        val (rig, conv) = setup()
+        rig.bob1.repo.upsertChat(rig.bob1.repo.chat("acc-ana")!!.copy(isRequest = true))
+        val st = store(rig.bob1)
+        rig.ana1.send(conv, ContentEnvelope.Profile("p1", NOW, "Ann", JPEG, 1))
+        st.syncInbox(); st.settle()
+        assertEquals("Ann", rig.bob1.repo.profile("acc-ana")!!.name, "stored")
+        assertEquals("Ana", st.contact("acc-ana")!!.displayName, "the lookup name shows")
+        assertNull(st.profiles.value["acc-ana"], "no photo shows")
+        st.accept("acc-ana"); st.settle()
+        assertEquals("Ann", st.contact("acc-ana")!!.displayName)
+        assertContentEquals(JPEG, st.profiles.value["acc-ana"]!!.photo)
+    }
+
+    // Ruling C: the notification title is the name the chat list shows.
+
+    @Test fun theNotificationTitleUsesTheSameNameAsTheChatList() = runTest {
+        val (rig, conv) = setup()
+        val np = rig.bob1.notifications()
+        suspend fun push(env: ContentEnvelope): NotificationOutcome {
+            rig.ana1.send(conv, env)
+            val item = rig.server.pending("acc-bob/bob1").last()
+            return rig.bob1.lock.withLock { np.onMessagePush(org.example.app.messaging.pad(item.payload)) }
+        }
+        assertEquals("Ana", (push(ContentEnvelope.Text("n1", NOW, "hi")) as NotificationOutcome.Message).senderName)
+        rig.bob1.repo.saveProfile("acc-ana", "Ann", null, 2)
+        assertEquals("Ann", (push(ContentEnvelope.Text("n2", NOW + 1, "hi")) as NotificationOutcome.Message).senderName)
+        rig.bob1.repo.block("acc-ana", NOW)
+        assertIs<NotificationOutcome.Nothing>(push(ContentEnvelope.Text("n3", NOW + 2, "hi")))
     }
 }
