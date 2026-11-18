@@ -25,12 +25,21 @@ struct ChatView: View {
     @State private var draft = ""
     /// The draft set aside while the edit bar fills the composer.
     @State private var draftBeforeEdit = ""
-    @State private var downloaded: Set<String> = []
+    /// Messages whose download the person started; older loaded pages are re-read until each one finishes.
+    @State private var downloading: Set<String> = []
+    @State private var voice = VoicePlayer()
+    @State private var preview = MediaPreview()
+    @Environment(\.scenePhase) private var scenePhase
     @State private var history = ChatHistory()
     /// The store's newest messages as of the last sync, so ones that slide out of that window are kept.
     @State private var lastNewest: [Message] = []
     /// Set when this screen reacts to, edits or deletes a message, which may be older than the newest window.
     @State private var needsOlderRefresh = false
+    @State private var scrollTarget = ScrollTarget()
+    /// Bumped after a programmatic change of `scrollTarget` so the view reads it again.
+    @State private var scrollTick = 0
+    /// How many times the scroll-to-newest button ran (shown to UI tests in debug builds only).
+    @State private var scrollTaps = 0
     @State private var hits: [MessageHit] = []
     /// The query `hits` answers; "No results" shows only once it matches what is typed.
     @State private var searchedQuery = ""
@@ -107,6 +116,15 @@ struct ChatView: View {
             model.markRead(chatID: chatID)
             openSearchIfRequested()
         }
+        .onAppear {
+            MediaPreview.sweepStale()
+            voice.isInCall = { [weak model] in model?.activeCall?.isEnded == false }
+            voice.callStateChanged(inCall: model.activeCall?.isEnded == false)
+        }
+        .onChange(of: model.activeCall?.isEnded == false) { _, inCall in voice.callStateChanged(inCall: inCall) }
+        .onDisappear { voice.stop(); preview.close() }
+        .onChange(of: scenePhase) { _, phase in if phase != .active { voice.stop() } }
+        .mediaPreview(preview)
         .onChange(of: searchRequest) { _, _ in openSearchIfRequested() }
         .onChange(of: draft) { _, text in
             if editing == nil { model.drafts.set(text, for: chatID) }
@@ -130,6 +148,29 @@ struct ChatView: View {
 
     // MARK: - Timeline
 
+    private static let bottomID = "chat-bottom"
+
+    /// Holds the id `scrollPosition(id:)` reads and writes. A plain class, so the system writing it during
+    /// ordinary scrolling does not redraw the chat; `scrollTick` is bumped to make a programmatic change take effect.
+    private final class ScrollTarget {
+        var id: String?
+    }
+
+    /// Scrolls to the end of the chat. A far-away row of a lazy stack is only sized by estimate the first time,
+    /// so the scroll is repeated once it has been laid out.
+    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+        // Two independent mechanisms: the scroll position binding and the proxy.
+        scrollTarget.id = nil
+        scrollTick += 1
+        Task { @MainActor in
+            scrollTarget.id = Self.bottomID
+            scrollTick += 1
+            proxy.scrollTo(Self.bottomID, anchor: .bottom)
+            try? await Task.sleep(for: .milliseconds(200))
+            proxy.scrollTo(Self.bottomID, anchor: .bottom)
+        }
+    }
+
     private func messages(_ chat: Chat) -> some View {
         let all = history.messages(newest: chat.messages)
         let rows = ChatTimeline.rows(messages: all, firstUnreadID: firstUnreadID, calendar: .current)
@@ -143,10 +184,15 @@ struct ChatView: View {
                         rowView(row, all: all, indexByID: indexByID, byID: byID, newestID: newestID, chat: chat, proxy: proxy)
                             .id(row.id)
                     }
+                    // Always the last child: the one target for every "go to the bottom".
+                    Color.clear.frame(height: 1).id(Self.bottomID)
                 }
+                .scrollTargetLayout()
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
             }
+            .scrollPosition(id: Binding(get: { _ = scrollTick; return scrollTarget.id }, set: { scrollTarget.id = $0 }),
+                            anchor: .bottom)
             .defaultScrollAnchor(.bottom)
             .background(Color.groupedBackground)
             .overlay {
@@ -157,18 +203,29 @@ struct ChatView: View {
                 }
             }
             .overlay(alignment: .bottomTrailing) {
-                if !tracker.atBottom, let newestID {
+                if !tracker.atBottom, newestID != nil {
                     scrollButton(count: tracker.unseenCount(in: all)) {
-                        tracker.setAtBottom(true, newestID: newestID)
-                        // After this update has laid out, as the follow-new-messages scroll does; an animated
-                        // scroll started inside the same update did not reach the bottom in CI.
-                        Task { @MainActor in proxy.scrollTo(newestID, anchor: .bottom) }
+                        // The button goes away when the newest row appears, not on tap, so a scroll that
+                        // lands short leaves it there to try again.
+                        scrollTaps += 1
+                        scrollToBottom(proxy)
                     }
                 }
             }
+            #if DEBUG
+            .overlay(alignment: .topLeading) {
+                // Lets UI tests see that the button's action ran. Not in release builds.
+                Color.clear
+                    .frame(width: 1, height: 1)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Scroll button taps")
+                    .accessibilityValue("\(scrollTaps)")
+                    .accessibilityIdentifier("chat.debug.scrollTaps")
+            }
+            #endif
             .onChange(of: newestID) { _, new in
-                if tracker.messagesChanged(newestID: new), let new {
-                    Task { @MainActor in proxy.scrollTo(new, anchor: .bottom) }
+                if tracker.messagesChanged(newestID: new) {
+                    scrollToBottom(proxy)
                 }
             }
             .onChange(of: firstUnreadID) { _, new in
@@ -213,8 +270,13 @@ struct ChatView: View {
                 isMine: mine,
                 reply: message.replyToID.flatMap { byID[$0] },
                 replySenderName: senderName,
-                showsMedia: downloaded.contains(message.id) || autoDownloads(message),
-                download: { downloaded.insert(message.id) },
+                mediaState: MediaBubbleState(media: message.media, fileExists: model.mediaFileIsUsable),
+                download: { downloading.insert(message.id); model.downloadMedia(messageID: message.id, in: chatID) },
+                openMedia: { url, name, isPhoto in
+                    preview.open(source: url, mediaDirectory: model.mediaDirectory, name: name, isPhoto: isPhoto)
+                },
+                voice: voice,
+                canDownload: !model.isSampleData,
                 retry: { model.retrySend(messageID: message.id) },
                 actions: MessageActions.available(for: message, isMine: mine),
                 perform: { perform($0, on: message, all: all, indexByID: indexByID) },
@@ -243,6 +305,7 @@ struct ChatView: View {
             Image(systemName: "chevron.down")
                 .font(.headline)
                 .frame(width: 44, height: 44)
+                .contentShape(Circle())
                 .glassBackground(in: Circle())
                 .overlay(alignment: .topTrailing) {
                     if count > 0 {
@@ -279,7 +342,7 @@ struct ChatView: View {
         guard let chat else { return }
         // Store changes in other chats (receipts and so on) cost this screen nothing.
         let changed = chat.messages != lastNewest
-        guard changed || needsOlderRefresh else { return }
+        guard changed || needsOlderRefresh || !downloading.isEmpty else { return }
         var next = history
         next.sync(previousNewest: lastNewest, newest: chat.messages, refreshOlder: true,
                   allowTrim: tracker.atBottom) { before, limit in
@@ -288,6 +351,15 @@ struct ChatView: View {
         history = next
         lastNewest = chat.messages
         needsOlderRefresh = false
+        if !downloading.isEmpty {
+            let loaded = history.messages(newest: chat.messages)
+            downloading = downloading.filter { id in
+                switch loaded.first(where: { $0.id == id })?.media?.phase {
+                case .remote, .downloading: true
+                default: false
+                }
+            }
+        }
     }
 
     /// Loads the next older page and keeps `anchorID` (the row that triggered it) where it was on screen.
@@ -404,17 +476,6 @@ struct ChatView: View {
         model.delete(messageID: target.id, in: chatID, followedBy: nextLoadedID(after: target.id))
     }
 
-    private func autoDownloads(_ message: Message) -> Bool {
-        let kind: MediaKind
-        switch message.content {
-        case .photo: kind = .photo
-        case .file: kind = .file
-        case .voice: kind = .voice
-        case .text, .call, .deleted, .unsupported, .system: return true
-        }
-        return AutoDownloadPolicy.shouldDownload(kind, network: model.network, settings: model.settings.autoDownload)
-    }
-
     private func send(_ chat: Chat) {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
@@ -473,7 +534,6 @@ struct ChatView: View {
     private func searchResults(_ chat: Chat) -> some View {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let shown = trimmed == searchedQuery ? hits : []
-        let known = Dictionary(history.messages(newest: chat.messages).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         return List {
             if !trimmed.isEmpty, searchedQuery == trimmed, hits.isEmpty {
                 Text("No results")
@@ -490,8 +550,8 @@ struct ChatView: View {
                 } label: {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(hit.preview).lineLimit(2).foregroundStyle(.primary)
-                        if let sentAt = known[hit.messageID]?.sentAt {
-                            Text(sentAt, format: .dateTime.day().month().year().hour().minute())
+                        if hit.sentAt != .distantPast {
+                            Text(hit.sentAt, format: .dateTime.day().month().year().hour().minute())
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }

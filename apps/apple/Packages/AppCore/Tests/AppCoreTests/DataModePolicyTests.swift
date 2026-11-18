@@ -15,6 +15,12 @@ let server = ServerPolicy(defaultPreference: .auto, maximum: .high, defaultIPHid
     #expect(DataModePolicy.ceiling(server: server, settings: .init(), network: .mobile, inCall: .fixed(.high)) == .high)
 }
 
+/// With no connection the ceiling must not rise: the next network is unknown, so the mobile-data limit holds.
+@Test func offlineKeepsTheMobileLimit() {
+    #expect(DataModePolicy.ceiling(server: server, settings: .init(), network: .offline, inCall: nil) == .dataSaver)
+    #expect(DataModePolicy.stripLabel(server: server, settings: .init(), network: .offline) == DataMode.dataSaver.title)
+}
+
 @Test func inCallAutoKeepsMobileLimit() {
     #expect(DataModePolicy.ceiling(server: server, settings: .init(), network: .mobile, inCall: .auto) == .dataSaver)
 }

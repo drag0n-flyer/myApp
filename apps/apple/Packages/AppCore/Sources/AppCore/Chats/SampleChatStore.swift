@@ -123,7 +123,7 @@ public final class SampleChatStore: ChatStore {
         for chat in allChats where !chat.isRequest {
             for message in chat.messages.reversed() {
                 guard case .text(let text) = message.content, text.localizedCaseInsensitiveContains(q) else { continue }
-                hits.append(MessageHit(chatID: chat.id, messageID: message.id, preview: message.previewText))
+                hits.append(MessageHit(chatID: chat.id, messageID: message.id, preview: message.previewText, sentAt: message.sentAt))
                 if hits.count == limit { return hits }
             }
         }

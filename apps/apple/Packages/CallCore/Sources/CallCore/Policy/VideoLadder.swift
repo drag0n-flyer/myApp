@@ -23,7 +23,7 @@ public enum VideoLadder {
     }
 
     public static func startsOff(ceiling: DataMode, network: NetworkType, settings: CallSettings) -> Bool {
-        ceiling <= .dataSaver || (network == .mobile && settings.videoOffOnMobile)
+        ceiling <= .dataSaver || (network != .wifi && settings.videoOffOnMobile)
     }
 
     /// Highest tier (at most `maxTier`) whose minimum fits `budget`, with the sender capped at `min(budget, max)`.
