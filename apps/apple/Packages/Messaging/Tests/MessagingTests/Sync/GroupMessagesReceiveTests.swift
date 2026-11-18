@@ -14,7 +14,7 @@ private let jpeg4 = Data([0xFF, 0xD8, 0xFF, 0xE0])
     private func started() async throws -> (rig: GroupRig, ana: GroupSide, bob: GroupSide, cy: GroupSide, chatID: String, conversationID: String) {
         let rig = try await GroupRig.make()
         let ana = GroupSide(rig.ana)
-        let made = try await ana.manager.createGroup(accounts: ["acc-bob", "acc-cy"], name: "Book club", photo: jpeg4)
+        let made = try await ana.manager.createGroup(accounts: ["acc-bob", "acc-cy"], name: "Book club", photo: nil)
         try await ana.outbox.flush()
         let bob = GroupSide(rig.bob[0]), cy = GroupSide(rig.cy[0])
         try await bob.sync()
