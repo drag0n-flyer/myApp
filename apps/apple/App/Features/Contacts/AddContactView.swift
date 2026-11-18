@@ -4,6 +4,8 @@ import SwiftUI
 /// Add a contact by username.
 struct AddContactView: View {
     let model: AppModel
+    /// A pasted or scanned link, handed to the presenter (see `AddByLinkSection`).
+    let onLink: (URL) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var username = ""
     @State private var notFound = false
@@ -30,7 +32,7 @@ struct AddContactView: View {
                         .disabled(username.trimmingCharacters(in: .whitespaces).isEmpty)
                         .accessibilityIdentifier("addcontact.submit")
                 }
-                AddByLinkSection(model: model, finish: { dismiss() })
+                AddByLinkSection(model: model, finish: { url in onLink(url); dismiss() })
             }
             .navigationTitle("Add contact")
             .toolbar {

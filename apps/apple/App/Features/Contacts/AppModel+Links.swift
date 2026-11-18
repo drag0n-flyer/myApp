@@ -19,12 +19,16 @@ extension AppModel: LinkServices {
         contacts.first { $0.username == username }?.id
     }
 
+    /// The host a contact link must name: the signed-in server, else the one being joined (never just the build default
+    /// once the person has chosen another).
+    var linkHost: String { account.currentServer?.host ?? server.host }
+
     func receiveContactLink(_ url: URL) {
-        AppLinks.coordinator.receive(url, serverHost: server.host)
+        AppLinks.coordinator.receive(url)
     }
 
     func processLinks() async {
-        await AppLinks.coordinator.process(ready: linkReady, services: self)
+        await AppLinks.coordinator.process(ready: { [unowned self] in linkReady }, services: self)
     }
 
     /// Redeems a one-time link. The token is not kept: it exists only in this call. A sample account has no server, so
@@ -36,15 +40,15 @@ extension AppModel: LinkServices {
     }
 
     /// `https://<host>/u/<username>` for the QR code.
-    var myProfileLinkURL: URL? { ContactLink.userURL(host: server.host, username: me.username) }
+    var myProfileLinkURL: URL? { ContactLink.userURL(host: linkHost, username: me.username) }
 
     /// Makes a one-time link to share. A sample account gets a link that goes nowhere.
     func makeInviteLink() async -> Result<URL, NewLinkFailure> {
         if isSampleData {
-            guard let url = ContactLink.inviteURL(host: server.host, token: "SampleSampleSampleSamp") else { return .failure(.failed) }
+            guard let url = ContactLink.inviteURL(host: linkHost, token: "SampleSampleSampleSamp") else { return .failure(.failed) }
             return .success(url)
         }
         guard let client = contactLinkClient else { return .failure(.failed) }
-        do throws(NewLinkFailure) { return .success(try await client.newInviteLinkURL(host: server.host)) } catch { return .failure(error) }
+        do throws(NewLinkFailure) { return .success(try await client.newInviteLinkURL(host: linkHost)) } catch { return .failure(error) }
     }
 }

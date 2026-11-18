@@ -7,8 +7,9 @@ import SwiftUI
 /// or opens links only. The app never reads the pasteboard: the person pastes into the field.
 struct AddByLinkSection: View {
     let model: AppModel
-    /// Closes the add-contact sheet so the confirmation can come up on the root.
-    let finish: () -> Void
+    /// Hands the link up and closes the add-contact sheet. The presenter keeps the URL and calls `model.handle(url:)`
+    /// from its sheet's `onDismiss`, so every sheet is gone before the root presents the confirmation.
+    let finish: (URL) -> Void
 
     @State private var showingMyCode = false
     @State private var showingScanner = false
@@ -76,17 +77,12 @@ struct AddByLinkSection: View {
         notALink = false
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmed),
-              ContactLink.parse(url, serverHost: model.server.host) != .notALink else {
+              ContactLink.parse(url, serverHost: model.linkHost) != .notALink else {
             notALink = true
             return
         }
         link = ""
-        finish()
-        // The confirmation is a sheet on the root: give this one time to leave first.
-        Task {
-            try? await Task.sleep(for: .milliseconds(600))
-            model.handle(url: url)
-        }
+        finish(url)
     }
 
     private func makeLink() {

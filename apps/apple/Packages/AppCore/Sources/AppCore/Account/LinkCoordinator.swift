@@ -51,6 +51,9 @@ public enum LinkOutcome: Equatable, Sendable {
 @MainActor
 public protocol LinkServices: AnyObject {
     var ownUsername: String { get }
+    /// The host of the server the person is on now (the signed-in one, else the one being joined). Asked when a link is
+    /// handled, not when it arrived.
+    var linkHost: String { get }
     /// The contact with this username, if any.
     func contactID(username: String) -> String?
     /// Redeems a one-time link's token. The caller drops the token afterwards.
@@ -69,36 +72,42 @@ public final class LinkCoordinator {
     public private(set) var outcome: LinkOutcome?
     /// Counts the links received, so a view can watch for a new one.
     public private(set) var received = 0
-    @ObservationIgnored private var pending: ContactLink?
+    @ObservationIgnored private var pending: URL?
     @ObservationIgnored private var working = false
+    @ObservationIgnored private var generation = 0
 
     public init() {}
 
     public var hasPending: Bool { pending != nil }
 
-    /// Keeps the link if it is one; the latest wins. Anything else changes nothing.
-    public func receive(_ url: URL, serverHost: String) {
-        let link = ContactLink.parse(url, serverHost: serverHost)
-        guard link != .notALink else { return }
-        pending = link
+    /// Keeps the URL if it has the shape of one of our links, whatever its host; the latest wins. Anything else changes
+    /// nothing. The host is judged later, in `process`, against the server the person is on by then.
+    public func receive(_ url: URL) {
+        guard ContactLink.parse(url, serverHost: url.host ?? "") != .notALink else { return }
+        pending = url
         received += 1
     }
 
-    /// Handles the waiting link when `ready`, once. A link that arrives meanwhile is handled next.
-    public func process(ready: Bool, services: any LinkServices) async {
-        guard ready, !working else { return }
+    /// Handles the waiting link while `ready()` (asked again on every pass), once. A link that arrives meanwhile waits
+    /// until the outcome on screen is dismissed. A result that comes back after `clear()` is discarded.
+    public func process(ready: @MainActor () -> Bool, services: any LinkServices) async {
+        guard !working else { return }
         working = true
         defer { working = false }
-        while let link = pending {
+        while ready(), outcome == nil, let url = pending {
             pending = nil
-            outcome = await resolve(link, services)
+            let started = generation
+            let result = await resolve(ContactLink.parse(url, serverHost: services.linkHost), services)
+            guard started == generation else { continue }
+            outcome = result
         }
     }
 
     public func dismiss() { outcome = nil }
 
-    /// Drops a waiting link and what is shown (sign-out).
+    /// Drops a waiting link and what is shown (sign-out); a redeem still out is discarded when it returns.
     public func clear() {
+        generation += 1
         pending = nil
         outcome = nil
     }

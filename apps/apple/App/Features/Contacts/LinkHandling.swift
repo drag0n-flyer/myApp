@@ -10,26 +10,28 @@ struct LinkHandling: ViewModifier {
 
     private struct Trigger: Equatable {
         var received: Int
+        var outcome: LinkOutcome?
         var ready: Bool
     }
 
     func body(content: Content) -> some View {
         content
-            // An unstructured task: a lock that comes up meanwhile must not cancel a redeem that already started.
-            .onChange(of: Trigger(received: links.received, ready: model.linkReady), initial: true) {
+            // Watches the outcome too: a chat to open that arrived while locked is acted on at unlock, and a link that
+            // waited behind a shown outcome is taken when that one is dismissed. The task is unstructured so a lock
+            // that comes up meanwhile does not cancel a redeem that already started.
+            .onChange(of: Trigger(received: links.received, outcome: links.outcome, ready: model.linkReady), initial: true) {
+                if model.linkReady, case .openChat(let contactID) = links.outcome {
+                    model.selectedTab = .chats
+                    model.openChatID = model.openChat(with: contactID)
+                    links.dismiss()
+                }
                 Task { await model.processLinks() }
-            }
-            .onChange(of: links.outcome) { _, outcome in
-                guard model.linkReady, case .openChat(let contactID) = outcome else { return }
-                model.selectedTab = .chats
-                model.openChatID = model.openChat(with: contactID)
-                links.dismiss()
             }
             .sheet(item: confirmation) { person in
                 LinkConfirmView(model: model, person: person)
             }
             .alert(messageTitle, isPresented: messageShown) {
-                Button("OK", role: .cancel) { links.dismiss() }
+                Button("OK", role: .cancel) { if model.linkReady { links.dismiss() } }
             }
     }
 
@@ -40,7 +42,8 @@ struct LinkHandling: ViewModifier {
                 guard model.linkReady, case .confirmAdd(let username, let name) = links.outcome else { return nil }
                 return PersonToAdd(username: username, displayName: name)
             },
-            set: { if $0 == nil { links.dismiss() } }
+            // A lock that comes up must not drop an outcome (its token may be spent): only a dismissal on screen counts.
+            set: { if $0 == nil, model.linkReady { links.dismiss() } }
         )
     }
 
@@ -52,7 +55,7 @@ struct LinkHandling: ViewModifier {
     private var messageTitle: LocalizedStringKey { LocalizedStringKey(message?.text ?? "") }
 
     private var messageShown: Binding<Bool> {
-        Binding(get: { message != nil }, set: { if !$0 { links.dismiss() } })
+        Binding(get: { message != nil }, set: { if !$0, model.linkReady { links.dismiss() } })
     }
 }
 
