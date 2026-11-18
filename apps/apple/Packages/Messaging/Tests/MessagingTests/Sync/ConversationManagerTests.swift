@@ -311,7 +311,7 @@ private func syncInbox(_ device: TestDevice, joinWith joiner: ConversationManage
         // A new epoch means a new encrypt: mark the mode pending again and move the group on.
         try deps.repo.set(await mgr.pendingKey(serverID), Data([1]))
         let group = GroupID(raw: record.groupID)
-        _ = try await spy.add(keyPackages: try await rig.ana2.deps.mls.makeKeyPackages(count: 1), to: group)
+        _ = try await spy.add(keyPackages: try await makeDevice(rig.server, account: "acc-bob", username: "bob").deps.mls.makeKeyPackages(count: 1), to: group)
         try await spy.commitAccepted(group)
         _ = try? await mgr.announceMode(record)
         #expect(spy.encryptCount == 2)
