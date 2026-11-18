@@ -102,8 +102,6 @@ public final class LiveChatStore: ChatStore {
         _ = try? await inbox.syncOnce()
         // A chat whose first commit's reply was lost is finished here, never started again (MLS profile, step 5).
         await conversations.resumePendingCreates()
-        // Every group I am in is read from the server once (start-up and reconnect), so a missed `members` item is caught up.
-        await conversations.reconcileGroups()
         await PendingActions.run(repo: repo, server: deps.server, gate: pendingGate)
         refresh()
     }
@@ -117,6 +115,15 @@ public final class LiveChatStore: ChatStore {
                 _ = self?.background { await attachments.autoDownload(for: message) }
             }
         }
+    }
+
+    /// Every group this device is in is read from the server once and brought in line, so a missed `members` item is caught
+    /// up. The app calls it at start-up and on each live connect (not on every inbox event: it is one request per group).
+    public func reconcileGroups() async {
+        guard !closed else { return }
+        await conversations.reconcileGroups()
+        flushOutboxSoon()
+        refresh()
     }
 
     /// A `members` item starts a group sync in the background (it may read the inbox itself, so the drain never waits for it).

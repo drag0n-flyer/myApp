@@ -442,6 +442,35 @@ final class AppModel {
         return await chatStore.createGroup(accounts: accounts, name: name, photo: photo)
     }
 
+    // MARK: Group changes (the group screens call these)
+
+    /// The member list this device holds for a group chat; the screen sorts it.
+    func groupMembers(chatID: String) -> [GroupMember] { _ = revision; return chatStore.groupMembers(chatID: chatID) }
+    func addMembers(chatID: String, accounts: [String]) async -> GroupChangeOutcome {
+        defer { revision += 1 }
+        return await chatStore.addMembers(chatID: chatID, accounts: accounts)
+    }
+    func removeMember(chatID: String, account: String) async -> GroupChangeOutcome {
+        defer { revision += 1 }
+        return await chatStore.removeMember(chatID: chatID, account: account)
+    }
+    func leaveGroup(chatID: String) async -> GroupChangeOutcome {
+        defer { revision += 1 }
+        return await chatStore.leaveGroup(chatID: chatID)
+    }
+    func setRole(chatID: String, account: String, role: GroupRole) async -> GroupChangeOutcome {
+        defer { revision += 1 }
+        return await chatStore.setRole(chatID: chatID, account: account, role: role)
+    }
+    func renameGroup(chatID: String, name: String) async -> GroupChangeOutcome {
+        defer { revision += 1 }
+        return await chatStore.renameGroup(chatID: chatID, name: name)
+    }
+    func setGroupPhoto(chatID: String, photo: Data?) async -> GroupChangeOutcome {
+        defer { revision += 1 }
+        return await chatStore.setGroupPhoto(chatID: chatID, photo: photo)
+    }
+
     /// What a chat is called: a group's name, else its contact's name. A group whose name has not arrived yet is "Group".
     func chatName(_ chat: Chat) -> String {
         _ = revision
@@ -719,6 +748,7 @@ final class AppModel {
         // The seed's session, store and signed-in guard makes a late write safe.
         Task { await seedOwnName() }
         await syncInbox()
+        await messaging?.store.reconcileGroups()
         await replenishKeyPackages()
         await registerForPushIfAllowed()
     }
@@ -918,6 +948,7 @@ final class AppModel {
     private func didConnect() async {
         peopleConnected()
         await syncInbox()
+        await messaging?.store.reconcileGroups()
         await messaging?.reconciler.connected()
     }
 
