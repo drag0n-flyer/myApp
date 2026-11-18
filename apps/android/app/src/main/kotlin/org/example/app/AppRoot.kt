@@ -257,6 +257,7 @@ fun AppRoot(
                             vm, onOpenChat = { openChat.value(it, null) }, onOpenRequests = { nav.navigate(REQUESTS) },
                             onNewChat = { nav.navigate(NEW_CHAT) }, onSearch = { nav.navigate(SEARCH) },
                             onOpenArchive = { nav.navigate(ARCHIVE) },
+                            selectedChatId = if (wide) paneChat else null,
                         )
                     } else if (tab == MainTab.Calls) {
                         val vm = viewModel<CallHistoryViewModel>(factory = factory { CallHistoryViewModel(graph.chatStore) })

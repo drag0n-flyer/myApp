@@ -67,6 +67,36 @@ class TwoPaneTest {
         rule.onNodeWithText("Arjun").assertIsDisplayed()
     }
 
+    private fun selectedRows() = rule.onAllNodes(androidx.compose.ui.test.isSelected() and hasText("Riya") or
+        (androidx.compose.ui.test.isSelected() and hasText("Arjun"))).fetchSemanticsNodes().size
+
+    @Test fun theOpenChatsRowIsSelectedInTheListAndNoOtherIs() {
+        launch()
+        rule.onNodeWithText("Riya").performClick()
+        rule.waitForIdle()
+        rule.onNode(androidx.compose.ui.test.isSelected() and hasText("Riya")).assertIsDisplayed()
+        rule.onNode(androidx.compose.ui.test.isNotSelected() and hasText("Arjun")).assertIsDisplayed()
+        assertEquals(1, selectedRows())
+    }
+
+    @Test fun noRowIsSelectedWithNoChatOpenOrInOnePane() {
+        launch()
+        assertEquals(0, selectedRows()) // nothing open yet
+        rule.onNodeWithText("Riya").performClick()
+        rule.waitForIdle()
+        RuntimeEnvironment.setQualifiers("w411dp-h900dp")
+        scenario!!.recreate()
+        rule.waitForIdle()
+        assertEquals(0, rule.onAllNodes(androidx.compose.ui.test.isSelected() and hasText("Riya")).fetchSemanticsNodes().size)
+        assertEquals(0, rule.onAllNodes(androidx.compose.ui.test.isNotSelected() and hasText("Riya")).fetchSemanticsNodes().size)
+        // Back to the list: the chat's row carries no selection state at all in one pane.
+        scenario!!.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        rule.waitForIdle()
+        rule.onNodeWithText("Riya").assertIsDisplayed()
+        assertEquals(0, selectedRows())
+        assertEquals(0, rule.onAllNodes(androidx.compose.ui.test.isNotSelected() and hasText("Riya")).fetchSemanticsNodes().size)
+    }
+
     @Test fun aNarrowWindowIsUnchanged() {
         RuntimeEnvironment.setQualifiers("w411dp-h900dp")
         launch()

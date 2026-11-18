@@ -57,6 +57,8 @@ fun ChatListScreen(
     onSearch: () -> Unit,
     modifier: Modifier = Modifier,
     onOpenArchive: () -> Unit = {},
+    /** The chat open beside the list (two panes); null leaves every row unselected, as in one pane. */
+    selectedChatId: String? = null,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
@@ -141,7 +143,7 @@ fun ChatListScreen(
                     }
                 }
                 items(state.rows, key = { it.chatId }) { row ->
-                    SwipeableChatRow(row, inArchive = false, actions = actions, onClick = { onOpenChat(row.chatId) })
+                    SwipeableChatRow(row, inArchive = false, actions = actions, onClick = { onOpenChat(row.chatId) }, selected = selectedChatId?.let { it == row.chatId })
                 }
             }
         }
