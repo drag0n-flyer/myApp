@@ -199,6 +199,7 @@ class RoomRepository(
         ConversationEntity(c.serverId, c.chatId, c.groupId, c.mode, c.innerMode, c.modeMismatch, c.epoch, c.active, c.createdAt),
         )
     }
+    override fun deleteConversation(serverId: String) = conversations.delete(serverId)
     override fun conversations(chatId: String) = conversations.forChat(chatId).map { it.toRecord() }
     override fun conversation(serverId: String) = conversations.get(serverId)?.toRecord()
     override fun conversationByGroup(groupId: ByteArray) = conversations.byGroup(groupId)?.toRecord()

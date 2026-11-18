@@ -266,6 +266,19 @@ abstract class RepositoryContract {
         assertEquals(1L, repo.conversation("c1")?.epoch)
     }
 
+    @Test fun deleteConversationRemovesItsRowAndMembersAndLeavesTheChatAndAnotherConversation() {
+        repo.upsertConversation(ConversationRecord("c1", "chat1", byteArrayOf(1), "e2ee", null, false, 0, true, 1))
+        repo.upsertConversation(ConversationRecord("c2", "chat1", byteArrayOf(2), "e2ee", null, false, 0, true, 1))
+        repo.replaceMembers("c1", listOf(org.example.app.messaging.ports.MemberRecord("alice", byteArrayOf(7))))
+        repo.deleteConversation("c1")
+        assertNull(repo.conversation("c1"))
+        assertNull(repo.conversationByGroup(byteArrayOf(1)))
+        assertEquals(emptyList(), repo.members("c1"))
+        assertNotNull(repo.conversation("c2"))
+        assertNotNull(repo.chat("chat1"))
+        repo.deleteConversation("nope") // nothing to delete: no error
+    }
+
     @Test fun preferredConversationIsSmallestActive() {
         repo.upsertConversation(ConversationRecord("b", "chat1", byteArrayOf(2), "e2ee", null, false, 0, true, 1))
         repo.upsertConversation(ConversationRecord("a", "chat1", byteArrayOf(1), "e2ee", null, false, 0, false, 1))

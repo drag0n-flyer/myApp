@@ -338,6 +338,8 @@ interface Repository {
     // conversations
     /** @throws IllegalArgumentException when `mode` or `innerMode` is not a [ConversationMode] value. */
     fun upsertConversation(c: ConversationRecord)
+    /** Deletes the conversation row and, by cascade, its members; the chat and its messages stay. A no-op for an unknown ID. */
+    fun deleteConversation(serverId: String)
     fun conversations(chatId: String): List<ConversationRecord>
     fun conversation(serverId: String): ConversationRecord?
     fun conversationByGroup(groupId: ByteArray): ConversationRecord?
