@@ -10,6 +10,7 @@ import org.example.app.contracts.NotificationOutcome
 import org.example.app.core.chats.ChatStore
 import org.example.app.core.notify.NotificationPlan
 import org.example.app.push.MessageNotifier
+import org.example.app.push.NotificationActionSink
 import org.example.app.contracts.PushPayloadHandler
 import org.example.app.contracts.RingOutcome
 import org.example.app.net.ServerClient
@@ -59,6 +60,15 @@ object PushWiring {
         // The two switches the notifications read. Wired here and nowhere else: N4 (mute) and N6 (app lock) replace these lines.
         PushRuntime.mutedChatIds = { emptySet() }
         PushRuntime.appLockOn = { false }
+        PushRuntime.notificationActions = object : NotificationActionSink {
+            override suspend fun markRead(chatId: String): Boolean {
+                val store = graph().openSession()?.chatStore ?: return false
+                if (store.chat(chatId) == null) return false // an ID from an intent is checked against the store first
+                store.markRead(chatId) // also sends the read receipt when the setting allows
+                store.awaitWrites()
+                return true
+            }
+        }
         PushRuntime.dispatcher = PushDispatcher(handler, ring, AndroidPushEffects(app, missed))
         PushRuntime.inboxFetcher = object : InboxFetcher {
             override suspend fun fetch(): List<NotificationOutcome> = graph().openSession()?.notifications?.fetchOutcomes() ?: emptyList()

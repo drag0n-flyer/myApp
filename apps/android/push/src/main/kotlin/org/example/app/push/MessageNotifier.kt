@@ -129,6 +129,7 @@ class MessageNotifier(
             .addExtras(android.os.Bundle().apply { putBoolean(EXTRA_HIDDEN, plan.hideContent) })
         if (plan.silent) builder.setPriority(NotificationCompat.PRIORITY_LOW).setSilent(true)
         openChat(builder, CHAT_TAG + chatId, chatId)
+        builder.addAction(0, context.getString(R.string.push_action_mark_read), NotificationActions.markReadIntent(context, chatId))
         @Suppress("MissingPermission") // checked above
         manager.notify(CHAT_TAG + chatId, 0, builder.build())
         refreshSummary()
