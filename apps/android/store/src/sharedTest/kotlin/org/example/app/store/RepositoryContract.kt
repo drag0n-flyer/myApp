@@ -425,4 +425,92 @@ abstract class RepositoryContract {
         assertTrue(row.muted)
         repo.reduceUnread("nobody", 1) // no row, no error
     }
+
+    // People base (version 3)
+
+    @Test fun timerIsPerChatAndNothingElseUndoesIt() {
+        assertEquals(0, repo.timerSeconds("chat1"))
+        assertEquals(0, repo.timerSeconds("nobody"))
+        repo.setTimer("chat1", 604_800)
+        assertEquals(604_800, repo.timerSeconds("chat1"))
+        repo.setMuted("chat1", true)
+        repo.bumpChat("chat1", 1, 50)
+        repo.setArchived("chat1", true)
+        assertEquals(604_800, repo.timerSeconds("chat1"))
+        assertEquals(604_800, repo.chat("chat1")!!.timerSeconds)
+        repo.setTimer("chat1", 0)
+        assertEquals(0, repo.timerSeconds("chat1"))
+    }
+
+    @Test fun messageKeepsExpiryCaptionAndPreview() {
+        repo.insertMessage(message("m1", "x").copy(expiresAt = 9_000, caption = "a caption", linkPreview = """{"url":"https://a.example"}"""))
+        val row = repo.message("m1")!!
+        assertEquals(9_000L, row.expiresAt)
+        assertEquals("a caption", row.caption)
+        assertEquals("""{"url":"https://a.example"}""", row.linkPreview)
+        repo.insertMessage(message("m2"))
+        assertNull(repo.message("m2")!!.expiresAt)
+        assertNull(repo.message("m2")!!.caption)
+    }
+
+    @Test fun captionIsFoundBySearch() {
+        repo.insertMessage(message("m1", "sunset over the harbour").copy(caption = "sunset over the harbour"))
+        assertEquals(listOf("m1"), repo.search("harbour", 10).map { it.messageId })
+    }
+
+    @Test fun sweepExpiredRemovesRowFileSearchEntryReactionAndOutboxInOneGo() {
+        val file = java.io.File.createTempFile("blob", ".enc").apply { writeText("x") }
+        try {
+            repo.insertMessage(message("old", "findable word", sentAt = 100).copy(expiresAt = 1_000))
+            repo.upsertAttachment(
+                org.example.app.messaging.ports.AttachmentRecord("att", "old", "photo", ByteArray(1), ByteArray(1), 1, 1, "local", 1, file.path),
+            )
+            repo.setReaction("old", "bob", "x")
+            repo.enqueue(OutboxRecord("old", "chat1", ByteArray(1), 0, 5))
+            repo.insertMessage(message("edge", "edge word", sentAt = 101).copy(expiresAt = 2_000))
+            repo.insertMessage(message("later", "later word", sentAt = 102).copy(expiresAt = 2_001))
+            repo.insertMessage(message("forever", "forever word", sentAt = 103))
+
+            assertEquals(emptyList(), repo.sweepExpired(999))
+            assertEquals(setOf("old", "edge"), repo.sweepExpired(2_000).toSet())
+
+            assertNull(repo.message("old"))
+            assertNull(repo.message("edge"))
+            assertNull(repo.attachment("att"))
+            assertTrue(repo.reactions("old").isEmpty())
+            assertTrue(repo.dueOutbox(Long.MAX_VALUE).isEmpty())
+            assertFalse(file.exists(), "the attachment file is deleted")
+            assertTrue(repo.search("findable", 10).isEmpty(), "the search entry is gone")
+            assertEquals(listOf("later"), repo.search("later word", 10).map { it.messageId })
+            assertNotNull(repo.message("forever"))
+            assertEquals(emptyList(), repo.sweepExpired(2_000))
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test fun saveProfileKeepsOnlyAStrictlyHigherVersion() {
+        assertNull(repo.profile("bob"))
+        assertTrue(repo.saveProfile("bob", "Bob", byteArrayOf(1, 2), 1))
+        var p = repo.profile("bob")!!
+        assertEquals("Bob", p.name)
+        assertContentEquals(byteArrayOf(1, 2), p.photo)
+        assertEquals(1, p.ver)
+
+        assertFalse(repo.saveProfile("bob", "Other", null, 1))
+        assertFalse(repo.saveProfile("bob", "Older", null, 0))
+        assertEquals("Bob", repo.profile("bob")!!.name)
+
+        assertTrue(repo.saveProfile("bob", "Robert", null, 2))
+        p = repo.profile("bob")!!
+        assertEquals("Robert", p.name)
+        assertNull(p.photo)
+        assertEquals(2, p.ver)
+    }
+
+    @Test fun wipeRemovesProfiles() {
+        repo.saveProfile("bob", "Bob", null, 1)
+        repo.wipe()
+        assertNull(repo.profile("bob"))
+    }
 }

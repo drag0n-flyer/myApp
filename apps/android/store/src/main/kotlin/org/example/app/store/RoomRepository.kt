@@ -13,6 +13,8 @@ import org.example.app.messaging.ports.MemberRecord
 import org.example.app.messaging.ports.MessageRecord
 import org.example.app.messaging.ports.OutboxRecord
 import org.example.app.messaging.ports.RawInboxRecord
+import org.example.app.core.people.ProfileMerge
+import org.example.app.messaging.ports.ProfileRecord
 import org.example.app.messaging.ports.ReactionRecord
 import org.example.app.messaging.ports.Repository
 import org.example.app.messaging.ports.SafetyRecord
@@ -45,7 +47,7 @@ class RoomRepository(private val db: AppDatabase, allowLikeFallback: Boolean = f
     override fun contacts() = contacts.all().map { it.toRecord() }
 
     // chats
-    override fun upsertChat(c: ChatRecord) = chats.upsert(ChatEntity(c.id, c.isRequest, c.unread, c.muted, c.lastActivity, c.pinnedAt, c.archived))
+    override fun upsertChat(c: ChatRecord) = chats.upsert(ChatEntity(c.id, c.isRequest, c.unread, c.muted, c.lastActivity, c.pinnedAt, c.archived, c.timerSeconds))
     override fun chat(id: String) = chats.get(id)?.toRecord()
     override fun chats() = chats.all().map { it.toRecord() }
     override fun setUnread(chatId: String, n: Int) = chats.setUnread(chatId, n)
@@ -60,6 +62,33 @@ class RoomRepository(private val db: AppDatabase, allowLikeFallback: Boolean = f
     override fun drafts() = chats.drafts().associate { it.chatId to it.text }
     override fun setDraft(chatId: String, text: String?, at: Long) =
         if (text.isNullOrBlank()) chats.deleteDraft(chatId) else chats.putDraft(chatId, text, at)
+    override fun setTimer(chatId: String, seconds: Int) = chats.setTimer(chatId, seconds)
+    override fun timerSeconds(chatId: String) = chats.timerSeconds(chatId) ?: 0
+    override fun sweepExpired(now: Long): List<String> {
+        val paths = ArrayList<String>()
+        val removed = transaction {
+            val ids = messages.expiredIds(now)
+            // 500 at a time: SQLite caps the number of variables in one statement.
+            ids.chunked(500).forEach { chunk ->
+                paths += messages.pathsFor(chunk)
+                outbox.removeAll(chunk)
+                messages.deleteByIds(chunk)
+            }
+            ids
+        }
+        // Files go after the commit: a rolled-back sweep must not leave rows pointing at deleted files.
+        paths.forEach { runCatching { java.io.File(it).delete() } }
+        return removed
+    }
+
+    // profiles
+    override fun profile(accountId: String) = messages.profile(accountId)?.let { ProfileRecord(it.accountId, it.name, it.photo, it.ver) }
+    override fun saveProfile(accountId: String, name: String, photo: ByteArray?, ver: Int): Boolean = transaction {
+        if (!ProfileMerge.accept(messages.profileVer(accountId), ver)) return@transaction false
+        messages.putProfile(ProfileEntity(accountId, name, photo, ver))
+        true
+    }
+
     override fun deleteChat(id: String) = transaction {
         chats.deleteOutbox(id)
         chats.delete(id)
@@ -250,7 +279,7 @@ class RoomRepository(private val db: AppDatabase, allowLikeFallback: Boolean = f
             // Children go with their chats, folders and messages by cascade.
             db.openHelper.writableDatabase.execSQL("DELETE FROM outbox")
             db.openHelper.writableDatabase.let { w ->
-                listOf("drafts", "messages", "chats", "contacts", "inbox_raw", "processed", "folders", "blocked", "kv", "calls").forEach {
+                listOf("profiles", "drafts", "messages", "chats", "contacts", "inbox_raw", "processed", "folders", "blocked", "kv", "calls").forEach {
                     w.execSQL("DELETE FROM $it")
                 }
             }
@@ -268,15 +297,15 @@ class RoomRepository(private val db: AppDatabase, allowLikeFallback: Boolean = f
 }
 
 private fun ContactEntity.toRecord() = ContactRecord(accountId, username, displayName, isContact, addedAt)
-private fun ChatEntity.toRecord() = ChatRecord(id, isRequest, unread, muted, lastActivity, pinnedAt, archived)
+private fun ChatEntity.toRecord() = ChatRecord(id, isRequest, unread, muted, lastActivity, pinnedAt, archived, timerSeconds)
 private fun ConversationEntity.toRecord() = ConversationRecord(serverId, chatId, groupId, mode, innerMode, modeMismatch, epoch, active, createdAt)
 private fun MessageRecord.toEntity() = MessageEntity(
     id, chatId, conversationId, senderAccount, senderDevice, sentAt, receivedAt, envelope, status, replyTo, editedAt,
-    deleted, undecryptable, folded,
+    deleted, undecryptable, folded, expiresAt, caption, linkPreview,
 )
 private fun MessageEntity.toRecord() = MessageRecord(
     id, chatId, conversationId, senderAccount, senderDevice, sentAt, receivedAt, envelope, status, replyTo, editedAt,
-    deleted, undecryptable, folded,
+    deleted, undecryptable, folded, expiresAt, caption, linkPreview,
 )
 private fun AttachmentEntity.toRecord() = AttachmentRecord(id, messageId, kind, key, digest, size, cipherSize, state, downloaded, localPath)
 private fun OutboxRecord.toEntity() = OutboxEntity(messageId, chatId, envelope, attempts, nextAttemptAt)

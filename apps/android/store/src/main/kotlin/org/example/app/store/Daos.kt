@@ -35,6 +35,8 @@ interface ChatDao {
     @Query("INSERT OR REPLACE INTO drafts(chat_id, text, updated_at) SELECT id, :text, :at FROM chats WHERE id = :id")
     fun putDraft(id: String, text: String, at: Long)
     @Query("DELETE FROM drafts WHERE chat_id = :id") fun deleteDraft(id: String)
+    @Query("UPDATE chats SET timer_seconds = :seconds WHERE id = :id") fun setTimer(id: String, seconds: Int)
+    @Query("SELECT timer_seconds FROM chats WHERE id = :id") fun timerSeconds(id: String): Int?
     @Query("DELETE FROM outbox WHERE chat_id = :id") fun deleteOutbox(id: String)
     @Query("DELETE FROM chats WHERE id = :id") fun delete(id: String)
 }
@@ -102,6 +104,13 @@ interface MessageDao {
     fun markDeleted(id: String, sender: String): Int
     @Query("UPDATE messages SET status = 'sending', received_at = :now WHERE id = :id AND status = 'failed'") fun resetForRetry(id: String, now: Long): Int
 
+    @Query("SELECT id FROM messages WHERE expires_at IS NOT NULL AND expires_at <= :now") fun expiredIds(now: Long): List<String>
+    @Query("SELECT local_path FROM attachments WHERE message_id IN (:ids) AND local_path IS NOT NULL") fun pathsFor(ids: List<String>): List<String>
+    @Query("DELETE FROM messages WHERE id IN (:ids)") fun deleteByIds(ids: List<String>)
+    @Query("SELECT * FROM profiles WHERE account_id = :id") fun profile(id: String): ProfileEntity?
+    @Query("SELECT ver FROM profiles WHERE account_id = :id") fun profileVer(id: String): Int?
+    @Upsert fun putProfile(p: ProfileEntity)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE) fun setReaction(r: ReactionEntity)
     @Query("DELETE FROM reactions WHERE message_id = :messageId AND account_id = :accountId") fun removeReaction(messageId: String, accountId: String)
     @Query("SELECT * FROM reactions WHERE message_id = :messageId ORDER BY account_id") fun reactions(messageId: String): List<ReactionEntity>
@@ -132,6 +141,7 @@ interface OutboxDao {
     fun dueHeads(at: Long): List<OutboxEntity>
     @Query("UPDATE outbox SET attempts = attempts + 1, next_attempt_at = :next WHERE message_id = :id") fun bump(id: String, next: Long)
     @Query("DELETE FROM outbox WHERE message_id = :id") fun remove(id: String)
+    @Query("DELETE FROM outbox WHERE message_id IN (:ids)") fun removeAll(ids: List<String>)
 
     @Insert(onConflict = OnConflictStrategy.IGNORE) fun insertRaw(items: List<InboxRawEntity>)
     @Query("SELECT * FROM inbox_raw ORDER BY cursor LIMIT :limit") fun raw(limit: Int): List<InboxRawEntity>
