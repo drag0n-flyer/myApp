@@ -43,7 +43,7 @@ final class MediaPreview {
 
     // MARK: - Files
 
-    static var folder: URL { FileManager.default.temporaryDirectory.appendingPathComponent("media-preview", isDirectory: true) }
+    nonisolated static var folder: URL { FileManager.default.temporaryDirectory.appendingPathComponent("media-preview", isDirectory: true) }
 
     private static var swept = false
 
@@ -58,7 +58,7 @@ final class MediaPreview {
     }
 
     /// Where photos and files picked in the composer are copied before the engine takes them.
-    static var stagingFolder: URL { FileManager.default.temporaryDirectory.appendingPathComponent("outgoing-media", isDirectory: true) }
+    nonisolated static var stagingFolder: URL { FileManager.default.temporaryDirectory.appendingPathComponent("outgoing-media", isDirectory: true) }
 
     static func shownName(cleaned: String?, source: URL, isPhoto: Bool) -> String {
         let ext = source.pathExtension.lowercased()
