@@ -18,6 +18,23 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 #else
 final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor static weak var model: AppModel?
+    @MainActor private static let lockTimer = LockDueTimer()
+
+    /// App lock: leaving and returning are tracked here, not in a view, so they count with every window closed.
+    func applicationDidResignActive(_ notification: Notification) {
+        MainActor.assumeIsolated {
+            guard let lock = AppDelegate.model?.lock else { return }
+            lock.phaseChanged(.inactive)
+            AppDelegate.lockTimer.start(lock)
+        }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        MainActor.assumeIsolated {
+            AppDelegate.lockTimer.cancel()
+            AppDelegate.model?.lock.phaseChanged(.active)
+        }
+    }
 
     func application(_ application: NSApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
         Task { @MainActor in await AppDelegate.model?.didReceivePushToken(deviceToken) }
@@ -38,6 +55,7 @@ struct AppMain: App {
     var body: some Scene {
         WindowGroup {
             RootView(model: model)
+                .modifier(LockSceneDriver(lock: model.lock))
                 .onOpenURL { model.handle(url: $0) }
                 .onAppear { AppDelegate.model = model }
         }
@@ -49,7 +67,7 @@ struct AppMain: App {
         .defaultSize(width: 420, height: 720)
 
         Settings {
-            MacSettingsView(model: model)
+            LockGate(lock: model.lock) { MacSettingsView(model: model) }
         }
         #endif
     }

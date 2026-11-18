@@ -53,6 +53,12 @@ struct ChatListView: View {
             path = [.chat(id: id)]
             model.openChatID = nil
         }
+        .onAppear {
+            // A chat held while the app was locked is opened once, after unlock (the view did not exist before).
+            guard let id = model.openChatID else { return }
+            path = [.chat(id: id)]
+            model.openChatID = nil
+        }
     }
 }
 

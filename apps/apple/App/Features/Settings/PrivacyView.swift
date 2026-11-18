@@ -5,6 +5,15 @@ struct PrivacyView: View {
     @Bindable var model: AppModel
     @State private var findByEmailError: AccountError?
 
+    private static func delayTitle(_ seconds: Int) -> LocalizedStringKey {
+        switch seconds {
+        case 0: "Immediately"
+        case 300: "5 minutes"
+        case 3600: "1 hour"
+        default: "1 minute"
+        }
+    }
+
     var body: some View {
         let _ = model.revision
         Form {
@@ -34,6 +43,45 @@ struct PrivacyView: View {
                     get: { model.settings.findByEmail },
                     set: { on in Task { findByEmailError = await model.setFindByEmail(on) } }))
                     .accessibilityIdentifier("privacy.findemail")
+            }
+
+            Section {
+                let available = model.lock.availability == .ready
+                Toggle(isOn: Binding(
+                    get: { model.lock.appLockOn },
+                    set: { on in Task { _ = await model.setAppLock(on) } })) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("App lock")
+                        Group {
+                            if available || model.lock.appLockOn {
+                                #if os(iOS)
+                                Text("Ask for Face ID, Touch ID or your passcode to open \(AppBrand.name)")
+                                #else
+                                Text("Ask for Touch ID or your password to open \(AppBrand.name)")
+                                #endif
+                            } else {
+                                #if os(iOS)
+                                Text("Set a passcode in Settings first.")
+                                #else
+                                Text("Set a password in System Settings first.")
+                                #endif
+                            }
+                        }
+                        .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .disabled(!available && !model.lock.appLockOn)
+                .accessibilityIdentifier("privacy.applock")
+                if model.lock.appLockOn {
+                    Picker("Lock after", selection: Binding(
+                        get: { model.lock.lockAfterSeconds },
+                        set: { model.setLockAfter($0) })) {
+                        ForEach(AppLockPolicy.delays, id: \.self) { seconds in
+                            Text(Self.delayTitle(seconds)).tag(seconds)
+                        }
+                    }
+                    .accessibilityIdentifier("privacy.lockafter")
+                }
             }
 
             Section("Messages") {

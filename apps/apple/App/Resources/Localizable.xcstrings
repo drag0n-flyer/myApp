@@ -46,6 +46,39 @@
         }
       }
     },
+    "1 hour" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 hour"
+          }
+        }
+      }
+    },
+    "1 minute" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 minute"
+          }
+        }
+      }
+    },
+    "5 minutes" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "5 minutes"
+          }
+        }
+      }
+    },
     "Accept" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -90,6 +123,17 @@
         }
       }
     },
+    "App lock" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "App lock"
+          }
+        }
+      }
+    },
     "Approve" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -97,6 +141,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Approve"
+          }
+        }
+      }
+    },
+    "Ask for Face ID, Touch ID or your passcode to open %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ask for Face ID, Touch ID or your passcode to open %@"
+          }
+        }
+      }
+    },
+    "Ask for Touch ID or your password to open %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ask for Touch ID or your password to open %@"
           }
         }
       }
@@ -141,6 +207,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Camera access is off"
+          }
+        }
+      }
+    },
+    "Can't check right now. Try again." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Can't check right now. Try again."
           }
         }
       }
@@ -629,6 +706,17 @@
         }
       }
     },
+    "Immediately" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Immediately"
+          }
+        }
+      }
+    },
     "Incoming call" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -691,6 +779,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Link this device?"
+          }
+        }
+      }
+    },
+    "Lock after" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lock after"
           }
         }
       }
@@ -1212,6 +1311,28 @@
         }
       }
     },
+    "Set a passcode in Settings first." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Set a passcode in Settings first."
+          }
+        }
+      }
+    },
+    "Set a password in System Settings first." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Set a password in System Settings first."
+          }
+        }
+      }
+    },
     "Settings" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1626,6 +1747,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Unknown"
+          }
+        }
+      }
+    },
+    "Unlock" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unlock"
+          }
+        }
+      }
+    },
+    "Unlock %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unlock %@"
           }
         }
       }
