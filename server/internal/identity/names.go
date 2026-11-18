@@ -7,12 +7,32 @@ import (
 	"unicode/utf8"
 )
 
-// directionControls are bidirectional controls that can make a name read as
-// something else.
-var directionControls = map[rune]bool{
-	0x202A: true, 0x202B: true, 0x202C: true, 0x202D: true, 0x202E: true,
-	0x2066: true, 0x2067: true, 0x2068: true, 0x2069: true,
-	0x200E: true, 0x200F: true, 0x061C: true,
+// refusedRanges are format and direction characters refused by code point, so
+// the result does not depend on the Unicode table version of a platform.
+var refusedRanges = [][2]rune{
+	{0x00AD, 0x00AD}, {0x0600, 0x0605}, {0x061C, 0x061C}, {0x06DD, 0x06DD},
+	{0x070F, 0x070F}, {0x0890, 0x0891}, {0x08E2, 0x08E2}, {0x180E, 0x180E},
+	{0x200B, 0x200B}, {0x200E, 0x200F}, {0x202A, 0x202E}, {0x2060, 0x2064},
+	{0x2066, 0x206F}, {0xFEFF, 0xFEFF}, {0xFFF9, 0xFFFB}, {0x110BD, 0x110BD},
+	{0x110CD, 0x110CD}, {0x13430, 0x1343F}, {0x1BCA0, 0x1BCA3},
+	{0x1D173, 0x1D17A}, {0xE0001, 0xE0001},
+}
+
+func isRefused(r rune) bool {
+	for _, rg := range refusedRanges {
+		if r >= rg[0] && r <= rg[1] {
+			return true
+		}
+	}
+	if unicode.In(r, unicode.Cc, unicode.Zl, unicode.Zp) {
+		return true
+	}
+	// Any other format character, except the joiners and the tag characters
+	// that emoji sequences need.
+	if unicode.Is(unicode.Cf, r) {
+		return !(r == 0x200C || r == 0x200D || (r >= 0xE0020 && r <= 0xE007F))
+	}
+	return false
 }
 
 // invisibleFillers draw nothing, so they do not count as a visible character.
@@ -36,13 +56,20 @@ func isVisible(r rune) bool {
 	if invisibleFillers[r] {
 		return false
 	}
-	return unicode.In(r, unicode.L, unicode.N, unicode.P, unicode.S)
+	if unicode.In(r, unicode.L, unicode.N, unicode.P, unicode.S) {
+		return true
+	}
+	// Unassigned code points (Cn) count as visible, so a newer Unicode table
+	// on one platform does not change the result. Go's C table holds Cn too,
+	// so Cn is what is in C but in none of Cc, Cf, Co and Cs.
+	return unicode.Is(unicode.C, r) && !unicode.In(r, unicode.Cc, unicode.Cf, unicode.Co, unicode.Cs)
 }
 
 // ValidDisplayName is the display-name rule shared with the clients
 // (DisplayNameRule.clean): 1 to 40 code points after trimming, at least one
-// visible character, no control, line or paragraph separator characters and no
-// direction controls. It returns the trimmed name.
+// visible character, no control, line or paragraph separator characters, no
+// direction controls and no format characters except U+200C, U+200D and the
+// tag characters. Unassigned code points count as visible. It returns the trimmed name.
 func ValidDisplayName(s string) (clean string, ok bool) {
 	if !utf8.ValidString(s) {
 		return "", false
@@ -53,7 +80,7 @@ func ValidDisplayName(s string) (clean string, ok bool) {
 	}
 	visible := false
 	for _, r := range name {
-		if directionControls[r] || unicode.In(r, unicode.Cc, unicode.Zl, unicode.Zp) {
+		if isRefused(r) {
 			return "", false
 		}
 		if isVisible(r) {

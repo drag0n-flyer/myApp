@@ -76,7 +76,7 @@ internal object ChatMapping {
             is ContentEnvelope.Text -> MessageContent.Text(e.t)
             is ContentEnvelope.Photo -> MessageContent.Photo(e.a.sz)
             is ContentEnvelope.Voice -> MessageContent.Voice(e.dur)
-            is ContentEnvelope.File -> MessageContent.File(e.name, e.a.sz)
+            is ContentEnvelope.File -> MessageContent.File(e.name, e.a.sz, e.mime)
             else -> MessageContent.Unsupported // control kinds are never stored as messages
         }
         message = message.copy(content = content)

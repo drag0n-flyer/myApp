@@ -62,6 +62,7 @@ func New(d core.Deps) *App {
 
 	id := identity.New(d)
 	dl := delivery.New(d)
+	dl.HandleFrames(rt)
 	cl := calls.New(d, rt)
 	tn := turn.New(d)
 	at := attachments.New(d)

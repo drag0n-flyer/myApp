@@ -9,7 +9,16 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
+import org.example.app.core.chats.ChatMedia
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
+import org.example.app.core.chats.SendPlan
+import org.example.app.core.chats.UploadCancel
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -79,7 +88,7 @@ interface SocialPort {
 /** A photo, voice note or file ready to upload. `:app` makes it (`PhotoPrep`, `VoiceRecorder`). */
 class PreparedMedia(
     val file: File, val width: Int = 0, val height: Int = 0, val thumbnail: ByteArray? = null,
-    val duration: Double = 0.0, val name: String = file.name,
+    val duration: Double = 0.0, val name: String = file.name, val mime: String = "",
 )
 
 fun interface MediaPreparer {
@@ -141,8 +150,11 @@ class LiveChatStore(
     onEscrowRejected: () -> Unit = {},
 ) : ChatStore, CallSignalSealer by sealer {
 
+    /** Messages made one after the other keep their order, and the time never runs ahead of the device clock for long. */
+    private val storeClock: Clock = MonotonicClock(clock)
+
     val outbox = Outbox(
-        device, mls, server, repo, lock, clock, conversations, escrow, syncOnce = { inbox.sync() },
+        device, mls, server, repo, lock, storeClock, conversations, escrow, syncOnce = { inbox.sync() },
         readReceiptsEnabled = readReceiptsEnabled, fold = fold, onEscrowRejected = onEscrowRejected,
     )
     val receipts = Receipts(outbox, readReceiptsEnabled)
@@ -152,6 +164,48 @@ class LiveChatStore(
     private val tempDir = dirs.tempDir
     /** Ids of the attachment messages this process is preparing or uploading; a "sending" row not in here was cut off. */
     private val uploading = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    /** The running upload job of each message in [uploading], so Cancel can stop it; and the ones Cancel was pressed for. */
+    private val uploadJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
+    private val cancelled = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val progress = MutableStateFlow<Map<String, Double>>(emptyMap())
+    override val uploadProgress: StateFlow<Map<String, Double>> = progress.asStateFlow()
+
+    private fun setProgress(id: String, fraction: Double) {
+        // Whole percents are enough for a ring; the stream reports on every read.
+        progress.update { if (fraction >= 1.0 || (it[id] ?: -1.0) + 0.01 <= fraction) it + (id to fraction) else it }
+    }
+
+    override fun cancelUpload(messageId: String) = write {
+        val pending = repo.get(PENDING_UPLOAD_PREFIX + messageId)?.isNotEmpty() == true
+        if (UploadCancel.onCancel(if (pending) UploadCancel.Phase.Uploading else UploadCancel.Phase.Sent) == UploadCancel.Action.Keep) return@write
+        val job = uploadJobs[messageId]
+        if (job != null) {
+            // The job removes everything itself when it sees the cancellation.
+            cancelled += messageId
+            // A cancel that lost the race (the job finished without seeing it) leaves nothing behind.
+            job.invokeOnCompletion { cancelled -= messageId }
+            job.cancel()
+        } else {
+            removeUnsent(messageId)
+        }
+    }
+
+    /**
+     * Cancel: removes the message, its pending key, its kept and staged files, in one transaction for the rows. Does
+     * nothing when the message was queued meanwhile (its pending key is already empty): it is sent then.
+     */
+    private fun removeUnsent(id: String) {
+        val raw = try {
+            repo.transaction {
+                val value = repo.get(PENDING_UPLOAD_PREFIX + id)
+                if (value == null || value.isEmpty() || !repo.deleteUnsentMessage(id, device.accountId)) null
+                else value.also { repo.set(PENDING_UPLOAD_PREFIX + id, ByteArray(0)) }
+            }
+        } catch (_: Exception) { null } ?: return
+        val pending = runCatching { Json.decodeFromString(PendingUpload.serializer(), raw.decodeToString()) }.getOrNull()
+        discardPending(id, pending?.prepared?.takeIf { it.isNotEmpty() }?.let(::File), pending?.path)
+        reload()
+    }
 
     private val _contacts = MutableStateFlow<List<Contact>>(emptyList())
     private val _folders = MutableStateFlow(listOf(ChatFolder.All, ChatFolder.Unread))
@@ -263,7 +317,7 @@ class LiveChatStore(
         }
     }
 
-    private fun nowMs() = clock.now()
+    private fun nowMs() = storeClock.now()
     private fun freshId() = UUID.randomUUID().toString().lowercase()
     private val showRead get() = readReceiptsEnabled()
 
@@ -524,12 +578,47 @@ class LiveChatStore(
      * with the file's real name and size, so it shows at once; a failed upload makes it `failed` and keeps the files for
      * "Try again" ([retryUpload]); a file that can never be sent is removed ([dropUnsendable]).
      */
-    override fun sendAttachment(path: String, kind: MediaKind, chatId: String) {
-        if (closed.get()) return
+    override fun sendAttachment(path: String, kind: MediaKind, chatId: String) = startAttachment(path, kind, chatId, null)
+
+    override val attachmentLimitBytes: Long get() = maxAttachmentBytes
+
+    /**
+     * A preview's plan, in order: each attachment's message is stored (staged, `sending`) before the next step starts, so
+     * the caption and the later items come after it in the chat. The uploads then run side by side.
+     */
+    override fun sendBatch(sends: List<SendPlan.Send>, chatId: String) {
+        if (closed.get() || sends.isEmpty()) return
+        inFlight.update { it + 1 }
+        scope.launch {
+            try {
+                for (item in sends) {
+                    when (item) {
+                        is SendPlan.Send.Attachment -> {
+                            val created = CompletableDeferred<Unit>()
+                            startAttachment(item.picked.path, item.picked.kind, chatId, created)
+                            created.await()
+                        }
+                        is SendPlan.Send.Text -> {
+                            send(MessageContent.Text(item.text), chatId)
+                            // The text is written by the writer: the next item must be made after it, not before.
+                            awaitWrites()
+                        }
+                    }
+                }
+            } finally {
+                inFlight.update { it - 1 }
+            }
+        }
+    }
+
+    /** [created] completes once the message is stored (or the attachment was dropped), before its upload starts. */
+    private fun startAttachment(path: String, kind: MediaKind, chatId: String, created: CompletableDeferred<Unit>?) {
+        if (closed.get()) { created?.complete(Unit); return }
         inFlight.update { it + 1 }
         scope.launch {
             val id = freshId()
             var stored = false
+            kotlin.coroutines.coroutineContext[Job]?.let { uploadJobs[id] = it }
             try {
                 if (!ensureChatRow(chatId)) return@launch
                 uploading += id
@@ -550,14 +639,20 @@ class LiveChatStore(
                 stored = true
                 bumpActivity(chatId, at)
                 reload()
+                created?.complete(Unit)
                 upload(id, at, pending)
             } catch (e: CancellationException) {
+                if (id in cancelled) withContext(NonCancellable) { removeUnsent(id) }
                 throw e
             } catch (_: Exception) {
                 if (stored) failUpload(id)
             } finally {
                 if (!stored) pendingDir(id).deleteRecursively()
                 uploading -= id
+                uploadJobs -= id
+                cancelled -= id
+                progress.update { it - id }
+                created?.complete(Unit)
                 reload()
                 inFlight.update { it - 1 }
             }
@@ -629,15 +724,20 @@ class LiveChatStore(
         repo.updateStatus(listOf(messageId), "sending")
         inFlight.update { it + 1 }
         scope.launch {
+            kotlin.coroutines.coroutineContext[Job]?.let { uploadJobs[messageId] = it }
             try {
                 reload()
                 upload(messageId, row.sentAt, pending)
             } catch (e: CancellationException) {
+                if (messageId in cancelled) withContext(NonCancellable) { removeUnsent(messageId) }
                 throw e
             } catch (_: Exception) {
                 failUpload(messageId)
             } finally {
                 uploading -= messageId
+                uploadJobs -= messageId
+                cancelled -= messageId
+                progress.update { it - messageId }
                 reload()
                 inFlight.update { it - 1 }
             }
@@ -667,6 +767,12 @@ class LiveChatStore(
                 if (File(pending.path).isFile) throw e
                 null
             }
+            if (!currentCoroutineContext().isActive) {
+                // Cancelled while it was being prepared (a blocking step that cannot stop half way): what it made goes too,
+                // and an empty result is not "unreadable".
+                if (fresh != null && (isInsideTemp(fresh.file) || isInside(fresh.file, pendingDir(id)))) fresh.file.delete()
+                throw CancellationException("cancelled while preparing")
+            }
             if (fresh == null) {
                 // Nothing to retry from: it can never send, so it is removed instead of offering a dead "Try again".
                 dropUnsendable(id, pending.chatId)
@@ -684,7 +790,7 @@ class LiveChatStore(
         }
         // The ciphertext waits in the temp folder until the message is stored, so no blob is ever left without a record.
         val uploaded = try {
-            uploader.uploadKeeping(prepared.file)
+            uploader.uploadKeeping(prepared.file) { setProgress(id, it) }
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
@@ -696,7 +802,7 @@ class LiveChatStore(
         val queued = try {
             repo.transaction {
                 // False when the message was deleted while it uploaded: then nothing is queued and no record is written.
-                if (!repo.replaceUnsentEnvelope(id, device.accountId, ContentCodec.encode(envelope), fold(prepared.name.takeIf { kind == MediaKind.File } ?: ""), nowMs())) {
+                if (!repo.replaceUnsentEnvelope(id, device.accountId, ContentCodec.encode(envelope), fold(prepared.name.takeIf { kind == MediaKind.File || kind == MediaKind.Video } ?: ""), nowMs())) {
                     false
                 } else {
                     outbox.enqueue(envelope, pending.chatId)
@@ -779,16 +885,18 @@ class LiveChatStore(
     private fun placeholderAtt(size: Long) = Att("", ByteArray(0), ByteArray(0), size, size)
 
     private fun envelopeFor(kind: MediaKind, id: String, at: Long, att: Att, p: PreparedMedia): ContentEnvelope = when (kind) {
-        MediaKind.Photo, MediaKind.Video -> ContentEnvelope.Photo(id, at, att, p.width, p.height, p.thumbnail)
+        MediaKind.Photo -> ContentEnvelope.Photo(id, at, att, p.width, p.height, p.thumbnail)
+        // A video is file content (the same on every platform): its name keeps the extension and the mime says video/.
+        MediaKind.Video -> ContentEnvelope.File(id, at, att, p.name, p.mime.ifEmpty { ChatMedia.videoMime(p.name) })
         MediaKind.Voice -> ContentEnvelope.Voice(id, at, att, p.duration)
-        MediaKind.File -> ContentEnvelope.File(id, at, att, p.name, "application/octet-stream")
+        MediaKind.File -> ContentEnvelope.File(id, at, att, p.name, p.mime.ifEmpty { "application/octet-stream" })
     }
 
     /** What a retry knows about the prepared file: its length, size or name, from the stored envelope. */
     private fun preparedFrom(envelope: ByteArray?, file: File): PreparedMedia = when (val e = envelope?.let { ContentCodec.decode(it) }) {
         is ContentEnvelope.Photo -> PreparedMedia(file, e.w, e.h, e.th)
         is ContentEnvelope.Voice -> PreparedMedia(file, duration = e.dur)
-        is ContentEnvelope.File -> PreparedMedia(file, name = e.name)
+        is ContentEnvelope.File -> PreparedMedia(file, name = e.name, mime = e.mime)
         else -> PreparedMedia(file)
     }
 
@@ -834,9 +942,9 @@ class LiveChatStore(
     }
 
     private fun attachmentKind(kind: MediaKind) = when (kind) {
-        MediaKind.Photo, MediaKind.Video -> "photo"
+        MediaKind.Photo -> "photo"
         MediaKind.Voice -> "voice"
-        MediaKind.File -> "file"
+        MediaKind.File, MediaKind.Video -> "file"
     }
 
     override fun download(messageId: String, chatId: String) {

@@ -2,9 +2,11 @@ package org.example.app.core.profile
 
 /**
  * What a display name may be. The server accepts up to 64 characters with no control characters; this is stricter:
- * 1 to 40 characters after trimming, at least one visible character, no line or paragraph breaks, no control
- * characters, no direction or format controls (they can make a name read as something else), no broken surrogate
- * pairs. [forDisplay] cleans a name that came from somewhere else.
+ * 1 to 40 code points after trimming, at least one visible character, no line or paragraph breaks, no control
+ * characters, no format characters (they can make a name read as something else; listed by code point, plus every
+ * other Cf one) except U+200C, U+200D and the tag characters U+E0020..U+E007F that emoji sequences need, no broken
+ * surrogate pairs. Unassigned code points count as visible, so the Unicode table version of a platform does not
+ * change the result. The same rule as the server's and AppCore's. [forDisplay] cleans a name that came from somewhere else.
  */
 object DisplayNameRule {
     const val MAX = 40
@@ -12,7 +14,23 @@ object DisplayNameRule {
     /** The longest name the server stores. */
     private const val SERVER_MAX = 64
 
-    private val directionControls = setOf(0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 0x2066, 0x2067, 0x2068, 0x2069, 0x200E, 0x200F, 0x061C)
+    /** Format and direction characters refused by code point, whatever the platform's tables say. */
+    private val refusedRanges = listOf(
+        0x00AD..0x00AD, 0x0600..0x0605, 0x061C..0x061C, 0x06DD..0x06DD, 0x070F..0x070F, 0x0890..0x0891,
+        0x08E2..0x08E2, 0x180E..0x180E, 0x200B..0x200B, 0x200E..0x200F, 0x202A..0x202E, 0x2060..0x2064,
+        0x2066..0x206F, 0xFEFF..0xFEFF, 0xFFF9..0xFFFB, 0x110BD..0x110BD, 0x110CD..0x110CD,
+        0x13430..0x1343F, 0x1BCA0..0x1BCA3, 0x1D173..0x1D17A, 0xE0001..0xE0001,
+    )
+
+    private fun isRefused(cp: Int): Boolean {
+        if (refusedRanges.any { cp in it }) return true
+        return when (Character.getType(cp)) {
+            Character.CONTROL.toInt(), Character.LINE_SEPARATOR.toInt(), Character.PARAGRAPH_SEPARATOR.toInt(),
+            Character.SURROGATE.toInt() -> true
+            Character.FORMAT.toInt() -> !(cp == 0x200C || cp == 0x200D || cp in 0xE0020..0xE007F)
+            else -> false
+        }
+    }
 
     /** Letters or fillers that draw nothing (zero-width and Hangul/Braille blanks): they do not count as a visible character. */
     private val invisible = setOf(0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF, 0x3164, 0x115F, 0x1160, 0xFFA0, 0x2800, 0x034F, 0x180E, 0x17B4, 0x17B5)
@@ -27,11 +45,7 @@ object DisplayNameRule {
             val cp = name.codePointAt(i)
             i += Character.charCount(cp)
             if (++count > MAX) return null
-            if (cp in directionControls) return null
-            when (Character.getType(cp)) {
-                Character.CONTROL.toInt(), Character.LINE_SEPARATOR.toInt(), Character.PARAGRAPH_SEPARATOR.toInt(),
-                Character.SURROGATE.toInt() -> return null
-            }
+            if (isRefused(cp)) return null
         }
         return if (hasVisible(name)) name else null
     }
@@ -47,11 +61,7 @@ object DisplayNameRule {
         while (i < name.length) {
             val cp = name.codePointAt(i)
             i += Character.charCount(cp)
-            if (cp in directionControls) continue
-            when (Character.getType(cp)) {
-                Character.CONTROL.toInt(), Character.LINE_SEPARATOR.toInt(), Character.PARAGRAPH_SEPARATOR.toInt(),
-                Character.SURROGATE.toInt() -> continue
-            }
+            if (isRefused(cp)) continue
             kept.appendCodePoint(cp)
         }
         val trimmed = trimmed(kept.toString())
@@ -77,7 +87,7 @@ object DisplayNameRule {
                 Character.END_PUNCTUATION.toInt(), Character.INITIAL_QUOTE_PUNCTUATION.toInt(), Character.FINAL_QUOTE_PUNCTUATION.toInt(),
                 Character.OTHER_PUNCTUATION.toInt(),
                 Character.MATH_SYMBOL.toInt(), Character.CURRENCY_SYMBOL.toInt(), Character.MODIFIER_SYMBOL.toInt(),
-                Character.OTHER_SYMBOL.toInt() -> return true
+                Character.OTHER_SYMBOL.toInt(), Character.UNASSIGNED.toInt() -> return true
             }
         }
         return false
