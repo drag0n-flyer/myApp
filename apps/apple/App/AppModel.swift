@@ -657,6 +657,11 @@ final class AppModel {
             revision += 1
             NotificationActions.shared.signedOut()
         }
+        // The privacy switches belong to the account that left: the next one starts with them on. Set after the
+        // signal model is gone, so turning them back on here sends nothing.
+        settings.typingIndicator = true
+        settings.onlineAndLastSeen = true
+        settings.readReceipts = true
         #if os(macOS)
         onboarding = OnboardingFlow(platform: .mac)
         #else
