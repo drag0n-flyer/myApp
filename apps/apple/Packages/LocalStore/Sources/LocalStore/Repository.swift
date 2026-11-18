@@ -436,31 +436,36 @@ public final class Repository: @unchecked Sendable {
     private func outRow(_ r: Row) -> OutboxRecord {
         OutboxRecord(
             messageID: r.text(0), chatID: r.text(1), envelope: r.blob(2), attempts: Int(r.int(3)), nextAttemptAt: date(r.int(4)),
-            ciphertext: r.isNull(5) ? nil : r.blob(5), ciphertextEpoch: r.isNull(6) ? nil : r.int(6))
+            ciphertext: r.isNull(5) ? nil : r.blob(5), ciphertextEpoch: r.isNull(6) ? nil : r.int(6),
+            ciphertextConversation: r.isNull(7) ? nil : r.text(7))
     }
 
-    private let outCols = "message_id, chat_id, envelope, attempts, next_attempt_at, ciphertext, ciphertext_epoch"
+    private let outCols = "message_id, chat_id, envelope, attempts, next_attempt_at, ciphertext, ciphertext_epoch, ciphertext_conversation"
 
     public func enqueue(_ o: OutboxRecord) throws {
         try db.execute("""
-            INSERT OR REPLACE INTO outbox(message_id, chat_id, envelope, attempts, next_attempt_at, ciphertext, ciphertext_epoch)
-            VALUES (?,?,?,?,?,?,?)
+            INSERT OR REPLACE INTO outbox(message_id, chat_id, envelope, attempts, next_attempt_at, ciphertext, ciphertext_epoch, ciphertext_conversation)
+            VALUES (?,?,?,?,?,?,?,?)
             """,
                        [.text(o.messageID), .text(o.chatID), .blob(o.envelope), .int(Int64(o.attempts)), .int(ms(o.nextAttemptAt)),
-                        o.ciphertext.map { .blob($0) } ?? .null, o.ciphertextEpoch.map { .int($0) } ?? .null])
+                        o.ciphertext.map { .blob($0) } ?? .null, o.ciphertextEpoch.map { .int($0) } ?? .null,
+                        o.ciphertextConversation.map { .text($0) } ?? .null])
     }
 
     /// Keeps the ciphertext of a queued message's one encrypt. Only when the row still holds `envelope`: if the
     /// envelope was replaced meanwhile, the ciphertext belongs to the old one and is not kept (false).
     @discardableResult
-    public func setOutboxCiphertext(id: String, envelope: Data, ciphertext: Data, epoch: Int64) throws -> Bool {
-        try db.run("UPDATE outbox SET ciphertext=?, ciphertext_epoch=? WHERE message_id=? AND envelope=?",
-                   [.blob(ciphertext), .int(epoch), .text(id), .blob(envelope)]) > 0
+    public func setOutboxCiphertext(
+        id: String, envelope: Data, ciphertext: Data, epoch: Int64, conversation: String
+    ) throws -> Bool {
+        try db.run(
+            "UPDATE outbox SET ciphertext=?, ciphertext_epoch=?, ciphertext_conversation=? WHERE message_id=? AND envelope=?",
+            [.blob(ciphertext), .int(epoch), .text(conversation), .text(id), .blob(envelope)]) > 0
     }
 
     /// Forgets the stored ciphertext (its epoch is over); the next attempt encrypts again.
     public func clearOutboxCiphertext(id: String) throws {
-        try db.execute("UPDATE outbox SET ciphertext=NULL, ciphertext_epoch=NULL WHERE message_id=?", [.text(id)])
+        try db.execute("UPDATE outbox SET ciphertext=NULL, ciphertext_epoch=NULL, ciphertext_conversation=NULL WHERE message_id=?", [.text(id)])
     }
 
     /// Stores a message and its outbox row in one transaction.

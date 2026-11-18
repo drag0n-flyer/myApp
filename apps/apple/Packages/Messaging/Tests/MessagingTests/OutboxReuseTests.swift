@@ -103,6 +103,85 @@ import MessagingTestKit
         #expect(rig.spy.encryptCount == count)
     }
 
+    func storedCiphertexts(_ rig: Rig) throws -> [Data] {
+        try rig.repo.dueOutbox(at: Date.distantFuture).compactMap(\.ciphertext)
+    }
+
+    @Test func replacedEnvelopeIsEncryptedAgain() async throws {
+        let rig = try await makeRig()
+        let first = rig.p.envelope("placeholder text", id: "u1")
+        try rig.outbox.enqueue(first, chatID: rig.p.chatID)
+        rig.p.probe.failNext(2)
+        try await flushAndWait(rig, rig.outbox, attempt: 0)
+        #expect(rig.spy.encryptCount == 1)
+        #expect(try storedCiphertexts(rig).count == 1)
+        // The way an upload completes: the unsent message gets its real envelope and the outbox row is replaced.
+        let second = rig.p.envelope("real text", id: "u1")
+        let me = rig.p.ana.accountID
+        try rig.repo.transaction {
+            _ = try rig.repo.replaceUnsentEnvelope(id: "u1", sender: me, envelope: second.encoded(), folded: "")
+            try rig.repo.enqueue(OutboxRecord(
+                messageID: "u1", chatID: rig.p.chatID, envelope: second.encoded(), attempts: 0, nextAttemptAt: rig.p.clock.now))
+        }
+        #expect(try storedCiphertexts(rig).isEmpty)
+        try await flushAndWait(rig, rig.outbox, attempt: 1)     // fails again
+        try await flushAndWait(rig, rig.outbox, attempt: 2)     // goes out
+        #expect(rig.spy.encryptCount == 2)
+        #expect(try await rig.p.bobTexts() == ["real text"])
+    }
+
+    @Test func replacingOnlyTheMessageEnvelopeAlsoDropsTheKeptCiphertext() async throws {
+        let rig = try await makeRig()
+        let env = rig.p.envelope("one", id: "u2")
+        try rig.outbox.enqueue(env, chatID: rig.p.chatID)
+        rig.p.probe.failNext(1)
+        try await flushAndWait(rig, rig.outbox, attempt: 0)
+        #expect(try storedCiphertexts(rig).count == 1)
+        _ = try rig.repo.replaceUnsentEnvelope(id: "u2", sender: rig.p.ana.accountID, envelope: env.encoded(), folded: "")
+        #expect(try storedCiphertexts(rig).isEmpty)
+    }
+
+    @Test func deliveredMessageLeavesNoCiphertext() async throws {
+        let rig = try await makeRig()
+        let env = rig.p.envelope("goes out")
+        try rig.outbox.enqueue(env, chatID: rig.p.chatID)
+        rig.p.probe.failNext(1)
+        try await flushAndWait(rig, rig.outbox, attempt: 0)
+        #expect(try storedCiphertexts(rig).count == 1)
+        try await flushAndWait(rig, rig.outbox, attempt: 1)
+        #expect(try rig.repo.message(id: env.id)?.status == "sent")
+        #expect(try rig.repo.dueOutbox(at: Date.distantFuture).isEmpty)
+        let rows = try rig.database.query("SELECT COUNT(*) FROM outbox WHERE ciphertext IS NOT NULL") { $0.int(0) }
+        #expect(rows == [0])
+    }
+
+    @Test func droppedAndExpiredMessagesLeaveNoCiphertext() async throws {
+        let rig = try await makeRig()
+        try rig.outbox.enqueue(rig.p.envelope("will expire", id: "x1"), chatID: rig.p.chatID)
+        rig.p.probe.failNext(1)
+        try await flushAndWait(rig, rig.outbox, attempt: 0)
+        #expect(try storedCiphertexts(rig).count == 1)
+        rig.p.clock.advance(Outbox.maxAge + 1)
+        try await rig.outbox.flush()
+        #expect(try rig.repo.message(id: "x1")?.status == "failed")
+        #expect(try storedCiphertexts(rig).isEmpty)
+        #expect(rig.spy.encryptCount == 1)
+    }
+
+    @Test func manualRetryEncryptsAgainFromTheStart() async throws {
+        let rig = try await makeRig()
+        try rig.outbox.enqueue(rig.p.envelope("fails", id: "r1"), chatID: rig.p.chatID)
+        rig.p.probe.failNext(Outbox.maxAttempts)
+        for attempt in 0..<Outbox.maxAttempts { try await flushAndWait(rig, rig.outbox, attempt: attempt) }
+        #expect(try rig.repo.message(id: "r1")?.status == "failed")
+        #expect(rig.spy.encryptCount == 1)
+        try rig.outbox.retry(messageID: "r1")
+        #expect(try storedCiphertexts(rig).isEmpty)
+        try await rig.outbox.flush()
+        #expect(try rig.repo.message(id: "r1")?.status == "sent")
+        #expect(rig.spy.encryptCount == 2)
+    }
+
     func advanceEpoch(_ rig: Rig) async throws {
         let cat = await makeDevice(rig.p.server, account: "acc-ana", username: "ana")
         let packages = try await cat.deps.mls.makeKeyPackages(count: 1)

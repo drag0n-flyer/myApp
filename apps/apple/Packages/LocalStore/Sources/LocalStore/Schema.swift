@@ -60,9 +60,10 @@ let schemaV2: [String] = [
     "CREATE TABLE drafts(chat_id TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE, text TEXT NOT NULL, updated_at INTEGER NOT NULL) STRICT",
 ]
 
-/// A queued message keeps the ciphertext of its one MLS encrypt and the epoch it was made in, so a retry posts the
+/// A queued message keeps the ciphertext of its one MLS encrypt, and the conversation and epoch it was made in, so a retry posts the
 /// same bytes instead of encrypting again. Existing rows have none (they are encrypted on their next attempt).
 let schemaV3: [String] = [
     "ALTER TABLE outbox ADD COLUMN ciphertext BLOB",
     "ALTER TABLE outbox ADD COLUMN ciphertext_epoch INTEGER",
+    "ALTER TABLE outbox ADD COLUMN ciphertext_conversation TEXT",
 ]

@@ -30,16 +30,16 @@ private func populatedBefore() throws -> Database {
     let repo = Repository(db: db, now: { Date(timeIntervalSince1970: 1) })
     let rows = try repo.dueOutbox(at: Date.distantFuture)
     #expect(rows.map(\.messageID) == ["c1", "m1"])
-    #expect(rows.allSatisfy { $0.ciphertext == nil && $0.ciphertextEpoch == nil })
+    #expect(rows.allSatisfy { $0.ciphertext == nil && $0.ciphertextEpoch == nil && $0.ciphertextConversation == nil })
     let m1 = try #require(rows.first { $0.messageID == "m1" })
     #expect(m1.attempts == 3 && m1.envelope == Data("{}".utf8))
     #expect(try db.query("SELECT COUNT(*) FROM messages") { $0.int(0) } == [1])
     #expect(try db.query("PRAGMA foreign_key_check") { $0.int(0) }.isEmpty)
     #expect(try db.query("PRAGMA integrity_check") { $0.text(0) } == ["ok"])
     // An old row can take a ciphertext now.
-    #expect(try repo.setOutboxCiphertext(id: "m1", envelope: Data("{}".utf8), ciphertext: Data([1, 2, 3]), epoch: 7))
+    #expect(try repo.setOutboxCiphertext(id: "m1", envelope: Data("{}".utf8), ciphertext: Data([1, 2, 3]), epoch: 7, conversation: "s1"))
     let again = try #require(try repo.dueOutbox(at: Date.distantFuture).first { $0.messageID == "m1" })
-    #expect(again.ciphertext == Data([1, 2, 3]) && again.ciphertextEpoch == 7)
+    #expect(again.ciphertext == Data([1, 2, 3]) && again.ciphertextEpoch == 7 && again.ciphertextConversation == "s1")
     // A second open changes nothing.
     try migrate(db)
     #expect(try repo.dueOutbox(at: Date.distantFuture).first { $0.messageID == "m1" }?.ciphertext == Data([1, 2, 3]))
@@ -57,28 +57,28 @@ private func row(_ repo: Repository) throws -> OutboxRecord? { try repo.dueOutbo
 
 @Test func testCiphertextIsStoredWithItsEpochAndSurvivesBackoff() throws {
     let repo = try queued()
-    #expect(try repo.setOutboxCiphertext(id: "m1", envelope: Data("a".utf8), ciphertext: Data([9]), epoch: 4))
+    #expect(try repo.setOutboxCiphertext(id: "m1", envelope: Data("a".utf8), ciphertext: Data([9]), epoch: 4, conversation: "s1"))
     try repo.bumpOutbox(id: "m1", nextAttempt: t(50))
     let r = try #require(try row(repo))
-    #expect(r.ciphertext == Data([9]) && r.ciphertextEpoch == 4 && r.attempts == 1)
+    #expect(r.ciphertext == Data([9]) && r.ciphertextEpoch == 4 && r.ciphertextConversation == "s1" && r.attempts == 1)
 }
 
 @Test func testCiphertextOfAnOldEnvelopeIsRefused() throws {
     let repo = try queued()
     // The envelope was replaced while the old one was being encrypted: the stale result must not be kept.
     try repo.enqueue(OutboxRecord(messageID: "m1", chatID: "c1", envelope: Data("b".utf8), attempts: 0, nextAttemptAt: t(1)))
-    #expect(try repo.setOutboxCiphertext(id: "m1", envelope: Data("a".utf8), ciphertext: Data([9]), epoch: 4) == false)
+    #expect(try repo.setOutboxCiphertext(id: "m1", envelope: Data("a".utf8), ciphertext: Data([9]), epoch: 4, conversation: "s1") == false)
     #expect(try row(repo)?.ciphertext == nil)
 }
 
 @Test func testReplacingTheEnvelopeClearsTheCiphertext() throws {
     let repo = try queued()
-    _ = try repo.setOutboxCiphertext(id: "m1", envelope: Data("a".utf8), ciphertext: Data([9]), epoch: 4)
+    _ = try repo.setOutboxCiphertext(id: "m1", envelope: Data("a".utf8), ciphertext: Data([9]), epoch: 4, conversation: "s1")
     // Enqueueing again (upload completion, manual retry) replaces the row.
     try repo.enqueue(OutboxRecord(messageID: "m1", chatID: "c1", envelope: Data("b".utf8), attempts: 0, nextAttemptAt: t(1)))
     #expect(try row(repo)?.ciphertext == nil)
     #expect(try row(repo)?.ciphertextEpoch == nil)
-    _ = try repo.setOutboxCiphertext(id: "m1", envelope: Data("b".utf8), ciphertext: Data([8]), epoch: 5)
+    _ = try repo.setOutboxCiphertext(id: "m1", envelope: Data("b".utf8), ciphertext: Data([8]), epoch: 5, conversation: "s1")
     #expect(try repo.replaceUnsentEnvelope(id: "m1", sender: "me", envelope: Data("c".utf8), folded: "") == true)
     #expect(try row(repo)?.ciphertext == nil)
     #expect(try row(repo)?.ciphertextEpoch == nil)
@@ -86,19 +86,19 @@ private func row(_ repo: Repository) throws -> OutboxRecord? { try repo.dueOutbo
 
 @Test func testCompletingOrRemovingTheRowLeavesNoCiphertext() throws {
     let repo = try queued()
-    _ = try repo.setOutboxCiphertext(id: "m1", envelope: Data("a".utf8), ciphertext: Data([9]), epoch: 4)
+    _ = try repo.setOutboxCiphertext(id: "m1", envelope: Data("a".utf8), ciphertext: Data([9]), epoch: 4, conversation: "s1")
     try repo.completeSend(id: "m1", status: "sent")
     #expect(try row(repo) == nil)
     try repo.enqueue(OutboxRecord(messageID: "m1", chatID: "c1", envelope: Data("a".utf8), attempts: 0, nextAttemptAt: t(1)))
-    _ = try repo.setOutboxCiphertext(id: "m1", envelope: Data("a".utf8), ciphertext: Data([9]), epoch: 4)
+    _ = try repo.setOutboxCiphertext(id: "m1", envelope: Data("a".utf8), ciphertext: Data([9]), epoch: 4, conversation: "s1")
     try repo.removeOutbox(id: "m1")
     #expect(try row(repo) == nil)
 }
 
 @Test func testClearOutboxCiphertext() throws {
     let repo = try queued()
-    _ = try repo.setOutboxCiphertext(id: "m1", envelope: Data("a".utf8), ciphertext: Data([9]), epoch: 4)
+    _ = try repo.setOutboxCiphertext(id: "m1", envelope: Data("a".utf8), ciphertext: Data([9]), epoch: 4, conversation: "s1")
     try repo.clearOutboxCiphertext(id: "m1")
     let r = try #require(try row(repo))
-    #expect(r.ciphertext == nil && r.ciphertextEpoch == nil && r.envelope == Data("a".utf8))
+    #expect(r.ciphertext == nil && r.ciphertextEpoch == nil && r.ciphertextConversation == nil && r.envelope == Data("a".utf8))
 }
