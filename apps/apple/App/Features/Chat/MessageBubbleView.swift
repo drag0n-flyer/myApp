@@ -26,6 +26,12 @@ struct MessageBubbleView: View {
     var isHighlighted = false
     /// Jumps to the quoted message.
     var quoteTapped: () -> Void = {}
+    /// A group chat: the sender's name, when this bubble starts a run of incoming bubbles. Name and tile show above it.
+    var senderName: String?
+    /// A group chat, my message: opens Message info.
+    var showInfo: (() -> Void)?
+    /// A blocked member's message is collapsed until the person shows it (this device, this screen only).
+    @State private var revealed = false
 
     var body: some View {
         if case .system(let event) = message.content {
@@ -36,8 +42,42 @@ struct MessageBubbleView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 4)
         } else {
-            bubble
+            VStack(alignment: .leading, spacing: 2) {
+                if let senderName, !isMine { senderHeader(senderName) }
+                if message.fromBlockedSender, !isMine, !revealed { collapsedBubble } else { bubble }
+            }
         }
+    }
+
+    /// The name and tile of the sender above the first bubble of a run (group chats).
+    private func senderHeader(_ name: String) -> some View {
+        HStack(spacing: 6) {
+            Avatar(name: name, colorKey: message.senderID, size: 22)
+            Text(name).font(.caption.weight(.semibold)).foregroundStyle(.secondary).lineLimit(1)
+        }
+        .padding(.leading, 4)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("chat.sender.\(message.id)")
+    }
+
+    /// What a blocked member's message shows: nothing of it, and a control to show it.
+    private var collapsedBubble: some View {
+        HStack {
+            HStack(spacing: 8) {
+                Text("Message from a blocked contact").font(.footnote).foregroundStyle(.secondary)
+                Button("Show") { revealed = true }
+                    .buttonStyle(.borderless)
+                    .font(.footnote.weight(.semibold))
+                    .accessibilityLabel(Text("Show message"))
+                    .accessibilityIdentifier("chat.blocked.show.\(message.id)")
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(Color.secondaryBackground, in: bubbleShape)
+            Spacer(minLength: 60)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("chat.blocked.\(message.id)")
     }
 
     private var bubble: some View {
@@ -141,6 +181,9 @@ struct MessageBubbleView: View {
         }
         if actions.contains(.edit) {
             Button("Edit", systemImage: "pencil") { perform(.edit) }
+        }
+        if let showInfo {
+            Button("Message info", systemImage: "info.circle", action: showInfo)
         }
         if actions.contains(.delete) {
             Button("Delete", systemImage: "trash", role: .destructive) { perform(.delete) }

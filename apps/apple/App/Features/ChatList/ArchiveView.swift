@@ -10,7 +10,7 @@ struct ArchiveView: View {
         List {
             ForEach(model.archivedChats) { chat in
                 Button { open(.chat(id: chat.id)) } label: {
-                    ChatRowView(chat: chat, name: model.chatName(chat))
+                    ChatRowView(chat: chat, name: model.chatName(chat), previewSender: model.previewSenderName(chat))
                 }
                 .buttonStyle(.plain)
                 .modifier(ChatRowActions(chat: chat, model: model, inArchive: true, pinLimit: {}))

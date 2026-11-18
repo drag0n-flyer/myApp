@@ -46,6 +46,10 @@ extension AppModel {
                                  loadSeen: { seen[$0] }, saveSeen: { seen[$0] = $1 })
         }
         made.onChange = { [weak self] in self?.bumpRevision() }
+        // Groups: typing is shown per member, for members who are not blocked.
+        made.myAccount = chatStore.me.id
+        made.blockedAccounts = { [weak self] in self?.chatStore.blockedIDs ?? [] }
+        if let repo { made.groupMembers = { Set(((try? repo.groupMembers(chatID: $0)) ?? []).map(\.accountID)) } }
         people = made
         if peopleActive { made.foreground() }
 
@@ -73,7 +77,7 @@ extension AppModel {
         let me = chatStore.me.id
         // Archived chats too: a message there also ends "typing…".
         for chat in chatStore.chats(in: .all) + chatStore.archivedChats where !chat.isRequest {
-            if let last = chat.messages.last(where: { $0.senderID != me }) { people.incomingMessage(chatID: chat.id, id: last.id) }
+            if let last = chat.messages.last(where: { $0.senderID != me }) { people.incomingMessage(chatID: chat.id, id: last.id, from: last.senderID) }
         }
     }
 
@@ -115,6 +119,8 @@ extension AppModel {
     /// The line under the name in the chat header: "typing…", "online", "last seen 9:38", or nothing.
     func headerStatus(chatID: String) -> String? {
         _ = revision
+        // A group: only who is typing, never presence or "last seen".
+        if ChatID.isGroup(chatID) { return groupTypingText(chatID: chatID) }
         guard !peopleHidden, let people, !ChatID.isGroup(chatID), chatStore.chat(id: chatID)?.contactID != chatStore.me.id else { return nil }
         if people.isTyping(chatID: chatID) { return String(localized: "typing…") }
         switch people.presence(chatID: chatID) {

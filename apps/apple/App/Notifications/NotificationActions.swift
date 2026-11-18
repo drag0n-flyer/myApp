@@ -139,7 +139,7 @@ final class NotificationActions: NSObject, UNUserNotificationCenterDelegate {
         if let queuedID { await waitForFlush(queuedID, chatID: chatID, store: store, budget: budget) }
         if ReplyDraft.outcome(decision: decision, queued: queued) == .keepDraft {
             NotificationHooks.saveReplyDraft(chatID: chatID, text: text)
-            await postNotSent(chatID: chatID, contactName: locked ? nil : model.contact(id: chat?.contactID ?? chatID)?.displayName)
+            await postNotSent(chatID: chatID, contactName: locked ? nil : (chat?.title ?? model.contact(id: chat?.contactID ?? chatID)?.displayName))
         }
     }
 
