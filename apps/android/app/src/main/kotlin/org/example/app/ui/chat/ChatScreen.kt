@@ -338,6 +338,7 @@ fun ChatScreen(
                         onPress = voiceControls.press,
                         onDrag = voiceControls.capture::drag,
                         onLift = voiceControls.capture::lift,
+                        onInterrupt = voiceControls.capture::interrupted,
                         onStop = voiceControls.capture::stop,
                         onDelete = voiceControls.capture::delete,
                         onSend = voiceControls.capture::send,

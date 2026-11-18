@@ -180,6 +180,11 @@ class VoiceCapture(
     /** A call or the background took the screen: the recording is kept as a preview. */
     fun interrupted() {
         holdJob?.cancel()
+        // Under a second is never worth keeping.
+        if (VoiceGesture.isRecording(gesture) && _state.value is CaptureState.Recording && elapsedMs() < VoiceGesture.minimumMs) {
+            discard()
+            return
+        }
         if (step(VoiceGesture.Event.interrupted) == VoiceGesture.State.preview) finish(thenSend = false)
     }
 

@@ -30,6 +30,12 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -61,6 +67,8 @@ class VoiceUi(
     val onPress: (rtl: Boolean) -> Unit = {},
     val onDrag: (dx: Float, dy: Float) -> Unit = { _, _ -> },
     val onLift: () -> Unit = {},
+    /** The gesture ended any way but a finger lifting (cut off, second finger, button gone): keep or drop, never send. */
+    val onInterrupt: () -> Unit = {},
     val onStop: () -> Unit = {},
     val onDelete: () -> Unit = {},
     val onSend: () -> Unit = {},
@@ -93,24 +101,35 @@ internal fun MicButton(enabled: Boolean, ui: VoiceUi, onActivate: () -> Unit, on
                 role = Role.Button
                 if (enabled) onClick(label) { activate(); true }
             }
+            .onKeyEvent { e ->
+                val activateKey = e.key == Key.Enter || e.key == Key.NumPadEnter || e.key == Key.Spacebar || e.key == Key.DirectionCenter
+                if (enabled && activateKey && e.type == KeyEventType.KeyUp) { activate(); true } else activateKey
+            }
+            .focusable(enabled)
             .pointerInput(enabled, rtl) {
                 if (!enabled) return@pointerInput
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     current.onPress(rtl)
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                        if (change.changedToUp() || !change.pressed) break
-                        val moved = change.position - down.position
-                        val dx = moved.x.toDp().value
-                        val dy = moved.y.toDp().value
-                        across.invoke(if (rtl) dx else -dx)
-                        current.onDrag(dx, dy)
-                        change.consume()
+                    var lifted = false
+                    try {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (change.changedToUp()) { lifted = true; break }
+                            if (!change.pressed) break
+                            val moved = change.position - down.position
+                            val dx = moved.x.toDp().value
+                            val dy = moved.y.toDp().value
+                            across.invoke(if (rtl) dx else -dx)
+                            current.onDrag(dx, dy)
+                            change.consume()
+                        }
+                    } finally {
+                        across.invoke(0f)
+                        // A finger that lifted ends the hold; anything else (cancelled block, lost pointer) must not send.
+                        if (lifted) current.onLift() else current.onInterrupt()
                     }
-                    across.invoke(0f)
-                    current.onLift()
                 }
             },
         contentAlignment = Alignment.Center,

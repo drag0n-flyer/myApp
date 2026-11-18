@@ -9,6 +9,11 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.pressKey
+import androidx.compose.ui.test.requestFocus
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import java.io.File
@@ -34,7 +39,7 @@ class VoiceComposerTest {
 
     private fun ui(state: CaptureState = CaptureState.Idle, hint: Boolean = false, engines: VoiceEngineFactory = VoiceEngineFactory { NoEngine }) = VoiceUi(
         state = state, hint = hint,
-        onPress = { log += "press" }, onDrag = { dx, dy -> log += "drag ${dx.toInt()} ${dy.toInt()}" }, onLift = { log += "lift" },
+        onPress = { log += "press" }, onDrag = { dx, dy -> log += "drag ${dx.toInt()} ${dy.toInt()}" }, onLift = { log += "lift" }, onInterrupt = { log += "interrupt" },
         onStop = { log += "stop" }, onDelete = { log += "delete" }, onSend = { log += "send" },
         previewEngines = engines,
     )
@@ -63,6 +68,47 @@ class VoiceComposerTest {
         assertEquals("press", log.first())
         assertTrue(log.any { it.startsWith("drag -") }, "drag toward the leading edge is negative: $log")
         assertEquals("lift", log.last())
+    }
+
+    @Test fun liftingTheFirstOfTwoFingersEndsTheHoldExactlyOnce() {
+        show(ui())
+        rule.onNodeWithContentDescription("Record voice message").performTouchInput {
+            down(0, center)
+            down(1, center + Offset(5f, 5f))
+            up(0)
+            up(1)
+        }
+        assertEquals(1, log.count { it == "press" })
+        assertEquals(1, log.count { it == "lift" })
+        assertEquals(0, log.count { it == "interrupt" })
+    }
+
+    @Test fun aGestureCutOffByTheButtonLeavingIsAnInterruptNotALift() {
+        var visible by androidx.compose.runtime.mutableStateOf(true)
+        rule.setContent {
+            AppTheme {
+                if (visible) Composer(enabled = true, text = "", onTextChange = {}, onSend = {}, onAttach = {}, onRecordVoice = {}, voice = ui())
+            }
+        }
+        rule.onNodeWithContentDescription("Record voice message").performTouchInput { down(center) }
+        assertEquals(listOf("press"), log.toList(), "the finger is still down")
+        rule.runOnIdle { visible = false }
+        rule.waitForIdle()
+        assertEquals(listOf("press", "interrupt"), log.toList())
+    }
+
+    @Test fun enterOnTheFocusedMicrophoneStartsALockedRecording() {
+        show(ui())
+        rule.onNodeWithContentDescription("Record voice message").requestFocus()
+        rule.onNodeWithContentDescription("Record voice message").performKeyInput { pressKey(androidx.compose.ui.input.key.Key.Enter) }
+        assertEquals(listOf("activate"), log)
+    }
+
+    @Test fun spaceOnTheFocusedMicrophoneStartsALockedRecording() {
+        show(ui())
+        rule.onNodeWithContentDescription("Record voice message").requestFocus()
+        rule.onNodeWithContentDescription("Record voice message").performKeyInput { pressKey(androidx.compose.ui.input.key.Key.Spacebar) }
+        assertEquals(listOf("activate"), log)
     }
 
     @Test fun activatingTheMicrophoneFromAccessibilityStartsALockedRecording() {

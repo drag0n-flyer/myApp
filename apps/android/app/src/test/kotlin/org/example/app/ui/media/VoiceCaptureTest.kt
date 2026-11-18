@@ -404,6 +404,30 @@ class VoiceCaptureTest {
         assertEquals(0.11f, levels.first())
     }
 
+    @Test fun aHoldThatIsInterruptedIsKeptAsAPreviewAndNeverSent() = runTest {
+        val file = File.createTempFile("note", ".ogg")
+        recorder.stopResult = StopResult.Success(Recording(file, 3.0))
+        val c = capture()
+        hold(c)
+        c.interrupted()
+        runCurrent()
+        assertEquals(CaptureState.Preview(file, 3.0), c.state.value)
+        assertTrue(notes.isEmpty())
+        file.delete()
+    }
+
+    @Test fun aHoldInterruptedUnderOneSecondIsDiscarded() = runTest {
+        val c = capture()
+        hold(c)
+        recorder.capturedSeconds = 0.9
+        c.interrupted()
+        runCurrent()
+        assertEquals(CaptureState.Idle, c.state.value)
+        assertEquals(1, recorder.cancels)
+        assertEquals(0, recorder.stops)
+        assertTrue(notes.isEmpty())
+    }
+
     // ---- lead's rulings: minimum on Send, keep on leaving ----
 
     @Test fun sendFromTheLockedBarUnderOneSecondIsRefusedWithTheHint() = runTest {
