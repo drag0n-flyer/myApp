@@ -21,6 +21,8 @@ import org.example.app.messaging.ports.ChatRecord
 import org.example.app.messaging.ports.Clock
 import org.example.app.messaging.ports.ConversationMode
 import org.example.app.messaging.ports.ConversationRecord
+import org.example.app.messaging.ports.GroupMemberRecord
+import org.example.app.messaging.ports.MessageRecord
 import org.example.app.messaging.ports.MlsLock
 import org.example.app.messaging.ports.Repository
 
@@ -39,11 +41,11 @@ import org.example.app.messaging.ports.Repository
  */
 class ConversationManager(
     private val me: LocalDevice,
-    private val mls: MlsEngine,
-    private val server: DeliveryApi,
+    internal val mls: MlsEngine,
+    internal val server: DeliveryApi,
     private val repo: Repository,
     private val lock: MlsLock,
-    private val clock: Clock,
+    internal val clock: Clock,
     private val membership: Membership,
     private val escrow: EscrowSealer? = null,
     private val syncOnce: suspend () -> Unit,
@@ -51,15 +53,21 @@ class ConversationManager(
 ) {
     /** This device's account. */
     val localAccountId: String get() = me.accountId
+    val localDeviceId: String get() = me.deviceId
 
     /** Serialises creates (and their recovery) for all contacts, not only per contact: creates are rare. */
-    private val creating = Mutex()
+    internal val creating = Mutex()
 
-    private suspend fun <T> critical(block: suspend () -> T): T = lock.withLock { withContext(NonCancellable) { block() } }
+    internal suspend fun <T> critical(block: suspend () -> T): T = lock.withLock { withContext(NonCancellable) { block() } }
 
     /** The active conversation with the smallest server ID, created when there is none. Sends a pending `mode` envelope first. */
     suspend fun preferredConversation(contactId: String): ConversationRecord {
-        if (ChatID.isGroup(contactId)) throw SyncException.NoPeer // a group chat has no peer to make a one-to-one conversation with
+        // A group chat has no peer to make a one-to-one conversation with: only its own active conversation is used.
+        if (ChatID.isGroup(contactId)) {
+            val own = repo.preferredConversation(contactId) ?: throw SyncException.NoPeer
+            ensureModeAnnounced(own)
+            return own
+        }
         repo.preferredConversation(contactId)?.let { ensureModeAnnounced(it); return it }
         // A second caller waits for the first create instead of starting another.
         return creating.withLock {
@@ -156,7 +164,7 @@ class ConversationManager(
      * - The engine lost the commit although the server applied it: logged and abandoned (`CreateLost`).
      * - An unknown outcome: read the inbox; still pending means the error is thrown and the create stays pending.
      */
-    private suspend fun finishCreate(serverId: String, resumed: Boolean): ConversationRecord {
+    internal suspend fun finishCreate(serverId: String, resumed: Boolean): ConversationRecord {
         if (resumed) {
             readInboxAfterUnknownOutcome()
             activeOrNull(serverId)?.let { return announced(it) }
@@ -251,11 +259,33 @@ class ConversationManager(
     // Join
 
     /** Rows a Welcome creates. Built under the lock (engine reads), written by the inbox processor's transaction. */
-    class JoinPlan(val chat: ChatRecord, val conversation: ConversationRecord, val keys: List<MemberKey>) {
+    /** A group's member list as the server gave it, and who the server says added this device (shown only if listed). */
+    class GroupJoin(val members: List<GroupMemberRecord>, val version: Long, val addedBy: String?)
+
+    class JoinPlan(val chat: ChatRecord, val conversation: ConversationRecord, val keys: List<MemberKey>, val group: GroupJoin? = null) {
         /** The chat is created only when it does not exist yet. */
         fun store(repo: Repository) {
-            if (repo.chat(chat.id) == null) repo.upsertChat(chat)
+            if (group != null) {
+                repo.upsertGroup(chat.id, conversation.serverId, null, chat.lastActivity)
+                repo.setGroupMembers(chat.id, group.members, group.version)
+                // A welcome for a group this account had left or been removed from: it is a member again.
+                if (repo.chat(chat.id)?.myState != org.example.app.messaging.ports.MyState.MEMBER) {
+                    repo.setMyState(chat.id, org.example.app.messaging.ports.MyState.MEMBER)
+                }
+            } else if (repo.chat(chat.id) == null) {
+                repo.upsertChat(chat)
+            }
             repo.upsertConversation(conversation)
+            if (group != null) {
+                val by = group.addedBy
+                repo.insertMessage(
+                    MessageRecord(
+                        id = "sys-added-${conversation.serverId}-${conversation.epoch}", chatId = chat.id, conversationId = conversation.serverId,
+                        senderAccount = "system", senderDevice = null, sentAt = chat.lastActivity, receivedAt = chat.lastActivity,
+                        envelope = Membership.lineEnvelope("addedYou", by), status = "sent",
+                    ),
+                )
+            }
         }
     }
 
@@ -266,13 +296,28 @@ class ConversationManager(
      * @throws SyncException.ConversationRebound when [serverConversationId] is already bound to another group, or
      *   [group] to another server conversation.
      */
-    suspend fun planJoin(group: GroupId, serverConversationId: String, serverMode: String): JoinPlan {
+    suspend fun planJoin(group: GroupId, serverConversationId: String, serverMode: String, groupJoin: GroupJoin? = null): JoinPlan {
         // A server ID already bound to another group is never rebound (it would move that chat's messages), and a group
         // already bound to another server ID is never bound twice (`group_id` is unique: the write would fail on every
         // retry and stall the inbox). Anyone who shares a chat with me knows its group ID and can build such a Welcome.
-        repo.conversation(serverConversationId)?.let { if (!it.groupId.contentEquals(group.raw)) throw SyncException.ConversationRebound }
+        // A group I left or was removed from (its conversation row is inactive) may be joined again with a new MLS group.
+        repo.conversation(serverConversationId)?.let {
+            if (!it.groupId.contentEquals(group.raw) && !(groupJoin != null && !it.active)) throw SyncException.ConversationRebound
+        }
         repo.conversationByGroup(group.raw)?.let { if (it.serverId != serverConversationId) throw SyncException.ConversationRebound }
         val keys = membership.keys(group)
+        if (groupJoin != null) {
+            // A group chat: `g:<conversationID>`, never a request, no peer. Its mode pin works as in a one-to-one chat.
+            val chatId = ChatID.group(serverConversationId)
+            return JoinPlan(
+                chat = ChatRecord(chatId, isRequest = false, unread = 0, muted = false, lastActivity = clock.now()),
+                conversation = ConversationRecord(
+                    serverId = serverConversationId, chatId = chatId, groupId = group.raw, mode = serverMode, innerMode = null,
+                    modeMismatch = false, epoch = mls.epoch(group), active = true, createdAt = clock.now(),
+                ),
+                keys = keys, group = groupJoin,
+            )
+        }
         val peer = keys.map { it.identity.substringBefore('/') }.toSet().minus(me.accountId).minOrNull()
             ?: throw SyncException.NoPeer
         val epoch = mls.epoch(group)

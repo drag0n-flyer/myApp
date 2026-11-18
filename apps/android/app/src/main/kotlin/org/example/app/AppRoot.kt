@@ -73,6 +73,7 @@ import org.example.app.ui.chatlist.ArchiveScreen
 import org.example.app.ui.chatlist.ChatListScreen
 import org.example.app.ui.chatlist.ChatListViewModel
 import org.example.app.ui.chatlist.NewChatScreen
+import org.example.app.ui.chatlist.NewGroupScreen
 import org.example.app.ui.search.SearchScreen
 import org.example.app.ui.search.SearchViewModel
 import org.example.app.push.PushRuntime
@@ -117,6 +118,7 @@ private const val REQUESTS = "requests"
 private const val ARCHIVE = "archive"
 private const val ADD_CONTACT = "addcontact"
 private const val NEW_CHAT = "newchat"
+private const val NEW_GROUP = "newgroup"
 private const val SEARCH = "search"
 private const val PROFILE = "settings/profile"
 private const val MY_QR = "myqr"
@@ -517,6 +519,17 @@ fun AppRoot(
                         else nav.navigate("chat/${Uri.encode(chatId)}") { popUpTo(NEW_CHAT) { inclusive = true } }
                     },
                     onAddContact = { nav.navigate(ADD_CONTACT) },
+                    onBack = { nav.popBackStack() },
+                    onNewGroup = { nav.navigate(NEW_GROUP) },
+                )
+            }
+            composable(NEW_GROUP) {
+                NewGroupScreen(
+                    graph.chatStore,
+                    onCreated = { chatId ->
+                        if (wide) { nav.popBackStack(MAIN, inclusive = false); openChat.value(chatId, null) }
+                        else nav.navigate("chat/${Uri.encode(chatId)}") { popUpTo(NEW_CHAT) { inclusive = true } }
+                    },
                     onBack = { nav.popBackStack() },
                 )
             }
