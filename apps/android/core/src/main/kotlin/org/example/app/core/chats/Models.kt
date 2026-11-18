@@ -138,6 +138,12 @@ data class Chat(
     val isRequest: Boolean,
     /** The server and the conversation disagree about the chat's mode; sending is paused. */
     val modeMismatch: Boolean = false,
+    /** When the chat was pinned on this device; null when not pinned. */
+    val pinnedAt: Instant? = null,
+    val muted: Boolean = false,
+    val archived: Boolean = false,
+    /** Unsent composer text saved for this chat; null when there is none. */
+    val draft: String? = null,
 ) {
     val lastMessage: Message? get() = messages.lastOrNull()
 }
