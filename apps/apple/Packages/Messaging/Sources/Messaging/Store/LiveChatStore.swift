@@ -732,14 +732,17 @@ public final class LiveChatStore: ChatStore {
             envelope: (try? JSONEncoder().encode(SystemEvent.timer(seconds: seconds, name: nil))) ?? Data(), status: "sent",
             replyTo: nil, editedAt: nil, deleted: false, undecryptable: false, folded: "")
         let repo = repo
+        // The envelope ID is chosen here so the same ID is stored and sent: it breaks a tie at the same millisecond.
+        let envelopeID = UUID().uuidString.lowercased()
         guard (try? repo.transaction { () throws -> Void in
             try repo.setTimer(chatID: chatID, seconds: seconds)
+            try repo.set(IncomingHandler.timerIDKey(chatID), Data(envelopeID.utf8))
             try repo.insertMessage(line)
             try repo.set(IncomingHandler.timerAtKey(chatID), Data(String(Int64((at.timeIntervalSince1970 * 1000).rounded())).utf8))
         }) != nil else { return }
         bumpActivity(chatID, at: at)
         refresh()
-        sendControl(.timer(seconds: seconds), chatID: chatID)
+        sendControl(.timer(seconds: seconds), chatID: chatID, id: envelopeID)
     }
 
     /// Removes what has expired and returns the IDs (so delivered notifications can go too). Files are deleted
@@ -778,8 +781,8 @@ public final class LiveChatStore: ChatStore {
         return true
     }
 
-    private func sendControl(_ body: ContentEnvelope.Body, chatID: String) {
-        guard (try? outbox.enqueueControl(body, chatID: chatID)) != nil else { return }
+    private func sendControl(_ body: ContentEnvelope.Body, chatID: String, id: String? = nil) {
+        guard (try? outbox.enqueueControl(body, chatID: chatID, id: id)) != nil else { return }
         let outbox = outbox
         background { try? await outbox.flush() }
     }

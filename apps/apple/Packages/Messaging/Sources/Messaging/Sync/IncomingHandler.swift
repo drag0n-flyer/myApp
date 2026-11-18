@@ -255,6 +255,8 @@ public struct IncomingHandler: Sendable {
 
     /// `kv` key holding the effective `at` (ms) of the last `timer` applied in a chat.
     static func timerAtKey(_ chatID: String) -> String { "timer-at:" + chatID }
+    /// `kv` key holding the envelope ID of that last `timer`: at the same millisecond the greater ID (as a string) wins.
+    static func timerIDKey(_ chatID: String) -> String { "timer-id:" + chatID }
 
     /// Kinds that never become a message row, whether valid or not.
     static let silentKinds: Set<String> = ["typing", "presence", "profile", "timer"]
@@ -267,7 +269,13 @@ public struct IncomingHandler: Sendable {
         // The comparison uses `min(at, now + 5 minutes)`, so a sender's clock far in the future cannot freeze the timer.
         let effectiveAt = min(at, Self.ms(now()) + Self.timerSkewMs)
         let key = Self.timerAtKey(chatID)
-        if let last = try db.get(key).flatMap({ Int64(String(decoding: $0, as: UTF8.self)) }), effectiveAt < last { return }
+        if let last = try db.get(key).flatMap({ Int64(String(decoding: $0, as: UTF8.self)) }) {
+            if effectiveAt < last { return }
+            // The same millisecond: both sides keep the change with the greater envelope ID, so they end alike.
+            if effectiveAt == last, let lastID = try db.get(Self.timerIDKey(chatID)).map({ String(decoding: $0, as: UTF8.self) }), id <= lastID {
+                return
+            }
+        }
         let event = SystemEvent.timer(seconds: seconds, name: account == me.accountID ? nil : account)
         let envelope = (try? JSONEncoder().encode(event)) ?? Data()
         let sentAt = Date(timeIntervalSince1970: Double(effectiveAt) / 1000)
@@ -276,6 +284,7 @@ public struct IncomingHandler: Sendable {
             senderDevice: nil, sentAt: sentAt, receivedAt: now(), envelope: envelope, status: "sent", replyTo: nil,
             editedAt: nil, deleted: false, undecryptable: false, folded: "")
         try db.set(key, Data(String(effectiveAt).utf8))
+        try db.set(Self.timerIDKey(chatID), Data(id.utf8))
         // The same value again (a repeat or a replay) changes nothing and adds no second line.
         guard try db.timerSeconds(chatID: chatID) != seconds else { return }
         guard try db.insertMessage(line) else { return }
