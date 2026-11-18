@@ -4,5 +4,15 @@ package org.example.app.core.profile
 object AvatarColor {
     const val COUNT = 8
 
-    fun index(accountId: String): Int = 0
+    private const val OFFSET_BASIS = 2166136261L
+    private const val PRIME = 16777619L
+
+    fun index(accountId: String): Int {
+        var hash = OFFSET_BASIS
+        for (b in accountId.toByteArray(Charsets.UTF_8)) {
+            hash = hash xor (b.toLong() and 0xFF)
+            hash = (hash * PRIME) and 0xFFFFFFFFL
+        }
+        return (hash % COUNT).toInt()
+    }
 }
