@@ -68,6 +68,11 @@ public struct IncomingHandler: Sendable {
             return .joined(group: group, epoch: epoch)
         case .commit(let group, let newEpoch, let removedMe):
             guard var conversation = try db.conversation(serverID: raw.conversationID) else { return .ignored }
+            if removedMe, ChatID.isGroup(conversation.chatID) {
+                // A group: the chat stays read-only and the conversation row goes (a later Welcome is a fresh join).
+                try GroupLines.iAmOut(chatID: conversation.chatID, state: "removed", at: now(), db: db)
+                return .removedMe(conversationID: conversation.serverID)
+            }
             if removedMe {
                 conversation.active = false
                 try db.upsertConversation(conversation)
@@ -269,7 +274,18 @@ public struct IncomingHandler: Sendable {
               photo.map({ $0.count >= GroupLimits.minPhoto && $0.count <= GroupLimits.maxPhoto }) ?? true else { return }
         let role = try db.groupMembers(chatID: chat.id).first { $0.accountID == account }.map { GroupRole(wire: $0.role) }
         guard GroupMerge.accept(currentVer: chat.groupVer, incomingVer: ver, senderRole: role) else { return }
-        try db.setGroupInfo(chatID: chat.id, title: name, photo: photo, ver: ver)
+        let before = (title: chat.title, photo: chat.photo, ver: chat.groupVer)
+        guard try db.setGroupInfo(chatID: chat.id, title: name, photo: photo, ver: ver),
+              before.ver != nil, let conversationID = ChatID.conversationID(chat.id) else { return }
+        // The first name and photo a group gets say nothing; a later change is one line each, once (the ID carries the version).
+        if let old = before.title, old != name {
+            try GroupLines.insert(.nameChanged(by: account, name: name), id: "sys-group-name-\(conversationID)-\(ver)", chatID: chat.id,
+                                  conversationID: conversationID, at: now(), db: db)
+        }
+        if before.photo != photo {
+            try GroupLines.insert(.photoChanged(by: account), id: "sys-group-photo-\(conversationID)-\(ver)", chatID: chat.id,
+                                  conversationID: conversationID, at: now().addingTimeInterval(0.001), db: db)
+        }
     }
 
     static let timerSkewMs: Int64 = 5 * 60 * 1000

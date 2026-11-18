@@ -260,3 +260,15 @@ private func groupMessage(_ id: String, from sender: String = "me") -> MessageRe
     #expect(try repo.deleteConversations(groupChatID: chatID) == ["c1"])
     #expect(try repo.conversation(serverID: "c1") == nil && repo.chat(id: chatID) != nil)
 }
+
+@Test func testFailQueuedSendsMarksTheMessagesFailedAndClearsTheQueue() throws {
+    let repo = try groupRepo()
+    let message = MessageRecord(id: "m1", chatID: chatID, conversationID: nil, senderAccount: "me", senderDevice: nil,
+                                sentAt: Date(timeIntervalSince1970: 1), receivedAt: Date(timeIntervalSince1970: 1), envelope: Data("{}".utf8),
+                                status: "sending", replyTo: nil, editedAt: nil, deleted: false, undecryptable: false, folded: "")
+    try repo.enqueueSend(message: message, outbox: OutboxRecord(messageID: "m1", chatID: chatID, envelope: Data("{}".utf8), attempts: 0,
+                                                                nextAttemptAt: Date(timeIntervalSince1970: 1)))
+    try repo.failQueuedSends(chatID: chatID)
+    #expect(try repo.message(id: "m1")?.status == "failed")
+    #expect(try repo.dueOutbox(at: Date(timeIntervalSince1970: 10)).isEmpty)
+}

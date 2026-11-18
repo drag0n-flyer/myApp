@@ -40,6 +40,9 @@ public actor ConversationManager: ConversationManaging {
     private let lockTimeout: Duration
     private let log: @Sendable (String) -> Void
     var creating: [String: Task<ConversationRecord, Error>] = [:]
+    /// One group reconcile or group change at a time (`acquireGroup`).
+    var groupBusy = false
+    var groupWaiters: [CheckedContinuation<Void, Never>] = []
 
     /// - Parameters:
     ///   - escrowKey: the server's escrow public key, needed only to seal the `mode` envelope's

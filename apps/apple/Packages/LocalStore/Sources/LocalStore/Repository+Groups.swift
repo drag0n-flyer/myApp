@@ -108,6 +108,15 @@ extension Repository {
         }
     }
 
+    /// What is still queued for a chat can never be sent (I am out of the group): the queue rows go and the messages
+    /// among them are marked `failed`, one transaction.
+    public func failQueuedSends(chatID: String) throws {
+        try db.transaction { d in
+            try d.execute("UPDATE messages SET status='failed' WHERE status='sending' AND id IN (SELECT message_id FROM outbox WHERE chat_id=?)", [.text(chatID)])
+            try d.execute("DELETE FROM outbox WHERE chat_id=?", [.text(chatID)])
+        }
+    }
+
     // MARK: receipts
 
     /// One row per member and kind (`delivered`, `read`); the first time stays. `false` for a repeat, an unknown kind
