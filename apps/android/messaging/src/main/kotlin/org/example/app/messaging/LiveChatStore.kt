@@ -339,7 +339,26 @@ class LiveChatStore(
      * Like [send] for text, for a caller that must know the message was queued (a notification reply). Returns the new
      * message's id once it is in the outbox, null when nothing was queued. Never returns null after queueing.
      */
-    suspend fun sendReturningId(text: String, chatId: String, replyTo: String? = null): String? = null
+    suspend fun sendReturningId(text: String, chatId: String, replyTo: String? = null): String? {
+        if (closed.get()) return null
+        val body = TextLimit.truncate(text)
+        if (body.isBlank()) return null
+        val queued = kotlinx.coroutines.CompletableDeferred<String?>()
+        write {
+            try {
+                if (!ensureChatRow(chatId)) return@write
+                val id = freshId()
+                outbox.enqueue(ContentEnvelope.Text(id, nowMs(), body, replyTo), chatId)
+                // From here on the message is queued, whatever else fails: the caller must not send it again.
+                queued.complete(id)
+                bumpActivity(chatId, nowMs())
+                requestFlush()
+            } finally {
+                queued.complete(null) // does nothing once the id is out
+            }
+        }
+        return kotlinx.coroutines.withTimeoutOrNull(WRITE_WAIT_MS) { queued.await() }
+    }
 
     /** Messages that gave up sending (they show as [DeliveryStatus.Failed]; the UI offers [retrySend]). */
     fun failedMessageIds(chatId: String): Set<String> =
@@ -980,6 +999,7 @@ class LiveChatStore(
 
     companion object {
         const val CACHED_MESSAGES = 50
+        private const val WRITE_WAIT_MS = 10_000L
         private const val REPORTED_MESSAGES = 10
         const val BLOCK_PREFIX = "pending.block."
         const val UNBLOCK_PREFIX = "pending.unblock."

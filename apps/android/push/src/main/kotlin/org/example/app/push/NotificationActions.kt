@@ -34,10 +34,15 @@ interface NotificationActionSink {
 internal object ReplyClaims {
     private val used = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
-    /** True the first time a token is seen. Tokens are random and fresh on every posting, so the set stays small. */
+    /**
+     * True the first time this token is seen with this text. Two different replies typed before the notification was
+     * posted again share a token and are both sent; the same reply delivered twice is sent once. Only a digest of the
+     * text is kept.
+     */
     fun claim(nonce: String, text: String): Boolean {
         if (used.size > 256) used.clear()
-        return used.add(nonce)
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
+        return used.add(nonce + ":" + digest.joinToString("") { "%02x".format(it) })
     }
 
     fun clear() = used.clear()
@@ -151,7 +156,8 @@ object NotificationActions {
         android.app.PendingIntent.getBroadcast(
             context,
             (ACTION_REPLY + chatId).hashCode(),
-            Intent(context, NotificationActionReceiver::class.java).setAction(ACTION_REPLY)
+            // The identifier makes the intent differ per chat, so two chats whose ids share a hash code never share a PendingIntent.
+            Intent(context, NotificationActionReceiver::class.java).setAction(ACTION_REPLY).setIdentifier(chatId)
                 .putExtra(MessageNotifier.EXTRA_CHAT_ID, chatId).putExtra(EXTRA_NONCE, nonce),
             android.app.PendingIntent.FLAG_MUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT,
         )
@@ -161,7 +167,7 @@ object NotificationActions {
         android.app.PendingIntent.getBroadcast(
             context,
             (ACTION_MARK_READ + chatId).hashCode(),
-            Intent(context, NotificationActionReceiver::class.java).setAction(ACTION_MARK_READ).putExtra(MessageNotifier.EXTRA_CHAT_ID, chatId),
+            Intent(context, NotificationActionReceiver::class.java).setAction(ACTION_MARK_READ).setIdentifier(chatId).putExtra(MessageNotifier.EXTRA_CHAT_ID, chatId),
             android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT,
         )
 }

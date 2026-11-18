@@ -29,6 +29,7 @@ class MessageNotifierTest {
 
     @BeforeTest
     fun setUp() {
+        MessageNotifier.forgetRecent()
         shadowOf(context as Application).grantPermissions("android.permission.POST_NOTIFICATIONS")
     }
 
@@ -148,7 +149,7 @@ class MessageNotifierTest {
     fun hidingShownContentRepostsEveryChatInItsLockedForm() {
         say("c1", "Ana", "first secret")
         say("c1", "Ana", "second secret")
-        say("c2", "Bo", "other secret")
+        say("c2", "Zed", "other secret")
         notifier().showNotSent("c1")
         notifier().hideShownContent()
         val all = chatNotifications()
@@ -157,7 +158,7 @@ class MessageNotifierTest {
             val n = sbn.notification
             assertEquals(listOf("New message"), lines(n), sbn.tag)
             val shown = n.extras.keySet().mapNotNull { n.extras.get(it)?.toString() }.joinToString("|")
-            assertTrue(listOf("Ana", "Bo", "secret").none { shown.contains(it) }, shown)
+            assertTrue(listOf("Ana", "Zed", "secret").none { shown.contains(it) }, shown)
             assertNull(n.actions?.firstOrNull { it.title == "Reply" }, "no Reply")
             assertNotNull(n.actions?.firstOrNull { it.title == "Mark as read" })
         }

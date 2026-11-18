@@ -54,6 +54,7 @@ class NotificationActionsTest {
 
     @BeforeTest
     fun setUp() {
+        MessageNotifier.forgetRecent()
         shadowOf(context as Application).grantPermissions("android.permission.POST_NOTIFICATIONS")
     }
 

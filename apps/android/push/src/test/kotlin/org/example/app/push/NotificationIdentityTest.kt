@@ -32,6 +32,7 @@ class NotificationIdentityTest {
     @BeforeTest
     fun setUp() {
         assertEquals("Aa".hashCode(), "BB".hashCode())
+        MessageNotifier.forgetRecent()
         shadowOf(context as Application).grantPermissions("android.permission.POST_NOTIFICATIONS")
         val info = android.content.pm.ResolveInfo().apply {
             activityInfo = android.content.pm.ActivityInfo().apply {

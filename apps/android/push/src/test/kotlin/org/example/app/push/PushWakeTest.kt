@@ -366,6 +366,9 @@ class PushWakeTest {
 
     // ---- notifications
 
+    @kotlin.test.BeforeTest
+    fun forgetEarlierNotifications() = MessageNotifier.forgetRecent()
+
     private fun active() = shadowOf(context.getSystemService(NotificationManager::class.java)).allNotifications
 
     @Test

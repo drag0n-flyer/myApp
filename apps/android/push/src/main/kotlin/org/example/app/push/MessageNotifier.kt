@@ -13,6 +13,23 @@ import org.example.app.core.chats.Message
 import org.example.app.core.chats.MessageContent
 import org.example.app.core.notify.NotificationPlan
 
+/** A line already in a chat's notification. */
+private class Entry(val text: String, val at: Long, val mine: Boolean)
+
+/**
+ * What this process last did to a chat's notification. The notification manager applies posts and cancels
+ * asynchronously, so a read of its list straight after one can be stale; for [FRESH_MS] this is trusted instead.
+ * `gone`: the chat's notification was just cancelled.
+ */
+private class Snapshot(val title: String?, val hidden: Boolean, val muted: Boolean, val entries: List<Entry>, val at: Long, val gone: Boolean = false)
+
+/** Shared by every [MessageNotifier] of the process (they are made on use), and guarded by [lock]. */
+private object NotifierState {
+    const val FRESH_MS = 3_000L
+    val lock = Any()
+    val recent = HashMap<String, Snapshot>()
+}
+
 /**
  * Shows what [NotificationOutcome] says. Plain words only; no mention of how a message is protected.
  * Notifications opened from here carry the extra [EXTRA_CHAT_ID] on the launch intent.
@@ -35,10 +52,10 @@ class MessageNotifier(
         private const val GROUP_KEY = "org.example.app.push.CHATS"
         private const val SELF_KEY = "self"
         private const val EXTRA_HIDDEN = "org.example.app.push.HIDDEN"
-    }
 
-    /** A line already in a chat's notification. */
-    private class Entry(val text: String, val at: Long, val mine: Boolean)
+        /** Forgets what this process last did to each chat's notification. For tests, which share one process. */
+        internal fun forgetRecent() = synchronized(NotifierState.lock) { NotifierState.recent.clear() }
+    }
 
     fun show(outcome: NotificationOutcome) {
         when (outcome) {
@@ -72,12 +89,13 @@ class MessageNotifier(
         )
 
     /** The chat was read: its notification goes (and the summary, once fewer than two chats remain). */
-    fun cancelChat(chatId: String) {
+    fun cancelChat(chatId: String) = synchronized(NotifierState.lock) {
         val manager = NotificationManagerCompat.from(context)
         manager.cancel(CHAT_TAG + chatId, 0)
         manager.cancel(CALL_TAG + chatId, 0)
         manager.cancel(NOT_SENT_TAG + chatId, 0)
-        refreshSummary()
+        NotifierState.recent[CHAT_TAG + chatId] = Snapshot(null, false, false, emptyList(), System.currentTimeMillis(), gone = true)
+        refreshSummary(cancelled = CHAT_TAG + chatId)
     }
 
     /** The reply was queued: the chat's notification gets the sent line, without alerting again. Nothing to update once it was dismissed. */
@@ -87,10 +105,10 @@ class MessageNotifier(
     }
 
     /** The reply could not be sent: "Not sent", which opens the chat (the text is its draft). Names nobody while app lock is on. */
-    fun showNotSent(chatId: String) {
+    fun showNotSent(chatId: String, hideName: Boolean = false) = synchronized(NotifierState.lock) {
         val manager = NotificationManagerCompat.from(context)
-        if (!manager.areNotificationsEnabled()) return
-        val name = if (appLockOn()) null else shownTitle(chatId)
+        if (!manager.areNotificationsEnabled()) return@synchronized
+        val name = if (hideName || appLockOn()) null else shownTitle(chatId)
         NotificationChannels.ensure(context)
         val builder = NotificationCompat.Builder(context, NotificationChannels.MESSAGES)
             .setSmallIcon(R.drawable.ic_stat_message)
@@ -110,14 +128,42 @@ class MessageNotifier(
     }
 
     /** The sender's name on the chat's showing notification; null when there is none or it hides its content. */
-    private fun shownTitle(chatId: String): String? {
-        val n = active(CHAT_TAG + chatId)?.notification ?: return null
-        if (n.extras.getBoolean(EXTRA_HIDDEN)) return null
-        return n.extras.getString("android.title")
+    private fun shownTitle(chatId: String): String? = stateOf(chatId)?.takeIf { !it.hidden }?.title
+
+    /**
+     * What the chat's notification shows now: what this process just did to it, or else what the system lists. Null when
+     * there is none. Call with the lock held.
+     */
+    private fun stateOf(chatId: String): Snapshot? {
+        val tag = CHAT_TAG + chatId
+        NotifierState.recent[tag]?.takeIf { System.currentTimeMillis() - it.at < NotifierState.FRESH_MS }?.let { return if (it.gone) null else it }
+        val n = active(tag)?.notification ?: return null
+        val muted = n.channelId == NotificationChannels.MUTED
+        if (n.extras.getBoolean(EXTRA_HIDDEN)) return Snapshot(null, true, muted, emptyList(), System.currentTimeMillis())
+        val style = NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(n)
+        val entries = style?.messages?.map { Entry(it.text?.toString().orEmpty(), it.timestamp, it.person?.key == SELF_KEY) }.orEmpty()
+        return Snapshot(n.extras.getString("android.title"), false, muted, entries, System.currentTimeMillis())
     }
 
-    /** App lock was just turned on: every showing chat notification is posted again in its locked form. */
-    fun hideShownContent() = Unit
+    /**
+     * App lock was just turned on: every showing chat notification is posted again in its locked form (no sender, no
+     * history, no Reply), and so is a "Not sent" notice, which then names nobody. Safe to call twice.
+     */
+    fun hideShownContent() = synchronized(NotifierState.lock) {
+        val manager = NotificationManagerCompat.from(context)
+        val ids = (
+            manager.activeNotifications.mapNotNull { it.tag?.takeIf { t -> t.startsWith(CHAT_TAG) } } +
+                NotifierState.recent.filter { !it.value.gone && System.currentTimeMillis() - it.value.at < NotifierState.FRESH_MS }.keys
+            ).toSet() - NotifierState.recent.filter { it.value.gone && System.currentTimeMillis() - it.value.at < NotifierState.FRESH_MS }.keys
+        for (tag in ids) {
+            val chatId = tag.removePrefix(CHAT_TAG)
+            if (stateOf(chatId)?.hidden == true) continue
+            postChat(chatId, "", null, alert = false, forceLocked = true)
+        }
+        val notSent = manager.activeNotifications.mapNotNull { it.tag?.takeIf { t -> t.startsWith(NOT_SENT_TAG) } }
+        for (tag in notSent) showNotSent(tag.removePrefix(NOT_SENT_TAG), hideName = true)
+        refreshSummary()
+    }
 
     /** Removes the generic notice once the real notification is shown. */
     fun cancelGeneric() = NotificationManagerCompat.from(context).cancel("generic", 0)
@@ -127,20 +173,20 @@ class MessageNotifier(
     private fun active(tag: String): StatusBarNotification? =
         NotificationManagerCompat.from(context).activeNotifications.firstOrNull { it.tag == tag && it.id == 0 }
 
-    private fun history(chatId: String): List<Entry> {
-        val n = active(CHAT_TAG + chatId)?.notification ?: return emptyList()
-        if (n.extras.getBoolean(EXTRA_HIDDEN)) return emptyList() // placeholder lines carry nothing worth keeping
-        val style = NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(n) ?: return emptyList()
-        return style.messages.map { Entry(it.text?.toString().orEmpty(), it.timestamp, it.person?.key == SELF_KEY) }
-    }
+    /** Placeholder lines of a locked notification carry nothing worth keeping. */
+    private fun history(chatId: String): List<Entry> = stateOf(chatId)?.takeIf { !it.hidden }?.entries.orEmpty()
 
-    private fun postChat(chatId: String, senderName: String, added: Entry?, alert: Boolean = true) {
+    /** One post at a time: the history is read, the notification built and posted, and the cache updated under one lock. */
+    private fun postChat(chatId: String, senderName: String, added: Entry?, alert: Boolean = true, forceLocked: Boolean = false) =
+        synchronized(NotifierState.lock) { postChatLocked(chatId, senderName, added, alert, forceLocked) }
+
+    private fun postChatLocked(chatId: String, senderName: String, added: Entry?, alert: Boolean, forceLocked: Boolean) {
         val manager = NotificationManagerCompat.from(context)
         // Without the permission (Android 13+) the system would drop it anyway.
         if (!manager.areNotificationsEnabled()) return
         NotificationChannels.ensure(context)
-        val locked = appLockOn()
-        val entries = if (locked) listOfNotNull(added) else history(chatId) + listOfNotNull(added)
+        val locked = forceLocked || appLockOn()
+        val entries = if (locked) listOf(added ?: Entry("", System.currentTimeMillis(), false)) else history(chatId) + listOfNotNull(added)
         if (entries.isEmpty()) return
         val unread = entries.mapIndexed { i, e ->
             Message(
@@ -190,19 +236,35 @@ class MessageNotifier(
         builder.addAction(0, context.getString(R.string.push_action_mark_read), NotificationActions.markReadIntent(context, chatId))
         @Suppress("MissingPermission") // checked above
         manager.notify(CHAT_TAG + chatId, 0, builder.build())
-        refreshSummary()
+        val kept = if (plan.hideContent) emptyList() else plan.lines.map { Entry(it.text, it.sentAt.toEpochMilli(), (it.sentAt.toEpochMilli() to it.text) in mineKeys) }
+        NotifierState.recent[CHAT_TAG + chatId] = Snapshot(
+            if (plan.hideContent) null else plan.title, plan.hideContent, plan.silent, kept, System.currentTimeMillis(),
+        )
+        refreshSummary(posted = CHAT_TAG + chatId to plan.silent)
     }
 
     /** Posts the summary while two or more chats are showing, removes it otherwise. Its number is the unmuted chats. */
-    internal fun refreshSummary(posted: Pair<String, Boolean>? = null, cancelled: String? = null) {
+    internal fun refreshSummary(posted: Pair<String, Boolean>? = null, cancelled: String? = null) = synchronized(NotifierState.lock) {
         val manager = NotificationManagerCompat.from(context)
-        val chats = manager.activeNotifications.filter { it.tag?.startsWith(CHAT_TAG) == true && it.id == 0 }
-        if (!NotificationPlan.needsSummary(chats.map { it.tag }.toSet())) {
-            manager.cancel(SUMMARY_TAG, 0)
-            return
+        // tag -> muted. The system's list can lag behind what this process just posted or cancelled, so what it did
+        // within the last moments, and the call's own `posted` and `cancelled`, win over the list.
+        val chats = LinkedHashMap<String, Boolean>()
+        for (n in manager.activeNotifications) {
+            if (n.tag?.startsWith(CHAT_TAG) == true && n.id == 0) chats[n.tag] = n.notification.channelId == NotificationChannels.MUTED
         }
-        if (!manager.areNotificationsEnabled()) return
-        val unmuted = chats.count { it.notification.channelId != NotificationChannels.MUTED }
+        val now = System.currentTimeMillis()
+        for ((tag, snap) in NotifierState.recent) {
+            if (now - snap.at >= NotifierState.FRESH_MS) continue
+            if (snap.gone) chats.remove(tag) else chats[tag] = snap.muted
+        }
+        cancelled?.let { chats.remove(it) }
+        posted?.let { chats[it.first] = it.second }
+        if (!NotificationPlan.needsSummary(chats.keys)) {
+            manager.cancel(SUMMARY_TAG, 0)
+            return@synchronized
+        }
+        if (!manager.areNotificationsEnabled()) return@synchronized
+        val unmuted = chats.values.count { !it }
         val summary = NotificationCompat.Builder(context, NotificationChannels.MESSAGES)
             .setSmallIcon(R.drawable.ic_stat_message)
             .setContentTitle(appLabel())
@@ -223,6 +285,8 @@ class MessageNotifier(
     private fun openChat(builder: NotificationCompat.Builder, tag: String, chatId: String?) {
         context.packageManager.getLaunchIntentForPackage(context.packageName)?.let { launch ->
             chatId?.let { launch.putExtra(EXTRA_CHAT_ID, it) }
+            // Unique per notification, so two tags whose hash codes collide never share (and rewrite) one PendingIntent.
+            launch.setIdentifier(tag)
             builder.setContentIntent(
                 PendingIntent.getActivity(context, tag.hashCode(), launch, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT),
             )

@@ -8,13 +8,10 @@ import kotlinx.serialization.json.put
 import org.example.app.AppGraph
 import org.example.app.contracts.NotificationOutcome
 import org.example.app.core.chats.ChatStore
+import org.example.app.messaging.LiveChatStore
+import org.example.app.core.chats.DraftKeeper
 import org.example.app.core.notify.NotificationPlan
 import org.example.app.push.MessageNotifier
-import org.example.app.push.NotificationActionSink
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import org.example.app.core.chats.MessageContent
-import org.example.app.messaging.content.TextLimit
 import org.example.app.ui.chat.ProcessDrafts
 import org.example.app.contracts.PushPayloadHandler
 import org.example.app.contracts.RingOutcome
@@ -65,40 +62,10 @@ object PushWiring {
         // The two switches the notifications read. Wired here and nowhere else: N4 (mute) and N6 (app lock) replace these lines.
         PushRuntime.mutedChatIds = { emptySet() }
         PushRuntime.appLockOn = { false }
-        PushRuntime.notificationActions = object : NotificationActionSink {
-            override suspend fun markRead(chatId: String): Boolean {
-                val store = graph().openSession()?.chatStore ?: return false
-                if (store.chat(chatId) == null) return false // an ID from an intent is checked against the store first
-                store.markRead(chatId) // also sends the read receipt when the setting allows
-                store.awaitWrites()
-                return true
-            }
-
-            /**
-             * The reply goes into the session's outbox, the queue the composer uses, through the one session the app holds
-             * (`openSession` is cached and opens once), so it cannot race the open app. True only when the new message is
-             * stored. A request, an unknown chat or a text over the limit is refused whole: the limit would cut it short.
-             */
-            override suspend fun reply(chatId: String, text: String): Boolean = withContext(Dispatchers.IO) {
-                val store = graph().openSession()?.chatStore ?: return@withContext false
-                val chat = store.chat(chatId) ?: return@withContext false
-                if (chat.isRequest || TextLimit.truncate(text) != text) return@withContext false
-                val before = store.messages(chatId, null, 20).map { it.id }.toSet()
-                store.send(MessageContent.Text(text), chatId)
-                store.awaitWrites()
-                store.messages(chatId, null, 20).any {
-                    it.id !in before && it.senderId == store.me.id && (it.content as? MessageContent.Text)?.text == text
-                }
-            }
-
-            /** Added to what is already typed in that chat's composer, never replacing it. */
-            override suspend fun saveDraft(chatId: String, text: String) {
-                val store = graph().openSession()?.chatStore ?: return
-                val keeper = ProcessDrafts.keeperFor(store.me.id)
-                val typed = keeper.draft(chatId)
-                keeper.set(if (typed.isBlank()) text else typed + "\n" + text, chatId)
-            }
-        }
+        PushRuntime.notificationActions = LiveNotificationActions(
+            store = { graph().openSession()?.chatStore?.let(::SessionNotificationStore) },
+            drafts = { ProcessDrafts.keeperFor(it) },
+        )
         PushRuntime.dispatcher = PushDispatcher(handler, ring, AndroidPushEffects(app, missed))
         PushRuntime.inboxFetcher = object : InboxFetcher {
             override suspend fun fetch(): List<NotificationOutcome> = graph().openSession()?.notifications?.fetchOutcomes() ?: emptyList()
@@ -115,14 +82,20 @@ object PushWiring {
         }
     }
 
-    /** A chat whose unread count falls to zero was read (in the app or from its notification): its notification goes. */
+    /**
+     * Cancels a chat's notifications when it was read (its unread count fell to zero, in the app or from the notification),
+     * left the chat list, or was blocked.
+     */
     suspend fun cancelReadChats(context: Context, store: ChatStore) {
         val notifier = MessageNotifier(context.applicationContext)
         var before = emptyMap<String, Int>()
-        store.chats.collect { chats ->
+        var blockedBefore = emptySet<String>()
+        kotlinx.coroutines.flow.combine(store.chats, store.blockedIds) { chats, blocked -> chats to blocked }.collect { (chats, blocked) ->
             val after = chats.associate { it.id to it.unreadCount }
-            NotificationPlan.readChats(before, after).forEach(notifier::cancelChat)
+            val gone = NotificationPlan.readChats(before, after) + NotificationPlan.leftChats(before.keys, after.keys, blockedBefore, blocked)
+            gone.forEach(notifier::cancelChat)
             before = after
+            blockedBefore = blocked
         }
     }
 
@@ -159,4 +132,23 @@ object PushWiring {
             tokens.putPushToken("unifiedpush", buildJsonObject { put("endpoint", endpoint); put("p256dh", b64(p256dh)); put("auth", b64(auth)) })
         override suspend fun delete(kind: String) = tokens.deletePushToken(kind)
     }
+}
+
+/** Adds [text] to the chat's unsent draft, after what is already typed there, never replacing it. N4's `ChatStore.setDraft` replaces the body of this function. */
+internal fun saveReplyDraft(keeper: DraftKeeper, chatId: String, text: String) {
+    val typed = keeper.draft(chatId)
+    keeper.set(if (typed.isBlank()) text else typed + "\n" + text, chatId)
+}
+
+/** The live store as the notification buttons see it. */
+private class SessionNotificationStore(private val store: LiveChatStore) : NotificationStore {
+    override val meId: String get() = store.me.id
+    override fun chat(chatId: String) = store.chat(chatId)
+    override fun blocked(): Set<String> = store.blockedIds.value
+    override suspend fun markRead(chatId: String) {
+        store.markRead(chatId)
+        store.awaitWrites()
+    }
+    override suspend fun sendReturningId(chatId: String, text: String): String? = store.sendReturningId(text, chatId)
+    override suspend fun settle() = store.settle()
 }

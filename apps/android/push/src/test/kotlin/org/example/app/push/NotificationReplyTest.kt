@@ -36,6 +36,7 @@ class NotificationReplyTest {
 
     @BeforeTest
     fun setUp() {
+        MessageNotifier.forgetRecent()
         shadowOf(context as Application).grantPermissions("android.permission.POST_NOTIFICATIONS")
         ReplyClaims.clear()
         // A launcher activity, so notifications get a content intent to check (Robolectric has none by default).

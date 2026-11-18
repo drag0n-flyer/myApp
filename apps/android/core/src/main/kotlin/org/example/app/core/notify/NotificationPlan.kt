@@ -50,7 +50,7 @@ object NotificationPlan {
      * Chats whose notifications must go because the chat left the list between two looks, or was blocked since.
      */
     fun leftChats(before: Set<String>, after: Set<String>, blockedBefore: Set<String>, blockedAfter: Set<String>): Set<String> =
-        emptySet()
+        (before - after) + (blockedAfter - blockedBefore)
 
     /** Chats whose unread count fell to zero between two looks: they were read, so their notification goes. */
     fun readChats(before: Map<String, Int>, after: Map<String, Int>): Set<String> =
