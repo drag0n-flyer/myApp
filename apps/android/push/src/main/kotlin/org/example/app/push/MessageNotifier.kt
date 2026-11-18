@@ -30,6 +30,7 @@ class MessageNotifier(
         const val EXTRA_CHAT_ID = "org.example.app.push.CHAT_ID"
         internal const val CHAT_TAG = "chat:"
         internal const val CALL_TAG = "call:"
+        internal const val NOT_SENT_TAG = "notsent:"
         internal const val SUMMARY_TAG = "summary"
         private const val GROUP_KEY = "org.example.app.push.CHATS"
         private const val SELF_KEY = "self"
@@ -75,17 +76,45 @@ class MessageNotifier(
         val manager = NotificationManagerCompat.from(context)
         manager.cancel(CHAT_TAG + chatId, 0)
         manager.cancel(CALL_TAG + chatId, 0)
+        manager.cancel(NOT_SENT_TAG + chatId, 0)
         refreshSummary()
     }
 
-    /** The reply was queued: the chat's notification gets the sent line. */
-    fun showSent(chatId: String, text: String) = Unit
+    /** The reply was queued: the chat's notification gets the sent line, without alerting again. Nothing to update once it was dismissed. */
+    fun showSent(chatId: String, text: String) {
+        val title = shownTitle(chatId) ?: return
+        postChat(chatId, title, Entry(text, System.currentTimeMillis(), mine = true), alert = false)
+    }
 
-    /** The reply could not be sent: "Not sent", which opens the chat (the text is its draft). */
-    fun showNotSent(chatId: String) = Unit
+    /** The reply could not be sent: "Not sent", which opens the chat (the text is its draft). Names nobody while app lock is on. */
+    fun showNotSent(chatId: String) {
+        val manager = NotificationManagerCompat.from(context)
+        if (!manager.areNotificationsEnabled()) return
+        val name = if (appLockOn()) null else shownTitle(chatId)
+        NotificationChannels.ensure(context)
+        val builder = NotificationCompat.Builder(context, NotificationChannels.MESSAGES)
+            .setSmallIcon(R.drawable.ic_stat_message)
+            .setContentTitle(context.getString(R.string.push_not_sent))
+            .setCategory(NotificationCompat.CATEGORY_ERROR)
+            .setAutoCancel(true)
+        if (name != null) builder.setContentText(name)
+        openChat(builder, NOT_SENT_TAG + chatId, chatId)
+        @Suppress("MissingPermission") // checked above
+        manager.notify(NOT_SENT_TAG + chatId, 0, builder.build())
+    }
 
-    /** Posts the chat's notification again as it is, with a fresh Reply token. */
-    fun refreshChat(chatId: String) = Unit
+    /** Posts the chat's notification again as it is, with a fresh Reply token (and no sound). */
+    fun refreshChat(chatId: String) {
+        val title = shownTitle(chatId) ?: return
+        postChat(chatId, title, null, alert = false)
+    }
+
+    /** The sender's name on the chat's showing notification; null when there is none or it hides its content. */
+    private fun shownTitle(chatId: String): String? {
+        val n = active(CHAT_TAG + chatId)?.notification ?: return null
+        if (n.extras.getBoolean(EXTRA_HIDDEN)) return null
+        return n.extras.getString("android.title")
+    }
 
     /** Removes the generic notice once the real notification is shown. */
     fun cancelGeneric() = NotificationManagerCompat.from(context).cancel("generic", 0)
@@ -102,13 +131,14 @@ class MessageNotifier(
         return style.messages.map { Entry(it.text?.toString().orEmpty(), it.timestamp, it.person?.key == SELF_KEY) }
     }
 
-    private fun postChat(chatId: String, senderName: String, added: Entry) {
+    private fun postChat(chatId: String, senderName: String, added: Entry?, alert: Boolean = true) {
         val manager = NotificationManagerCompat.from(context)
         // Without the permission (Android 13+) the system would drop it anyway.
         if (!manager.areNotificationsEnabled()) return
         NotificationChannels.ensure(context)
         val locked = appLockOn()
-        val entries = if (locked) listOf(added) else history(chatId) + added
+        val entries = if (locked) listOfNotNull(added) else history(chatId) + listOfNotNull(added)
+        if (entries.isEmpty()) return
         val unread = entries.mapIndexed { i, e ->
             Message(
                 id = "n$i", senderId = if (e.mine) SELF_KEY else chatId, sentAt = Instant.ofEpochMilli(e.at),
@@ -136,8 +166,24 @@ class MessageNotifier(
             .setGroup(GROUP_KEY)
             .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_CHILDREN)
             .addExtras(android.os.Bundle().apply { putBoolean(EXTRA_HIDDEN, plan.hideContent) })
-        if (plan.silent) builder.setPriority(NotificationCompat.PRIORITY_LOW).setSilent(true)
+        if (plan.silent) builder.setPriority(NotificationCompat.PRIORITY_LOW)
+        if (plan.silent || !alert) builder.setSilent(true)
+        if (!alert) builder.setOnlyAlertOnce(true)
         openChat(builder, CHAT_TAG + chatId, chatId)
+        if (!plan.hideContent) {
+            // Not offered with app lock on: a reply typed there would be a way around the lock.
+            val input = androidx.core.app.RemoteInput.Builder(NotificationActions.KEY_REPLY_TEXT).setLabel(context.getString(R.string.push_action_reply)).build()
+            val reply = NotificationCompat.Action.Builder(
+                0, context.getString(R.string.push_action_reply),
+                NotificationActions.replyIntent(context, chatId, java.util.UUID.randomUUID().toString()),
+            )
+                .addRemoteInput(input)
+                .setAllowGeneratedReplies(true)
+                .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY)
+                .setShowsUserInterface(false)
+                .build()
+            builder.addAction(reply)
+        }
         builder.addAction(0, context.getString(R.string.push_action_mark_read), NotificationActions.markReadIntent(context, chatId))
         @Suppress("MissingPermission") // checked above
         manager.notify(CHAT_TAG + chatId, 0, builder.build())

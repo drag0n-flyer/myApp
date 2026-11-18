@@ -38,6 +38,16 @@ class NotificationReplyTest {
     fun setUp() {
         shadowOf(context as Application).grantPermissions("android.permission.POST_NOTIFICATIONS")
         ReplyClaims.clear()
+        // A launcher activity, so notifications get a content intent to check (Robolectric has none by default).
+        val info = android.content.pm.ResolveInfo().apply {
+            activityInfo = android.content.pm.ActivityInfo().apply {
+                packageName = context.packageName
+                name = "org.example.app.FakeLauncher"
+            }
+        }
+        shadowOf(context.packageManager).addResolveInfoForIntent(
+            Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setPackage(context.packageName), info,
+        )
     }
 
     private fun chat(id: String = "c1"): StatusBarNotification? = nm.activeNotifications.firstOrNull { it.tag == "chat:$id" }

@@ -11,6 +11,11 @@ import org.example.app.core.chats.ChatStore
 import org.example.app.core.notify.NotificationPlan
 import org.example.app.push.MessageNotifier
 import org.example.app.push.NotificationActionSink
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.example.app.core.chats.MessageContent
+import org.example.app.messaging.content.TextLimit
+import org.example.app.ui.chat.ProcessDrafts
 import org.example.app.contracts.PushPayloadHandler
 import org.example.app.contracts.RingOutcome
 import org.example.app.net.ServerClient
@@ -67,6 +72,31 @@ object PushWiring {
                 store.markRead(chatId) // also sends the read receipt when the setting allows
                 store.awaitWrites()
                 return true
+            }
+
+            /**
+             * The reply goes into the session's outbox, the queue the composer uses, through the one session the app holds
+             * (`openSession` is cached and opens once), so it cannot race the open app. True only when the new message is
+             * stored. A request, an unknown chat or a text over the limit is refused whole: the limit would cut it short.
+             */
+            override suspend fun reply(chatId: String, text: String): Boolean = withContext(Dispatchers.IO) {
+                val store = graph().openSession()?.chatStore ?: return@withContext false
+                val chat = store.chat(chatId) ?: return@withContext false
+                if (chat.isRequest || TextLimit.truncate(text) != text) return@withContext false
+                val before = store.messages(chatId, null, 20).map { it.id }.toSet()
+                store.send(MessageContent.Text(text), chatId)
+                store.awaitWrites()
+                store.messages(chatId, null, 20).any {
+                    it.id !in before && it.senderId == store.me.id && (it.content as? MessageContent.Text)?.text == text
+                }
+            }
+
+            /** Added to what is already typed in that chat's composer, never replacing it. */
+            override suspend fun saveDraft(chatId: String, text: String) {
+                val store = graph().openSession()?.chatStore ?: return
+                val keeper = ProcessDrafts.keeperFor(store.me.id)
+                val typed = keeper.draft(chatId)
+                keeper.set(if (typed.isBlank()) text else typed + "\n" + text, chatId)
             }
         }
         PushRuntime.dispatcher = PushDispatcher(handler, ring, AndroidPushEffects(app, missed))

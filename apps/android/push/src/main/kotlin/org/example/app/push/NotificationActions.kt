@@ -32,9 +32,15 @@ interface NotificationActionSink {
 
 /** Reply tokens already used, so a broadcast delivered twice sends once. */
 internal object ReplyClaims {
-    fun claim(nonce: String): Boolean = true
+    private val used = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
-    fun clear() = Unit
+    /** True the first time a token is seen. Tokens are random and fresh on every posting, so the set stays small. */
+    fun claim(nonce: String): Boolean {
+        if (used.size > 256) used.clear()
+        return used.add(nonce)
+    }
+
+    fun clear() = used.clear()
 }
 
 internal class NotificationActionHandler(
@@ -46,7 +52,45 @@ internal class NotificationActionHandler(
     private fun valid(chatId: String?): Boolean =
         chatId != null && chatId.isNotBlank() && chatId.length <= NotificationActions.MAX_ID_LENGTH
 
-    suspend fun reply(chatId: String?, text: String?, nonce: String?) = Unit
+    /**
+     * Sends [text] to the chat, or says "Not sent". The token is claimed first, so the same broadcast arriving twice
+     * sends once; the notification is then posted again with a fresh token, so the next Reply works. A reply that is
+     * not sent keeps its text as the chat's draft and says so; it is never dropped quietly.
+     */
+    suspend fun reply(chatId: String?, text: String?, nonce: String?) {
+        if (chatId == null || !valid(chatId) || nonce.isNullOrBlank()) return
+        val body = text?.trim().orEmpty()
+        if (body.isEmpty()) {
+            notifier.refreshChat(chatId) // ends the spinner on the Reply button
+            return
+        }
+        if (!ReplyClaims.claim(nonce)) return
+        val sink = sink()
+        val queued = if (sink == null || appLockOn()) {
+            false
+        } else {
+            try {
+                sink.reply(chatId, body)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                false
+            }
+        }
+        if (queued) {
+            notifier.showSent(chatId, body)
+            return
+        }
+        try {
+            sink?.saveDraft(chatId, body)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // Not sent is still said below.
+        }
+        notifier.showNotSent(chatId)
+        notifier.refreshChat(chatId)
+    }
 
     suspend fun markRead(chatId: String?) {
         if (chatId == null || !valid(chatId)) return
@@ -91,9 +135,26 @@ object NotificationActions {
         val chatId = intent.getStringExtra(MessageNotifier.EXTRA_CHAT_ID)
         when (intent.action) {
             ACTION_MARK_READ -> handler.markRead(chatId)
+            ACTION_REPLY -> {
+                val text = androidx.core.app.RemoteInput.getResultsFromIntent(intent)?.getCharSequence(KEY_REPLY_TEXT)?.toString()
+                handler.reply(chatId, text, intent.getStringExtra(EXTRA_NONCE))
+            }
             else -> Unit
         }
     }
+
+    /**
+     * The Reply button. Mutable, because the system must add the typed text to it; explicit, so only [NotificationActionReceiver]
+     * can receive it. [nonce] is new for every posting.
+     */
+    internal fun replyIntent(context: Context, chatId: String, nonce: String): android.app.PendingIntent =
+        android.app.PendingIntent.getBroadcast(
+            context,
+            (ACTION_REPLY + chatId).hashCode(),
+            Intent(context, NotificationActionReceiver::class.java).setAction(ACTION_REPLY)
+                .putExtra(MessageNotifier.EXTRA_CHAT_ID, chatId).putExtra(EXTRA_NONCE, nonce),
+            android.app.PendingIntent.FLAG_MUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT,
+        )
 
     /** The Mark as read button: immutable, explicit, one per chat. */
     internal fun markReadIntent(context: Context, chatId: String): android.app.PendingIntent =
