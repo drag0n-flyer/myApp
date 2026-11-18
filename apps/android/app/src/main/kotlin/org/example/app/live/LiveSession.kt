@@ -105,7 +105,7 @@ class LiveSession(
     val mls = platform.mls(device.identity, platform.mlsDir, secrets)
     val api = DeliveryApiImpl(client)
     private val membership: Membership = Membership(device, mls, realMemberKeys = (mls as? LiveMlsEngine)?.providesRealMemberKeys ?: false, clock = clock)
-    private val handler: IncomingHandler = IncomingHandler(device, clock, fold = TextFold::fold, log = { Log.w(TAG, it) })
+    private val handler: IncomingHandler = IncomingHandler(device, clock, fold = TextFold::fold, log = { Log.w(TAG, it) }, photoDecodable = org.example.app.profile.ProfilePhoto::decodes)
     private val escrowKeys = EscrowKeySource { ServerInfoApi(client).serverInfo().encryption.escrowKey }
     private val escrow = Escrow.sealer(device.accountId, hpke, escrowKeys)
     private lateinit var inboxRef: InboxProcessor

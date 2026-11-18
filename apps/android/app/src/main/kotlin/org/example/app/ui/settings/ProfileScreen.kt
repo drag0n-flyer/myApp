@@ -1,6 +1,8 @@
 package org.example.app.ui.settings
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.AlertDialog
@@ -44,6 +46,27 @@ fun ProfileScreen(
     storedName: String = me.displayName,
 ) {
     var confirm by rememberSaveable { mutableStateOf<String?>(null) }
+    var choosingPhoto by rememberSaveable { mutableStateOf(false) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val expectReturn = org.example.app.ui.lock.LocalExpectReturn.current
+    val hasPhoto = org.example.app.profile.LocalProfilePhotos.current?.collectAsStateWithLifecycle()?.value?.get(me.id)?.photo != null
+    val library = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) scope.launch {
+            val bytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                try { context.contentResolver.openInputStream(uri)?.use { it.readNBytes(MAX_PICKED_BYTES) } } catch (e: Exception) { null }
+            }
+            if (bytes != null && bytes.isNotEmpty()) viewModel.setPhoto(bytes)
+        }
+    }
+    val camera = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.TakePicturePreview()) { bitmap ->
+        if (bitmap != null) scope.launch {
+            val bytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                java.io.ByteArrayOutputStream().also { bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, it) }.toByteArray()
+            }
+            viewModel.setPhoto(bytes)
+        }
+    }
     val state by viewModel.state.collectAsStateWithLifecycle()
     val busy = state.busy != null
 
@@ -56,6 +79,17 @@ fun ProfileScreen(
                 headlineContent = { Text(me.displayName, style = MaterialTheme.typography.titleMedium) },
                 supportingContent = { Text(usernameText(me.username)) },
                 trailingContent = { Icon(painterResource(R.drawable.ic_edit), contentDescription = null) },
+            )
+            HorizontalDivider()
+        }
+        item {
+            ListItem(
+                modifier = Modifier.clickable(enabled = !busy, role = Role.Button) { choosingPhoto = true },
+                headlineContent = { Text(stringResource(R.string.profile_change_photo)) },
+            )
+            if (hasPhoto) ListItem(
+                modifier = Modifier.clickable(enabled = !busy, role = Role.Button) { viewModel.removePhoto() },
+                headlineContent = { Text(stringResource(R.string.profile_remove_photo)) },
             )
             HorizontalDivider()
         }
@@ -83,6 +117,25 @@ fun ProfileScreen(
         state.error?.let { message -> item { FooterText(stringResource(message), error = true) } }
     }
 
+    if (choosingPhoto) AlertDialog(
+        onDismissRequest = { choosingPhoto = false },
+        title = { Text(stringResource(R.string.profile_change_photo)) },
+        text = {
+            Column {
+                TextButton(onClick = {
+                    choosingPhoto = false; expectReturn()
+                    library.launch(androidx.activity.result.PickVisualMediaRequest(androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly))
+                }) { Text(stringResource(R.string.profile_photo_choose)) }
+                TextButton(onClick = {
+                    choosingPhoto = false; expectReturn()
+                    try { camera.launch(null) } catch (e: android.content.ActivityNotFoundException) { }
+                }) { Text(stringResource(R.string.profile_photo_take)) }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = { choosingPhoto = false }) { Text(stringResource(R.string.cancel)) } },
+    )
+
     if (state.editingName) EditNameDialog(storedName, onSave = viewModel::saveName, onCancel = viewModel::closeNameEditor)
 
     when (confirm) {
@@ -102,5 +155,6 @@ fun ProfileScreen(
     }
 }
 
+private const val MAX_PICKED_BYTES = 32 * 1024 * 1024
 private const val SIGN_OUT = "signOut"
 private const val DELETE = "delete"
