@@ -22,7 +22,8 @@ struct MainCommands: Commands {
         CommandGroup(replacing: .newItem) {
             item(.newChat, title: "New Chat", symbol: "square.and.pencil")
         }
-        CommandGroup(after: .textEditing) {
+        // Replaces the system Find items: their ⌘F would come first and swallow the key.
+        CommandGroup(replacing: .textEditing) {
             item(.search, title: model.onScreenChatID != nil && !model.lock.coversContent ? "Search in chat" : "Search",
                  symbol: "magnifyingglass")
         }

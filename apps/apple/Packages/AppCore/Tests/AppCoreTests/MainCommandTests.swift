@@ -71,3 +71,11 @@ private func enabled(_ c: MainCommand, locked: Bool = false, signedIn: Bool = tr
     #expect(ChatCycle.adjacent(in: [], current: "a", step: 1) == nil)
     #expect(ChatCycle.adjacent(in: ["a"], current: "a", step: 1) == "a")
 }
+
+@Test func openChatAfterArchivingIsTheNextOneOrNone() {
+    #expect(ChatCycle.openAfterArchiving(in: ["a", "b", "c"], archiving: "a") == "b")
+    #expect(ChatCycle.openAfterArchiving(in: ["a", "b", "c"], archiving: "b") == "c")
+    #expect(ChatCycle.openAfterArchiving(in: ["a", "b", "c"], archiving: "c") == nil)
+    #expect(ChatCycle.openAfterArchiving(in: ["a"], archiving: "a") == nil)
+    #expect(ChatCycle.openAfterArchiving(in: ["a", "b"], archiving: "gone") == nil)
+}

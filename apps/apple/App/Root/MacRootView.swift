@@ -73,6 +73,10 @@ struct MacRootView: View {
             if case .info? = detailPath.last { return }
             detailPath.append(.info(chatID: id))
         }
+        .onChange(of: model.closeChatRequests) { _, _ in
+            selectedChatID = nil
+            detailPath = []
+        }
         .onDisappear { model.onScreenChatID = nil }
         .onAppear {
             model.onScreenChatID = selectedChatID

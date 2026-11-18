@@ -48,6 +48,13 @@ public enum MainCommand: CaseIterable, Sendable {
 
 /// Next Chat / Previous Chat: which chat of the visible list follows.
 public enum ChatCycle {
+    /// Which chat stays open after `id` is archived: the one below it in the visible list, or nil (close the chat)
+    /// when it was the last one, the only one, or is not in the list.
+    public static func openAfterArchiving(in ids: [String], archiving id: String) -> String? {
+        guard let index = ids.firstIndex(of: id), index + 1 < ids.count else { return nil }
+        return ids[index + 1]
+    }
+
     /// The chat `step` places from `current`, wrapping at the ends. With no (or an unknown) current chat, a forward
     /// step gives the first and a backward step the last. Nil for an empty list.
     public static func adjacent(in ids: [String], current: String?, step: Int) -> String? {

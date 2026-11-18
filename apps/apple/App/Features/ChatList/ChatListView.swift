@@ -23,6 +23,8 @@ struct ChatListView: View {
     @State private var showingNewChat = false
 
     var body: some View {
+        // Switching layouts rebuilds the views below, so `path` is the only state carried over (the chat's scroll
+        // position is not).
         Group {
             if sizeClass == .regular { splitLayout } else { stackLayout }
         }

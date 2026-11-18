@@ -139,6 +139,7 @@ final class AppModel {
     var newChatRequests = 0
     var listSearchRequests = 0
     var chatInfoRequests = 0
+    var closeChatRequests = 0
     private(set) var activeCall: CallState?
     var pendingInvite: InviteLink?
     /// Mac only: a contact who is ringing (macOS has no CallKit).

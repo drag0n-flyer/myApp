@@ -27,6 +27,19 @@ final class MacLayoutTests: XCTestCase {
         XCTAssertTrue(app.sheets.buttons["Cancel"].waitToExist())
     }
 
+    /// With no chat open, ⌘F goes to the chat list's search field (the Edit menu's own Find is replaced).
+    func testMacFindShortcutFocusesTheChatListSearch() {
+        let app = XCUIApplication.launched()
+        XCTAssertTrue(app.element("mac.sidebar.chats").waitToExist())
+        XCTAssertFalse(app.element("chat.composer.field").exists)
+        app.typeKey("f", modifierFlags: .command)
+        let field = app.searchFields.firstMatch
+        XCTAssertTrue(field.waitToExist())
+        let focused = NSPredicate(format: "hasKeyboardFocus == true")
+        expectation(for: focused, evaluatedWith: field)
+        waitForExpectations(timeout: 5)
+    }
+
     func testMacOnboardingOffersStartAndLink() {
         let app = XCUIApplication.launched(skipOnboarding: false)
         XCTAssertTrue(app.element("welcome.haveaccount").waitToExist())

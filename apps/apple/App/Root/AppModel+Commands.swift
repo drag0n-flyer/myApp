@@ -33,7 +33,12 @@ extension AppModel {
         case .toggleMute:
             if let chat = commandChat { setMuted(chat.id, !chat.muted) }
         case .archive:
-            if let chat = commandChat { setArchived(chat.id, true) }
+            if let chat = commandChat {
+                let ids = chats(in: selectedFolder, matching: chatListQuery).map(\.id)
+                let next = ChatCycle.openAfterArchiving(in: ids, archiving: chat.id)
+                setArchived(chat.id, true)
+                if let next { openChatID = next } else { closeChatRequests += 1 }
+            }
         case .lockNow:
             lock.lockNow()
         }
