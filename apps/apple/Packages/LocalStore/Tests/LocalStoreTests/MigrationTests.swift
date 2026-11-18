@@ -38,7 +38,7 @@ private func snapshot(_ db: Database) throws -> [String] {
     let db = try populatedV1()
     let before = try snapshot(db)
     try migrate(db)
-    #expect(try db.query("PRAGMA user_version") { $0.int(0) } == [2])
+    #expect(try db.query("PRAGMA user_version") { $0.int(0) } == [latestSchemaVersion])
     #expect(try snapshot(db) == before)
     // Old rows are not pinned, not archived, and have no draft.
     #expect(try db.query("SELECT pinned_at IS NULL, archived FROM chats ORDER BY id") { [$0.int(0), $0.int(1)] } == [[1, 0], [1, 0]])
@@ -55,7 +55,7 @@ private func snapshot(_ db: Database) throws -> [String] {
     try migrate(db)
     #expect(try snapshot(db) == before)
     #expect(try db.query("SELECT pinned_at, archived FROM chats WHERE id='bob'") { [$0.int(0), $0.int(1)] } == [[77, 1]])
-    #expect(try db.query("PRAGMA user_version") { $0.int(0) } == [2])
+    #expect(try db.query("PRAGMA user_version") { $0.int(0) } == [latestSchemaVersion])
 }
 
 @Test func testDraftsTableCascadesWithTheChat() throws {
