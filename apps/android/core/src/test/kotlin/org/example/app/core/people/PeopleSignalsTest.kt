@@ -233,4 +233,50 @@ class PeopleSignalsTest {
         runCurrent()
         assertEquals(listOf("riya" to Signal.Presence(true)), r.sent)
     }
+
+    private fun chatAt(id: String, lastMs: Long?, archived: Boolean = false, request: Boolean = false) = Chat(
+        id, id, ChatEncryption.EndToEnd, emptySet(), 0,
+        listOfNotNull(lastMs?.let { Message("m-$id", id, Instant.ofEpochMilli(it), MessageContent.Text("x"), DeliveryStatus.Delivered, null, emptyList()) }),
+        isRequest = request, archived = archived,
+    )
+
+    @Test fun presenceGoesOnlyToChatsActiveInTheLastSevenDaysAtMostThirtyNewestFirst() {
+        val day = 86_400_000L
+        val now = 100 * day
+        val chats = listOf(
+            chatAt("old", now - 7 * day), // exactly seven days: out
+            chatAt("edge", now - 7 * day + 1),
+            chatAt("empty", null),
+            chatAt("request", now - 1, request = true),
+        ) + (1..40).map { chatAt("c$it", now - it * 1000L) }
+        val picked = PresenceTargets.pick(chats, now)
+        assertEquals(30, picked.size)
+        assertEquals((1..30).map { "c$it" }, picked)
+        assertEquals(listOf("c1", "edge"), PresenceTargets.pick(chats.filter { it.id == "c1" || it.id == "edge" || it.id == "old" }, now))
+    }
+
+    @Test fun typingGoesAheadOfQueuedPresenceAndIsNeverDropped() = runTest {
+        val r = Rig(this)
+        r.targets = (1..200).map { "p$it" }
+        r.model.setForeground(true)          // 200 presence frames queued
+        r.model.composerChanged("riya", isEmpty = false)
+        runCurrent()
+        assertEquals("riya" to Signal.Typing(true), r.sent.first())
+        r.model.messageSent("riya")
+        runCurrent()
+        assertTrue(r.sent.contains("riya" to Signal.Typing(false)))
+    }
+
+    @Test fun anIncomingMessageInAnArchivedChatEndsTyping() = runTest {
+        val r = Rig(this)
+        val chats = MutableStateFlow(listOf(chatAt("riya", 100, archived = true)))
+        r.model.watchMessages(chats, "me")
+        runCurrent()
+        r.channel.emit("riya", Signal.Typing(true))
+        runCurrent()
+        assertTrue(r.typing("riya"))
+        chats.value = listOf(chatAt("riya", 200, archived = true))
+        runCurrent()
+        assertEquals(false, r.typing("riya"))
+    }
 }

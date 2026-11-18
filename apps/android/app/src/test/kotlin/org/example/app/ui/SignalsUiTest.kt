@@ -138,4 +138,40 @@ class SignalsUiTest {
         assertEquals(false, store.settings.value.typingIndicator)
         assertEquals(true, store.settings.value.onlineAndLastSeen)
     }
+
+    @Test fun aSavedDraftRestoredWhenTheChatOpensSendsNoTyping() {
+        store.setDraft("chat-riya", "half written")
+        val chat = ChatViewModel(store, "chat-riya", NetworkType.Wifi, signals = signals) { AutoDownloadSettings() }
+        rule.setContent { AppTheme { ChatScreen(chat, myId = "me", onBack = {}, onOpenInfo = {}, onCall = null) } }
+        rule.waitForIdle()
+        rule.onNodeWithText("half written").assertIsDisplayed()
+        assertEquals(emptyList(), channel.sent)
+    }
+
+    @Test fun openingAndClosingAChatSendsNoFrame() {
+        val chat = ChatViewModel(store, "chat-riya", NetworkType.Wifi, signals = signals) { AutoDownloadSettings() }
+        var open by mutableStateOf(true)
+        rule.setContent { AppTheme { if (open) ChatScreen(chat, myId = "me", onBack = {}, onOpenInfo = {}, onCall = null) } }
+        rule.waitForIdle()
+        rule.runOnIdle { open = false }
+        rule.waitForIdle()
+        assertEquals(emptyList(), channel.sent)
+    }
+
+    @Test fun aSwitchLeftOffSurvivesARestartAndNothingIsSent() {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        val prefs = context.getSharedPreferences("signals-restart-test", android.content.Context.MODE_PRIVATE)
+        prefs.edit().clear().commit()
+        SettingsStore(prefs).update { it.copy(typingIndicator = false, onlineAndLastSeen = false) }
+        val relaunched = SettingsStore(prefs)
+        val model = PeopleSignals(
+            scope = scope, channel = channel,
+            typingEnabled = { relaunched.settings.value.typingIndicator }, presenceEnabled = { relaunched.settings.value.onlineAndLastSeen },
+            blocked = { false }, presenceTargets = { listOf("chat-riya") }, witnesses = NoWitnessStore, nowMs = System::currentTimeMillis,
+        )
+        model.composerChanged("chat-riya", isEmpty = false)
+        model.setForeground(true)
+        model.setForeground(false)
+        assertEquals(emptyList(), channel.sent)
+    }
 }

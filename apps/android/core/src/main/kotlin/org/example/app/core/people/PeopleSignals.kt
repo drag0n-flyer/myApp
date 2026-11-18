@@ -72,7 +72,10 @@ class PeopleSignals(
     private var heartbeat: Job? = null
     private var expiryJob: Job? = null
     private var tickJob: Job? = null
-    private val outbox = Channel<Pair<String, Signal>>(Channel.UNLIMITED)
+    // Typing goes first and is never dropped; presence is bounded and drops its oldest frames when the queue is full.
+    private val typingQueue = ArrayDeque<Pair<String, Signal>>()
+    private val presenceQueue = ArrayDeque<Pair<String, Signal>>()
+    private val wake = Channel<Unit>(Channel.CONFLATED)
     private val _views = MutableStateFlow<Map<String, PeerView>>(emptyMap())
 
     /** The state per chat; chats with nothing to show are absent. */
@@ -80,8 +83,11 @@ class PeopleSignals(
 
     init {
         scope.launch {
-            for ((chatId, signal) in outbox) {
-                try { channel.send(chatId, signal) } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+            for (ignored in wake) {
+                while (true) {
+                    val next = synchronized(lock) { typingQueue.removeFirstOrNull() ?: presenceQueue.removeFirstOrNull() } ?: break
+                    try { channel.send(next.first, next.second) } catch (e: CancellationException) { throw e } catch (_: Exception) { }
+                }
             }
         }
         scope.launch {
@@ -205,7 +211,7 @@ class PeopleSignals(
         val step = synchronized(lock) {
             TypingSender.step(senders[chatId] ?: TypingSender.State(), event, nowMs()).also { senders[chatId] = it.state }
         }
-        step.send?.let { outbox.trySend(chatId to Signal.Typing(it)) }
+        step.send?.let { enqueue(chatId to Signal.Typing(it)) }
         scheduleTick()
     }
 
@@ -234,7 +240,7 @@ class PeopleSignals(
                 step.send?.let { sends += chat to Signal.Typing(it) }
             }
         }
-        sends.forEach { outbox.trySend(it) }
+        sends.forEach { enqueue(it) }
         scheduleTick()
     }
 
@@ -258,17 +264,42 @@ class PeopleSignals(
         }
     }
 
+    private fun enqueue(item: Pair<String, Signal>) {
+        synchronized(lock) {
+            if (item.second is Signal.Typing) typingQueue.addLast(item)
+            else {
+                if (presenceQueue.size >= PRESENCE_QUEUE_MAX) presenceQueue.removeFirst()
+                presenceQueue.addLast(item)
+            }
+        }
+        wake.trySend(Unit)
+    }
+
     private fun sendPresence(online: Boolean) {
         if (!presenceEnabled()) return
         for (chat in presenceTargets()) {
-            if (!blocked(chat)) outbox.trySend(chat to Signal.Presence(online))
+            if (!blocked(chat)) enqueue(chat to Signal.Presence(online))
         }
     }
 
     companion object {
         const val HEARTBEAT_MS = 60_000L
         private const val SAVE_EVERY_MS = 30_000L
+        private const val PRESENCE_QUEUE_MAX = 64
     }
+}
+
+/** Who gets `online` and `away`: one-to-one chats with a message in the last 7 days, the 30 most recent first. */
+object PresenceTargets {
+    const val MAX_CHATS = 30
+    const val WINDOW_MS = 7 * 86_400_000L
+
+    fun pick(chats: List<Chat>, nowMs: Long): List<String> = chats
+        .filter { !it.isRequest }
+        .mapNotNull { chat -> chat.lastMessage?.sentAt?.toEpochMilli()?.takeIf { nowMs - it < WINDOW_MS }?.let { chat.id to it } }
+        .sortedByDescending { it.second }
+        .take(MAX_CHATS)
+        .map { it.first }
 }
 
 /**

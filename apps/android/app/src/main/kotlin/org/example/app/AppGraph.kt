@@ -66,6 +66,7 @@ import org.example.app.core.chats.ChatStore
 import org.example.app.core.chats.SampleChatStore
 import org.example.app.core.people.NoWitnessStore
 import org.example.app.core.people.PeopleSignals
+import org.example.app.core.people.PresenceTargets
 import org.example.app.core.people.ScriptedSignals
 import org.example.app.core.people.SignalChannel
 import org.example.app.core.people.WitnessStore
@@ -407,7 +408,7 @@ class AppGraph(
             presenceEnabled = { settingsStore.settings.value.onlineAndLastSeen },
             // Never to or for a blocked contact, nor a chat that is not known or is still a message request.
             blocked = { id -> store.chat(id).let { it == null || it.isRequest || it.contactId in store.blockedIds.value } },
-            presenceTargets = { store.chats.value.filter { !it.isRequest }.map { it.id } },
+            presenceTargets = { PresenceTargets.pick(store.chats.value, System.currentTimeMillis()) },
             witnesses = witnesses, nowMs = System::currentTimeMillis,
         ).also { it.watchMessages(store.chats, store.me.id) }
 
