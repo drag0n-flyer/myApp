@@ -11,6 +11,7 @@ import org.example.app.ui.msg
 import org.example.app.ui.storeWith
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
@@ -70,5 +71,25 @@ class ChatViewModelTest {
         val vm = ChatViewModel(store, "chat-riya", NetworkType.Mobile) { AutoDownloadSettings() }
         vm.requestAutoDownload("1", MediaKind.Photo)
         assertEquals(emptyList(), downloads)
+    }
+
+    @Test
+    fun sendProblemsOfThisChatReachTheScreenAndOthersDoNot() {
+        val inner = storeWith(listOf(msg("1", "riya", MessageContent.Text("hi"))))
+        val problems = kotlinx.coroutines.flow.MutableSharedFlow<org.example.app.core.chats.SendProblem>(extraBufferCapacity = 4)
+        val store = object : ChatStore by inner {
+            override val sendProblems: kotlinx.coroutines.flow.Flow<org.example.app.core.chats.SendProblem> get() = problems
+        }
+        val vm = ChatViewModel(store, "chat-riya", NetworkType.Wifi) { AutoDownloadSettings() }
+        val seen = mutableListOf<org.example.app.core.chats.SendProblem.Reason>()
+        val job = kotlinx.coroutines.CoroutineScope(Dispatchers.Main).launch { vm.sendProblems.collect { seen += it } }
+        problems.tryEmit(org.example.app.core.chats.SendProblem("chat-other", org.example.app.core.chats.SendProblem.Reason.TooBig))
+        problems.tryEmit(org.example.app.core.chats.SendProblem("chat-riya", org.example.app.core.chats.SendProblem.Reason.TooBig))
+        problems.tryEmit(org.example.app.core.chats.SendProblem("chat-riya", org.example.app.core.chats.SendProblem.Reason.Unreadable))
+        job.cancel()
+        assertEquals(
+            listOf(org.example.app.core.chats.SendProblem.Reason.TooBig, org.example.app.core.chats.SendProblem.Reason.Unreadable),
+            seen,
+        )
     }
 }

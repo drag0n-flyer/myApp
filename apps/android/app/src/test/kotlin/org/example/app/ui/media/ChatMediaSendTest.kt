@@ -68,6 +68,8 @@ class ChatMediaSendTest {
 
     private class RecordingStore(inner: SampleChatStore) : ChatStore by inner {
         val sent = mutableListOf<Pair<String, MediaKind>>()
+        val problems = kotlinx.coroutines.flow.MutableSharedFlow<org.example.app.core.chats.SendProblem>(extraBufferCapacity = 4)
+        override val sendProblems: kotlinx.coroutines.flow.Flow<org.example.app.core.chats.SendProblem> get() = problems
         override fun sendAttachment(path: String, kind: MediaKind, chatId: String) { sent += path to kind }
     }
 
@@ -105,6 +107,16 @@ class ChatMediaSendTest {
         assertTrue(contract is ActivityResultContracts.PickVisualMedia)
         assertEquals(ActivityResultContracts.PickVisualMedia.ImageOnly, (input as androidx.activity.result.PickVisualMediaRequest).mediaType)
         assertEquals(listOf(picked.toString() to MediaKind.Photo), store.sent)
+    }
+
+    @Test fun aPhotoTheStoreReportsAsTooBigOrUnreadableShowsTheSameMessagesAsAFile() {
+        launch(AnsweringRegistry { _, _ -> null })
+        rule.waitForIdle()
+        store.problems.tryEmit(org.example.app.core.chats.SendProblem("chat-riya", org.example.app.core.chats.SendProblem.Reason.TooBig))
+        rule.waitUntil(5_000) { rule.onAllNodes(androidx.compose.ui.test.hasText("That file is too big to send.")).fetchSemanticsNodes().isNotEmpty() }
+        rule.waitUntil(5_000) { rule.onAllNodes(androidx.compose.ui.test.hasText("That file is too big to send.")).fetchSemanticsNodes().isEmpty() }
+        store.problems.tryEmit(org.example.app.core.chats.SendProblem("chat-riya", org.example.app.core.chats.SendProblem.Reason.Unreadable))
+        rule.waitUntil(5_000) { rule.onAllNodes(androidx.compose.ui.test.hasText("Couldn't read that file.")).fetchSemanticsNodes().isNotEmpty() }
     }
 
     @Test fun backingOutOfThePhotoPickerSendsNothing() {

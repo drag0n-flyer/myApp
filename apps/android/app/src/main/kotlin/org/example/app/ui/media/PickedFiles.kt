@@ -11,6 +11,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import org.example.app.core.chats.SafeFileName
+import org.example.app.messaging.StageResult
 import org.example.app.messaging.media.Downloader
 
 /**
@@ -84,6 +85,20 @@ object PickedFiles {
                 Result.Unreadable
             }
         }
+
+    /**
+     * What the send path calls for a picked `content:` photo: copies it into [into] (the same cap and care as a file) and
+     * says why when it cannot, so the person is told the same "too big" or "unreadable" a file pick shows.
+     */
+    suspend fun stage(context: Context, source: String, into: File, maxBytes: Long = MAX_BYTES): StageResult {
+        val uri = Uri.parse(source)
+        if (!isFromPicker(context, uri)) return StageResult.Unreadable
+        return when (val result = copy(into, "photo", maxBytes) { context.contentResolver.openInputStream(uri) }) {
+            is Result.Copied -> StageResult.Copied(result.file)
+            Result.TooBig -> StageResult.TooBig
+            Result.Unreadable -> StageResult.Unreadable
+        }
+    }
 
     private const val BUFFER = 64 * 1024
 }

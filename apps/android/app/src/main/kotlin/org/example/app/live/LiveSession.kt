@@ -39,7 +39,6 @@ import org.example.app.messaging.FoundUser
 import org.example.app.messaging.LiveChatStore
 import org.example.app.messaging.MediaDirs
 import org.example.app.messaging.MediaPreparer
-import org.example.app.messaging.StageResult
 import org.example.app.messaging.NotificationProcessor
 import org.example.app.messaging.PreparedMedia
 import org.example.app.messaging.ReportedLine
@@ -131,7 +130,7 @@ class LiveSession(
         dirs = MediaDirs(File(platform.mediaDir, "blobs"), File(platform.cacheDir, "open"), File(platform.cacheDir, "outgoing")),
         social = SocialAdapter(SocialApi(client)), scope = scope, fold = TextFold::fold,
         mediaPreparer = Preparer(context, File(platform.cacheDir, "outgoing")),
-        stageSource = { source, into -> stagePicked(context, source, into) },
+        stageSource = { source, into -> PickedFiles.stage(context, source, into) },
         mediaSweep = { MediaCache.sweep(context) },
         onEscrowRejected = { escrowKeys.invalidate() },
     )
@@ -204,26 +203,18 @@ class LiveSession(
             api.report(accountId, conversationId, "other", messages.map { ReportedMessage(Instant.ofEpochMilli(it.sentAt), it.text) }, null)
     }
 
-    /** A picked `content:` photo is copied (same 100 MiB cap as a file) so a retry after a restart does not need the URI permission. */
-    private suspend fun stagePicked(context: Context, source: String, into: File): StageResult {
-        val uri = Uri.parse(source)
-        if (!PickedFiles.isFromPicker(context, uri)) return StageResult.Unreadable
-        return when (val result = PickedFiles.copy(into, "photo") { context.contentResolver.openInputStream(uri) }) {
-            is PickedFiles.Result.Copied -> StageResult.Copied(result.file)
-            PickedFiles.Result.TooBig -> StageResult.TooBig
-            PickedFiles.Result.Unreadable -> StageResult.Unreadable
-        }
-    }
-
     /** Photos are scaled and get a thumbnail; files go as they are. */
     private class Preparer(private val context: Context, private val outDir: File) : MediaPreparer {
         override suspend fun prepare(path: String, kind: MediaKind): PreparedMedia? = when (kind) {
             MediaKind.Photo -> try {
                 val uri = if (path.startsWith("content:") || path.startsWith("file:")) Uri.parse(path) else Uri.fromFile(File(path))
                 PhotoPrep(context, outDir.apply { mkdirs() }).prepare(uri).let { PreparedMedia(it.file, it.width, it.height, it.thumbnail) }
-            } catch (e: Exception) {
+            } catch (e: org.example.app.media.PhotoPrepException) {
+                Log.w(TAG, "photo not prepared: cannot be decoded")
+                null // it can never be sent
+            } catch (e: java.io.IOException) {
                 Log.w(TAG, "photo not prepared: ${e.javaClass.simpleName}")
-                null
+                throw e // the store keeps the message as failed while the file is still there
             }
             MediaKind.File -> PreparedMedia(File(path))
             MediaKind.Voice -> VoicePrep.prepare(File(path))
