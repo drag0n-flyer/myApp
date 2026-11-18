@@ -35,6 +35,16 @@ class ProfileSender(
     /** The person's own photo, or null. */
     fun photo(): ByteArray? = repo.get(PHOTO)?.takeIf { it.isNotEmpty() }
 
+    /**
+     * The current own profile as an envelope, for a chat that starts now (a new group). Starts the first version when
+     * there is none. Null while there is no name to send.
+     */
+    fun envelope(id: String, at: Long): org.example.app.messaging.content.ContentEnvelope.Profile? = synchronized(lock) {
+        val name = sendableName() ?: return@synchronized null
+        if (ver() == 0) bump(fingerprint(name, photo()))
+        org.example.app.messaging.content.ContentEnvelope.Profile(id, at, name, photo(), ver())
+    }
+
     /** Stores [jpeg] as the own photo (null removes it) and announces the change. */
     fun setPhoto(jpeg: ByteArray?) {
         synchronized(lock) { repo.set(PHOTO, jpeg ?: ByteArray(0)) }

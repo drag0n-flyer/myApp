@@ -53,6 +53,15 @@ interface ChatStore {
     fun chat(id: String): Chat?
     fun contact(id: String): Contact?
 
+    /**
+     * The name to show for an account: a contact's, or in a group the member's own profile name. Null when nothing is
+     * known (the screens then say "Someone").
+     */
+    fun personName(accountId: String): String? = contact(accountId)?.displayName
+
+    /** Who in a group got and read my message, with the times; empty for a message with no receipt and for a one-to-one chat. Reads storage: call it off the main thread. */
+    fun messageReceipts(messageId: String): List<MessageReceipt> = emptyList()
+
     /** Up to `limit` messages before `messageId` (the newest if null), oldest first. */
     fun messages(chatId: String, before: String?, limit: Int): List<Message>
     fun searchMessages(query: String, limit: Int): List<MessageHit>

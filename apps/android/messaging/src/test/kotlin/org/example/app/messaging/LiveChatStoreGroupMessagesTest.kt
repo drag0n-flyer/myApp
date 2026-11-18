@@ -1,0 +1,183 @@
+package org.example.app.messaging
+
+import java.io.File
+import java.nio.file.Files
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.test.runTest
+import org.example.app.core.chats.DeliveryStatus
+import org.example.app.core.chats.MessageReceipt
+import org.example.app.messaging.content.ContentCodec
+import org.example.app.messaging.content.ContentEnvelope
+import org.example.app.messaging.ports.ContactRecord
+import org.example.app.messaging.ports.GroupMemberRecord
+import org.example.app.messaging.sync.GroupWorld
+import org.example.app.messaging.sync.NOW
+import org.example.app.messaging.sync.TestDevice
+
+/** The group parts of the live store: the tick over every member, receipts for Message info, names, the timer rule, my profile. */
+class LiveChatStoreGroupMessagesTest {
+    private val scope = CoroutineScope(Dispatchers.Default + Job())
+    private val chatId = "g:conv-0001"
+
+    private fun tmp(n: String): File = Files.createTempDirectory(n).toFile().also { it.deleteOnExit() }
+
+    private fun store(d: TestDevice) = LiveChatStore(
+        device = d.me, mls = d.mls, server = d.api, repo = d.repo, lock = d.lock, clock = d.clock, conversations = d.manager,
+        inbox = d.processor, membership = d.membership, sealer = d.sealer(), escrow = d.escrow,
+        readReceiptsEnabled = { d.readReceiptsSwitch() }, maxAttachmentBytes = 1234L,
+        dirs = MediaDirs(tmp("blob"), tmp("open"), tmp("temp")),
+        social = object : SocialPort {
+            override suspend fun lookUpUser(username: String) = null
+            override suspend fun block(accountId: String) = Unit
+            override suspend fun unblock(accountId: String) = Unit
+            override suspend fun report(accountId: String, conversationId: String?, messages: List<ReportedLine>) = Unit
+        },
+        scope = scope, fold = { it.lowercase() }, mediaSweep = { },
+    )
+
+    private suspend fun joined(): GroupWorld {
+        val w = GroupWorld.trio()
+        val ana = w.device("ana1")
+        ana.repo.upsertContact(ContactRecord("acc-ana", "ana", "Ana", false, NOW))
+        ana.groups.create(listOf("acc-bob", "acc-cat"), "Book club", null)
+        ana.outbox.flush()
+        for (id in listOf("bob1", "cat1")) {
+            w.device(id).processor.sync()
+            w.device(id).receipts.attach(w.device(id).processor)
+        }
+        ana.processor.sync()
+        return w
+    }
+
+    private suspend fun GroupWorld.send(id: String, from: String = "ana1") {
+        val d = device(from)
+        d.outbox.enqueue(ContentEnvelope.Text(id, NOW + 10, "hi"), chatId)
+        d.outbox.flush()
+    }
+
+    private fun LiveChatStore.status(id: String) = messages(chatId, null, 50).first { it.id == id }.status
+
+    @Test
+    fun theTickWaitsForEveryOtherMemberAndAMemberWhoLeftDoesNotHoldItBack() = runTest {
+        val w = joined()
+        val ana = w.device("ana1")
+        val s = store(ana)
+        w.send("m-1")
+        assertEquals(DeliveryStatus.Sent, s.status("m-1"))
+        w.device("bob1").processor.sync()
+        ana.processor.sync()
+        assertEquals(DeliveryStatus.Sent, s.status("m-1"), "bob only")
+        w.device("cat1").processor.sync()
+        ana.processor.sync()
+        assertEquals(DeliveryStatus.Delivered, s.status("m-1"))
+        w.device("bob1").receipts.read(chatId, listOf("m-1"))
+        w.device("bob1").outbox.flush()
+        ana.processor.sync()
+        assertEquals(DeliveryStatus.Delivered, s.status("m-1"), "cat has not read it")
+        // Cat leaves: the stored list loses her, and bob's read now covers everyone left.
+        ana.repo.setGroupMembers(chatId, listOf(GroupMemberRecord("acc-ana", "owner"), GroupMemberRecord("acc-bob", "member")), 9)
+        assertEquals(DeliveryStatus.Read, s.status("m-1"))
+        // With the Read receipts switch off a read tick shows as delivered, as in a one-to-one chat.
+        ana.readReceiptsSwitch = { false }
+        assertEquals(DeliveryStatus.Delivered, s.status("m-1"))
+    }
+
+    @Test
+    fun aMessageThatHasNotLeftKeepsItsOwnStatus() = runTest {
+        val w = joined()
+        val ana = w.device("ana1")
+        val s = store(ana)
+        ana.outbox.enqueue(ContentEnvelope.Text("m-2", NOW + 11, "queued"), chatId)
+        assertEquals(DeliveryStatus.Sending, s.status("m-2"))
+    }
+
+    @Test
+    fun messageReceiptsListEachMemberWithTheirTimes() = runTest {
+        val w = joined()
+        val ana = w.device("ana1")
+        val s = store(ana)
+        w.send("m-1")
+        w.device("bob1").processor.sync()
+        w.device("cat1").processor.sync()
+        w.device("bob1").receipts.read(chatId, listOf("m-1"))
+        w.device("bob1").outbox.flush()
+        ana.processor.sync()
+        val got = s.messageReceipts("m-1")
+        assertEquals(listOf("acc-bob", "acc-cat"), got.map { it.accountId })
+        val bob = got.first { it.accountId == "acc-bob" }
+        val cat = got.first { it.accountId == "acc-cat" }
+        assertTrue(bob.deliveredAt != null && bob.readAt != null)
+        assertTrue(cat.deliveredAt != null)
+        assertNull(cat.readAt)
+        assertEquals(emptyList<MessageReceipt>(), s.messageReceipts("nope"))
+    }
+
+    @Test
+    fun aMembersNameComesFromTheirProfileEvenWhenTheyAreNoContact() = runTest {
+        val w = joined()
+        val ana = w.device("ana1")
+        val s = store(ana)
+        assertNull(s.personName("acc-cat"))
+        val cat = w.device("cat1")
+        cat.outbox.enqueueControl(chatId) { id, at -> ContentEnvelope.Profile(id, at, "Cat Smith", null, 2) }
+        cat.outbox.flush()
+        ana.processor.sync()
+        s.refresh()
+        assertEquals("Cat Smith", s.personName("acc-cat"))
+        assertEquals("Cat Smith", s.profiles.value["acc-cat"]?.name)
+        assertNull(s.contact("acc-cat"), "still no contact")
+    }
+
+    @Test
+    fun aPlainMemberCannotSetTheTimerButAnOwnerCan() = runTest {
+        val w = joined()
+        val bob = w.device("bob1")
+        val sb = store(bob)
+        sb.setTimer(chatId, 86_400)
+        sb.settle()
+        assertEquals(0, bob.repo.timerSeconds(chatId))
+        assertTrue(bob.repo.dueOutbox(Long.MAX_VALUE).none { ContentCodec.decode(it.envelope) is ContentEnvelope.Timer })
+        val ana = w.device("ana1")
+        val sa = store(ana)
+        sa.setTimer(chatId, 86_400)
+        sa.settle()
+        assertEquals(86_400, ana.repo.timerSeconds(chatId))
+    }
+
+    @Test
+    fun readingTheGroupSendsAReadReceiptToTheGroup() = runTest {
+        val w = joined()
+        val bob = w.device("bob1")
+        val sb = store(bob)
+        w.send("m-1")
+        bob.processor.sync()
+        sb.markRead(chatId)
+        sb.settle()
+        bob.outbox.flush()
+        val ana = w.device("ana1")
+        ana.processor.sync()
+        assertTrue(ana.repo.receipts("m-1").any { it.accountId == "acc-bob" && it.kind == "read" })
+    }
+
+    @Test
+    fun aNewGroupAnnouncesMyProfileAfterItsGroupEnvelope() = runTest {
+        val w = GroupWorld.trio()
+        val ana = w.device("ana1")
+        ana.repo.upsertContact(ContactRecord("acc-ana", "ana", "Ana", false, NOW))
+        val s = store(ana)
+        val made = s.createGroup(listOf("acc-bob", "acc-cat"), "Trio", null)
+        s.settle()
+        ana.outbox.flush()
+        val bob = w.device("bob1")
+        bob.processor.sync()
+        assertEquals("Trio", bob.repo.chat(made.chatId)!!.title)
+        assertEquals("Ana", bob.repo.profile("acc-ana")?.name, "the new group's members get my name")
+        assertTrue(ana.repo.dueOutbox(Long.MAX_VALUE).isEmpty())
+    }
+}

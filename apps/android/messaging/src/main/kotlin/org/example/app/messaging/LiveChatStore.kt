@@ -42,6 +42,7 @@ import org.example.app.core.chats.ChatStore
 import org.example.app.core.chats.GroupCreateFailed
 import org.example.app.core.chats.GroupCreated
 import org.example.app.core.chats.Contact
+import org.example.app.core.chats.DeliveryStatus
 import org.example.app.core.chats.IncomingCallDecision
 import org.example.app.core.chats.Message
 import org.example.app.core.chats.MessageContent
@@ -395,6 +396,7 @@ class LiveChatStore(
     private fun map(records: List<MessageRecord>): List<Message> {
         val showSafety = supportsSafetyNumbers
         val show = showRead
+        val members = HashMap<String, List<org.example.app.core.groups.Member>>()
         return records.map { record ->
             val plain = record.senderAccount != ChatMapping.SYSTEM_SENDER && !record.id.startsWith(ChatMapping.CALL_PREFIX)
             ChatMapping.message(
@@ -402,7 +404,8 @@ class LiveChatStore(
                 attachment = if (plain) repo.attachmentForMessage(record.id) else null,
                 reactions = if (plain && !record.deleted) repo.reactions(record.id) else emptyList(),
                 showRead = show,
-                displayName = { account -> nameOf(contactRows[account]) },
+                displayName = { account -> personName(account) },
+                groupStatus = if (plain) groupTick(record, members) else null,
             )
         }.filter { showSafety || it.content != MessageContent.System(org.example.app.core.chats.SystemEvent.SafetyNumberChanged) }
     }
@@ -415,6 +418,38 @@ class LiveChatStore(
         return org.example.app.core.people.ContactDisplay.name(null, profileName, row.displayName, row.username).ifEmpty { null }
     }
 
+    /** A contact's name by the usual rule, else a group member's own (cleaned) profile name; null when neither is known. */
+    override fun personName(accountId: String): String? =
+        nameOf(contactRows[accountId]) ?: profileNames[accountId]?.let { org.example.app.core.profile.DisplayNameRule.forDisplay(it, "") }?.ifEmpty { null }
+
+    override fun messageReceipts(messageId: String): List<org.example.app.core.chats.MessageReceipt> {
+        val record = repo.message(messageId) ?: return emptyList()
+        if (!ChatID.isGroup(record.chatId) || record.senderAccount != device.accountId) return emptyList()
+        val shownRead = showRead
+        return repo.receipts(messageId).groupBy { it.accountId }.map { (account, list) ->
+            val read = list.firstOrNull { it.kind == "read" }?.at?.takeIf { shownRead }
+            val delivered = list.firstOrNull { it.kind == "delivered" }?.at ?: read
+            org.example.app.core.chats.MessageReceipt(account, delivered?.let(Instant::ofEpochMilli), read?.let(Instant::ofEpochMilli))
+        }.sortedBy { it.accountId }
+    }
+
+    /** The tick of my message in a group, from the members' receipts; null for a message that has not left yet or is not mine in a group. */
+    private fun groupTick(record: MessageRecord, members: MutableMap<String, List<org.example.app.core.groups.Member>>): DeliveryStatus? {
+        if (!ChatID.isGroup(record.chatId) || record.senderAccount != device.accountId || record.status == "sending" || record.status == "failed") return null
+        val list = members.getOrPut(record.chatId) {
+            repo.groupMembers(record.chatId).mapNotNull { m -> org.example.app.core.groups.GroupRole.from(m.role)?.let { org.example.app.core.groups.Member(m.accountId, it) } }
+        }
+        val state = org.example.app.core.groups.GroupTicks.state(
+            repo.receipts(record.id).map { org.example.app.core.groups.GroupReceipt(it.accountId, it.kind) }, list, device.accountId,
+        )
+        return when (state) {
+            org.example.app.core.groups.GroupTicks.State.Sent -> DeliveryStatus.Sent
+            org.example.app.core.groups.GroupTicks.State.Delivered -> DeliveryStatus.Delivered
+            // Like a one-to-one chat: with the Read receipts switch off, read shows as delivered.
+            org.example.app.core.groups.GroupTicks.State.Read -> if (showRead) DeliveryStatus.Read else DeliveryStatus.Delivered
+        }
+    }
+
     // Profiles: contacts' newest, and the person's own, kept for the tile and name helpers.
 
     private fun loadProfiles() {
@@ -423,6 +458,13 @@ class LiveChatStore(
         val hidden = runCatching { repo.blockedIds().toSet() + repo.chats().filter { it.isRequest }.map { it.id } }.getOrDefault(emptySet())
         for (id in contactRows.keys) {
             if (id == device.accountId || id in hidden) continue
+            runCatching { repo.profile(id) }.getOrNull()?.let { loaded[id] = org.example.app.core.people.Profile(it.accountId, it.name, it.photo, it.ver) }
+        }
+        // The people in my groups, contact or not: their own name and photo for the sender line and the tile.
+        val inGroups = runCatching { repo.chats().filter { it.kind == org.example.app.messaging.ports.ChatKind.GROUP }.flatMap { repo.groupMembers(it.id) } }
+            .getOrDefault(emptyList()).map { it.accountId }.toSet()
+        for (id in inGroups) {
+            if (id == device.accountId || id in hidden || id in loaded) continue
             runCatching { repo.profile(id) }.getOrNull()?.let { loaded[id] = org.example.app.core.people.Profile(it.accountId, it.name, it.photo, it.ver) }
         }
         runCatching { profileSender.photo() }.getOrNull()?.let {
@@ -1322,7 +1364,7 @@ class LiveChatStore(
         return contactOf(row)
     }
 
-    private val groupCreator = org.example.app.messaging.sync.GroupCreator(conversations, repo, outbox)
+    private val groupCreator = org.example.app.messaging.sync.GroupCreator(conversations, repo, outbox, ownProfile = { id, at -> profileSender.envelope(id, at) })
 
     override suspend fun createGroup(contactIds: List<String>, name: String, photo: ByteArray?): GroupCreated {
         if (closed.get()) throw GroupCreateFailed(GroupCreateFailed.Reason.Other)
@@ -1393,6 +1435,11 @@ class LiveChatStore(
         write {
             val queued = repo.transaction {
                 if (repo.chat(chatId) == null || repo.timerSeconds(chatId) == seconds) return@transaction false
+                // In a group only an owner or admin sets it (the others would be ignored by every member).
+                if (ChatID.isGroup(chatId)) {
+                    val mine = repo.groupMembers(chatId).firstOrNull { it.accountId == device.accountId }?.let { org.example.app.core.groups.GroupRole.from(it.role) }
+                    if (mine?.canSetTimer != true) return@transaction false
+                }
                 // The id is made here, and is the id on the wire: it breaks a tie with the peer's timer at the same millisecond.
                 val id = freshId()
                 var at = 0L
