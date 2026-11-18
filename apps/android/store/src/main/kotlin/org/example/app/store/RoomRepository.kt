@@ -51,6 +51,7 @@ class RoomRepository(private val db: AppDatabase, allowLikeFallback: Boolean = f
     override fun setUnread(chatId: String, n: Int) = chats.setUnread(chatId, n)
     override fun setRequest(chatId: String, value: Boolean) = chats.setRequest(chatId, value)
     override fun bumpActivity(chatId: String, at: Long) = chats.bumpActivity(chatId, at)
+    override fun reduceUnread(chatId: String, n: Int) = Unit // stub
     override fun bumpChat(chatId: String, unreadDelta: Int, at: Long) = chats.bumpChat(chatId, unreadDelta, at)
     override fun setPinnedAt(chatId: String, at: Long?) = chats.setPinnedAt(chatId, at)
     override fun setMuted(chatId: String, muted: Boolean) = chats.setMuted(chatId, muted)

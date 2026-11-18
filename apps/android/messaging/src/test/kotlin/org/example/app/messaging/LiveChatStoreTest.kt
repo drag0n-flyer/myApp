@@ -14,6 +14,7 @@ import kotlin.test.assertTrue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import org.example.app.core.chats.CallSummary
 import org.example.app.core.chats.DeliveryStatus
@@ -410,14 +411,13 @@ class LiveChatStoreTest {
     @Test
     fun anIncomingMessageNeverChangesArchivedOrMutedButIsStoredAndCounted() = runTest {
         val (rig, s, conv) = joined()
-        s.setArchived("acc-ana", true); s.setMuted("acc-ana", true); s.setPinned("acc-ana", true); s.settle()
+        s.setArchived("acc-ana", true); s.setMuted("acc-ana", true); s.settle()
         rig.ana1.send(conv, ContentEnvelope.Text("m-new", NOW + 10, "are you there"))
         rig.bob1.processor.sync()
         s.refresh()
         val row = rig.bob1.repo.chat("acc-ana")!!
         assertTrue(row.archived)
         assertTrue(row.muted)
-        assertNotNull(row.pinnedAt)
         assertEquals(1, row.unread)
         assertNotNull(rig.bob1.repo.message("m-new"))
         val chat = s.chat("acc-ana")!!
@@ -530,5 +530,96 @@ class LiveChatStoreTest {
         s.settle()
         assertEquals("first words", rig.bob1.repo.draft("acc-fresh"))
         assertEquals("first words", store(rig.bob1).chat("acc-fresh")!!.draft)
+    }
+
+    @Test
+    fun sendReturningIdQueuesOnceAndReturnsTheStoredMessageId() = runTest {
+        val (rig, s, _) = joined()
+        // Real time: the wait inside is a real timeout, not a virtual one.
+        val id = kotlinx.coroutines.withContext(Dispatchers.Default) { s.sendReturningId("from a notification", "acc-ana") }
+        assertNotNull(id)
+        s.settle()
+        val rows = rig.bob1.repo.messages("acc-ana", null, 20).filter { it.senderAccount == "acc-bob" }
+        assertEquals(listOf(id), rows.map { it.id })
+        assertEquals("sent", rows.single().status)
+    }
+
+    @Test
+    fun sendReturningIdQueuesNothingForBlankOrClosedStore() = runTest {
+        val (rig, s, _) = joined()
+        assertNull(s.sendReturningId("   ", "acc-ana"))
+        s.shutdown()
+        assertNull(s.sendReturningId("late", "acc-ana"))
+        assertTrue(rig.bob1.repo.messages("acc-ana", null, 20).none { it.senderAccount == "acc-bob" })
+    }
+
+    @Test
+    fun aWriterSlowerThanTheWaitReportsNullAndNeverEnqueuesLater() = runTest {
+        val (rig, s, _) = joined()
+        val gate = java.util.concurrent.CountDownLatch(1)
+        s.beforeClaimForTest = { gate.await(5, java.util.concurrent.TimeUnit.SECONDS) }
+        val result = kotlinx.coroutines.withContext(Dispatchers.Default) { s.sendReturningId("too late", "acc-ana", waitMs = 100) }
+        assertNull(result)
+        gate.countDown() // the writer now gets to the job
+        s.settle()
+        assertTrue(rig.bob1.repo.messages("acc-ana", null, 20).none { it.senderAccount == "acc-bob" }, "nothing was queued after null")
+    }
+
+    @Test
+    fun aWriterThatClaimsJustBeforeTheWaitEndsStillReturnsTheId() = runTest {
+        val (rig, s, _) = joined()
+        val gate = java.util.concurrent.CountDownLatch(1)
+        s.afterClaimForTest = { gate.await(5, java.util.concurrent.TimeUnit.SECONDS) } // claimed, enqueue under way
+        val pending = CoroutineScope(Dispatchers.Default).async { s.sendReturningId("just in time", "acc-ana", waitMs = 100) }
+        Thread.sleep(400) // past the wait
+        gate.countDown()
+        val id = pending.await()
+        assertNotNull(id)
+        s.settle()
+        assertEquals(listOf(id), rig.bob1.repo.messages("acc-ana", null, 20).filter { it.senderAccount == "acc-bob" }.map { it.id })
+    }
+
+    @Test
+    fun aPinnedMutedChatKeepsItsPinAndMuteWhenAMessageArrives() = runTest {
+        val (rig, s, conv) = joined()
+        s.setPinned("acc-ana", true); s.setMuted("acc-ana", true); s.settle()
+        rig.ana1.send(conv, ContentEnvelope.Text("m-pin", NOW + 10, "hello"))
+        rig.bob1.processor.sync()
+        s.refresh()
+        val row = rig.bob1.repo.chat("acc-ana")!!
+        assertNotNull(row.pinnedAt)
+        assertTrue(row.muted)
+        assertEquals(1, row.unread)
+    }
+
+    @Test
+    fun anArchivedChatCannotBePinnedAndNothingIsWritten() = runTest {
+        val (rig, s, _) = joined()
+        s.setArchived("acc-ana", true); s.settle()
+        assertFalse(s.setPinned("acc-ana", true))
+        s.settle()
+        assertNull(rig.bob1.repo.chat("acc-ana")!!.pinnedAt)
+    }
+
+    @Test
+    fun aReadReceiptFromAnotherDeviceLowersUnreadWithoutUndoingAPin() = runTest {
+        val (rig, s, _) = joined()
+        val bob = rig.bob1
+        bob.repo.insertMessage(MessageRecord("in-r", "acc-ana", null, "acc-ana", "ana1", NOW, NOW, org.example.app.messaging.content.ContentCodec.encode(ContentEnvelope.Text("in-r", NOW, "x")), "delivered"))
+        bob.repo.setUnread("acc-ana", 3)
+        bob.repo.reduceUnread("acc-ana", 1)
+        bob.repo.setPinnedAt("acc-ana", 5)
+        bob.repo.reduceUnread("acc-ana", 10)
+        assertEquals(0, bob.repo.chat("acc-ana")!!.unread)
+        assertEquals(5L, bob.repo.chat("acc-ana")!!.pinnedAt)
+    }
+
+    @Test
+    fun aReplyDraftAppendedToAnExistingOneSurvivesANewStoreOnTheSameDatabase() = runTest {
+        val (rig, s, _) = joined()
+        s.setDraft("acc-ana", "half a thought"); s.settle()
+        val typed = s.chat("acc-ana")!!.draft.orEmpty()
+        s.setDraft("acc-ana", typed + "\n" + "my reply"); s.settle()
+        assertEquals("half a thought\nmy reply", store(rig.bob1).chat("acc-ana")!!.draft)
     }
 }

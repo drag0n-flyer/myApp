@@ -156,9 +156,12 @@ class LiveChatStore(
     override val reportedChatIds: StateFlow<Set<String>> = _reported.asStateFlow()
     override val mutedChatIds: StateFlow<Set<String>> = _muted.asStateFlow()
 
-    @Volatile private var meContact = Contact(device.accountId, "You", "")
+    private val meFlow = MutableStateFlow(Contact(device.accountId, "You", ""))
+    private val meContact: Contact get() = meFlow.value
     @Volatile private var contactRows: Map<String, ContactRecord> = emptyMap()
     override val me: Contact get() = meContact
+    override val meState: StateFlow<Contact> = meFlow.asStateFlow()
+    override val myStoredName: String get() = contactRows[device.accountId]?.displayName.orEmpty()
 
     // Declared before `init`, whose first reload reads them.
     private val pinLock = Any()
@@ -248,7 +251,7 @@ class LiveChatStore(
     private fun reload() = synchronized(reloadLock) {
         val rows = runCatching { repo.contacts() }.getOrDefault(emptyList())
         contactRows = rows.associateBy { it.accountId }
-        contactRows[device.accountId]?.let { meContact = Contact(it.accountId, it.displayName.ifEmpty { "You" }, it.username) }
+        contactRows[device.accountId]?.let { meFlow.value = Contact(it.accountId, org.example.app.core.profile.DisplayNameRule.forDisplay(it.displayName, "").ifEmpty { "You" }, it.username) }
         _contacts.value = rows.filter { it.isContact }.sortedWith(compareBy({ it.displayName }, { it.accountId })).map(::contactOf)
 
         val folderRecords = runCatching { repo.folders() }.getOrDefault(emptyList())
@@ -312,8 +315,8 @@ class LiveChatStore(
 
     private fun nameOf(row: ContactRecord?): String? {
         if (row == null) return null
-        if (row.displayName.isNotEmpty()) return row.displayName
-        return row.username.ifEmpty { null }
+        // Names come from the server and from other people's devices: cleaned for every screen and notification.
+        return org.example.app.core.profile.DisplayNameRule.forDisplay(row.displayName, row.username).ifEmpty { null }
     }
 
     private fun contactOf(row: ContactRecord) = Contact(row.accountId, nameOf(row) ?: "Unknown", row.username)
@@ -393,6 +396,16 @@ class LiveChatStore(
 
     override fun contact(id: String): Contact? = if (id == device.accountId) meContact else contactRows[id]?.let(::contactOf)
 
+    /** Shown at once and stored with the person's own contact row, in the reload's lock so a reload cannot put the old name back. */
+    override fun setMyDisplayName(name: String) = synchronized(reloadLock) {
+        val row = contactRows[device.accountId] ?: runCatching { repo.contact(device.accountId) }.getOrNull()
+            ?: ContactRecord(device.accountId, meContact.username, name, false, nowMs())
+        val updated = row.copy(displayName = name)
+        runCatching { repo.upsertContact(updated) }
+        contactRows = contactRows + (device.accountId to updated)
+        meFlow.value = Contact(device.accountId, name.ifEmpty { "You" }, meContact.username)
+    }
+
     /** Reads the database: call it off the main thread. */
     override fun messages(chatId: String, before: String?, limit: Int): List<Message> {
         if (limit <= 0) return emptyList()
@@ -431,6 +444,45 @@ class LiveChatStore(
             requestFlush()
         }
     }
+
+    /**
+     * Like [send] for text, for a caller that must know the message was queued (a notification reply). Returns the new
+     * message's id once it is in the outbox, and null only when nothing was queued and nothing ever will be.
+     *
+     * The caller and the writer share one claim. The writer takes it before it enqueues; the caller takes it when it
+     * gives up waiting ([waitMs]). Whoever takes it first decides: if the caller does, the writer finds it taken and
+     * enqueues nothing, so "not queued" is true for good; if the writer already did, the enqueue is under way and the
+     * caller waits for its id, so "queued" is never reported as null.
+     */
+    suspend fun sendReturningId(text: String, chatId: String, replyTo: String? = null, waitMs: Long = WRITE_WAIT_MS): String? {
+        if (closed.get()) return null
+        val body = TextLimit.truncate(text)
+        if (body.isBlank()) return null
+        val queued = kotlinx.coroutines.CompletableDeferred<String?>()
+        val claimed = AtomicBoolean(false)
+        write {
+            try {
+                beforeClaimForTest()
+                if (!claimed.compareAndSet(false, true)) return@write // the caller gave up: enqueue nothing
+                afterClaimForTest()
+                if (!ensureChatRow(chatId)) return@write
+                val id = freshId()
+                outbox.enqueue(ContentEnvelope.Text(id, nowMs(), body, replyTo), chatId)
+                // From here on the message is queued, whatever else fails: the caller must not send it again.
+                queued.complete(id)
+                bumpActivity(chatId, nowMs())
+                requestFlush()
+            } finally {
+                queued.complete(null) // does nothing once the id is out
+            }
+        }
+        return kotlinx.coroutines.withTimeoutOrNull(waitMs) { queued.await() }
+            ?: if (claimed.compareAndSet(false, true)) null else queued.await()
+    }
+
+    /** Test seams for [sendReturningId]: run in the writer before and after it claims the message. */
+    internal var beforeClaimForTest: () -> Unit = {}
+    internal var afterClaimForTest: () -> Unit = {}
 
     /** Messages that gave up sending (they show as [DeliveryStatus.Failed]; the UI offers [retrySend]). */
     fun failedMessageIds(chatId: String): Set<String> =
@@ -1069,6 +1121,7 @@ class LiveChatStore(
 
     companion object {
         const val CACHED_MESSAGES = 50
+        private const val WRITE_WAIT_MS = 10_000L
         private const val REPORTED_MESSAGES = 10
         const val BLOCK_PREFIX = "pending.block."
         const val UNBLOCK_PREFIX = "pending.unblock."

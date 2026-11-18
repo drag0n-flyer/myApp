@@ -126,4 +126,12 @@ class ChatListActionsTest {
         s.setArchived(all[0], true)
         assertTrue(s.setPinned(all[5], true), "archiving freed a place")
     }
+
+    @Test fun anArchivedChatCannotBePinned() {
+        val s = store()
+        val id = ids(s)[1]
+        s.setArchived(id, true)
+        assertFalse(s.setPinned(id, true))
+        assertNull(s.chat(id)!!.pinnedAt)
+    }
 }

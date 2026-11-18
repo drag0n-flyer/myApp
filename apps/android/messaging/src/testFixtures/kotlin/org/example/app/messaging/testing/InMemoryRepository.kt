@@ -102,6 +102,7 @@ class InMemoryRepository : Repository {
     override fun setUnread(chatId: String, n: Int) = tx { s.chats[chatId]?.let { s.chats[chatId] = it.copy(unread = n) }; Unit }
     override fun setRequest(chatId: String, value: Boolean) = tx { s.chats[chatId]?.let { s.chats[chatId] = it.copy(isRequest = value) }; Unit }
     override fun bumpActivity(chatId: String, at: Long) = tx { s.chats[chatId]?.let { if (at > it.lastActivity) s.chats[chatId] = it.copy(lastActivity = at) }; Unit }
+    override fun reduceUnread(chatId: String, n: Int) = tx { s.chats[chatId]?.let { s.chats[chatId] = it.copy(unread = maxOf(0, it.unread - n)) }; Unit }
     override fun bumpChat(chatId: String, unreadDelta: Int, at: Long) = tx {
         s.chats[chatId]?.let { s.chats[chatId] = it.copy(unread = it.unread + unreadDelta, lastActivity = maxOf(it.lastActivity, at)) }
         Unit

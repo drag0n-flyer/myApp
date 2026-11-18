@@ -413,4 +413,16 @@ abstract class RepositoryContract {
         assertFalse(row.archived)
         assertNull(row.pinnedAt)
     }
+
+    @Test fun reduceUnreadNeverGoesBelowZeroAndTouchesNothingElse() {
+        repo.setMuted("chat1", true)
+        repo.setUnread("chat1", 3)
+        repo.reduceUnread("chat1", 2)
+        assertEquals(1, repo.chat("chat1")!!.unread)
+        repo.reduceUnread("chat1", 5)
+        val row = repo.chat("chat1")!!
+        assertEquals(0, row.unread)
+        assertTrue(row.muted)
+        repo.reduceUnread("nobody", 1) // no row, no error
+    }
 }

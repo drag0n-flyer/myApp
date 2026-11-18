@@ -32,6 +32,8 @@ final class LiveCallEngine {
     private var showsIncoming: Bool
     private var reportedConnected = false
     private var outgoing = false
+    /// Bumped by every video-off, so a video-on parked behind the camera prompt does not undo it.
+    private var videoAskGeneration = 0
     /// Answer or end taps that arrived before the engine knew the call (lower-cased server call ID).
     private var earlyActions: [String: EarlyAction] = [:]
 
@@ -264,9 +266,6 @@ extension LiveCallEngine: @MainActor CallEngine {
         #endif
         runner?.handle(input)
     }
-
-    /// Bumped by every video-off, so a video-on parked behind the camera prompt does not undo it.
-    private var videoAskGeneration = 0
 
     /// Sends `input` to the runner; `CameraPlan` decides how the camera permission fits in. Answering never waits for
     /// the prompt. Once the permission is decided every input is handled synchronously, so a later input (video off,

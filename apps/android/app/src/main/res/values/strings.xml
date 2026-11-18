@@ -320,6 +320,8 @@
     <string name="settings_folders">Chat folders</string>
     <string name="settings_calls_audio">Calls &amp; Audio</string>
     <string name="settings_profile">Profile</string>
+    <string name="profile_edit_name">Edit name</string>
+    <string name="profile_name_error">Couldn\'t save your name. Try again.</string>
     <string name="profile_sign_out">Sign out</string>
     <string name="profile_sign_out_confirm">Sign out of this device? Your messages on this device will be removed.</string>
     <string name="profile_signing_out">Signing out</string>

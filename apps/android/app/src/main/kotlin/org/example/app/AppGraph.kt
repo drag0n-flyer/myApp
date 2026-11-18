@@ -447,8 +447,10 @@ class AppGraph(
     private fun start(session: LiveSession) {
         session.scope.launch {
             quietly("start") { session.start() }
+            if (seedNameOnOpen) quietly("own name") { seedOwnName(session) }
             quietly("push") { org.example.app.live.PushWiring.registerAfterSignIn(appContext, session.client) }
         }
+        session.scope.launch { quietly("read chats") { org.example.app.live.PushWiring.cancelReadChats(appContext, session.chatStore) } }
         val live = session.socket.socket
         sessionGone.value = false
         session.scope.launch { live.states.collect { socketState.value = it } }
@@ -535,7 +537,59 @@ class AppGraph(
 
     /** Sign-out and delete, one at a time for the whole app, run in this graph's scope (the profile screen only shows them). */
     val accountActions: org.example.app.ui.settings.AccountActions by lazy {
-        org.example.app.ui.settings.AccountActions(scope, signOut = ::signOut, deleteAccount = ::deleteAccount)
+        org.example.app.ui.settings.AccountActions(scope, signOut = ::signOut, deleteAccount = ::deleteAccount, saveName = ::saveDisplayName)
+    }
+
+    /**
+     * Changes the person's own display name (`PATCH /v1/me/settings`, the call "find me by email" uses). The new name
+     * shows at once; if the server did not take it the old one comes back and this throws [AccountError]. It runs in the
+     * graph's scope, so leaving the screen mid-save still ends with the two matching. A name [DisplayNameRule] refuses
+     * never reaches the server. [AccountActions] lets only one save run at a time. A save that finishes after a
+     * sign-out or a different account's session (the settings generation moved on, or the store is another one) writes
+     * nothing: the name belongs to the account that has gone.
+     */
+    suspend fun saveDisplayName(name: String) {
+        val clean = org.example.app.core.profile.DisplayNameRule.clean(name) ?: throw AccountError.Server
+        if (sampleData) { chatStore.setMyDisplayName(clean); return }
+        val generation = settingsStore.generation
+        val store = chatStore
+        scope.async {
+            fun current() = settingsStore.generation == generation && chatStore === store
+            val previous = store.myStoredName // "" when none is known: never the fallback "You"
+            if (current()) store.setMyDisplayName(clean)
+            try {
+                val client = openSession()?.client ?: throw AccountError.Server
+                SocialApi(client).updateSettings(clean, null)
+            } catch (e: Exception) {
+                if (current()) store.setMyDisplayName(previous)
+                if (e is CancellationException) throw e
+                throw when {
+                    e is AccountError -> e
+                    e is ServerException && e.code == "network" -> AccountError.Network
+                    else -> AccountError.Server
+                }
+            }
+        }.await()
+    }
+
+    /** Reads the person's name from the server (`GET /v1/me`) into an own contact row that has none. */
+    /** Tests turn this off to drive [seedOwnName] themselves. */
+    internal var seedNameOnOpen = true
+
+    suspend fun seedOwnName(session: org.example.app.live.LiveSession) {
+        val store = session.chatStore
+        if (store.myStoredName.isNotEmpty()) return
+        val generation = settingsStore.generation
+        val name = try {
+            IdentityApi(session.client).me().displayName
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            return // silent: the next open tries again
+        }
+        val clean = org.example.app.core.profile.DisplayNameRule.forDisplay(name, "")
+        // Same guard as a save: a sign-out or another session while the read was out means this name is not ours to store.
+        if (clean.isEmpty() || settingsStore.generation != generation || liveSession !== session || chatStore !== store) return
+        if (store.myStoredName.isEmpty()) store.setMyDisplayName(clean)
     }
 
     private val findByEmailLock = Mutex()

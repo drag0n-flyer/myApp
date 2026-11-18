@@ -31,6 +31,8 @@ data class ChatRowModel(
     val muted: Boolean = false,
     /** Unsent text saved for this chat; the row shows it in place of the last message. */
     val draft: String? = null,
+    /** The other person's account ID, which picks the colour of the letter tile. */
+    val colorKey: String? = null,
 )
 
 data class ChatListState(
@@ -78,6 +80,7 @@ class ChatListViewModel(
         val last = chat.lastMessage
         return ChatRowModel(
             chat.id, store.contact(chat.contactId)?.displayName ?: chat.contactId, last?.preview, last?.sentAt, chat.unreadCount,
+            colorKey = chat.contactId,
             pinned = chat.pinnedAt != null, muted = chat.muted, draft = chat.draft,
         )
     }

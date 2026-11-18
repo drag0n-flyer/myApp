@@ -18,7 +18,7 @@ import org.example.app.core.chats.ChatStore
 import org.example.app.core.chats.MessageHit
 
 /** A message hit with the name of the chat it is in. */
-data class MessageResult(val hit: MessageHit, val chatName: String)
+data class MessageResult(val hit: MessageHit, val chatName: String, val colorKey: String? = null)
 
 sealed interface SearchRow {
     data class Contact(val contact: org.example.app.core.chats.Contact) : SearchRow
@@ -66,7 +66,7 @@ class SearchViewModel(
                 it.displayName.contains(query, ignoreCase = true) || it.username.contains(query, ignoreCase = true)
             }
             val messages = runCatching { store.searchMessages(query, messageLimit) }.getOrDefault(emptyList()).map { hit ->
-                MessageResult(hit, store.chat(hit.chatId)?.let { store.contact(it.contactId)?.displayName } ?: hit.chatId)
+                MessageResult(hit, store.chat(hit.chatId)?.let { store.contact(it.contactId)?.displayName } ?: hit.chatId, store.chat(hit.chatId)?.contactId)
             }
             // A newer query cancelled this one while the database call was running: its results are stale.
             ensureActive()

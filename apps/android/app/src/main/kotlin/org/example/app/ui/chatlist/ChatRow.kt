@@ -69,7 +69,7 @@ fun ChatRow(row: ChatRowModel, onClick: () -> Unit, modifier: Modifier = Modifie
     }
     ListItem(
         modifier = clickable,
-        leadingContent = { Avatar(row.name) },
+        leadingContent = { Avatar(row.name, colorKey = row.colorKey) },
         headlineContent = { Text(row.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         supportingContent = {
             val draft = row.draft

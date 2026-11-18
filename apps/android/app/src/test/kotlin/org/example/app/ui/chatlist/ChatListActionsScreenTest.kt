@@ -154,7 +154,8 @@ class ChatListActionsScreenTest {
     fun theArchivedRowShowsTheUnreadCountOfArchivedChats() {
         store.setArchived("chat-riya", true) // Riya has unread messages
         launchList()
-        rule.onNodeWithContentDescription("Archived, 1").assertIsDisplayed()
+        // One item for a screen reader: the count, then the unread badge text.
+        rule.onNodeWithContentDescription("Archived, 1, 1 unread").assertIsDisplayed()
     }
 
     @Test

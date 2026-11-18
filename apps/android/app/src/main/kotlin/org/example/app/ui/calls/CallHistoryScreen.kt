@@ -118,7 +118,7 @@ private fun CallRow(record: CallRecord, onCall: (String, Boolean) -> Unit) {
         else -> stringResource(R.string.calls_incoming)
     }
     ListItem(
-        leadingContent = { Avatar(record.name, size = 40.dp) },
+        leadingContent = { Avatar(record.name, size = 40.dp, colorKey = record.contactId) },
         headlineContent = { Text(record.name, color = color, maxLines = 1) },
         supportingContent = {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
