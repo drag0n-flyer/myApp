@@ -153,4 +153,31 @@ func queued(_ device: TestDevice, _ chatID: String) throws -> [OutboxRecord] {
         #expect(one.chatID != two.chatID)
         #expect(try rig.ana.deps.repo.chats().count == 2)
     }
+
+    @Test func aLostPostLeavesTheGroupPendingAndTheNextStartFinishesItWithoutASecondGroup() async throws {
+        let rig = try await GroupRig.make()
+        await rig.server.failNextRequests("POST /v1/conversations/", count: 1, status: 503)
+        let manager = rig.manager(rig.ana)
+        let result = try await manager.createGroup(accounts: ["acc-bob", "acc-cy"], name: "Club", photo: nil)
+        // Durable: the chat and the pending commit are stored; nothing was announced yet.
+        #expect(try rig.ana.deps.repo.conversation(serverID: result.conversationID)?.active == false)
+        #expect(try queued(rig.ana, result.chatID).isEmpty)
+        await manager.resumePendingCreates()
+        #expect(try rig.ana.deps.repo.conversation(serverID: result.conversationID)?.active == true)
+        #expect(try queued(rig.ana, result.chatID).count == 1)
+        #expect(await rig.server.conversationIDs() == [result.conversationID])
+        // Resuming again queues nothing twice.
+        await manager.resumePendingCreates()
+        #expect(try queued(rig.ana, result.chatID).count == 1)
+    }
+
+    @Test func aRefusedCommitAbandonsTheGroupAndRemovesItsChat() async throws {
+        let rig = try await GroupRig.make()
+        await rig.server.failNextRequests("POST /v1/conversations/", count: 1, status: 403)
+        do {
+            _ = try await rig.manager(rig.ana).createGroup(accounts: ["acc-bob", "acc-cy"], name: "Club", photo: nil)
+            Issue.record("expected the refusal")
+        } catch { #expect((error as? ServerError)?.status == 403) }
+        #expect(try rig.ana.deps.repo.chats().isEmpty)
+    }
 }

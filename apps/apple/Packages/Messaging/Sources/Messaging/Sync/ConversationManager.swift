@@ -264,7 +264,7 @@ public actor ConversationManager: ConversationManaging {
         }
     }
 
-    private func activeOrNil(_ serverID: String) throws -> ConversationRecord? {
+    func activeOrNil(_ serverID: String) throws -> ConversationRecord? {
         guard let record = try deps.repo.conversation(serverID: serverID), record.active,
               try !PendingCreate.isPending(serverID: serverID, db: deps.repo) else { return nil }
         return record

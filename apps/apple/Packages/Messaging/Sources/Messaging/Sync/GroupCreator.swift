@@ -104,7 +104,18 @@ extension ConversationManager {
         }
 
         // 4. Post, activate, announce the mode, queue the group envelopes.
-        _ = try await finishCreate(serverID: record.serverID, resumed: false)
+        do {
+            _ = try await finishCreate(serverID: record.serverID, resumed: false)
+        } catch {
+            // Still pending or already active: the group is durable and the next start finishes it (`resumePendingCreates`),
+            // so the caller has a group, and a retry must not make a second one. Abandoned (the server refused the
+            // commit for good, or the engine lost it): there is no group, so its chat goes and the error is passed on.
+            let durable = try PendingCreate.isPending(serverID: record.serverID, db: repo) || activeOrNil(record.serverID) != nil
+            if !durable {
+                try? repo.deleteChat(id: chatID)
+                throw error
+            }
+        }
         return GroupCreation(chatID: chatID, conversationID: created.conversationID, notAdded: notAdded)
     }
 
