@@ -54,7 +54,7 @@ fun ProfileScreen(
     val library = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) scope.launch {
             val bytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                try { context.contentResolver.openInputStream(uri)?.use { it.readNBytes(MAX_PICKED_BYTES) } } catch (e: Exception) { null }
+                try { context.contentResolver.openInputStream(uri)?.use { readAtMost(it, MAX_PICKED_BYTES) } } catch (e: Exception) { null }
             }
             if (bytes != null && bytes.isNotEmpty()) viewModel.setPhoto(bytes)
         }
@@ -153,6 +153,21 @@ fun ProfileScreen(
             dismissButton = { TextButton(onClick = { confirm = null }) { Text(stringResource(R.string.cancel)) } },
         )
     }
+}
+
+/** At most [limit] bytes of [input], or null when there are more (nothing larger is ever held in memory). */
+private fun readAtMost(input: java.io.InputStream, limit: Int): ByteArray? {
+    val out = java.io.ByteArrayOutputStream()
+    val buffer = ByteArray(8192)
+    var total = 0
+    while (true) {
+        val n = input.read(buffer)
+        if (n < 0) break
+        total += n
+        if (total > limit) return null
+        out.write(buffer, 0, n)
+    }
+    return out.toByteArray()
 }
 
 private const val MAX_PICKED_BYTES = 32 * 1024 * 1024
