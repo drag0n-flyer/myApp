@@ -34,13 +34,16 @@ final class CallVideo {
     private(set) var remoteVideoOn = false
     /// The camera was refused (or is off in system settings), so the call continues as audio.
     private(set) var cameraDenied = false
-    /// iPhone with a front and a back camera, during a live call.
-    var canFlip: Bool { session != nil && WebRTCMediaSession.canSwitchCamera }
+    /// iPhone with a front and a back camera, during a live call. Worked out once, when the call begins.
+    private(set) var canFlip = false
 
-    func began(_ s: WebRTCMediaSession) { session = s; remoteVideoOn = false; cameraDenied = false }
+    func began(_ s: WebRTCMediaSession) {
+        session = s; remoteVideoOn = false; cameraDenied = false
+        canFlip = WebRTCMediaSession.canSwitchCamera
+    }
     func ended(_ s: WebRTCMediaSession) {
         guard session === s else { return }
-        session = nil; remoteVideoOn = false; cameraDenied = false
+        session = nil; remoteVideoOn = false; cameraDenied = false; canFlip = false
     }
     func remoteVideoChanged(_ on: Bool, of s: WebRTCMediaSession) { if session === s { remoteVideoOn = on } }
     func cameraAccess(denied: Bool, of s: WebRTCMediaSession) { if session === s { cameraDenied = denied } }
@@ -52,7 +55,12 @@ final class CallVideo {
 }
 
 enum CameraAccess {
-    /// Asks the first time; later it only reports what the user chose.
+    /// True when the user has allowed the camera. Never prompts, so it is safe inside the call's effect queue.
+    static var isAuthorized: Bool { AVCaptureDevice.authorizationStatus(for: .video) == .authorized }
+
+    /// Asks the first time; later it only reports what the user chose. Call it on the main actor BEFORE the call
+    /// engine queues any effect (the engine does, when video is wanted): the prompt must not hold up candidates,
+    /// hang-up or close.
     static func ensure() async -> Bool {
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized: return true
@@ -107,7 +115,7 @@ final class LiveMediaSession: MediaSession, @unchecked Sendable {
             await inner.setVideo(nil, ceiling: ceiling)
             return
         }
-        guard await CameraAccess.ensure() else {
+        guard CameraAccess.isAuthorized else {   // the engine already asked, before the call's effects were queued
             await CallVideo.shared.cameraAccess(denied: true, of: inner)
             await inner.setVideo(nil, ceiling: ceiling)   // the call goes on as audio
             return

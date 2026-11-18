@@ -35,6 +35,7 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
     private var videoController: VideoController?
     private var remoteRenderers: [any RTCVideoRenderer] = []   // behind `lock`
     private var localRenderers: [any RTCVideoRenderer] = []    // behind `lock`
+    private var localAttachments = 0                           // renderers handed to the video track (tests); behind `lock`
     private var closed = false
     private var monitor: Task<Void, Never>?
 
@@ -58,6 +59,9 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
         return await StatsReader(pc: pc).rawStats()
     }
 
+    /// Test hook: how many local renderers have been attached to the video track.
+    var localAttachmentsForTesting: Int { lock.withLock { localAttachments } }
+
     /// Test hook: how many renderers are registered (remote, local).
     var rendererCountsForTesting: (remote: Int, local: Int) { lock.withLock { (remoteRenderers.count, localRenderers.count) } }
 
@@ -74,17 +78,19 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
     }
 
     public func removeRemoteRenderer(_ renderer: any RTCVideoRenderer) {
-        let track: RTCVideoTrack? = lock.withLock {
+        let pc: RTCPeerConnection? = lock.withLock {
             remoteRenderers.removeAll { $0 === renderer }
-            return remoteVideoTrack()
+            return self.pc
         }
-        track?.remove(renderer)
+        Self.remoteVideoTrack(of: pc)?.remove(renderer)
     }
 
     /// Shows the camera preview in `renderer`. Frames arrive while video is on.
     public func addLocalRenderer(_ renderer: any RTCVideoRenderer) {
         let track: RTCVideoTrack? = lock.withLock { localRenderers.append(renderer); return videoTrack }
-        track?.add(renderer)
+        guard let track else { return }   // `configure` attaches it when the video track exists
+        track.add(renderer)
+        lock.withLock { localAttachments += 1 }
     }
 
     public func removeLocalRenderer(_ renderer: any RTCVideoRenderer) {
@@ -100,13 +106,12 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
 
     /// Attaches every registered remote renderer to the remote video track, once there is one (adding twice is a no-op).
     private func refreshRemoteRenderers() {
-        let (track, renderers): (RTCVideoTrack?, [any RTCVideoRenderer]) = lock.withLock { (remoteVideoTrack(), remoteRenderers) }
-        guard let track else { return }
+        let (pc, renderers): (RTCPeerConnection?, [any RTCVideoRenderer]) = lock.withLock { (self.pc, remoteRenderers) }
+        guard let track = Self.remoteVideoTrack(of: pc) else { return }   // WebRTC is queried outside the lock
         for r in renderers { track.add(r) }
     }
 
-    /// Call with `lock` held.
-    private func remoteVideoTrack() -> RTCVideoTrack? {
+    private static func remoteVideoTrack(of pc: RTCPeerConnection?) -> RTCVideoTrack? {
         pc?.transceivers.first { $0.mediaType == .video }?.receiver.track as? RTCVideoTrack
     }
 
@@ -158,13 +163,19 @@ public final class WebRTCMediaSession: MediaSession, @unchecked Sendable {
             startRemoteVideoMonitor()
         }
 
-        lock.withLock {
+        // Local renderers added before the video track existed (the stage shows from ringing) attach now.
+        let waiting: [any RTCVideoRenderer] = lock.withLock {
             self.pc = pc
             audioSource = aSource; audioTrack = aTrack; audioSender = aTransceiver?.sender
             videoSource = vSource; videoTrack = vTrack; videoSender = vSender; capturer = cap
             if let vSource, let vTrack, let vSender, let cap {
                 videoController = VideoController(source: vSource, track: vTrack, sender: vSender, capturer: cap)
             }
+            return localRenderers
+        }
+        if let vTrack {
+            for r in waiting { vTrack.add(r) }
+            lock.withLock { localAttachments += waiting.count }
         }
     }
 

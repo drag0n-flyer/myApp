@@ -45,6 +45,19 @@ final class VideoSessionTests: XCTestCase {
         await s.close()
     }
 
+    /// A caller's video call shows the stage from ringing: a preview view added before `configure` is attached once the
+    /// video track exists.
+    func testLocalRendererAddedBeforeConfigureIsAttachedAfter() async throws {
+        let s = WebRTCMediaSession()
+        let local = Sink()
+        s.addLocalRenderer(local)
+        XCTAssertEqual(s.localAttachmentsForTesting, 0)   // no track yet
+        try await s.configure(iceServers: [], policy: .all, video: true)
+        XCTAssertEqual(s.rendererCountsForTesting.local, 1)
+        XCTAssertEqual(s.localAttachmentsForTesting, 1)
+        await s.close()
+    }
+
     func testRendererOnAudioOnlySessionIsHarmless() async throws {
         let s = WebRTCMediaSession()
         try await s.configure(iceServers: [], policy: .all, video: false)

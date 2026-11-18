@@ -87,30 +87,53 @@ public final class CallRunner {
 
     public func pathChanged() { handle(.pathChanged) }
 
-    /// The network type changed while the call runs (never to "no connection": the engine only records that).
+    public func update(context: CallContext) { handle(.contextChanged(context)) }
+
+    /// True while a restart makes sense: only an active or reconnecting call has a media path to restart. A ringing or
+    /// connecting call that restarts leaves have-local-offer and then fails.
+    public var canRestart: Bool { machine.state?.phase == .active || machine.state?.phase == .reconnecting }
+
+    /// The device's network changed while the call runs. `NetworkChange.action` decides. "No connection" is only
+    /// recorded; a call that cannot restart yet (ringing, connecting) just gets its new context.
+    public func networkChanged(from old: NetworkType, to new: NetworkType, meaningful: Bool, context: CallContext) {
+        switch NetworkChange.action(from: old, to: new, meaningful: meaningful) {
+        case .nothing, .record: return
+        case .contextOnly: update(context: context)
+        case .pathOnly: if canRestart { pathChanged() }
+        case .restart:
+            if canRestart { restartOnNewNetwork(context: context) } else { update(context: context) }
+        }
+    }
+
     /// A new data ceiling asks for a mode-change offer; on a path change that offer must BE the ICE restart
     /// (same new profile, sent at once). A plain offer would be outstanding when the restart is asked for, and the
     /// machine would drop the restart, leaving audio dead on the new path for several seconds. The path change is
-    /// delivered afterwards either way; while our offer is outstanding it adds nothing, and the callee's separate
-    /// "please restart" request is left out when the rewrite already sent a restart offer.
-    public func networkChanged(context: CallContext) {
+    /// delivered afterwards either way; while our offer is outstanding it adds nothing. When the rewrite sent a
+    /// restart offer, the callee's separate "please restart" request and the `modeChange` signal are left out.
+    private func restartOnNewNetwork(context: CallContext) {
         var restarted = false
-        let effects = machine.handle(.contextChanged(context)).map { effect -> CallEffect in
+        var effects = machine.handle(.contextChanged(context)).map { effect -> CallEffect in
             guard case .makeOffer(let receive, _) = effect else { return effect }
             restarted = true
             return .makeOffer(receive: receive, iceRestart: true)
         }
-        process(effects)
         var path = machine.handle(.pathChanged)
         if restarted {
+            // The restart offer already carries our ceiling, and the receiver applies it before choosing its send profile.
+            // A `modeChange` sent ahead of it would make the peer send its own plain offer first, and that offer would win
+            // the glare and cancel our restart.
+            effects.removeAll { effect in
+                if case .sendSignal(let p) = effect { return p.kind == .modeChange }
+                return false
+            }
             path.removeAll { effect in
                 if case .sendSignal(let p) = effect { return p.kind == .renegotiate && p.sdp == nil }
                 return false
             }
         }
-        process(path)
+        effects += path
+        process(effects)
     }
-    public func update(context: CallContext) { handle(.contextChanged(context)) }
 
     /// Waits until every queued effect (and the inputs they cause) has run.
     public func settled() async {

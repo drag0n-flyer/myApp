@@ -88,13 +88,6 @@ final class LiveCallEngine {
         pushContext()
     }
 
-    /// The path change that follows a network change is delivered by `setNetwork` itself; this skips the repeat.
-    private var pathDeliveredByNetworkChange = false
-
-    func pathChanged() {
-        if pathDeliveredByNetworkChange { pathDeliveredByNetworkChange = false; return }
-        runner?.pathChanged()
-    }
 
     private func context(for contactID: String?) -> CallContext {
         let isContact = contactID.map { id in chat.contacts.contains { $0.id == id } } ?? true
@@ -156,7 +149,7 @@ final class LiveCallEngine {
         r.handle(.incoming(callID: callID, contact: contact, fromDeviceID: device, ring: ring))
         if let early = earlyActions.removeValue(forKey: callID.lowercased()) {
             switch early {
-            case .answer(let video): r.handle(.answer(video: video))
+            case .answer(let video): send(.answer(video: video), to: r, video: video)
             case .end: r.handle(.hangup)
             }
         }
@@ -243,7 +236,7 @@ extension LiveCallEngine: @MainActor CallEngine {
         audio.configure()
         if let kit = UUID(uuidString: callID) { callKit?.requestStart(contact: contact, video: video, callID: kit) }
         #endif
-        r.handle(.start(contact: contact, video: video, callID: callID))
+        send(.start(contact: contact, video: video, callID: callID), to: r, video: video)
     }
 
     func setPreference(_ preference: ModePreference) { runner?.handle(.setPreference(preference)) }
@@ -254,9 +247,9 @@ extension LiveCallEngine: @MainActor CallEngine {
         audio.setSpeaker(on)
         #endif
     }
-    func setVideo(_ on: Bool) { runner?.handle(.setVideo(on)) }
+    func setVideo(_ on: Bool) { if let runner { send(.setVideo(on), to: runner, video: on) } }
     func end() { hangUpFromApp(.hangup) }
-    func answer(video: Bool) { runner?.handle(.answer(video: video)) }
+    func answer(video: Bool) { if let runner { send(.answer(video: video), to: runner, video: video) } }
     func decline() { hangUpFromApp(.decline) }
 
     /// End or Decline in our own UI. iPhone: a call CallKit knows is ended through a `CXEndCallAction` request, which
@@ -272,22 +265,28 @@ extension LiveCallEngine: @MainActor CallEngine {
         runner?.handle(input)
     }
 
-    /// `network` is always the device's current network (the app model feeds every change), so a call that begins
-    /// starts from it, not from where the last call left off.
-    func setNetwork(_ type: NetworkType) {
-        // A repeat changes nothing and must not restart the media path again.
-        guard type != network else { return }
-        network = type
-        // No connection: record it only. Nothing can be offered over it, and a mode-change offer made now would
-        // block the restart that the network's return needs.
-        guard type != .offline, let runner, !runner.isFinished else { return }
-        // The new network may change the data ceiling. On a path change that offer is the ICE restart itself
-        // (CallRunner.networkChanged), sent at once in the new profile; the path change is delivered with it.
-        runner.networkChanged(context: context(for: runner.contactID))
-        // The app model reports the path change right after the network; it is already handled.
-        pathDeliveredByNetworkChange = true
-        Task { @MainActor [weak self] in self?.pathDeliveredByNetworkChange = false }
+    /// Sends `input` to the runner. When video is wanted the camera permission is asked for first, here on the main
+    /// actor, so the prompt never sits inside the runner's serial effect queue (candidates, hang-up and close would
+    /// wait behind it). A refusal is not an error: the media layer sees the denied permission and the call stays audio.
+    private func send(_ input: CallInput, to r: CallRunner, video: Bool) {
+        guard video else { r.handle(input); return }
+        Task { @MainActor in
+            _ = await CameraAccess.ensure()
+            r.handle(input)
+        }
     }
+
+    /// The device's network changed (the app model reports each change, with the path monitor's verdict on whether it
+    /// matters to a call). `network` is always the device's current network, so a call that begins starts from it,
+    /// not from where the last call left off. What to do is `NetworkChange`'s decision, carried out by the runner.
+    func networkChanged(_ type: NetworkType, meaningful: Bool) {
+        let old = network
+        network = type
+        guard let runner, !runner.isFinished else { return }
+        runner.networkChanged(from: old, to: type, meaningful: meaningful, context: context(for: runner.contactID))
+    }
+
+    func setNetwork(_ type: NetworkType) { networkChanged(type, meaningful: false) }
 
     func reset() {
         guard runner?.isFinished ?? true else { return }
@@ -304,7 +303,7 @@ extension LiveCallEngine: @MainActor CallEngine {
 #if os(macOS)
 extension LiveCallEngine {
     func ringAnswer(callID: String, video: Bool) {
-        if let runner, runner.callID == callID { runner.handle(.answer(video: video)) }
+        if let runner, runner.callID == callID { send(.answer(video: video), to: runner, video: video) }
         else { earlyActions[callID.lowercased()] = .answer(video: video) }   // launched by the notification: the ring comes next
     }
 
@@ -329,7 +328,10 @@ extension LiveCallEngine {
 extension LiveCallEngine: CallKitCallHandling {
     func callKitAnswer(callID: UUID) {
         if matches(callID) != nil {
-            runner?.handle(.answer(video: runner?.state?.isVideoCall ?? false))
+            if let runner {
+                let video = runner.state?.isVideoCall ?? false
+                send(.answer(video: video), to: runner, video: video)
+            }
         } else {
             earlyActions[callID.uuidString.lowercased()] = .answer(video: false)
         }
