@@ -43,26 +43,44 @@ object ProfilePhoto {
         }
     }
 
-    /** True when [jpeg] is within the size limit and the platform reads it as a JPEG of a sane size. */
+    /**
+     * True when [jpeg] passes [ProfilePhotoRule] (size, and a declared size of at most 1024 x 1024 read from the frame
+     * header without decoding) and the platform reads it as a JPEG of that size.
+     */
     fun decodes(jpeg: ByteArray): Boolean {
         if (!ProfilePhotoRule.isAcceptable(jpeg)) return false
         return try {
             val bounds = boundsOf(jpeg)
-            bounds.outMimeType == "image/jpeg" && bounds.outWidth in 1..MAX_SIDE && bounds.outHeight in 1..MAX_SIDE &&
+            bounds.outMimeType == "image/jpeg" && bounds.outWidth in 1..ProfilePhotoRule.MAX_SIDE && bounds.outHeight in 1..ProfilePhotoRule.MAX_SIDE &&
                 BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size)?.also { it.recycle() } != null
         } catch (e: Exception) {
             false
         }
     }
 
-    /** The picture to draw, or null when the bytes do not decode (the tile then shows the coloured letter). */
-    fun bitmap(jpeg: ByteArray): Bitmap? = try {
-        if (!ProfilePhotoRule.isAcceptable(jpeg)) null else BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size)
+    /**
+     * The picture to draw, or null (the tile then shows the coloured letter). The rule is checked again here (a row
+     * stored by an earlier build), the bounds are read first, and the decode is sub-sampled to about [targetSide] px,
+     * so unchecked data is never decoded at full size. Call it off the main thread.
+     */
+    fun bitmap(jpeg: ByteArray, targetSide: Int = ProfilePhotoRule.SIDE_PIXELS): Bitmap? = try {
+        if (!ProfilePhotoRule.isAcceptable(jpeg)) {
+            null
+        } else {
+            val bounds = boundsOf(jpeg)
+            if (bounds.outWidth !in 1..ProfilePhotoRule.MAX_SIDE || bounds.outHeight !in 1..ProfilePhotoRule.MAX_SIDE) {
+                null
+            } else {
+                var sample = 1
+                while (minOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= targetSide) sample *= 2
+                BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, BitmapFactory.Options().apply { inSampleSize = sample })
+            }
+        }
     } catch (e: Exception) {
         null
+    } catch (e: OutOfMemoryError) {
+        null
     }
-
-    private const val MAX_SIDE = 4096
 
     private fun boundsOf(bytes: ByteArray) = BitmapFactory.Options().also {
         it.inJustDecodeBounds = true

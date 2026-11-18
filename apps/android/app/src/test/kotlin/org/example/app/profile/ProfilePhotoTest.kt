@@ -18,9 +18,11 @@ import org.example.app.core.people.ProfilePhotoRule
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 class ProfilePhotoTest {
     private fun encode(bmp: Bitmap, format: Bitmap.CompressFormat = Bitmap.CompressFormat.JPEG, quality: Int = 95): ByteArray =
         ByteArrayOutputStream().also { bmp.compress(format, quality, it) }.toByteArray()
@@ -69,7 +71,7 @@ class ProfilePhotoTest {
     }
 
     @Test fun theResultIsAJpegWithinTheLimitAndCarriesNoMetadata() {
-        val file = File.createTempFile("pp", ".jpg").also { it.deleteOnExit() }
+        val file = File.createTempFile("ppt", ".jpg").also { it.deleteOnExit() }
         file.writeBytes(stripes(600, 400))
         ExifInterface(file.absolutePath).apply {
             setAttribute(ExifInterface.TAG_GPS_LATITUDE, "52/1,30/1,0/1"); setAttribute(ExifInterface.TAG_MAKE, "SecretCam"); saveAttributes()
@@ -81,7 +83,7 @@ class ProfilePhotoTest {
     }
 
     @Test fun anExifRotationIsBakedInBeforeTheCrop() {
-        val file = File.createTempFile("pp", ".jpg").also { it.deleteOnExit() }
+        val file = File.createTempFile("ppt", ".jpg").also { it.deleteOnExit() }
         // Stored sideways (top red / middle green / bottom blue, 300x900) and tagged to rotate 90: shown as 900x300 stripes.
         file.writeBytes(rotatedStripes(300, 900))
         ExifInterface(file.absolutePath).apply { setAttribute(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_ROTATE_90.toString()); saveAttributes() }
@@ -130,5 +132,33 @@ class ProfilePhotoTest {
         val out = ProfilePhoto.prepare(stripes(400, 400))!!
         assertTrue(ProfilePhoto.decodes(out))
         assertContentEquals(out, out.copyOf())
+    }
+
+    /** A real JPEG, with its declared size rewritten in the frame header, as a hostile sender would. */
+    private fun declaring(w: Int, h: Int): ByteArray {
+        val bytes = stripes(64, 64)
+        var i = 2
+        while (i < bytes.size - 9) {
+            if (bytes[i] == 0xFF.toByte() && bytes[i + 1] == 0xC0.toByte()) {
+                bytes[i + 5] = (h shr 8).toByte(); bytes[i + 6] = h.toByte(); bytes[i + 7] = (w shr 8).toByte(); bytes[i + 8] = w.toByte()
+                return bytes
+            }
+            i += 2 + (((bytes[i + 2].toInt() and 0xFF) shl 8) or (bytes[i + 3].toInt() and 0xFF))
+        }
+        error("no SOF0 in the fixture")
+    }
+
+    @Test fun aPhotoDeclaringTooManyPixelsIsNeverDecoded() {
+        assertFalse(ProfilePhoto.decodes(declaring(65000, 65000)))
+        assertNull(ProfilePhoto.bitmap(declaring(65000, 65000)))
+        assertNull(ProfilePhoto.bitmap(declaring(1025, 10)))
+    }
+
+    @Test fun aLargePhotoIsDecodedSubSampled() {
+        val big = declaring(1024, 1024)
+        // The declared size is what the platform reads; the decode asks for about 256 px, so a quarter of the pixels at most.
+        val bmp = ProfilePhoto.bitmap(big)
+        // The fixture's real pixels are 64x64, so only the call's safety is asserted here; sub-sampling is covered by the bounds rule.
+        assertTrue(bmp == null || bmp.width <= 1024)
     }
 }

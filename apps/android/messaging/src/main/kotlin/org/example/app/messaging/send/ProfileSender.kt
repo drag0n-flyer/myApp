@@ -67,8 +67,10 @@ class ProfileSender(
             val photo = photo()
             for (chatId in targets(ver)) {
                 // The marker follows a successful queue; a failure leaves this chat pending for the next pass.
-                try { send(chatId, name, photo, ver) } catch (e: Exception) { continue }
-                repo.set(SENT + chatId, ver.toString().encodeToByteArray())
+                // Queue and marker are one transaction: either both happen or neither.
+                try {
+                    repo.transaction { send(chatId, name, photo, ver); repo.set(SENT + chatId, ver.toString().encodeToByteArray()) }
+                } catch (e: Exception) { continue }
             }
         }
     }
