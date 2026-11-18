@@ -22,17 +22,18 @@ extension AppModel {
     }
 }
 
-/// Remembers whether a media file is usable. A "yes" stays (the file only goes away with a wipe, which clears this);
-/// a "no" is asked again after a second, because the file may be about to be moved into place.
+/// Remembers whether a media file is usable, so drawing a bubble does not touch the disk every time. A "yes" is
+/// asked again after 30 seconds (a wipe also clears everything); a "no" after a second.
 @MainActor
 final class MediaFileCheck {
     static let shared = MediaFileCheck()
     private var answers: [String: (usable: Bool, at: Date)] = [:]
+    /// How long an answer is kept: a "no" briefly (the file may be about to be moved into place), a "yes" for 30 seconds.
     private init() {}
 
     func isUsable(_ url: URL, in directory: URL) -> Bool {
         let key = url.path
-        if let known = answers[key], known.usable || Date().timeIntervalSince(known.at) < 1 { return known.usable }
+        if let known = answers[key], Date().timeIntervalSince(known.at) < (known.usable ? 30 : 1) { return known.usable }
         let usable = Self.check(url, in: directory)
         if answers.count > 2000 { answers.removeAll() }
         answers[key] = (usable, Date())

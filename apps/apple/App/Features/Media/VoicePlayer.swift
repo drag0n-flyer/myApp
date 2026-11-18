@@ -208,9 +208,11 @@ final class VoicePlayer {
         #if os(iOS)
         if let interruption { NotificationCenter.default.removeObserver(interruption) }
         interruption = nil
-        // Only give the session back when this player took it (a call may own it otherwise).
+        // Only give the session back when this player took it, and never while a call is on (a call owns the
+        // session; this also covers the stop that a starting call causes).
         guard sessionActive else { return }
         sessionActive = false
+        guard !callActive, !isInCall() else { return }
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         #endif
     }

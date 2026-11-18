@@ -153,12 +153,12 @@ struct VoiceMessageView: View {
             .buttonStyle(.plain)
             .accessibilityLabel(player?.isPlaying(messageID) == true ? Text("Pause") : Text("Play voice message"))
             .accessibilityValue(Text(Message.clockText(duration)))
-            .accessibilityHint(player?.callActive == true ? Text("You can play this after the call.") : Text(""))
-            .opacity(player?.callActive == true ? 0.5 : 1)
+            .modifier(CallHint(active: player?.callActive == true))
             .accessibilityIdentifier("chat.voice.play.\(messageID)")
         case .notDownloaded where !canDownload:
             circle(systemName: "play.fill")
                 .opacity(0.5)
+                .accessibilityElement(children: .ignore)
                 .accessibilityLabel(Text("Play voice message"))
                 .accessibilityValue(Text(Message.clockText(duration)))
         case .notDownloaded, .failed:
@@ -182,5 +182,18 @@ struct VoiceMessageView: View {
             .frame(width: 28, height: 28)
             .background(Circle().fill(isMine ? Color.white.opacity(0.25) : Color.accentColor))
             .foregroundStyle(.white)
+    }
+}
+
+/// While a call is on the play button is dimmed and says why; otherwise it carries no hint at all.
+private struct CallHint: ViewModifier {
+    let active: Bool
+
+    func body(content: Content) -> some View {
+        if active {
+            content.opacity(0.5).accessibilityHint(Text("You can play this after the call."))
+        } else {
+            content
+        }
     }
 }
