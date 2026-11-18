@@ -164,6 +164,9 @@ interface OutboxDao {
     fun dueHeads(at: Long): List<OutboxEntity>
     @Query("UPDATE outbox SET attempts = attempts + 1, next_attempt_at = :next WHERE message_id = :id") fun bump(id: String, next: Long)
     @Query("DELETE FROM outbox WHERE message_id = :id") fun remove(id: String)
+    @Query("UPDATE outbox SET ciphertext = :ciphertext, cipher_epoch = :epoch, cipher_conversation = :conversationId WHERE message_id = :id")
+    fun storeCiphertext(id: String, conversationId: String, epoch: Long, ciphertext: ByteArray)
+    @Query("UPDATE outbox SET ciphertext = NULL, cipher_epoch = NULL, cipher_conversation = NULL WHERE message_id = :id") fun clearCiphertext(id: String)
     @Query("DELETE FROM outbox WHERE message_id IN (:ids)") fun removeAll(ids: List<String>)
 
     @Insert(onConflict = OnConflictStrategy.IGNORE) fun insertRaw(items: List<InboxRawEntity>)

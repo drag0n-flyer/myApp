@@ -32,6 +32,11 @@ struct LiveMessaging {
     let autoDownload: SharedValue<AutoDownloadSettings>
     /// The Read receipts switch, read by the outbox and the chat store.
     let readReceipts: SharedValue<Bool>
+    /// Typing and presence signals; `ephemeralSender` is pointed at the live connection once it exists.
+    let ephemeral: EphemeralChannel
+    let ephemeralSender: EphemeralSenderBox
+    /// The shared database (the app keeps the time each contact was last witnessed in its key-value store).
+    let repo: Repository
 
     /// The app-group container, or nil when the group is not available.
     static var container: URL? {
@@ -134,9 +139,12 @@ struct LiveMessaging {
             deps: deps, outbox: outbox, inbox: inbox, conversations: conversations, attachments: attachments)
         let reconciler = ReconcileScheduler(
             deviceID: session.deviceID, reconcile: { try await sync.reconcileOwnDevices() })
+        let ephemeralSender = EphemeralSenderBox()
         return LiveMessaging(
             store: store, inbox: inbox, sync: sync, reconciler: reconciler,
-            network: networkBox, autoDownload: settingsBox, readReceipts: readReceiptsBox)
+            network: networkBox, autoDownload: settingsBox, readReceipts: readReceiptsBox,
+            ephemeral: EphemeralChannel(repo: repo, me: session.accountID, sender: ephemeralSender),
+            ephemeralSender: ephemeralSender, repo: repo)
     }
 
     /// MERGE(M5): the real engine, `makeMLSEngine(identity:storage:)` (plan 4), keeping its group state in the
@@ -167,4 +175,15 @@ private final class SyncHook: @unchecked Sendable {
     private var action: (@Sendable () async throws -> Void)?
     func set(_ action: @escaping @Sendable () async throws -> Void) { lock.withLock { self.action = action } }
     func run() async throws { try await lock.withLock { action }?() }
+}
+
+/// The `EphemeralSending` the channel is built with before the live connection exists. Sending fails until `use`.
+final class EphemeralSenderBox: EphemeralSending, @unchecked Sendable {
+    private let lock = NSLock()
+    private var target: (any EphemeralSending)?
+    func use(_ sender: (any EphemeralSending)?) { lock.withLock { target = sender } }
+    func sendEphemeral(conversationID: String, epoch: UInt64, ciphertext: Data) async throws {
+        guard let target = lock.withLock({ target }) else { throw URLError(.notConnectedToInternet) }
+        try await target.sendEphemeral(conversationID: conversationID, epoch: epoch, ciphertext: ciphertext)
+    }
 }

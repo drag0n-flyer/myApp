@@ -55,7 +55,7 @@ abstract class Migration2To3Contract {
         try {
             val raw = db.openHelper.writableDatabase
             assertEquals(AppDatabase.VERSION, raw.version)
-            assertEquals(3, AppDatabase.VERSION)
+            assertTrue(AppDatabase.VERSION >= 3) // later migrations (3 to 4) run on top of this one
             assertEquals(before, snapshot(raw), "a version 2 row changed or was lost")
             raw.query("PRAGMA foreign_key_check").use { assertFalse(it.moveToFirst(), "foreign key violation after migration") }
             raw.query("PRAGMA integrity_check").use { it.moveToFirst(); assertEquals("ok", it.getString(0)) }
