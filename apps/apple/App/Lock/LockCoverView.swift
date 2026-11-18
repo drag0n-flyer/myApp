@@ -34,6 +34,8 @@ struct LockCoverView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.background)
+        // Keep the children as their own elements, so the button keeps its own identifier.
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("lock.cover")
         // The prompt appears by itself once per request, and only while the scene is active.
         .task(id: lock.promptKey) { await lock.promptAutomatically(reason: reason) }

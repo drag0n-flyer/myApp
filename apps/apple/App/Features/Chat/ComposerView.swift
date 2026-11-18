@@ -30,6 +30,10 @@ struct ComposerView: View {
     #if os(iOS)
     @State private var showCamera = false
     @State private var cameraDenied = false
+    /// One of the app's own pickers or the camera is up (app lock does not count that as leaving).
+    private var pickerOpen: Bool { showPhotos || showFiles || showCamera }
+    #else
+    private var pickerOpen: Bool { showPhotos || showFiles }
     #endif
 
     private var isEmpty: Bool { text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -103,7 +107,7 @@ struct ComposerView: View {
                     .glassBackground(in: Circle())
             }
             .accessibilityLabel("Attach")
-            .expectsReturn(when: showPhotos || showFiles || showCamera)
+            .expectsReturn(when: pickerOpen)
             .photosPicker(isPresented: $showPhotos,selection: $photoItem, matching: .images)
             .fileImporter(isPresented: $showFiles, allowedContentTypes: [.item]) { result in
                 guard case .success(let url) = result else { return }
