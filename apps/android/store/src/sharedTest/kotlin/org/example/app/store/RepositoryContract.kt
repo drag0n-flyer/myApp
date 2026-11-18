@@ -22,7 +22,9 @@ abstract class RepositoryContract {
     protected abstract fun openDatabase(): AppDatabase
     /** The repository's clock: nothing is expired while it reads 0. */
     protected var nowMs = 0L
-    protected open fun newRepository(db: AppDatabase) = RoomRepository(db, clock = { nowMs })
+    /** The only folder the repository may delete attachment files from. */
+    protected val mediaRoot: java.io.File = java.nio.file.Files.createTempDirectory("media-root").toFile().also { it.deleteOnExit() }
+    protected open fun newRepository(db: AppDatabase) = RoomRepository(db, clock = { nowMs }, mediaRoots = listOf(mediaRoot))
 
     protected lateinit var db: AppDatabase
     protected lateinit var repo: RoomRepository
@@ -461,7 +463,7 @@ abstract class RepositoryContract {
     }
 
     @Test fun sweepExpiredRemovesRowFileSearchEntryReactionAndOutboxInOneGo() {
-        val file = java.io.File.createTempFile("blob", ".enc").apply { writeText("x") }
+        val file = java.io.File.createTempFile("blob", ".enc", mediaRoot).apply { writeText("x") }
         try {
             repo.insertMessage(message("old", "findable word", sentAt = 100).copy(expiresAt = 1_000))
             repo.upsertAttachment(
@@ -488,6 +490,27 @@ abstract class RepositoryContract {
             assertEquals(emptyList(), repo.sweepExpired(2_000, "me"))
         } finally {
             file.delete()
+        }
+    }
+
+    @Test fun sweepExpiredNeverDeletesAFileOutsideTheMediaFolders() {
+        val outside = java.io.File.createTempFile("outside", ".txt").apply { writeText("keep me") }
+        val inside = java.io.File.createTempFile("inside", ".enc", mediaRoot).apply { writeText("x") }
+        val sneaky = java.io.File(mediaRoot, "../" + outside.name) // leaves the folder through a ..
+        try {
+            repo.insertMessage(message("a", "one", sentAt = 100).copy(expiresAt = 1_000))
+            repo.insertMessage(message("b", "two", sentAt = 101).copy(expiresAt = 1_000))
+            repo.insertMessage(message("c", "three", sentAt = 102).copy(expiresAt = 1_000))
+            fun att(id: String, msg: String, path: String) =
+                org.example.app.messaging.ports.AttachmentRecord(id, msg, "photo", ByteArray(1), ByteArray(1), 1, 1, "local", 1, path)
+            repo.upsertAttachment(att("x1", "a", outside.path))
+            repo.upsertAttachment(att("x2", "b", inside.path))
+            repo.upsertAttachment(att("x3", "c", sneaky.path))
+            assertEquals(setOf("a", "b", "c"), repo.sweepExpired(1_000, "me").toSet())
+            assertTrue(outside.exists(), "a path outside the media folders is left alone")
+            assertFalse(inside.exists(), "a path inside is deleted")
+        } finally {
+            outside.delete(); inside.delete()
         }
     }
 
