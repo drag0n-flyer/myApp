@@ -1050,7 +1050,7 @@ class LiveChatStore(
         val record = repo.message(messageId) ?: return@write
         if (record.chatId != chatId || record.senderAccount != device.accountId || record.deleted) return@write
         val old = ContentCodec.decode(record.envelope) as? ContentEnvelope.Text ?: return@write
-        val edited = ContentCodec.encode(ContentEnvelope.Text(old.id, old.at, newText, old.r))
+        val edited = ContentCodec.encode(old.edited(newText))
         if (!repo.applyEdit(messageId, device.accountId, edited, fold(newText), nowMs())) return@write
         sendControl(chatId) { id, at -> ContentEnvelope.Edit(id, at, messageId, newText) }
     }
@@ -1279,30 +1279,41 @@ class LiveChatStore(
     override fun setTimer(chatId: String, seconds: Int) {
         if (org.example.app.core.people.TimerChoice.from(seconds) == null) return
         write {
-            if (repo.chat(chatId) == null) return@write
-            val changed = repo.timerSeconds(chatId) != seconds
-            // Remembered with the time of the choice, so an older timer from the peer cannot override it.
-            repo.set("timer-at:$chatId", nowMs().toString().encodeToByteArray())
-            if (!changed) return@write
-            repo.setTimer(chatId, seconds)
-            // One `timer` control through the normal send path, and the same line the peer will show, without a name.
-            var id = ""
-            var at = 0L
-            outbox.enqueueControl(chatId) { newId, now -> id = newId; at = now; ContentEnvelope.Timer(newId, now, seconds) }
-            repo.insertMessage(
-                MessageRecord(
-                    id = "sys-timer-$id", chatId = chatId, conversationId = null, senderAccount = ChatMapping.SYSTEM_SENDER,
-                    senderDevice = null, sentAt = at, receivedAt = at, envelope = "{\"timer\":{\"seconds\":$seconds}}".encodeToByteArray(),
-                    status = "sent",
-                ),
-            )
-            requestFlush()
+            val queued = repo.transaction {
+                if (repo.chat(chatId) == null || repo.timerSeconds(chatId) == seconds) return@transaction false
+                // The id is made here, and is the id on the wire: it breaks a tie with the peer's timer at the same millisecond.
+                val id = freshId()
+                var at = 0L
+                // One `timer` control through the normal send path, and the same line the peer will show, without a name.
+                outbox.enqueueControl(chatId) { _, now -> at = now; ContentEnvelope.Timer(id, now, seconds) }
+                repo.setTimer(chatId, seconds)
+                // Remembered with the time and id of the choice, so an older (or tied but lower) timer from the peer cannot override it.
+                repo.set("timer-at:$chatId", at.toString().encodeToByteArray())
+                repo.set("timer-id:$chatId", id.encodeToByteArray())
+                repo.insertMessage(
+                    MessageRecord(
+                        id = "sys-timer-$id", chatId = chatId, conversationId = null, senderAccount = ChatMapping.SYSTEM_SENDER,
+                        senderDevice = null, sentAt = at, receivedAt = at, envelope = "{\"timer\":{\"seconds\":$seconds}}".encodeToByteArray(),
+                        status = "sent",
+                    ),
+                )
+                true
+            }
+            if (queued) requestFlush()
         }
     }
 
     override fun sweepExpired(now: Long): List<String> {
         if (closed.get()) return emptyList()
+        // The attachments of what is about to go, to remove their decrypted copies afterwards.
+        val attachmentIds = repo.expiredMessageIds(now).mapNotNull { repo.attachmentForMessage(it)?.id }
         val removed = repo.sweepExpired(now, device.accountId)
+        // The decrypted copy in the open folder is named "<attachment id>-<digest>-<key hash>".
+        for (attId in attachmentIds) dirs.openDir.listFiles()?.forEach { if (it.name.startsWith("$attId-")) it.delete() }
+        // A failed or waiting upload that expired leaves nothing behind: its staged files and its pending key.
+        for (id in removed) {
+            if (pendingDir(id).exists() || repo.get(PENDING_UPLOAD_PREFIX + id)?.isNotEmpty() == true) discardPending(id)
+        }
         if (removed.isNotEmpty()) reload()
         return removed
     }
