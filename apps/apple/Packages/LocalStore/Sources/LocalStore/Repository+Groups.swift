@@ -1,3 +1,4 @@
+import AppCore
 import Foundation
 
 private func millis(_ d: Date) -> Int64 { Int64((d.timeIntervalSince1970 * 1000).rounded()) }
@@ -20,10 +21,14 @@ extension Repository {
     // MARK: groups
 
     /// Makes the group chat `g:<conversationID>` when there is none (not a message request, no unread). An existing row,
-    /// of either kind, is left exactly as it is. Returns the chat ID, or `nil` for a conversation ID that cannot be used.
+    /// of either kind, is left exactly as it is. Returns the chat ID, or `nil` for a conversation ID outside [A-Za-z0-9_-] or too long, and for a title the group name rule would change.
     @discardableResult
     public func upsertGroup(conversationID: String, title: String?, photo: Data?, at: Date) throws -> String? {
-        guard !conversationID.isEmpty, conversationID.count <= GroupLimits.maxConversationIDLength else { return nil }
+        guard !conversationID.isEmpty, conversationID.count <= GroupLimits.maxConversationIDLength,
+              conversationID.utf8.allSatisfy({ ($0 >= 0x30 && $0 <= 0x39) || ($0 >= 0x41 && $0 <= 0x5A) || ($0 >= 0x61 && $0 <= 0x7A) || $0 == 0x2D || $0 == 0x5F })
+        else { return nil }
+        // A title is kept only as the group name rule would write it.
+        if let title, GroupNameRule.clean(title) != title { return nil }
         let id = "g:" + conversationID
         try db.execute("""
             INSERT INTO chats(id, is_request, unread, muted, last_activity, kind, conversation_id, title, photo)

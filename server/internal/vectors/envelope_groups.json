@@ -94,6 +94,22 @@
   }
  },
  {
+  "name": "group photo null is no photo",
+  "json": "{\"v\":1,\"id\":\"m1\",\"at\":1700000000000,\"k\":\"group\",\"name\":\"Book club\",\"photo\":null,\"ver\":1}",
+  "expect": {
+   "kind": "group",
+   "name": "Book club",
+   "ver": 1
+  }
+ },
+ {
+  "name": "group ver is fractional",
+  "json": "{\"v\":1,\"id\":\"m1\",\"at\":1700000000000,\"k\":\"group\",\"name\":\"Book club\",\"ver\":1.5}",
+  "expect": {
+   "unsupported": "group"
+  }
+ },
+ {
   "name": "group name empty",
   "json": "{\"v\":1,\"id\":\"m1\",\"at\":1700000000000,\"k\":\"group\",\"name\":\"\",\"ver\":1}",
   "expect": {

@@ -232,3 +232,16 @@ private func groupMessage(_ id: String, from sender: String = "me") -> MessageRe
         try db.execute("INSERT INTO chats(id, is_request, unread, muted, last_activity, kind, conversation_id) VALUES ('g:other',0,0,0,1,'group','c-1')")
     }
 }
+
+@Test func testUpsertGroupRefusesATitleTheGroupNameRuleWouldChangeAndOddConversationIDs() throws {
+    let (_, repo) = try makeRepo()
+    for title in ["", "  Club", "Club ", "Bo\u{202E}ok", "Book\nclub", String(repeating: "a", count: 51)] {
+        #expect(try repo.upsertGroup(conversationID: "c-1", title: title, photo: nil, at: t(1)) == nil, "\(title.debugDescription)")
+    }
+    for id in ["c 1", "c/1", "c:1", "c.1", "\u{00E9}", "c\n1"] {
+        #expect(try repo.upsertGroup(conversationID: id, title: nil, photo: nil, at: t(1)) == nil, "\(id.debugDescription)")
+    }
+    #expect(try repo.chats().isEmpty)
+    #expect(try repo.upsertGroup(conversationID: "Ab_9-z", title: String(repeating: "a", count: 50), photo: nil, at: t(1)) == "g:Ab_9-z")
+    #expect(try repo.upsertGroup(conversationID: "c-2", title: nil, photo: nil, at: t(1)) == "g:c-2")
+}
