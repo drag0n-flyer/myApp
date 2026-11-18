@@ -78,7 +78,8 @@ struct MessageBubbleView: View {
 
     /// Detected links, underlined so they look like links on both bubble colours.
     private static func underlinedLinks(_ text: String) -> AttributedString {
-        var attributed = LinkDetector.attributed(text)
+        // Formatting is display only: `MessageFormat` styles the spans and keeps links outside monospace.
+        var attributed = MessageFormat.attributed(text)
         for run in attributed.runs where run.link != nil {
             attributed[run.range].swiftUI.underlineStyle = .single
         }
