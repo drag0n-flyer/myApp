@@ -213,6 +213,7 @@ public final class LiveChatStore: ChatStore {
         let showRead = outbox.readReceiptsEnabled()
         let me = deps.me.accountID
         var groupMembersCache: [String: [String]] = [:]
+        let blockedAccounts = Set((try? repo.blockedIDs()) ?? [])
         return records.map { record -> Message in
             // My message in a group: the tick is what every other current member's receipts say.
             var record = record
@@ -233,6 +234,9 @@ public final class LiveChatStore: ChatStore {
                     return name.isEmpty ? nil : name
                 },
                 showRead: showRead || record.senderAccount != me)
+            if ChatID.isGroup(record.chatID), record.senderAccount != me, blockedAccounts.contains(record.senderAccount) {
+                message.fromBlockedSender = true
+            }
             if record.status == "failed", tooBig.contains(record.id) { message.sendFailure = .tooBig }
             if record.status == "sending", uploading.contains(record.id) { message.uploadProgress = uploadFraction[record.id] ?? 0 }
             return message

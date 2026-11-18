@@ -181,7 +181,10 @@ public actor InboxProcessor {
                 if step == .stop { break scan }
                 if case .stored(let message)? = applied, message.senderAccount != deps.me.accountID, !message.undecryptable {
                     newMessages[message.chatID, default: []].append(message.id)
-                    storedFromOthers.append(message)
+                    // Nothing is fetched on behalf of a blocked member of a group.
+                    if !(ChatID.isGroup(message.chatID) && ((try? deps.repo.isBlocked(message.senderAccount)) ?? false)) {
+                        storedFromOthers.append(message)
+                    }
                 }
             }
         }

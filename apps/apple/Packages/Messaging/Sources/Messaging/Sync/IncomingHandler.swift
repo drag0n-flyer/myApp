@@ -369,7 +369,10 @@ public struct IncomingHandler: Sendable {
     /// An incoming message from someone else counts as unread and moves the chat up.
     private func bumpChat(_ message: MessageRecord, db: Repository) throws {
         // One statement: pin, mute and archive are never read and written back.
-        try db.bumpChat(chatID: message.chatID, unreadDelta: message.senderAccount != me.accountID ? 1 : 0,
+        // A group message from an account I have blocked is kept (collapsed) but never counted as unread.
+        var counts = message.senderAccount != me.accountID
+        if counts, ChatID.isGroup(message.chatID), try db.isBlocked(message.senderAccount) { counts = false }
+        try db.bumpChat(chatID: message.chatID, unreadDelta: counts ? 1 : 0,
                         at: min(message.sentAt, now()))
     }
 

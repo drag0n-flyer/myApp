@@ -165,6 +165,8 @@ public struct Message: Identifiable, Hashable, Codable, Sendable {
     public var linkPreview: LinkPreviewCard?
     /// When the message disappears (`sentAt + ttl`); `nil` when it never does.
     public var expiresAt: Date?
+    /// A group message from an account this device has blocked: shown collapsed ("Message from a blocked contact").
+    public var fromBlockedSender = false
 
     /// True while a timer applies to this message: the bubble shows the timer glyph.
     public var disappears: Bool { expiresAt != nil }
