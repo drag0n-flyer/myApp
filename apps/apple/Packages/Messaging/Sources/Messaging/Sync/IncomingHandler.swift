@@ -342,6 +342,12 @@ public struct IncomingHandler: Sendable {
         for id in ids {
             guard let message = try db.message(id: id), message.chatID == chatID else { continue }
             guard message.senderAccount == me.accountID || fromMe else { continue }
+            // In a group each member's receipt is kept on its own (the tick follows all of them); the stored status of my
+            // message stays what it was.
+            if ChatID.isGroup(chatID), !fromMe {
+                try db.addReceipt(messageID: id, accountID: account, kind: kind.rawValue, at: now())
+                continue
+            }
             valid.append(id)
             if fromMe, kind == .read, message.senderAccount != me.accountID, message.status != "read" { unreadCleared += 1 }
         }

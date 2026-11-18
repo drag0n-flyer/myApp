@@ -50,6 +50,11 @@ extension Repository {
         }
     }
 
+    /// Every account that is a member of any group chat, once, sorted.
+    public func groupMemberAccounts() throws -> [String] {
+        try db.query("SELECT DISTINCT account_id FROM group_members ORDER BY account_id") { $0.text(0) }
+    }
+
     /// Replaces the member list of a group chat in one transaction, when `version` is higher than the stored one.
     /// Returns the members as they were, or `nil` when nothing changed: not a group chat, a version that is not higher
     /// (or below 0), or a list over 100 accounts. An empty account ID and a repeated account are dropped; a role this

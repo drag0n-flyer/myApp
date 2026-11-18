@@ -247,3 +247,12 @@ private func groupMessage(_ id: String, from sender: String = "me") -> MessageRe
     #expect(try repo.upsertGroup(conversationID: "Ab_9-z", title: String(repeating: "a", count: 50), photo: nil, at: t(1)) == "g:Ab_9-z")
     #expect(try repo.upsertGroup(conversationID: "c-2", title: nil, photo: nil, at: t(1)) == "g:c-2")
 }
+
+@Test func testGroupMemberAccountsListsEveryAccountOfEveryGroupOnce() throws {
+    let repo = try groupRepo()
+    #expect(try repo.groupMemberAccounts().isEmpty)
+    _ = try repo.setGroupMembers(chatID: chatID, [member("b", "admin"), member("a", "owner")], version: 0)
+    _ = try repo.upsertGroup(conversationID: "c-2", title: "Other", photo: nil, at: t(5))
+    _ = try repo.setGroupMembers(chatID: "g:c-2", [member("b"), member("c")], version: 0)
+    #expect(try repo.groupMemberAccounts() == ["a", "b", "c"])
+}

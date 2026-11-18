@@ -36,7 +36,7 @@ public final class LiveChatStore: ChatStore {
     private var repo: Repository { deps.repo }
 
     private var meContact: Contact
-    private var contactRows: [String: ContactRecord] = [:]
+    var contactRows: [String: ContactRecord] = [:]
     /// What contacts said about themselves (`profile`), by account, read at every reload.
     var profileRows: [String: StoredProfile] = [:]
     /// Tests only: replaces how the own profile is queued for a chat.
@@ -170,7 +170,9 @@ public final class LiveChatStore: ChatStore {
         let rows = (try? repo.contacts()) ?? []
         contactRows = Dictionary(rows.map { ($0.accountID, $0) }, uniquingKeysWith: { $1 })
         // A message request is not shown by its profile (name or photo) until it is accepted.
-        profileRows = Dictionary(((try? repo.profiles()) ?? []).filter { contactRows[$0.accountID]?.isContact == true }.map {
+        // A member of a group is shown by the profile they sent, contact or not.
+        let groupAccounts = Set((try? repo.groupMemberAccounts()) ?? [])
+        profileRows = Dictionary(((try? repo.profiles()) ?? []).filter { contactRows[$0.accountID]?.isContact == true || groupAccounts.contains($0.accountID) }.map {
             ($0.accountID, StoredProfile(accountID: $0.accountID, name: $0.name, photo: $0.photo, ver: $0.ver))
         }, uniquingKeysWith: { $1 })
         if let mine = contactRows[deps.me.accountID] {
@@ -210,7 +212,16 @@ public final class LiveChatStore: ChatStore {
         // The switch is reciprocal: while it is off, others' read receipts (still stored) show as delivered.
         let showRead = outbox.readReceiptsEnabled()
         let me = deps.me.accountID
+        var groupMembersCache: [String: [String]] = [:]
         return records.map { record -> Message in
+            // My message in a group: the tick is what every other current member's receipts say.
+            var record = record
+            if record.senderAccount == me, ChatID.isGroup(record.chatID), ["sent", "delivered", "read"].contains(record.status) {
+                let members = groupMembersCache[record.chatID] ?? ((try? repo.groupMembers(chatID: record.chatID)) ?? []).map(\.accountID)
+                groupMembersCache[record.chatID] = members
+                let receipts = ((try? repo.receipts(messageID: record.id)) ?? []).map { GroupReceipt(accountID: $0.accountID, kind: $0.kind, at: $0.at) }
+                record.status = Self.groupStatusName(GroupTicks.state(receipts: receipts, members: members, me: me))
+            }
             let plain = record.senderAccount != ChatMapping.systemSender && !record.id.hasPrefix(ChatMapping.callPrefix)
             var message = ChatMapping.message(
                 record,
@@ -230,10 +241,18 @@ public final class LiveChatStore: ChatStore {
         .filter { showSafety || $0.content != .system(.safetyNumberChanged) }
     }
 
+    private nonisolated static func groupStatusName(_ tick: GroupTick) -> String {
+        switch tick {
+        case .sent: "sent"
+        case .delivered: "delivered"
+        case .read: "read"
+        }
+    }
+
     /// Display only: shown while no own name is stored. Never stored, never sent.
     static let placeholderName = "You"
 
-    private nonisolated static func name(of row: ContactRecord?) -> String? {
+    nonisolated static func name(of row: ContactRecord?) -> String? {
         guard let row else { return nil }
         // Names come from the server and from other people's devices: cleaned for every screen.
         let name = DisplayNameRule.forDisplay(row.displayName, fallback: row.username)
