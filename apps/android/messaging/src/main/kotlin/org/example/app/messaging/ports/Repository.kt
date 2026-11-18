@@ -187,6 +187,11 @@ interface Repository {
      * Replaces the envelope of one's own message that has not left yet (`sending` or `failed`), without marking it edited.
      * An attachment is stored before its upload, with what is known then; this puts in what the upload returned.
      */
+    /**
+     * Removes one's own message that has not left yet (`sending` or `failed`) together with its outbox row: an attachment
+     * that can never be sent. False, and nothing removed, for any other message.
+     */
+    fun deleteUnsentMessage(id: String, sender: String): Boolean
     fun replaceUnsentEnvelope(id: String, sender: String, envelope: ByteArray, folded: String, receivedAt: Long): Boolean
     fun markDeleted(id: String, sender: String): Boolean
     fun setReaction(messageId: String, accountId: String, emoji: String)

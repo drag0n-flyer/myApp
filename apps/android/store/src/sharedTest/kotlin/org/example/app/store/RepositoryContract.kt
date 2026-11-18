@@ -182,6 +182,17 @@ abstract class RepositoryContract {
         assertFalse(repo.replaceUnsentEnvelope("m1", "alice", byteArrayOf(10), "f", 5))
     }
 
+    @Test fun onlyAnUnsentOwnMessageCanBeRemoved() {
+        repo.insertMessage(message("m1", "x").copy(status = "sending"))
+        repo.insertMessage(message("m2", "y").copy(status = "sent"))
+        assertFalse(repo.deleteUnsentMessage("m1", "mallory"))
+        assertFalse(repo.deleteUnsentMessage("m2", "alice"))
+        assertTrue(repo.deleteUnsentMessage("m1", "alice"))
+        assertEquals(null, repo.message("m1"))
+        assertEquals("m2", repo.message("m2")!!.id)
+        assertFalse(repo.deleteUnsentMessage("m1", "alice"))
+    }
+
     @Test fun shortQueryUsesLike() {
         repo.insertMessage(message("m1", "東京タワー", sentAt = 1))
         repo.insertMessage(message("m2", "100% sure_ok", sentAt = 2))

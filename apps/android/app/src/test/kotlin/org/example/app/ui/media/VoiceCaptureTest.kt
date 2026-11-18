@@ -37,8 +37,10 @@ class VoiceCaptureTest {
     private val notes = mutableListOf<File>()
     private val notices = mutableListOf<Int>()
 
+    private var valid = true
+
     private fun TestScope.capture() =
-        VoiceCapture(backgroundScope, recorder, { notes += it }, { notices += it }, StandardTestDispatcher(testScheduler), tickMs = 200)
+        VoiceCapture(backgroundScope, recorder, { notes += it }, { notices += it }, StandardTestDispatcher(testScheduler), tickMs = 200, check = { valid })
 
     @Test fun beginningStartsTheRecorderAndShowsTheBar() = runTest {
         val c = capture()
@@ -76,6 +78,21 @@ class VoiceCaptureTest {
         assertEquals(listOf(File("/out/note.ogg")), notes)
         assertEquals(CaptureState.Idle, c.state.value)
         assertTrue(notices.isEmpty())
+    }
+
+    @Test fun aNoteThatDoesNotPassTheCheckIsNotSentAndSaysSo() = runTest {
+        val file = File.createTempFile("note", ".ogg")
+        recorder.stopResult = StopResult.Success(Recording(file, 3.0))
+        valid = false
+        val c = capture()
+        c.begin()
+        runCurrent()
+        c.send()
+        runCurrent()
+        assertEquals(emptyList(), notes)
+        assertEquals(listOf(R.string.media_record_failed), notices)
+        assertEquals(false, file.exists(), "the broken note is deleted")
+        assertEquals(CaptureState.Idle, c.state.value)
     }
 
     @Test fun theButtonsWaitWhileTheNoteIsBeingFinished() = runTest {

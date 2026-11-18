@@ -62,6 +62,8 @@ class VoiceCapture(
     private val notify: (Int) -> Unit,
     private val io: CoroutineDispatcher = Dispatchers.IO,
     private val tickMs: Long = 200,
+    /** Run on [io] before a finished note is handed over; a note that fails it is deleted and "Couldn't record" is shown. */
+    private val check: (File) -> Boolean = { true },
 ) {
     private val _state = MutableStateFlow<CaptureState>(CaptureState.Idle)
     val state: StateFlow<CaptureState> = _state
@@ -110,7 +112,15 @@ class VoiceCapture(
             }
             _state.value = CaptureState.Idle
             when (result) {
-                is StopResult.Success -> onNote(result.recording.file)
+                is StopResult.Success -> {
+                    val file = result.recording.file
+                    if (withContext(io) { check(file) }) {
+                        onNote(file)
+                    } else {
+                        file.delete()
+                        notify(R.string.media_record_failed)
+                    }
+                }
                 // An accidental tap: nothing to send and nothing to say.
                 StopResult.TooShort -> Unit
                 is StopResult.Failed -> notify(textFor(result.reason))

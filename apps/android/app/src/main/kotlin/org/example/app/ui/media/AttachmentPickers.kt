@@ -30,6 +30,7 @@ import kotlinx.coroutines.withContext
 import org.example.app.R
 import org.example.app.core.settings.MediaKind
 import org.example.app.media.MediaCache
+import org.example.app.media.VoicePrep
 import org.example.app.media.VoiceRecorder
 
 /** The rows of the attach sheet. */
@@ -165,7 +166,7 @@ fun rememberVoiceControls(onNote: (File) -> Unit, notify: (Int) -> Unit): VoiceC
     val say by rememberUpdatedState(notify)
     val capture = remember(context) {
         val dir = MediaCache.outgoingDir(context)
-        VoiceCapture(scope, VoiceRecorderPort(VoiceRecorder(context, dir), dir), { note(it) }, { say(it) })
+        VoiceCapture(scope, VoiceRecorderPort(VoiceRecorder(context, dir), dir), { note(it) }, { say(it) }, check = { VoicePrep.prepare(it) != null })
     }
     DisposableEffect(capture) { onDispose { capture.release() } }
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { capture.cancel() }
