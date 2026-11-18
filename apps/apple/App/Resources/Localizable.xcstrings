@@ -750,6 +750,17 @@
         }
       }
     },
+    "No app can open this file." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No app can open this file."
+          }
+        }
+      }
+    },
     "No chats yet" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1659,6 +1670,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "You added a new device"
+          }
+        }
+      }
+    },
+    "You can play this after the call." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You can play this after the call."
           }
         }
       }

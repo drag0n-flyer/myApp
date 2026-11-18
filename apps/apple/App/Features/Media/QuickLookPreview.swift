@@ -15,7 +15,7 @@ final class MediaPreview {
     var url: URL? {
         didSet { if url == nil, let old = oldValue { Self.remove(old) } }
     }
-    /// Set when nothing could be opened; the chat shows the "Couldn't download" alert.
+    /// Set when nothing could be opened; the chat shows the "No app can open this file." alert.
     var failed = false
 
     private var openingToken = UUID()
@@ -55,6 +55,12 @@ final class MediaPreview {
         guard !swept else { return }
         swept = true
         MediaStaging.sweep(directory: folder, olderThan: 0, now: Date())
+    }
+
+    /// Sign-out: nothing of this account's plaintext stays in the temporary folder.
+    nonisolated static func removeTemporaryFolders() {
+        try? FileManager.default.removeItem(at: folder)
+        try? FileManager.default.removeItem(at: stagingFolder)
     }
 
     /// Where photos and files picked in the composer are copied before the engine takes them.
@@ -97,12 +103,12 @@ final class MediaPreview {
 }
 
 extension View {
-    /// Presents Quick Look for `preview.url` and the "Couldn't download" alert when nothing could be opened.
+    /// Presents Quick Look for `preview.url` and a "No app can open this file." alert when nothing could be opened.
     func mediaPreview(_ preview: MediaPreview) -> some View {
         @Bindable var preview = preview
         return self
             .quickLookPreview($preview.url)
-            .alert("Couldn't download", isPresented: $preview.failed) {
+            .alert("No app can open this file.", isPresented: $preview.failed) {
                 Button("OK", role: .cancel) {}
             }
     }

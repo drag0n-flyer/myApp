@@ -12,6 +12,8 @@ struct MessageBubbleView: View {
     /// Opens a downloaded photo or file: the file, its received name (nil for photos) and whether it is a photo.
     var openMedia: (URL, String?, Bool) -> Void = { _, _, _ in }
     var voice: VoicePlayer?
+    /// False with sample data: there is nothing to fetch, so the bubble shows a plain placeholder, not a Download button.
+    var canDownload = true
     /// Sends a message that is marked "Not sent" again.
     var retry: () -> Void = {}
     /// Context menu items for this message, from `MessageActions.available`.
@@ -152,14 +154,15 @@ struct MessageBubbleView: View {
         case .text(let text):
             Text(Self.underlinedLinks(text)).font(.body).tint(isMine ? Color.white : Color.accentColor)
         case .voice(let duration):
-            VoiceMessageView(messageID: message.id, duration: duration, isMine: isMine, state: mediaState, player: voice, download: download)
+            VoiceMessageView(messageID: message.id, duration: duration, isMine: isMine, state: mediaState, player: voice,
+                             canDownload: canDownload, download: download)
         case .photo(let bytes):
             MediaBubbleView(isPhoto: true, name: nil, bytes: bytes, state: mediaState, messageID: message.id,
-                            download: download, open: { openMedia($0, nil, true) })
+                            canDownload: canDownload, download: download, open: { openMedia($0, nil, true) })
         case .file(let name, let bytes):
             let cleaned = MediaFileName.clean(name)
             MediaBubbleView(isPhoto: false, name: cleaned, bytes: bytes, state: mediaState, messageID: message.id,
-                            download: download, open: { openMedia($0, cleaned, false) })
+                            canDownload: canDownload, download: download, open: { openMedia($0, cleaned, false) })
         case .call:
             Label(message.previewText, systemImage: "phone")
         case .deleted:

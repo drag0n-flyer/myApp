@@ -11,14 +11,15 @@ struct DecodedImage: @unchecked Sendable {
 /// actor, and keeps a bounded number of results.
 actor ThumbnailLoader {
     static let shared = ThumbnailLoader()
-    private var cache = BoundedCache<String, DecodedImage>(capacity: 60)
+    /// Bounded by memory (about 50 MB of decoded pixels), not by the number of pictures.
+    private var cache = BoundedCache<String, DecodedImage>(capacity: 50_000_000)
 
     /// nil when the file is missing, empty or not an image.
     func image(at url: URL, maxPixel: Int) async -> DecodedImage? {
         let key = "\(url.path)@\(maxPixel)"
         if let hit = cache.get(key) { return hit }
         let decoded = await Task.detached(priority: .userInitiated) { Self.decode(url, maxPixel: maxPixel) }.value
-        if let decoded { cache.set(key, decoded) }
+        if let decoded { cache.set(key, decoded, cost: decoded.cgImage.bytesPerRow * decoded.cgImage.height) }
         return decoded
     }
 

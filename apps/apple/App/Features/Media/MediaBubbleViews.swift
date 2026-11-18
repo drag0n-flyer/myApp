@@ -11,6 +11,7 @@ struct MediaBubbleView: View {
     let bytes: Int64
     let state: MediaBubbleState
     let messageID: String
+    var canDownload = true
     let download: () -> Void
     let open: (URL) -> Void
 
@@ -35,6 +36,21 @@ struct MediaBubbleView: View {
             .accessibilityLabel(Text(isPhoto ? String(localized: "Photo") : label))
             .accessibilityHint(Text("Opens it"))
             .accessibilityIdentifier("chat.media.open.\(messageID)")
+        case .notDownloaded where !canDownload:
+            // Nothing to fetch (sample data): a plain placeholder with the size, not a button.
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.secondary.opacity(0.25))
+                .frame(width: mediaWidth, height: isPhoto ? mediaHeight : 80)
+                .overlay {
+                    VStack(spacing: 6) {
+                        Image(systemName: isPhoto ? "photo" : "doc.fill").font(.title)
+                        Text(label).font(.caption.weight(.semibold))
+                    }
+                    .foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Text(label))
+                .accessibilityIdentifier("chat.media.placeholder.\(messageID)")
         case .notDownloaded:
             placeholder {
                 Image(systemName: "arrow.down")
@@ -94,6 +110,7 @@ struct VoiceMessageView: View {
     let isMine: Bool
     let state: MediaBubbleState
     let player: VoicePlayer?
+    var canDownload = true
     let download: () -> Void
 
     private let bars: [CGFloat] = [6, 12, 18, 9, 15, 7, 13, 17, 8, 11, 5, 14]
@@ -136,7 +153,14 @@ struct VoiceMessageView: View {
             .buttonStyle(.plain)
             .accessibilityLabel(player?.isPlaying(messageID) == true ? Text("Pause") : Text("Play voice message"))
             .accessibilityValue(Text(Message.clockText(duration)))
+            .accessibilityHint(player?.callActive == true ? Text("You can play this after the call.") : Text(""))
+            .opacity(player?.callActive == true ? 0.5 : 1)
             .accessibilityIdentifier("chat.voice.play.\(messageID)")
+        case .notDownloaded where !canDownload:
+            circle(systemName: "play.fill")
+                .opacity(0.5)
+                .accessibilityLabel(Text("Play voice message"))
+                .accessibilityValue(Text(Message.clockText(duration)))
         case .notDownloaded, .failed:
             Button(action: download) { circle(systemName: state == .failed ? "arrow.clockwise" : "arrow.down") }
                 .buttonStyle(.plain)

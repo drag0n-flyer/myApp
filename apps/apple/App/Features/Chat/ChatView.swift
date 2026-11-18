@@ -111,7 +111,12 @@ struct ChatView: View {
             model.markRead(chatID: chatID)
             openSearchIfRequested()
         }
-        .onAppear { MediaPreview.sweepStale() }
+        .onAppear {
+            MediaPreview.sweepStale()
+            voice.isInCall = { [weak model] in model?.activeCall?.isEnded == false }
+            voice.callStateChanged(inCall: model.activeCall?.isEnded == false)
+        }
+        .onChange(of: model.activeCall?.isEnded == false) { _, inCall in voice.callStateChanged(inCall: inCall) }
         .onDisappear { voice.stop(); preview.close() }
         .onChange(of: scenePhase) { _, phase in if phase != .active { voice.stop() } }
         .mediaPreview(preview)
@@ -227,6 +232,7 @@ struct ChatView: View {
                     preview.open(source: url, mediaDirectory: model.mediaDirectory, name: name, isPhoto: isPhoto)
                 },
                 voice: voice,
+                canDownload: !model.isSampleData,
                 retry: { model.retrySend(messageID: message.id) },
                 actions: MessageActions.available(for: message, isMine: mine),
                 perform: { perform($0, on: message, all: all, indexByID: indexByID) },
