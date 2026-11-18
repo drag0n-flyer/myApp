@@ -8,7 +8,7 @@ package org.example.app.core.people
  * must be at least 2 and fit the file). The first SOF0, SOF1 or SOF2 (FF C0, FF C1, FF C2) gives the size: its length
  * must be at least 8 and fit the file; the bytes after the precision are height then width, 16 bits each. The walk stops
  * with null at the start of a scan (FF DA), at the end of the image (FF D9), at a truncated segment or at the end of the
- * file, so an SOF-looking byte pair inside another segment (an EXIF block, a thumbnail) is never mistaken for the header.
+ * file (a stray FF 00 is not special: it is walked as a marker with a length, as AppCore does), so an SOF-looking byte pair inside another segment (an EXIF block, a thumbnail) is never mistaken for the header.
  * The first start-of-frame marker of any type (C0-C3, C5-C7, C9-CB, CD-CF) is the frame header; if it is not C0, C1 or C2 the result is null.
  */
 object JpegFrame {
@@ -22,7 +22,6 @@ object JpegFrame {
             if (i >= bytes.size) return null
             val marker = bytes[i].toInt() and 0xFF
             i++
-            if (marker == 0x00) return null
             if (marker in 0xD0..0xD8 || marker == 0x01) continue
             if (marker == 0xD9 || marker == 0xDA) return null
             if (i + 2 > bytes.size) return null

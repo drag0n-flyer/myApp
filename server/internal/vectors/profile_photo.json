@@ -149,5 +149,12 @@
   "name": "C5 differential then C0",
   "hex": "ffd8ffc5000b080010001001011100ffc0000b080010001001011100",
   "accept": false
+ },
+ {
+  "name": "a stray FF 00 is walked as a segment by its length, then the C0 gives 16x16",
+  "hex": "ffd8ff000004aaaaffc0000b080010001001011100",
+  "accept": true,
+  "width": 16,
+  "height": 16
  }
 ]

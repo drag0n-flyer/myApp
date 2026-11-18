@@ -111,4 +111,32 @@ class ProfilePhotoScreensTest {
         rule.onNodeWithText("Remove photo").assertIsDisplayed().performClick()
         assertEquals(listOf<ByteArray?>(null), removed)
     }
+
+    // Review fixes: the cache key cannot be collided, and a decode that outlives a sign-out does not refill the cache.
+
+    @Test fun twoPhotosWithTheSameHashAndSizeAreDifferentCacheEntries() {
+        ProfilePhotoCache.clear()
+        val a = ByteArray(40) { (it + 3).toByte() }
+        val b = a.copyOf().also { it[0] = (it[0] + 1).toByte(); it[1] = (it[1] - 31).toByte() }
+        assertTrue(a.contentHashCode() == b.contentHashCode() && a.size == b.size && !a.contentEquals(b), "fixture must collide")
+        var decodes = 0
+        val first = ProfilePhotoCache.get(a) { decodes++; android.graphics.Bitmap.createBitmap(2, 2, android.graphics.Bitmap.Config.ARGB_8888) }
+        val second = ProfilePhotoCache.get(b) { decodes++; android.graphics.Bitmap.createBitmap(3, 3, android.graphics.Bitmap.Config.ARGB_8888) }
+        assertEquals(2, decodes)
+        assertTrue(first !== second && second!!.width == 3)
+        assertEquals(2, ProfilePhotoCache.size)
+        ProfilePhotoCache.get(a) { error("a hit must not decode") }
+        ProfilePhotoCache.clear()
+    }
+
+    @Test fun aDecodeThatFinishesAfterClearDoesNotRefillTheCache() {
+        ProfilePhotoCache.clear()
+        val bytes = ByteArray(40) { it.toByte() }
+        val result = ProfilePhotoCache.get(bytes) {
+            ProfilePhotoCache.clear() // the sign-out happens while the decode is running
+            android.graphics.Bitmap.createBitmap(2, 2, android.graphics.Bitmap.Config.ARGB_8888)
+        }
+        assertNotNull(result, "the caller of the old session still gets its picture")
+        assertEquals(0, ProfilePhotoCache.size)
+    }
 }

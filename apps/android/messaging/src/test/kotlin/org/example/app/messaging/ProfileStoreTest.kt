@@ -133,4 +133,18 @@ class ProfileStoreTest {
         rig.bob1.repo.block("acc-ana", NOW)
         assertIs<NotificationOutcome.Nothing>(push(ContentEnvelope.Text("n3", NOW + 2, "hi")))
     }
+
+    // Review fix: a photo change announces the name the repo has now, not one cached before another device's change was adopted.
+
+    @Test fun aPhotoChangeSendsAJustAdoptedName() = runTest {
+        val (rig, conv) = setup()
+        rig.bob2.processor.sync()
+        rig.bob1.repo.upsertContact(ContactRecord("acc-bob", "bob", "Bob", false, NOW))
+        val st = store(rig.bob1) // its cache holds "Bob"
+        rig.bob2.send(conv, ContentEnvelope.Profile("o1", NOW, "Bobby", null, 1_900_000_000))
+        rig.bob1.processor.sync() // adopted straight into the repo; the store has not reloaded
+        st.setMyPhoto(JPEG); st.settle()
+        rig.ana1.processor.sync()
+        assertEquals("Bobby", rig.ana1.repo.profile("acc-bob")!!.name)
+    }
 }

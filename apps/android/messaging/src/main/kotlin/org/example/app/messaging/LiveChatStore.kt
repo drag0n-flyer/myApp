@@ -217,7 +217,7 @@ class LiveChatStore(
     override val profiles: StateFlow<Map<String, org.example.app.core.people.Profile>> = profilesFlow.asStateFlow()
     @Volatile private var profileNames: Map<String, String> = emptyMap()
 
-    private val profileSender = org.example.app.messaging.send.ProfileSender(repo, device.accountId, { myStoredName }) { chatId, name, photo, ver ->
+    private val profileSender = org.example.app.messaging.send.ProfileSender(repo, device.accountId, { runCatching { repo.contact(device.accountId)?.displayName }.getOrNull().orEmpty() }) { chatId, name, photo, ver ->
         outbox.enqueueControl(chatId) { id, at -> ContentEnvelope.Profile(id, at, name, photo, ver) }
     }
 
