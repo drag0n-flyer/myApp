@@ -132,6 +132,14 @@ final class AppModel {
     var chatListQuery = ""
     /// Chat opened from outside the chat list (Mac sidebar, Contacts, Calls).
     var openChatID: String?
+    /// The chat on screen in the main window (Mac, iPad); the menu commands act on it. The roots keep it current and
+    /// clear it when they leave the screen (the lock cover removes them).
+    var onScreenChatID: String?
+    /// Menu commands ask the root for something by counting up; the root watches the number (see `AppModel+Commands`).
+    var newChatRequests = 0
+    var listSearchRequests = 0
+    var chatInfoRequests = 0
+    var closeChatRequests = 0
     private(set) var activeCall: CallState?
     var pendingInvite: InviteLink?
     /// Mac only: a contact who is ringing (macOS has no CallKit).

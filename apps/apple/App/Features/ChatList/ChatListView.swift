@@ -9,39 +9,24 @@ enum ChatRoute: Hashable {
 }
 
 #if os(iOS)
-/// The Chats tab on iPhone.
+/// The Chats tab. Compact width (iPhone, iPad in a narrow split): list, then chat, in one stack. Regular width (iPad,
+/// a wide window): the list beside the chat (`NavigationSplitView`).
+///
+/// One `path` serves both layouts so a rotation or a split-view resize loses nothing: its first element is the screen
+/// beside the list (a chat, the requests or the archive) and the rest are pushed on top of it; compact width shows the
+/// same list as a stack. The composer's unsent text is kept by the store (drafts), not by this view.
 struct ChatListView: View {
     @Bindable var model: AppModel
     let showsSearchField: Bool
+    @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var path: [ChatRoute] = []
     @State private var showingNewChat = false
 
     var body: some View {
-        NavigationStack(path: $path) {
-            ChatListContent(model: model, newChat: { showingNewChat = true }) { path.append($0) }
-                .navigationTitle("Chats")
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Menu {
-                            Button("Chat folders", systemImage: "folder") { model.selectedTab = .settings }
-                            Button("Mark all as read", systemImage: "checkmark.message") {
-                                model.chats(in: .unread).forEach { model.markRead(chatID: $0.id) }
-                            }
-                        } label: {
-                            Image(systemName: "ellipsis")
-                        }
-                        .accessibilityLabel("More")
-                    }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button { showingNewChat = true } label: { Image(systemName: "square.and.pencil") }
-                            .accessibilityLabel("New chat")
-                            .accessibilityIdentifier("chatlist.compose")
-                    }
-                }
-                .modifier(OptionalSearch(isOn: showsSearchField, text: $model.chatListQuery))
-                .navigationDestination(for: ChatRoute.self) { route in
-                    ChatDestination(route: route, model: model) { path.append($0) }
-                }
+        // Switching layouts rebuilds the views below, so `path` is the only state carried over (the chat's scroll
+        // position is not).
+        Group {
+            if sizeClass == .regular { splitLayout } else { stackLayout }
         }
         .sheet(isPresented: $showingNewChat) {
             NewChatView(model: model) { contactID in
@@ -60,6 +45,87 @@ struct ChatListView: View {
             path = [.chat(id: id)]
             model.openChatID = nil
         }
+    }
+
+    // MARK: Compact
+
+    private var stackLayout: some View {
+        NavigationStack(path: $path) {
+            listColumn(open: { path.append($0) })
+                .navigationDestination(for: ChatRoute.self) { route in
+                    ChatDestination(route: route, model: model) { path.append($0) }
+                }
+        }
+    }
+
+    // MARK: Regular
+
+    private var splitLayout: some View {
+        NavigationSplitView {
+            listColumn(selectedChatID: selectedChatID) { route in
+                switch route {
+                case .chat, .requests, .archive: path = [route]
+                case .info: path.append(route)
+                }
+            }
+        } detail: {
+            NavigationStack(path: pushedRoutes) {
+                detailRoot
+                    .navigationDestination(for: ChatRoute.self) { route in
+                        ChatDestination(route: route, model: model) { path.append($0) }
+                    }
+            }
+        }
+    }
+
+    /// The chat shown beside the list (highlighted in it).
+    private var selectedChatID: String? {
+        if case .chat(let id)? = path.first { return id }
+        return nil
+    }
+
+    /// What sits on top of the detail's first screen.
+    private var pushedRoutes: Binding<[ChatRoute]> {
+        Binding(
+            get: { Array(path.dropFirst()) },
+            set: { path = Array(path.prefix(1)) + $0 }
+        )
+    }
+
+    @ViewBuilder private var detailRoot: some View {
+        if let first = path.first {
+            ChatDestination(route: first, model: model) { path.append($0) }
+                .id(first)
+        } else {
+            ContentUnavailableView("Select a chat", systemImage: "bubble.left.and.bubble.right")
+                .accessibilityIdentifier("chatlist.detail.empty")
+        }
+    }
+
+    // MARK: List
+
+    private func listColumn(selectedChatID: String? = nil, open: @escaping (ChatRoute) -> Void) -> some View {
+        ChatListContent(model: model, selectedChatID: selectedChatID, newChat: { showingNewChat = true }, open: open)
+            .navigationTitle("Chats")
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Menu {
+                        Button("Chat folders", systemImage: "folder") { model.selectedTab = .settings }
+                        Button("Mark all as read", systemImage: "checkmark.message") {
+                            model.chats(in: .unread).forEach { model.markRead(chatID: $0.id) }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                    }
+                    .accessibilityLabel("More")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { showingNewChat = true } label: { Image(systemName: "square.and.pencil") }
+                        .accessibilityLabel("New chat")
+                        .accessibilityIdentifier("chatlist.compose")
+                }
+            }
+            .modifier(OptionalSearch(isOn: showsSearchField, text: $model.chatListQuery))
     }
 }
 

@@ -19,6 +19,7 @@ struct MacRootView: View {
     @State private var detailPath: [ChatRoute] = []
     @State private var missedOnly = false
     @State private var showingNewChat = false
+    @State private var searchPresented = false
 
     var body: some View {
         NavigationSplitView {
@@ -59,7 +60,26 @@ struct MacRootView: View {
             open(.chat(id: id))
             model.openChatID = nil
         }
+        // Menu commands (MainCommands): the model counts up, this view acts. The lock cover removes this view, so
+        // nothing here runs while locked, and the model checks the rule again before it counts.
+        .onChange(of: selectedChatID) { _, id in model.onScreenChatID = id }
+        .onChange(of: model.newChatRequests) { _, _ in showingNewChat = true }
+        .onChange(of: model.listSearchRequests) { _, _ in
+            sidebar = .folder(model.selectedFolder.id)
+            searchPresented = true
+        }
+        .onChange(of: model.chatInfoRequests) { _, _ in
+            guard let id = selectedChatID else { return }
+            if case .info? = detailPath.last { return }
+            detailPath.append(.info(chatID: id))
+        }
+        .onChange(of: model.closeChatRequests) { _, _ in
+            selectedChatID = nil
+            detailPath = []
+        }
+        .onDisappear { model.onScreenChatID = nil }
         .onAppear {
+            model.onScreenChatID = selectedChatID
             // A chat held while the app was locked is opened once, after unlock (the view did not exist before).
             guard let id = model.openChatID else { return }
             open(.chat(id: id))
@@ -113,7 +133,7 @@ struct MacRootView: View {
         case .folder, nil:
             ChatListContent(model: model, selectedChatID: selectedChatID, newChat: { showingNewChat = true }, open: open)
                 .navigationTitle(model.selectedFolder.name)
-                .searchable(text: $model.chatListQuery, placement: .toolbar)
+                .searchable(text: $model.chatListQuery, isPresented: $searchPresented, placement: .toolbar)
         }
     }
 

@@ -87,6 +87,14 @@ public struct AppLockPolicy: Sendable {
         expectedReturn = false
     }
 
+    /// The person chose Lock Now: locked at once (only when enabled).
+    public mutating func lockNow() {
+        guard enabled else { return }
+        locked = true
+        leftAt = nil
+        expectedReturn = false
+    }
+
     /// The setting changed. Turning it on happens after a passed prompt, so the app stays unlocked; off unlocks.
     public mutating func setEnabled(_ on: Bool) {
         enabled = on
