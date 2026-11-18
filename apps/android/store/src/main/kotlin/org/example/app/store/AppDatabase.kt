@@ -32,8 +32,8 @@ abstract class AppDatabase : RoomDatabase() {
 
     companion object {
         /** Every schema upgrade, in order. There is no destructive fallback: a gap here fails the open instead of erasing messages. */
-        const val VERSION = 3
-        val MIGRATIONS = arrayOf(Migration1To2, Migration2To3)
+        const val VERSION = 4
+        val MIGRATIONS = arrayOf(Migration1To2, Migration2To3, Migration3To4)
 
         const val FILE_NAME = "messages.db"
         private const val FTS_TABLE = "messages_fts"
