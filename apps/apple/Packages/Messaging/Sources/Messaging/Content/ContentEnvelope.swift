@@ -36,6 +36,7 @@ public struct ContentEnvelope: Codable, Sendable, Equatable {
         case presence(PresenceState)
         case timer(seconds: Int)
         case profile(name: String, photo: Data?, ver: Int)
+        case group(name: String, photo: Data?, ver: Int)
         case unsupported(kind: String)
     }
 
@@ -86,8 +87,8 @@ public struct ContentEnvelope: Codable, Sendable, Equatable {
     /// A kind that is a signal or a profile update: never stored as a message, never notifies, even when malformed.
     public var isSignalOnly: Bool {
         switch body {
-        case .typing, .presence, .profile: true
-        case .unsupported(let kind): ["typing", "presence", "profile"].contains(kind)
+        case .typing, .presence, .profile, .group: true
+        case .unsupported(let kind): ["typing", "presence", "profile", "group"].contains(kind)
         default: false
         }
     }
@@ -115,10 +116,10 @@ public struct ContentEnvelope: Codable, Sendable, Equatable {
 
     private static let knownKinds: Set<String> = [
         "text", "photo", "voice", "file", "edit", "delete", "react", "receipt", "callsig", "mode",
-        "typing", "presence", "timer", "profile",
+        "typing", "presence", "timer", "profile", "group",
     ]
     /// Kinds whose bad field values are reported under their own name.
-    private static let invalidKinds: Set<String> = ["mode", "receipt", "typing", "presence", "timer", "profile"]
+    private static let invalidKinds: Set<String> = ["mode", "receipt", "typing", "presence", "timer", "profile", "group"]
 
     private struct Header: Decodable {
         let v: Int
@@ -180,6 +181,8 @@ public struct ContentEnvelope: Codable, Sendable, Equatable {
             case .timer(let secs): k = "timer"; seconds = Lenient(secs)
             case .profile(let profileName, let image, let version):
                 k = "profile"; name = profileName; photo = image.map { Lenient($0.base64EncodedString()) }; ver = Lenient(version)
+            case .group(let groupName, let image, let version):
+                k = "group"; name = groupName; photo = image.map { Lenient($0.base64EncodedString()) }; ver = Lenient(version)
             case .unsupported(let kind): k = kind
             }
         }
@@ -221,6 +224,11 @@ public struct ContentEnvelope: Codable, Sendable, Equatable {
                 guard let photo else { return .profile(name: name, photo: nil, ver: ver) }
                 guard let text = photo.value, let image = LinkPreview.base64(text), LinkPreview.isJPEG(image, max: ContentEnvelope.maxProfilePhoto) else { return nil }
                 return .profile(name: name, photo: image, ver: ver)
+            case "group":
+                guard let name, GroupNameRule.clean(name) == name, let ver = ver?.value, ver >= 1 else { return nil }
+                guard let photo else { return .group(name: name, photo: nil, ver: ver) }
+                guard let text = photo.value, let image = LinkPreview.base64(text), LinkPreview.isJPEG(image, max: ContentEnvelope.maxProfilePhoto) else { return nil }
+                return .group(name: name, photo: image, ver: ver)
             default: return nil
             }
         }
