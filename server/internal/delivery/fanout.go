@@ -83,10 +83,18 @@ func (m *Module) deliverPush(ctx context.Context, tx pgx.Tx, deviceIDs []string,
 	if len(deviceIDs) == 0 {
 		return nil
 	}
-	if err := lockDevices(ctx, tx, deviceIDs); err != nil {
+	locked, err := lockDevices(ctx, tx, deviceIDs)
+	if err != nil {
 		return err
 	}
+	alive := make(map[string]bool, len(locked))
+	for _, id := range locked {
+		alive[id] = true
+	}
 	for _, dev := range deviceIDs {
+		if !alive[dev] {
+			continue // deleted meanwhile: nothing to deliver to
+		}
 		it := item
 		payload := it.Payload
 		if it.MembersVersion != nil {
@@ -112,9 +120,12 @@ func (m *Module) deliverPush(ctx context.Context, tx pgx.Tx, deviceIDs []string,
 // client acking the higher one would lose the other row. Holding the lock
 // from before the insert to the commit makes cursor order equal commit order
 // for each device; the fixed order avoids deadlocks.
-func lockDevices(ctx context.Context, tx pgx.Tx, deviceIDs []string) error {
-	_, err := tx.Exec(ctx, `select 1 from devices where id = any($1::uuid[]) order by id for update`, deviceIDs)
-	return err
+//
+// It returns the IDs it actually locked: a device deleted meanwhile (account
+// deletion, revoke) is not among them, and callers must not insert rows that
+// refer to it.
+func lockDevices(ctx context.Context, tx pgx.Tx, deviceIDs []string) ([]string, error) {
+	return queryStrings(ctx, tx, `select id::text from devices where id = any($1::uuid[]) order by id for update`, deviceIDs)
 }
 
 // notifyAll tells each recipient device about its new inbox row.

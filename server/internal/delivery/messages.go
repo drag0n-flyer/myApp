@@ -133,7 +133,7 @@ func (m *Module) postMessage(w http.ResponseWriter, r *http.Request) error {
 		// sorted statement, before anything takes a foreign-key lock on the
 		// sender's device row (the client_messages insert does): every path
 		// takes device locks in sorted order, so none can deadlock.
-		if err := lockDevices(ctx, tx, append(append([]string{}, to...), p.DeviceID)); err != nil {
+		if _, err := lockDevices(ctx, tx, append(append([]string{}, to...), p.DeviceID)); err != nil {
 			return err
 		}
 		if err := tx.QueryRow(ctx,

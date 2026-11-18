@@ -318,8 +318,22 @@ func (m *Module) postCommit(w http.ResponseWriter, r *http.Request) error {
 			lockIDs = append(lockIDs, dv.device)
 		}
 		lockIDs = append(lockIDs, allowed...)
-		if err := lockDevices(ctx, tx, lockIDs); err != nil {
+		locked, err := lockDevices(ctx, tx, lockIDs)
+		if err != nil {
 			return err
+		}
+		if len(allowed) > 0 {
+			// A device deleted between the lookup above and the lock is gone:
+			// nothing is applied (the whole transaction rolls back).
+			lockedSet := make(map[string]bool, len(locked))
+			for _, id := range locked {
+				lockedSet[id] = true
+			}
+			for _, id := range allowed {
+				if !lockedSet[id] {
+					return httpx.Err("conflict", "a device no longer exists")
+				}
+			}
 		}
 		if len(allowed) > 0 {
 			added, err = queryStrings(ctx, tx,
