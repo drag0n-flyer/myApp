@@ -219,13 +219,17 @@ public final class LiveChatStore: ChatStore {
         let me = deps.me.accountID
         var groupMembersCache: [String: [String]] = [:]
         let blockedAccounts = Set((try? repo.blockedIDs()) ?? [])
+        // One read of the receipts for every message of mine in a group that needs a tick.
+        let receiptsByMessage = (try? repo.receipts(messageIDs: records.filter {
+            $0.senderAccount == me && ChatID.isGroup($0.chatID) && ["sent", "delivered", "read"].contains($0.status)
+        }.map(\.id))) ?? [:]
         return records.map { record -> Message in
             // My message in a group: the tick is what every other current member's receipts say.
             var record = record
             if record.senderAccount == me, ChatID.isGroup(record.chatID), ["sent", "delivered", "read"].contains(record.status) {
                 let members = groupMembersCache[record.chatID] ?? ((try? repo.groupMembers(chatID: record.chatID)) ?? []).map(\.accountID)
                 groupMembersCache[record.chatID] = members
-                let receipts = ((try? repo.receipts(messageID: record.id)) ?? []).map { GroupReceipt(accountID: $0.accountID, kind: $0.kind, at: $0.at) }
+                let receipts = (receiptsByMessage[record.id] ?? []).map { GroupReceipt(accountID: $0.accountID, kind: $0.kind, at: $0.at) }
                 record.status = Self.groupStatusName(GroupTicks.state(receipts: receipts, members: members, me: me))
             }
             let plain = record.senderAccount != ChatMapping.systemSender && !record.id.hasPrefix(ChatMapping.callPrefix)
@@ -368,7 +372,10 @@ public final class LiveChatStore: ChatStore {
             // The global search leaves message requests out; a chat the person has open is searched as asked.
             guard chatID != nil || !requests.contains(hit.chatID),
                   let record = (try? repo.message(id: hit.messageID)) ?? nil else { return nil }
-            let preview = map([record]).first?.previewText ?? ""
+            let mapped = map([record]).first
+            // A blocked member's message in a group stays collapsed, so it is not found either.
+            if mapped?.fromBlockedSender == true { return nil }
+            let preview = mapped?.previewText ?? ""
             return MessageHit(chatID: hit.chatID, messageID: hit.messageID, preview: preview, sentAt: record.sentAt)
         }
     }

@@ -36,6 +36,21 @@ import MessagingTestKit
         _ = try await g.bob.inbox.syncOnce()
         #expect(await seen.accounts == ["acc-ana"])
     }
+
+    @Test func aBlockedMembersGroupMessageIsNotFoundBySearch() async throws {
+        let g = try await GroupOfThree.make()
+        try g.bob.repo.block("acc-cy")
+        g.cy.store.send(.text("zebra from cy"), in: g.chatID, replyTo: nil)
+        await g.cy.store.flushOutbox()
+        g.ana.store.send(.text("zebra from ana"), in: g.chatID, replyTo: nil)
+        await g.ana.store.flushOutbox()
+        await g.bob.store.syncInbox()
+        #expect(g.bob.store.searchMessages("zebra", in: g.chatID, limit: 10).map(\.preview).contains { $0.contains("cy") } == false)
+        #expect(g.bob.store.searchMessages("zebra", in: g.chatID, limit: 10).count == 1)
+        // Others still find it.
+        await g.ana.store.syncInbox()
+        #expect(g.ana.store.searchMessages("zebra", in: g.chatID, limit: 10).count == 2)
+    }
 }
 
 private actor Seen {
