@@ -28,4 +28,12 @@ extension LiveChatStore {
         }
         return MessageReceiptLists(readBy: entries(lists.readBy), deliveredTo: entries(lists.deliveredTo))
     }
+
+    /// A one-to-one chat: anyone. A group: only an owner or admin of the stored list, and only while this device is in it.
+    func mayChangeTimer(_ chatID: String) -> Bool {
+        guard ChatID.isGroup(chatID) else { return true }
+        guard let chat = (try? deps.repo.chat(id: chatID)) ?? nil, chat.kind == "group", chat.myState == "member" else { return false }
+        let role = ((try? deps.repo.groupMembers(chatID: chatID)) ?? []).first { $0.accountID == deps.me.accountID }.map { GroupRole(wire: $0.role) }
+        return role?.canSetTimer == true
+    }
 }

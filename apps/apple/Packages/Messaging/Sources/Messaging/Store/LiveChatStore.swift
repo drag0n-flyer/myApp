@@ -789,7 +789,7 @@ public final class LiveChatStore: ChatStore {
     /// choice, and does nothing when the timer already has that value.
     public func setTimer(_ chatID: String, seconds: Int) {
         guard !closed, TimerChoice.from(seconds: seconds) != nil, ensureChatRow(chatID) != nil,
-              timerSeconds(chatID) != seconds else { return }
+              timerSeconds(chatID) != seconds, mayChangeTimer(chatID) else { return }
         let at = deps.now()
         let line = MessageRecord(
             id: "sys-timer-\(freshID())", chatID: chatID, conversationID: nil, senderAccount: ChatMapping.systemSender,
