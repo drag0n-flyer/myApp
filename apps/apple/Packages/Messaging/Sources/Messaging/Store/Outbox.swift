@@ -97,10 +97,10 @@ public actor Outbox: ControlSender {
     /// Queues a control message (edit, delete, reaction, receipt) in the chat's queue, so it stays behind the
     /// messages queued before it, is retried like a message, and survives a restart. It has no message row:
     /// the outbox row's ID is the envelope ID.
-    nonisolated public func enqueueControl(_ body: ContentEnvelope.Body, chatID: String) throws {
+    nonisolated public func enqueueControl(_ body: ContentEnvelope.Body, chatID: String, id: String? = nil) throws {
         let now = deps.now()
         let envelope = ContentEnvelope(
-            id: UUID().uuidString.lowercased(), at: Int64((now.timeIntervalSince1970 * 1000).rounded()), body: body)
+            id: id ?? UUID().uuidString.lowercased(), at: Int64((now.timeIntervalSince1970 * 1000).rounded()), body: body)
         try deps.repo.enqueue(OutboxRecord(
             messageID: envelope.id, chatID: chatID, envelope: envelope.encoded(), attempts: 0, nextAttemptAt: now))
     }

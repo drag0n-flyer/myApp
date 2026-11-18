@@ -23,6 +23,19 @@ class SettingsStoreTest {
     private val prefs get() = context.getSharedPreferences("settings-test", Context.MODE_PRIVATE)
 
     @Test
+    fun theSignalSwitchesAreOnByDefaultAndSurviveARestart() {
+        prefs.edit().clear().commit()
+        assertEquals(true, SettingsStore(prefs).settings.value.typingIndicator)
+        assertEquals(true, SettingsStore(prefs).settings.value.onlineAndLastSeen)
+        SettingsStore(prefs).update { it.copy(typingIndicator = false) }
+        val again = SettingsStore(prefs).settings.value
+        assertEquals(false, again.typingIndicator)
+        assertEquals(true, again.onlineAndLastSeen)
+        SettingsStore(prefs).update { it.copy(onlineAndLastSeen = false) }
+        assertEquals(false, SettingsStore(prefs).settings.value.onlineAndLastSeen)
+    }
+
+    @Test
     fun aValueUpdatedInOneStoreIsReadByASecondOverTheSamePreferences() {
         prefs.edit().clear().commit()
         val first = SettingsStore(prefs)

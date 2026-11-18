@@ -102,7 +102,39 @@ class SampleChatStore(
     }
 
     override fun send(content: MessageContent, chatId: String, replyTo: String?) = mutate {
-        append(Message(makeId(), me.id, clock(), content, DeliveryStatus.Sent, replyTo, emptyList()), chatId)
+        val at = clock()
+        // Under a timer the message disappears at `at + timer`, as in the live store.
+        val ttl = allChats.firstOrNull { it.id == chatId }?.timerSeconds ?: 0
+        val expiresAt = org.example.app.core.people.Expiry.expiresAt(at.toEpochMilli(), ttl.toLong().takeIf { it > 0 })?.let(Instant::ofEpochMilli)
+        append(Message(makeId(), me.id, at, content, DeliveryStatus.Sent, replyTo, emptyList(), expiresAt = expiresAt), chatId)
+    }
+
+    override fun timerSeconds(chatId: String): Int = chat(chatId)?.timerSeconds ?: 0
+
+    override fun setTimer(chatId: String, seconds: Int) = mutate {
+        if (org.example.app.core.people.TimerChoice.from(seconds) == null) return@mutate
+        val current = allChats.firstOrNull { it.id == chatId } ?: return@mutate
+        if (current.timerSeconds == seconds) return@mutate
+        change(chatId) { it.copy(timerSeconds = seconds) }
+        val line = Message(makeId(), "system", clock(), MessageContent.System(SystemEvent.Timer(seconds, null)), DeliveryStatus.Sent, null, emptyList())
+        append(line, chatId)
+    }
+
+    override fun sweepExpired(now: Long): List<String> {
+        val removed = mutableListOf<String>()
+        mutate {
+            allChats = allChats.map { chat ->
+                val gone = chat.messages.filter { org.example.app.core.people.Expiry.isExpired(it.expiresAt?.toEpochMilli(), now) }
+                if (gone.isEmpty()) {
+                    chat
+                } else {
+                    removed += gone.map { it.id }
+                    val unreadGone = gone.count { it.senderId != me.id && it.senderId != "system" && it.content !is MessageContent.System }
+                    chat.copy(messages = chat.messages - gone.toSet(), unreadCount = maxOf(0, chat.unreadCount - unreadGone))
+                }
+            }
+        }
+        return removed
     }
 
     override fun sendAttachment(path: String, kind: MediaKind, chatId: String) = sendAttachment(path, kind, chatId, null)

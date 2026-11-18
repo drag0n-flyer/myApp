@@ -74,6 +74,7 @@ fun ChatInfoScreen(
     var showVerify by rememberSaveable { mutableStateOf(false) }
     var confirmReport by rememberSaveable { mutableStateOf(false) }
     var confirmBlock by rememberSaveable { mutableStateOf(false) }
+    var pickTimer by rememberSaveable { mutableStateOf(false) }
 
     Scaffold(
         modifier = modifier,
@@ -107,6 +108,13 @@ fun ChatInfoScreen(
                 modifier = Modifier.clickable(role = Role.Button, onClick = onOpenGallery),
                 headlineContent = { Text(stringResource(R.string.info_media_and_files)) },
                 trailingContent = { Text(chat.messages.count { it.content is MessageContent.Photo || it.content is MessageContent.File }.toString()) },
+            )
+            HorizontalDivider()
+            ListItem(
+                modifier = Modifier.clickable(role = Role.Button) { pickTimer = true },
+                leadingContent = { Icon(painterResource(R.drawable.ic_timer), contentDescription = null) },
+                headlineContent = { Text(stringResource(R.string.info_disappearing)) },
+                trailingContent = { Text(stringResource(DisappearingChoices.labelFor(chat.timerSeconds))) },
             )
             HorizontalDivider()
             if (chat.modeMismatch) {
@@ -168,6 +176,12 @@ fun ChatInfoScreen(
                         }
                     }
                 }
+            }
+        }
+        if (pickTimer) {
+            DisappearingDialog(chat.timerSeconds, onDismiss = { pickTimer = false }) { seconds ->
+                pickTimer = false
+                if (seconds != chat.timerSeconds) store.setTimer(chatId, seconds)
             }
         }
         if (confirmReport) {

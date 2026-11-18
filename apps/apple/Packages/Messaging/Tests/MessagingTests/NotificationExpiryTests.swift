@@ -63,7 +63,7 @@ private func padded(_ payload: Data) -> Data {
         let pair = try await Pair()
         let envelope = ContentEnvelope(id: "m1", at: nowMs, body: .text("Lunch?", replyTo: nil), ttl: 3_600)
         let outcome = await pair.process(try await pair.push(envelope))
-        #expect(outcome == .show(title: "Ana", body: "Lunch?", threadID: "acc-ana"))
+        #expect(outcome == .show(title: "Ana", body: "Lunch?", threadID: "acc-ana", messageID: "m1"))
         #expect(try pair.bob.deps.repo.message(id: "m1")?.expiresAt == testEpochDate.addingTimeInterval(3_600))
     }
 

@@ -30,6 +30,28 @@ public enum TimerChoice: CaseIterable, Sendable {
     public static func from(seconds: Int) -> TimerChoice? {
         allCases.first { $0.seconds == seconds }
     }
+
+    /// 0 (off), 1, 7 or 90: how the duration is worded ("1 day", "7 days", "90 days").
+    public var days: Int { seconds / 86_400 }
+}
+
+/// What a timer system line says, for the view to word from the String Catalog. `name == nil` means "You".
+public struct TimerLine: Equatable, Sendable {
+    public var choice: TimerChoice
+    public var name: String?
+
+    public init(choice: TimerChoice, name: String?) {
+        self.choice = choice
+        self.name = name
+    }
+}
+
+extension SystemEvent {
+    /// The timer line for this event; `nil` for another event or a number that is not one of the choices.
+    public var timerLine: TimerLine? {
+        guard case .timer(let seconds, let name) = self, let choice = TimerChoice.from(seconds: seconds) else { return nil }
+        return TimerLine(choice: choice, name: name)
+    }
 }
 
 /// A profile update counts only when its version is higher than the one kept.

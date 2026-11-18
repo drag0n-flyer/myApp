@@ -115,6 +115,8 @@ interface ChatStore {
     fun markRead(chatId: String)
     fun incomingCall(fromAccountId: String, video: Boolean = false): IncomingCallDecision
     suspend fun addContact(username: String): Contact?
+    /** Adds someone the server already named (a redeemed one-time link), without a username lookup. The default looks them up. */
+    suspend fun addKnownContact(accountId: String, username: String, displayName: String): Contact? = addContact(username)
 
     /** The chat with this contact, created empty if there is none yet. */
     fun ensureChat(contactId: String): String

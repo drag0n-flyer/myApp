@@ -12,9 +12,19 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import org.example.app.push.MessageNotifier
 
+/** Reopened from Recents: the system hands back the intent that first started the task, which was already acted on. */
+private fun fromHistory(intent: Intent?) = intent != null && (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0
+
 /** The chat a message notification opens: its `EXTRA_CHAT_ID`, or null for no intent, no extra or a blank one. */
 fun chatIdFrom(intent: Intent?): String? =
-    intent?.getStringExtra(MessageNotifier.EXTRA_CHAT_ID)?.takeIf { it.isNotBlank() }
+    if (fromHistory(intent)) null else intent?.getStringExtra(MessageNotifier.EXTRA_CHAT_ID)?.takeIf { it.isNotBlank() }
+
+/** The link an app link (`https://<host>/u/...` or `/c/...`) opened this activity with, or null. Anything else is not for the link handler. */
+fun contactLinkFrom(intent: Intent?): String? {
+    if (intent?.action != Intent.ACTION_VIEW || fromHistory(intent)) return null
+    val data = intent.data ?: return null
+    return if (data.scheme == "https") data.toString() else null
+}
 
 // FragmentActivity (a ComponentActivity) because androidx.biometric's prompt needs one.
 class MainActivity : FragmentActivity() {
@@ -31,6 +41,8 @@ class MainActivity : FragmentActivity() {
         keepWindowSecureWhileLockIsOn()
         // Held while locked: AppRoot follows it once after the unlock.
         chatIdFrom(intent)?.let { graph.requestedChat.value = it }
+        // A recreation (rotation) gets the same intent again: that link was already taken.
+        if (savedInstanceState == null) contactLinkFrom(intent)?.let { graph.pendingLink.offer(it) }
         setContent { AppRoot(graph) }
     }
 
@@ -48,6 +60,7 @@ class MainActivity : FragmentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         chatIdFrom(intent)?.let { graph.requestedChat.value = it }
+        contactLinkFrom(intent)?.let { graph.pendingLink.offer(it) }
     }
 
     override fun onStart() {

@@ -139,7 +139,7 @@ class LiveChatStore(
     escrow: EscrowSealer?,
     private val readReceiptsEnabled: () -> Boolean,
     val maxAttachmentBytes: Long,
-    dirs: MediaDirs,
+    private val dirs: MediaDirs,
     private val social: SocialPort,
     private val scope: CoroutineScope,
     private val fold: (String) -> String = { it.lowercase(Locale.ROOT) },
@@ -1066,6 +1066,7 @@ class LiveChatStore(
 
     override fun edit(messageId: String, chatId: String, text: String) = write {
         val newText = TextLimit.truncate(text)
+<<<<<<< HEAD
         // Reading the row, applying the edit and looking at the pending-upload marker are ONE transaction, so an upload
         // cannot commit between them unseen: either the edit lands first and the upload carries the edited caption, or
         // the upload has committed (its marker is gone) and the Edit control goes behind the message in the queue.
@@ -1083,6 +1084,15 @@ class LiveChatStore(
         } ?: return@write
         // While the upload has not committed, it reads the edited caption from this row and carries it itself.
         if (outcome.isText || !outcome.uploadStillPending) sendControl(chatId) { id, at -> ContentEnvelope.Edit(id, at, messageId, outcome.wire) }
+=======
+        if (newText.isBlank()) return@write
+        val record = repo.message(messageId) ?: return@write
+        if (record.chatId != chatId || record.senderAccount != device.accountId || record.deleted) return@write
+        val old = ContentCodec.decode(record.envelope) as? ContentEnvelope.Text ?: return@write
+        val edited = ContentCodec.encode(old.edited(newText))
+        if (!repo.applyEdit(messageId, device.accountId, edited, fold(newText), nowMs())) return@write
+        sendControl(chatId) { id, at -> ContentEnvelope.Edit(id, at, messageId, newText) }
+>>>>>>> origin/main
     }
 
     override fun delete(messageId: String, chatId: String) = write {
@@ -1262,7 +1272,17 @@ class LiveChatStore(
         val name = username.trim().lowercase(Locale.ROOT)
         if (name.isEmpty()) return null
         val user = try { social.lookUpUser(name) } catch (e: CancellationException) { throw e } catch (_: Exception) { null } ?: return null
+        if (user.accountId == device.accountId) return null // never add yourself
         val row = ContactRecord(user.accountId, user.username, user.displayName, true, contactRows[user.accountId]?.addedAt ?: nowMs())
+        repo.upsertContact(row)
+        reload()
+        return contactOf(row)
+    }
+
+    override suspend fun addKnownContact(accountId: String, username: String, displayName: String): Contact? {
+        val user = username.trim().lowercase(Locale.ROOT)
+        if (accountId.isBlank() || user.isEmpty() || accountId == device.accountId) return null // never add yourself
+        val row = ContactRecord(accountId, user, displayName, true, contactRows[accountId]?.addedAt ?: nowMs())
         repo.upsertContact(row)
         reload()
         return contactOf(row)
@@ -1307,16 +1327,43 @@ class LiveChatStore(
     override fun timerSeconds(chatId: String): Int = repo.timerSeconds(chatId)
 
     override fun setTimer(chatId: String, seconds: Int) {
-        if (closed.get() || org.example.app.core.people.TimerChoice.from(seconds) == null) return
-        // Remembered with the time of the choice, so an older timer from the peer cannot override it.
-        repo.set("timer-at:$chatId", nowMs().toString().encodeToByteArray())
-        repo.setTimer(chatId, seconds)
-        reload()
+        if (org.example.app.core.people.TimerChoice.from(seconds) == null) return
+        write {
+            val queued = repo.transaction {
+                if (repo.chat(chatId) == null || repo.timerSeconds(chatId) == seconds) return@transaction false
+                // The id is made here, and is the id on the wire: it breaks a tie with the peer's timer at the same millisecond.
+                val id = freshId()
+                var at = 0L
+                // One `timer` control through the normal send path, and the same line the peer will show, without a name.
+                outbox.enqueueControl(chatId) { _, now -> at = now; ContentEnvelope.Timer(id, now, seconds) }
+                repo.setTimer(chatId, seconds)
+                // Remembered with the time and id of the choice, so an older (or tied but lower) timer from the peer cannot override it.
+                repo.set("timer-at:$chatId", at.toString().encodeToByteArray())
+                repo.set("timer-id:$chatId", id.encodeToByteArray())
+                repo.insertMessage(
+                    MessageRecord(
+                        id = "sys-timer-$id", chatId = chatId, conversationId = null, senderAccount = ChatMapping.SYSTEM_SENDER,
+                        senderDevice = null, sentAt = at, receivedAt = at, envelope = "{\"timer\":{\"seconds\":$seconds}}".encodeToByteArray(),
+                        status = "sent",
+                    ),
+                )
+                true
+            }
+            if (queued) requestFlush()
+        }
     }
 
     override fun sweepExpired(now: Long): List<String> {
         if (closed.get()) return emptyList()
+        // The attachments of what is about to go, to remove their decrypted copies afterwards.
+        val openNames = repo.expiredMessageIds(now).mapNotNull { repo.attachmentForMessage(it) }.map { Downloader.openName(it.id, it.digest, it.key) }
         val removed = repo.sweepExpired(now, device.accountId)
+        // The decrypted copy in the open folder, by the exact name `Downloader.open` gave it.
+        for (name in openNames) File(dirs.openDir, name).delete()
+        // A failed or waiting upload that expired leaves nothing behind: its staged files and its pending key.
+        for (id in removed) {
+            if (pendingDir(id).exists() || repo.get(PENDING_UPLOAD_PREFIX + id)?.isNotEmpty() == true) discardPending(id)
+        }
         if (removed.isNotEmpty()) reload()
         return removed
     }

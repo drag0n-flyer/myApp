@@ -32,7 +32,10 @@ sealed interface ContentEnvelope {
     data class Text(
         override val id: String, override val at: Long, val t: String, val r: String? = null, override val v: Int = 1,
         val ttl: Int? = null, val lp: LinkPreview? = null,
-    ) : ContentEnvelope
+    ) : ContentEnvelope {
+        /** The same message with new text: it keeps its `ttl`, and its link preview while the link is still in the text. */
+        fun edited(newText: String): Text = copy(t = newText, lp = lp?.takeIf { newText.contains(it.url) })
+    }
     /** [c] is the caption. */
     class Photo(
         override val id: String, override val at: Long, val a: Att, val w: Int, val h: Int,

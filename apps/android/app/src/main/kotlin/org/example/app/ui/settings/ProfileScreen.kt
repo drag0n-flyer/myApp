@@ -42,6 +42,8 @@ fun ProfileScreen(
     modifier: Modifier = Modifier,
     /** What the account has stored as its name ("" when unknown): "Edit name" starts from it, never from the fallback "You". */
     storedName: String = me.displayName,
+    /** Opens "My QR code"; null hides the row. */
+    onMyQr: (() -> Unit)? = null,
 ) {
     var confirm by rememberSaveable { mutableStateOf<String?>(null) }
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -56,6 +58,15 @@ fun ProfileScreen(
                 headlineContent = { Text(me.displayName, style = MaterialTheme.typography.titleMedium) },
                 supportingContent = { Text(usernameText(me.username)) },
                 trailingContent = { Icon(painterResource(R.drawable.ic_edit), contentDescription = null) },
+            )
+            HorizontalDivider()
+        }
+        if (onMyQr != null) item {
+            ListItem(
+                modifier = Modifier.clickable(role = Role.Button, onClick = onMyQr),
+                leadingContent = { Icon(painterResource(R.drawable.ic_qr_scan), contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                headlineContent = { Text(stringResource(R.string.my_qr_title)) },
+                trailingContent = { Icon(painterResource(R.drawable.ic_chevron), contentDescription = null) },
             )
             HorizontalDivider()
         }
