@@ -53,6 +53,14 @@ interface DeliveryApi {
     suspend fun conversation(id: String): ConversationInfo
     suspend fun postCommit(id: String, epoch: Long, commit: ByteArray, welcome: ByteArray?, addDevices: List<String>, removeDevices: List<String>): Long
     suspend fun postMessage(id: String, epoch: Long, ciphertext: ByteArray, escrow: ByteArray?, clientMsgId: String): Long
+
+    /**
+     * Like the five-argument form, with the time (epoch milliseconds) after which the server may delete undelivered
+     * copies (`expiresAt`, a disappearing message). The default ignores it, for implementations that predate it.
+     */
+    suspend fun postMessage(
+        id: String, epoch: Long, ciphertext: ByteArray, escrow: ByteArray?, clientMsgId: String, expiresAtMs: Long?,
+    ): Long = postMessage(id, epoch, ciphertext, escrow, clientMsgId)
     suspend fun inbox(after: Long?, limit: Int = 100): InboxPage
     suspend fun ack(upTo: Long)
     suspend fun devices(): List<DeviceRecord>

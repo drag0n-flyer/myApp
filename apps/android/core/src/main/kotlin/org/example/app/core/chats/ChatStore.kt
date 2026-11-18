@@ -98,6 +98,19 @@ interface ChatStore {
     /** The chat with this contact, created empty if there is none yet. */
     fun ensureChat(contactId: String): String
 
+    // People base (disappearing messages and profiles). Defaults suit stores that keep none of it.
+
+    /** The chat's disappearing-message timer in seconds; 0 is off. */
+    fun timerSeconds(chatId: String): Int = 0
+    /** Sets the chat's timer on this device. Later messages sent here carry it as `ttl`. Sending the `timer` message is the caller's. */
+    fun setTimer(chatId: String, seconds: Int) {}
+    /** Removes every message that expired by [now] (rows, files, search entries) and returns their IDs, to cancel their notifications. */
+    fun sweepExpired(now: Long): List<String> = emptyList()
+    /** The newest profile a contact sent, or null. */
+    fun profile(accountId: String): org.example.app.core.people.Profile? = null
+    /** Keeps the profile only when [ver] is higher than the stored one; returns whether it was kept. */
+    fun saveProfile(accountId: String, name: String, photo: ByteArray?, ver: Int): Boolean = false
+
     /** Custom folders only; All and Unread are fixed. */
     fun addFolder(name: String, chatIds: Set<String>): ChatFolder
     fun renameFolder(id: String, name: String)

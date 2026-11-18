@@ -3,6 +3,7 @@ package org.example.app.messaging.sync
 import java.util.Locale
 import org.example.app.contracts.Incoming
 import org.example.app.contracts.MemberKey
+import org.example.app.core.people.Expiry
 import org.example.app.messaging.ChatMapping
 import org.example.app.messaging.content.Att
 import org.example.app.messaging.content.ContentCodec
@@ -141,7 +142,14 @@ class IncomingHandler(
         val envelope = ContentCodec.decode(plaintext)
         val chatId = conversation.chatId
 
-        fun store(replyTo: String? = null, folded: String = ""): AppliedResult {
+        // A message whose `at + ttl` has passed (the device was offline) is dropped before anything is stored or downloaded.
+        fun expiry(ttl: Int?): Long? = Expiry.expiresAt(envelope.at, ttl?.toLong())
+        fun expired(ttl: Int?) = Expiry.isExpired(expiry(ttl), clock.now())
+
+        fun store(
+            replyTo: String? = null, folded: String = "", ttl: Int? = null, caption: String? = null, linkPreview: String? = null,
+        ): AppliedResult {
+            if (expired(ttl)) return AppliedResult.Ignored
             // IDs with a local meaning (`call-…`, `join-failed-…`) are never taken from a peer: a peer could forge a
             // call line or a placeholder in its own chat.
             if (ChatMapping.isReservedId(envelope.id)) return AppliedResult.Ignored
@@ -149,14 +157,15 @@ class IncomingHandler(
                 id = envelope.id.ifEmpty { "unsupported-${raw.cursor}" }, chatId = chatId, conversationId = conversation.serverId,
                 senderAccount = account, senderDevice = device, sentAt = envelope.at, receivedAt = clock.now(), envelope = plaintext,
                 status = if (account == me.accountId) "sent" else "delivered", replyTo = replyTo, folded = folded,
+                expiresAt = expiry(ttl), caption = caption, linkPreview = linkPreview,
             )
             if (!repo.insertMessage(record)) return AppliedResult.Ignored
             bumpChat(record, repo)
             return AppliedResult.Stored(record)
         }
 
-        fun media(att: Att, kind: String, reply: String?, folded: String = ""): AppliedResult {
-            val result = store(reply, folded)
+        fun media(att: Att, kind: String, reply: String?, folded: String = "", ttl: Int? = null, caption: String? = null): AppliedResult {
+            val result = store(reply, folded, ttl, caption)
             if (result is AppliedResult.Stored) {
                 repo.upsertAttachment(
                     AttachmentRecord(att.id, result.message.id, kind, att.key, att.dg, att.sz, att.csz, AttachmentState.REMOTE, 0, null),
@@ -166,11 +175,14 @@ class IncomingHandler(
         }
 
         return when (envelope) {
-            is ContentEnvelope.Text -> store(envelope.r, fold(envelope.t))
-            is ContentEnvelope.Photo -> media(envelope.a, "photo", envelope.r)
-            is ContentEnvelope.Voice -> media(envelope.a, "voice", envelope.r)
-            is ContentEnvelope.File -> media(envelope.a, "file", envelope.r, fold(envelope.name))
-            is ContentEnvelope.Unknown -> store()
+            is ContentEnvelope.Text ->
+                store(envelope.r, fold(envelope.t), envelope.ttl, linkPreview = envelope.lp?.let(ContentCodec::linkPreviewJson))
+            is ContentEnvelope.Photo -> media(envelope.a, "photo", envelope.r, envelope.c?.let(fold).orEmpty(), envelope.ttl, envelope.c)
+            is ContentEnvelope.Voice -> media(envelope.a, "voice", envelope.r, ttl = envelope.ttl)
+            is ContentEnvelope.File ->
+                media(envelope.a, "file", envelope.r, fold(listOfNotNull(envelope.name, envelope.c).joinToString(" ")), envelope.ttl, envelope.c)
+            // The people kinds are never stored as messages: a bad one (it decodes as Unknown with its own kind) is dropped too.
+            is ContentEnvelope.Unknown -> if (envelope.kind in PEOPLE_KINDS) AppliedResult.Ignored else store()
             is ContentEnvelope.Edit -> {
                 val message = repo.message(envelope.target)
                 val old = message?.let { ContentCodec.decode(it.envelope) }
@@ -195,13 +207,44 @@ class IncomingHandler(
                 applyReceipt(envelope.s, envelope.ids, account, chatId, repo)
                 AppliedResult.Ignored
             }
-            is ContentEnvelope.Typing, is ContentEnvelope.Presence, is ContentEnvelope.Profile, is ContentEnvelope.Timer -> AppliedResult.Ignored // handled in the behaviour step
+            // Typing and presence travel only in the ephemeral frame. One that arrives as a stored message is dropped.
+            is ContentEnvelope.Typing, is ContentEnvelope.Presence -> AppliedResult.Ignored
+            is ContentEnvelope.Profile -> {
+                // My own profile is kept in the settings; the sender is the MLS credential, never a field of the message.
+                if (account != me.accountId) repo.saveProfile(account, envelope.name, envelope.photo, envelope.ver)
+                AppliedResult.Ignored
+            }
+            is ContentEnvelope.Timer -> {
+                applyTimer(envelope, account, chatId, repo)
+                AppliedResult.Ignored
+            }
             is ContentEnvelope.CallSig -> AppliedResult.CallSignal(envelope.p, sender)
             is ContentEnvelope.Mode -> {
                 ModePin.pin(repo, conversation, envelope.m, clock.now(), log)
                 AppliedResult.Ignored
             }
         }
+    }
+
+    /**
+     * Sets the chat's timer and adds one system line when it changed. A timer older than the last one applied is
+     * ignored, so a late message cannot undo a newer choice. The line is a `system` row, never unread.
+     */
+    private fun applyTimer(timer: ContentEnvelope.Timer, account: String, chatId: String, repo: Repository) {
+        val key = "timer-at:$chatId"
+        val last = repo.get(key)?.decodeToString()?.toLongOrNull()
+        if (last != null && timer.at < last) return
+        repo.set(key, timer.at.toString().encodeToByteArray())
+        if (repo.timerSeconds(chatId) == timer.seconds) return
+        repo.setTimer(chatId, timer.seconds)
+        val nameField = if (account == me.accountId) "" else ",\"name\":" + kotlinx.serialization.json.JsonPrimitive(account).toString()
+        val body = "{\"timer\":{\"seconds\":${timer.seconds}$nameField}}"
+        repo.insertMessage(
+            MessageRecord(
+                id = "sys-timer-${timer.id}", chatId = chatId, conversationId = null, senderAccount = ChatMapping.SYSTEM_SENDER,
+                senderDevice = null, sentAt = timer.at, receivedAt = clock.now(), envelope = body.encodeToByteArray(), status = "sent",
+            ),
+        )
     }
 
     /** A receipt counts when it is about my own messages (from the peer), or comes from one of my own devices. */
@@ -227,3 +270,6 @@ class IncomingHandler(
     }
 }
 
+
+/** Envelope kinds that are never a chat row, valid or not. */
+private val PEOPLE_KINDS = setOf("typing", "presence", "timer", "profile")

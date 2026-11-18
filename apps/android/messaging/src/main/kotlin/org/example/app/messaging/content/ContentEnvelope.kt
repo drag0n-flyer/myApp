@@ -211,6 +211,9 @@ object ContentCodec {
         return LinkPreview(url, title, desc, img)
     }
 
+    /** The preview as the JSON stored in `messages.link_preview`. */
+    fun linkPreviewJson(lp: LinkPreview): String = lpJson(lp).toString()
+
     private fun lpJson(lp: LinkPreview): JsonElement = buildJsonObject {
         put("url", lp.url); put("title", lp.title); lp.desc?.let { put("desc", it) }; lp.img?.let { put("img", b64(it)) }
     }

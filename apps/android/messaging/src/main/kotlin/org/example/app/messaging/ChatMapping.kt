@@ -60,7 +60,7 @@ internal object ChatMapping {
             id = record.id, senderId = record.senderAccount, sentAt = Instant.ofEpochMilli(record.sentAt),
             content = MessageContent.Unsupported, status = status(record.status, showRead), replyToId = record.replyTo,
             reactions = reactions.map { it.emoji }, editedAt = record.editedAt?.let(Instant::ofEpochMilli),
-            media = null, undecryptable = record.undecryptable,
+            media = null, undecryptable = record.undecryptable, expiresAt = record.expiresAt?.let(Instant::ofEpochMilli),
         )
         if (record.deleted) return message.copy(content = MessageContent.Deleted, reactions = emptyList())
         if (record.undecryptable) return message
@@ -94,6 +94,10 @@ internal object ChatMapping {
         obj["deviceRemoved"]?.jsonObject?.let { return SystemEvent.DeviceRemoved(name(it)) }
         if ("safetyNumberChanged" in obj) return SystemEvent.SafetyNumberChanged
         if ("messagesPaused" in obj) return SystemEvent.MessagesPaused
+        obj["timer"]?.jsonObject?.let { t ->
+            val seconds = t["seconds"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: return null
+            return SystemEvent.Timer(seconds, name(t))
+        }
         return null
     }
 

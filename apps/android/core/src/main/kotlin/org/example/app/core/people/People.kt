@@ -27,3 +27,10 @@ enum class TimerChoice(val seconds: Int) {
 object ProfileMerge {
     fun accept(current: Int?, incoming: Int): Boolean = incoming >= 1 && (current == null || incoming > current)
 }
+
+/** What a contact says about themselves. [photo] is a JPEG of at most 24,576 bytes. */
+class Profile(val accountId: String, val name: String, val photo: ByteArray?, val ver: Int) {
+    override fun equals(other: Any?) = other is Profile && accountId == other.accountId && name == other.name &&
+        (photo contentEquals other.photo) && ver == other.ver
+    override fun hashCode() = accountId.hashCode() + ver
+}

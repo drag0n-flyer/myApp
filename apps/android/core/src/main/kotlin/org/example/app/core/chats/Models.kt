@@ -24,6 +24,8 @@ sealed interface SystemEvent {
     data class DeviceRemoved(val name: String?) : SystemEvent
     data object SafetyNumberChanged : SystemEvent
     data object MessagesPaused : SystemEvent
+    /** The disappearing-message timer was set to [seconds] (0 = off) by [name]; a null name is "You". */
+    data class Timer(val seconds: Int, val name: String?) : SystemEvent
 }
 
 sealed interface MessageContent {
@@ -91,6 +93,8 @@ data class Message(
     val editedAt: Instant? = null,
     val media: MediaState? = null,
     val undecryptable: Boolean = false,
+    /** When the message disappears; null when it does not. */
+    val expiresAt: Instant? = null,
 ) {
     /** For the chat list; worked out once per message. */
     val preview: MessagePreview by lazy(LazyThreadSafetyMode.PUBLICATION) {
@@ -114,6 +118,13 @@ data class Message(
                     if (e.name == null) MessagePreview.Resource("system_device_removed_you") else MessagePreview.Resource("system_device_removed", listOf(e.name))
                 SystemEvent.SafetyNumberChanged -> MessagePreview.Resource("system_safety_number_changed")
                 SystemEvent.MessagesPaused -> MessagePreview.Resource("system_messages_paused")
+                // The strings for these keys come with the disappearing-messages screens (task P3).
+                is SystemEvent.Timer -> when {
+                    e.seconds == 0 && e.name == null -> MessagePreview.Resource("system_timer_off_you")
+                    e.seconds == 0 -> MessagePreview.Resource("system_timer_off", listOf(e.name!!))
+                    e.name == null -> MessagePreview.Resource("system_timer_set_you", listOf(e.seconds.toString()))
+                    else -> MessagePreview.Resource("system_timer_set", listOf(e.name, e.seconds.toString()))
+                }
             }
         }
     }

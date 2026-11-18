@@ -10,6 +10,7 @@ import org.example.app.contracts.DeliveryApi
 import org.example.app.contracts.GroupId
 import org.example.app.contracts.MlsEngine
 import org.example.app.contracts.ServerException
+import org.example.app.core.people.Expiry
 import org.example.app.messaging.content.ContentCodec
 import org.example.app.messaging.content.ContentEnvelope
 import org.example.app.messaging.content.ReceiptKind
@@ -94,17 +95,22 @@ class Outbox(
         val now = clock.now()
         val limited = if (envelope is ContentEnvelope.Text) envelope.copy(t = TextLimit.truncate(envelope.t)) else envelope
         require(!limited.isPlaceholder()) { "an attachment without an uploaded id is never queued" }
+        // A caption follows the text-message rule: too long is refused here, never cut.
+        val caption = when (limited) { is ContentEnvelope.Photo -> limited.c; is ContentEnvelope.File -> limited.c; else -> null }
+        require(caption == null || TextLimit.truncate(caption) == caption) { "caption over the text limit" }
         val data = ContentCodec.encode(limited)
         val (text, reply) = when (limited) {
             is ContentEnvelope.Text -> limited.t to limited.r
-            is ContentEnvelope.Photo -> "" to limited.r
+            is ContentEnvelope.Photo -> limited.c.orEmpty() to limited.r
             is ContentEnvelope.Voice -> "" to limited.r
-            is ContentEnvelope.File -> limited.name to limited.r
+            is ContentEnvelope.File -> listOfNotNull(limited.name, limited.c).joinToString(" ") to limited.r
             else -> "" to null
         }
         val message = MessageRecord(
             id = limited.id, chatId = chatId, conversationId = null, senderAccount = me.accountId, senderDevice = me.deviceId,
             sentAt = limited.at, receivedAt = now, envelope = data, status = "sending", replyTo = reply, folded = fold(text),
+            expiresAt = expiryOf(limited), caption = caption,
+            linkPreview = (limited as? ContentEnvelope.Text)?.lp?.let(ContentCodec::linkPreviewJson),
         )
         repo.enqueueSend(message, OutboxRecord(limited.id, chatId, data, 0, now))
     }
@@ -127,6 +133,15 @@ class Outbox(
         val stored = repo.message(messageId)?.let { ContentCodec.decode(it.envelope) }
         if (stored != null && stored.isPlaceholder()) return false
         return repo.requeueSend(messageId, clock.now())
+    }
+
+    /** `at + ttl` of a content message, null for everything else. */
+    private fun expiryOf(e: ContentEnvelope): Long? = when (e) {
+        is ContentEnvelope.Text -> Expiry.expiresAt(e.at, e.ttl?.toLong())
+        is ContentEnvelope.Photo -> Expiry.expiresAt(e.at, e.ttl?.toLong())
+        is ContentEnvelope.Voice -> Expiry.expiresAt(e.at, e.ttl?.toLong())
+        is ContentEnvelope.File -> Expiry.expiresAt(e.at, e.ttl?.toLong())
+        else -> null
     }
 
     private fun ContentEnvelope.isPlaceholder(): Boolean = when (this) {
@@ -175,6 +190,11 @@ class Outbox(
         // A read receipt found with the switch off (also when another device turned it off through sync) is dropped,
         // not held: holding it would send it later and block the chat's queue.
         if (envelope is ContentEnvelope.Receipt && envelope.s == ReceiptKind.Read && !readReceiptsEnabled()) {
+            repo.removeOutbox(item.messageId)
+            return true
+        }
+        // A message that has already expired never leaves: the sweep removes its row, and the server would refuse the time.
+        if (Expiry.isExpired(expiryOf(envelope), clock.now())) {
             repo.removeOutbox(item.messageId)
             return true
         }
@@ -301,7 +321,10 @@ class Outbox(
             }
 
             try {
-                server.postMessage(conversation.serverId, encrypted.epoch, encrypted.ciphertext, escrowCopy, envelope.id)
+                val expiresAt = expiryOf(envelope)
+                // Without an expiry the five-argument call is used, exactly as before this existed.
+                if (expiresAt == null) server.postMessage(conversation.serverId, encrypted.epoch, encrypted.ciphertext, escrowCopy, envelope.id)
+                else server.postMessage(conversation.serverId, encrypted.epoch, encrypted.ciphertext, escrowCopy, envelope.id, expiresAt)
                 return
             } catch (e: CancellationException) {
                 throw e
