@@ -88,7 +88,7 @@ public struct ChatHistory: Sendable {
     /// and re-reads the loaded older range so edits, deletes and removals show. The store's copy always wins.
     /// With nothing changed and `refreshOlder` false it reads nothing.
     public mutating func sync(previousNewest: [Message], newest: [Message], refreshOlder: Bool = true,
-                              loader: (String, Int) -> [Message]) {
+                              allowTrim: Bool = false, loader: (String, Int) -> [Message]) {
         guard let first = newest.first else { return }
         if previousNewest == newest && !refreshOlder { return }
         let newestIDs = Set(newest.map(\.id))
@@ -117,16 +117,14 @@ public struct ChatHistory: Sendable {
             }
         }
 
-        if older.count > Self.trimAbove {
-            older = Array(older.suffix(Self.trimTo))
-            pager = HistoryPager()
-        }
+        // Only while the person is at the bottom: trimming removes rows they would be reading.
+        if allowTrim { trimIfNeeded() }
 
         guard refreshOlder, let oldestLoaded = older.first else { return }
         var fresh: [Message] = []
         var before = first.id
         var complete = false
-        for _ in 0..<8 {
+        for _ in 0..<(older.count / Self.refreshPageSize + 3) {
             let limit = min(Self.refreshPageSize, max(1, older.count - fresh.count))
             let page = loader(before, limit)
             fresh = MessageMerge.merged(newest: page, older: fresh)
@@ -140,6 +138,14 @@ public struct ChatHistory: Sendable {
             older = []
             pager = HistoryPager()
         }
+    }
+
+    /// Keeps only the newest `trimTo` older messages when more than `trimAbove` are loaded; paging reloads the rest.
+    /// Call it only while the newest message is on screen (and after a sync, or on returning to the bottom).
+    public mutating func trimIfNeeded() {
+        guard older.count > Self.trimAbove else { return }
+        older = Array(older.suffix(Self.trimTo))
+        pager = HistoryPager()
     }
 
     /// Loads older pages until `targetID` is known. False when history ends first, or after `maxJumpPages`

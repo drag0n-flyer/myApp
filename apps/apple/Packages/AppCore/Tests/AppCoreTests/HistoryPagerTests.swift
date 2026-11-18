@@ -243,17 +243,58 @@ final class ChatHistoryTests: XCTestCase {
         XCTAssertFalse(history.messages(newest: newest).contains { $0.id == "m60" })
     }
 
-    // B-S1: a huge loaded range is trimmed so paging reloads it fresh.
-    func testHugeLoadedRangeIsTrimmed() {
+    /// 1050 older messages loaded, then one arrives.
+    private func hugeRangeThenArrival(allowTrim: Bool) -> (history: ChatHistory, now: [Message], store: MutableStore) {
         let store = MutableStore((1...3000).map(msg))
         var history = ChatHistory()
-        let newest = store.newest(50)
-        for _ in 0..<30 { _ = history.loadPage(newest: newest, loader: store.load) }
-        XCTAssertGreaterThan(history.older.count, 1000)
-        history.sync(previousNewest: newest, newest: newest) { b, l in store.load(b, l) }
+        let previous = store.newest(50)
+        for _ in 0..<21 { _ = history.loadPage(newest: previous, loader: store.load) }
+        XCTAssertEqual(history.older.count, 1050)
+        store.all.append(msg(3001))
+        let now = store.newest(50)
+        history.sync(previousNewest: previous, newest: now, allowTrim: allowTrim) { b, l in store.load(b, l) }
+        return (history, now, store)
+    }
+
+    // The person is reading older messages: nothing may be removed under them.
+    func testHugeLoadedRangeIsKeptWhileAwayFromBottom() {
+        let (history, now, _) = hugeRangeThenArrival(allowTrim: false)
+        assertContiguous(history.messages(newest: now).map(\.id), from: 1901, to: 3001)
+    }
+
+    // B-S1: a huge loaded range is trimmed (at the bottom) so paging reloads it fresh.
+    func testHugeLoadedRangeIsTrimmedAtBottom() {
+        let (history, now, store) = hugeRangeThenArrival(allowTrim: true)
         XCTAssertEqual(history.older.count, 500)
         XCTAssertFalse(history.pager.reachedStart)
-        assertContiguous(history.messages(newest: newest).map(\.id), from: 2451, to: 3000)
+        assertContiguous(history.messages(newest: now).map(\.id), from: 2452, to: 3001)
+        var paged = history
+        XCTAssertEqual(paged.loadPage(newest: now, loader: store.load), 50)
+        assertContiguous(paged.messages(newest: now).map(\.id), from: 2402, to: 3001)
+    }
+
+    func testTrimWhenReturningToBottom() {
+        let result = hugeRangeThenArrival(allowTrim: false)
+        var history = result.history
+        let now = result.now
+        history.trimIfNeeded()
+        XCTAssertEqual(history.older.count, 500)
+        assertContiguous(history.messages(newest: now).map(\.id), from: 2452, to: 3001)
+    }
+
+    // A jump far back survives the next arrival while away from the bottom.
+    func testJumpTargetSurvivesArrivalAwayFromBottom() {
+        let store = MutableStore((1...3000).map(msg))
+        var history = ChatHistory()
+        let previous = store.newest(50)
+        XCTAssertTrue(history.load(until: "m1000", newest: previous, loader: store.load))
+        XCTAssertGreaterThan(history.older.count, 1000)
+        store.all.append(msg(3001))
+        let now = store.newest(50)
+        history.sync(previousNewest: previous, newest: now, allowTrim: false) { b, l in store.load(b, l) }
+        let ids = history.messages(newest: now).map(\.id)
+        XCTAssertTrue(ids.contains("m1000"))
+        assertContiguous(ids, from: Int(ids.first!.dropFirst())!, to: 3001)
     }
 
     // B-S2: a burst too big to close leaves no hole.

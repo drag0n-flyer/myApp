@@ -221,7 +221,11 @@ struct ChatView: View {
                 quoteTapped: { if let id = message.replyToID { jump = JumpRequest(messageID: id) } }
             )
             .onAppear {
-                if message.id == newestID { tracker.setAtBottom(true, newestID: newestID) }
+                if message.id == newestID {
+                    tracker.setAtBottom(true, newestID: newestID)
+                    // Back at the bottom: now it is safe to drop far-away loaded pages.
+                    history.trimIfNeeded()
+                }
                 if let index = indexByID[message.id], history.pager.shouldLoad(oldestVisibleIndex: index) {
                     loadOlder(chat: chat, keeping: message.id, proxy: proxy)
                 }
@@ -275,7 +279,8 @@ struct ChatView: View {
         let changed = chat.messages != lastNewest
         guard changed || needsOlderRefresh else { return }
         var next = history
-        next.sync(previousNewest: lastNewest, newest: chat.messages, refreshOlder: true) { before, limit in
+        next.sync(previousNewest: lastNewest, newest: chat.messages, refreshOlder: true,
+                  allowTrim: tracker.atBottom) { before, limit in
             model.olderMessages(in: chatID, before: before, limit: limit)
         }
         history = next
@@ -298,6 +303,10 @@ struct ChatView: View {
         var trial = history
         guard trial.load(until: id, newest: chat.messages, loader: { before, _ in model.olderMessages(in: chatID, before: before) }) else { return }
         history = trial
+        // We are about to scroll away from the bottom; no trimming until the person is back there.
+        if !chat.messages.contains(where: { $0.id == id }) {
+            tracker.setAtBottom(false, newestID: chat.messages.last?.id)
+        }
         highlightID = id
         Task { @MainActor in withAnimation { proxy.scrollTo(id, anchor: .center) } }
         Task {
