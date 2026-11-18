@@ -36,6 +36,7 @@ struct ContactsContent: View {
     var query: String = ""
     let openChat: (String) -> Void
     @State private var showingAdd = false
+    @State private var linkFromAdd: URL?
 
     private var inviteURL: URL {
         URL(string: "https://\(model.server.host)/invite/\(SampleAccountService.sampleInviteCode)")!
@@ -94,8 +95,10 @@ struct ContactsContent: View {
                 }
             }
         }
-        .sheet(isPresented: $showingAdd) {
-            AddContactView(model: model)
+        .sheet(isPresented: $showingAdd, onDismiss: {
+            if let url = linkFromAdd { linkFromAdd = nil; model.handle(url: url) }
+        }) {
+            AddContactView(model: model, onLink: { linkFromAdd = $0 })
         }
     }
 }
