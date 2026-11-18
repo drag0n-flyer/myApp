@@ -8,7 +8,7 @@ extension LiveChatStore {
     public func memberName(_ accountID: String) -> String {
         if accountID == deps.me.accountID { return me.displayName }
         let lookup = Self.name(of: contactRows[accountID]) ?? ""
-        let name = ProfileDisplay.name(lookup: lookup, profile: profileRows[accountID], nickname: nil)
+        let name = ProfileDisplay.name(lookup: lookup, profile: profileRows[accountID] ?? groupProfileRows[accountID], nickname: nil)
         return name.isEmpty ? Self.unknownMemberName : name
     }
 

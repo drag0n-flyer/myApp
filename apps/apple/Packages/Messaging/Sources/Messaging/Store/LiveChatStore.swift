@@ -39,6 +39,8 @@ public final class LiveChatStore: ChatStore {
     var contactRows: [String: ContactRecord] = [:]
     /// What contacts said about themselves (`profile`), by account, read at every reload.
     var profileRows: [String: StoredProfile] = [:]
+    /// Profiles of group members, for group chats only (sender names and tiles).
+    var groupProfileRows: [String: StoredProfile] = [:]
     /// Tests only: replaces how the own profile is queued for a chat.
     var profileEnqueueOverride: ((ContentEnvelope.Body, String) throws -> Void)?
     private var allChats: [Chat] = []
@@ -169,12 +171,15 @@ public final class LiveChatStore: ChatStore {
     private func reload() {
         let rows = (try? repo.contacts()) ?? []
         contactRows = Dictionary(rows.map { ($0.accountID, $0) }, uniquingKeysWith: { $1 })
-        // A message request is not shown by its profile (name or photo) until it is accepted.
-        // A member of a group is shown by the profile they sent, contact or not.
+        // A message request is not shown by its profile (name or photo) until it is accepted. A member of a group is
+        // shown by the profile they sent in that group's chat only (`groupProfileRows`), contact or not.
+        let all = (try? repo.profiles()) ?? []
+        func stored(_ r: ProfileRecord) -> StoredProfile { StoredProfile(accountID: r.accountID, name: r.name, photo: r.photo, ver: r.ver) }
+        profileRows = Dictionary(all.filter { contactRows[$0.accountID]?.isContact == true }.map { ($0.accountID, stored($0)) },
+                                 uniquingKeysWith: { $1 })
         let groupAccounts = Set((try? repo.groupMemberAccounts()) ?? [])
-        profileRows = Dictionary(((try? repo.profiles()) ?? []).filter { contactRows[$0.accountID]?.isContact == true || groupAccounts.contains($0.accountID) }.map {
-            ($0.accountID, StoredProfile(accountID: $0.accountID, name: $0.name, photo: $0.photo, ver: $0.ver))
-        }, uniquingKeysWith: { $1 })
+        groupProfileRows = Dictionary(all.filter { groupAccounts.contains($0.accountID) }.map { ($0.accountID, stored($0)) },
+                                      uniquingKeysWith: { $1 })
         if let mine = contactRows[deps.me.accountID] {
             // No stored name shows the placeholder; the placeholder itself is never stored.
             let name = DisplayNameRule.forDisplay(mine.displayName, fallback: "")

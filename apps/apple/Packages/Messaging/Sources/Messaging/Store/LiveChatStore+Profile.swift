@@ -26,7 +26,10 @@ extension LiveChatStore {
     /// not pass `ProfilePhotoRule`.
     public func profilePhoto(for accountID: String) -> Data? {
         if accountID == deps.me.accountID { return myPhoto }
-        return ProfileDisplay.photo(profile: profileRows[accountID])
+        if let row = profileRows[accountID] { return ProfileDisplay.photo(profile: row) }
+        // A tile is shown without its chat: a group member's photo only when no message request from them is open.
+        if ((try? deps.repo.chat(id: accountID)) ?? nil)?.isRequest == true { return nil }
+        return ProfileDisplay.photo(profile: groupProfileRows[accountID])
     }
 
     /// Publishes a new version when the own name or photo is not what the last version said, then queues the current
