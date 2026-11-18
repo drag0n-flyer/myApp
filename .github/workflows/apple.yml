@@ -286,7 +286,7 @@ jobs:
   # and only on main, pull requests and manual runs.
   ios:
     needs: changes
-    if: needs.changes.outputs.app == 'true' && (github.ref == 'refs/heads/main' || github.event_name != 'push')
+    if: needs.changes.outputs.app == 'true' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/b1-apple-calls' || github.event_name != 'push')
     runs-on: macos-26
     timeout-minutes: 60
     steps:
@@ -311,7 +311,7 @@ jobs:
 
   macos:
     needs: changes
-    if: needs.changes.outputs.app == 'true' && (github.ref == 'refs/heads/main' || github.event_name != 'push')
+    if: needs.changes.outputs.app == 'true' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/b1-apple-calls' || github.event_name != 'push')
     runs-on: macos-26
     timeout-minutes: 60
     steps:
