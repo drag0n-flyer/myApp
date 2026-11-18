@@ -177,6 +177,7 @@ class InMemoryRepository : Repository {
 
     // groups
     override fun upsertGroup(chatId: String, conversationId: String, title: String?, now: Long) = tx {
+        GroupStoreRules.requireGroup(conversationId, title)
         val existing = s.chats[chatId]
         require(existing == null || existing.kind == ChatKind.GROUP) { "not a group chat" }
         require(s.chats.values.none { it.id != chatId && it.conversationId == conversationId }) { "conversation already has a chat" }

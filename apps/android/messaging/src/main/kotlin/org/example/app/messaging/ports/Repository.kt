@@ -78,6 +78,14 @@ object GroupStoreRules {
         }
     }
 
+    private val conversationIdRule = Regex("[A-Za-z0-9_-]+")
+
+    /** A conversation ID of letters, digits, `_` and `-` only; a title, when given, that the name rule returns unchanged. */
+    fun requireGroup(conversationId: String, title: String?) {
+        require(conversationIdRule.matches(conversationId)) { "Bad conversation ID" }
+        if (title != null) require(org.example.app.core.groups.GroupNameRule.clean(title) == title) { "Bad group name" }
+    }
+
     /** The name must pass the group name rule as it is; a photo is a JPEG of at most 24,576 bytes. */
     fun requireInfo(title: String, photo: ByteArray?) {
         require(org.example.app.core.groups.GroupNameRule.clean(title) == title) { "Bad group name" }

@@ -124,7 +124,12 @@ class RoomRepository(
     }
 
     // groups
-    override fun upsertGroup(chatId: String, conversationId: String, title: String?, now: Long) = transaction {
+    override fun upsertGroup(chatId: String, conversationId: String, title: String?, now: Long) {
+        GroupStoreRules.requireGroup(conversationId, title)
+        upsertGroupChecked(chatId, conversationId, title, now)
+    }
+
+    private fun upsertGroupChecked(chatId: String, conversationId: String, title: String?, now: Long) = transaction {
         val existing = chats.get(chatId)
         if (existing == null) {
             chats.insertNew(

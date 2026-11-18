@@ -43,6 +43,12 @@ class InMemoryGroupStoreTest {
         assertFailsWith<IllegalArgumentException> { repo.upsertGroup("chat1", "c9", "X", 1) }
     }
 
+    @Test fun upsertGroupRefusesABadTitleOrConversationId() {
+        assertFailsWith<IllegalArgumentException> { repo.upsertGroup("g:x", "x", " padded ", 1) }
+        assertFailsWith<IllegalArgumentException> { repo.upsertGroup("g:x/y", "x/y", "Ok", 1) }
+        assertNull(repo.chat("g:x"))
+    }
+
     @Test fun receiptsAreUniquePerMemberAndKind() {
         repo.insertMessage(MessageRecord("m1", "g:c1", null, "me", null, 1, 1, byteArrayOf(1), "sent"))
         assertTrue(repo.addReceipt("m1", "bob", "delivered", 100))

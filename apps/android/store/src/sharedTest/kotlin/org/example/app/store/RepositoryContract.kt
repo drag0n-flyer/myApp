@@ -626,6 +626,18 @@ abstract class RepositoryContract {
         assertNull(repo.chat("g:other"))
     }
 
+    @Test fun upsertGroupRefusesABadTitleOrConversationId() {
+        assertFailsWith<IllegalArgumentException> { repo.upsertGroup("g:x", "x", "", 1) }
+        assertFailsWith<IllegalArgumentException> { repo.upsertGroup("g:x", "x", " padded ", 1) }
+        assertFailsWith<IllegalArgumentException> { repo.upsertGroup("g:x", "x", "a".repeat(51), 1) }
+        assertFailsWith<IllegalArgumentException> { repo.upsertGroup("g:x/y", "x/y", "Ok", 1) }
+        assertFailsWith<IllegalArgumentException> { repo.upsertGroup("g:", "", "Ok", 1) }
+        assertFailsWith<IllegalArgumentException> { repo.upsertGroup("g:x", "x y", "Ok", 1) }
+        assertNull(repo.chat("g:x"))
+        repo.upsertGroup("g:A-b_9", "A-b_9", null, 1)
+        assertEquals("group", repo.chat("g:A-b_9")!!.kind)
+    }
+
     @Test fun setGroupMembersReturnsTheOldListAndKeepsTheHighestVersion() {
         newGroup()
         assertEquals(emptyList(), repo.setGroupMembers("g:c1", listOf(member("b"), member("a", "owner")), 0))
