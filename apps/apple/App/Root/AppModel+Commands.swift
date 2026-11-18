@@ -44,11 +44,9 @@ extension AppModel {
         }
     }
 
-    /// Search in the chat that is open (⌘F). The in-chat search task replaces the body with its own request; until
-    /// then it asks the chat screen to open its search field the way chat info's Search button does.
+    /// Search in the chat that is open (⌘F): the chat screen opens its search bar.
     func requestSearchInOpenChat() {
-        guard let id = onScreenChatID else { return }
-        chatSearchRequest = id
+        openSearchInOpenChat()
     }
 
     private func openAdjacentChat(step: Int) {
