@@ -7,26 +7,29 @@ import android.provider.MediaStore
 import android.webkit.MimeTypeMap
 import java.io.File
 import java.io.IOException
-import org.example.app.media.VideoMeta
+import org.example.app.core.chats.ChatMedia
 
 /**
  * Saves a decrypted photo or video to the device's Pictures or Movies folder through `MediaStore` (no permission is needed
  * to add a file on Android 10 and later). Blocking: call it off the main thread. The caller closes (deletes) [file].
  */
 object MediaSaver {
-    /** What the bytes are: an image type the platform decodes, a video the platform reads, or null. */
-    internal fun kindOf(file: File): Pair<String, Boolean>? {
+    /**
+     * What the bytes are, as (mime, isVideo). A video message ([videoName] is its file name) is a video with the mime and
+     * extension its name gives; anything else is an image type the platform decodes, or null.
+     */
+    internal fun kindOf(file: File, videoName: String? = null): Pair<String, Boolean>? {
+        if (videoName != null) return ChatMedia.videoMime(videoName) to true
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.path, bounds)
         if (bounds.outWidth > 0 && bounds.outMimeType != null) return bounds.outMimeType!! to false
-        if (VideoMeta.probe(file) != null) return "video/mp4" to true
         return null
     }
 
     /** True when it was saved. A file that is neither a photo nor a video, or a store that refuses, is false. */
-    fun save(context: Context, file: File, now: Long = System.currentTimeMillis()): Boolean {
-        val (mime, video) = kindOf(file) ?: return false
-        val extension = MimeTypeMap.getSingleton().getExtensionFromMimeType(mime) ?: if (video) "mp4" else "jpg"
+    fun save(context: Context, file: File, videoName: String? = null, now: Long = System.currentTimeMillis()): Boolean {
+        val (mime, video) = kindOf(file, videoName) ?: return false
+        val extension = if (video) ChatMedia.videoExtension(videoName.orEmpty()) else MimeTypeMap.getSingleton().getExtensionFromMimeType(mime) ?: "jpg"
         val collection = if (video) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, "${if (video) "VID" else "IMG"}_$now.$extension")

@@ -23,12 +23,19 @@ object ChatMedia {
         else -> "mp4"
     }
 
-    /** The name a sent video travels under: the picker's name when it has a video extension, else with the extension its mime gives (mp4 by default). */
-    fun videoFileName(displayName: String?, mime: String?): String {
-        val name = displayName?.trim().orEmpty()
-        if (name.isEmpty()) return "video." + extensionForMime(mime)
-        return if (extensionOf(name) in EXTENSIONS) name else name.trimEnd('.') + "." + extensionForMime(mime)
+    /**
+     * The name a sent video travels under: generic, `video-<8 hex>.<ext>`, never the picker's own name (it can reveal the
+     * device and the time). The extension is the picker name's when it is a video one, else the mime's (mp4 by default).
+     */
+    fun videoFileName(displayName: String?, mime: String?, hex: String = randomHex()): String {
+        val ext = displayName?.trim()?.let { extensionOf(it) }?.takeIf { it in EXTENSIONS } ?: extensionForMime(mime)
+        return "video-$hex.$ext"
     }
+
+    private fun randomHex(): String = java.util.UUID.randomUUID().toString().replace("-", "").take(8)
+
+    /** The extension a saved video keeps: its name's when it is a video one, else mp4. */
+    fun videoExtension(name: String): String = extensionOf(name)?.takeIf { it in EXTENSIONS } ?: "mp4"
 
     /** The mime a video with this name is sent with. */
     fun videoMime(name: String): String = when (extensionOf(name)) {

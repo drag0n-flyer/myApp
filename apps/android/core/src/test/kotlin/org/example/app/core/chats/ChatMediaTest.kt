@@ -18,17 +18,22 @@ class ChatMediaTest {
         assertFalse(ChatMedia.isVideo("report.pdf", "application/pdf"))
     }
 
-    @Test fun aVideoGetsARealNameAndMime() {
-        assertEquals("holiday.mov", ChatMedia.videoFileName("holiday.mov", "video/quicktime"))
-        assertEquals("holiday.mp4", ChatMedia.videoFileName("holiday", "video/mp4"))
-        assertEquals("video.mov", ChatMedia.videoFileName(null, "video/quicktime"))
-        assertEquals("video.webm", ChatMedia.videoFileName("  ", "video/webm"))
-        assertEquals("video.mp4", ChatMedia.videoFileName(null, null))
-        assertEquals("video.mp4", ChatMedia.videoFileName(null, "video/unknown"))
-        assertEquals("clip.mkv", ChatMedia.videoFileName("clip.mkv", null))
+    @Test fun aVideoTravelsUnderAGenericNameWithTheRightExtension() {
+        // The picker's name (it can reveal the device and the time) is never used; only its extension is.
+        assertEquals("video-1a2b3c4d.mov", ChatMedia.videoFileName("PXL_20260101_120000.MOV", "video/quicktime", "1a2b3c4d"))
+        assertEquals("video-1a2b3c4d.mp4", ChatMedia.videoFileName("holiday", "video/mp4", "1a2b3c4d"))
+        assertEquals("video-1a2b3c4d.mov", ChatMedia.videoFileName(null, "video/quicktime", "1a2b3c4d"))
+        assertEquals("video-1a2b3c4d.webm", ChatMedia.videoFileName("  ", "video/webm", "1a2b3c4d"))
+        assertEquals("video-1a2b3c4d.mp4", ChatMedia.videoFileName(null, null, "1a2b3c4d"))
+        assertEquals("video-1a2b3c4d.mp4", ChatMedia.videoFileName(null, "video/unknown", "1a2b3c4d"))
+        assertEquals("video-1a2b3c4d.mkv", ChatMedia.videoFileName("clip.mkv", null, "1a2b3c4d"))
+        assertTrue(Regex("video-[0-9a-f]{8}\\.mp4").matches(ChatMedia.videoFileName(null, null)))
         assertEquals("video/quicktime", ChatMedia.videoMime("a.MOV"))
         assertEquals("video/mp4", ChatMedia.videoMime("a"))
         assertEquals("video/3gpp", ChatMedia.videoMime("a.3gp"))
+        assertEquals("mov", ChatMedia.videoExtension("a.MOV"))
+        assertEquals("mp4", ChatMedia.videoExtension("a.bin"))
+        assertEquals("mp4", ChatMedia.videoExtension("a"))
     }
 
     @Test fun aFileContentIsAVideoByItsOwnNameAndMime() {

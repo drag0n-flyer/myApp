@@ -150,11 +150,8 @@ class LiveChatStore(
     onEscrowRejected: () -> Unit = {},
 ) : ChatStore, CallSignalSealer by sealer {
 
-    /** Every time this store takes is later than the last one, so messages made one after the other keep that order. */
-    private val storeClock = object : Clock {
-        private var last = Long.MIN_VALUE
-        override fun now(): Long = synchronized(this) { maxOf(clock.now(), last + 1).also { last = it } }
-    }
+    /** Messages made one after the other keep their order, and the time never runs ahead of the device clock for long. */
+    private val storeClock: Clock = MonotonicClock(clock)
 
     val outbox = Outbox(
         device, mls, server, repo, lock, storeClock, conversations, escrow, syncOnce = { inbox.sync() },
@@ -185,6 +182,8 @@ class LiveChatStore(
         if (job != null) {
             // The job removes everything itself when it sees the cancellation.
             cancelled += messageId
+            // A cancel that lost the race (the job finished without seeing it) leaves nothing behind.
+            job.invokeOnCompletion { cancelled -= messageId }
             job.cancel()
         } else {
             removeUnsent(messageId)
@@ -768,9 +767,10 @@ class LiveChatStore(
                 if (File(pending.path).isFile) throw e
                 null
             }
-            if (fresh != null && !currentCoroutineContext().isActive) {
-                // Cancelled while it was being prepared (a blocking step that cannot stop half way): what it made goes too.
-                if (isInsideTemp(fresh.file) || isInside(fresh.file, pendingDir(id))) fresh.file.delete()
+            if (!currentCoroutineContext().isActive) {
+                // Cancelled while it was being prepared (a blocking step that cannot stop half way): what it made goes too,
+                // and an empty result is not "unreadable".
+                if (fresh != null && (isInsideTemp(fresh.file) || isInside(fresh.file, pendingDir(id)))) fresh.file.delete()
                 throw CancellationException("cancelled while preparing")
             }
             if (fresh == null) {

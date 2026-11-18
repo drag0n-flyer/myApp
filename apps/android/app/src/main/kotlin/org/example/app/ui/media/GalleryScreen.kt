@@ -134,7 +134,7 @@ fun GalleryScreen(
     }
     viewing?.let { id ->
         val items = remember(media) { ChatMediaIndex.viewerItems(media).let { all -> if (all.any { it.id == id }) all else all + ViewerItem(id, false) } }
-        MediaViewerScreen(items, id, opener, onDismiss = { viewing = null }, onShare = actions::sharePhoto, onSave = actions::save)
+        MediaViewerScreen(items, id, opener, onDismiss = { viewing = null }, onShare = actions::sharePhoto, onSave = { actions.save(it.id, it.videoName) })
     }
 }
 

@@ -84,7 +84,7 @@ fun MediaViewerScreen(
     opener: AttachmentOpener?,
     onDismiss: () -> Unit,
     onShare: (messageId: String) -> Unit,
-    onSave: suspend (messageId: String) -> Boolean,
+    onSave: suspend (ViewerItem) -> Boolean,
 ) {
     if (items.isEmpty()) return
     val messageIds = items.map { it.id }
@@ -111,7 +111,7 @@ fun MediaViewerScreen(
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     IconButton(
-                        onClick = { scope.launch { saveResult = if (onSave(current)) R.string.media_saved else R.string.media_save_failed } },
+                        onClick = { scope.launch { saveResult = if (onSave(items[pager.currentPage.coerceIn(0, items.lastIndex)])) R.string.media_saved else R.string.media_save_failed } },
                         colors = colors,
                     ) {
                         Icon(painterResource(R.drawable.ic_download), contentDescription = stringResource(R.string.media_save))

@@ -8,7 +8,8 @@ import org.example.app.core.chats.isVideo
 import org.example.app.media.VideoMeta
 
 /** One page of the viewer: a message's file, and whether it plays as a video. */
-data class ViewerItem(val id: String, val video: Boolean)
+/** [videoName] is the video file's name (its extension tells Save the type); null for a photo. */
+data class ViewerItem(val id: String, val video: Boolean, val videoName: String? = null)
 
 /** The photos, videos and files of one chat, read from the whole history for the viewer and the gallery. */
 object ChatMediaIndex {
@@ -41,7 +42,7 @@ object ChatMediaIndex {
     fun isLocal(message: Message): Boolean = message.media?.phase is MediaState.Phase.Local
 
     /** What the viewer swipes over: photos and videos that are on this device. */
-    fun viewerItems(media: List<Message>): List<ViewerItem> = media.filter { isMedia(it) && isLocal(it) }.map { ViewerItem(it.id, isVideo(it)) }
+    fun viewerItems(media: List<Message>): List<ViewerItem> = media.filter { isMedia(it) && isLocal(it) }.map { ViewerItem(it.id, isVideo(it), (it.content as? MessageContent.File)?.name?.takeIf { _ -> isVideo(it) }) }
 }
 
 /** A picture to show for a downloaded photo (decoded) or video (a frame of it, with its length). Blocking: call it off the main thread. */

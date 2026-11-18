@@ -42,10 +42,10 @@ class MediaActions(
     fun sharePhoto(messageId: String) = hand(messageId, null, view = false)
 
     /** Saves the photo or video to the device's gallery. False when it could not be opened or the device refused. */
-    suspend fun save(messageId: String): Boolean {
+    suspend fun save(messageId: String, videoName: String? = null): Boolean {
         val opened = opener?.openOrNull(messageId) ?: return false
         return try {
-            withContext(Dispatchers.IO) { MediaSaver.save(context, opened.file) }
+            withContext(Dispatchers.IO) { MediaSaver.save(context, opened.file, videoName) }
         } finally {
             withContext(NonCancellable + Dispatchers.IO) { opened.close() }
         }

@@ -455,7 +455,7 @@ fun ChatScreen(
             // Every photo and video of the chat that is on this device, in order, starting at the tapped one.
             val items by produceState<List<ViewerItem>?>(null, id) { value = viewModel.viewerItems().let { all -> if (all.any { it.id == id }) all else all + ViewerItem(id, false) } }
             items?.let {
-                MediaViewerScreen(it, id, opener, onDismiss = { viewingPhoto = null }, onShare = mediaActions::sharePhoto, onSave = mediaActions::save)
+                MediaViewerScreen(it, id, opener, onDismiss = { viewingPhoto = null }, onShare = mediaActions::sharePhoto, onSave = { mediaActions.save(it.id, it.videoName) })
             }
         }
         if (previewItems.isNotEmpty()) {

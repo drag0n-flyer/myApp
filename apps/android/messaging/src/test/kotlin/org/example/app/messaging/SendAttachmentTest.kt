@@ -552,12 +552,12 @@ class SendAttachmentTest {
     fun aVideoTravelsAsFileContentWithItsNameAndMime() = runBlocking<Unit> {
         val f = fixture()
         val s = session(f)
-        val clip = File(tmp("clip"), "holiday.MOV").also { it.writeText("video bytes") }
+        val clip = File(tmp("clip"), "video-1a2b3c4d.MOV").also { it.writeText("video bytes") }
         s.store.sendAttachment(clip.path, MediaKind.Video, "acc-ana")
         s.store.settle()
         val id = sentId(f)
         val sent = assertIs<ContentEnvelope.File>(peerGot(f, id))
-        assertEquals("holiday.MOV", sent.name)
+        assertEquals("video-1a2b3c4d.MOV", sent.name)
         assertEquals("video/quicktime", sent.mime)
         assertEquals("file", f.d.repo.attachmentForMessage(id)!!.kind)
         val mine = assertIs<MessageContent.File>(s.store.chat("acc-ana")!!.messages.last { it.id == id }.content)
@@ -584,6 +584,26 @@ class SendAttachmentTest {
         assertFalse(pendingDir(f, id).exists())
         assertFalse(pendingKey(f, id))
         assertEquals(0, s.api.attempts.get(), "nothing was uploaded")
+    }
+
+    @Test
+    fun aCancelDuringAPrepareThatFindsNothingToSendShowsNoNotice() = runBlocking<Unit> {
+        val f = fixture()
+        val s = session(f)
+        val started = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        f.prepareFails = true
+        f.prepareThrows = { started.countDown(); release.await(10, java.util.concurrent.TimeUnit.SECONDS) }
+        s.store.sendAttachment(staged(f).path, MediaKind.File, "acc-ana")
+        check(started.await(10, java.util.concurrent.TimeUnit.SECONDS)) { "preparation never started" }
+        val id = sentId(f)
+        s.store.cancelUpload(id)
+        s.store.awaitWrites()
+        release.countDown()
+        s.store.settle()
+        Thread.sleep(200)
+        assertNull(f.d.repo.message(id))
+        assertEquals(emptyList(), s.problems, "a cancel is not an unreadable file")
     }
 
     @Test
