@@ -21,6 +21,16 @@ public enum ReplyDecision: Equatable, Sendable {
     case refuseKeepDraft
 }
 
+/// What happens to one delivered notification when app lock is switched on.
+public enum LockedRewrite: Equatable, Sendable {
+    /// Leave it as it is.
+    case keep
+    /// Replace it with the locked message form (app name, "New message", no Reply).
+    case hideMessage(chatID: String)
+    /// Keep body, thread and category; only the title (a name) becomes the app name.
+    case hideName
+}
+
 /// What a reply turned into.
 public enum ReplyOutcome: Equatable, Sendable {
     case sent
@@ -36,8 +46,15 @@ public enum NotificationPlan {
     /// Same limit as the composer.
     public static let maxReplyLength = 4096
 
+    /// Identifier prefix of the "Not sent" notice of one chat.
+    public static let notSentPrefix = "not-sent-"
+    /// The category of a live call ring.
+    public static let callCategory = "CALL"
+
+    /// `isRequest`: the chat is a message request; the content shows but there is no Reply.
     public static func content(
-        chatID: String, sender: String, text: String, muted: Bool, appLockOn: Bool, missedCall: Bool = false
+        chatID: String, sender: String, text: String, muted: Bool, appLockOn: Bool, missedCall: Bool = false,
+        isRequest: Bool = false
     ) -> PlannedNotification {
         // A missed call is never silent, muted chat or not.
         let silent = muted && !missedCall
@@ -48,7 +65,23 @@ public enum NotificationPlan {
         }
         return PlannedNotification(
             title: sender, body: missedCall ? missedCallText : text, threadIdentifier: chatID,
-            category: messageCategory, silent: silent, hidesContent: false, bodyNeedsTranslation: missedCall)
+            category: isRequest ? lockedCategory : messageCategory, silent: silent, hidesContent: false,
+            bodyNeedsTranslation: missedCall)
+    }
+
+    /// How long to keep the app alive after a reply was queued so it can leave: at most 5 seconds, and never more
+    /// than what is left of the action's budget.
+    public static func flushWait(remaining: Duration) -> Duration {
+        min(.seconds(5), max(.zero, remaining))
+    }
+
+    /// Which delivered notifications are rewritten when app lock is switched on, and how. Anything with a chat thread,
+    /// a "Not sent" identifier or a call ID names somebody. A live ring may keep the caller's name; a missed call may not.
+    public static func lockedRewrite(identifier: String, category: String, threadID: String, hasCallID: Bool) -> LockedRewrite {
+        if hasCallID { return category == callCategory ? .keep : .hideName }
+        if identifier.hasPrefix(notSentPrefix) { return .hideName }
+        if let chatID = NotificationRoute.chatID(userInfoChatID: nil, threadID: threadID) { return .hideMessage(chatID: chatID) }
+        return .keep
     }
 
     /// An already delivered notification, rewritten when app lock is switched on. Quiet: it must not alert again.
@@ -148,10 +181,21 @@ public struct NotificationSettings: Codable, Equatable, Sendable {
 
     public var mutedChatIDs: Set<String>
     public var appLockOn: Bool
+    /// Chats that are message requests: their notifications show content but offer no Reply.
+    public var requestChatIDs: Set<String>
 
-    public init(mutedChatIDs: Set<String>, appLockOn: Bool) {
+    public init(mutedChatIDs: Set<String>, appLockOn: Bool, requestChatIDs: Set<String> = []) {
         self.mutedChatIDs = mutedChatIDs
         self.appLockOn = appLockOn
+        self.requestChatIDs = requestChatIDs
+    }
+
+    /// A file written before `requestChatIDs` existed still reads.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        mutedChatIDs = try c.decode(Set<String>.self, forKey: .mutedChatIDs)
+        appLockOn = try c.decode(Bool.self, forKey: .appLockOn)
+        requestChatIDs = try c.decodeIfPresent(Set<String>.self, forKey: .requestChatIDs) ?? []
     }
 
     /// What is used when the file is missing or unreadable: locked, nothing muted.

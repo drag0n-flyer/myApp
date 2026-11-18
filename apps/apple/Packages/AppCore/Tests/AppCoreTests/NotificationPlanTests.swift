@@ -92,6 +92,40 @@ import Testing
         #expect(NotificationPlan.badgeCount(unread: ["a": -1], muted: [], archived: []) == 0)
     }
 
+    @Test func aRequestShowsContentButOffersNoReply() {
+        let p = NotificationPlan.content(chatID: "c1", sender: "Ana", text: "hi", muted: false, appLockOn: false, isRequest: true)
+        #expect(p.category == "message.locked")
+        #expect(!p.hidesContent)
+        #expect(p.title == "Ana" && p.body == "hi")
+        let locked = NotificationPlan.content(chatID: "c1", sender: "Ana", text: "hi", muted: false, appLockOn: true, isRequest: true)
+        #expect(locked.hidesContent && locked.title == "")
+    }
+
+    @Test func flushWaitIsBoundedByFiveSecondsAndTheBudget() {
+        #expect(NotificationPlan.flushWait(remaining: .seconds(20)) == .seconds(5))
+        #expect(NotificationPlan.flushWait(remaining: .seconds(5)) == .seconds(5))
+        #expect(NotificationPlan.flushWait(remaining: .seconds(2)) == .seconds(2))
+        #expect(NotificationPlan.flushWait(remaining: .zero) == .zero)
+        #expect(NotificationPlan.flushWait(remaining: .seconds(-3)) == .zero)
+    }
+
+    @Test func lockSwitchedOnRewritesWhatNamesSomebody() {
+        func r(_ id: String = "x", category: String = "", thread: String = "", call: Bool = false) -> LockedRewrite {
+            NotificationPlan.lockedRewrite(identifier: id, category: category, threadID: thread, hasCallID: call)
+        }
+        #expect(r(category: "message", thread: "c1") == .hideMessage(chatID: "c1"))
+        #expect(r(category: "message.locked", thread: "c1") == .hideMessage(chatID: "c1"))   // a request still shows content
+        #expect(r(thread: "c1") == .hideMessage(chatID: "c1"))   // no category
+        #expect(r("not-sent-c1", thread: "c1") == .hideName)
+        #expect(r("not-sent-c1") == .hideName)
+        #expect(r("call1", category: "CALL", thread: "c1", call: true) == .keep)   // a live ring may name the caller
+        #expect(r("call1", thread: "c1", call: true) == .hideName)   // a missed call may not
+        #expect(r("call1", call: true) == .hideName)
+        #expect(r("new-device-1", thread: "devices") == .keep)
+        #expect(r("other") == .keep)
+        #expect(r("x", thread: " ") == .keep)
+    }
+
     @Test func aChatIsReadWhenItsUnreadCountFallsToZero() {
         let before = ["a": 2, "b": 0, "c": 1, "d": 3]
         let after = ["a": 0, "b": 0, "c": 4]   // d left the list: not "read", see leftChats
@@ -170,6 +204,14 @@ import Testing
         #expect(NotificationSettings.decode(Data("not json".utf8)) == locked)
         #expect(NotificationSettings.decode(Data("{\"mutedChatIDs\":[\"a\"]}".utf8)) == locked)
         #expect(NotificationSettings.decode(Data("{}".utf8)) == locked)
+    }
+
+    @Test func requestChatsRoundTripAndAnOldFileWithoutThemStillReads() {
+        let s = NotificationSettings(mutedChatIDs: [], appLockOn: false, requestChatIDs: ["r"])
+        #expect(NotificationSettings.decode(s.encoded()) == s)
+        let old = NotificationSettings.decode(Data("{\"mutedChatIDs\":[\"a\"],\"appLockOn\":false}".utf8))
+        #expect(old == NotificationSettings(mutedChatIDs: ["a"], appLockOn: false))
+        #expect(old.requestChatIDs.isEmpty)
     }
 
     @Test func aFlagOfWrongTypeCountsAsLocked() {
