@@ -15,6 +15,8 @@ android {
 
     defaultConfig {
         applicationId = appId
+        // The host of the https app links (/u/ and /c/); the server's real host is passed at release time.
+        manifestPlaceholders["appLinkHost"] = providers.gradleProperty("appLinkHost").getOrElse("home.example.org")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // LiveSmokeTest runs only when the android-emulator job has started the Go server on the host (-PliveServer=true).
         providers.gradleProperty("liveServer").orNull?.let { testInstrumentationRunnerArguments["liveServer"] = it }

@@ -34,7 +34,18 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import org.example.app.core.account.AccountState
+import org.example.app.ui.contacts.AddContactLinks
 import org.example.app.ui.contacts.AddContactScreen
+import org.example.app.ui.contacts.ContactLinkConfirmScreen
+import org.example.app.ui.contacts.LinkProblemDialog
+import org.example.app.ui.contacts.MyQrScreen
+import org.example.app.ui.contacts.PasteLinkDialog
+import org.example.app.ui.contacts.ScanLinkScreen
+import org.example.app.ui.contacts.linkProblemMessage
+import org.example.app.ui.contacts.shareText
+import org.example.app.core.links.LinkOutcome
+import org.example.app.core.links.LinkProblem
+import org.example.app.core.links.LinkProblemException
 import org.example.app.ui.contacts.ContactsScreen
 import org.example.app.ui.contacts.MessageRequestsScreen
 import org.example.app.ui.settings.*
@@ -107,6 +118,11 @@ private const val ADD_CONTACT = "addcontact"
 private const val NEW_CHAT = "newchat"
 private const val SEARCH = "search"
 private const val PROFILE = "settings/profile"
+private const val MY_QR = "myqr"
+/** Stands in for the link while the invite text is built, so the link is only ever put in at the share. */
+private const val INVITE_URL_SLOT = "\u0001link\u0001"
+private const val SCAN_LINK = "scanlink"
+private const val CONFIRM_CONTACT = "confirmcontact/{username}?id={id}&name={name}"
 
 private fun shareInvite(context: Context, url: String, expectReturn: () -> Unit) {
     val send = Intent(Intent.ACTION_SEND).setType("text/plain")
@@ -154,6 +170,7 @@ fun AppRoot(
         if (sessionEnds != seenEnds) {
             // Signed out by the server or wiped after a revocation: back to onboarding.
             seenEnds = sessionEnds
+            graph.linkFlow.accountEnded()
             onboarding = true
         }
         if (onboarding) {
@@ -257,6 +274,37 @@ fun AppRoot(
                 // Only a chat this account has: another app could send any ID.
                 graph.openableChat(id)?.let { openChat.value(it, null) }
                 graph.requestedChat.value = null
+            }
+        }
+        // A contact link (app link, paste, scan) waits here while locked or signed out; once the app is ready it is
+        // opened exactly once. What it leads to is acted on when the screens show: held while locked.
+        val flow = graph.linkFlow
+        val pendingLink by flow.pending.value.collectAsStateWithLifecycle()
+        val linkOutcome by flow.outcome.collectAsStateWithLifecycle()
+        val linkBusy by flow.busy.collectAsStateWithLifecycle()
+        var linkProblem by remember { mutableStateOf<LinkProblem?>(null) }
+        // Keyed on everything that can make a waiting link startable again: a new link, the unlock, the end of the
+        // previous open, the previous outcome being acted on. No timers.
+        LaunchedEffect(pendingLink, locked, linkBusy, linkOutcome) { flow.start(ready = !locked) }
+        // The outcome is acted on at the root once unlocked, whatever dialog or screen is above the chats. A redeemed
+        // person (Confirm) stays in the flow until the confirmation screen reports Add or Cancel, and is shown again if
+        // its route is gone (a rotation, or the lock cover, cannot lose it).
+        val topEntry by nav.currentBackStackEntryAsState()
+        LaunchedEffect(linkOutcome, locked, topEntry) {
+            if (locked) return@LaunchedEffect
+            val confirmShown = runCatching { nav.getBackStackEntry(CONFIRM_CONTACT) }.isSuccess
+            val outcome = linkOutcome ?: return@LaunchedEffect
+            if (outcome is LinkOutcome.Confirm) {
+                if (!confirmShown) nav.navigate(
+                    "confirmcontact/${Uri.encode(outcome.username)}" +
+                        (outcome.redeemed?.let { "?id=${Uri.encode(it.accountId)}&name=${Uri.encode(it.displayName)}" } ?: ""),
+                )
+                return@LaunchedEffect
+            }
+            when (val taken = flow.takeOutcome(ready = true)) {
+                is LinkOutcome.OpenChat -> openChat.value(graph.chatStore.ensureChat(taken.contactId), null)
+                is LinkOutcome.Problem -> linkProblem = taken.problem
+                else -> {}
             }
         }
         val context = LocalContext.current
@@ -381,7 +429,74 @@ fun AppRoot(
                 MessageRequestsScreen(graph.chatStore, onOpenChat = { openChat.value(it, null) }, onBack = { nav.popBackStack() })
             }
             composable(ADD_CONTACT) {
-                AddContactScreen(graph.chatStore, onBack = { nav.popBackStack() }, onAdded = { nav.popBackStack() })
+                var pasting by remember { mutableStateOf(false) }
+                var making by remember { mutableStateOf(false) }
+                var makeMessage by remember { mutableStateOf<Int?>(null) }
+                val makeScope = rememberCoroutineScope()
+                val ctx = LocalContext.current
+                val appName = stringResource(R.string.app_name)
+                val inviteText = stringResource(R.string.invite_message, appName, INVITE_URL_SLOT)
+                AddContactScreen(
+                    graph.chatStore, onBack = { nav.popBackStack() }, onAdded = { nav.popBackStack() },
+                    links = AddContactLinks(
+                        onScan = { nav.navigate(SCAN_LINK) },
+                        onPaste = { pasting = true },
+                        onMyQr = { nav.navigate(MY_QR) },
+                        onInviteWithLink = {
+                            making = true; makeMessage = null
+                            makeScope.launch {
+                                try {
+                                    val url = graph.createContactLinkUrl()
+                                    shareText(ctx, inviteText.replace(INVITE_URL_SLOT, url), graph.appLock::expectReturn)
+                                } catch (e: kotlinx.coroutines.CancellationException) {
+                                    throw e
+                                } catch (e: LinkProblemException) {
+                                    makeMessage = linkProblemMessage(e.problem)
+                                } catch (_: Exception) {
+                                    makeMessage = R.string.link_make_failed
+                                } finally {
+                                    making = false
+                                }
+                            }
+                        },
+                        makingLink = making,
+                        message = makeMessage,
+                    ),
+                )
+                if (pasting) PasteLinkDialog(onOpen = { graph.pendingLink.offer(it); pasting = false }, onDismiss = { pasting = false })
+            }
+            composable(MY_QR) {
+                MyQrScreen(graph.chatStore.me.username, graph.serverPolicy.host, onBack = { nav.popBackStack() })
+            }
+            composable(SCAN_LINK) {
+                ScanLinkScreen(onResult = { graph.pendingLink.offer(it); nav.popBackStack() }, onBack = { nav.popBackStack() })
+            }
+            composable(
+                CONFIRM_CONTACT,
+                listOf(
+                    navArgument("username") { type = NavType.StringType },
+                    navArgument("id") { type = NavType.StringType; nullable = true; defaultValue = null },
+                    navArgument("name") { type = NavType.StringType; nullable = true; defaultValue = null },
+                ),
+            ) { entry ->
+                val username = entry.arguments!!.getString("username")!!
+                val id = entry.arguments?.getString("id")
+                val name = entry.arguments?.getString("name")
+                ContactLinkConfirmScreen(
+                    username, name,
+                    onAdd = {
+                        val who = if (id != null) graph.chatStore.addKnownContact(id, username, name.orEmpty()) else graph.chatStore.addContact(username)
+                        if (who != null) {
+                            graph.linkFlow.finishConfirmation()
+                            nav.popBackStack(MAIN, inclusive = false)
+                            openChat.value(graph.chatStore.ensureChat(who.id), null)
+                        }
+                        who != null
+                    },
+                    onBack = { graph.linkFlow.finishConfirmation(); nav.popBackStack() },
+                )
+                // The system back gesture is Cancel too.
+                androidx.activity.compose.BackHandler { graph.linkFlow.finishConfirmation(); nav.popBackStack() }
             }
             composable(NEW_CHAT) {
                 NewChatScreen(
@@ -407,7 +522,7 @@ fun AppRoot(
             composable(PROFILE) {
                 val vm = viewModel<ProfileViewModel>(factory = factory { ProfileViewModel(graph.accountActions) })
                 val me = graph.chatStore.meState.collectAsStateWithLifecycle().value
-                ProfileScreen(me, vm, onBack = { nav.popBackStack() }, storedName = graph.chatStore.myStoredName)
+                ProfileScreen(me, vm, onBack = { nav.popBackStack() }, storedName = graph.chatStore.myStoredName, onMyQr = { nav.navigate(MY_QR) })
             }
             composable(SettingsPage.Server.route) {
                 val status by graph.connectionStatus.collectAsStateWithLifecycle()
@@ -469,6 +584,7 @@ fun AppRoot(
                 GalleryScreen(graph.chatStore, id, graph.attachmentOpener, onBack = { nav.popBackStack() })
             }
         }
+        linkProblem?.let { LinkProblemDialog(it) { linkProblem = null } }
         CallOverlay(call?.phase, callVm)
         }
         }

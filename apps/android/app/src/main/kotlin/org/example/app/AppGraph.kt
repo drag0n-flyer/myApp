@@ -63,6 +63,12 @@ import org.example.app.contracts.CallSignalSealer
 import org.example.app.calls.android.CallMedia
 import org.example.app.live.SessionCallEngine
 import org.example.app.core.chats.ChatStore
+import org.example.app.core.links.ContactLinkOpener
+import org.example.app.core.links.LinkFlow
+import org.example.app.core.links.LinkProblem
+import org.example.app.core.links.LinkProblemException
+import org.example.app.core.links.PendingLink
+import org.example.app.core.links.RedeemedContact
 import org.example.app.core.chats.SampleChatStore
 import org.example.app.core.people.NoWitnessStore
 import org.example.app.core.people.PeopleSignals
@@ -173,6 +179,47 @@ class AppGraph(
 
     /** A chat a notification tap asked to open; `AppRoot` opens it once the chats show, then clears it. */
     val requestedChat = MutableStateFlow<String?>(null)
+
+    /** Opens a contact link: the host is the signed-in server's, read when the link is handled; nothing leaves the device for another host. */
+    val contactLinkOpener: ContactLinkOpener by lazy {
+        ContactLinkOpener({ serverPolicy.host }, { chatStore.me.username }, { chatStore.contacts.value }, ::redeemContactLink)
+    }
+
+    /**
+     * Contact links: the raw URL waits (one, the latest) while locked or signed out; `AppRoot` starts it once ready. A redeem
+     * runs in the graph's scope (leaving a screen does not cancel it) and its result is dropped if the account ended meanwhile.
+     */
+    val linkFlow: LinkFlow by lazy { LinkFlow(contactLinkOpener, { sessionEnds.value }) { block -> scope.launch { block() } } }
+    val pendingLink: PendingLink get() = linkFlow.pending
+
+    private suspend fun redeemContactLink(token: String): RedeemedContact {
+        if (sampleData) throw LinkProblemException(LinkProblem.Expired)
+        val client = openSession()?.client ?: throw LinkProblemException(LinkProblem.Failed)
+        try {
+            val who = SocialApi(client).redeemContactLink(token)
+            return RedeemedContact(who.accountID, who.username, who.displayName)
+        } catch (e: ServerException) {
+            throw LinkProblemException(
+                when (e.code) {
+                    "own_link" -> LinkProblem.OwnLink
+                    "expired" -> LinkProblem.Expired
+                    "rate_limited" -> LinkProblem.RateLimited
+                    else -> LinkProblem.Failed
+                },
+            )
+        }
+    }
+
+    /** `https://<host>/c/<token>` for a new one-time link (the token is the secret: it is only ever handed to the share sheet). */
+    suspend fun createContactLinkUrl(): String {
+        if (sampleData) return "https://${serverPolicy.host}/c/AAAAAAAAAAAAAAAAAAAAAA"
+        val client = openSession()?.client ?: throw LinkProblemException(LinkProblem.Failed)
+        try {
+            return "https://${serverPolicy.host}/c/${SocialApi(client).createContactLink().token}"
+        } catch (e: ServerException) {
+            throw LinkProblemException(if (e.code == "too_many") LinkProblem.TooManyLinks else LinkProblem.Failed)
+        }
+    }
 
     // ---- Connection status
 
