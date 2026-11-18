@@ -30,6 +30,10 @@ public actor FakeServer {
         var accounts: Set<String>
         var members: Set<String>   // device IDs
         var nextSeq: Int64 = 1
+        /// `direct` or `group`. A group keeps each account's role and the version of that list.
+        var kind = "direct"
+        var roles: [String: String] = [:]
+        var membersVersion: Int64 = 0
     }
 
     private var accounts: [String: Account] = [:]
@@ -65,6 +69,22 @@ public actor FakeServer {
 
     /// Forgets a conversation: every later request about it gets `404 not_found`.
     public func removeConversation(_ conversationID: String) { conversations[conversationID] = nil }
+
+    /// Test hook: takes an account out of a group's member list (as a removal would) and raises the list version. Its
+    /// devices stay in `members` until a commit removes them, as on the real server's delivery side.
+    public func dropGroupAccount(_ account: String, from conversationID: String) {
+        guard var c = conversations[conversationID], c.kind == "group" else { return }
+        c.accounts.remove(account)
+        c.roles[account] = nil
+        c.membersVersion += 1
+        conversations[conversationID] = c
+    }
+
+    /// The accounts and roles the server lists for a group, sorted by account.
+    public func groupMembers(of conversationID: String) -> [(account: String, role: String)] {
+        guard let c = conversations[conversationID], c.kind == "group" else { return [] }
+        return c.roles.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
+    }
 
     /// The epoch the server holds for a conversation (`nil` when it does not exist).
     public func epoch(of conversationID: String) -> UInt64? { conversations[conversationID]?.epoch }
@@ -250,7 +270,13 @@ public actor FakeServer {
     private struct Seq: Encodable { let seq: Int64 }
     private struct EpochOut: Encodable { let epoch: UInt64 }
     private struct BlockList: Encodable { let accountIDs: [String] }
-    private struct ConversationOut: Encodable { let conversationID: String; let mode: String; let epoch: UInt64 }
+    private struct MemberOut: Encodable { let account: String; let role: String }
+    private struct ConversationOut: Encodable {
+        let conversationID: String; let mode: String; let epoch: UInt64
+        var kind: String?
+        var members: [MemberOut]?
+        var membersVersion: Int64?
+    }
     private struct ClaimEntry: Encodable { let deviceID: String; let keyPackage: Base64URLData }
     private struct ClaimOut: Encodable { let keyPackages: [ClaimEntry] }
 
@@ -267,6 +293,7 @@ public actor FakeServer {
     private struct KeyPackagesBody: Decodable { let keyPackages: [Base64URLData] }
     private struct ClaimBody: Decodable { let accountID: String; let deviceIDs: [String]? }
     private struct MembersBody: Decodable { let members: [String] }
+    private struct CreateBody: Decodable { let kind: String?; let members: [String]?; let accounts: [String]? }
     private struct CommitBody: Decodable {
         let epoch: UInt64
         let commit: Base64URLData
@@ -308,7 +335,9 @@ public actor FakeServer {
     }
 
     private func createConversation(_ me: Caller, _ body: Data) -> (Data, HTTPURLResponse) {
-        guard let b: MembersBody = decode(body), b.members.count == 1, let other = b.members.first,
+        guard let b: CreateBody = decode(body) else { return failure(400, "bad_request") }
+        if b.kind == "group" { return createGroup(me, b.accounts ?? []) }
+        guard let members = b.members, members.count == 1, let other = members.first,
               other != me.account, accounts[other] != nil else { return failure(400, "bad_request") }
         counter += 1
         let id = "conv-\(counter)"
@@ -316,8 +345,35 @@ public actor FakeServer {
         return ok(ConversationOut(conversationID: id, mode: defaultMode, epoch: 0))
     }
 
+    /// 1 to 99 other, distinct accounts; an unknown one is `not_found`; one that blocked the caller is skipped silently.
+    private func createGroup(_ me: Caller, _ others: [String]) -> (Data, HTTPURLResponse) {
+        guard !others.isEmpty, Set(others).count == others.count, !others.contains(me.account) else { return failure(400, "bad_request") }
+        guard others.count <= 99 else { return failure(409, "group_full") }
+        guard others.allSatisfy({ accounts[$0] != nil }) else { return failure(404, "not_found") }
+        let kept = others.filter { !blocks[$0, default: []].contains(me.account) }
+        counter += 1
+        let id = "conv-\(counter)"
+        var roles = [me.account: "owner"]
+        for account in kept { roles[account] = "member" }
+        var c = Conversation(id: id, mode: defaultMode, epoch: 0, accounts: Set(roles.keys), members: [me.device])
+        c.kind = "group"
+        c.roles = roles
+        conversations[id] = c
+        return ok(groupOut(c))
+    }
+
+    private func groupOut(_ c: Conversation) -> ConversationOut {
+        ConversationOut(
+            conversationID: c.id, mode: c.mode, epoch: c.epoch, kind: "group",
+            members: c.roles.sorted { $0.key < $1.key }.map { MemberOut(account: $0.key, role: $0.value) },
+            membersVersion: c.membersVersion)
+    }
+
     private func getConversation(_ me: Caller, _ id: String) -> (Data, HTTPURLResponse) {
-        guard let c = conversations[id], c.members.contains(me.device) else { return failure(404, "not_found") }
+        guard let c = conversations[id] else { return failure(404, "not_found") }
+        // A group is readable by any device of a member account (a new device needs it to join).
+        if c.kind == "group" { return c.accounts.contains(me.account) ? ok(groupOut(c)) : failure(404, "not_found") }
+        guard c.members.contains(me.device) else { return failure(404, "not_found") }
         return ok(ConversationOut(conversationID: c.id, mode: c.mode, epoch: c.epoch))
     }
 
@@ -342,12 +398,12 @@ public actor FakeServer {
         }
         if let welcome = b.welcome {
             for device in added.sorted() {
-                guard let account = deviceAccount[device], !blocks[account, default: []].contains(me.account) else { continue }
+                guard let account = deviceAccount[device], (c.kind == "group" || !blocks[account, default: []].contains(me.account)) else { continue }
                 deliver(to: device, kind: "welcome", conversation: c.id, seq: nil, epoch: Int64(newEpoch), from: me, payload: welcome.data)
             }
         }
         for device in added {
-            if let account = deviceAccount[device], !blocks[account, default: []].contains(me.account) { c.members.insert(device) }
+            if let account = deviceAccount[device], (c.kind == "group" || !blocks[account, default: []].contains(me.account)) { c.members.insert(device) }
         }
         for device in removed { c.members.remove(device) }
         c.epoch = newEpoch
@@ -373,7 +429,7 @@ public actor FakeServer {
             seq: seq, epoch: b.epoch, senderDeviceID: me.device, ciphertext: b.ciphertext.data, escrow: b.escrow?.data,
             expiresAt: b.expiresAt))
         for device in c.members.sorted() where device != me.device {
-            guard let account = deviceAccount[device], !blocks[account, default: []].contains(me.account) else { continue }
+            guard let account = deviceAccount[device], (c.kind == "group" || !blocks[account, default: []].contains(me.account)) else { continue }
             deliver(to: device, kind: "message", conversation: id, seq: seq, epoch: Int64(b.epoch), from: me, payload: b.ciphertext.data)
         }
         return ok(Seq(seq: seq))
