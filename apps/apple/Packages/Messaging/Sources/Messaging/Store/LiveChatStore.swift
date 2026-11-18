@@ -176,7 +176,13 @@ public final class LiveChatStore: ChatStore {
         for folder in folderRecords {
             for chatID in (try? repo.folderChats(folderID: folder.id)) ?? [] { folderIDs[chatID, default: []].insert(folder.id) }
         }
-        let records = (try? repo.chats()) ?? []
+        // An expired message that is not swept yet no longer counts as unread.
+        let expiredUnread = (try? repo.expiredUnreadCounts(me: deps.me.accountID)) ?? [:]
+        let records = ((try? repo.chats()) ?? []).map { record -> ChatRecord in
+            var record = record
+            record.unread = max(0, record.unread - (expiredUnread[record.id] ?? 0))
+            return record
+        }
         for id in draftsPending.keys where records.contains(where: { $0.id == id }) { persistDraft(id) }
         var drafts = (try? repo.drafts()) ?? [:]
         for (id, text) in draftsPending { drafts[id] = text.isEmpty ? nil : text }
@@ -729,6 +735,7 @@ public final class LiveChatStore: ChatStore {
         guard (try? repo.transaction { () throws -> Void in
             try repo.setTimer(chatID: chatID, seconds: seconds)
             try repo.insertMessage(line)
+            try repo.set(IncomingHandler.timerAtKey(chatID), Data(String(Int64((at.timeIntervalSince1970 * 1000).rounded())).utf8))
         }) != nil else { return }
         bumpActivity(chatID, at: at)
         refresh()
@@ -739,7 +746,7 @@ public final class LiveChatStore: ChatStore {
     /// after the database commit, only inside the media folder; an unfinished upload's folder goes with its row.
     @discardableResult
     public func sweepExpired(now: Date) -> [String] {
-        guard !closed, let removed = try? repo.sweepExpired(now: now), !removed.isEmpty else { return [] }
+        guard !closed, let removed = try? repo.sweepExpired(now: now, me: deps.me.accountID), !removed.isEmpty else { return [] }
         for message in removed {
             for path in message.localPaths where MediaPathGuard.isInside(URL(fileURLWithPath: path), directory: deps.mediaDirectory) {
                 try? FileManager.default.removeItem(atPath: path)

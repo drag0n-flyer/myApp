@@ -93,8 +93,18 @@ public final class Repository: @unchecked Sendable {
     /// Removes every message whose `expires_at` is at or before `now`, in one transaction: the row, its attachment
     /// rows, reactions and search entry (cascade and trigger) and any queued send. Returns what was removed, with the
     /// attachment file paths, so the caller can delete the files and the delivered notifications.
-    public func sweepExpired(now: Date) throws -> [ExpiredMessage] {
+    /// With `me` (this account), each chat's unread count drops by the removed messages that were unread and from others.
+    public func sweepExpired(now: Date, me: String? = nil) throws -> [ExpiredMessage] {
         try db.transaction { d in
+            if let me {
+                let counts = try d.query("""
+                    SELECT chat_id, COUNT(*) FROM messages WHERE expires_at IS NOT NULL AND expires_at <= ? AND \(Self.unreadFromOthers)
+                    GROUP BY chat_id
+                    """, [.int(ms(now)), .text(me)]) { ($0.text(0), Int($0.int(1))) }
+                for (chatID, n) in counts {
+                    try d.execute("UPDATE chats SET unread = MAX(0, unread - ?) WHERE id=?", [.int(Int64(n)), .text(chatID)])
+                }
+            }
             let due = try d.query("SELECT id, chat_id FROM messages WHERE expires_at IS NOT NULL AND expires_at <= ? ORDER BY expires_at, id",
                                   [.int(ms(now))]) { ($0.text(0), $0.text(1)) }
             var removed: [ExpiredMessage] = []
@@ -106,6 +116,19 @@ public final class Repository: @unchecked Sendable {
             }
             return removed
         }
+    }
+
+    /// Unread messages from others (not `me`, not system lines, not read, not deleted).
+    private static let unreadFromOthers = "sender_account != ? AND sender_account != 'system' AND status != 'read' AND deleted = 0 AND undecryptable = 0"
+
+    /// Per chat, how many of its counted unread messages have expired but are not swept yet. A reader subtracts this
+    /// from `ChatRecord.unread`, so an expired message no longer counts before the sweep has run.
+    public func expiredUnreadCounts(me: String) throws -> [String: Int] {
+        let rows = try db.query("""
+            SELECT chat_id, COUNT(*) FROM messages WHERE expires_at IS NOT NULL AND expires_at <= ? AND \(Self.unreadFromOthers)
+            GROUP BY chat_id
+            """, [.int(ms(now())), .text(me)]) { ($0.text(0), Int($0.int(1))) }
+        return Dictionary(rows, uniquingKeysWith: { $1 })
     }
 
     /// The earliest `expires_at` of any message, for the sweep timer.

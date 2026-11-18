@@ -317,3 +317,53 @@ private let jpeg = Data([0xFF, 0xD8, 0xFF]) + Data(count: 100)
         #expect(stored.contains("Example") && stored.contains(link))
     }
 }
+
+@Suite("TestPeopleStoreFixes") @MainActor struct TestPeopleStoreFixes {
+    @Test func aFutureSendTimeDoesNotExtendALife() async throws {
+        let rig = try await Rig.make()
+        try await rig.ana.sendRaw(rig.envelope("f1", .text("from the future", replyTo: nil), ttl: 60, at: rig.ms + 3_600_000), to: "acc-bob")
+        try await rig.ana.sendRaw(rig.envelope("p1", .text("from the past", replyTo: nil), ttl: 3_600, at: rig.ms - 1_800_000), to: "acc-bob")
+        await rig.bobSync()
+        #expect(try rig.bob.repo.message(id: "f1")?.expiresAt == testEpochDate.addingTimeInterval(60))
+        #expect(try rig.bob.repo.message(id: "p1")?.expiresAt == testEpochDate.addingTimeInterval(1_800))
+    }
+
+    @Test func anOlderTimerChangeIsIgnored() async throws {
+        let rig = try await Rig.make()
+        try await rig.ana.sendRaw(rig.envelope("t-new", .timer(seconds: 86_400)), to: "acc-bob")
+        try await rig.ana.sendRaw(rig.envelope("t-old", .timer(seconds: 604_800), at: rig.ms - 10_000), to: "acc-bob")
+        await rig.bobSync()
+        #expect(rig.bob.store.timerSeconds("acc-ana") == 86_400)
+        #expect(try rig.bob.repo.message(id: "sys-timer-t-old") == nil)
+        // A newer one still applies.
+        try await rig.ana.sendRaw(rig.envelope("t-newer", .timer(seconds: 0), at: rig.ms + 1_000), to: "acc-bob")
+        await rig.bobSync()
+        #expect(rig.bob.store.timerSeconds("acc-ana") == 0)
+    }
+
+    @Test func anExpiredUnreadMessageNoLongerCountsBeforeOrAfterTheSweep() async throws {
+        let rig = try await Rig.make()
+        try await rig.ana.sendRaw(rig.envelope("a", .text("a", replyTo: nil), ttl: 100), to: "acc-bob")
+        try await rig.ana.sendRaw(rig.envelope("b", .text("b", replyTo: nil), ttl: 100_000), to: "acc-bob")
+        await rig.bobSync()
+        #expect(rig.bob.store.chat(id: "acc-ana")?.unreadCount == 2)
+        rig.clock.advance(100)
+        rig.bob.store.refresh()
+        #expect(rig.bob.store.chat(id: "acc-ana")?.unreadCount == 1)   // before the sweep
+        #expect(rig.bob.store.sweepExpired(now: rig.clock.now()) == ["a"])
+        #expect(rig.bob.store.chat(id: "acc-ana")?.unreadCount == 1)   // after: not subtracted twice
+        #expect(try rig.bob.repo.chat(id: "acc-ana")?.unread == 1)
+    }
+
+    @Test func aReadMessageThatExpiresDoesNotLowerUnread() async throws {
+        let rig = try await Rig.make()
+        try await rig.ana.sendRaw(rig.envelope("a", .text("a", replyTo: nil), ttl: 100), to: "acc-bob")
+        await rig.bobSync()
+        rig.bob.store.markRead(chatID: "acc-ana")
+        try await rig.ana.sendRaw(rig.envelope("b", .text("b", replyTo: nil), ttl: 100_000), to: "acc-bob")
+        await rig.bobSync()
+        rig.clock.advance(100)
+        rig.bob.store.sweepExpired(now: rig.clock.now())
+        #expect(rig.bob.store.chat(id: "acc-ana")?.unreadCount == 1)
+    }
+}

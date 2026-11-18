@@ -156,7 +156,8 @@ public struct IncomingHandler: Sendable {
         let device = parts.count > 1 ? parts[1] : raw.senderDevice
         let envelope = ContentEnvelope.decode(plaintext)
         let chatID = conversation.chatID
-        let expiresAt = Expiry.expiresAt(atMs: envelope.at, ttlSeconds: envelope.ttl)
+        // From the send time, but a sender's `at` in the future never extends the life.
+        let expiresAt = Expiry.expiresAt(atMs: min(envelope.at, Self.ms(now())), ttlSeconds: envelope.ttl)
             .map { Date(timeIntervalSince1970: Double($0) / 1000) }
 
         func store(_ status: String? = nil, replyTo: String? = nil, folded: String = "", id: String? = nil,
@@ -250,6 +251,9 @@ public struct IncomingHandler: Sendable {
         }
     }
 
+    /// `kv` key holding the `at` (ms) of the last `timer` applied in a chat.
+    static func timerAtKey(_ chatID: String) -> String { "timer-at:" + chatID }
+
     /// Kinds that never become a message row, whether valid or not.
     static let silentKinds: Set<String> = ["typing", "presence", "profile", "timer"]
 
@@ -257,6 +261,9 @@ public struct IncomingHandler: Sendable {
     /// unread and nothing notifies. The line's ID comes from the envelope, so a repeat adds no second line.
     private func applyTimer(_ seconds: Int, id: String, at: Int64, from account: String, conversation: ConversationRecord, db: Repository) throws {
         let chatID = conversation.chatID
+        // A change older than the last one applied for this chat is ignored (messages can arrive out of order).
+        let key = Self.timerAtKey(chatID)
+        if let last = try db.get(key).flatMap({ Int64(String(decoding: $0, as: UTF8.self)) }), at < last { return }
         let event = SystemEvent.timer(seconds: seconds, name: account == me.accountID ? nil : account)
         let envelope = (try? JSONEncoder().encode(event)) ?? Data()
         let sentAt = Date(timeIntervalSince1970: Double(at) / 1000)
@@ -266,6 +273,7 @@ public struct IncomingHandler: Sendable {
             editedAt: nil, deleted: false, undecryptable: false, folded: "")
         guard try db.insertMessage(line) else { return }
         try db.setTimer(chatID: chatID, seconds: seconds)
+        try db.set(key, Data(String(at).utf8))
     }
 
     /// A receipt counts when it is about my own messages (from the peer), or when it comes from one of my
