@@ -60,8 +60,9 @@ func New(d core.Deps) *App {
 	d.Notify = rt
 	d.Live = rt
 
-	id := identity.New(d)
 	dl := delivery.New(d)
+	d.Groups = dl // account deletion takes the account out of its groups
+	id := identity.New(d)
 	dl.HandleFrames(rt)
 	cl := calls.New(d, rt)
 	tn := turn.New(d)

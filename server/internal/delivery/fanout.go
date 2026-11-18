@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/drag0n-flyer/myApp/server/internal/core"
@@ -13,7 +14,7 @@ import (
 // InboxItem is one entry of a device's inbox, as sent to the client.
 type InboxItem struct {
 	Cursor          int64     `json:"cursor"`
-	Kind            string    `json:"kind"` // "message", "commit" or "welcome"
+	Kind            string    `json:"kind"` // "message", "commit", "welcome" or "members"
 	ConversationID  string    `json:"conversationID"`
 	Seq             *int64    `json:"seq,omitempty"`
 	Epoch           int64     `json:"epoch"`
@@ -21,6 +22,8 @@ type InboxItem struct {
 	SenderDeviceID  string    `json:"senderDeviceID"`
 	Payload         []byte    `json:"payload"`
 	SentAt          time.Time `json:"sentAt"`
+	// MembersVersion is set on kind "members" items only; their payload is empty.
+	MembersVersion *int64 `json:"membersVersion,omitempty"`
 	// ExpiresAt, when set, is when the server drops an undelivered copy. It is
 	// not sent to clients: they count the timer from SentAt themselves.
 	ExpiresAt *time.Time `json:"-"`
@@ -85,10 +88,15 @@ func (m *Module) deliverPush(ctx context.Context, tx pgx.Tx, deviceIDs []string,
 	}
 	for _, dev := range deviceIDs {
 		it := item
+		payload := it.Payload
+		if it.MembersVersion != nil {
+			// Stored as JSON; getInbox turns it back into MembersVersion.
+			payload = []byte(fmt.Sprintf(`{"membersVersion":%d}`, *it.MembersVersion))
+		}
 		err := tx.QueryRow(ctx,
 			`insert into inbox (device_id, kind, conversation_id, seq, epoch, sender_account, sender_device, payload, sent_at, expires_at)
 			 values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) returning cursor`,
-			dev, it.Kind, it.ConversationID, it.Seq, it.Epoch, it.SenderAccountID, it.SenderDeviceID, it.Payload, it.SentAt, it.ExpiresAt,
+			dev, it.Kind, it.ConversationID, it.Seq, it.Epoch, it.SenderAccountID, it.SenderDeviceID, payload, it.SentAt, it.ExpiresAt,
 		).Scan(&it.Cursor)
 		if err != nil {
 			return err

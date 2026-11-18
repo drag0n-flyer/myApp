@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 
@@ -51,6 +52,15 @@ func (m *Module) getInbox(w http.ResponseWriter, r *http.Request) error {
 		if err := rows.Scan(&it.Cursor, &it.Kind, &it.ConversationID, &it.Seq, &it.Epoch,
 			&it.SenderAccountID, &it.SenderDeviceID, &it.Payload, &it.SentAt); err != nil {
 			return err
+		}
+		if it.Kind == "members" {
+			var mv struct {
+				V int64 `json:"membersVersion"`
+			}
+			if json.Unmarshal(it.Payload, &mv) == nil {
+				it.MembersVersion = &mv.V
+				it.Payload = nil
+			}
 		}
 		items = append(items, it)
 	}

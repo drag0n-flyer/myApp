@@ -66,6 +66,26 @@ func (l *Limiter) AllowN(key string, n int) (bool, time.Duration) {
 	return true, 0
 }
 
+// Refund gives back n tokens taken by AllowN for a request that then failed.
+// It never raises a bucket above full.
+func (l *Limiter) Refund(key string, n int) {
+	if n <= 0 {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	full, ok := l.buckets[key]
+	if !ok {
+		return
+	}
+	full = full.Add(-time.Duration(n) * l.step)
+	if !full.After(l.now()) {
+		delete(l.buckets, key)
+		return
+	}
+	l.buckets[key] = full
+}
+
 // sweep drops keys whose bucket is full again, at most once per period.
 func (l *Limiter) sweep(now time.Time) {
 	if now.Sub(l.swept) < l.per {
