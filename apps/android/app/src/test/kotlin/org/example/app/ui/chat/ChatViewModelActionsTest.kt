@@ -7,6 +7,8 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -303,5 +305,80 @@ class ChatViewModelActionsTest {
         val vm = vm(store)
         assertEquals(listOf("m1"), vm.search("h").map { it.messageId })
         assertEquals(emptyList(), vm.search("   "))
+    }
+
+    // The store's cached page is the newest 50: older messages slide out of it as new ones arrive.
+
+    private class WindowStore(inner: SampleChatStore, val all: MutableList<Message>) : ChatStore by inner {
+        private val base = inner.chat("chat-riya")!!
+        private val flow = MutableStateFlow(listOf(base.copy(messages = all.takeLast(50))))
+        override val chats: StateFlow<List<Chat>> get() = flow
+        override fun chat(id: String): Chat? = flow.value.firstOrNull { it.id == id }
+        override fun messages(chatId: String, before: String?, limit: Int): List<Message> {
+            val end = if (before == null) all.size else all.indexOfFirst { it.id == before }.let { if (it < 0) return emptyList() else it }
+            return all.subList(maxOf(0, end - limit), end).toList()
+        }
+        fun publish() { flow.value = listOf(base.copy(messages = all.takeLast(50))) }
+    }
+
+    private fun windowed(count: Int): WindowStore {
+        val all = (0 until count).map { message(it) }.toMutableList()
+        return WindowStore(sampleWith(all.takeLast(50)), all)
+    }
+
+    private fun WindowStore.arrive(n: Int) {
+        all += message(1000 + n)
+        publish()
+    }
+
+    @Test
+    fun sixtyArrivalsLeaveNoGapAndTheUnseenCountKeepsRising() = runTest {
+        val store = windowed(60)
+        val vm = vm(store)
+        val lastSeen = vm.state.value.messages.last().id
+        repeat(60) { store.arrive(it) }
+        val ids = vm.state.value.messages.map { it.id }
+        assertEquals(store.all.drop(10).map { it.id }, ids)
+        assertEquals(60, org.example.app.core.chats.ChatTimeline.unseenCount(vm.state.value.messages, lastSeen))
+    }
+
+    @Test
+    fun sixtyArrivalsWithOlderPagesLoadedLeaveNoGapEither() = runTest {
+        val store = windowed(180)
+        val vm = vm(store)
+        vm.loadOlder()
+        repeat(60) { store.arrive(it) }
+        assertEquals(store.all.drop(80).map { it.id }, vm.state.value.messages.map { it.id })
+    }
+
+    @Test
+    fun aDeletedOlderMessageStopsShowingItsTextOnTheNextChange() = runTest {
+        val store = windowed(180)
+        val vm = vm(store)
+        vm.loadOlder()
+        val i = store.all.indexOfFirst { it.id == "m100" }
+        store.all[i] = store.all[i].copy(content = MessageContent.Deleted)
+        store.arrive(0)
+        assertEquals(MessageContent.Deleted, vm.state.value.messages.single { it.id == "m100" }.content)
+    }
+
+    @Test
+    fun anEmptyNewestPageEndsTheJumpWithNotFound() = runTest {
+        val empty = object : ChatStore by sampleWith(emptyList()) {
+            override fun messages(chatId: String, before: String?, limit: Int) = emptyList<Message>()
+        }
+        assertFalse(vm(empty).ensureLoaded("anything"))
+    }
+
+    @Test
+    fun searchWidensTheLimitWhenOtherChatsFillTheTopHits() = runTest {
+        val others = (0 until 250).map { MessageHit("chat-other", "o$it", "needle $it", base) }
+        val mine = (0 until 3).map { MessageHit("chat-riya", "r$it", "needle mine $it", base) }
+        val everything = others + mine
+        val inner = sampleWith(listOf(message(1)))
+        val store = object : ChatStore by inner {
+            override fun searchMessages(query: String, limit: Int) = everything.take(limit)
+        }
+        assertEquals(listOf("r0", "r1", "r2"), vm(store).search("needle").map { it.messageId })
     }
 }

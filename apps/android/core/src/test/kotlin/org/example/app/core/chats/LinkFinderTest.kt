@@ -18,6 +18,15 @@ class LinkFinderTest {
         assertEquals(listOf("https://a.example" to "https://a.example"), urls("go to https://a.example, ok"))
     }
 
+    @Test fun mailtoIsALink() {
+        assertEquals(listOf("mailto:a@b.example" to "mailto:a@b.example"), urls("write mailto:a@b.example."))
+    }
+
+    @Test fun aLinkWithBidirectionalControlCharactersIsSkipped() {
+        assertEquals(emptyList(), urls("go https://example.org/\u202Egpj.exe now"))
+        assertEquals(emptyList(), urls("go https://example.org/\u2066x"))
+    }
+
     @Test fun plainTextAndOtherSchemesHaveNoLinks() {
         assertEquals(emptyList(), urls("hello there, file:///etc/passwd javascript:alert(1) a.b"))
     }

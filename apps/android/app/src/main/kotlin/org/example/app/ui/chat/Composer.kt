@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.Column
@@ -82,7 +83,7 @@ fun Composer(
                         Text(bar.preview, maxLines = 1, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-                IconButton(onClick = onCloseBar) {
+                IconButton(onClick = onCloseBar, modifier = Modifier.size(48.dp)) {
                     Icon(painterResource(R.drawable.ic_close), contentDescription = stringResource(R.string.chat_bar_close))
                 }
             }

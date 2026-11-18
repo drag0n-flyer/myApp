@@ -80,6 +80,15 @@ class ChatTimelineTest {
         assertNull(ChatTimeline.firstUnreadId(list, unreadCount = 9, myId = "me"))
     }
 
+    @Test fun callRecordsAndSystemLinesDoNotCountAsUnread() {
+        val list = listOf(
+            m("1", at("2026-11-17"), "riya"), m("2", at("2026-11-17"), "riya"),
+            m("3", at("2026-11-17"), "riya", MessageContent.Call(CallSummary.MissedAudio)),
+            m("4", at("2026-11-17"), "system", MessageContent.System(SystemEvent.SafetyNumberChanged)),
+        )
+        assertEquals("1", ChatTimeline.firstUnreadId(list, unreadCount = 2, myId = "me"))
+    }
+
     // Review focus 2: pages and live updates overlap; there must be one copy of each message.
     @Test fun mergeKeepsOneCopyPerIdAndSortsOldestFirst() {
         val a = m("a", at("2026-11-15")); val b = m("b", at("2026-11-16")); val c = m("c", at("2026-11-17"))

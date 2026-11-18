@@ -26,7 +26,8 @@ class HistoryPager {
 
     fun finish(loadedCount: Int) {
         isLoading = false
-        if (loadedCount < PAGE_SIZE) reachedStart = true
+        // Only an empty page is the start: a page can be short when hidden lines (system rows) are skipped.
+        if (loadedCount == 0) reachedStart = true
     }
 
     /** A load that failed or was cancelled: it may be tried again. */

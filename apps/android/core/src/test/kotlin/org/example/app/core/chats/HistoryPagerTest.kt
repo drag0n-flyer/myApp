@@ -23,11 +23,19 @@ class HistoryPagerTest {
         assertTrue(p.shouldLoad(0))
     }
 
-    @Test fun aShortPageEndsHistory() {
+    @Test fun onlyAnEmptyPageEndsHistory() {
         val p = HistoryPager()
-        p.begin(); p.finish(49)
+        p.begin(); p.finish(0)
         assertTrue(p.reachedStart)
         assertFalse(p.shouldLoad(0))
+    }
+
+    @Test fun aShortPageDoesNotEndHistory() {
+        // Hidden system lines can make a page short.
+        val p = HistoryPager()
+        p.begin(); p.finish(49)
+        assertFalse(p.reachedStart)
+        assertTrue(p.shouldLoad(0))
     }
 
     @Test fun aFullPageDoesNot() {

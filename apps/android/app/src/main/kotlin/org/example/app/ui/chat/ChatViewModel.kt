@@ -17,6 +17,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.example.app.core.calls.NetworkType
+import org.example.app.core.chats.AccountDrafts
 import org.example.app.core.chats.Chat
 import org.example.app.core.chats.ChatStore
 import org.example.app.core.chats.ChatTimeline
@@ -36,7 +37,8 @@ import org.example.app.messaging.content.TextLimit
 
 /** Unsent composer text, kept for the life of the process so leaving a chat and coming back keeps it. */
 internal object ProcessDrafts {
-    val keeper = DraftKeeper()
+    private val drafts = AccountDrafts()
+    fun keeperFor(accountId: String): DraftKeeper = drafts.keeperFor(accountId)
 }
 
 data class ChatState(
@@ -53,7 +55,7 @@ class ChatViewModel(
     private val store: ChatStore,
     val chatId: String,
     private val network: NetworkType,
-    private val drafts: DraftKeeper = ProcessDrafts.keeper,
+    private val drafts: DraftKeeper = ProcessDrafts.keeperFor(store.me.id),
     private val io: CoroutineDispatcher = Dispatchers.IO,
     private val nowMs: () -> Long = System::currentTimeMillis,
     private val autoDownload: () -> AutoDownloadSettings,
@@ -61,6 +63,7 @@ class ChatViewModel(
     // Every message this screen has seen: the store's cached newest page as it moves on, plus older pages loaded since.
     // Messages that fall out of the store's cache while the chat is open stay on screen. The store's copy always wins.
     private val known = MutableStateFlow(store.chat(chatId)?.messages.orEmpty())
+    private val loadLock = Mutex()
 
     // Only this chat matters: other chats changing must not recompute anything.
     private val chatFlow = combine(store.chats, store.requests) { chats, requests ->
@@ -79,7 +82,12 @@ class ChatViewModel(
         firstUnreadId = chat?.let { ChatTimeline.firstUnreadId(it.messages, it.unreadCount, store.me.id) }
         store.markRead(chatId)
         viewModelScope.launch {
-            chatFlow.collect { chat -> if (chat != null) known.update { ChatTimeline.merge(it, chat.messages) } }
+            chatFlow.collect { chat ->
+                if (chat != null) {
+                    known.update { ChatTimeline.merge(it, chat.messages) }
+                    refreshLoadedOlder(chat.messages.firstOrNull()?.id)
+                }
+            }
         }
     }
 
@@ -115,8 +123,22 @@ class ChatViewModel(
 
     // Older history
 
+    /**
+     * Messages older than the store's cached page are copies from when they were loaded. After any change in the chat
+     * (a reaction, edit or delete, ours or remote) read that range again so a deleted message does not keep its text.
+     */
+    private suspend fun refreshLoadedOlder(cacheOldestId: String?) {
+        if (cacheOldestId == null) return
+        loadLock.withLock {
+            val count = known.value.indexOfFirst { it.id == cacheOldestId }
+            if (count <= 0) return@withLock
+            val fresh = withContext(io) { store.messages(chatId, cacheOldestId, minOf(count, MAX_REFRESH)) }
+            // The fresh copies win over the stale ones.
+            known.update { ChatTimeline.merge(it, fresh) }
+        }
+    }
+
     private val pager = HistoryPager()
-    private val loadLock = Mutex()
 
     /** The screen's oldest visible row, counted from the oldest loaded message; asks for a page when it is near the start. */
     fun maybeLoadOlder(oldestVisibleIndex: Int) {
@@ -204,7 +226,20 @@ class ChatViewModel(
     /** Results from this chat only, newest first as the store gives them. Reads the database: call it off the main thread. */
     suspend fun search(query: String): List<MessageHit> {
         if (query.isBlank()) return emptyList()
-        return withContext(io) { store.searchMessages(query, SEARCH_LIMIT).filter { it.chatId == chatId } }
+        // The store searches every chat, so a small limit can be filled by other chats' hits: widen it until this chat's
+        // hits are enough or the store has nothing more.
+        return withContext(io) {
+            var limit = SEARCH_LIMIT
+            var mine: List<MessageHit>
+            var done: Boolean
+            do {
+                val all = store.searchMessages(query, limit)
+                mine = all.filter { it.chatId == chatId }
+                done = mine.size >= SEARCH_WANTED || all.size < limit || limit >= SEARCH_MAX
+                limit *= 5
+            } while (!done)
+            mine
+        }
     }
 
     // Drafts
@@ -232,5 +267,8 @@ class ChatViewModel(
     private companion object {
         const val REACTION_REPEAT_MS = 500L
         const val SEARCH_LIMIT = 200
+        const val SEARCH_WANTED = 50
+        const val SEARCH_MAX = 5_000
+        const val MAX_REFRESH = 1_000
     }
 }

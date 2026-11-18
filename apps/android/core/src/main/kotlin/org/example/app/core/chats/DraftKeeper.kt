@@ -12,3 +12,18 @@ class DraftKeeper {
 
     fun draft(chatId: String): String = drafts[chatId].orEmpty()
 }
+
+/** One [DraftKeeper] per signed-in account: another account signing in later in the same process starts with none. */
+class AccountDrafts {
+    private var owner: String? = null
+    private var keeper = DraftKeeper()
+
+    @Synchronized
+    fun keeperFor(accountId: String): DraftKeeper {
+        if (owner != accountId) {
+            owner = accountId
+            keeper = DraftKeeper()
+        }
+        return keeper
+    }
+}

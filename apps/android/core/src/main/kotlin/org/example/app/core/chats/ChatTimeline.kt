@@ -55,7 +55,8 @@ object ChatTimeline {
         var seen = 0
         for (i in messages.indices.reversed()) {
             val m = messages[i]
-            if (m.senderId == myId || m.content is MessageContent.System) continue
+            // Own messages, system lines and call records never raise the unread count.
+            if (m.senderId == myId || m.content is MessageContent.System || m.content is MessageContent.Call) continue
             seen++
             if (seen == unreadCount) return m.id
         }

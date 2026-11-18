@@ -453,4 +453,4 @@ private fun SearchResults(
     }
 }
 
-private const val SEARCH_DEBOUNCE_MS = 200L
+private const val SEARCH_DEBOUNCE_MS = 300L

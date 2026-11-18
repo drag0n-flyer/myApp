@@ -1,6 +1,7 @@
 package org.example.app.ui.chat
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -96,7 +97,9 @@ fun MessageBubble(
         .semantics { onLongClick(optionsLabel) { onLongPress(); true } }
     Row(modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp), horizontalArrangement = if (isOwn) Arrangement.End else Arrangement.Start) {
         Box {
-            Surface(shape = shape, color = fill, modifier = Modifier.widthIn(max = 300.dp).then(press)) {
+            // The flash after a jump is a fill and an outline, so it shows on both the own and the other bubble colour.
+            val outline = if (highlighted) BorderStroke(3.dp, MaterialTheme.colorScheme.tertiary) else null
+            Surface(shape = shape, color = fill, border = outline, modifier = Modifier.widthIn(max = 300.dp).then(press)) {
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     if (message.replyToId != null) ReplyQuote(replyTo, replyAuthor, onQuoteClick)
                     Body(message, autoDownloads, onDownload)

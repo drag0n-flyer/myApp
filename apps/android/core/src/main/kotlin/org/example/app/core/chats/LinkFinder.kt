@@ -1,10 +1,13 @@
 package org.example.app.core.chats
 
-/** Finds web links in message text: `http://`, `https://` and `www.` only. */
+/**
+ * Finds links in message text: `http://`, `https://`, `www.` and `mailto:` only. A link containing bidirectional control
+ * characters is skipped: it could display as one address and open another.
+ */
 object LinkFinder {
     data class Link(val range: IntRange, val url: String)
 
-    private val pattern = Regex("""(?<![\w/])(?:https?://|www\.)[^\s<>]+""", RegexOption.IGNORE_CASE)
+    private val pattern = Regex("""(?<![\w/])(?:https?://|www\.|mailto:)[^\s<>]+""", RegexOption.IGNORE_CASE)
     private const val TRAILING = ".,;:!?'\""
 
     fun find(text: String): List<Link> = pattern.findAll(text).mapNotNull { match ->
@@ -17,7 +20,8 @@ object LinkFinder {
             if (c in TRAILING || unbalancedClose) end-- else break
         }
         val body = text.substring(start, end + 1)
-        val host = body.substringAfter("://", body.removePrefix("www.").removePrefix("WWW."))
+        if (body.any { it in '\u202A'..'\u202E' || it in '\u2066'..'\u2069' }) return@mapNotNull null
+        val host = body.substringAfter("://", body.removePrefix("www.").removePrefix("WWW.")).removePrefix("mailto:").removePrefix("MAILTO:")
         // A bare scheme or "www." with nothing after it is not a link.
         if (host.isEmpty()) return@mapNotNull null
         Link(start..end, if (body.startsWith("www.", ignoreCase = true)) "https://$body" else body)
