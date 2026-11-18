@@ -21,6 +21,7 @@ type Module struct {
 
 	frames   realtime.FrameRouter // set by HandleFrames (ephemeral.go)
 	ephLimit *ratelimit.Limiter   // conv.ephemeral: 30/minute per device and conversation
+	ephTotal *ratelimit.Limiter   // conv.ephemeral: 120/minute per device
 }
 
 // New returns the delivery module.

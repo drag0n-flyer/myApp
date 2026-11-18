@@ -17,12 +17,15 @@ const (
 	maxEphemeralBytes = 4 << 10
 	// ephemeralPerMinute is the per device, per conversation frame budget.
 	ephemeralPerMinute = 30
+	// ephemeralDevicePerMinute is the per device budget across conversations.
+	ephemeralDevicePerMinute = 120
 )
 
 // HandleFrames registers the delivery module's WebSocket frames on frames.
 func (m *Module) HandleFrames(frames realtime.FrameRouter) {
 	m.frames = frames
 	m.ephLimit = ratelimit.New(ephemeralPerMinute, time.Minute, m.d.Now)
+	m.ephTotal = ratelimit.New(ephemeralDevicePerMinute, time.Minute, m.d.Now)
 	frames.HandleFrame("conv.ephemeral", m.ephemeral)
 }
 
@@ -37,6 +40,11 @@ func ephemeralRespectsBlocks(conversationID string) bool { return true }
 // sender's own account. Nothing is stored, logged or pushed. Membership is
 // read from conversation_devices on every frame.
 func (m *Module) ephemeral(ctx context.Context, from core.Principal, data json.RawMessage) (any, error) {
+	// The device's overall budget comes first, before any database query, so
+	// a flood costs the server nothing but this check. Excess is dropped.
+	if ok, _ := m.ephTotal.Allow(from.DeviceID); !ok {
+		return nil, nil
+	}
 	var in struct {
 		ConversationID string      `json:"conversationID"`
 		Epoch          *int64      `json:"epoch"`
@@ -88,7 +96,9 @@ func (m *Module) ephemeral(ctx context.Context, from core.Principal, data json.R
 		if dv.account == from.AccountID || blocked[dv.account] {
 			continue
 		}
-		m.frames.Send(dv.device, "conv.ephemeral", out) // offline: nothing, by design
+		// TrySend, never Send: a full buffer drops this frame and must not
+		// close the recipient's connection. Offline: nothing, by design.
+		m.frames.TrySend(dv.device, "conv.ephemeral", out)
 	}
 	return nil, nil
 }
