@@ -92,6 +92,13 @@ struct PrivacyView: View {
                     LabeledContent("Blocked", value: "\(model.chatStore.blockedIDs.count)")
                 }
             }
+
+            Section {
+                Toggle("Link previews", isOn: $model.settings.linkPreviews)
+                    .accessibilityIdentifier("privacy.linkpreviews")
+            } footer: {
+                Text("To make a preview, your device contacts the website, which learns your IP address.")
+            }
         }
         .formStyle(.grouped)
         .navigationTitle("Privacy")

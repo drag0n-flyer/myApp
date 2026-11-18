@@ -250,6 +250,10 @@ private let jpeg = Data([0xFF, 0xD8, 0xFF, 0xE0, 0x01, 0x02])
         #endif
     }
 
+    @Test func linkPreviewsAreOffByDefault() {
+        #expect(UserSettings().linkPreviews == false)
+    }
+
     @Test func theRequestIsAPlainGetWithoutCookies() {
         let request = URLSessionPreviewTransport.request(URL(string: "https://example.com/")!, accept: "text/html")
         #expect(request.httpMethod == "GET" && request.httpShouldHandleCookies == false && request.httpBody == nil)

@@ -67,6 +67,7 @@ struct ChatView: View {
     @State private var jump: JumpRequest?
     @State private var replyingTo: Message?
     @State private var editing: Message?
+    @State private var previews = LinkPreviewComposerModel()
     @State private var deleteTarget: Message?
     @State private var forwardItem: ForwardItem?
     @State private var searching = false
@@ -88,6 +89,7 @@ struct ChatView: View {
                         if chat.isRequest {
                             RequestActionsBar(chat: chat, model: model)
                         } else {
+                            ComposerWithPreview(previews: previews) {
                             ComposerView(text: $draft, send: { send(chat) }, sendSample: sendSample,
                                          sendAttachment: { model.sendAttachment($0, in: chatID) },
                                          sendMedia: { model.sendMedia($0, caption: $1, in: chatID) },
@@ -99,6 +101,7 @@ struct ChatView: View {
                                          cancelBar: cancelBar,
                                          sampleMode: model.isSampleData,
                                          callActive: model.activeCall?.isEnded == false)
+                            }
                         }
                     }
             } else {
@@ -150,6 +153,9 @@ struct ChatView: View {
         .mediaPreview(preview)
         .mediaViewer($viewer)
         .onChange(of: searchRequest) { _, _ in openSearchIfRequested() }
+        .onChange(of: draft) { _, text in
+            previews.draftChanged(text, enabled: model.settings.linkPreviews && editing == nil, fetcher: model.linkPreviewFetcher)
+        }
         .onChange(of: draft) { _, text in
             // The clearing after a send is the store's job (it clears the draft only once the message is queued).
             if sentClear { sentClear = false; return }
@@ -481,7 +487,12 @@ struct ChatView: View {
     }
 
     private func beginEdit(_ message: Message) {
-        guard case .text(let text) = message.content else { return }
+        let text: String
+        switch message.content {
+        case .text(let own): text = own
+        case .photo, .file: text = message.caption ?? ""
+        default: return
+        }
         if editing == nil { draftBeforeEdit = draft }
         replyingTo = nil
         editing = message
@@ -529,7 +540,8 @@ struct ChatView: View {
         }
         // Your own message always scrolls into view.
         tracker.setAtBottom(true, newestID: history.messages(newest: chat.messages).last?.id)
-        model.send(.text(text), in: chatID, replyTo: replyingTo?.id)
+        model.send(.text(text), in: chatID, replyTo: replyingTo?.id, preview: previews.cardToSend(for: text))
+        previews.reset()
         replyingTo = nil
         sentClear = true
         draft = ""

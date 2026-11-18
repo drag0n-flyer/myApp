@@ -502,6 +502,8 @@ private struct Rig {
         #expect(rig.last?.linkPreview == card)
         let peer = try #require(await rig.bobReceives())
         #expect(peer.linkPreview == card)
+        // The receiver shows what the message carries and fetches nothing: every request went to the server's own API.
+        #expect(await rig.server.requests().allSatisfy { $0.contains(" /v1/") })
         // A preview whose address is not in the text is dropped.
         rig.ana.store.send(.text("no link"), in: "acc-bob", replyTo: nil, preview: card)
         await rig.ana.store.settle()

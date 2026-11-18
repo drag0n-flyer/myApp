@@ -151,24 +151,42 @@ struct MessageBubbleView: View {
         isMine ? AnyShapeStyle(Color.accentColor.gradient) : AnyShapeStyle(Color.secondaryBackground)
     }
 
+    /// The caption of a photo or file, formatted like a text.
+    @ViewBuilder
+    private var captionText: some View {
+        if let caption = message.caption, !caption.isEmpty {
+            Text(Self.underlinedLinks(caption)).font(.body).tint(isMine ? Color.white : Color.accentColor)
+                .accessibilityIdentifier("chat.caption.\(message.id)")
+        }
+    }
+
     @ViewBuilder
     private var content: some View {
         switch message.content {
         case .text(let text):
-            Text(Self.underlinedLinks(text)).font(.body).tint(isMine ? Color.white : Color.accentColor)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(Self.underlinedLinks(text)).font(.body).tint(isMine ? Color.white : Color.accentColor)
+                if let card = message.linkPreview { LinkPreviewCardView(card: card, isMine: isMine) }
+            }
         case .voice(let duration):
             VoiceMessageView(messageID: message.id, duration: duration, isMine: isMine, state: mediaState, player: voice,
                              canDownload: canDownload, download: download)
         case .photo(let bytes):
+            VStack(alignment: .leading, spacing: 6) {
             MediaBubbleView(isPhoto: true, uploadProgress: isMine ? message.uploadProgress : nil, cancelUpload: cancelUpload,
                             name: nil, bytes: bytes, state: mediaState, messageID: message.id,
                             canDownload: canDownload, download: download, open: { openMedia($0, nil, true) })
+            captionText
+            }
         case .file(let name, let bytes):
             let cleaned = MediaFileName.clean(name)
+            VStack(alignment: .leading, spacing: 6) {
             MediaBubbleView(isPhoto: false, isVideo: ChatMedia.isVideo(name: cleaned),
                             uploadProgress: isMine ? message.uploadProgress : nil, cancelUpload: cancelUpload,
                             name: cleaned, bytes: bytes, state: mediaState, messageID: message.id,
                             canDownload: canDownload, download: download, open: { openMedia($0, cleaned, false) })
+            captionText
+            }
         case .call:
             Label(message.previewText, systemImage: "phone")
         case .deleted:

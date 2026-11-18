@@ -96,6 +96,7 @@ final class AppModel {
     var settings: UserSettings {
         didSet {
             syncCalls()
+            if settings.linkPreviews != oldValue.linkPreviews, !isSampleData { LinkPreviewSetting.save(settings.linkPreviews) }
             messaging?.autoDownload.value = settings.autoDownload
             if settings.readReceipts != oldValue.readReceipts, let messaging {
                 messaging.readReceipts.value = settings.readReceipts
@@ -201,6 +202,7 @@ final class AppModel {
         let lock = AppModel.makeLock(sampleData: sampleData, launch: launch)
         settings.appLock = lock.appLockOn
         settings.lockAfterSeconds = lock.lockAfterSeconds
+        settings.linkPreviews = !sampleData && LinkPreviewSetting.load()
         self.account = account
         self.live = live
         self.linkSnapshots = bridge

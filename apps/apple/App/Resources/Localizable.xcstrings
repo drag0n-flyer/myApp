@@ -1015,6 +1015,28 @@
         }
       }
     },
+    "Link preview" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Link preview"
+          }
+        }
+      }
+    },
+    "Link previews" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Link previews"
+          }
+        }
+      }
+    },
     "Link this device?" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1642,6 +1664,17 @@
         }
       }
     },
+    "Remove preview" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove preview"
+          }
+        }
+      }
+    },
     "Reply" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2243,6 +2276,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Through your server"
+          }
+        }
+      }
+    },
+    "To make a preview, your device contacts the website, which learns your IP address." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "To make a preview, your device contacts the website, which learns your IP address."
           }
         }
       }

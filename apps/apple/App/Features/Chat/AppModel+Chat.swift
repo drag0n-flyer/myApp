@@ -88,8 +88,8 @@ extension AppModel {
         chatStore.messages(in: chatID, before: messageID, limit: limit)
     }
 
-    func send(_ content: MessageContent, in chatID: String, replyTo: String?) {
-        chatStore.send(content, in: chatID, replyTo: replyTo)
+    func send(_ content: MessageContent, in chatID: String, replyTo: String?, preview: LinkPreviewCard? = nil) {
+        chatStore.send(content, in: chatID, replyTo: replyTo, preview: preview)
     }
 
     /// Reacts, unless the message vanished or was deleted, or this is a quick repeat. The store toggles.
