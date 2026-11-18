@@ -23,8 +23,11 @@ public enum OutboxError: Error, Equatable, Sendable {
 }
 
 /// The send queue (Design 3, 6, 18): one outbox row per stored message, retried with backoff.
-/// Every attempt encrypts afresh and posts with the envelope ID as `clientMsgID`, so a retry is
-/// idempotent on the server. Never logs message content, only IDs.
+/// A queued row is encrypted once per epoch: the ciphertext, its conversation and its epoch are kept on the row,
+/// and a retry posts the same bytes with the envelope ID as `clientMsgID` (the server deduplicates by it). Every
+/// MLS encrypt advances the sender's generation and a receiver can skip only 1,024 of them, so an offline device
+/// must not encrypt on every attempt. When the epoch (or conversation) changed, the kept bytes are dropped and
+/// the message is encrypted again. Never logs message content, only IDs.
 ///
 /// Public API for other lanes:
 /// - `send(_:in:)`: the one escrow-aware send (Design 18 table, seal, POST, one stale-epoch retry, one
@@ -159,7 +162,7 @@ public actor Outbox: ControlSender {
             try deps.repo.completeSend(id: item.messageID, status: "failed")
             return true
         }
-        switch await attempt(envelope, chatID: item.chatID) {
+        switch await attempt(envelope, chatID: item.chatID, item: item) {
         case .sent:
             try deps.repo.completeSend(id: item.messageID, status: "sent")
             return true
@@ -202,10 +205,25 @@ public actor Outbox: ControlSender {
 
     private enum Outcome { case sent, failed, waiting, retry }
 
-    private func attempt(_ envelope: ContentEnvelope, chatID: String) async -> Outcome {
+    private func attempt(_ envelope: ContentEnvelope, chatID: String, item: OutboxRecord) async -> Outcome {
         do {
             let conversation = try await conversations.preferredConversation(with: chatID)
-            try await send(envelope, in: conversation)
+            let repo = deps.repo
+            let id = item.messageID
+            let bytes = item.envelope
+            var sealed: SealedMessage?
+            if let c = item.ciphertext, let e = item.ciphertextEpoch, let g = item.ciphertextConversation {
+                sealed = SealedMessage(ciphertext: c, epoch: UInt64(clamping: e), conversationID: g)
+            }
+            try await sendKeeping(
+                envelope, in: conversation, sealed: sealed,
+                keep: { sealed in
+                    // The row may have been replaced meanwhile; the store refuses a ciphertext of an old envelope.
+                    try? repo.setOutboxCiphertext(
+                        id: id, envelope: bytes, ciphertext: sealed.ciphertext, epoch: Int64(clamping: sealed.epoch),
+                        conversation: sealed.conversationID)
+                },
+                drop: { try? repo.clearOutboxCiphertext(id: id) })
             return .sent
         } catch let error as OutboxError {
             switch error {
@@ -236,9 +254,29 @@ public actor Outbox: ControlSender {
         }
     }
 
+    /// The result of one MLS encrypt, kept so that a retry in the same epoch posts the same bytes.
+    struct SealedMessage: Sendable, Equatable {
+        var ciphertext: Data
+        var epoch: UInt64
+        var conversationID: String
+    }
+
     /// Encrypts, adds the escrow copy when Design 18 says so, and posts. Throws `OutboxError`.
-    /// The envelope ID is the `clientMsgID`, so calling it again for the same envelope is idempotent.
+    /// The envelope ID is the `clientMsgID`, so calling it again for the same envelope is idempotent. This entry
+    /// keeps nothing: every call encrypts (a message that is not queued has nowhere to keep the ciphertext).
     public func send(_ envelope: ContentEnvelope, in start: ConversationRecord) async throws {
+        try await sendKeeping(envelope, in: start, sealed: nil, keep: nil, drop: nil)
+    }
+
+    /// `send` for a queued row. `stored` is a ciphertext made earlier for this envelope. It is posted again,
+    /// without encrypting, when the conversation and its current MLS epoch are still the ones it was made in;
+    /// otherwise `drop` is called and the envelope is encrypted again. `keep` receives each new ciphertext before
+    /// anything else can fail, so the caller can store it.
+    func sendKeeping(
+        _ envelope: ContentEnvelope, in start: ConversationRecord, sealed stored: SealedMessage?,
+        keep: (@Sendable (SealedMessage) -> Void)?, drop: (@Sendable () -> Void)?
+    ) async throws {
+        var sealed = stored
         var conversation = start
         var staleRetried = false
         var modeRetried = false
@@ -259,7 +297,27 @@ public actor Outbox: ControlSender {
             let epoch: UInt64
             var escrowCopy: Data?
             do {
-                (ciphertext, epoch) = try await deps.mls.encrypt(envelope.encoded(), in: GroupID(raw: conversation.groupID))
+                let group = GroupID(raw: conversation.groupID)
+                if let kept = sealed {
+                    // `epoch(of:)` reads the group; it does not advance the sender's generation.
+                    if kept.conversationID == conversation.serverID, try await deps.mls.epoch(of: group) == kept.epoch {
+                        (ciphertext, epoch) = (kept.ciphertext, kept.epoch)
+                    } else {
+                        sealed = nil
+                        drop?()
+                        (ciphertext, epoch) = try await deps.mls.encrypt(envelope.encoded(), in: group)
+                        let fresh = SealedMessage(ciphertext: ciphertext, epoch: epoch, conversationID: conversation.serverID)
+                        sealed = fresh
+                        keep?(fresh)
+                    }
+                } else {
+                    (ciphertext, epoch) = try await deps.mls.encrypt(envelope.encoded(), in: group)
+                    if let keep {
+                        let fresh = SealedMessage(ciphertext: ciphertext, epoch: epoch, conversationID: conversation.serverID)
+                        sealed = fresh
+                        keep(fresh)
+                    }
+                }
             } catch {
                 throw OutboxError.retryable
             }

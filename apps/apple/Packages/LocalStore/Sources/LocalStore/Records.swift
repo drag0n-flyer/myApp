@@ -120,9 +120,18 @@ public struct OutboxRecord: Sendable, Equatable {
     public var envelope: Data
     public var attempts: Int
     public var nextAttemptAt: Date
-    public init(messageID: String, chatID: String, envelope: Data, attempts: Int, nextAttemptAt: Date) {
+    /// The MLS ciphertext of `envelope` and the epoch it was made in, once the message has been encrypted.
+    public var ciphertext: Data?
+    public var ciphertextEpoch: Int64?
+    /// The server ID of the conversation the ciphertext was made for (a chat can get a new conversation).
+    public var ciphertextConversation: String?
+    public init(
+        messageID: String, chatID: String, envelope: Data, attempts: Int, nextAttemptAt: Date,
+        ciphertext: Data? = nil, ciphertextEpoch: Int64? = nil, ciphertextConversation: String? = nil
+    ) {
         self.messageID = messageID; self.chatID = chatID; self.envelope = envelope
         self.attempts = attempts; self.nextAttemptAt = nextAttemptAt
+        self.ciphertext = ciphertext; self.ciphertextEpoch = ciphertextEpoch; self.ciphertextConversation = ciphertextConversation
     }
 }
 
