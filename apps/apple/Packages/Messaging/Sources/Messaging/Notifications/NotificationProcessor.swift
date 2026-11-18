@@ -141,14 +141,44 @@ public struct NotificationProcessor: Sendable {
     }
 
     /// A payload already fetched into the raw inbox names its conversation and sender (the server's word): in a group the sender
-    /// must be in the stored list. A payload not fetched yet says nothing, so a device that is in any group leaves it to the app.
+    /// must be in the stored list. A payload not fetched yet is placed by the group ID in its framing: a group chat's is left to the app.
     private func mustLeaveToApp(_ payload: Data) throws -> Bool {
         if let known = try deps.repo.rawItems(limit: 500).first(where: { $0.payload == payload }) {
             guard known.kind == "message", let conversation = try deps.repo.conversation(serverID: known.conversationID),
                   ChatID.isGroup(conversation.chatID) else { return false }
             return try !deps.repo.groupMembers(chatID: conversation.chatID).contains { $0.accountID == known.senderAccount }
         }
-        return try deps.repo.chats().contains { $0.kind == "group" }
+        // Not fetched yet: read the MLS group ID from the framing, before anything is decrypted.
+        guard let raw = Self.groupID(in: payload), let conversation = try deps.repo.conversation(groupID: raw) else { return false }
+        return ChatID.isGroup(conversation.chatID)
+    }
+
+    /// The group ID of an MLS PrivateMessage without decrypting it: version 1 (`00 01`), wire format private_message
+    /// (`00 02`), then the group ID with a varint length (RFC 9420 section 2.1.2). Also the fake engine's JSON `group`
+    /// (hex). Hostile input: every length is bounds-checked, anything else gives nil.
+    static func groupID(in payload: Data) -> Data? {
+        let b = [UInt8](payload.prefix(4096))
+        if b.count >= 5, b[0] == 0, b[1] == 1, b[2] == 0, b[3] == 2 {
+            let first = b[4], kind = first >> 6
+            guard kind < 3 else { return nil }
+            let width = 1 << Int(kind)
+            guard b.count >= 4 + width else { return nil }
+            var length = Int(first & 0x3f)
+            for i in 1..<width { length = length << 8 | Int(b[4 + i]) }
+            let start = 4 + width
+            guard length > 0, start + length <= b.count else { return nil }
+            return Data(b[start..<start + length])
+        }
+        guard let object = try? JSONSerialization.jsonObject(with: payload) as? [String: Any],
+              object["fake"] as? String == "app", let hex = object["group"] as? String, hex.count % 2 == 0, !hex.isEmpty else { return nil }
+        var out = Data(), index = hex.startIndex
+        while index < hex.endIndex {
+            let next = hex.index(index, offsetBy: 2)
+            guard let byte = UInt8(hex[index..<next], radix: 16) else { return nil }
+            out.append(byte)
+            index = next
+        }
+        return out
     }
 
     static func sniffsAsWelcome(_ payload: Data) -> Bool {

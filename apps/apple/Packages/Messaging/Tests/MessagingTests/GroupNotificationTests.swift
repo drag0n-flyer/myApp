@@ -129,7 +129,7 @@ private struct GroupPush {
         #expect(try g.bob.deps.repo.rawItems(limit: 5).count == 1)   // still there for the app
     }
 
-    @Test func aPushNotFetchedYetIsLeftForTheAppWhenThisDeviceIsInAGroup() async throws {
+    @Test func aPushNotFetchedYetForAGroupIsLeftForTheAppBeforeAnythingIsDecrypted() async throws {
         let g = try await GroupPush()
         let data = try await g.push(.text("hi", replyTo: nil))
         let deps = g.bob.deps
