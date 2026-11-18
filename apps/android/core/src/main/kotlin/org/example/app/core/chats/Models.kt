@@ -173,6 +173,8 @@ data class Chat(
     val title: String? = null,
     /** The chat's disappearing-message time in seconds; 0 is off. */
     val timerSeconds: Int = 0,
+    /** A group chat's member list and whether this account is still in it; null for a one-to-one chat. */
+    val group: org.example.app.core.groups.GroupInfo? = null,
 ) {
     /** True for a group chat (`g:<conversationID>`). */
     val isGroup: Boolean get() = org.example.app.core.groups.ChatID.isGroup(id)

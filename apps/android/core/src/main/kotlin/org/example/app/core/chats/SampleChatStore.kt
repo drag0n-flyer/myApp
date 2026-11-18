@@ -3,6 +3,13 @@ package org.example.app.core.chats
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import org.example.app.core.groups.GroupInfo
+import org.example.app.core.groups.GroupNameRule
+import org.example.app.core.groups.GroupRole
+import org.example.app.core.groups.Member
+import org.example.app.core.groups.MyGroupState
+import org.example.app.core.people.Profile
+import org.example.app.core.people.ProfilePhotoRule
 import org.example.app.core.settings.MediaKind
 import java.time.Instant
 
@@ -278,9 +285,73 @@ class SampleChatStore(
         mutate {
             nextId += 1
             id = org.example.app.core.groups.ChatID.group("sample-$nextId")
-            allChats = allChats + Chat(id, null, ChatEncryption.EndToEnd, emptySet(), 0, emptyList(), isRequest = false, title = title)
+            val members = listOf(Member(me.id, GroupRole.Owner)) + contactIds.map { Member(it, GroupRole.Member) }
+            allChats = allChats + Chat(id, null, ChatEncryption.EndToEnd, emptySet(), 0, emptyList(), isRequest = false, title = title, group = GroupInfo(members))
+            if (photo != null && ProfilePhotoRule.isAcceptable(photo)) _profiles.value = _profiles.value + (id to Profile(id, title, photo, 1))
         }
         return GroupCreated(id, emptyList())
+    }
+
+    /** Runs [change] on the group chat [chatId] when this account is still in it and [allowed] by its role; false otherwise. */
+    private inline fun groupChange(chatId: String, allowed: (GroupRole) -> Boolean, change: (Chat, GroupInfo) -> Chat?): Boolean = synchronized(lock) {
+        val chat = allChats.firstOrNull { it.id == chatId } ?: return false
+        val info = chat.group ?: return false
+        if (info.myState != MyGroupState.Member) return false
+        val mine = info.roleOf(me.id) ?: return false
+        if (!allowed(mine)) return false
+        val next = change(chat, info) ?: return false
+        mutate { change(chatId) { next } }
+        true
+    }
+
+    override suspend fun addMembers(chatId: String, accounts: List<String>): Boolean = groupChange(chatId, { it.canAdd }) { chat, info ->
+        val fresh = accounts.distinct()
+        if (fresh.isEmpty() || fresh.size != accounts.size || fresh.any { info.roleOf(it) != null } || fresh.size > info.roomLeft()) return@groupChange null
+        chat.copy(group = info.copy(members = info.members + fresh.map { Member(it, GroupRole.Member) }))
+    }
+
+    override suspend fun removeMember(chatId: String, account: String): Boolean = groupChange(chatId, { it.canAdd }) { chat, info ->
+        val mine = info.roleOf(me.id) ?: return@groupChange null
+        val target = info.roleOf(account) ?: return@groupChange null
+        if (account == me.id || !mine.canRemove(target)) return@groupChange null
+        chat.copy(group = info.copy(members = info.members.filter { it.accountId != account }))
+    }
+
+    override suspend fun leaveGroup(chatId: String): Boolean = groupChange(chatId, { true }) { chat, info ->
+        if (info.roleOf(me.id) == GroupRole.Owner && info.members.size > 1) return@groupChange null
+        chat.copy(group = GroupInfo(info.members.filter { it.accountId != me.id }, MyGroupState.Left))
+    }
+
+    override suspend fun setRole(chatId: String, account: String, role: GroupRole): Boolean = groupChange(chatId, { it.canSetRoles }) { chat, info ->
+        val target = info.roleOf(account) ?: return@groupChange null
+        if (account == me.id || target == GroupRole.Owner || target == role) return@groupChange null
+        val members = info.members.map {
+            when {
+                it.accountId == account -> it.copy(role = role)
+                role == GroupRole.Owner && it.accountId == me.id -> it.copy(role = GroupRole.Admin)
+                else -> it
+            }
+        }
+        chat.copy(group = info.copy(members = members))
+    }
+
+    override suspend fun renameGroup(chatId: String, name: String): Boolean = groupChange(chatId, { it.canEditInfo }) { chat, _ ->
+        val clean = GroupNameRule.clean(name) ?: return@groupChange null
+        chat.copy(title = clean)
+    }
+
+    override suspend fun setGroupPhoto(chatId: String, photo: ByteArray?): Boolean = groupChange(chatId, { it.canEditInfo }) { chat, _ ->
+        if (photo != null && !ProfilePhotoRule.isAcceptable(photo)) return@groupChange null
+        _profiles.value = if (photo == null) _profiles.value - chatId else _profiles.value + (chatId to Profile(chatId, chat.title.orEmpty(), photo, 1))
+        chat
+    }
+
+    override fun deleteChat(chatId: String) = mutate {
+        val chat = allChats.firstOrNull { it.id == chatId } ?: return@mutate
+        val state = chat.group?.myState ?: return@mutate
+        if (state == MyGroupState.Member) return@mutate
+        allChats = allChats.filter { it.id != chatId }
+        _profiles.value = _profiles.value - chatId
     }
 
     override fun addFolder(name: String, chatIds: Set<String>): ChatFolder {

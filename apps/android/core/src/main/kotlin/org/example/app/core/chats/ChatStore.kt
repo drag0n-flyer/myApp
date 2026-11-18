@@ -128,6 +128,23 @@ interface ChatStore {
     suspend fun createGroup(contactIds: List<String>, name: String, photo: ByteArray?): GroupCreated =
         throw GroupCreateFailed(GroupCreateFailed.Reason.Other)
 
+    // Group screens. Each change returns true once it is done (or durably queued), false when it was refused. Defaults suit stores with no groups.
+
+    /** Adds [accounts] (contacts' account IDs). Owner or admin only; at most 100 members in all. */
+    suspend fun addMembers(chatId: String, accounts: List<String>): Boolean = false
+    /** Removes [account]. The owner removes an admin or a member; an admin removes a member. */
+    suspend fun removeMember(chatId: String, account: String): Boolean = false
+    /** Leaves the group. An owner with other people in it must hand ownership over first (then this is false). */
+    suspend fun leaveGroup(chatId: String): Boolean = false
+    /** Owner only. Making someone the owner makes the previous owner an admin. */
+    suspend fun setRole(chatId: String, account: String, role: org.example.app.core.groups.GroupRole): Boolean = false
+    /** Owner or admin. [name] goes through `GroupNameRule`. */
+    suspend fun renameGroup(chatId: String, name: String): Boolean = false
+    /** Owner or admin. A JPEG that passes `ProfilePhotoRule`, or null to remove the photo. The photo shows through [profiles] under the chat ID. */
+    suspend fun setGroupPhoto(chatId: String, photo: ByteArray?): Boolean = false
+    /** Removes a group chat this account is no longer in (left or removed), with its history. Anything else does nothing. */
+    fun deleteChat(chatId: String) {}
+
     // People base (disappearing messages and profiles). Defaults suit stores that keep none of it.
 
     /** The chat's disappearing-message timer in seconds; 0 is off. */
