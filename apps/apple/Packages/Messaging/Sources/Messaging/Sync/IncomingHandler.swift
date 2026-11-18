@@ -238,6 +238,9 @@ public struct IncomingHandler: Sendable {
         case .typing, .presence:
             // Signals travel as ephemeral frames; one that arrives as a stored message is dropped.
             return .ignored
+        case .group:
+            // Applied by the group message task (from an owner or admin of the stored member list only); never a message.
+            return .ignored
         case .timer(let seconds):
             try applyTimer(seconds, id: envelope.id, at: envelope.at, from: account, conversation: conversation, db: db)
             return .ignored
@@ -264,7 +267,7 @@ public struct IncomingHandler: Sendable {
     static func timerIDKey(_ chatID: String) -> String { "timer-id:" + chatID }
 
     /// Kinds that never become a message row, whether valid or not.
-    static let silentKinds: Set<String> = ["typing", "presence", "profile", "timer"]
+    static let silentKinds: Set<String> = ["typing", "presence", "profile", "timer", "group"]
 
     /// `timer`: the chat's timer changes and one system line says so. It is not a message, so nothing is counted as
     /// unread and nothing notifies. The line's ID comes from the envelope, so a repeat adds no second line.

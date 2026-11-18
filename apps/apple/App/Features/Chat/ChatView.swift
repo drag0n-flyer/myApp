@@ -746,7 +746,7 @@ struct RequestActionsBar: View {
                 .multilineTextAlignment(.center)
             HStack(spacing: 10) {
                 Button(role: .destructive) {
-                    model.block(contactID: chat.contactID)
+                    if let contactID = chat.contactID { model.block(contactID: contactID) }
                     dismiss()
                 } label: { Text("Block").frame(maxWidth: .infinity) }
                     .accessibilityIdentifier("requests.block")

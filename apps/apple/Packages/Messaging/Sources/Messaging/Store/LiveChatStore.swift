@@ -836,7 +836,7 @@ public final class LiveChatStore: ChatStore {
     // MARK: - Calls
 
     public func recordCall(_ summary: CallSummary, contactID: String, outgoing: Bool, at date: Date) {
-        guard let chatID = ensureChatRow(contactID),
+        guard !ChatID.isGroup(contactID), let chatID = ensureChatRow(contactID),
               let envelope = try? JSONEncoder().encode(summary) else { return }
         let id = ChatMapping.callPrefix + freshID()
         let (video, outcome, duration): (Bool, String, Double) = switch summary {
@@ -955,6 +955,7 @@ public final class LiveChatStore: ChatStore {
     }
 
     public func block(contactID: String) {
+        guard !ChatID.isGroup(contactID) else { return }   // a group is not a person
         do {
             try repo.transaction {
                 try repo.block(contactID)
@@ -972,6 +973,7 @@ public final class LiveChatStore: ChatStore {
     }
 
     public func unblock(contactID: String) {
+        guard !ChatID.isGroup(contactID) else { return }
         do {
             try repo.transaction {
                 try repo.unblock(contactID)
@@ -985,6 +987,7 @@ public final class LiveChatStore: ChatStore {
     }
 
     public func report(chatID: String) {
+        guard !ChatID.isGroup(chatID) else { return }   // a report names a person, not a group
         let records = (try? repo.messages(chatID: chatID, before: nil, limit: 40)) ?? []
         let lines = map(records).filter { message in
             if case .system = message.content { return false }
@@ -1042,6 +1045,7 @@ public final class LiveChatStore: ChatStore {
 
     /// The chat with this contact, created empty if there is none yet. A chat with a non-contact is a request.
     public func ensureChat(with contactID: String) -> String {
+        guard !ChatID.isGroup(contactID) else { return contactID }
         let id = ensureChatRow(contactID) ?? contactID
         refresh()
         return id
@@ -1051,6 +1055,8 @@ public final class LiveChatStore: ChatStore {
     private func ensureChatRow(_ contactID: String) -> String? {
         do {
             if try repo.chat(id: contactID) != nil { return contactID }
+            // A group chat is made only from its conversation; a `g:` ID never becomes a contact's chat.
+            guard !ChatID.isGroup(contactID) else { return nil }
             let known = try repo.contact(id: contactID)
             if known == nil {
                 try repo.upsertContact(ContactRecord(

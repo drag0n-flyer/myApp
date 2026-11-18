@@ -57,7 +57,7 @@ func msg(_ c: MessageContent) -> Message {
 @MainActor @Test func blockRemovesChatAndContact() {
     let s = SampleChatStore()
     let req = s.messageRequests[0]
-    s.block(contactID: req.contactID)
+    s.block(contactID: req.contactID!)
     #expect(s.messageRequests.isEmpty && s.messageRequestsRowTitle == nil)
 }
 

@@ -30,9 +30,9 @@ extension AppModel {
         (everyChat + messageRequests)
             .flatMap { chat in
                 chat.messages.compactMap { message -> CallRecord? in
-                    guard case .call(let summary) = message.content else { return nil }
-                    return CallRecord(id: message.id, contactID: chat.contactID,
-                                      name: contact(id: chat.contactID)?.displayName ?? "",
+                    guard let contactID = chat.contactID, case .call(let summary) = message.content else { return nil }
+                    return CallRecord(id: message.id, contactID: contactID,
+                                      name: contact(id: contactID)?.displayName ?? "",
                                       summary: summary, date: message.sentAt,
                                       isOutgoing: message.senderID == chatStore.me.id)
                 }

@@ -215,7 +215,8 @@ public struct Message: Identifiable, Hashable, Codable, Sendable {
 
 public struct Chat: Identifiable, Hashable, Codable, Sendable {
     public var id: String
-    public var contactID: String
+    /// The other person of a one-to-one chat (its ID); `nil` for a group chat.
+    public var contactID: String?
     public var encryption: ChatEncryption
     public var folderIDs: Set<String>
     public var unreadCount: Int
@@ -232,7 +233,7 @@ public struct Chat: Identifiable, Hashable, Codable, Sendable {
     /// The unsent text saved for this chat; `nil` when there is none.
     public var draft: String?
 
-    public init(id: String, contactID: String, encryption: ChatEncryption, folderIDs: Set<String>, unreadCount: Int, messages: [Message], isRequest: Bool,
+    public init(id: String, contactID: String?, encryption: ChatEncryption, folderIDs: Set<String>, unreadCount: Int, messages: [Message], isRequest: Bool,
                 modeMismatch: Bool = false, pinnedAt: Date? = nil, muted: Bool = false, archived: Bool = false, draft: String? = nil) {
         self.id = id
         self.contactID = contactID

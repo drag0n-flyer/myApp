@@ -109,7 +109,7 @@ enum ChatMapping {
         messages: [Message], draft: String? = nil
     ) -> Chat {
         Chat(
-            id: record.id, contactID: record.id, encryption: encryption(preferred: preferred), folderIDs: folderIDs,
+            id: record.id, contactID: record.kind == "group" ? nil : record.id, encryption: encryption(preferred: preferred), folderIDs: folderIDs,
             unreadCount: record.unread, messages: messages, isRequest: record.isRequest,
             modeMismatch: conversations.contains { $0.modeMismatch }, pinnedAt: record.pinnedAt, muted: record.muted,
             archived: record.archived, draft: draft)

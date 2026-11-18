@@ -269,7 +269,7 @@ public final class SampleChatStore: ChatStore {
         defer { onChange?() }
         guard let i = index(of: requestID), allChats[i].isRequest else { return }
         allChats[i].isRequest = false
-        if let sender = requestSenders.removeValue(forKey: allChats[i].contactID) {
+        if let contactID = allChats[i].contactID, let sender = requestSenders.removeValue(forKey: contactID) {
             contacts.append(sender)
         }
     }
