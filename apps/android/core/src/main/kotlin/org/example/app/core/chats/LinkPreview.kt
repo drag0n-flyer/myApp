@@ -111,7 +111,8 @@ object LinkPreviewRule {
         if (u(0) == 0x00 && u(1) == 0x64 && u(2) == 0xFF && u(3) == 0x9B) return zero(4, 12) && embedded(12) // NAT64
         if ((u(0) and 0xE0) != 0x20) return false // only global unicast 2000::/3: refuses fe80::/10, fc00::/7, fec0::/10, ff00::/8
         if (u(0) == 0x20 && u(1) == 0x02) return embedded(2) // 6to4
-        if (u(0) == 0x20 && u(1) == 0x01 && u(2) == 0x00 && u(3) == 0x00) return false // Teredo
+        if (u(0) == 0x20 && u(1) == 0x01 && (u(2) and 0xFE) == 0x00) return false // 2001::/23 IETF special-purpose, Teredo included
+        if (u(0) == 0x3F && u(1) == 0xFF && (u(2) and 0xF0) == 0x00) return false // 3fff::/20 documentation
         if (u(0) == 0x20 && u(1) == 0x01 && u(2) == 0x0D && u(3) == 0xB8) return false // documentation
         return true
     }

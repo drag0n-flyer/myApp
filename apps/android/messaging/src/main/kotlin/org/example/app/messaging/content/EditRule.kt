@@ -8,9 +8,9 @@ package org.example.app.messaging.content
 object EditRule {
     class Result(val envelope: ContentEnvelope, val folded: String, val caption: String?, val linkPreview: String?)
 
-    /** Null when the message cannot be edited. [fold] makes the search text. */
+    /** Null when the message cannot be edited, including a text message whose new text is blank. [fold] makes the search text. */
     fun apply(old: ContentEnvelope, text: String, fold: (String) -> String): Result? = when (old) {
-        is ContentEnvelope.Text -> {
+        is ContentEnvelope.Text -> if (text.isBlank()) null else {
             val lp = old.lp?.takeIf { it.url in text }
             Result(old.copy(t = text, lp = lp), fold(text), null, lp?.let(ContentCodec::linkPreviewJson))
         }

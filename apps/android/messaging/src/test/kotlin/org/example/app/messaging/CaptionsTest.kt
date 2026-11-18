@@ -164,6 +164,12 @@ class CaptionsTest {
         assertNull(assertIs<MessageContent.Photo>(store.chat("acc-ana")!!.messages.single { it.id == "p1" }.content).caption)
     }
 
+    @Test fun r1AReceivedBlankEditOfATextIsRefused() {
+        val old = ContentEnvelope.Text("t8", NOW, "hello")
+        assertEquals(null, org.example.app.messaging.content.EditRule.apply(old, "  ") { it })
+        assertEquals("hi", (org.example.app.messaging.content.EditRule.apply(old, "hi") { it }!!.envelope as ContentEnvelope.Text).t)
+    }
+
     @Test fun r1ATextEditToBlankIsStillRefused() = runTest {
         val s = setup()
         val me = s.ana.me.accountId

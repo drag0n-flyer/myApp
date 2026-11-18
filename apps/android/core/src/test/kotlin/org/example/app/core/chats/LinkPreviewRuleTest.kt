@@ -211,6 +211,13 @@ class LinkPreviewRuleTest {
         }
     }
 
+    @Test fun r5TheSpecialPurposeAndDocumentationIPv6BlocksAreRefusedAsOnApple() {
+        for (a in listOf("2001::1", "2001:0:4136:e378::1", "2001:1ff::1", "2001:db8::1", "3fff::1", "3fff:fff::1")) {
+            assertFalse(LinkPreviewRule.allowedHost("example.org", listOf(ip(a))), a)
+        }
+        for (a in listOf("2001:200::1", "3fff:1000::1")) assertTrue(LinkPreviewRule.allowedHost("example.org", listOf(ip(a))), a)
+    }
+
     @Test fun r5HostCharsetIsLowerCaseLettersDigitsDotsAndHyphensOnly() {
         for (h in listOf("a_b.example", "ex\u00E4mple.org", "\u4F8B\u3048.jp", "a b.example", "a%41.example", "a@b.example", "a:b.example", "a/b.example", "a\\b.example")) {
             assertFalse(LinkPreviewRule.hostNameAllowed(h), h)
