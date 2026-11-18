@@ -74,7 +74,17 @@ final class ChatActionsTests: XCTestCase {
         let button = app.element("chat.scrollToNewest")
         XCTAssertTrue(button.waitToExist())
         button.tap()
-        XCTAssertTrue(app.staticTexts["Filler message 20"].waitToExist())
+        let reachedNewest = app.staticTexts["Filler message 20"].waitForExistence(timeout: 5)
+        if !reachedNewest {
+            // Diagnostics for a failed scroll: did the action run, is the button still there, where is the list.
+            let tapsValue = String(describing: app.element("chat.debug.scrollTaps").value)
+            let stillShown = button.exists
+            let lastFiller = (1...20).reversed().first { app.staticTexts["Filler message \($0)"].exists } ?? 0
+            let attachment = XCTAttachment(string: app.debugDescription)
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            XCTFail("Did not reach the newest message: taps=\(tapsValue) buttonStillShown=\(stillShown) lastFiller=\(lastFiller)")
+        }
     }
 
     func testSearchInChat() {
