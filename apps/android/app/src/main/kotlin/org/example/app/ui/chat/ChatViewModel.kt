@@ -149,12 +149,8 @@ class ChatViewModel(
         if (clean.isEmpty() || state.value.sendingPaused) return false
         // A reply to a message that is gone or deleted would show a dead quote; send it as a plain message.
         val target = replyTo?.takeIf { id -> current(id)?.let { MessageActions.stillApplies(MessageAction.Reply, it, mine(it)) } == true }
-<<<<<<< HEAD
         store.send(MessageContent.Text(clean, preview?.let { LinkPreviewRule.cardFor(clean, it) }), chatId, target)
-=======
-        store.send(MessageContent.Text(clean), chatId, target)
         signals?.messageSent(chatId)
->>>>>>> origin/main
         return true
     }
 

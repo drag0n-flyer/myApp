@@ -31,4 +31,12 @@ class PreviewImageCacheTest {
         cache.get(byteArrayOf(1)) { decodes++; 1 } // was pushed out
         assertEquals(4, decodes)
     }
+
+    @Test fun r3bAPictureWithNoReadableFrameHeaderIsNeverHandedToTheDecoder() {
+        // FF D8 FF and a few bytes: a JPEG start with no frame header, so its declared size is unknown. No decoder is
+        // involved (this runs without Robolectric), so reaching the bitmap decoder would throw and still give null; the
+        // size check comes first and the result is none either way.
+        assertNull(decodeSmallJpeg(byteArrayOf(-1, -40, -1, 1, 2, 3)))
+        assertNull(decodeSmallJpeg(byteArrayOf(-1, -40, 2)))
+    }
 }

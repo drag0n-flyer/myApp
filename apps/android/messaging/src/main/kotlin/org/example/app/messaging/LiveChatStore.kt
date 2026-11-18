@@ -1066,7 +1066,6 @@ class LiveChatStore(
 
     override fun edit(messageId: String, chatId: String, text: String) = write {
         val newText = TextLimit.truncate(text)
-<<<<<<< HEAD
         // Reading the row, applying the edit and looking at the pending-upload marker are ONE transaction, so an upload
         // cannot commit between them unseen: either the edit lands first and the upload carries the edited caption, or
         // the upload has committed (its marker is gone) and the Edit control goes behind the message in the queue.
@@ -1084,15 +1083,6 @@ class LiveChatStore(
         } ?: return@write
         // While the upload has not committed, it reads the edited caption from this row and carries it itself.
         if (outcome.isText || !outcome.uploadStillPending) sendControl(chatId) { id, at -> ContentEnvelope.Edit(id, at, messageId, outcome.wire) }
-=======
-        if (newText.isBlank()) return@write
-        val record = repo.message(messageId) ?: return@write
-        if (record.chatId != chatId || record.senderAccount != device.accountId || record.deleted) return@write
-        val old = ContentCodec.decode(record.envelope) as? ContentEnvelope.Text ?: return@write
-        val edited = ContentCodec.encode(old.edited(newText))
-        if (!repo.applyEdit(messageId, device.accountId, edited, fold(newText), nowMs())) return@write
-        sendControl(chatId) { id, at -> ContentEnvelope.Edit(id, at, messageId, newText) }
->>>>>>> origin/main
     }
 
     override fun delete(messageId: String, chatId: String) = write {

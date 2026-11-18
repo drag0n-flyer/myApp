@@ -261,7 +261,7 @@ interface Repository {
     fun updateStatus(ids: List<String>, status: String)
     /**
      * Applies an edit: new envelope, search text and edit time. [caption] and [linkPreview] are the new values of those
-     * columns, used only where the row already has one (a caption of a captioned message, the preview of a message that has one).
+     * columns, stored as given (null removes the caption or preview; a caption can be added where there was none).
      */
     fun applyEdit(id: String, sender: String, envelope: ByteArray, folded: String, at: Long, caption: String?, linkPreview: String?): Boolean
     /**

@@ -153,7 +153,7 @@ private val decodedPictures = PreviewImageCache<ImageBitmap>(32)
  * A preview picture is a JPEG of at most 8 KiB. Its declared size is read from its own header first; anything over
  * 1,024 x 1,024 (or not a JPEG at all) is never handed to the decoder.
  */
-private fun decodeSmallJpeg(bytes: ByteArray): ImageBitmap? = decodedPictures.get(bytes) { b ->
+internal fun decodeSmallJpeg(bytes: ByteArray): ImageBitmap? = decodedPictures.get(bytes) { b ->
     try {
         val info = ImageHeader.read(b)
         if (info != null && info.format == ImageHeader.Format.Jpeg && info.width <= 1024 && info.height <= 1024) {
