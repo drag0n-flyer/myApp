@@ -25,7 +25,7 @@ class VoiceCaptureTest {
         var starts = 0
         var stops = 0
         var cancels = 0
-        override var capturedSeconds = 0.0
+        override var capturedSeconds = 3.0
         override var level = 0f
         override fun start(): StartResult { starts++; return startResult }
         override fun stop(): StopResult {
@@ -379,6 +379,7 @@ class VoiceCaptureTest {
         val c = capture()
         c.press(rtl = false)
         advanceTimeBy(160)   // the start is queued on the io dispatcher but has not run
+        recorder.capturedSeconds = 0.0   // the microphone has delivered nothing yet
         c.lift()
         runCurrent()
         val end = System.currentTimeMillis() + 5_000
@@ -401,5 +402,82 @@ class VoiceCaptureTest {
         assertEquals(30, levels.size)
         assertEquals(0.40f, levels.last())
         assertEquals(0.11f, levels.first())
+    }
+
+    // ---- lead's rulings: minimum on Send, keep on leaving ----
+
+    @Test fun sendFromTheLockedBarUnderOneSecondIsRefusedWithTheHint() = runTest {
+        val c = capture()
+        c.activate()
+        runCurrent()
+        recorder.capturedSeconds = 0.9
+        c.send()
+        runCurrent()
+        assertTrue(notes.isEmpty())
+        assertEquals(1, recorder.cancels)
+        assertEquals(CaptureState.Idle, c.state.value)
+        assertEquals(true, c.hint.value)
+    }
+
+    @Test fun sendFromAPreviewUnderOneSecondIsRefusedAndTheFileIsDeleted() = runTest {
+        val file = File.createTempFile("note", ".ogg")
+        recorder.stopResult = StopResult.Success(Recording(file, 0.9))
+        val c = capture()
+        c.activate()
+        runCurrent()
+        c.stop()
+        runCurrent()
+        c.send()
+        runCurrent()
+        val end = System.currentTimeMillis() + 5_000
+        while (file.exists() && System.currentTimeMillis() < end) Thread.sleep(10)
+        assertEquals(false, file.exists())
+        assertTrue(notes.isEmpty())
+        assertEquals(true, c.hint.value)
+    }
+
+    @Test fun leavingWhileRecordingStopsAndKeepsThePreview() = runTest {
+        val file = File.createTempFile("note", ".ogg")
+        recorder.stopResult = StopResult.Success(Recording(file, 5.0))
+        val kept = java.util.concurrent.LinkedBlockingQueue<CaptureState.Preview>()
+        val c = VoiceCapture(backgroundScope, recorder, { notes += it }, { notices += it }, StandardTestDispatcher(testScheduler), keep = { kept.add(it) })
+        c.activate()
+        runCurrent()
+        c.release()
+        val p = kept.poll(5, java.util.concurrent.TimeUnit.SECONDS)
+        assertEquals(CaptureState.Preview(file, 5.0), p)
+        assertTrue(file.exists())
+        assertEquals(0, recorder.cancels)
+        file.delete()
+    }
+
+    @Test fun aKeptPreviewIsShownAgainByTheNextCapture() = runTest {
+        val file = File.createTempFile("note", ".ogg")
+        val c = VoiceCapture(backgroundScope, recorder, { notes += it }, { notices += it }, StandardTestDispatcher(testScheduler), initial = CaptureState.Preview(file, 5.0))
+        assertEquals(CaptureState.Preview(file, 5.0), c.state.value)
+        c.send()
+        runCurrent()
+        assertEquals(listOf(file), notes)
+        file.delete()
+    }
+
+    @Test fun theKeepBoxHandsAPreviewToTheNextScreenOfTheSameChatOnly() {
+        val file = File("a.ogg")
+        val got = mutableListOf<CaptureState.Preview>()
+        VoiceKeep.put("chat1", CaptureState.Preview(file, 3.0))
+        VoiceKeep.take("other") { got += it }
+        assertTrue(got.isEmpty())
+        VoiceKeep.take("chat1") { got += it }
+        assertEquals(listOf(CaptureState.Preview(file, 3.0)), got)
+        // Taken once only.
+        VoiceKeep.take("chat1") { got += it }
+        assertEquals(1, got.size)
+    }
+
+    @Test fun theKeepBoxCallsBackWhenThePreviewArrivesLate() {
+        val got = mutableListOf<CaptureState.Preview>()
+        VoiceKeep.take("chat2") { got += it }
+        VoiceKeep.put("chat2", CaptureState.Preview(File("b.ogg"), 2.0))
+        assertEquals(1, got.size)
     }
 }

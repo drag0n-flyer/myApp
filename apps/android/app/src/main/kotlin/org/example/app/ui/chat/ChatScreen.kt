@@ -158,7 +158,7 @@ fun ChatScreen(
     val expectReturn by rememberUpdatedState(LocalExpectReturn.current)
     val mediaActions = remember(context, opener) { MediaActions(context, opener, scope, notify = { notice = it }, expectReturn = { expectReturn() }) }
     val pickers = rememberAttachmentPickers(onAttachment = viewModel::sendAttachment, notify = { notice = it })
-    val voiceControls = rememberVoiceControls(onNote = { viewModel.sendAttachment(it.path, MediaKind.Voice) }, notify = { notice = it })
+    val voiceControls = rememberVoiceControls(chatKey = viewModel.chatId, onNote = { viewModel.sendAttachment(it.path, MediaKind.Voice) }, notify = { notice = it })
     val capture by voiceControls.capture.state.collectAsState()
     val voiceHint by voiceControls.capture.hint.collectAsState()
     // One voice message plays at a time; it stops when the screen is left or the app goes to the background.

@@ -85,8 +85,15 @@ class VoiceCapture(
     private val tickMs: Long = 100,
     /** Run on [io] before a finished note is handed over; a note that fails it is deleted and "Couldn't record" is shown. */
     private val check: (File) -> Boolean = { true },
+    /**
+     * Where a recording goes when the screen leaves (or turns): stopped and kept as a preview for the next screen of the same
+     * chat. Without it the recording is thrown away.
+     */
+    private val keep: ((CaptureState.Preview) -> Unit)? = null,
+    /** A preview kept by the previous screen, shown again at once. */
+    initial: CaptureState.Preview? = null,
 ) {
-    private val _state = MutableStateFlow<CaptureState>(CaptureState.Idle)
+    private val _state = MutableStateFlow<CaptureState>(initial ?: CaptureState.Idle)
     val state: StateFlow<CaptureState> = _state
 
     private val _hint = MutableStateFlow(false)
@@ -97,7 +104,7 @@ class VoiceCapture(
     private var ticker: Job? = null
     private var hintJob: Job? = null
     private var holdJob: Job? = null
-    private var gesture = VoiceGesture.State.idle
+    private var gesture = if (initial != null) VoiceGesture.State.preview else VoiceGesture.State.idle
     private var rtl = false
     private var starting = false
     private var released = false
@@ -176,6 +183,16 @@ class VoiceCapture(
         if (step(VoiceGesture.Event.interrupted) == VoiceGesture.State.preview) finish(thenSend = false)
     }
 
+    /** A preview kept by an earlier screen arrives late (its recorder was still being stopped). */
+    fun adopt(preview: CaptureState.Preview) {
+        scope.launch {
+            if (!released && _state.value == CaptureState.Idle && !starting) {
+                gesture = VoiceGesture.State.preview
+                _state.value = preview
+            } else if (keep != null) keep.invoke(preview) else deleteInBackground(preview.file)
+        }
+    }
+
     private fun showHint() {
         hintJob?.cancel()
         _hint.value = true
@@ -236,7 +253,10 @@ class VoiceCapture(
             val result = try {
                 withContext(io + NonCancellable) { recorder.stop().also { held.set(it) } }
             } catch (e: CancellationException) {
-                (held.get() as? StopResult.Success)?.recording?.file?.delete()
+                val note = (held.get() as? StopResult.Success)?.recording
+                if (note != null) {
+                    if (!thenSend && keep != null) keep.invoke(CaptureState.Preview(note.file, note.durationSeconds)) else note.file.delete()
+                }
                 throw e
             }
             when (result) {
@@ -276,11 +296,19 @@ class VoiceCapture(
         when (val current = _state.value) {
             is CaptureState.Recording -> {
                 if (current.stopping) return
+                if (elapsedMs() < VoiceGesture.minimumMs) { discard(); showHint(); return }
                 step(VoiceGesture.Event.sendTapped)
                 finish(thenSend = true)
             }
             is CaptureState.Preview -> {
                 if (current.sending) return
+                if (current.seconds * 1000 < VoiceGesture.minimumMs) {
+                    _state.value = CaptureState.Idle
+                    gesture = VoiceGesture.State.idle
+                    deleteInBackground(current.file)
+                    showHint()
+                    return
+                }
                 step(VoiceGesture.Event.sendTapped)
                 _state.value = current.copy(sending = true)
                 scope.launch {
@@ -312,9 +340,16 @@ class VoiceCapture(
         ticker?.cancel()
         holdJob?.cancel()
         when (val current = _state.value) {
-            is CaptureState.Recording -> { _state.value = CaptureState.Idle; cancelInBackground() }
-            // If this is cut short, the sweep at the next app start removes the file.
-            is CaptureState.Preview -> { _state.value = CaptureState.Idle; deleteInBackground(current.file) }
+            is CaptureState.Recording -> {
+                _state.value = CaptureState.Idle
+                // A finish already under way keeps its own note (see finish); otherwise stop now and keep what was recorded.
+                if (!current.stopping) if (keep != null) keepInBackground(keep) else cancelInBackground()
+            }
+            // If the app is killed, the sweep at the next start removes the file.
+            is CaptureState.Preview -> {
+                _state.value = CaptureState.Idle
+                if (!current.sending) if (keep != null) keep.invoke(current) else deleteInBackground(current.file)
+            }
             CaptureState.Idle -> Unit
         }
         gesture = VoiceGesture.State.idle
@@ -322,6 +357,13 @@ class VoiceCapture(
 
     private fun deleteInBackground(file: File) {
         thread(name = "voice-delete") { file.delete() }
+    }
+
+    private fun keepInBackground(keep: (CaptureState.Preview) -> Unit) {
+        thread(name = "voice-keep") {
+            val result = recorder.stop()
+            if (result is StopResult.Success) keep(CaptureState.Preview(result.recording.file, result.recording.durationSeconds))
+        }
     }
 
     private fun startTicker() {

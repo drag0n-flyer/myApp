@@ -162,20 +162,23 @@ class VoiceControls(val capture: VoiceCapture, val press: (rtl: Boolean) -> Unit
 /**
  * A [VoiceCapture] on the real recorder. Holding the microphone records after the microphone permission (asked on first
  * use, and that first press records nothing); refusing it says so in one line. The app going to the background, or a call,
- * stops a recording in progress and keeps what was captured as a preview. The 30-minute limit does the same.
+ * stops a recording in progress and keeps what was captured as a preview; so does leaving the chat or a rotation (the preview
+ * comes back with the next screen of the same [chatKey]). The 30-minute limit does the same.
  */
 @Composable
-fun rememberVoiceControls(onNote: (File) -> Unit, notify: (Int) -> Unit): VoiceControls {
+fun rememberVoiceControls(chatKey: String, onNote: (File) -> Unit, notify: (Int) -> Unit): VoiceControls {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val note by rememberUpdatedState(onNote)
     val say by rememberUpdatedState(notify)
-    val capture = remember(context) {
+    val capture = remember(context, chatKey) {
         val dir = MediaCache.outgoingDir(context)
         var self: VoiceCapture? = null
         val recorder = VoiceRecorder(context, dir) { self?.limitReached() }
-        VoiceCapture(scope, VoiceRecorderPort(recorder, dir), { note(it) }, { say(it) }, check = { VoicePrep.prepare(it) != null })
-            .also { self = it }
+        VoiceCapture(
+            scope, VoiceRecorderPort(recorder, dir), { note(it) }, { say(it) }, check = { VoicePrep.prepare(it) != null },
+            keep = { VoiceKeep.put(chatKey, it) },
+        ).also { self = it; VoiceKeep.take(chatKey) { p -> it.adopt(p) } }
     }
     DisposableEffect(capture) { onDispose { capture.release() } }
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { capture.interrupted() }
