@@ -4,6 +4,7 @@ import android.content.ClipData
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -115,6 +116,8 @@ fun ChatScreen(
     opener: AttachmentOpener? = null,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val peer by viewModel.peer.collectAsStateWithLifecycle()
+    androidx.compose.runtime.DisposableEffect(viewModel) { onDispose { viewModel.leftChat() } }
     val list = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboard.current
@@ -356,7 +359,10 @@ fun ChatScreen(
                     title = {
                         Row(Modifier.clickable(role = Role.Button, onClick = onOpenInfo), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             Avatar(state.contactName, size = 36.dp, colorKey = state.chat?.contactId)
-                            Text(state.contactName, maxLines = 1)
+                            Column {
+                                Text(state.contactName, maxLines = 1)
+                                peerLineText(peer)?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1) }
+                            }
                         }
                     },
                     actions = {
@@ -380,7 +386,7 @@ fun ChatScreen(
                 Composer(
                     enabled = !state.sendingPaused,
                     text = text,
-                    onTextChange = { text = it; if (editing == null) viewModel.setDraft(it) },
+                    onTextChange = { text = it; if (editing == null) { viewModel.setDraft(it); viewModel.typed(it.isEmpty()) } },
                     onSend = { sent ->
                         val target = editing
                         if (target != null) {

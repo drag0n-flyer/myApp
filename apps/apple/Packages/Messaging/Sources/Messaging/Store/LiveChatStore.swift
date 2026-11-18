@@ -110,7 +110,7 @@ public final class LiveChatStore: ChatStore {
         guard let attachments else { return }
         await inbox.setOnStored { [weak self] message in
             await MainActor.run {
-                self?.background { await attachments.autoDownload(for: message) }
+                _ = self?.background { await attachments.autoDownload(for: message) }
             }
         }
     }

@@ -26,6 +26,20 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- A person's QR code (/u/<username>) and a one-time link (/c/<token>) on the server's host. The host is a build
+                 setting (-PappLinkHost=...); the app itself refuses a link for any other host. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="${appLinkHost}" android:pathPrefix="/u/" />
+            </intent-filter>
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="${appLinkHost}" android:pathPrefix="/c/" />
+            </intent-filter>
         </activity>
 
         <!-- Opening and sharing a file, and the camera's output: one URI at a time, read access granted by the intent that carries it. -->
