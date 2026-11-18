@@ -32,7 +32,8 @@ struct RootView: View {
             }
         }
         .environment(\.expectReturn, { [lock = model.lock] in lock.expectReturn() })
-        .environment(\.cancelExpectReturn, { [lock = model.lock] in lock.cancelExpectedReturn() })
+        .environment(\.profilePhoto, { [model] id in model.profilePhoto(for: id) })
+        .environment(\.cancelExpectReturn,{ [lock = model.lock] in lock.cancelExpectedReturn() })
         .preferredColorScheme(AppearanceChoice(rawValue: appearance)?.colorScheme)
         .linkHandling(model)
         .alert("This device was removed from your account.", isPresented: $model.deviceRemovedAlert) {

@@ -1,0 +1,153 @@
+[
+ {
+  "name": "256x256 baseline",
+  "hex": "ffd8ffc0000b080100010001011100",
+  "accept": true,
+  "width": 256,
+  "height": 256
+ },
+ {
+  "name": "1024x1024 is the largest",
+  "hex": "ffd8ffc0000b080400040001011100",
+  "accept": true,
+  "width": 1024,
+  "height": 1024
+ },
+ {
+  "name": "1x1 is the smallest",
+  "hex": "ffd8ffc0000b080001000101011100",
+  "accept": true,
+  "width": 1,
+  "height": 1
+ },
+ {
+  "name": "1025x1 too wide",
+  "hex": "ffd8ffc0000b080001040101011100",
+  "accept": false
+ },
+ {
+  "name": "1x1025 too tall",
+  "hex": "ffd8ffc0000b080401000101011100",
+  "accept": false
+ },
+ {
+  "name": "0 wide",
+  "hex": "ffd8ffc0000b08000a000001011100",
+  "accept": false
+ },
+ {
+  "name": "0 tall",
+  "hex": "ffd8ffc0000b080000000a01011100",
+  "accept": false
+ },
+ {
+  "name": "65000x65000 in a tiny file",
+  "hex": "ffd8ffc0000b08fde8fde801011100",
+  "accept": false
+ },
+ {
+  "name": "SOF1 extended",
+  "hex": "ffd8ffc1000b0800c8012c01011100",
+  "accept": true,
+  "width": 300,
+  "height": 200
+ },
+ {
+  "name": "SOF2 progressive",
+  "hex": "ffd8ffc2000b0800c8012c01011100",
+  "accept": true,
+  "width": 300,
+  "height": 200
+ },
+ {
+  "name": "SOF3 lossless is not read",
+  "hex": "ffd8ffc3000b0800c8012c01011100",
+  "accept": false
+ },
+ {
+  "name": "no frame header",
+  "hex": "ffd8ffd9",
+  "accept": false
+ },
+ {
+  "name": "scan before any frame header",
+  "hex": "ffd8ffda0002",
+  "accept": false
+ },
+ {
+  "name": "truncated right after the marker",
+  "hex": "ffd8ffc0",
+  "accept": false
+ },
+ {
+  "name": "truncated inside the frame header",
+  "hex": "ffd8ffc0000b080100",
+  "accept": false
+ },
+ {
+  "name": "frame length too short",
+  "hex": "ffd8ffc00005080100",
+  "accept": false
+ },
+ {
+  "name": "not a JPEG",
+  "hex": "89504e47ffc0000b080100010001011100",
+  "accept": false
+ },
+ {
+  "name": "only the start marker",
+  "hex": "ffd8",
+  "accept": false
+ },
+ {
+  "name": "three bytes",
+  "hex": "ffd8ff",
+  "accept": false
+ },
+ {
+  "name": "frame-like bytes inside APP1 are not the frame header",
+  "hex": "ffd8ffe1000fffc0000b08fde8fde801011100ffc0000b080100010001011100",
+  "accept": true,
+  "width": 256,
+  "height": 256
+ },
+ {
+  "name": "frame-like bytes inside APP1 and no real one",
+  "hex": "ffd8ffe1000fffc0000b08fde8fde801011100",
+  "accept": false
+ },
+ {
+  "name": "fill bytes before the marker",
+  "hex": "ffd8ffffffc0000b080030004001011100",
+  "accept": true,
+  "width": 64,
+  "height": 48
+ },
+ {
+  "name": "APP0 then DQT then frame",
+  "hex": "ffd8ffe000040000ffdb000300ffc0000b080060008001011100",
+  "accept": true,
+  "width": 128,
+  "height": 96
+ },
+ {
+  "name": "segment length runs past the end",
+  "hex": "ffd8ffe1ffff00",
+  "accept": false
+ },
+ {
+  "name": "first frame marker C9 (arithmetic) declaring 65000x65000, then a C0 16x16",
+  "hex": "ffd8ffc9000b08fde8fde801011100ffc0000b080010001001011100",
+  "accept": false
+ },
+ {
+  "name": "C3 alone",
+  "hex": "ffd8ffc3000b080010001001011100",
+  "accept": false
+ },
+ {
+  "name": "C5 differential then C0",
+  "hex": "ffd8ffc5000b080010001001011100ffc0000b080010001001011100",
+  "accept": false
+ }
+]

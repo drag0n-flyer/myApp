@@ -12,6 +12,24 @@ public final class SampleChatStore: ChatStore {
         me.displayName = name
         onChange?()
     }
+    private var ownPhoto: Data?
+    public var myPhoto: Data? { ownPhoto }
+
+    @discardableResult
+    public func setMyPhoto(_ photo: Data?) -> Bool {
+        if let photo, ProfileDisplay.photo(profile: StoredProfile(accountID: me.id, name: me.displayName, photo: photo, ver: 1)) == nil {
+            return false
+        }
+        ownPhoto = photo
+        onChange?()
+        return true
+    }
+
+    /// Sample data: the first sample contact has a photo, so the screens show one.
+    public func profilePhoto(for accountID: String) -> Data? {
+        if accountID == me.id { return ownPhoto }
+        return accountID == "riya" ? SamplePhoto.jpeg : nil
+    }
     public private(set) var contacts: [Contact]
     public private(set) var folders: [ChatFolder]
     public private(set) var blockedIDs: Set<String> = []

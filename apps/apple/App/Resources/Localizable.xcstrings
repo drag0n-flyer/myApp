@@ -487,6 +487,17 @@
         }
       }
     },
+    "Change photo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Change photo"
+          }
+        }
+      }
+    },
     "Chat" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -516,6 +527,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Check your connection, then try again."
+          }
+        }
+      }
+    },
+    "Choose photo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose photo"
           }
         }
       }
@@ -725,6 +747,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Couldn't sign out"
+          }
+        }
+      }
+    },
+    "Couldn't use that photo. Try another." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't use that photo. Try another."
           }
         }
       }
@@ -1939,6 +1972,17 @@
         }
       }
     },
+    "Remove photo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remove photo"
+          }
+        }
+      }
+    },
     "Remove preview" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2353,6 +2397,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Stop recording"
+          }
+        }
+      }
+    },
+    "Take photo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Take photo"
           }
         }
       }
@@ -3090,6 +3145,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Your link is ready. It works once and lasts 7 days."
+          }
+        }
+      }
+    },
+    "Your profile photo" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your profile photo"
           }
         }
       }

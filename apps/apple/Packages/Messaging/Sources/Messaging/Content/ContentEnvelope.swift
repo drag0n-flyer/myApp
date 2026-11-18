@@ -220,7 +220,7 @@ public struct ContentEnvelope: Codable, Sendable, Equatable {
             case "profile":
                 guard let name, DisplayNameRule.clean(name) == name, let ver = ver?.value, ver >= 1 else { return nil }
                 guard let photo else { return .profile(name: name, photo: nil, ver: ver) }
-                guard let text = photo.value, let image = LinkPreview.base64(text), LinkPreview.isJPEG(image, max: ContentEnvelope.maxProfilePhoto) else { return nil }
+                guard let text = photo.value, let image = LinkPreview.base64(text), ProfilePhotoRule.isAcceptable(image) else { return nil }
                 return .profile(name: name, photo: image, ver: ver)
             default: return nil
             }

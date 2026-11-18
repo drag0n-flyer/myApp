@@ -75,7 +75,7 @@ private struct Rig {
     func bobMessages() throws -> [MessageRecord] { try bob.repo.messages(chatID: "acc-ana", before: nil, limit: 100) }
 }
 
-private let jpeg = Data([0xFF, 0xD8, 0xFF]) + Data(count: 100)
+private let jpeg = Data([0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x0B, 0x08, 0x01, 0x00, 0x01, 0x00, 0x01, 0x01, 0x11, 0x00]) + Data(count: 100)
 
 @Suite("TestPeopleStore") @MainActor struct TestPeopleStore {
     // MARK: timer and ttl on send

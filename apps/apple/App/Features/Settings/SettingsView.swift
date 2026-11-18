@@ -125,6 +125,7 @@ struct ProfileView: View {
 
     var body: some View {
         Form {
+            ProfilePhotoSection(model: model)
             Section {
                 Button { editingName = true } label: {
                     LabeledContent("Name") {
