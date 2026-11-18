@@ -64,8 +64,11 @@ public enum ChatTimeline {
         guard unreadCount > 0 else { return nil }
         let incoming = messages.filter {
             if $0.senderID == myID { return false }
-            if case .system = $0.content { return false }
-            return true
+            // System lines and call records do not raise the unread count.
+            switch $0.content {
+            case .system, .call: return false
+            default: return true
+            }
         }
         return incoming.suffix(unreadCount).first?.id
     }

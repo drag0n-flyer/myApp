@@ -26,6 +26,8 @@ public protocol ChatStore: AnyObject {
     /// Up to `limit` messages before `messageID` (the newest if nil), oldest first.
     func messages(in chatID: String, before messageID: String?, limit: Int) -> [Message]
     func searchMessages(_ query: String, limit: Int) -> [MessageHit]
+    /// Hits inside one chat.
+    func searchMessages(_ query: String, in chatID: String, limit: Int) -> [MessageHit]
     func send(_ content: MessageContent, in chatID: String, replyTo: String?)
     func sendAttachment(_ fileURL: URL, kind: MediaKind, in chatID: String)
     /// A recorded voice note of `duration` seconds.
@@ -62,6 +64,11 @@ public protocol ChatStore: AnyObject {
 }
 
 extension ChatStore {
+    /// Searches every chat for the newest 500 hits and keeps this chat's. A store with a chat-scoped query should override it.
+    public func searchMessages(_ query: String, in chatID: String, limit: Int) -> [MessageHit] {
+        Array(searchMessages(query, limit: 500).filter { $0.chatID == chatID }.prefix(limit))
+    }
+
     public func sendVoice(_ fileURL: URL, duration: Double, in chatID: String) {
         sendAttachment(fileURL, kind: .voice, in: chatID)
     }

@@ -48,7 +48,8 @@ struct MessageBubbleView: View {
             .foregroundStyle(isMine ? Color.white : Color.primary)
             .background(bubbleBackground, in: bubbleShape)
             .overlay {
-                bubbleShape.stroke(Color.accentColor, lineWidth: 3).opacity(isHighlighted ? 1 : 0)
+                // Accent on your own accent-coloured bubble would not show.
+                bubbleShape.stroke(isMine ? Color.primary : Color.accentColor, lineWidth: 3).opacity(isHighlighted ? 1 : 0)
             }
             .animation(.easeInOut(duration: 0.3), value: isHighlighted)
             .contextMenu { menu }
@@ -67,6 +68,15 @@ struct MessageBubbleView: View {
             .padding(.bottom, message.reactions.isEmpty ? 0 : 10)
             if !isMine { Spacer(minLength: 60) }
         }
+    }
+
+    /// Detected links, underlined so they look like links on both bubble colours.
+    private static func underlinedLinks(_ text: String) -> AttributedString {
+        var attributed = LinkDetector.attributed(text)
+        for run in attributed.runs where run.link != nil {
+            attributed[run.range].underlineStyle = .single
+        }
+        return attributed
     }
 
     private var bubbleShape: UnevenRoundedRectangle {
@@ -136,7 +146,7 @@ struct MessageBubbleView: View {
     private var content: some View {
         switch message.content {
         case .text(let text):
-            Text(LinkDetector.attributed(text)).font(.body).tint(isMine ? Color.white : Color.accentColor)
+            Text(Self.underlinedLinks(text)).font(.body).tint(isMine ? Color.white : Color.accentColor)
         case .voice(let duration):
             VoiceMessageView(duration: duration, isMine: isMine)
         case .photo(let bytes):

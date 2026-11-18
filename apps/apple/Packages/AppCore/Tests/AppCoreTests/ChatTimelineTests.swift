@@ -73,6 +73,11 @@ final class ChatTimelineTests: XCTestCase {
         XCTAssertEqual(ChatTimeline.firstUnreadID(messages: ms, unreadCount: 2, myID: "me"), "c")
         XCTAssertEqual(ChatTimeline.firstUnreadID(messages: ms, unreadCount: 3, myID: "me"), "a")
         XCTAssertNil(ChatTimeline.firstUnreadID(messages: ms, unreadCount: 0, myID: "me"))
+        // A missed call record does not count towards the unread number.
+        var withCall = ms
+        withCall.insert(Message(id: "call", senderID: "them", sentAt: date(10, 11, 30), content: .call(.missedAudio), status: .read,
+                                replyToID: nil, reactions: []), at: 3)
+        XCTAssertEqual(ChatTimeline.firstUnreadID(messages: withCall, unreadCount: 2, myID: "me"), "c")
         // More unread than loaded: the oldest loaded incoming message.
         XCTAssertEqual(ChatTimeline.firstUnreadID(messages: ms, unreadCount: 9, myID: "me"), "a")
         XCTAssertNil(ChatTimeline.firstUnreadID(messages: [], unreadCount: 3, myID: "me"))

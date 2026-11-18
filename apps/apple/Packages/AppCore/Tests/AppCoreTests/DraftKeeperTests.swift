@@ -42,3 +42,21 @@ final class LinkDetectorTests: XCTestCase {
         XCTAssertTrue(links.allSatisfy { ["http", "https", "mailto"].contains($0.scheme ?? "") })
     }
 }
+
+extension LinkDetectorTests {
+    func testSkipsLinksWithBidiControls() {
+        let text = LinkDetector.attributed("open https://exa\u{202E}mple.com now")
+        XCTAssertTrue(text.runs.compactMap(\.link).isEmpty)
+    }
+}
+
+final class OwnerGuardTests: XCTestCase {
+    func testSwitchingAccountsReportsChange() {
+        var owner = OwnerGuard()
+        XCTAssertTrue(owner.switchTo("a"))
+        XCTAssertFalse(owner.switchTo("a"))
+        XCTAssertTrue(owner.switchTo("b"))
+        owner.clear()
+        XCTAssertTrue(owner.switchTo("b"))
+    }
+}

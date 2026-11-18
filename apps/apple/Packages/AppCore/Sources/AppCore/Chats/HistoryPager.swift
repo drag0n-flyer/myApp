@@ -19,7 +19,9 @@ public struct HistoryPager: Sendable {
 
     public mutating func finish(loadedCount: Int) {
         isLoading = false
-        if loadedCount < Self.pageSize { reachedStart = true }
+        // Only an empty page proves the start: a page can come back short while older messages exist
+        // (hidden system lines are dropped after the database limit).
+        if loadedCount == 0 { reachedStart = true }
     }
 }
 
@@ -57,8 +59,13 @@ public struct ChatHistory: Sendable {
     /// `loader(beforeID, limit)` has the semantics of `ChatStore.messages(in:before:limit:)`.
     @discardableResult
     public mutating func loadPage(newest: [Message], loader: (String, Int) -> [Message]) -> Int {
-        guard !pager.reachedStart, !pager.isLoading, let oldestID = messages(newest: newest).first?.id else { return 0 }
+        guard !pager.reachedStart, !pager.isLoading else { return 0 }
         pager.begin()
+        guard let oldestID = messages(newest: newest).first?.id else {
+            // Nothing is known yet, so there is nothing to page from.
+            pager.finish(loadedCount: 0)
+            return 0
+        }
         let page = loader(oldestID, HistoryPager.pageSize)
         let before = messages(newest: newest).count
         older = MessageMerge.merged(newest: older, older: page)
@@ -66,6 +73,27 @@ public struct ChatHistory: Sendable {
         // A page that adds nothing new means the store has nothing more to give; do not ask again.
         pager.finish(loadedCount: added == 0 ? 0 : page.count)
         return added
+    }
+
+    /// Call when the store's newest messages changed. Keeps messages that slid out of the newest window,
+    /// fills a gap left by a burst of arrivals, and re-reads the loaded older range so edits, deletes and
+    /// reactions on older messages show. The store's copy always wins.
+    public mutating func sync(previousNewest: [Message], newest: [Message], loader: (String, Int) -> [Message]) {
+        older = MessageMerge.merged(newest: previousNewest, older: older)
+        guard let firstID = newest.first?.id else { return }
+        if let lastSeen = previousNewest.last?.id, !newest.contains(where: { $0.id == lastSeen }) {
+            var before = firstID
+            for _ in 0..<20 {
+                let page = loader(before, HistoryPager.pageSize)
+                older = MessageMerge.merged(newest: page, older: older)
+                guard let oldestOfPage = page.first, !page.contains(where: { $0.id == lastSeen }) else { break }
+                before = oldestOfPage.id
+            }
+        }
+        if !older.isEmpty {
+            let fresh = loader(firstID, min(older.count, 500))
+            older = MessageMerge.merged(newest: fresh, older: older)
+        }
     }
 
     /// Loads older pages until `targetID` is known. False when history ends first; the caller then leaves the chat as it was.

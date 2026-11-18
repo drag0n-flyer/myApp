@@ -23,11 +23,17 @@ public enum LinkDetector {
         var result = AttributedString(text)
         for (range, url) in links(in: text) {
             guard let scheme = url.scheme?.lowercased(), ["http", "https", "mailto"].contains(scheme),
+                  !containsBidiControl(text[range]),
                   let lower = AttributedString.Index(range.lowerBound, within: result),
                   let upper = AttributedString.Index(range.upperBound, within: result) else { continue }
             result[lower..<upper].link = url
         }
         return result
+    }
+
+    /// Text that reorders itself (U+202A-202E, U+2066-2069) could show one address and open another.
+    private static func containsBidiControl(_ text: Substring) -> Bool {
+        text.unicodeScalars.contains { (0x202A...0x202E).contains($0.value) || (0x2066...0x2069).contains($0.value) }
     }
 
     #if canImport(Darwin)
@@ -56,4 +62,20 @@ public enum LinkDetector {
         return found
     }
     #endif
+}
+
+/// Remembers whose screen state it is. When another account signs in, the state is dropped.
+public struct OwnerGuard: Sendable {
+    public private(set) var ownerID: String?
+
+    public init() {}
+
+    /// True when `id` differs from the current owner, so the caller must reset what it holds.
+    public mutating func switchTo(_ id: String) -> Bool {
+        guard ownerID != id else { return false }
+        ownerID = id
+        return true
+    }
+
+    public mutating func clear() { ownerID = nil }
 }

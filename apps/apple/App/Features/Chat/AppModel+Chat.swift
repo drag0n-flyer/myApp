@@ -12,14 +12,39 @@ final class ChatScreenState {
     var reactionGate = ReactionGate()
     /// Set by chat info's Search button; the chat with this ID opens its search field and clears it.
     var searchRequestChatID: String?
+    private var owner = OwnerGuard()
     private init() {}
+
+    /// Drops everything when another account is signed in (a chat ID is the other person's account ID,
+    /// so account B must not see account A's draft).
+    func ensureOwner(_ id: String) {
+        if owner.switchTo(id) { clearState() }
+    }
+
+    /// For sign-out and account deletion.
+    func reset() {
+        owner.clear()
+        clearState()
+    }
+
+    private func clearState() {
+        drafts = DraftKeeper()
+        reactionGate = ReactionGate()
+        searchRequestChatID = nil
+    }
 }
 
 extension AppModel {
     /// Unsent composer text per chat for the life of the process.
     var drafts: DraftKeeper {
-        get { ChatScreenState.shared.drafts }
-        set { ChatScreenState.shared.drafts = newValue }
+        get { ChatScreenState.shared.ensureOwner(chatStore.me.id); return ChatScreenState.shared.drafts }
+        set { ChatScreenState.shared.ensureOwner(chatStore.me.id); ChatScreenState.shared.drafts = newValue }
+    }
+
+    /// Chat whose search field should open (set by chat info's Search button).
+    var chatSearchRequest: String? {
+        get { ChatScreenState.shared.ensureOwner(chatStore.me.id); return ChatScreenState.shared.searchRequestChatID }
+        set { ChatScreenState.shared.ensureOwner(chatStore.me.id); ChatScreenState.shared.searchRequestChatID = newValue }
     }
 
     private func isMine(_ message: Message) -> Bool { message.senderID == chatStore.me.id }
@@ -29,12 +54,13 @@ extension AppModel {
     func currentMessage(id: String, in chatID: String, followedBy nextID: String? = nil) -> Message? {
         if let found = chatStore.chat(id: chatID)?.messages.first(where: { $0.id == id }) { return found }
         guard let nextID else { return nil }
-        return chatStore.messages(in: chatID, before: nextID, limit: 1).first { $0.id == id }
+        // Ask for a few: a page can come back short when hidden lines are dropped after the database limit.
+        return chatStore.messages(in: chatID, before: nextID, limit: 3).first { $0.id == id }
     }
 
     /// A page of messages before `messageID`, oldest first.
-    func olderMessages(in chatID: String, before messageID: String) -> [Message] {
-        chatStore.messages(in: chatID, before: messageID, limit: HistoryPager.pageSize)
+    func olderMessages(in chatID: String, before messageID: String, limit: Int = HistoryPager.pageSize) -> [Message] {
+        chatStore.messages(in: chatID, before: messageID, limit: limit)
     }
 
     func send(_ content: MessageContent, in chatID: String, replyTo: String?) {
@@ -77,9 +103,8 @@ extension AppModel {
         return chatID
     }
 
-    /// Message hits inside one chat. The store searches every chat, so ask for many and filter.
+    /// Message hits inside one chat.
     func searchMessages(_ query: String, in chatID: String) -> [MessageHit] {
-        let hits = chatStore.searchMessages(query, limit: 500)
-        return Array(hits.filter { $0.chatID == chatID }.prefix(100))
+        chatStore.searchMessages(query, in: chatID, limit: 100)
     }
 }

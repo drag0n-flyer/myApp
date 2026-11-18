@@ -28,7 +28,7 @@ struct ChatInfoView: View {
                             action(muted ? "Unmute" : "Mute", muted ? "bell.slash" : "bell") { muted.toggle() }
                             action("Search", "magnifyingglass") {
                                 // Back to the chat, which opens its own search field.
-                                ChatScreenState.shared.searchRequestChatID = chatID
+                                model.chatSearchRequest = chatID
                                 dismiss()
                             }
                         }

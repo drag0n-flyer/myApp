@@ -27,6 +27,11 @@ struct ChatView: View {
     @State private var draftBeforeEdit = ""
     @State private var downloaded: Set<String> = []
     @State private var history = ChatHistory()
+    /// The store's newest messages as of the last sync, so ones that slide out of that window are kept.
+    @State private var lastNewest: [Message] = []
+    @State private var hits: [MessageHit] = []
+    /// The query `hits` answers; "No results" shows only once it matches what is typed.
+    @State private var searchedQuery = ""
     @State private var tracker = NewestTracker()
     @State private var firstUnreadID: String?
     @State private var capturedUnread = false
@@ -44,7 +49,7 @@ struct ChatView: View {
     private var contact: Contact? { chat.flatMap { model.contact(id: $0.contactID) } }
 
     var body: some View {
-        let searchRequest = ChatScreenState.shared.searchRequestChatID
+        let searchRequest = model.chatSearchRequest
         Group {
             if let chat {
                 messages(chat)
@@ -93,6 +98,7 @@ struct ChatView: View {
             if !capturedUnread, let chat {
                 // Before markRead clears the count.
                 capturedUnread = true
+                lastNewest = chat.messages
                 firstUnreadID = ChatTimeline.firstUnreadID(messages: chat.messages, unreadCount: chat.unreadCount, myID: model.me.id)
                 draft = model.drafts.draft(for: chatID)
             }
@@ -104,6 +110,7 @@ struct ChatView: View {
             if editing == nil { model.drafts.set(text, for: chatID) }
         }
         .onChange(of: chat?.messages) { _, _ in closeBarsForChangedMessages() }
+        .onChange(of: model.revision) { _, _ in syncHistory() }
         .confirmationDialog("Delete this message for everyone?",
                             isPresented: Binding(get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } }),
                             titleVisibility: .visible) {
@@ -259,10 +266,22 @@ struct ChatView: View {
 
     // MARK: - History
 
+    /// After a store change: keep messages that left the newest window, fill gaps, refresh loaded older ones.
+    private func syncHistory() {
+        guard let chat else { return }
+        guard chat.messages != lastNewest || !history.older.isEmpty else { return }
+        var next = history
+        next.sync(previousNewest: lastNewest, newest: chat.messages) { before, limit in
+            model.olderMessages(in: chatID, before: before, limit: limit)
+        }
+        history = next
+        lastNewest = chat.messages
+    }
+
     /// Loads the next older page and keeps `anchorID` (the row that triggered it) where it was on screen.
     private func loadOlder(chat: Chat, keeping anchorID: String, proxy: ScrollViewProxy) {
         var next = history
-        let added = next.loadPage(newest: chat.messages) { model.olderMessages(in: chatID, before: $0) }
+        let added = next.loadPage(newest: chat.messages) { before, _ in model.olderMessages(in: chatID, before: before) }
         history = next
         if added > 0 {
             Task { @MainActor in proxy.scrollTo(anchorID, anchor: .top) }
@@ -272,7 +291,7 @@ struct ChatView: View {
     /// Scrolls to a message and highlights it, loading older pages as needed. Does nothing if history ends first.
     private func jumpToMessage(_ id: String, chat: Chat, proxy: ScrollViewProxy) {
         var trial = history
-        guard trial.load(until: id, newest: chat.messages, loader: { model.olderMessages(in: chatID, before: $0) }) else { return }
+        guard trial.load(until: id, newest: chat.messages, loader: { before, _ in model.olderMessages(in: chatID, before: before) }) else { return }
         history = trial
         highlightID = id
         Task { @MainActor in withAnimation { proxy.scrollTo(id, anchor: .center) } }
@@ -402,8 +421,8 @@ struct ChatView: View {
     // MARK: - Search
 
     private func openSearchIfRequested() {
-        guard ChatScreenState.shared.searchRequestChatID == chatID else { return }
-        ChatScreenState.shared.searchRequestChatID = nil
+        guard model.chatSearchRequest == chatID else { return }
+        model.chatSearchRequest = nil
         searching = true
         Task { @MainActor in searchFocused = true }
     }
@@ -435,17 +454,17 @@ struct ChatView: View {
 
     private func searchResults(_ chat: Chat) -> some View {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let hits = trimmed.isEmpty ? [] : model.searchMessages(trimmed, in: chatID)
+        let shown = trimmed == searchedQuery ? hits : []
         let known = Dictionary(history.messages(newest: chat.messages).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         return List {
-            if !trimmed.isEmpty, hits.isEmpty {
+            if !trimmed.isEmpty, searchedQuery == trimmed, hits.isEmpty {
                 Text("No results")
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity)
                     .listRowBackground(Color.clear)
                     .accessibilityIdentifier("chat.search.empty")
             }
-            ForEach(hits, id: \.messageID) { hit in
+            ForEach(shown, id: \.messageID) { hit in
                 Button {
                     searching = false
                     query = ""
@@ -465,6 +484,18 @@ struct ChatView: View {
         .listStyle(.plain)
         .background(Color.groupedBackground)
         .accessibilityIdentifier("chat.search.results")
+        .task(id: trimmed) {
+            // Debounced, and kept in state so typing does not search on every redraw.
+            guard !trimmed.isEmpty else {
+                hits = []
+                searchedQuery = ""
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            hits = model.searchMessages(trimmed, in: chatID)
+            searchedQuery = trimmed
+        }
     }
 }
 

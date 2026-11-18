@@ -57,6 +57,8 @@ struct ComposerView: View {
                 .accessibilityElement(children: .combine)
                 Button(action: cancelBar) {
                     Image(systemName: "xmark.circle.fill").font(.title3).foregroundStyle(.secondary)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Cancel")

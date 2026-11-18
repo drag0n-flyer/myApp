@@ -18,10 +18,18 @@ final class HistoryPagerTests: XCTestCase {
         XCTAssertTrue(pager.shouldLoad(oldestVisibleIndex: 0))
     }
 
-    func testShortPageReachesStart() {
+    func testShortPageDoesNotReachStart() {
         var pager = HistoryPager()
         pager.begin()
         pager.finish(loadedCount: 49)
+        XCTAssertFalse(pager.reachedStart)
+        XCTAssertTrue(pager.shouldLoad(oldestVisibleIndex: 0))
+    }
+
+    func testEmptyPageReachesStart() {
+        var pager = HistoryPager()
+        pager.begin()
+        pager.finish(loadedCount: 0)
         XCTAssertTrue(pager.reachedStart)
         XCTAssertFalse(pager.shouldLoad(oldestVisibleIndex: 0))
     }
@@ -65,6 +73,8 @@ final class ChatHistoryTests: XCTestCase {
         XCTAssertEqual(history.loadPage(newest: newest, loader: loader), 50)
         XCTAssertFalse(history.pager.reachedStart)
         XCTAssertEqual(history.loadPage(newest: newest, loader: loader), 40)
+        XCTAssertFalse(history.pager.reachedStart, "A short page is not proof of the start")
+        XCTAssertEqual(history.loadPage(newest: newest, loader: loader), 0)
         XCTAssertTrue(history.pager.reachedStart)
         XCTAssertEqual(history.loadPage(newest: newest, loader: loader), 0)
         XCTAssertEqual(history.messages(newest: newest).map(\.id), all.map(\.id))
@@ -99,6 +109,80 @@ final class ChatHistoryTests: XCTestCase {
         XCTAssertFalse(history.load(until: "does-not-exist", newest: newest, loader: loader))
         XCTAssertTrue(history.pager.reachedStart)
         XCTAssertFalse(history.pager.isLoading)
+    }
+
+    func testLoadUntilWithEmptyNewestEnds() {
+        var history = ChatHistory()
+        XCTAssertFalse(history.load(until: "x", newest: [], loader: { _, _ in [] }))
+        XCTAssertTrue(history.pager.reachedStart)
+    }
+
+    /// A store whose contents the test can change; `loader` has the semantics of `ChatStore.messages(in:before:limit:)`.
+    private final class MutableStore {
+        var all: [Message]
+        init(_ all: [Message]) { self.all = all }
+        func newest(_ n: Int) -> [Message] { Array(all.suffix(n)) }
+        func load(_ before: String, _ limit: Int) -> [Message] {
+            guard let at = all.firstIndex(where: { $0.id == before }) else { return [] }
+            return Array(all[max(0, at - limit)..<at])
+        }
+    }
+
+    private func assertContiguous(_ ids: [String], from: Int, to: Int, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(ids, (from...to).map { "m\($0)" }, file: file, line: line)
+    }
+
+    // Review: more than 50 messages arrive while the chat is open (no older pages loaded).
+    func testBurstOfSixtyWithoutOlderPages() {
+        let store = MutableStore((1...140).map(msg))
+        var history = ChatHistory()
+        let previous = store.newest(50)
+        store.all += (141...200).map(msg)
+        let now = store.newest(50)
+        history.sync(previousNewest: previous, newest: now, loader: store.load)
+        let merged = history.messages(newest: now)
+        assertContiguous(merged.map(\.id), from: 91, to: 200)
+        var tracker = NewestTracker()
+        tracker.setAtBottom(true, newestID: "m140")
+        tracker.setAtBottom(false, newestID: "m140")
+        XCTAssertEqual(tracker.unseenCount(in: merged), 60)
+    }
+
+    func testBurstOfSixtyWithOlderPagesLoaded() {
+        let store = MutableStore((1...140).map(msg))
+        var history = ChatHistory()
+        let previous = store.newest(50)
+        _ = history.loadPage(newest: previous, loader: store.load)
+        store.all += (141...200).map(msg)
+        let now = store.newest(50)
+        history.sync(previousNewest: previous, newest: now, loader: store.load)
+        assertContiguous(history.messages(newest: now).map(\.id), from: 41, to: 200)
+    }
+
+    func testBurstLargerThanOnePageLeavesNoGap() {
+        let store = MutableStore((1...100).map(msg))
+        var history = ChatHistory()
+        let previous = store.newest(50)
+        store.all += (101...400).map(msg)
+        let now = store.newest(50)
+        history.sync(previousNewest: previous, newest: now, loader: store.load)
+        assertContiguous(history.messages(newest: now).map(\.id), from: 51, to: 400)
+    }
+
+    // Review: a message older than the newest window is deleted or reacted to in the store.
+    func testOlderMessageDeletedInStoreShowsDeleted() {
+        let store = MutableStore((1...120).map(msg))
+        var history = ChatHistory()
+        let newest = store.newest(50)
+        _ = history.loadPage(newest: newest, loader: store.load)
+        var gone = msg(60)
+        gone.content = .deleted
+        gone.reactions = ["👍"]
+        store.all[59] = gone
+        history.sync(previousNewest: newest, newest: newest, loader: store.load)
+        let shown = history.messages(newest: newest).first { $0.id == "m60" }
+        XCTAssertEqual(shown?.content, .deleted)
+        XCTAssertEqual(shown?.reactions, ["👍"])
     }
 
     func testBadStoreThatRepeatsItselfCannotLoopForever() {
