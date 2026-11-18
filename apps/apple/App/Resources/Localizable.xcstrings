@@ -135,6 +135,17 @@
         }
       }
     },
+    "@%@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "@%@"
+          }
+        }
+      }
+    },
     "Accept" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -142,6 +153,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Accept"
+          }
+        }
+      }
+    },
+    "Add" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add"
           }
         }
       }
@@ -564,6 +586,28 @@
         }
       }
     },
+    "Couldn't make a link. Try again." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't make a link. Try again."
+          }
+        }
+      }
+    },
+    "Couldn't open the link. Try again in a moment." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't open the link. Try again in a moment."
+          }
+        }
+      }
+    },
     "Couldn't open this photo" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -927,6 +971,17 @@
         }
       }
     },
+    "https://…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "https://…"
+          }
+        }
+      }
+    },
     "If the numbers change, someone added or changed a device. Compare them again." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -967,6 +1022,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Incoming video call"
+          }
+        }
+      }
+    },
+    "Invite with a link" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Invite with a link"
           }
         }
       }
@@ -1176,6 +1242,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Muted"
+          }
+        }
+      }
+    },
+    "My QR code" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "My QR code"
           }
         }
       }
@@ -1422,6 +1499,17 @@
         }
       }
     },
+    "Open" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open"
+          }
+        }
+      }
+    },
     "Open-source licenses" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1495,6 +1583,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Paste code"
+          }
+        }
+      }
+    },
+    "Paste link" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paste link"
           }
         }
       }
@@ -1792,6 +1891,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Scan invite QR code"
+          }
+        }
+      }
+    },
+    "Scan QR code" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scan QR code"
           }
         }
       }
@@ -2126,6 +2236,17 @@
         }
       }
     },
+    "That isn't a link for a person." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "That isn't a link for a person."
+          }
+        }
+      }
+    },
     "That username is taken." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2254,6 +2375,39 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "This file is too big to send."
+          }
+        }
+      }
+    },
+    "This is your own link." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This is your own link."
+          }
+        }
+      }
+    },
+    "This link has expired. Ask for a new one." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This link has expired. Ask for a new one."
+          }
+        }
+      }
+    },
+    "This link is for a different server." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This link is for a different server."
           }
         }
       }
@@ -2665,6 +2819,17 @@
         }
       }
     },
+    "You have too many unused links. Wait for one to expire." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You have too many unused links. Wait for one to expire."
+          }
+        }
+      }
+    },
     "You removed a device" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2687,6 +2852,17 @@
         }
       }
     },
+    "Your code isn't ready" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your code isn't ready"
+          }
+        }
+      }
+    },
     "Your contacts weren't copied" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2694,6 +2870,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Your contacts weren't copied"
+          }
+        }
+      }
+    },
+    "Your link is ready. It works once and lasts 7 days." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your link is ready. It works once and lasts 7 days."
           }
         }
       }

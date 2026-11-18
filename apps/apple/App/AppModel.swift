@@ -608,6 +608,7 @@ final class AppModel {
     /// (`LocalAccountData`). Steps and their order: `SignOutPlan`.
     private func resetToWelcome(revoked: Bool = true) {
         sessionGeneration += 1
+        AppLinks.coordinator.clear()
         // Drafts and the pending in-chat search belong to the account that is leaving.
         ChatScreenState.shared.reset()
         // App lock goes back to off with its default delay; a prompt still open changes nothing.
@@ -972,9 +973,16 @@ final class AppModel {
     // MARK: - Links
 
     func handle(url: URL) {
-        guard let invite = InviteLink.parse(url) else { return }
-        pendingInvite = invite
+        if let invite = InviteLink.parse(url) {
+            pendingInvite = invite
+        } else {
+            // `/u/<name>` and `/c/<token>` of this server: kept until the app can open them (see `AppModel+Links`).
+            receiveContactLink(url)
+        }
     }
+
+    /// The signed-in connection, for the contact-link calls in `AppModel+Links`.
+    var contactLinkClient: ServerClient? { live?.client }
 }
 
 private enum LinkSnapshotError: Error { case noLiveStore }

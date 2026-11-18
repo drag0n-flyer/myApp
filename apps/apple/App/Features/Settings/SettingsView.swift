@@ -139,6 +139,7 @@ struct ProfileView: View {
                 .accessibilityHint("Edit name")
                 .accessibilityIdentifier("profile.name")
                 LabeledContent("Username", value: "@\(model.me.username)")
+                MyQRCodeRow(model: model)
                 if nameSaveFailed {
                     Text("Couldn't save your name. Try again.")
                         .font(.footnote).foregroundStyle(.red)
