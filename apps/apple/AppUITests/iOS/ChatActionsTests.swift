@@ -94,21 +94,33 @@ final class ChatActionsTests: XCTestCase {
         let field = app.textFields["chat.search.field"]
         XCTAssertTrue(field.waitToExist())
         field.typeText("leave")
-        let hits = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'chat.search.hit.'"))
-        XCTAssertTrue(hits.firstMatch.waitToExist())
-        XCTAssertGreaterThanOrEqual(hits.count, 1)
+        let count = app.element("chat.search.count")
+        XCTAssertTrue(count.waitToExist())
+        // The sample chat has two messages with "leave": the bar starts on the newest.
+        XCTAssertTrue((count.label as NSString).hasPrefix("1 of 2"), "Count was \(count.label)")
+        app.buttons["chat.search.next"].tap()
+        XCTAssertTrue(count.waitForLabel("2 of 2"), "Next moves to the older result")
+        app.buttons["chat.search.next"].tap()
+        XCTAssertTrue(count.waitForLabel("1 of 2"), "Next wraps to the first result")
+        app.buttons["chat.search.previous"].tap()
+        XCTAssertTrue(count.waitForLabel("2 of 2"), "Previous wraps to the last result")
 
         field.clearAndType("zzzz-nothing")
         XCTAssertTrue(app.element("chat.search.empty").waitToExist())
         XCTAssertTrue(app.staticTexts["No results"].exists)
 
-        field.clearAndType("leave")
-        hits.firstMatch.tap()
-        XCTAssertFalse(app.element("chat.search.results").waitForExistence(timeout: 2))
+        app.buttons["chat.search.cancel"].tap()
+        XCTAssertFalse(field.waitForExistence(timeout: 2))
     }
 }
 
 private extension XCUIElement {
+    /// True once the label equals `text` (the label changes a moment after a tap).
+    func waitForLabel(_ text: String, timeout: TimeInterval = 5) -> Bool {
+        let done = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", text), object: self)
+        return XCTWaiter().wait(for: [done], timeout: timeout) == .completed
+    }
+
     func clearAndType(_ text: String) {
         guard let current = value as? String, !current.isEmpty else { typeText(text); return }
         tap()

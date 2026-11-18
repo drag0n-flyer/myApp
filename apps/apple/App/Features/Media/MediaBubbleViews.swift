@@ -6,6 +6,11 @@ struct MediaBubbleView: View {
     @ScaledMetric(relativeTo: .body) private var mediaWidth: CGFloat = 220
     @ScaledMetric(relativeTo: .body) private var mediaHeight: CGFloat = 160
     let isPhoto: Bool
+    /// A video (sent as a file): shows its first frame, a play glyph and the length.
+    var isVideo = false
+    /// How much of an outgoing attachment is uploaded; nil when nothing is uploading.
+    var uploadProgress: Double?
+    var cancelUpload: () -> Void = {}
     /// The cleaned name for a file; nil for a photo.
     let name: String?
     let bytes: Int64
@@ -15,15 +20,31 @@ struct MediaBubbleView: View {
     let download: () -> Void
     let open: (URL) -> Void
 
+    /// Photos and videos are pictures; files are a row.
+    private var isVisual: Bool { isPhoto || isVideo }
+
     private var label: String {
-        isPhoto ? String(localized: "Photo · \(DataFormat.size(bytes: bytes))") : "\(name ?? MediaFileName.fallback) · \(DataFormat.size(bytes: bytes))"
+        if isVideo { return String(localized: "Video · \(DataFormat.size(bytes: bytes))") }
+        return isPhoto ? String(localized: "Photo · \(DataFormat.size(bytes: bytes))") : "\(name ?? MediaFileName.fallback) · \(DataFormat.size(bytes: bytes))"
     }
 
     var body: some View {
+        states
+            .overlay(alignment: isVisual ? .center : .trailing) {
+                if let uploadProgress {
+                    UploadRing(fraction: uploadProgress, messageID: messageID, cancel: cancelUpload)
+                }
+            }
+    }
+
+    @ViewBuilder
+    private var states: some View {
         switch state {
         case .ready(let url):
             Button { open(url) } label: {
-                if isPhoto {
+                if isVideo {
+                    VideoThumbnail(url: url)
+                } else if isPhoto {
                     PhotoThumbnail(url: url)
                 } else {
                     Label(label, systemImage: "doc.fill")
@@ -33,17 +54,17 @@ struct MediaBubbleView: View {
                 }
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(Text(isPhoto ? String(localized: "Photo") : label))
+            .accessibilityLabel(Text(isVideo ? String(localized: "Play video") : isPhoto ? String(localized: "Photo") : label))
             .accessibilityHint(Text("Opens it"))
             .accessibilityIdentifier("chat.media.open.\(messageID)")
         case .notDownloaded where !canDownload:
             // Nothing to fetch (sample data): a plain placeholder with the size, not a button.
             RoundedRectangle(cornerRadius: 12)
                 .fill(Color.secondary.opacity(0.25))
-                .frame(width: mediaWidth, height: isPhoto ? mediaHeight : 80)
+                .frame(width: mediaWidth, height: isVisual ? mediaHeight : 80)
                 .overlay {
                     VStack(spacing: 6) {
-                        Image(systemName: isPhoto ? "photo" : "doc.fill").font(.title)
+                        Image(systemName: isVideo ? "video" : isPhoto ? "photo" : "doc.fill").font(.title)
                         Text(label).font(.caption.weight(.semibold))
                     }
                     .foregroundStyle(.secondary)
@@ -67,7 +88,7 @@ struct MediaBubbleView: View {
                 ProgressView(value: fraction).frame(width: 120)
                 Text(label).font(.caption.weight(.semibold))
             }
-            .frame(width: mediaWidth, height: isPhoto ? mediaHeight : nil)
+            .frame(width: mediaWidth, height: isVisual ? mediaHeight : nil)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(Text(label))
             .accessibilityValue(Text(fraction, format: .percent.precision(.fractionLength(0))))
@@ -92,7 +113,7 @@ struct MediaBubbleView: View {
         Button(action: download) {
             RoundedRectangle(cornerRadius: 12)
                 .fill(LinearGradient(colors: [.gray.opacity(0.5), .gray.opacity(0.3)], startPoint: .top, endPoint: .bottom))
-                .frame(width: mediaWidth, height: isPhoto ? mediaHeight : 80)
+                .frame(width: mediaWidth, height: isVisual ? mediaHeight : 80)
                 .overlay {
                     VStack(spacing: 6) { content() }
                         .foregroundStyle(.white)
@@ -100,6 +121,35 @@ struct MediaBubbleView: View {
                 }
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// The progress ring of an outgoing attachment, with the Cancel control in its middle.
+struct UploadRing: View {
+    let fraction: Double
+    let messageID: String
+    let cancel: () -> Void
+
+    var body: some View {
+        Button(action: cancel) {
+            ZStack {
+                Circle().fill(.black.opacity(0.45))
+                Circle().stroke(.white.opacity(0.3), lineWidth: 3).padding(5)
+                Circle()
+                    .trim(from: 0, to: max(VoiceSelection.clamp(fraction), 0.03))
+                    .stroke(.white, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                    .padding(5)
+                Image(systemName: "xmark").font(.caption.weight(.bold)).foregroundStyle(.white)
+            }
+            .frame(width: 44, height: 44)
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .padding(4)
+        .accessibilityLabel(Text("Cancel upload"))
+        .accessibilityValue(Text(VoiceSelection.clamp(fraction), format: .percent.precision(.fractionLength(0))))
+        .accessibilityIdentifier("chat.upload.cancel.\(messageID)")
     }
 }
 

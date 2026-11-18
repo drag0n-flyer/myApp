@@ -132,6 +132,14 @@ final class AppModel {
     var chatListQuery = ""
     /// Chat opened from outside the chat list (Mac sidebar, Contacts, Calls).
     var openChatID: String?
+    /// The chat on screen in the main window (Mac, iPad); the menu commands act on it. The roots keep it current and
+    /// clear it when they leave the screen (the lock cover removes them).
+    var onScreenChatID: String?
+    /// Menu commands ask the root for something by counting up; the root watches the number (see `AppModel+Commands`).
+    var newChatRequests = 0
+    var listSearchRequests = 0
+    var chatInfoRequests = 0
+    var closeChatRequests = 0
     private(set) var activeCall: CallState?
     var pendingInvite: InviteLink?
     /// Mac only: a contact who is ringing (macOS has no CallKit).
@@ -143,6 +151,9 @@ final class AppModel {
     /// The app lock (Face ID, Touch ID or the device passcode in front of the UI). Created in `init`; the root shows
     /// only the cover while `lock.coversContent`.
     let lock: AppLock
+
+    /// The attachment size limit the server advertised (nil until known).
+    var serverAttachmentLimit: Int64?
 
     /// Bumped after every store change so views that read store data refresh.
     private(set) var revision = 0 {
@@ -200,6 +211,8 @@ final class AppModel {
         self.settings = settings
         self.network = launch.network
         self.isUITesting = launch.isUITesting
+        // A recording the app was killed in the middle of is not kept.
+        VoiceSession.removeOrphans()
         self.lock = lock
         let stores = AppStores(sampleData: sampleData, server: server, settings: settings.call, network: launch.network)
         let chatStore = stores.chatStore
@@ -341,6 +354,19 @@ final class AppModel {
 
     func send(_ content: MessageContent, in chatID: String) { chatStore.send(content, in: chatID); revision += 1 }
     func retrySend(messageID: String) { chatStore.retrySend(messageID: messageID); revision += 1 }
+    /// Asks the server for its attachment limit once (`GET /v1/server`); the size check for videos uses it.
+    func refreshAttachmentLimit() async {
+        guard serverAttachmentLimit == nil, !isSampleData, let client = live?.client,
+              let info = try? await client.serverInfo(), info.limits.attachmentBytes > 0 else { return }
+        serverAttachmentLimit = Int64(info.limits.attachmentBytes)
+    }
+    /// Cancel on an outgoing attachment that is still uploading.
+    func cancelUpload(messageID: String, in chatID: String) { chatStore.cancelUpload(messageID: messageID, in: chatID); revision += 1 }
+    /// Photos and videos from the preview screen; the caption follows the first as a text message.
+    func sendMedia(_ items: [OutgoingMedia], caption: String, in chatID: String) {
+        chatStore.sendMedia(items, caption: caption, in: chatID)
+        revision += 1
+    }
     func markRead(chatID: String) {
         chatStore.markRead(chatID: chatID)
         revision += 1
@@ -559,7 +585,8 @@ final class AppModel {
         settings.lockAfterSeconds = AppLockPolicy.defaultSeconds
         // Decoded pictures and plaintext copies made for previews and sends belong to it too.
         MediaPreview.removeTemporaryFolders()
-        Task { await ThumbnailLoader.shared.clear() }
+        VoiceSession.removeOrphans()
+        Task { await ThumbnailLoader.shared.clear(); await VideoPoster.shared.clear() }
         MediaFileCheck.shared.clear()
         // The live store belongs to the signed-out account. An empty store stands in until the next sign-in.
         if !isSampleData {

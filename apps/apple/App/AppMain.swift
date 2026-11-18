@@ -61,6 +61,9 @@ struct AppMain: App {
         }
         .onChange(of: scenePhase) { _, phase in model.scenePhaseChanged(phase) }
         #if os(macOS)
+        .commands { MainCommands(model: model) }
+        #endif
+        #if os(macOS)
         Window("Call", id: "call") {
             MacCallWindow(model: model)
         }

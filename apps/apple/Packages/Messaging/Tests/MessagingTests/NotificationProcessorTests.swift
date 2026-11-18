@@ -131,6 +131,13 @@ private struct NSEPair {
         #expect(try pair.bob.deps.repo.message(id: "m1") != nil)
     }
 
+    @Test func testPreviewDropsMarkersBeforeTheCut() async throws {
+        let pair = try await NSEPair()
+        let text = "*" + String(repeating: "a", count: 150) + "*"
+        let outcome = await pair.processor().process(pushData: try await pair.push(.text(text, replyTo: nil)), deadline: NSEPair.deadline)
+        #expect(outcome == .show(title: "Ana", body: String(repeating: "a", count: 140), threadID: "acc-ana"))
+    }
+
     @Test func testDuplicatePushDropsAndStoresOnce() async throws {
         // The "app syncs afterwards" half needs lane A's InboxProcessor; it is checked at merge.
         let pair = try await NSEPair()

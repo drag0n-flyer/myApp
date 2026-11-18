@@ -75,9 +75,9 @@ public actor ServerClient {
 
     func requestRaw(
         _ method: String, _ path: String, body: Data, contentType: String,
-        headers: [String: String], auth: Auth
+        headers: [String: String], auth: Auth, progress: (@Sendable (Double) -> Void)? = nil
     ) async throws(ServerError) -> (Data, HTTPURLResponse) {
-        try await perform(method, path, body: body, contentType: contentType, headers: headers, auth: auth)
+        try await perform(method, path, body: body, contentType: contentType, headers: headers, auth: auth, progress: progress)
     }
 
     /// Raw request without a body (downloads).
@@ -96,7 +96,7 @@ public actor ServerClient {
 
     private func perform(
         _ method: String, _ path: String, body: Data?, contentType: String,
-        headers: [String: String], auth: Auth
+        headers: [String: String], auth: Auth, progress: (@Sendable (Double) -> Void)? = nil
     ) async throws(ServerError) -> (Data, HTTPURLResponse) {
         guard let url = URL(string: path, relativeTo: baseURL)?.absoluteURL else { throw ServerError.network }
         var req = URLRequest(url: url)
@@ -116,7 +116,7 @@ public actor ServerClient {
         let data: Data
         let response: HTTPURLResponse
         do {
-            (data, response) = try await transport.send(req)
+            (data, response) = try await transport.send(req, progress: progress)
         } catch is CancellationError {
             throw ServerError.cancelled
         } catch let e as URLError where e.code == .cancelled {

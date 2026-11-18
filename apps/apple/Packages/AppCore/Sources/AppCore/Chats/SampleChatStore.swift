@@ -73,13 +73,43 @@ public final class SampleChatStore: ChatStore {
         append(Message(id: makeID(), senderID: me.id, sentAt: Date(), content: content, status: .sent, replyToID: replyTo, reactions: []), to: chatID)
     }
 
+    /// How long a sample upload stays "uploading" (with its Cancel control) before it counts as sent.
+    public var sampleUploadDuration: Duration = .seconds(6)
+
     public func sendAttachment(_ fileURL: URL, kind: MediaKind, in chatID: String) {
+        let bytes = Int64((try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
         let content: MessageContent = switch kind {
-        case .photo, .video: .photo(bytes: 0)
+        case .photo: .photo(bytes: bytes)
         case .voice: .voice(duration: 0)
-        case .file: .file(name: fileURL.lastPathComponent, bytes: 0)
+        case .video, .file: .file(name: fileURL.lastPathComponent, bytes: bytes)
         }
-        send(content, in: chatID, replyTo: nil)
+        guard kind != .voice else { send(content, in: chatID, replyTo: nil); return }
+        // Like a real upload: the row is "sending" with a fraction and a Cancel, then becomes sent.
+        let id = makeID()
+        append(Message(id: id, senderID: me.id, sentAt: Date(), content: content, status: .sending, replyToID: nil, reactions: [],
+                       uploadProgress: 0.4), to: chatID)
+        onChange?()
+        let wait = sampleUploadDuration
+        Task { [weak self] in
+            try? await Task.sleep(for: wait)
+            self?.finishSampleUpload(id, in: chatID)
+        }
+    }
+
+    private func finishSampleUpload(_ messageID: String, in chatID: String) {
+        guard let c = index(of: chatID), let m = allChats[c].messages.firstIndex(where: { $0.id == messageID }),
+              allChats[c].messages[m].status == .sending else { return }
+        allChats[c].messages[m].status = .sent
+        allChats[c].messages[m].uploadProgress = nil
+        onChange?()
+    }
+
+    public func cancelUpload(messageID: String, in chatID: String) {
+        guard let c = index(of: chatID), let m = allChats[c].messages.firstIndex(where: { $0.id == messageID }),
+              allChats[c].messages[m].senderID == me.id,
+              UploadCancel.onCancel(allChats[c].messages[m].status == .sending ? .uploading : .sent) == .removeUnsent else { return }
+        allChats[c].messages.remove(at: m)
+        onChange?()
     }
 
     public func react(_ emoji: String, to messageID: String, in chatID: String) {
