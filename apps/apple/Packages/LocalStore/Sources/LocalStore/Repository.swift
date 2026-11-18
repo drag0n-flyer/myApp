@@ -44,18 +44,23 @@ public final class Repository: @unchecked Sendable {
 
     // MARK: chats
 
-    private let chatCols = "id, is_request, unread, muted, last_activity"
+    private let chatCols = "id, is_request, unread, muted, last_activity, pinned_at, archived"
     private func chatRow(_ r: Row) -> ChatRecord {
-        ChatRecord(id: r.text(0), isRequest: r.int(1) != 0, unread: Int(r.int(2)), muted: r.int(3) != 0, lastActivity: date(r.int(4)))
+        ChatRecord(id: r.text(0), isRequest: r.int(1) != 0, unread: Int(r.int(2)), muted: r.int(3) != 0, lastActivity: date(r.int(4)),
+                   pinnedAt: r.isNull(5) ? nil : date(r.int(5)), archived: r.int(6) != 0)
     }
 
+    /// Inserts the chat, or updates `is_request`, `unread` and `last_activity` of an existing one. Pin, mute and
+    /// archive are device choices with their own single-column writes (`setPinnedAt`, `setMuted`, `setArchived`):
+    /// a whole-row write built from an older read never undoes them, so they are not written here for an existing row.
     public func upsertChat(_ c: ChatRecord) throws {
         // Not INSERT OR REPLACE: that would cascade-delete everything under the chat.
         try db.execute("""
-            INSERT INTO chats(id, is_request, unread, muted, last_activity) VALUES (?,?,?,?,?)
+            INSERT INTO chats(id, is_request, unread, muted, last_activity, pinned_at, archived) VALUES (?,?,?,?,?,?,?)
             ON CONFLICT(id) DO UPDATE SET is_request=excluded.is_request, unread=excluded.unread,
-            muted=excluded.muted, last_activity=excluded.last_activity
-            """, [.text(c.id), b(c.isRequest), .int(Int64(c.unread)), b(c.muted), .int(ms(c.lastActivity))])
+            last_activity=excluded.last_activity
+            """, [.text(c.id), b(c.isRequest), .int(Int64(c.unread)), b(c.muted), .int(ms(c.lastActivity)),
+                  c.pinnedAt.map { .int(ms($0)) } ?? .null, b(c.archived)])
     }
 
     public func chat(id: String) throws -> ChatRecord? {
@@ -72,6 +77,81 @@ public final class Repository: @unchecked Sendable {
 
     public func setRequest(chatID: String, _ v: Bool) throws {
         try db.execute("UPDATE chats SET is_request=? WHERE id=?", [b(v), .text(chatID)])
+    }
+
+    // MARK: chat list actions (one column, one statement)
+
+    public func setPinnedAt(chatID: String, _ at: Date?) throws {
+        try db.execute("UPDATE chats SET pinned_at=? WHERE id=?", [at.map { .int(ms($0)) } ?? .null, .text(chatID)])
+    }
+
+    /// Pins the chat at `at` unless `limit` chats are already pinned or the chat is archived or missing; in one
+    /// transaction. A chat that is already pinned keeps its pin time and counts as done.
+    @discardableResult
+    public func pin(chatID: String, at: Date, limit: Int) throws -> Bool {
+        try db.transaction { d in
+            guard let row = try d.query("SELECT archived, pinned_at IS NOT NULL FROM chats WHERE id=?", [.text(chatID)], row: { ($0.int(0) != 0, $0.int(1) != 0) }).first,
+                  !row.0 else { return false }
+            if row.1 { return true }
+            let pinned = try d.query("SELECT COUNT(*) FROM chats WHERE pinned_at IS NOT NULL AND archived=0") { Int($0.int(0)) }.first ?? 0
+            guard pinned < limit else { return false }
+            try d.execute("UPDATE chats SET pinned_at=? WHERE id=? AND archived=0", [.int(ms(at)), .text(chatID)])
+            return true
+        }
+    }
+
+    public func setMuted(chatID: String, _ muted: Bool) throws {
+        try db.execute("UPDATE chats SET muted=? WHERE id=?", [b(muted), .text(chatID)])
+    }
+
+    /// Archiving also unpins, in the same statement; unarchiving does not pin again.
+    public func setArchived(chatID: String, _ archived: Bool) throws {
+        if archived {
+            try db.execute("UPDATE chats SET archived=1, pinned_at=NULL WHERE id=?", [.text(chatID)])
+        } else {
+            try db.execute("UPDATE chats SET archived=0 WHERE id=?", [.text(chatID)])
+        }
+    }
+
+    /// Raises `last_activity` only; never lowers it and touches no other column.
+    public func bumpActivity(chatID: String, at: Date) throws {
+        try db.execute("UPDATE chats SET last_activity=? WHERE id=? AND last_activity < ?", [.int(ms(at)), .text(chatID), .int(ms(at))])
+    }
+
+    /// An incoming or own message: adds `unreadDelta` to `unread` and raises `last_activity` to `at` when that is
+    /// later, in one statement that touches no other column.
+    public func bumpChat(chatID: String, unreadDelta: Int, at: Date) throws {
+        try db.execute("UPDATE chats SET unread = unread + ?, last_activity = MAX(last_activity, ?) WHERE id=?",
+                       [.int(Int64(unreadDelta)), .int(ms(at)), .text(chatID)])
+    }
+
+    /// Lowers `unread` by `n`, not below zero, in one statement.
+    public func reduceUnread(chatID: String, by n: Int) throws {
+        try db.execute("UPDATE chats SET unread = MAX(0, unread - ?) WHERE id=?", [.int(Int64(n)), .text(chatID)])
+    }
+
+    // MARK: drafts
+
+    /// Saves the unsent text of a chat; blank text deletes it. One row per chat. `false` when the chat has no row
+    /// (the draft cannot hang on anything yet): the caller keeps it and writes it when the row appears.
+    @discardableResult
+    public func setDraft(chatID: String, _ text: String, at: Date) throws -> Bool {
+        try db.transaction { d in
+            guard try !d.query("SELECT 1 FROM chats WHERE id=?", [.text(chatID)], row: { $0.int(0) }).isEmpty else { return false }
+            if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                try d.execute("DELETE FROM drafts WHERE chat_id=?", [.text(chatID)])
+            } else {
+                try d.execute("""
+                    INSERT INTO drafts(chat_id, text, updated_at) VALUES (?,?,?)
+                    ON CONFLICT(chat_id) DO UPDATE SET text=excluded.text, updated_at=excluded.updated_at
+                    """, [.text(chatID), .text(text), .int(ms(at))])
+            }
+            return true
+        }
+    }
+
+    public func drafts() throws -> [String: String] {
+        Dictionary(try db.query("SELECT chat_id, text FROM drafts") { ($0.text(0), $0.text(1)) }, uniquingKeysWith: { $1 })
     }
 
     /// Deletes the chat and everything under it (outbox rows have no foreign key and are removed explicitly).
@@ -587,7 +667,7 @@ public final class Repository: @unchecked Sendable {
     /// Deletes every row in every table (sign-out / reset).
     public func wipe() throws {
         try db.transaction { d in
-            for table in ["messages", "chats", "contacts", "outbox", "inbox_raw", "processed", "folders", "blocked", "kv"] {
+            for table in ["messages", "drafts", "chats", "contacts", "outbox", "inbox_raw", "processed", "folders", "blocked", "kv"] {
                 try d.execute("DELETE FROM \(table)")
             }
         }

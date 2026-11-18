@@ -7,6 +7,7 @@ private struct Migration {
 
 private let migrations: [Migration] = [
     Migration(version: 1, statements: schemaV1),
+    Migration(version: 2, statements: schemaV2),
 ]
 
 public struct SchemaTooNew: Error, Equatable {
