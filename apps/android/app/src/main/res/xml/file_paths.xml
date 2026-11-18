@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The only folders the FileProvider serves, both in the cache and both emptied at start-up and when the account is removed:
+    plaintext copies of a file being opened or shared with another app, and the file the system camera writes.
+    Nothing else in the app's storage has a URI.
+-->
+<paths>
+    <cache-path name="share" path="open/share/" />
+    <cache-path name="camera" path="outgoing/camera/" />
+</paths>

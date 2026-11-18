@@ -272,6 +272,7 @@ fun AppRoot(
                     onForward = { target -> if (target != id) nav.navigate("chat/${Uri.encode(target)}") },
                     // Set by a search hit in the chat list; absent from routes that do not declare it.
                     highlightMessageId = entry.arguments?.getString("highlight")?.takeIf { it.isNotBlank() },
+                    opener = graph.attachmentOpener,
                 )
             }
             composable(INFO, idArg) { entry ->

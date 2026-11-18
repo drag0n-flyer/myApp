@@ -231,13 +231,15 @@ class Peer(private val config: PeerConfig) {
 
     /** Answers the message ID and the SHA-256 of the bytes sent (the file as it is). */
     suspend fun sendPhoto(peer: String, path: String): String {
+        // Read before sending: the store removes a staged file once it is sent.
+        val digest = sha256(File(path).readBytes())
         val before = messages(peer).map { it.id }.toSet()
         store.sendAttachment(path, MediaKind.Photo, peer)
         settle()
         val sent = messages(peer).lastOrNull { it.id !in before && it.senderId == me && it.content is MessageContent.Photo }
             ?: throw PeerError("photo not stored")
         if (sent.status == DeliveryStatus.Sending || sent.status == DeliveryStatus.Failed) throw PeerError("photo not sent")
-        return "${sent.id} ${sha256(File(path).readBytes())}"
+        return "${sent.id} $digest"
     }
 
     /** Downloads the photo message [messageId] and answers the SHA-256 of the decrypted bytes. */

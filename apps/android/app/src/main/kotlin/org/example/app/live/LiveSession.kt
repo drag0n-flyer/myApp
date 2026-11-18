@@ -32,6 +32,8 @@ import org.example.app.contracts.ServerException
 import org.example.app.core.settings.MediaKind
 import org.example.app.media.MediaCache
 import org.example.app.media.PhotoPrep
+import org.example.app.media.VoicePrep
+import org.example.app.ui.media.PickedFiles
 import org.example.app.messaging.ChatCallSealer
 import org.example.app.messaging.FoundUser
 import org.example.app.messaging.LiveChatStore
@@ -128,6 +130,7 @@ class LiveSession(
         dirs = MediaDirs(File(platform.mediaDir, "blobs"), File(platform.cacheDir, "open"), File(platform.cacheDir, "outgoing")),
         social = SocialAdapter(SocialApi(client)), scope = scope, fold = TextFold::fold,
         mediaPreparer = Preparer(context, File(platform.cacheDir, "outgoing")),
+        stageSource = { source, into -> stagePicked(context, source, into) },
         mediaSweep = { MediaCache.sweep(context) },
         onEscrowRejected = { escrowKeys.invalidate() },
     )
@@ -200,7 +203,15 @@ class LiveSession(
             api.report(accountId, conversationId, "other", messages.map { ReportedMessage(Instant.ofEpochMilli(it.sentAt), it.text) }, null)
     }
 
-    /** Photos are scaled and get a thumbnail; files go as they are. TODO(I1): voice-note duration from `VoiceRecorder`. */
+    /** A picked `content:` photo is copied (same 100 MiB cap as a file) so a retry after a restart does not need the URI permission. */
+    private suspend fun stagePicked(context: Context, source: String, into: File): File? {
+        val uri = Uri.parse(source)
+        if (!PickedFiles.isFromPicker(context, uri)) return null
+        val result = PickedFiles.copy(into, "photo") { context.contentResolver.openInputStream(uri) }
+        return (result as? PickedFiles.Result.Copied)?.file
+    }
+
+    /** Photos are scaled and get a thumbnail; files go as they are. */
     private class Preparer(private val context: Context, private val outDir: File) : MediaPreparer {
         override suspend fun prepare(path: String, kind: MediaKind): PreparedMedia? = when (kind) {
             MediaKind.Photo -> try {
@@ -210,7 +221,8 @@ class LiveSession(
                 Log.w(TAG, "photo not prepared: ${e.javaClass.simpleName}")
                 null
             }
-            MediaKind.File, MediaKind.Voice -> PreparedMedia(File(path))
+            MediaKind.File -> PreparedMedia(File(path))
+            MediaKind.Voice -> VoicePrep.prepare(File(path))
             MediaKind.Video -> null
         }
     }

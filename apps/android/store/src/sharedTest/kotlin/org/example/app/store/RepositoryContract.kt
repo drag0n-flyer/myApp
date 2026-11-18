@@ -169,6 +169,30 @@ abstract class RepositoryContract {
         assertTrue(repo.search("charlie", 10).isEmpty())
     }
 
+    @Test fun anUnsentEnvelopeCanBeReplacedButASentOneCannot() {
+        repo.insertMessage(message("m1", "x").copy(status = "sending"))
+        assertTrue(repo.replaceUnsentEnvelope("m1", "alice", byteArrayOf(7), "f", 5))
+        assertEquals(7, repo.message("m1")!!.envelope.single().toInt())
+        assertEquals(null, repo.message("m1")!!.editedAt)
+        assertEquals(5L, repo.message("m1")!!.receivedAt)
+        assertFalse(repo.replaceUnsentEnvelope("m1", "mallory", byteArrayOf(8), "f", 5))
+        repo.updateStatus(listOf("m1"), "failed")
+        assertTrue(repo.replaceUnsentEnvelope("m1", "alice", byteArrayOf(9), "f", 5))
+        repo.updateStatus(listOf("m1"), "sent")
+        assertFalse(repo.replaceUnsentEnvelope("m1", "alice", byteArrayOf(10), "f", 5))
+    }
+
+    @Test fun onlyAnUnsentOwnMessageCanBeRemoved() {
+        repo.insertMessage(message("m1", "x").copy(status = "sending"))
+        repo.insertMessage(message("m2", "y").copy(status = "sent"))
+        assertFalse(repo.deleteUnsentMessage("m1", "mallory"))
+        assertFalse(repo.deleteUnsentMessage("m2", "alice"))
+        assertTrue(repo.deleteUnsentMessage("m1", "alice"))
+        assertEquals(null, repo.message("m1"))
+        assertEquals("m2", repo.message("m2")!!.id)
+        assertFalse(repo.deleteUnsentMessage("m1", "alice"))
+    }
+
     @Test fun shortQueryUsesLike() {
         repo.insertMessage(message("m1", "東京タワー", sentAt = 1))
         repo.insertMessage(message("m2", "100% sure_ok", sentAt = 2))
