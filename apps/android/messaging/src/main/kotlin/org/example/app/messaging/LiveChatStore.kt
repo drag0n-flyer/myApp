@@ -213,6 +213,14 @@ class LiveChatStore(
     private val _chats = MutableStateFlow<List<Chat>>(emptyList())
     private val _requests = MutableStateFlow<List<Chat>>(emptyList())
     private val _muted = MutableStateFlow<Set<String>>(emptySet())
+    private val profilesFlow = MutableStateFlow<Map<String, org.example.app.core.people.Profile>>(emptyMap())
+    override val profiles: StateFlow<Map<String, org.example.app.core.people.Profile>> = profilesFlow.asStateFlow()
+    @Volatile private var profileNames: Map<String, String> = emptyMap()
+
+    private val profileSender = org.example.app.messaging.send.ProfileSender(repo, device.accountId, { myStoredName }) { chatId, name, photo, ver ->
+        outbox.enqueueControl(chatId) { id, at -> ContentEnvelope.Profile(id, at, name, photo, ver) }
+    }
+
     private val _blocked = MutableStateFlow<Set<String>>(emptySet())
     private val _reported = MutableStateFlow<Set<String>>(emptySet())
     override val contacts: StateFlow<List<Contact>> = _contacts.asStateFlow()
@@ -325,6 +333,7 @@ class LiveChatStore(
     private fun reload() = synchronized(reloadLock) {
         val rows = runCatching { repo.contacts() }.getOrDefault(emptyList())
         contactRows = rows.associateBy { it.accountId }
+        loadProfiles()
         contactRows[device.accountId]?.let { meFlow.value = Contact(it.accountId, org.example.app.core.profile.DisplayNameRule.forDisplay(it.displayName, "").ifEmpty { "You" }, it.username) }
         _contacts.value = rows.filter { it.isContact }.sortedWith(compareBy({ it.displayName }, { it.accountId })).map(::contactOf)
 
@@ -368,6 +377,7 @@ class LiveChatStore(
         _muted.value = records.filter { it.muted }.map { it.id }.toSet()
         _requests.value = built.filter { it.isRequest }
         _blocked.value = runCatching { repo.blockedIds().toSet() }.getOrDefault(emptySet())
+        if (!closed.get() && runCatching { profileSender.hasPending() }.getOrDefault(false)) write(reload = false) { profileSender.sync(); requestFlush() }
         _reported.value = runCatching { repo.entries(REPORTED_PREFIX).filterValues { it.isNotEmpty() }.keys.map { it.removePrefix(REPORTED_PREFIX) }.toSet() }
             .getOrDefault(emptySet())
     }
@@ -390,8 +400,33 @@ class LiveChatStore(
     private fun nameOf(row: ContactRecord?): String? {
         if (row == null) return null
         // Names come from the server and from other people's devices: cleaned for every screen and notification.
+        // A contact's own profile name comes first; the lookup name is the fallback.
+        val own = if (row.accountId == device.accountId) null else profileNames[row.accountId]
+        own?.let { org.example.app.core.profile.DisplayNameRule.forDisplay(it, "") }?.ifEmpty { null }?.let { return it }
         return org.example.app.core.profile.DisplayNameRule.forDisplay(row.displayName, row.username).ifEmpty { null }
     }
+
+    // Profiles: contacts' newest, and the person's own, kept for the tile and name helpers.
+
+    private fun loadProfiles() {
+        val loaded = HashMap<String, org.example.app.core.people.Profile>()
+        for (id in contactRows.keys) {
+            if (id == device.accountId) continue
+            runCatching { repo.profile(id) }.getOrNull()?.let { loaded[id] = org.example.app.core.people.Profile(it.accountId, it.name, it.photo, it.ver) }
+        }
+        runCatching { profileSender.photo() }.getOrNull()?.let {
+            loaded[device.accountId] = org.example.app.core.people.Profile(device.accountId, myStoredName, it, runCatching { profileSender.ver() }.getOrDefault(0))
+        }
+        profileNames = loaded.filterKeys { it != device.accountId }.mapValues { it.value.name }
+        profilesFlow.value = loaded
+    }
+
+    override fun setMyPhoto(photo: ByteArray?) {
+        if (photo != null && !org.example.app.core.people.ProfilePhotoRule.isAcceptable(photo)) return
+        write { profileSender.setPhoto(photo); requestFlush() }
+    }
+
+    override fun announceProfile() = write { profileSender.announce(); requestFlush() }
 
     private fun contactOf(row: ContactRecord) = Contact(row.accountId, nameOf(row) ?: "Unknown", row.username)
 

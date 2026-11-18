@@ -37,36 +37,45 @@ class ProfileSender(
 
     /** Bumps the version when the name or photo differs from the last announced one, then sends. */
     fun announce() {
-      synchronized(lock) {
-        val name = sendableName()
-        if (name != null) {
-            val fp = fingerprint(name, photo())
-            if (repo.get(FP)?.decodeToString() != fp) {
-                repo.set(VER, (ver() + 1).toString().encodeToByteArray())
-                repo.set(FP, fp.encodeToByteArray())
+        synchronized(lock) {
+            val name = sendableName()
+            if (name != null) {
+                val fp = fingerprint(name, photo())
+                if (repo.get(FP)?.decodeToString() != fp) {
+                    repo.set(VER, (ver() + 1).toString().encodeToByteArray())
+                    repo.set(FP, fp.encodeToByteArray())
+                }
             }
+            sync()
         }
-        sync()
-      }
+    }
+
+    /** True when [sync] would send something now (cheap: reads a few keys). */
+    fun hasPending(): Boolean = synchronized(lock) {
+        if (sendableName() == null) false else ver() == 0 || targets(ver()).isNotEmpty()
     }
 
     /** Sends the current version to every target that has not had it. With no version yet, a known name starts version 1. */
     fun sync() {
-      synchronized(lock) {
-        val name = sendableName() ?: return
-        if (ver() == 0) { announceFirst(name); return }
-        val ver = ver()
-        val photo = photo()
-        val blocked = repo.blockedIds().toSet()
-        for (chat in repo.chats()) {
-            if (chat.isRequest || chat.id == ownAccountId || chat.id in blocked) continue
-            if (repo.conversations(chat.id).isEmpty()) continue
-            val key = SENT + chat.id
-            if ((repo.get(key)?.decodeToString()?.toIntOrNull() ?: 0) >= ver) continue
-            send(chat.id, name, photo, ver)
-            repo.set(key, ver.toString().encodeToByteArray())
+        synchronized(lock) {
+            val name = sendableName() ?: return
+            if (ver() == 0) { announceFirst(name); return }
+            val ver = ver()
+            val photo = photo()
+            for (chatId in targets(ver)) {
+                send(chatId, name, photo, ver)
+                repo.set(SENT + chatId, ver.toString().encodeToByteArray())
+            }
         }
-      }
+    }
+
+    /** The chats that may get a profile and have not had version [ver]. */
+    private fun targets(ver: Int): List<String> {
+        val blocked = repo.blockedIds().toSet()
+        return repo.chats().filter { chat ->
+            !chat.isRequest && chat.id != ownAccountId && chat.id !in blocked && repo.conversations(chat.id).isNotEmpty() &&
+                (repo.get(SENT + chat.id)?.decodeToString()?.toIntOrNull() ?: 0) < ver
+        }.map { it.id }
     }
 
     private fun announceFirst(name: String) {
