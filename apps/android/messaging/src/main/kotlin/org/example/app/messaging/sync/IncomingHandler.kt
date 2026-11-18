@@ -64,9 +64,18 @@ class IncomingHandler(
             is Incoming.Commit -> {
                 val conversation = repo.conversationByGroup(incoming.group.raw)
                 when {
+                    // A group this account was removed from or left: late commits are dropped, never shown, never kept.
+                    conversation == null && GroupState.droppedForGone(repo, raw.conversationId) -> AppliedResult.Ignored
+                    conversation != null && GroupState.isGone(repo, conversation.chatId) -> AppliedResult.Ignored
                     conversation == null -> AppliedResult.Ignored.also { park(raw, repo, "unknown_group") }
                     incoming.removedMe -> {
-                        repo.upsertConversation(conversation.copy(active = false))
+                        val chat = repo.chat(conversation.chatId)
+                        if (chat?.kind == ChatKind.GROUP) {
+                            // Read-only from now on: "You were removed", the old conversation row gone.
+                            GroupState.markGone(repo, clock, chat, org.example.app.messaging.ports.MyState.REMOVED, line = true)
+                        } else {
+                            repo.upsertConversation(conversation.copy(active = false))
+                        }
                         AppliedResult.RemovedMe(conversation.serverId)
                     }
                     else -> {
@@ -83,8 +92,11 @@ class IncomingHandler(
             }
             is Incoming.Application -> {
                 val conversation = repo.conversationByGroup(incoming.group.raw)
-                // Never dropped silently: a placeholder where the server says it belongs, else kept.
-                if (conversation == null) AppliedResult.Ignored.also { if (!storePlaceholder(raw, repo)) park(raw, repo, "unknown_group") }
+                // Never dropped silently: a placeholder where the server says it belongs, else kept. Except for a group this
+                // account left or was removed from: nothing more is shown from it.
+                if (conversation == null && GroupState.droppedForGone(repo, raw.conversationId)) AppliedResult.Ignored
+                else if (conversation != null && GroupState.isGone(repo, conversation.chatId)) AppliedResult.Ignored
+                else if (conversation == null) AppliedResult.Ignored.also { if (!storePlaceholder(raw, repo)) park(raw, repo, "unknown_group") }
                 else applyApplication(incoming.sender, incoming.plaintext, raw, conversation, repo)
             }
         }

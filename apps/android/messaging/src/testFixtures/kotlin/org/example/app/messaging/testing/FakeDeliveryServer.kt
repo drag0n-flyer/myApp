@@ -9,6 +9,7 @@ import org.example.app.contracts.DeviceRecord
 import org.example.app.contracts.GroupMemberInfo
 import org.example.app.contracts.InboxItem
 import org.example.app.contracts.InboxPage
+import org.example.app.contracts.MembersChange
 import org.example.app.contracts.ServerException
 
 /**
@@ -137,6 +138,14 @@ class FakeDeliveryServer(var defaultMode: String = "e2ee") {
         )
     }
 
+    private fun deliverMembersLocked(to: String, conversationId: String, membersVersion: Long, from: String) {
+        cursor += 1
+        val (account, device) = from.split("/", limit = 2)
+        inboxes.getOrPut(to) { mutableListOf() }.add(
+            InboxItem(cursor, "members", conversationId, null, 0, account, device, ByteArray(0), Instant.ofEpochMilli(1_700_000_000_000), membersVersion),
+        )
+    }
+
     /** A second, different welcome for [conversationId] (the last one with a byte appended) to [to]. */
     fun deliverWelcomeCopy(to: String, conversationId: String, from: String = "acc-ana/ana1") = synchronized(lock) {
         val c = conversations.getValue(conversationId)
@@ -171,6 +180,14 @@ class FakeDeliveryServer(var defaultMode: String = "e2ee") {
         // A group: devices of current member accounts only.
         if (c.kind == "group" && added.any { it.substringBefore('/') !in c.accounts }) throw ServerException(403, "forbidden", null, null)
         val removed = c.members.filter { m -> removeDevices.any { m.endsWith("/$it") } }
+        // A group: only the sender's own devices, or devices of accounts that are no longer members; anything else (an unknown ID too) is refused.
+        if (c.kind == "group") {
+            val sender = identity.substringBefore('/')
+            for (d in removeDevices) {
+                val holder = c.members.firstOrNull { it.endsWith("/$d") }?.substringBefore('/') ?: throw ServerException(403, "forbidden", null, null)
+                if (holder != sender && holder in c.accounts) throw ServerException(403, "forbidden", null, null)
+            }
+        }
         before.forEach { deliver(it, "commit", id, epoch, identity, commit) }
         c.members.removeAll(removed.toSet())
         c.members.addAll(added)
@@ -248,6 +265,69 @@ class FakeDeliveryServer(var defaultMode: String = "e2ee") {
                 if (account !in c.accounts) throw ServerException(404, "not_found", null, null)
                 val info = ConversationInfo(c.id, c.mode, c.epoch, "group", c.accounts.map { (a, r) -> GroupMemberInfo(a, r) }, c.membersVersion)
                 groupInfoOverride?.invoke(info) ?: info
+            }
+        }
+
+        private fun groupFor(id: String): Conversation {
+            val c = conversations[id] ?: throw ServerException(404, "not_found", null, null)
+            if (account !in c.accounts) throw ServerException(404, "not_found", null, null)
+            if (c.kind != "group") throw ServerException(400, "bad_request", null, null)
+            return c
+        }
+
+        /** The version rises and every member device present before the change gets a `members` item; a removed account's devices leave at once. */
+        private fun bumped(c: Conversation, removedAccount: String? = null): Long {
+            val before = c.members.toList()
+            c.membersVersion += 1
+            before.forEach { deliverMembersLocked(it, c.id, c.membersVersion, identity) }
+            if (removedAccount != null) c.members.removeAll { it.startsWith("$removedAccount/") }
+            return c.membersVersion
+        }
+
+        override suspend fun addAccounts(id: String, accounts: List<String>): MembersChange {
+            call("addAccounts")
+            return synchronized(lock) {
+                val c = groupFor(id)
+                if (c.accounts[account] == "member") throw ServerException(403, "forbidden", null, null)
+                if (accounts.any { it !in keyPackages }) throw ServerException(404, "not_found", null, null)
+                val fresh = accounts.filter { it !in c.accounts }.distinct()
+                if (c.accounts.size + fresh.size > 100) throw ServerException(409, "group_full", null, null)
+                if (fresh.isEmpty()) return@synchronized MembersChange(c.membersVersion, false)
+                fresh.forEach { c.accounts[it] = "member" }
+                MembersChange(bumped(c), false)
+            }
+        }
+
+        override suspend fun removeAccount(id: String, account: String): MembersChange {
+            call("removeAccount")
+            return synchronized(lock) {
+                val c = groupFor(id)
+                val mine = c.accounts.getValue(this.account)
+                val target = c.accounts[account] ?: throw ServerException(404, "not_found", null, null)
+                if (account == this.account) {
+                    if (mine == "owner" && c.accounts.size > 1) throw ServerException(409, "owner_must_transfer", null, null)
+                } else {
+                    val allowed = (mine == "owner" && target != "owner") || (mine == "admin" && target == "member")
+                    if (!allowed) throw ServerException(403, "forbidden", null, null)
+                }
+                c.accounts.remove(account)
+                val version = bumped(c, account)
+                if (c.accounts.isEmpty()) { conversations.remove(id); return@synchronized MembersChange(version, true) }
+                MembersChange(version, false)
+            }
+        }
+
+        override suspend fun setRole(id: String, account: String, role: String): MembersChange {
+            call("setRole")
+            return synchronized(lock) {
+                val c = groupFor(id)
+                if (c.accounts[this.account] != "owner") throw ServerException(403, "forbidden", null, null)
+                if (account == this.account || role !in setOf("owner", "admin", "member")) throw ServerException(400, "bad_request", null, null)
+                val current = c.accounts[account] ?: throw ServerException(404, "not_found", null, null)
+                if (current == role) return@synchronized MembersChange(c.membersVersion, false)
+                c.accounts[account] = role
+                if (role == "owner") c.accounts[this.account] = "admin"
+                MembersChange(bumped(c), false)
             }
         }
 
