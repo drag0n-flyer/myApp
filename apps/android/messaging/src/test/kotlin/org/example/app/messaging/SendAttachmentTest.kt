@@ -224,4 +224,27 @@ class SendAttachmentTest {
         assertEquals(1, second.api.uploads.get())
         assertEquals(AttachmentState.LOCAL, f.d.repo.attachmentForMessage(id)!!.state)
     }
+
+    @Test
+    fun openingNeverDownloadsAndDoesNothingAfterClose() = runBlocking<Unit> {
+        val f = fixture()
+        val s = session(f)
+        s.store.sendAttachment(source(tmp("src")).path, MediaKind.File, "acc-ana")
+        s.store.settle()
+        val id = sentId(f)
+        val blob = File(f.d.repo.attachmentForMessage(id)!!.localPath!!)
+
+        // The blob is gone: the open path does not fetch it again.
+        val saved = blob.readBytes()
+        blob.delete()
+        assertNull(s.store.openAttachment(id))
+        assertEquals(0, s.api.downloads.get())
+        assertEquals(emptyList(), f.dirs.blobDir.list()!!.toList(), "nothing is created in the blob folder")
+
+        // Closed: the same message does not open even though its blob is back.
+        blob.writeBytes(saved)
+        s.store.shutdown()
+        assertNull(s.store.openAttachment(id))
+        assertEquals(emptyList(), f.dirs.openDir.list()!!.toList())
+    }
 }

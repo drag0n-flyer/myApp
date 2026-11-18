@@ -49,8 +49,13 @@ class PickedFilesTest {
     }
 
     @Test fun aFileOverTheLimitIsRefusedAndNothingIsLeft() = runBlocking<Unit> {
-        val r = PickedFiles.copy(out, "big.bin", maxBytes = 10) { ByteArrayInputStream(ByteArray(11)) }
-        assertEquals(PickedFiles.Result.TooBig, r)
+        var read = 0L
+        val endless = object : InputStream() {
+            override fun read(): Int { read++; return 1 }
+            override fun read(b: ByteArray, off: Int, len: Int): Int { read += len; return len }
+        }
+        assertEquals(PickedFiles.Result.TooBig, PickedFiles.copy(out, "endless.bin", maxBytes = 1_000) { endless })
+        assertTrue(read < 1_000 + 64 * 1024, "read $read bytes of an endless stream with a cap of 1000")
         assertTrue(out.listFiles().orEmpty().isEmpty())
     }
 
@@ -86,9 +91,12 @@ class PickedFilesTest {
     }
 
     @Test fun onlyContentUrisFromThePickerAreAccepted() {
-        assertTrue(PickedFiles.isFromPicker(Uri.parse("content://com.android.providers.media.documents/document/1")))
-        assertFalse(PickedFiles.isFromPicker(Uri.parse("file:///data/data/org.example.app/databases/app.db")))
-        assertFalse(PickedFiles.isFromPicker(Uri.parse("/data/data/org.example.app/databases/app.db")))
-        assertFalse(PickedFiles.isFromPicker(Uri.parse("http://example.com/x")))
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        assertTrue(PickedFiles.isFromPicker(context, Uri.parse("content://com.android.providers.media.documents/document/1")))
+        assertFalse(PickedFiles.isFromPicker(context, Uri.parse("file:///data/data/org.example.app/databases/app.db")))
+        assertFalse(PickedFiles.isFromPicker(context, Uri.parse("/data/data/org.example.app/databases/app.db")))
+        assertFalse(PickedFiles.isFromPicker(context, Uri.parse("http://example.com/x")))
+        // The app's own FileProvider (the copies it shares and the camera file) is not a source to attach from.
+        assertFalse(PickedFiles.isFromPicker(context, Uri.parse("content://${SharedFiles.authority(context)}/shared/open/x.pdf")))
     }
 }

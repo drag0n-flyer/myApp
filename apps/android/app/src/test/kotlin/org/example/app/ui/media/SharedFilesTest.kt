@@ -83,11 +83,13 @@ class SharedFilesTest {
 
     @Test fun anInstallablePackageIsNeverOffered() {
         assertNull(SharedFiles.viewIntent(Uri.parse("content://x/a.apk"), "a.apk"))
+        assertNull(SharedFiles.sendIntent(Uri.parse("content://x/a.apk"), "a.apk"))
+        assertNull(SharedFiles.sendIntent(Uri.parse("content://x/b.APK"), "b.APK"))
     }
 
     @Test fun sendIntentCarriesTheStreamAndGrantsReadOnly() {
         val uri = Uri.parse("content://org.example.app.files/share/x/a.png")
-        val intent = SharedFiles.sendIntent(uri, "a.png")
+        val intent = SharedFiles.sendIntent(uri, "a.png")!!
         assertEquals(Intent.ACTION_SEND, intent.action)
         assertEquals("image/png", intent.type)
         @Suppress("DEPRECATION")

@@ -39,6 +39,16 @@ interface VoiceEngine {
     }
 }
 
+/**
+ * The phone's audio focus: a voice message asks for it while it plays and gives it back when it stops, so music pauses
+ * under it and a call or another app can take it. [request] answers whether it was granted; [onLost] is called (main
+ * thread) when something else takes the focus away. [abandon] is safe to call when nothing is held.
+ */
+interface VoiceFocus {
+    fun request(onLost: () -> Unit): Boolean
+    fun abandon()
+}
+
 fun interface VoiceEngineFactory {
     fun create(): VoiceEngine
 }
@@ -48,7 +58,8 @@ fun interface VoiceEngineFactory {
  * go on; tapping another stops the first. A message is decrypted for as long as it plays and its plaintext is deleted
  * the moment it stops, ends or fails. Anything that arrives late (an open that finished after another tap, a callback of
  * a player that was stopped) is dropped. [release] when the screen leaves: it stops everything and the player takes no
- * more taps. Main thread only; [scope] should be the screen's own, [io] is where the decrypt runs.
+ * more taps. Main thread only; [scope] should be the screen's own, [io] is where the decrypt runs. While a message plays
+ * it holds [focus] (when given); losing it pauses the message.
  */
 class VoicePlayer(
     private val scope: CoroutineScope,
@@ -56,6 +67,7 @@ class VoicePlayer(
     private val engines: VoiceEngineFactory,
     private val io: CoroutineDispatcher = Dispatchers.IO,
     private val tickMs: Long = 100,
+    private val focus: VoiceFocus? = null,
 ) {
     private class Active(val opened: OpenedMedia, val engine: VoiceEngine) {
         var prepared = false
@@ -119,6 +131,10 @@ class VoicePlayer(
                 override fun onPrepared(durationMs: Int) {
                     if (mine != token) return
                     a.prepared = true
+                    if (!takeFocus(mine)) {
+                        stop()
+                        return
+                    }
                     engine.start()
                     _state.update { it.copy(playing = true, durationMs = durationMs) }
                     startTicker(a)
@@ -135,13 +151,23 @@ class VoicePlayer(
         }
     }
 
+    /** True when playing may go on: no focus port, or the focus was granted. Losing it later pauses this message. */
+    private fun takeFocus(mine: Int): Boolean = focus?.request { if (mine == token) pauseIfPlaying() } ?: true
+
+    private fun pauseIfPlaying() {
+        val a = active ?: return
+        if (_state.value.playing) pause(a)
+    }
+
     private fun pause(a: Active) {
         a.engine.pause()
+        focus?.abandon()
         ticker?.cancel()
         _state.update { it.copy(playing = false, positionMs = a.engine.positionMs) }
     }
 
     private fun resume(a: Active) {
+        if (!takeFocus(token)) return
         a.engine.start()
         _state.update { it.copy(playing = true) }
         startTicker(a)
@@ -169,6 +195,7 @@ class VoicePlayer(
         loading = null
         ticker?.cancel()
         ticker = null
+        focus?.abandon()
         active?.let {
             it.engine.release()
             it.opened.close()

@@ -71,7 +71,7 @@ class MediaActions(
                 val intent = if (view) {
                     SharedFiles.viewIntent(uri, staged.name)
                 } else {
-                    Intent.createChooser(SharedFiles.sendIntent(uri, staged.name), null)
+                    SharedFiles.sendIntent(uri, staged.name)?.let { Intent.createChooser(it, null) }
                 }
                 if (intent == null) {
                     notify(R.string.media_no_app)

@@ -11,6 +11,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.job
 import kotlinx.coroutines.withTimeoutOrNull
@@ -327,7 +329,17 @@ class AppGraph(
     private val sampleChats by lazy { SampleChatStore() }
 
     /** Decrypts a downloaded attachment for the chat screen. Nothing with sample data or while signed out. */
-    val attachmentOpener = AttachmentOpener { messageId -> liveSession?.chatStore?.openAttachment(messageId)?.asOpenedMedia() }
+    val attachmentOpener = AttachmentOpener { messageId ->
+        val session = liveSession ?: return@AttachmentOpener null
+        // Runs in the session's scope, so the sign-out wipe waits for it. A caller that gave up closes what it was about to get.
+        val job = session.scope.async { session.chatStore.openAttachment(messageId)?.asOpenedMedia() }
+        try {
+            job.await()
+        } catch (e: CancellationException) {
+            job.invokeOnCompletion { if (it == null) runCatching { job.getCompleted()?.close() } }
+            if (currentCoroutineContext().isActive) null else throw e
+        }
+    }
 
     /** Sample accounts, or the live ones; a live sign-in first finishes any pending wipe. */
     val accountService: AccountService get() = if (sampleData) sampleAccount else guardedAccount

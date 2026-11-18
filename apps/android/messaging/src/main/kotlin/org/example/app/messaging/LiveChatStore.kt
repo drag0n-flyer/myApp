@@ -527,10 +527,22 @@ class LiveChatStore(
         }
     }
 
-    /** Decrypts a downloaded attachment for viewing. Close the result when it is no longer shown. Null when not available. */
+    /**
+     * Decrypts a downloaded attachment for viewing. Close the result when it is no longer shown. Null when the store is
+     * closed, or the attachment is not [AttachmentState.LOCAL] with its blob on disk: opening never downloads (that is
+     * [download]), and while it runs a sign-out wipe waits for it.
+     */
     suspend fun openAttachment(messageId: String): OpenedAttachment? {
-        val r = repo.attachmentForMessage(messageId) ?: return null
-        return try { downloader.open(Att(r.id, r.key, r.digest, r.size, r.cipherSize)) } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
+        if (closed.get()) return null
+        inFlight.update { it + 1 }
+        try {
+            if (closed.get()) return null
+            val r = repo.attachmentForMessage(messageId) ?: return null
+            if (r.state != AttachmentState.LOCAL || r.localPath?.let { File(it).isFile } != true) return null
+            return try { downloader.open(Att(r.id, r.key, r.digest, r.size, r.cipherSize)) } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
+        } finally {
+            inFlight.update { it - 1 }
+        }
     }
 
     // Start-up (task I1)

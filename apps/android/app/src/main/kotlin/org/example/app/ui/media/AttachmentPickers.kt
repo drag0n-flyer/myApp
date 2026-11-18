@@ -60,12 +60,12 @@ fun rememberAttachmentPickers(onAttachment: (path: String, kind: MediaKind) -> U
 
     val photo = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        if (PickedFiles.isFromPicker(uri)) attach(uri.toString(), MediaKind.Photo) else say(R.string.media_file_unreadable)
+        if (PickedFiles.isFromPicker(context, uri)) attach(uri.toString(), MediaKind.Photo) else say(R.string.media_file_unreadable)
     }
 
     val document = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        if (!PickedFiles.isFromPicker(uri)) {
+        if (!PickedFiles.isFromPicker(context, uri)) {
             say(R.string.media_file_unreadable)
             return@rememberLauncherForActivityResult
         }

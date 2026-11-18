@@ -72,6 +72,7 @@ import org.example.app.core.chats.MessageContent
 import org.example.app.core.settings.MediaKind
 import org.example.app.ui.Avatar
 import org.example.app.ui.media.AttachmentOpener
+import org.example.app.ui.media.AudioManagerFocus
 import org.example.app.ui.media.CaptureState
 import org.example.app.ui.media.rememberAttachmentPickers
 import org.example.app.ui.media.rememberVoiceControls
@@ -148,7 +149,7 @@ fun ChatScreen(
     val voiceControls = rememberVoiceControls(onNote = { viewModel.sendAttachment(it.path, MediaKind.Voice) }, notify = { notice = it })
     val capture by voiceControls.capture.state.collectAsState()
     // One voice message plays at a time; it stops when the screen is left or the app goes to the background.
-    val voice = remember(opener) { VoicePlayer(scope, opener, MediaPlayerEngine.factory) }
+    val voice = remember(opener) { VoicePlayer(scope, opener, MediaPlayerEngine.factory, focus = AudioManagerFocus(context)) }
     DisposableEffect(voice) { onDispose { voice.release() } }
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { voice.stop() }
     val mediaHost = remember(opener, photos, mediaActions, voice) {

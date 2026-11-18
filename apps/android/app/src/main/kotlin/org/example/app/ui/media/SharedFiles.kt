@@ -90,13 +90,16 @@ object SharedFiles {
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
 
-    /** The share sheet's intent: read access to [uri] only. */
-    fun sendIntent(uri: Uri, name: String): Intent =
-        Intent(Intent.ACTION_SEND)
-            .setType(mimeFor(name))
+    /** The share sheet's intent: read access to [uri] only. Null for an installable package, as for [viewIntent]. */
+    fun sendIntent(uri: Uri, name: String): Intent? {
+        val mime = mimeFor(name)
+        if (mime == APK) return null
+        return Intent(Intent.ACTION_SEND)
+            .setType(mime)
             .putExtra(Intent.EXTRA_STREAM, uri)
             .apply { clipData = ClipData.newRawUri(null, uri) }
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
 
     private const val BUFFER = 64 * 1024
 }

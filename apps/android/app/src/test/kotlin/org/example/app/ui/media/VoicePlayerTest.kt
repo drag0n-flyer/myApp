@@ -29,6 +29,23 @@ private class FakeEngine : VoiceEngine {
     override fun release() { released = true }
 }
 
+/** Counts how often playback took and gave back the phone's audio focus. */
+private class FakeFocus : VoiceFocus {
+    var granted = true
+    var held = false
+    var requests = 0
+    var abandons = 0
+    var onLost: (() -> Unit)? = null
+    override fun request(onLost: () -> Unit): Boolean {
+        requests++
+        if (!granted) return false
+        held = true
+        this.onLost = onLost
+        return true
+    }
+    override fun abandon() { abandons++; held = false }
+}
+
 /** Opens a file per message id; a message can be held back until [gates] is completed. */
 private class GatedOpener : AttachmentOpener {
     val gates = mutableMapOf<String, CompletableDeferred<Boolean>>()
@@ -52,9 +69,10 @@ private class GatedOpener : AttachmentOpener {
 class VoicePlayerTest {
     private val engines = mutableListOf<FakeEngine>()
     private val opener = GatedOpener()
+    private val focus = FakeFocus()
 
     private fun TestScope.player(o: AttachmentOpener? = opener) =
-        VoicePlayer(backgroundScope, o, { FakeEngine().also { engines += it } }, StandardTestDispatcher(testScheduler), tickMs = 100)
+        VoicePlayer(backgroundScope, o, { FakeEngine().also { engines += it } }, StandardTestDispatcher(testScheduler), tickMs = 100, focus = focus)
 
     private fun TestScope.playing(p: VoicePlayer, id: String, durationMs: Int = 8_000): FakeEngine {
         p.toggle(id)
@@ -221,6 +239,57 @@ class VoicePlayerTest {
         advanceUntilIdle()
         assertEquals(VoiceState(), p.state.value)
         assertEquals(1, engines.size)
+    }
+
+    @Test fun playingTakesTheAudioFocusAndEveryWayOfStoppingGivesItBack() = runTest {
+        val p = player()
+        val engine = playing(p, "a")
+        assertTrue(focus.held)
+        assertEquals(1, focus.requests)
+        // Pause gives it back, resume takes it again.
+        p.toggle("a")
+        assertFalse(focus.held)
+        p.toggle("a")
+        assertTrue(focus.held)
+        assertEquals(2, focus.requests)
+        // The end of the message.
+        engine.listener!!.onCompleted()
+        assertFalse(focus.held)
+        // Stop, and the screen leaving.
+        playing(p, "b")
+        assertTrue(focus.held)
+        p.stop()
+        assertFalse(focus.held)
+        playing(p, "c")
+        p.release()
+        assertFalse(focus.held)
+    }
+
+    @Test fun aFailedMessageDoesNotKeepTheFocus() = runTest {
+        val p = player()
+        val engine = playing(p, "a")
+        engine.listener!!.onError()
+        assertFalse(focus.held)
+    }
+
+    @Test fun losingTheFocusToACallOrAnotherAppPauses() = runTest {
+        val p = player()
+        val engine = playing(p, "a")
+        focus.onLost!!.invoke()
+        assertFalse(p.state.value.playing)
+        assertEquals("a", p.state.value.messageId)
+        assertTrue(engine.paused)
+        assertFalse(focus.held)
+    }
+
+    @Test fun nothingPlaysWhenTheFocusIsRefused() = runTest {
+        focus.granted = false
+        val p = player()
+        p.toggle("a")
+        runCurrent()
+        engines.single().listener!!.onPrepared(8_000)
+        assertFalse(p.state.value.playing)
+        assertFalse(engines.single().started)
     }
 
     @Test fun clockShowsMinutesAndSeconds() {

@@ -1,5 +1,6 @@
 package org.example.app.ui.media
 
+import android.content.Context
 import android.net.Uri
 import java.io.File
 import java.io.InputStream
@@ -27,8 +28,12 @@ object PickedFiles {
         data object Unreadable : Result
     }
 
-    /** Only a `content:` URI from a document provider; a `file:` URI could name a file of this very app. */
-    fun isFromPicker(uri: Uri): Boolean = uri.scheme == "content"
+    /**
+     * Only a `content:` URI from a document provider; a `file:` URI could name a file of this very app, and so could a
+     * `content:` URI of this app's own FileProvider (it serves the app's cache).
+     */
+    fun isFromPicker(context: Context, uri: Uri): Boolean =
+        uri.scheme == "content" && !uri.authority.equals(SharedFiles.authority(context), ignoreCase = true)
 
     /**
      * Copies what [open] returns into a new folder under [outDir], named from [rawName] once [SafeFileName] has cleaned it.
