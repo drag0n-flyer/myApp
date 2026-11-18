@@ -119,8 +119,8 @@ func (m *Module) postMessage(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 		if escrow != nil {
-			if _, err := tx.Exec(ctx, `insert into escrow (conversation_id, seq, sender_account, data, created_at) values ($1, $2, $3, $4, $5)`,
-				id, seq, p.AccountID, escrow, now); err != nil {
+			if _, err := tx.Exec(ctx, `insert into escrow (conversation_id, seq, sender_account, data, created_at, expires_at) values ($1, $2, $3, $4, $5, $6)`,
+				id, seq, p.AccountID, escrow, now, expiresAt); err != nil {
 				return err
 			}
 		}
@@ -178,6 +178,7 @@ func (m *Module) PruneOnce(ctx context.Context) error {
 		del(`delete from escrow where created_at < $1`, now.Add(-time.Duration(d)*day))
 	}
 	del(`delete from inbox where expires_at <= $1`, now)
+	del(`delete from escrow where expires_at <= $1`, now)
 	del(`delete from client_messages where created_at < $1`, now.Add(-clientMsgTTL))
 	return errors.Join(errs...)
 }
