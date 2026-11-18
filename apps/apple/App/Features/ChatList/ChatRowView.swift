@@ -4,6 +4,8 @@ import SwiftUI
 struct ChatRowView: View {
     let chat: Chat
     let name: String
+    /// The other person is typing: "typing…" takes the place of the preview.
+    var isTyping = false
     @Environment(\.dynamicTypeSize) private var typeSize
 
     private var time: String { chat.lastMessage.map { TimeLabel.format($0.sentAt) } ?? "" }
@@ -33,7 +35,10 @@ struct ChatRowView: View {
                     .fixedSize()
                 }
                 HStack(alignment: .center) {
-                    if let draftLine {
+                    if isTyping {
+                        Text("typing…").font(.subheadline).foregroundStyle(.tint)
+                            .lineLimit(1)
+                    } else if let draftLine {
                         HStack(spacing: 4) {
                             Text("Draft:").foregroundStyle(.red)
                             Text(draftLine).foregroundStyle(.secondary)
@@ -67,7 +72,7 @@ struct ChatRowView: View {
         var parts = [name]
         if chat.pinnedAt != nil { parts.append(String(localized: "Pinned")) }
         if chat.muted { parts.append(String(localized: "Muted")) }
-        if let draftLine { parts.append(String(localized: "Draft:") + " " + draftLine) } else { parts.append(preview) }
+        if isTyping { parts.append(String(localized: "typing…")) } else if let draftLine { parts.append(String(localized: "Draft:") + " " + draftLine) } else { parts.append(preview) }
         parts.append(time)
         if chat.unreadCount > 0 { parts.append(String(localized: "\(chat.unreadCount) unread")) }
         return Text(parts.filter { !$0.isEmpty }.joined(separator: ", "))
