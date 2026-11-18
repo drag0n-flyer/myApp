@@ -263,7 +263,7 @@ final class VoiceSessionTests: XCTestCase {
         XCTAssertEqual(capture.lockedCount, 2)
     }
 
-    func testOrphanRecordingsAreRemovedAtStart() throws {
+    func testOrphanRecordingsAreRemovedAtStart() async throws {
         for name in ["voice-a.caf", "voice-b.ogg", "keep.txt"] {
             try Data([1]).write(to: folder.appendingPathComponent(name))
         }

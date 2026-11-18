@@ -40,6 +40,14 @@ object PushRuntime {
     /** For N6: call it when app lock is turned on. Notifications already showing lose their sender, text and Reply. */
     fun hideShownContent(context: android.content.Context) = MessageNotifier(context.applicationContext).hideShownContent()
 
+    /** The chat has no unread message left after an expiry: its message notification goes. Calls and "not sent" notices stay. */
+    fun cancelChatMessages(context: android.content.Context, chatId: String) =
+        MessageNotifier(context.applicationContext).cancelChatMessages(chatId)
+
+    /** Some unread messages are left after an expiry: the chat's showing notification shows only those. */
+    fun replaceChatLines(context: android.content.Context, chatId: String, title: String, lines: List<Pair<String, Long>>, expiresAtMs: Long?) =
+        MessageNotifier(context.applicationContext).replaceLines(chatId, title, lines, expiresAtMs)
+
     /** What the notification buttons do. The app sets it in `PushWiring`; null while signed out. */
     @Volatile var notificationActions: NotificationActionSink? = null
 

@@ -139,10 +139,16 @@ public struct Message: Identifiable, Hashable, Codable, Sendable {
     public var uploadProgress: Double?
     /// Why a failed send will not work again as it is (kept while the app runs; a restart shows plain "Not sent").
     public var sendFailure: SendFailure?
+    /// When the message disappears (`sentAt + ttl`); `nil` when it never does.
+    public var expiresAt: Date?
+
+    /// True while a timer applies to this message: the bubble shows the timer glyph.
+    public var disappears: Bool { expiresAt != nil }
 
     public init(id: String, senderID: String, sentAt: Date, content: MessageContent, status: DeliveryStatus, replyToID: String?, reactions: [String],
                 editedAt: Date? = nil, media: MediaState? = nil, undecryptable: Bool = false, uploadProgress: Double? = nil,
-                sendFailure: SendFailure? = nil) {
+                sendFailure: SendFailure? = nil, expiresAt: Date? = nil) {
+        self.expiresAt = expiresAt
         self.uploadProgress = uploadProgress
         self.sendFailure = sendFailure
         self.id = id

@@ -176,7 +176,7 @@ class PeopleBaseTest {
         val s = setup()
         val st = store(s.bob)
         s.bob.nowMs = NOW + 1_000
-        st.setTimer("acc-ana", 86_400)
+        st.setTimer("acc-ana", 86_400); st.settle()
         s.deliver(ContentEnvelope.Timer("old", NOW, 604_800)) // sent before the local choice
         assertEquals(86_400, s.bob.repo.timerSeconds("acc-ana"))
         s.bob.nowMs = NOW + 2_000
