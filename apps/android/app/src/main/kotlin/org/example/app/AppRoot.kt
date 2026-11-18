@@ -29,6 +29,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
@@ -41,6 +42,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.compose.foundation.layout.Box
@@ -67,6 +69,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.example.app.ui.nav.MainTab
 import org.example.app.ui.nav.MainTabs
+import org.example.app.ui.nav.PaneChats
 import org.example.app.ui.nav.TabPlaceholder
 import org.example.app.ui.onboarding.LinkApprovalFlow
 import org.example.app.ui.onboarding.LinkApprovalViewModel
@@ -86,6 +89,9 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+
+/** The open chat saved with the window: see `carried` in [AppRoot]. */
+private class CarriedChat(var id: String? = null, var info: Boolean = false)
 
 private const val MAIN = "main"
 /** `highlight` is a message ID to scroll to and flash (a search hit); the chat screen reads it as `highlightMessageId`. */
@@ -183,8 +189,46 @@ fun AppRoot(
                 nav.navigate("chat/${Uri.encode(id)}" + if (highlight != null) "?highlight=${Uri.encode(highlight)}" else "")
             }
         }
+        val idArg = listOf(navArgument("id") { type = NavType.StringType })
+        val chatArgs = idArg + navArgument("highlight") { type = NavType.StringType; nullable = true; defaultValue = null }
+        // While the app lock is on and locked, only the cover (and a ringing or active call) is composed.
+        val lockSetting by graph.settingsStore.settings.collectAsState()
+        val lockState by graph.appLock.locked.collectAsState()
+        val locked = lockSetting.appLock && lockState
+        // The pane's chat view models: one chat's at a time, cleared when another chat opens or the pane closes.
+        val pane = viewModel<PaneChats>(key = PaneChats.key(sessionEnds))
+        LaunchedEffect(paneChat, wide) { if (!wide || paneChat == null) pane.select(null) }
+        // The chat that was open when the window was last saved, read from the live state at save time. The nav
+        // back stack alone does not always come back (a rotation while the lock cover is up loses it), so this is
+        // applied once after the unlock and only when the stack came back without the chat.
+        val carried = rememberSaveable(
+            saver = Saver<CarriedChat, List<Any?>>(
+                save = { old ->
+                    val top = nav.currentBackStackEntry
+                    val onStack = top?.takeIf { it.destination.route == CHAT || it.destination.route == INFO }
+                    when {
+                        wide && paneChat != null -> listOf(paneChat, paneInfo)
+                        onStack != null -> listOf(onStack.arguments?.getString("id"), onStack.destination.route == INFO)
+                        else -> listOf(old.id, old.info) // not applied yet (still locked): keep it for the next recreation
+                    }
+                },
+                restore = { CarriedChat(it[0] as String?, it[1] as Boolean) },
+            ),
+        ) { CarriedChat() }
         // A rotation or resize across the threshold carries the open chat (and its info page) into the other layout.
-        LaunchedEffect(wide) {
+        // The destination is a key too: a restored back stack can arrive after the first composition, and a wide window
+        // never keeps a chat as a screen of its own.
+        val currentRoute = nav.currentBackStackEntryAsState().value?.destination?.route
+        LaunchedEffect(wide, locked, currentRoute) {
+            // Locked, no NavHost is composed (it has no graph yet): carry the chat over once the app is unlocked.
+            if (locked) return@LaunchedEffect
+            if (carried.id != null) {
+                val id = carried.id
+                val info = carried.info
+                carried.id = null
+                val hasChatOnStack = nav.currentBackStackEntry?.destination?.route.let { it == CHAT || it == INFO }
+                if (paneChat == null && !hasChatOnStack && graph.chatStore.chat(id!!) != null) { paneChat = id; paneInfo = info; paneHighlight = null }
+            }
             val route = nav.currentBackStackEntry?.destination?.route
             if (wide) {
                 if (route == CHAT || route == INFO) {
@@ -202,12 +246,6 @@ fun AppRoot(
                 paneInfo = false
             }
         }
-        val idArg = listOf(navArgument("id") { type = NavType.StringType })
-        val chatArgs = idArg + navArgument("highlight") { type = NavType.StringType; nullable = true; defaultValue = null }
-        // While the app lock is on and locked, only the cover (and a ringing or active call) is composed.
-        val lockSetting by graph.settingsStore.settings.collectAsState()
-        val lockState by graph.appLock.locked.collectAsState()
-        val locked = lockSetting.appLock && lockState
         // A message notification was tapped (also while the app was running): open that chat. Locked, it is held
         // until the unlock, then followed once (the key changes, and the request is cleared after it is followed).
         val requestedChat by graph.requestedChat.collectAsStateWithLifecycle()
@@ -286,7 +324,14 @@ fun AppRoot(
                         panes(Modifier.width(PaneLayout.LIST_PANE_DP.dp))
                         VerticalDivider()
                         Box(Modifier.weight(1f).fillMaxSize()) {
-                            val id = paneChat
+                            // Read so the pane follows the store: a chat that no longer exists (blocked, removed, a
+                            // restored id from before) shows the empty state.
+                            graph.chatStore.chats.collectAsState().value
+                            graph.chatStore.requests.collectAsState().value
+                            val shown = paneChat
+                            val id = shown?.takeIf { graph.chatStore.chat(it) != null }
+                            // Judged on what this composition saw: a chat opened a moment later is not this one's to drop.
+                            LaunchedEffect(shown, id) { if (shown != null && id == null && paneChat == shown) { paneChat = null; paneInfo = false } }
                             if (id == null) {
                                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(stringResource(R.string.select_a_chat)) }
                             } else key(id) {
@@ -295,11 +340,14 @@ fun AppRoot(
                                         graph.chatStore, id,
                                         onBack = { paneInfo = false },
                                         onCall = if (graph.callsAvailable) { video -> callVm.start(id, video) } else null,
+                                        // Search goes back to the chat through ChatSearchRequests, which the chat takes.
                                         onSearch = {},
                                         onBlocked = { paneInfo = false; paneChat = null },
                                     )
                                 } else {
+                                    pane.select(id)
                                     val vm = viewModel<ChatViewModel>(
+                                        viewModelStoreOwner = pane.owner,
                                         key = "chat-$id",
                                         factory = factory { ChatViewModel(graph.chatStore, id, graph.network) { graph.settingsStore.settings.value.autoDownload } },
                                     )
