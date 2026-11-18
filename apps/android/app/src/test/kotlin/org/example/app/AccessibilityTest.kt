@@ -141,6 +141,37 @@ class AccessibilityTest {
 
     @Test fun chatInfo() = screen { ChatInfoScreen(store(), "chat-riya", onBack = {}, onCall = {}, onSearch = {}, onBlocked = {}) }
 
+    private fun groupStore() = store().also { s -> kotlinx.coroutines.runBlocking { s.createGroup(listOf("riya", "arjun"), "Book club", null) } }
+    private fun groupId(s: SampleChatStore) = s.chats.value.first { it.isGroup }.id
+
+    @Test fun groupInfo() { val s = groupStore(); screen { ChatInfoScreen(s, groupId(s), onBack = {}, onCall = {}, onSearch = {}, onBlocked = {}) } }
+
+    @Test fun groupInfoMemberMenu() {
+        val s = groupStore()
+        open({ ChatInfoScreen(s, groupId(s), onBack = {}, onCall = {}, onSearch = {}, onBlocked = {}) }) {
+            onNodeWithContentDescription("Actions for Riya").performClick()
+            onNodeWithText("Make admin").assertIsDisplayed()
+        }
+    }
+
+    @Test fun groupLeaveDialog() {
+        val s = groupStore()
+        open({ ChatInfoScreen(s, groupId(s), onBack = {}, onCall = {}, onSearch = {}, onBlocked = {}) }) {
+            kotlinx.coroutines.runBlocking { s.setRole(groupId(s), "riya", org.example.app.core.groups.GroupRole.Owner) }
+            waitForIdle()
+            onNodeWithText("Leave group").performClick()
+            onNodeWithText("Leave this group?").assertIsDisplayed()
+        }
+    }
+
+    @Test fun groupAddMembers() {
+        val s = groupStore()
+        open({ ChatInfoScreen(s, groupId(s), onBack = {}, onCall = {}, onSearch = {}, onBlocked = {}) }) {
+            onNodeWithText("Add members").performClick()
+            onNodeWithText("Add").assertIsDisplayed()
+        }
+    }
+
     @Test fun contacts() = screen { ContactsScreen(store(), inviteUrl = "https://h/invite/x", onOpenChat = {}, onAddContact = {}, onInvite = {}) }
 
     @Test fun addContact() = screen { AddContactScreen(store(), onBack = {}, onAdded = {}) }

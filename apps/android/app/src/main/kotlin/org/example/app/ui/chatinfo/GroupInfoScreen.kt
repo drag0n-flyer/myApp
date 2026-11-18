@@ -46,6 +46,7 @@ import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -371,12 +372,12 @@ private fun InfoBar(onBack: () -> Unit) {
 @Composable
 private fun MemberRow(name: String, member: Member, actions: List<MemberAction>, onAction: (MemberAction) -> Unit) {
     var open by remember { mutableStateOf(false) }
-    val role = when (member.role) {
+    val roleLabel = when (member.role) {
         GroupRole.Owner -> stringResource(R.string.group_role_owner)
         GroupRole.Admin -> stringResource(R.string.group_role_admin)
         GroupRole.Member -> null
     }
-    val described = if (role == null) name else stringResource(R.string.group_member_desc, name, role)
+    val described = if (roleLabel == null) name else stringResource(R.string.group_member_desc, name, roleLabel)
     val labels = actions.map { it to stringResource(actionLabel(it)) }
     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Row(
@@ -391,7 +392,7 @@ private fun MemberRow(name: String, member: Member, actions: List<MemberAction>,
         ) {
             Avatar(name, colorKey = member.accountId)
             Text(name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, modifier = Modifier.weight(1f))
-            if (role != null) Text(role, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (roleLabel != null) Text(roleLabel, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (actions.isNotEmpty()) {
             Column {
@@ -400,7 +401,10 @@ private fun MemberRow(name: String, member: Member, actions: List<MemberAction>,
                 }
                 DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
                     for ((action, label) in labels) {
-                        DropdownMenuItem(text = { Text(label) }, onClick = { open = false; onAction(action) })
+                        DropdownMenuItem(
+                            text = { Text(label) }, onClick = { open = false; onAction(action) },
+                            modifier = Modifier.semantics { role = Role.Button },
+                        )
                     }
                 }
             }
