@@ -1,5 +1,6 @@
 package org.example.app.ui.chat
 
+import org.example.app.ui.media.AttachChoice
 import android.content.ClipData
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -138,6 +139,8 @@ fun ChatScreen(
     val blockedNow by viewModel.blockedIds.collectAsStateWithLifecycle()
     val someone = stringResource(R.string.group_someone)
     fun nameOfMember(id: String) = viewModel.senderName(id) ?: someone
+    val youLabel = stringResource(R.string.you)
+    var pollSheet by rememberSaveable { mutableStateOf(false) }
     val runs = remember(rowsNewestFirst) { BubbleRuns.positions(rowsNewestFirst.asReversed()) }
     val senderLines = remember(rowsNewestFirst, isGroup) { if (isGroup) GroupRuns.senderLineIds(rowsNewestFirst.asReversed(), myId) else emptySet() }
     var shownBlocked by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
@@ -430,7 +433,7 @@ fun ChatScreen(
                             viewModel.setDraft("")
                         }
                     },
-                    onAttach = pickers::start,
+                    onAttach = { choice -> if (choice == AttachChoice.Poll) pollSheet = true else pickers.start(choice) },
                     onRecordVoice = voiceControls.activate,
                     showCamera = pickers.cameraAvailable,
                     voice = VoiceUi(
@@ -506,6 +509,8 @@ fun ChatScreen(
                                 runFirst = runs[message.id]?.first ?: true,
                                 runLast = runs[message.id]?.last ?: true,
                                 onSwipeReply = if (MessageAction.Reply in actions) ({ perform(MessageAction.Reply, message.id) }) else null,
+                                onVote = { optionId -> viewModel.vote(message.id, optionId) },
+                                voterName = { id -> if (id == myId) youLabel else if (isGroup) nameOfMember(id) else state.contactName.ifEmpty { someone } },
                             )
                         }
                     }
@@ -557,6 +562,9 @@ fun ChatScreen(
             // Read again when the message's tick changes, so a receipt that arrives while the sheet is open shows.
             val receipts by produceState<List<org.example.app.core.chats.MessageReceipt>?>(null, id, byId[id]?.status) { value = viewModel.receiptsFor(id) }
             MessageInfoSheet(receipts, nameOf = ::nameOfMember, onDismiss = { infoFor = null })
+        }
+        if (pollSheet) {
+            NewPollSheet(onDismiss = { pollSheet = false }, onSend = { q, options, multi -> viewModel.sendPoll(q, options, multi) })
         }
         confirmDelete?.let { id ->
             DeleteDialog(onConfirm = { confirmDelete = null; viewModel.delete(id) }, onDismiss = { confirmDelete = null })

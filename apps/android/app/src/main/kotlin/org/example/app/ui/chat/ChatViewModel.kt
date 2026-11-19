@@ -31,6 +31,7 @@ import org.example.app.core.chats.MessageActions
 import org.example.app.core.chats.MessageContent
 import org.example.app.core.chats.MessageHit
 import org.example.app.core.chats.Picked
+import org.example.app.core.chats.PollRules
 import org.example.app.core.chats.LinkPreviewCard
 import org.example.app.core.chats.LinkPreviewRule
 import org.example.app.core.chats.SendPlan
@@ -278,6 +279,24 @@ class ChatViewModel(
     // Actions. Each re-checks the message as it is now, because the menu was built from an earlier copy.
 
     private var lastReaction: Pair<String, Long>? = null
+
+    /** Sends a poll from what the person typed; false (nothing sent) when it is not a valid poll or sending is paused. */
+    fun sendPoll(question: String, optionTexts: List<String>, multi: Boolean): Boolean {
+        val (q, options) = PollRules.build(question, optionTexts) ?: return false
+        if (state.value.sendingPaused) return false
+        store.sendPoll(q, options, multi, chatId)
+        signals?.messageSent(chatId)
+        return true
+    }
+
+    /** A tap on [optionId] of poll [pollId]: sets or takes back my vote by the poll's rule. False when the poll is gone. */
+    fun vote(pollId: String, optionId: String): Boolean {
+        val poll = current(pollId)?.content as? MessageContent.Poll ?: return false
+        if (optionId !in poll.options.map { it.id } || state.value.sendingPaused) return false
+        store.vote(pollId, chatId, PollRules.toggle(poll.tally.mine, optionId, poll.multi))
+        reloadAfterWrite(pollId)
+        return true
+    }
 
     /** False when the message is gone or cannot take a reaction, or when this is a second tap within half a second. */
     fun react(emoji: String, messageId: String): Boolean {

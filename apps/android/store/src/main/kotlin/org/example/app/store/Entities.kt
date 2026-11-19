@@ -63,6 +63,24 @@ data class ReceiptEntity(
     val at: Long,
 )
 
+/**
+ * One account's latest vote on a poll. No foreign key to `messages`: a vote can arrive before its poll. [optionIds] are
+ * joined with U+001F (an empty string is a retracted vote). Removed with the chat. Added in version 6.
+ */
+@Entity(
+    tableName = "poll_votes",
+    primaryKeys = ["poll_id", "account_id"],
+    foreignKeys = [ForeignKey(ChatEntity::class, ["id"], ["chat_id"], onDelete = ForeignKey.CASCADE)],
+    indices = [Index("chat_id", name = "poll_votes_chat")],
+)
+data class PollVoteEntity(
+    @ColumnInfo(name = "poll_id") val pollId: String,
+    @ColumnInfo(name = "account_id") val accountId: String,
+    @ColumnInfo(name = "chat_id") val chatId: String,
+    @ColumnInfo(name = "option_ids") val optionIds: String,
+    val at: Long,
+)
+
 /** Unsent composer text, one row per chat. Whitespace-only text is never stored. Added in version 2. */
 @Entity(
     tableName = "drafts",

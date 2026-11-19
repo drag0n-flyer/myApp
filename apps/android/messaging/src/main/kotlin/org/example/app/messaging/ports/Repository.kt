@@ -59,6 +59,9 @@ object MyState {
 data class GroupMemberRecord(val accountId: String, val role: String)
 
 /** A delivered or read receipt from one member for one of my messages. [kind] is `delivered` or `read`. */
+/** One account's latest vote on a poll, as received. [optionIds] is empty for a retracted vote; it is checked against the poll only when the votes are counted, so a vote can wait for a poll that has not arrived. */
+data class PollVoteRecord(val pollId: String, val accountId: String, val chatId: String, val optionIds: List<String>, val at: Long)
+
 data class ReceiptRecord(val messageId: String, val accountId: String, val kind: String, val at: Long)
 
 /** What a store must refuse to keep, whatever it was sent: the same checks in every [Repository]. */
@@ -387,6 +390,9 @@ interface Repository {
     fun markDeleted(id: String, sender: String): Boolean
     fun setReaction(messageId: String, accountId: String, emoji: String)
     fun reactions(messageId: String): List<ReactionRecord>
+    /** Keeps [optionIds] as [accountId]'s vote on [pollId] unless a later one (by [at]) is already stored. The poll need not be stored yet. */
+    fun setPollVote(pollId: String, accountId: String, chatId: String, optionIds: List<String>, at: Long)
+    fun pollVotes(pollId: String): List<PollVoteRecord>
     /** Searches folded text. Fewer than 3 characters use LIKE; longer queries use the trigram index. */
     fun search(query: String, limit: Int): List<SearchHit>
 

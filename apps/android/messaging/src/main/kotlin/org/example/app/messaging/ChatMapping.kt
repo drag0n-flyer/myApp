@@ -1,5 +1,6 @@
 package org.example.app.messaging
 
+import org.example.app.core.chats.PollRules
 import java.time.Instant
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -23,6 +24,7 @@ import org.example.app.messaging.ports.ChatRecord
 import org.example.app.messaging.ports.ConversationMode
 import org.example.app.messaging.ports.ConversationRecord
 import org.example.app.messaging.ports.MessageRecord
+import org.example.app.messaging.ports.PollVoteRecord
 import org.example.app.messaging.ports.ReactionRecord
 import org.example.app.messaging.send.Receipts
 
@@ -58,6 +60,8 @@ internal object ChatMapping {
         record: MessageRecord, attachment: AttachmentRecord?, reactions: List<ReactionRecord>, showRead: Boolean,
         /** The tick of my message in a group (worked out from the members' receipts); null keeps the stored status. */
         groupStatus: DeliveryStatus? = null,
+        /** The stored votes of a poll, asked for only when the message is one; [me] is this account. */
+        votes: (String) -> List<PollVoteRecord> = { emptyList() }, me: String = "",
         displayName: (String) -> String?,
     ): Message {
         var message = Message(
@@ -80,6 +84,10 @@ internal object ChatMapping {
             is ContentEnvelope.Text -> MessageContent.Text(e.t, e.lp?.let { LinkPreviewCard(it.url, it.title, it.desc, it.img) })
             is ContentEnvelope.Photo -> MessageContent.Photo(e.a.sz, e.c?.takeIf { it.isNotEmpty() })
             is ContentEnvelope.Voice -> MessageContent.Voice(e.dur)
+            is ContentEnvelope.Poll -> MessageContent.Poll(
+                e.question, e.options, e.multi,
+                PollRules.tally(e.options, e.multi, votes(record.id).filter { it.chatId == record.chatId }.associate { it.accountId to it.optionIds }, me),
+            )
             is ContentEnvelope.File -> MessageContent.File(e.name, e.a.sz, e.mime, e.c?.takeIf { it.isNotEmpty() })
             else -> MessageContent.Unsupported // control kinds are never stored as messages
         }

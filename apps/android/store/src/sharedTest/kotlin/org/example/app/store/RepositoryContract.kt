@@ -53,6 +53,23 @@ abstract class RepositoryContract {
         assertEquals(TextFold.fold("first"), repo.message("m1")?.folded)
     }
 
+    @Test fun aPollVoteKeepsTheLatestOnePerAccountAndNeedsNoPollMessage() {
+        repo.setPollVote("poll-1", "bob", "chat1", listOf("a", "b"), 10)
+        repo.setPollVote("poll-1", "cat", "chat1", listOf("c"), 11)
+        repo.setPollVote("poll-1", "bob", "chat1", listOf("b"), 12)
+        // An older vote arriving late changes nothing; a later empty one takes the vote back.
+        repo.setPollVote("poll-1", "bob", "chat1", listOf("a"), 5)
+        assertEquals(
+            listOf(org.example.app.messaging.ports.PollVoteRecord("poll-1", "cat", "chat1", listOf("c"), 11), org.example.app.messaging.ports.PollVoteRecord("poll-1", "bob", "chat1", listOf("b"), 12)),
+            repo.pollVotes("poll-1"),
+        )
+        repo.setPollVote("poll-1", "bob", "chat1", emptyList(), 13)
+        assertEquals(emptyList(), repo.pollVotes("poll-1").single { it.accountId == "bob" }.optionIds)
+        assertTrue(repo.pollVotes("other").isEmpty())
+        repo.deleteChat("chat1")
+        assertTrue(repo.pollVotes("poll-1").isEmpty(), "votes go with their chat")
+    }
+
     @Test fun inboxRawThenProcessIsAtomic() {
         val payload = "ciphertext".toByteArray()
         repo.insertRaw(listOf(raw(1, payload)))

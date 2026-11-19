@@ -1,5 +1,6 @@
 package org.example.app.messaging.sync
 
+import org.example.app.core.chats.PollRules
 import java.util.Locale
 import org.example.app.contracts.Incoming
 import org.example.app.contracts.MemberKey
@@ -266,6 +267,16 @@ class IncomingHandler(
             is ContentEnvelope.React -> {
                 val message = repo.message(envelope.target)
                 if (message != null && message.chatId == chatId && !message.deleted && !ChatMapping.isReservedId(envelope.target)) repo.setReaction(message.id, account, envelope.e)
+                AppliedResult.Ignored
+            }
+            is ContentEnvelope.Poll -> store(folded = fold((listOf(envelope.question) + envelope.options.map { it.text }).joinToString(" ")))
+            is ContentEnvelope.PollVote -> {
+                // The poll may not have arrived yet: the vote waits for it. One for a poll of another chat counts for nothing.
+                val poll = repo.message(envelope.pollId)
+                if ((poll == null || poll.chatId == chatId) && !ChatMapping.isReservedId(envelope.pollId)) {
+                    val ids = envelope.optionIds.filter { it.length in 1..PollRules.OPTION_ID_MAX && '\u001F' !in it }.distinct().take(PollRules.MAX_OPTIONS)
+                    repo.setPollVote(envelope.pollId, account, chatId, ids, envelope.at)
+                }
                 AppliedResult.Ignored
             }
             is ContentEnvelope.Receipt -> {

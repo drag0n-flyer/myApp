@@ -97,6 +97,10 @@ interface ChatStore {
     /** Forgets the problem of [chatId] once it has been shown. */
     fun takeSendProblem(chatId: String) {}
     fun react(emoji: String, messageId: String, chatId: String)
+    /** Sends a poll ([PollRules.build] made [question] and [options]). A store that has no polls ignores it. */
+    fun sendPoll(question: String, options: List<PollOption>, multi: Boolean, chatId: String) {}
+    /** Sets my answer to a poll: [optionIds] replaces my earlier one, empty takes it back. */
+    fun vote(pollId: String, chatId: String, optionIds: List<String>) {}
     fun edit(messageId: String, chatId: String, text: String)
     fun delete(messageId: String, chatId: String)
     fun download(messageId: String, chatId: String)

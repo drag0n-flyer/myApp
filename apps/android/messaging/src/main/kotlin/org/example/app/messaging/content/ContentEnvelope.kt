@@ -16,6 +16,8 @@ import kotlinx.serialization.json.put
 import org.example.app.contracts.CallSignalPayload
 import org.example.app.core.chats.LinkPreviewParse
 import org.example.app.core.chats.ImageHeader
+import org.example.app.core.chats.PollOption
+import org.example.app.core.chats.PollRules
 import org.example.app.core.chats.LinkPreviewRule
 import org.example.app.core.groups.GroupNameRule
 import org.example.app.core.people.Expiry
@@ -54,6 +56,12 @@ sealed interface ContentEnvelope {
     data class Edit(override val id: String, override val at: Long, val target: String, val t: String, override val v: Int = 1) : ContentEnvelope
     data class Delete(override val id: String, override val at: Long, val target: String, override val v: Int = 1) : ContentEnvelope
     data class React(override val id: String, override val at: Long, val target: String, val e: String, override val v: Int = 1) : ContentEnvelope
+    /** A poll. Limits are [PollRules]'s; an envelope outside them decodes as [Unknown]. */
+    data class Poll(
+        override val id: String, override val at: Long, val question: String, val options: List<PollOption>, val multi: Boolean, override val v: Int = 1,
+    ) : ContentEnvelope
+    /** A sender's vote on poll [pollId]; it replaces their earlier one, and an empty [optionIds] takes it back. */
+    data class PollVote(override val id: String, override val at: Long, val pollId: String, val optionIds: List<String>, override val v: Int = 1) : ContentEnvelope
     data class Receipt(override val id: String, override val at: Long, val s: ReceiptKind, val ids: List<String>, override val v: Int = 1) : ContentEnvelope
     data class CallSig(override val id: String, override val at: Long, val p: CallSignalPayload, override val v: Int = 1) : ContentEnvelope
     data class Mode(override val id: String, override val at: Long, val m: String, override val v: Int = 1) : ContentEnvelope
@@ -99,7 +107,7 @@ object ContentCodec {
     /** Loose backstop on a whole envelope (UTF-8 bytes), both ways. The real text limit is [TextLimit], applied at compose time. */
     const val MAX_ENVELOPE_BYTES = 64 * 1024
     private val json = Json { ignoreUnknownKeys = true }
-    private val knownKinds = setOf("text", "photo", "voice", "file", "edit", "delete", "react", "receipt", "callsig", "mode", "typing", "presence", "timer", "profile", "group")
+    private val knownKinds = setOf("text", "photo", "voice", "file", "edit", "delete", "react", "poll", "pollVote", "receipt", "callsig", "mode", "typing", "presence", "timer", "profile", "group")
     private val invalidKinds = setOf("mode", "receipt", "typing", "presence", "timer", "profile", "group")
 
     /** Sorted keys, no whitespace, like the Swift encoder. Throws [IllegalArgumentException] only over the 64 KiB backstop. [ContentEnvelope.Unknown] is re-emitted verbatim. */
@@ -128,6 +136,13 @@ object ContentCodec {
             is ContentEnvelope.Edit -> { head(env, "edit") { put("target", env.target); put("t", env.t) } }
             is ContentEnvelope.Delete -> head(env, "delete") { put("target", env.target) }
             is ContentEnvelope.React -> head(env, "react") { put("target", env.target); put("e", env.e) }
+            is ContentEnvelope.Poll -> head(env, "poll") {
+                put("question", env.question); put("multi", env.multi)
+                put("options", JsonArray(env.options.map { o -> buildJsonObject { put("id", o.id); put("text", o.text) } }))
+            }
+            is ContentEnvelope.PollVote -> head(env, "pollVote") {
+                put("pollID", env.pollId); put("optionIDs", JsonArray(env.optionIds.map { JsonPrimitive(it) }))
+            }
             is ContentEnvelope.Receipt -> head(env, "receipt") {
                 put("s", env.s.wire); put("ids", JsonArray(env.ids.map { JsonPrimitive(it) }))
             }
@@ -178,6 +193,12 @@ object ContentCodec {
             "edit" -> { val t = o["target"].str(); val x = o["t"].str(); if (t == null || x == null) null else ContentEnvelope.Edit(id, at, t, x) }
             "delete" -> o["target"].str()?.let { ContentEnvelope.Delete(id, at, it) }
             "react" -> { val t = o["target"].str(); val e = o["e"].str(); if (t == null || e == null) null else ContentEnvelope.React(id, at, t, e) }
+            "poll" -> poll(o, id, at)
+            "pollVote" -> {
+                val p = o["pollID"].str()
+                val ids = (o["optionIDs"] as? JsonArray)?.map { it.str() ?: return null }
+                if (p == null || ids == null) null else ContentEnvelope.PollVote(id, at, p, ids)
+            }
             "receipt" -> {
                 val s = ReceiptKind.entries.firstOrNull { it.wire == o["s"].str() }
                 val ids = (o["ids"] as? JsonArray)?.map { it.str() ?: return null }
@@ -192,6 +213,17 @@ object ContentCodec {
             "group" -> group(o, id, at)
             else -> null
         }
+    }
+
+    /** Null (so the message shows as unsupported) unless the question and options pass [PollRules]. */
+    private fun poll(o: JsonObject, id: String, at: Long): ContentEnvelope? {
+        val question = o["question"].str() ?: return null
+        val multi = (o["multi"] as? JsonPrimitive)?.takeIf { !it.isString }?.booleanOrNull ?: return null
+        val options = (o["options"] as? JsonArray)?.map { e ->
+            val obj = e as? JsonObject ?: return null
+            PollOption(obj["id"].str() ?: return null, obj["text"].str() ?: return null)
+        } ?: return null
+        return if (PollRules.valid(question, options)) ContentEnvelope.Poll(id, at, question, options, multi) else null
     }
 
     /** `ttl` is an integer of 1...31,622,400; anything else is ignored and the message kept. */

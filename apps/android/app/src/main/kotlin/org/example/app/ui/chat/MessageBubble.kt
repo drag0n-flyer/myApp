@@ -90,6 +90,10 @@ fun MessageBubble(
     runLast: Boolean = true,
     /** Reply to this message (swipe toward the trailing side, or the "Reply" accessibility action); null where Reply does not apply. */
     onSwipeReply: (() -> Unit)? = null,
+    /** A tap on an answer of a poll: the answer's ID. */
+    onVote: (String) -> Unit = {},
+    /** A voter's name for the "View votes" sheet, from the account ID. */
+    voterName: (String) -> String = { it },
 ) {
     val content = message.content
     if (content is MessageContent.System) {
@@ -124,7 +128,7 @@ fun MessageBubble(
             Surface(shape = shape, color = fill, border = outline, modifier = Modifier.widthIn(max = 300.dp).then(press)) {
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     if (message.replyToId != null) ReplyQuote(replyTo, replyAuthor, onQuoteClick)
-                    Body(message, autoDownloads, onDownload, media)
+                    Body(message, autoDownloads, onDownload, media, onVote, voterName)
                     Row(Modifier.align(Alignment.End), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         if (message.editedAt != null) Text(stringResource(R.string.edited), style = MaterialTheme.typography.labelSmall)
                         // A photo, file or voice message that is still on its way says so in words, with the clock mark after it.
@@ -239,12 +243,16 @@ private fun Caption(caption: String?) {
 }
 
 @Composable
-private fun Body(message: Message, autoDownloads: (MediaKind) -> Boolean, onDownload: () -> Unit, media: MediaHost?) {
+private fun Body(
+    message: Message, autoDownloads: (MediaKind) -> Boolean, onDownload: () -> Unit, media: MediaHost?,
+    onVote: (String) -> Unit, voterName: (String) -> String,
+) {
     // A message of mine that has not uploaded has nothing to download; it shows as sending or failed with its own retry.
     val unsent = message.media == null && (message.status == DeliveryStatus.Sending || message.status == DeliveryStatus.Failed)
     when (val c = message.content) {
         is MessageContent.Text -> { FormattedText(c.text); c.preview?.let { LinkPreviewCardView(it) } }
         is MessageContent.Voice -> VoiceBubble(message, c.duration, media, onDownload)
+        is MessageContent.Poll -> PollBody(c, enabled = message.status != DeliveryStatus.Failed && message.status != DeliveryStatus.Sending, nameOf = voterName, onVote = onVote)
         is MessageContent.Photo -> { PhotoBubble(
             message = message,
             title = stringResource(R.string.photo_with_size, dataSizeText(DataFormat.size(c.bytes))),

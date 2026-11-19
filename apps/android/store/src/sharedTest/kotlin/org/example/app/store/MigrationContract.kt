@@ -230,6 +230,36 @@ abstract class MigrationContract {
         }
     }
 
+    /** Version 5 to 6: every chat and message stays; the new vote table works. */
+    @Test fun populatedVersion5GetsPollVotes() {
+        val helper = v1Helper(object : SupportSQLiteOpenHelper.Callback(5) {
+            override fun onConfigure(db: SupportSQLiteDatabase) = db.setForeignKeyConstraintsEnabled(true)
+            override fun onCreate(db: SupportSQLiteDatabase) {
+                SchemaV1.create(db, hasFts)
+                Migration1To2.migrate(db)
+                Migration2To3.migrate(db)
+                Migration3To4.migrate(db)
+                Migration4To5.migrate(db)
+            }
+            override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = error("not expected")
+        })
+        assertEquals(5, helper.writableDatabase.version)
+        helper.close()
+        val db = openCurrent()
+        try {
+            val raw = db.openHelper.writableDatabase
+            assertEquals(AppDatabase.VERSION, raw.version)
+            raw.query("SELECT COUNT(*) FROM messages").use { it.moveToFirst(); assertEquals(3, it.getInt(0)) }
+            raw.query("SELECT COUNT(*) FROM poll_votes").use { it.moveToFirst(); assertEquals(0, it.getInt(0)) }
+            val repo = RoomRepository(db, allowLikeFallback = !hasFts)
+            repo.setPollVote("poll-1", "acc-a", "chat-a", listOf("o1"), 5)
+            assertEquals(listOf("o1"), repo.pollVotes("poll-1").single().optionIds)
+            raw.query("PRAGMA foreign_key_check").use { assertFalse(it.moveToFirst(), "foreign key violation after migration") }
+        } finally {
+            db.close()
+        }
+    }
+
     private inline fun AppDatabase.use(body: (AppDatabase) -> Unit) = try { body(this) } finally { close() }
 }
 

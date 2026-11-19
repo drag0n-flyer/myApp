@@ -57,6 +57,9 @@ interface ChatDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE) fun insertReceipt(r: ReceiptEntity)
     @Query("SELECT * FROM receipts WHERE message_id IN (:messageIds) ORDER BY message_id, account_id, kind") fun receiptsForMessages(messageIds: List<String>): List<ReceiptEntity>
     @Query("SELECT * FROM receipts WHERE message_id = :messageId ORDER BY account_id, kind") fun receipts(messageId: String): List<ReceiptEntity>
+    @Query("SELECT at FROM poll_votes WHERE poll_id = :pollId AND account_id = :accountId") fun pollVoteAt(pollId: String, accountId: String): Long?
+    @Insert(onConflict = OnConflictStrategy.REPLACE) fun putPollVote(v: PollVoteEntity)
+    @Query("SELECT * FROM poll_votes WHERE poll_id = :pollId ORDER BY at, account_id") fun pollVotes(pollId: String): List<PollVoteEntity>
 }
 
 data class DraftRow(
