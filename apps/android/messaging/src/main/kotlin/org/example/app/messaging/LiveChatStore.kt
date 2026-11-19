@@ -323,8 +323,9 @@ class LiveChatStore(
     private fun requestFlush() {
         if (closed.get()) return
         flushWanted.set(true)
-        if (!flushRunning.compareAndSet(false, true)) return
+        // Counted before the run can be seen, so a settle() that wakes between the two never misses it.
         inFlight.update { it + 1 }
+        if (!flushRunning.compareAndSet(false, true)) { inFlight.update { it - 1 }; return }
         scope.launch {
             try {
                 try {

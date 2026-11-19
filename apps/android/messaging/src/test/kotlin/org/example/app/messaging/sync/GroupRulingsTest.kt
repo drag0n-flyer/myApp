@@ -5,6 +5,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.example.app.contracts.GroupId
 import org.example.app.contracts.ServerException
@@ -140,6 +141,24 @@ class GroupRulingsTest {
         assertTrue(ana.repo.entries(GroupCreator.INIT_PREFIX).all { it.value.isEmpty() })
         creator.resumeInit()
         assertEquals(2, ana.repo.dueOutbox(Long.MAX_VALUE).size, "queued once")
+    }
+
+    @Test
+    fun resumingTheMarkerWaitsForAGroupCreateInProgress() = runTest {
+        val w = GroupWorld.trio()
+        val ana = w.device("ana1")
+        val creator = GroupCreator(ana.manager, ana.repo, ana.outbox, ownProfile = { id, at -> ContentEnvelope.Profile(id, at, "Ana", null, 1) })
+        w.server.failNextMessages = 1
+        runCatching { creator.create(listOf("acc-bob", "acc-cat"), "Book club", null) }
+        assertTrue(queuedKinds(ana).isEmpty())
+        // A create holds the lock from its marker to the end of its own finishInit; a flush's resume must not run inside that.
+        ana.manager.creating.lock()
+        val resume = launch { creator.resumeInit() }
+        testScheduler.runCurrent()
+        assertTrue(queuedKinds(ana).isEmpty(), "the resume waits for the create")
+        ana.manager.creating.unlock()
+        resume.join()
+        assertEquals(setOf("group", "profile"), queuedKinds(ana))
     }
 
     private fun ModePinFor(d: TestDevice, serverId: String) = ModePin.isPending(d.repo, serverId)
