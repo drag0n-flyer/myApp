@@ -100,10 +100,11 @@ private struct OnboardingActions<Primary: View, Secondary: View>: View {
         .frame(maxWidth: .infinity)
         #else
         VStack(spacing: 8) {
+            // Flexible sizing stretches the button itself; a frame alone would only widen its hit area.
             primary
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
-                .frame(maxWidth: .infinity)
+                .buttonSizing(.flexible)
             secondary.controlSize(.large)
         }
         .padding(.horizontal, 20)

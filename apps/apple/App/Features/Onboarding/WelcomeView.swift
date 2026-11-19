@@ -62,7 +62,7 @@ struct WelcomeView: View {
                 Button("Get started") { model.onboarding.getStarted() }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
-                    .frame(maxWidth: .infinity)
+                    .buttonSizing(.flexible)
                     .accessibilityIdentifier("welcome.start")
                 Button("I already have an account") { model.onboarding.alreadyHaveAccount() }
                     .controlSize(.large)
