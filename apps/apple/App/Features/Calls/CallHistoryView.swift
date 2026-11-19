@@ -66,17 +66,27 @@ struct CallHistoryContent: View {
                 chip("Missed", selected: missedOnly, id: "calls.chip.missed") { missedOnly = true }
             }
             .listRowSeparator(.hidden)
+            .accessibilityElement(children: .contain)
             let records = model.callHistory.filter { !missedOnly || $0.isMissed }
             if records.isEmpty {
-                ContentUnavailableView("No calls", systemImage: "phone")
+                ContentUnavailableView(missedOnly ? "No missed calls" : "No calls", systemImage: missedOnly ? "phone.arrow.down.left" : "phone")
+                    .listRowSeparator(.hidden)
             }
             ForEach(records) { record in
                 HStack(spacing: 11) {
                     Avatar(name: record.name, colorKey: record.contactID, size: 40)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(record.name).font(.headline).foregroundStyle(record.isMissed ? Color.red : Color.primary).lineLimit(1)
-                        Label(directionText(record), systemImage: record.isVideo ? "video.fill" : "phone.fill")
-                            .font(.caption).foregroundStyle(.secondary)
+                        HStack(spacing: 4) {
+                            Image(systemName: directionSymbol(record))
+                                .foregroundStyle(record.isMissed ? Color.red : Color.secondary)
+                                .accessibilityHidden(true)
+                            Text(directionText(record))
+                            Image(systemName: record.isVideo ? "video.fill" : "phone.fill")
+                                .imageScale(.small)
+                                .accessibilityHidden(true)
+                        }
+                        .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
                     Text(TimeLabel.format(record.date)).font(.caption).foregroundStyle(.secondary)
@@ -86,13 +96,22 @@ struct CallHistoryContent: View {
                         Image(systemName: record.isVideo ? "video" : "phone")
                     }
                     .buttonStyle(.borderless)
+                    .tint(.accentColor)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
                     .accessibilityLabel(Text("Call \(record.name)"))
                     .accessibilityIdentifier("calls.callback.\(record.id)")
                 }
+                .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("calls.row.\(record.id)")
             }
         }
         .listStyle(.plain)
+    }
+
+    private func directionSymbol(_ record: CallRecord) -> String {
+        if record.isMissed { return "phone.arrow.down.left" }
+        return record.isOutgoing ? "phone.arrow.up.right" : "phone.arrow.down.left"
     }
 
     private func directionText(_ record: CallRecord) -> String {

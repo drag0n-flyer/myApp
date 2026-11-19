@@ -2105,6 +2105,17 @@
         }
       }
     },
+    "No missed calls" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No missed calls"
+          }
+        }
+      }
+    },
     "No chats yet" : {
       "extractionState" : "manual",
       "localizations" : {

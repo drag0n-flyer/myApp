@@ -156,15 +156,39 @@ private struct AudioStage: View {
         }
     }
 
+    /// Spoken form: "04:12" reads badly as digits.
+    private var statusAccessibility: String {
+        guard case .active = call.phase else { return statusText }
+        let seconds = Int(call.elapsed)
+        return Duration.seconds(seconds).formatted(.units(allowed: [.hours, .minutes, .seconds], width: .wide))
+    }
+
     var body: some View {
         VStack(spacing: 6) {
             Avatar(name: call.contact.displayName, colorKey: call.contact.id, size: 110)
                 .padding(.bottom, 8)
+                .accessibilityHidden(true)
             Text(call.contact.displayName).font(.title.weight(.semibold))
             Text(statusText)
                 .font(.title3.monospacedDigit())
-                .foregroundStyle(.secondary)
-            HStack(spacing: 8) {
+                .foregroundStyle(call.isEnded ? Color.red.opacity(0.9) : Color.secondary)
+                .accessibilityLabel(Text(statusAccessibility))
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { pills }
+                VStack(spacing: 8) { pills }
+            }
+            .padding(.top, 14)
+            CallPill { Text(call.dataUsedText) }
+                .opacity(0.85)
+                .accessibilityIdentifier("call.used")
+        }
+        .foregroundStyle(.white)
+        .multilineTextAlignment(.center)
+        .frame(maxWidth: .infinity)
+        .padding(.top, 60)
+    }
+
+    @ViewBuilder private var pills: some View {
                 CallPill {
                     Label {
                         Text(call.quality.title)
@@ -179,16 +203,6 @@ private struct AudioStage: View {
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(Text(modeText))
                     .accessibilityIdentifier("call.mode")
-            }
-            .padding(.top, 14)
-            CallPill { Text(call.dataUsedText) }
-                .opacity(0.85)
-                .accessibilityIdentifier("call.used")
-        }
-        .foregroundStyle(.white)
-        .multilineTextAlignment(.center)
-        .frame(maxWidth: .infinity)
-        .padding(.top, 60)
     }
 }
 
@@ -271,6 +285,7 @@ struct MacCallWindow: View {
         Group {
             if model.activeCall != nil {
                 CallView(model: model)
+                    .frame(minWidth: 360, minHeight: 560)
             } else {
                 ContentUnavailableView("No call", systemImage: "phone")
             }
