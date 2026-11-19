@@ -23,9 +23,10 @@ import (
 )
 
 const (
-	cookieName      = "admin_session"
-	idleTimeout     = 15 * time.Minute
-	sessionLifetime = 8 * time.Hour
+	cookieName = "admin_session"
+	// Owner's choice (2026-11-19): stay signed in for 30 days, on this browser, even when unused.
+	idleTimeout     = 30 * 24 * time.Hour
+	sessionLifetime = 30 * 24 * time.Hour
 	auditKeep       = 365 * 24 * time.Hour
 )
 
@@ -205,7 +206,8 @@ func (m *Module) passwordLogin(w http.ResponseWriter, r *http.Request, username,
 				Detail: map[string]any{"username": name}})
 		})
 		if err == nil {
-			m.setCookie(w, r, sid, 0)
+			// A persistent cookie, so closing the browser does not sign the admin out.
+			m.setCookie(w, r, sid, int(sessionLifetime.Seconds()))
 			w.WriteHeader(http.StatusNoContent)
 			return nil
 		}

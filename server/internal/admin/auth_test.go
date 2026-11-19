@@ -117,19 +117,19 @@ func TestLoginSetsCookie(t *testing.T) {
 		t.Fatalf("login = %d %s", w.Code, w.Body)
 	}
 	sc := w.Header().Get("Set-Cookie")
-	for _, want := range []string{"admin_session=", "Path=/admin", "HttpOnly", "SameSite=Strict"} {
+	for _, want := range []string{"admin_session=", "Path=/admin", "HttpOnly", "SameSite=Strict", "Max-Age=2592000"} {
 		if !strings.Contains(sc, want) {
 			t.Errorf("Set-Cookie %q lacks %s", sc, want)
 		}
 	}
-	for _, bad := range []string{"Secure", "Max-Age", "Expires"} {
+	for _, bad := range []string{"Secure"} {
 		if strings.Contains(sc, bad) {
 			t.Errorf("Set-Cookie %q has %s", sc, bad)
 		}
 	}
 	s := getSession(t, h, cookieOf(t, w))
-	if s.Username == nil || *s.Username != testUser || s.CSRF == "" || s.IdleTimeoutSeconds != 900 ||
-		!s.ExpiresAt.Equal(f.Clock.Now().Add(8*time.Hour)) {
+	if s.Username == nil || *s.Username != testUser || s.CSRF == "" || s.IdleTimeoutSeconds != int(idleTimeout.Seconds()) ||
+		!s.ExpiresAt.Equal(f.Clock.Now().Add(sessionLifetime)) {
 		t.Errorf("session = %+v", s)
 	}
 	if again := getSession(t, h, cookieOf(t, w)); again.CSRF != s.CSRF {
@@ -247,13 +247,13 @@ func TestSessionIdleTimeout(t *testing.T) {
 	m, f := newTestModule(t)
 	h := m.Handler()
 	c := login(t, m, h)
-	f.Clock.Advance(14 * time.Minute)
+	f.Clock.Advance(idleTimeout - time.Minute)
 	if w := serveReq(h, req("GET", "/admin/api/session", "", c)); w.Code != 200 {
-		t.Fatalf("at 14 min = %d", w.Code)
+		t.Fatalf("just inside the idle limit = %d", w.Code)
 	}
-	f.Clock.Advance(16 * time.Minute)
+	f.Clock.Advance(idleTimeout + time.Minute)
 	if w := serveReq(h, req("GET", "/admin/api/session", "", c)); w.Code != 401 {
-		t.Fatalf("at 16 min idle = %d", w.Code)
+		t.Fatalf("past the idle limit = %d", w.Code)
 	}
 	if n := count(t, m, `select count(*) from admin_sessions`); n != 0 {
 		t.Errorf("rows = %d", n)
@@ -264,18 +264,25 @@ func TestSessionAbsoluteLifetime(t *testing.T) {
 	m, f := newTestModule(t)
 	h := m.Handler()
 	c := login(t, m, h)
-	for elapsed := 10; elapsed < 480; elapsed += 10 {
-		f.Clock.Advance(10 * time.Minute)
+	step := 24 * time.Hour
+	for elapsed := step; elapsed < sessionLifetime; elapsed += step {
+		f.Clock.Advance(step)
 		if w := serveReq(h, req("GET", "/admin/api/session", "", c)); w.Code != 200 {
-			t.Fatalf("at %d min = %d", elapsed, w.Code)
+			t.Fatalf("at %v = %d", elapsed, w.Code)
 		}
 	}
-	f.Clock.Advance(10 * time.Minute)
+	f.Clock.Advance(step)
 	if w := serveReq(h, req("GET", "/admin/api/session", "", c)); w.Code != 401 {
-		t.Fatalf("at 8 h = %d", w.Code)
+		t.Fatalf("at %v = %d", sessionLifetime, w.Code)
 	}
 	if n := count(t, m, `select count(*) from admin_sessions`); n != 0 {
 		t.Errorf("rows = %d", n)
+	}
+}
+
+func TestSessionLastsThirtyDays(t *testing.T) {
+	if idleTimeout != 30*24*time.Hour || sessionLifetime != 30*24*time.Hour {
+		t.Fatalf("idle %v, lifetime %v; the owner asked for 30 days", idleTimeout, sessionLifetime)
 	}
 }
 
@@ -319,7 +326,7 @@ func TestCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	ses := `insert into admin_sessions (id_hash, admin_user_id, csrf_hash, created_at, last_seen_at, expires_at) values ($1, '` + admin + `', $1, $2, $3, $4)`
-	exec(ses, []byte("idle"), now.Add(-time.Hour), now.Add(-16*time.Minute), now.Add(time.Hour))
+	exec(ses, []byte("idle"), now.Add(-time.Hour), now.Add(-idleTimeout-time.Minute), now.Add(time.Hour))
 	exec(ses, []byte("old"), now.Add(-9*time.Hour), now.Add(-time.Minute), now.Add(-time.Hour))
 	exec(ses, []byte("live"), now.Add(-time.Hour), now.Add(-time.Minute), now.Add(time.Hour))
 	const aud = `insert into admin_audit (at, actor, action) values ($1, 'cli', $2)`
@@ -347,18 +354,19 @@ func TestBackgroundRequestsKeepIdleTimerRunning(t *testing.T) {
 	m, f := newTestModule(t)
 	h := m.Handler()
 	c := login(t, m, h)
+	step := idleTimeout / 4
 	for i := 0; i < 2; i++ {
-		f.Clock.Advance(5 * time.Minute)
+		f.Clock.Advance(step)
 		r := req("GET", "/admin/api/session", "", c)
 		r.Header.Set(BackgroundHeader, "1")
 		if w := serveReq(h, r); w.Code != 200 {
-			t.Fatalf("background at %d min = %d", (i+1)*5, w.Code)
+			t.Fatalf("background after %v = %d", time.Duration(i+1)*step, w.Code)
 		}
 	}
-	f.Clock.Advance(10 * time.Minute)
-	// 20 minutes of background polling only: the session is idle.
+	f.Clock.Advance(2*step + time.Minute)
+	// Background polling only for longer than the idle limit: the session is idle.
 	if w := serveReq(h, req("GET", "/admin/api/session", "", c)); w.Code != 401 {
-		t.Fatalf("after 20 min of background only = %d, want 401", w.Code)
+		t.Fatalf("after the idle limit of background only = %d, want 401", w.Code)
 	}
 }
 
@@ -370,15 +378,8 @@ func TestNormalRequestResetsIdleTimer(t *testing.T) {
 	if w := serveReq(h, req("GET", "/admin/api/session", "", c)); w.Code != 200 {
 		t.Fatalf("normal at 10 min = %d", w.Code)
 	}
-	f.Clock.Advance(10 * time.Minute)
-	r := req("GET", "/admin/api/session", "", c)
-	r.Header.Set(BackgroundHeader, "1")
-	if w := serveReq(h, r); w.Code != 200 {
-		t.Fatalf("background at 20 min = %d, want 200 (normal request at 10 min reset)", w.Code)
-	}
-	f.Clock.Advance(10 * time.Minute)
-	if w := serveReq(h, req("GET", "/admin/api/session", "", c)); w.Code != 401 {
-		t.Fatalf("at 30 min = %d, want 401", w.Code)
+	if got := lastSeen(t, m); !got.Equal(f.Clock.Now()) {
+		t.Errorf("a normal request left last_seen_at at %v, want %v", got, f.Clock.Now())
 	}
 }
 

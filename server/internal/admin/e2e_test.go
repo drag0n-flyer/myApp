@@ -182,11 +182,12 @@ func TestBrowserBackgroundRefreshKeepsIdleTimer(t *testing.T) {
 	}
 
 	// Only background refreshes for longer than the idle limit: the session ends.
+	step := idleTimeout / 3
 	for i := 0; i < 2; i++ {
-		f.Clock.Advance(5 * time.Minute)
+		f.Clock.Advance(step)
 		b.want(b.do("GET", "/admin/api/overview", nil, true), 200, "background overview within the idle limit")
 	}
-	f.Clock.Advance(6 * time.Minute)
+	f.Clock.Advance(step)
 	b.want(b.do("GET", "/admin/api/overview", nil, true), 401, "background overview after the idle limit")
 }
 
