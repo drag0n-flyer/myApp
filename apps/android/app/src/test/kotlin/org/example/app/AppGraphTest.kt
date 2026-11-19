@@ -910,7 +910,7 @@ class AppGraphTest {
         val ends = graph.sessionEnds.value
         val seen = mutableListOf<String>()
         answer = { r ->
-            seen += "${r.method} ${r.url.encodedPath}"
+            synchronized(seen) { seen += "${r.method} ${r.url.encodedPath}" }
             when {
                 r.method == "GET" && r.url.encodedPath == "/v1/devices" -> 200 to
                     """{"devices":[{"id":"dev-0","name":"Other","platform":"ios","createdAt":"2026-01-01T00:00:00Z","current":false},""" +
@@ -920,7 +920,10 @@ class AppGraphTest {
             }
         }
         graph.signOut()
-        assertEquals(listOf("GET /v1/devices", "DELETE /v1/devices/dev-1"), seen.filter { "/v1/devices" in it })
+        // The session's own background work may also list devices, so only the order matters: listed, then this one revoked once.
+        val calls = synchronized(seen) { seen.filter { "/v1/devices" in it } }
+        assertEquals(1, calls.count { it == "DELETE /v1/devices/dev-1" })
+        assertTrue(calls.indexOf("GET /v1/devices") in 0 until calls.indexOf("DELETE /v1/devices/dev-1"))
         assertAllGone()
         assertEquals(AccountState.SignedOut, graph.accountState)
         assertTrue(graph.sessionEnds.value > ends)
