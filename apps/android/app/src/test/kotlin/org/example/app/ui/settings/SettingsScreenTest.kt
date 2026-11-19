@@ -23,6 +23,12 @@ class SettingsScreenTest {
     @get:Rule val rule = createComposeRule()
 
     @Test
+    fun groupsCoverEveryPageOnce() {
+        assertEquals(SettingsPage.entries.toSet(), SettingsPage.groups.flatten().toSet())
+        assertEquals(SettingsPage.entries.size, SettingsPage.groups.flatten().size)
+    }
+
+    @Test
     fun listsEveryPageAndOpensIt() {
         val opened = mutableListOf<SettingsPage>()
         rule.setContent {

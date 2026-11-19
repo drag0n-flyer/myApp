@@ -145,6 +145,12 @@
     <string name="info_audio">Audio</string>
     <string name="info_video">Video</string>
     <string name="info_search">Search</string>
+    <string name="info_mute">Mute</string>
+    <string name="info_unmute">Unmute</string>
+    <plurals name="contacts_count">
+        <item quantity="one">%d contact</item>
+        <item quantity="other">%d contacts</item>
+    </plurals>
     <string name="info_mismatch">The server\'s settings for this chat don\'t match the ones it started with. Sending is paused to keep your messages private.</string>
     <string name="info_verified">Verified</string>
     <string name="info_verify">Verify</string>

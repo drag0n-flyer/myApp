@@ -105,11 +105,18 @@ fun ChatInfoScreen(
                 Avatar(contact.displayName, size = 84.dp, colorKey = contact.id)
                 Text(contact.displayName, style = MaterialTheme.typography.titleLarge)
                 Text(usernameText(contact.username), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (onCall != null) TextButton(onClick = { onCall(false) }) { Text(stringResource(R.string.info_audio)) }
-                    if (onCall != null) TextButton(onClick = { onCall(true) }) { Text(stringResource(R.string.info_video)) }
+                val muted by store.mutedChatIds.collectAsStateWithLifecycle()
+                val isMuted = chatId in muted || chat.muted
+                Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (onCall != null) InfoAction(R.drawable.ic_call, stringResource(R.string.info_audio), Modifier.weight(1f)) { onCall(false) }
+                    if (onCall != null) InfoAction(R.drawable.ic_videocam, stringResource(R.string.info_video), Modifier.weight(1f)) { onCall(true) }
+                    InfoAction(
+                        if (isMuted) R.drawable.ic_bell else R.drawable.ic_bell_off,
+                        stringResource(if (isMuted) R.string.info_unmute else R.string.info_mute),
+                        Modifier.weight(1f),
+                    ) { store.setMuted(chatId, !isMuted); revision++ }
                     // The chat underneath opens its search field when it is back on top.
-                    TextButton(onClick = { ChatSearchRequests.request(chatId); onBack() }) { Text(stringResource(R.string.info_search)) }
+                    InfoAction(R.drawable.ic_search, stringResource(R.string.info_search), Modifier.weight(1f)) { ChatSearchRequests.request(chatId); onBack() }
                 }
             }
             HorizontalDivider()
@@ -233,5 +240,20 @@ internal fun EncryptionInfoRows(chat: org.example.app.core.chats.Chat) {
             leadingContent = { Icon(painterResource(R.drawable.ic_lock), contentDescription = null) },
             headlineContent = { Text(line) },
         )
+    }
+}
+
+/** One of the round-cornered action tiles under the name: icon over a short label. */
+@Composable
+internal fun InfoAction(@androidx.annotation.DrawableRes icon: Int, label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    androidx.compose.material3.Surface(
+        modifier = modifier.clickable(role = Role.Button, onClick = onClick),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+    ) {
+        Column(Modifier.padding(vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Icon(painterResource(icon), contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+        }
     }
 }
