@@ -58,5 +58,21 @@
  {
   "name": "mode_server_readable",
   "json": "{\"at\":1700000000000,\"id\":\"00000000-0000-4000-8000-000000000001\",\"k\":\"mode\",\"m\":\"server_readable\",\"v\":1}"
+ },
+ {
+  "name": "poll",
+  "json": "{\"at\":1700000000000,\"id\":\"00000000-0000-4000-8000-000000000001\",\"k\":\"poll\",\"multi\":true,\"options\":[{\"id\":\"a\",\"text\":\"Pizza\"},{\"id\":\"b\",\"text\":\"Sushi\"}],\"question\":\"Lunch?\",\"v\":1}"
+ },
+ {
+  "name": "poll_single",
+  "json": "{\"at\":1700000000000,\"id\":\"00000000-0000-4000-8000-000000000001\",\"k\":\"poll\",\"multi\":false,\"options\":[{\"id\":\"a\",\"text\":\"Pizza\"},{\"id\":\"b\",\"text\":\"Sushi\"}],\"question\":\"Lunch?\",\"v\":1}"
+ },
+ {
+  "name": "poll_vote",
+  "json": "{\"at\":1700000000000,\"id\":\"00000000-0000-4000-8000-000000000001\",\"k\":\"pollVote\",\"optionIDs\":[\"a\",\"b\"],\"pollID\":\"t1\",\"v\":1}"
+ },
+ {
+  "name": "poll_vote_retract",
+  "json": "{\"at\":1700000000000,\"id\":\"00000000-0000-4000-8000-000000000001\",\"k\":\"pollVote\",\"optionIDs\":[],\"pollID\":\"t1\",\"v\":1}"
  }
 ]

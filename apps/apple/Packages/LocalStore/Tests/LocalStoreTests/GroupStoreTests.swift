@@ -20,8 +20,8 @@ private func populatedV4() throws -> Database {
 @Test func testMigrationToV5MakesOldChatsDirectAndKeepsEveryRow() throws {
     let db = try populatedV4()
     try migrate(db)
-    #expect(latestSchemaVersion == 5)
-    #expect(try db.query("PRAGMA user_version") { $0.int(0) } == [5])
+    #expect(latestSchemaVersion == 6)
+    #expect(try db.query("PRAGMA user_version") { $0.int(0) } == [6])
     #expect(try db.query("SELECT id, kind, conversation_id IS NULL, title IS NULL, photo IS NULL, group_ver IS NULL, members_version IS NULL, my_state FROM chats ORDER BY id") {
         [$0.text(0), $0.text(1), String($0.int(2)), String($0.int(3)), String($0.int(4)), String($0.int(5)), String($0.int(6)), $0.text(7)]
     } == [["bob", "direct", "1", "1", "1", "1", "1", "member"], ["eve", "direct", "1", "1", "1", "1", "1", "member"]])
@@ -33,7 +33,7 @@ private func populatedV4() throws -> Database {
     #expect(try db.query("PRAGMA foreign_key_check") { $0.int(0) }.isEmpty)
     #expect(try db.query("PRAGMA integrity_check") { $0.text(0) } == ["ok"])
     try migrate(db)   // a second open changes nothing
-    #expect(try db.query("PRAGMA user_version") { $0.int(0) } == [5])
+    #expect(try db.query("PRAGMA user_version") { $0.int(0) } == [6])
     let repo = Repository(db: db, now: { t(1000) })
     let bob = try #require(try repo.chat(id: "bob"))
     #expect(bob.kind == "direct" && bob.conversationID == nil && bob.myState == "member" && bob.unread == 3 && bob.timerSeconds == 86400)

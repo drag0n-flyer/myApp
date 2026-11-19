@@ -191,6 +191,20 @@ public final class SampleChatStore: ChatStore {
         }
     }
 
+    public func sendPoll(_ poll: Poll, in chatID: String) {
+        guard poll.isValid else { return }
+        send(.poll(PollContent(poll: poll)), in: chatID, replyTo: nil)
+    }
+
+    public func votePoll(messageID: String, optionIDs: [String], in chatID: String) {
+        updateMessage(messageID, in: chatID) { message in
+            guard case .poll(var content) = message.content else { return }
+            content.votes.removeAll { $0.accountID == me.id }
+            content.votes.append(PollVote(accountID: me.id, optionIDs: PollTally.sanitized(optionIDs, in: content.poll)))
+            message.content = .poll(content)
+        }
+    }
+
     public func edit(messageID: String, in chatID: String, text: String) {
         updateMessage(messageID, in: chatID) { message in
             guard message.senderID == me.id else { return }

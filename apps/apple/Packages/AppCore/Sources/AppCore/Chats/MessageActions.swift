@@ -15,7 +15,7 @@ public enum MessageActions {
         case .deleted, .system, .call, .unsupported: return []
         case .text: isText = true; canEdit = true
         case .photo, .file: isText = false; canEdit = true   // the sender may add, change or remove the caption
-        case .voice: isText = false
+        case .voice, .poll: isText = false
         }
         // A caption can be copied like a text.
         let hasCaption = message.caption != nil

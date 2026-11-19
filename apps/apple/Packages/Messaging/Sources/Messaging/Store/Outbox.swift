@@ -74,6 +74,7 @@ public actor Outbox: ControlSender {
         case .text(let t, let r): text = t; reply = r
         case .photo(_, _, _, _, let r), .voice(_, _, let r): reply = r
         case .file(_, let name, _, let r): text = name; reply = r
+        case .poll(let poll): text = poll.question
         default: break
         }
         let message = MessageRecord(

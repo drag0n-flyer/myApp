@@ -126,6 +126,7 @@ struct PreviewText: View {
     private var symbol: (name: String, color: Color)? {
         switch message?.content {
         case .voice: ("mic.fill", .secondary)
+        case .poll: ("chart.bar", .secondary)
         case .photo: ("camera.fill", .secondary)
         case .file: ("doc.fill", .secondary)
         case .call(.missedAudio), .call(.missedVideo): ("phone.arrow.down.left", .red)

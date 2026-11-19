@@ -37,7 +37,7 @@ enum ChatMapping {
     ///   - showRead: see `status(_:showRead:)`.
     static func message(
         _ record: MessageRecord, attachment: AttachmentRecord?, reactions: [ReactionRecord],
-        displayName: (String) -> String?, showRead: Bool = true, me: String? = nil
+        displayName: (String) -> String?, showRead: Bool = true, me: String? = nil, pollVotes: [PollVoteRecord] = []
     ) -> Message {
         var message = Message(
             id: record.id, senderID: record.senderAccount, sentAt: record.sentAt, content: .unsupported,
@@ -68,6 +68,7 @@ enum ChatMapping {
         case .text(let text, _):
             message.content = .text(text)
             message.linkPreview = envelope.preview.map { LinkPreviewCard(url: $0.url, title: $0.title, desc: $0.desc, image: $0.img) }
+        case .poll(let poll): message.content = .poll(PollContent(poll: poll, votes: pollVotes.map { PollVote(accountID: $0.accountID, optionIDs: $0.optionIDs) }))
         case .photo(let att, _, _, _, _): message.content = .photo(bytes: att.sz)
         case .voice(_, let duration, _): message.content = .voice(duration: duration)
         case .file(let att, let name, _, _): message.content = .file(name: name, bytes: att.sz)

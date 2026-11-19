@@ -265,7 +265,8 @@ public final class LiveChatStore: ChatStore {
                     let name = ProfileDisplay.name(lookup: Self.name(of: row) ?? "", profile: profileRows[id], nickname: nil)
                     return name.isEmpty ? nil : name
                 },
-                showRead: showRead || record.senderAccount != me, me: me)
+                showRead: showRead || record.senderAccount != me, me: me,
+                pollVotes: plain && !record.deleted ? (try? repo.pollVotes(chatID: record.chatID, messageID: record.id)) ?? [] : [])
             if ChatID.isGroup(record.chatID), record.senderAccount != me, blockedAccounts.contains(record.senderAccount) {
                 message.fromBlockedSender = true
             }
@@ -756,6 +757,21 @@ public final class LiveChatStore: ChatStore {
         guard (try? repo.setReaction(messageID: messageID, accountID: deps.me.accountID, emoji: chosen)) != nil else { return }
         refresh()
         sendControl(.react(target: messageID, emoji: chosen), chatID: chatID)
+    }
+
+    public func sendPoll(_ poll: Poll, in chatID: String) {
+        guard poll.isValid else { return }
+        enqueue(.poll(poll), chatID: chatID)
+    }
+
+    public func votePoll(messageID: String, optionIDs: [String], in chatID: String) {
+        guard let record = (try? repo.message(id: messageID)) ?? nil, record.chatID == chatID, !record.deleted,
+              case .poll(let poll) = ContentEnvelope.decode(record.envelope).body else { return }
+        let ids = PollTally.sanitized(optionIDs, in: poll)
+        let me = deps.me.accountID
+        guard (try? repo.setPollVote(chatID: chatID, messageID: messageID, accountID: me, optionIDs: ids, at: deps.now())) != nil else { return }
+        refresh()
+        sendControl(.pollVote(pollID: messageID, optionIDs: ids), chatID: chatID)
     }
 
     public func edit(messageID: String, in chatID: String, text: String) {

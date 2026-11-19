@@ -245,6 +245,7 @@ public final class Repository: @unchecked Sendable {
     public func deleteChat(id: String) throws {
         try db.transaction { d in
             try d.execute("DELETE FROM outbox WHERE chat_id=?", [.text(id)])
+            try d.execute("DELETE FROM poll_votes WHERE chat_id=?", [.text(id)])
             try d.execute("DELETE FROM chats WHERE id=?", [.text(id)])
         }
     }
@@ -467,6 +468,28 @@ public final class Repository: @unchecked Sendable {
     public func reactions(messageID: String) throws -> [ReactionRecord] {
         try db.query("SELECT message_id, account_id, emoji FROM reactions WHERE message_id=? ORDER BY account_id",
                      [.text(messageID)]) { ReactionRecord(messageID: $0.text(0), accountID: $0.text(1), emoji: $0.text(2)) }
+    }
+
+    // MARK: poll votes
+
+    /// Keeps the account's answer to a poll when it is newer than (or as new as) the one stored; an empty list takes the
+    /// answer back. The poll message need not exist yet.
+    public func setPollVote(chatID: String, messageID: String, accountID: String, optionIDs: [String], at: Date) throws {
+        let json = (try? JSONEncoder().encode(optionIDs)).map { String(decoding: $0, as: UTF8.self) } ?? "[]"
+        let ms = Int64((at.timeIntervalSince1970 * 1000).rounded())
+        try db.execute("""
+            INSERT INTO poll_votes(chat_id, message_id, account_id, at, option_ids) VALUES (?,?,?,?,?) \
+            ON CONFLICT(chat_id, message_id, account_id) DO UPDATE SET at=excluded.at, option_ids=excluded.option_ids WHERE excluded.at >= poll_votes.at
+            """, [.text(chatID), .text(messageID), .text(accountID), .int(ms), .text(json)])
+    }
+
+    /// The stored answers to one poll, by account. Answers that name no option are returned as they are.
+    public func pollVotes(chatID: String, messageID: String) throws -> [PollVoteRecord] {
+        try db.query("SELECT account_id, at, option_ids FROM poll_votes WHERE chat_id=? AND message_id=? ORDER BY account_id",
+                     [.text(chatID), .text(messageID)]) {
+            PollVoteRecord(accountID: $0.text(0), at: Date(timeIntervalSince1970: Double($0.int(1)) / 1000),
+                           optionIDs: (try? JSONDecoder().decode([String].self, from: Data($0.text(2).utf8))) ?? [])
+        }
     }
 
     // MARK: search

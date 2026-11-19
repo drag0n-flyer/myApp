@@ -92,6 +92,16 @@ extension AppModel {
         chatStore.send(content, in: chatID, replyTo: replyTo, preview: preview)
     }
 
+    func sendPoll(_ poll: Poll, in chatID: String) {
+        guard poll.isValid else { return }
+        chatStore.sendPoll(poll, in: chatID)
+    }
+
+    /// Sets my answer to a poll message (the store checks that it is a poll in this chat that is not deleted).
+    func votePoll(_ optionIDs: [String], messageID: String, in chatID: String) {
+        chatStore.votePoll(messageID: messageID, optionIDs: optionIDs, in: chatID)
+    }
+
     /// Reacts, unless the message vanished or was deleted, or this is a quick repeat. The store toggles.
     func react(_ emoji: String, to messageID: String, in chatID: String, followedBy nextID: String? = nil) {
         guard let current = currentMessage(id: messageID, in: chatID, followedBy: nextID),

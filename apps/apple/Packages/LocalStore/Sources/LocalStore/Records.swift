@@ -115,6 +115,13 @@ public struct ReactionRecord: Sendable, Equatable {
     }
 }
 
+public struct PollVoteRecord: Sendable, Equatable {
+    public var accountID: String, at: Date, optionIDs: [String]
+    public init(accountID: String, at: Date, optionIDs: [String]) {
+        self.accountID = accountID; self.at = at; self.optionIDs = optionIDs
+    }
+}
+
 public struct AttachmentRecord: Sendable, Equatable {
     public var id: String, messageID: String, kind: String
     public var key: Data, digest: Data

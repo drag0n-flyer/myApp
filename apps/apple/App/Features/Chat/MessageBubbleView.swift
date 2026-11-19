@@ -22,6 +22,10 @@ struct MessageBubbleView: View {
     var actions: [MessageAction] = []
     var perform: (MessageAction) -> Void = { _ in }
     var react: (String) -> Void = { _ in }
+    /// My account ID, to find my own answer in a poll.
+    var myID = ""
+    /// Sets my answer to this message's poll.
+    var votePoll: ([String]) -> Void = { _ in }
     /// Briefly true after a jump to this message.
     var isHighlighted = false
     /// Jumps to the quoted message.
@@ -240,6 +244,8 @@ struct MessageBubbleView: View {
                             canDownload: canDownload, download: download, open: { openMedia($0, cleaned, false) })
             captionText
             }
+        case .poll(let poll):
+            PollBubbleView(messageID: message.id, content: poll, isMine: isMine, myID: myID, name: replySenderName, vote: votePoll)
         case .call:
             Label(message.previewText, systemImage: "phone")
         case .deleted:

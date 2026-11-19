@@ -98,6 +98,8 @@ Every message is `{"v":1,"id":"<uuid>","at":<sent time, ms since 1970>,"k":"<kin
 | `edit` | `target`, `t` | updates the target's text and sets `editedAt` (only if the sender matches) |
 | `delete` | `target` | the target becomes `.deleted` (only if the sender matches) |
 | `react` | `target`, `e` (one emoji; `""` removes) | one reaction per account per message |
+| `poll` | `question` (1..300), `options` (2..12 of `{id` 1..8 chars unique`, text` 1..100`}`), `multi` (bool) | a message with options; an invalid poll is "unsupported" |
+| `pollVote` | `pollID` (the poll message's `id`), `optionIDs` (`[]` takes the vote back) | one latest vote per account per poll; kept until the poll arrives; unknown option ids ignored; single choice keeps the first id; never shown as a message |
 | `receipt` | `s` (`"delivered"` or `"read"`), `ids` | updates the status of my messages; never shown |
 | `callsig` | `p`: a `CallSignalPayload` JSON object (AppCore; plan 8 defines its fields) | **never stored**; returned to plan 8 through `CallSignalSealer.open` |
 | `mode` | `m` (`"e2ee"` or `"server_readable"`) | **never shown**; pins `conversations.inner_mode` (Design 18) |

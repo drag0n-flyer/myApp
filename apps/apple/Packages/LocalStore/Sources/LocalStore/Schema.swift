@@ -101,3 +101,13 @@ let schemaV5: [String] = [
     kind TEXT NOT NULL CHECK(kind IN ('delivered','read')), at INTEGER NOT NULL, PRIMARY KEY(message_id, account_id, kind)) STRICT
     """,
 ]
+
+/// Poll votes: each account's latest answer to a poll message. No foreign key to `messages`, so a vote that arrives before
+/// its poll is kept until the poll comes. `at` is the vote's own time: an older vote never replaces a newer one.
+/// `option_ids` is a JSON array of strings (empty = answer taken back).
+let schemaV6: [String] = [
+    """
+    CREATE TABLE poll_votes(chat_id TEXT NOT NULL, message_id TEXT NOT NULL, account_id TEXT NOT NULL, at INTEGER NOT NULL, \
+    option_ids TEXT NOT NULL, PRIMARY KEY(chat_id, message_id, account_id)) STRICT
+    """,
+]
