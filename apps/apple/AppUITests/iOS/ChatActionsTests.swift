@@ -64,8 +64,9 @@ final class ChatActionsTests: XCTestCase {
     func testScrollButtonAppearsAfterScrollingUp() {
         let app = openRiya()
         let field = composerField(app)
-        field.tap()
         for i in 1...20 {
+            // The simulator sometimes drops keyboard focus after a send; typing needs it back.
+            if !(field.value(forKey: "hasKeyboardFocus") as? Bool ?? false) { field.tap() }
             field.typeText("Filler message \(i)")
             app.element("chat.composer.send").tap()
         }
