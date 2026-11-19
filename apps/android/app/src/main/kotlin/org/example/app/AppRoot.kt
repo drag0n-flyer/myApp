@@ -8,10 +8,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
-import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
 import androidx.compose.runtime.rememberUpdatedState
@@ -356,45 +353,8 @@ fun AppRoot(
                 LinkApprovalFlow(vm, onDone = { nav.popBackStack() })
             }
             composable(MAIN) {
-                val panes: @Composable (Modifier) -> Unit = { paneModifier ->
-                MainTabs(modifier = paneModifier, tabs = if (graph.callsAvailable) MainTab.entries else MainTab.entries - MainTab.Calls) { tab ->
-                    if (tab == MainTab.Chats) {
-                        val vm = viewModel<ChatListViewModel>(
-                            factory = factory { ChatListViewModel(graph.chatStore, graph.serverPolicy, graph.settingsStore.settings, graph.network, graph.connectionStatus, graph.signals) },
-                        )
-                        ChatListScreen(
-                            vm, onOpenChat = { openChat.value(it, null) }, onOpenRequests = { nav.navigate(REQUESTS) },
-                            onNewChat = { nav.navigate(NEW_CHAT) }, onSearch = { nav.navigate(SEARCH) },
-                            onOpenArchive = { nav.navigate(ARCHIVE) },
-                            selectedChatId = if (wide) paneChat else null,
-                        )
-                    } else if (tab == MainTab.Calls) {
-                        val vm = viewModel<CallHistoryViewModel>(factory = factory { CallHistoryViewModel(graph.chatStore) })
-                        CallHistoryScreen(vm, onCall = callVm::start)
-                    } else if (tab == MainTab.Contacts) {
-                        val context = LocalContext.current
-                        ContactsScreen(
-                            graph.chatStore, graph.inviteUrl,
-                            onOpenChat = { openChat.value(it, null) },
-                            onAddContact = { nav.navigate(ADD_CONTACT) },
-                            onInvite = { shareInvite(context, it, graph.appLock::expectReturn) },
-                        )
-                    } else if (tab == MainTab.Settings) {
-                        var devices by remember { mutableIntStateOf(0) }
-                        LaunchedEffect(Unit) { devices = runCatching { graph.accountService.devices().size }.getOrDefault(0) }
-                        SettingsScreen(graph.chatStore.meState.collectAsStateWithLifecycle().value, graph.serverPolicy.host, devices, onOpen = { nav.navigate(it.route) }, onOpenProfile = { nav.navigate(PROFILE) })
-                    } else {
-                        TabPlaceholder(tab)
-                    }
-                }
-                }
-                if (!wide) panes(Modifier) else {
-                    // Back closes the info page, then the chat, before it leaves the app.
-                    BackHandler(enabled = paneChat != null) { if (paneInfo) paneInfo = false else paneChat = null }
-                    Row(Modifier.fillMaxSize()) {
-                        panes(Modifier.width(PaneLayout.LIST_PANE_DP.dp))
-                        VerticalDivider()
-                        Box(Modifier.weight(1f).fillMaxSize()) {
+                val detailPane: @Composable () -> Unit = {
+                        Box(Modifier.fillMaxSize()) {
                             // Read so the pane follows the store: a chat that no longer exists (blocked, removed, a
                             // restored id from before) shows the empty state.
                             graph.chatStore.chats.collectAsState().value
@@ -439,8 +399,42 @@ fun AppRoot(
                                 }
                             }
                         }
+                }
+                val panes: @Composable (Modifier) -> Unit = { paneModifier ->
+                MainTabs(modifier = paneModifier, rail = wide, detail = if (wide) detailPane else null, tabs = if (graph.callsAvailable) MainTab.entries else MainTab.entries - MainTab.Calls) { tab ->
+                    if (tab == MainTab.Chats) {
+                        val vm = viewModel<ChatListViewModel>(
+                            factory = factory { ChatListViewModel(graph.chatStore, graph.serverPolicy, graph.settingsStore.settings, graph.network, graph.connectionStatus, graph.signals) },
+                        )
+                        ChatListScreen(
+                            vm, onOpenChat = { openChat.value(it, null) }, onOpenRequests = { nav.navigate(REQUESTS) },
+                            onNewChat = { nav.navigate(NEW_CHAT) }, onSearch = { nav.navigate(SEARCH) },
+                            onOpenArchive = { nav.navigate(ARCHIVE) },
+                            selectedChatId = if (wide) paneChat else null,
+                        )
+                    } else if (tab == MainTab.Calls) {
+                        val vm = viewModel<CallHistoryViewModel>(factory = factory { CallHistoryViewModel(graph.chatStore) })
+                        CallHistoryScreen(vm, onCall = callVm::start)
+                    } else if (tab == MainTab.Contacts) {
+                        val context = LocalContext.current
+                        ContactsScreen(
+                            graph.chatStore, graph.inviteUrl,
+                            onOpenChat = { openChat.value(it, null) },
+                            onAddContact = { nav.navigate(ADD_CONTACT) },
+                            onInvite = { shareInvite(context, it, graph.appLock::expectReturn) },
+                        )
+                    } else if (tab == MainTab.Settings) {
+                        var devices by remember { mutableIntStateOf(0) }
+                        LaunchedEffect(Unit) { devices = runCatching { graph.accountService.devices().size }.getOrDefault(0) }
+                        SettingsScreen(graph.chatStore.meState.collectAsStateWithLifecycle().value, graph.serverPolicy.host, devices, onOpen = { nav.navigate(it.route) }, onOpenProfile = { nav.navigate(PROFILE) })
+                    } else {
+                        TabPlaceholder(tab)
                     }
                 }
+                }
+                // Back closes the info page, then the chat, before it leaves the app.
+                if (wide) BackHandler(enabled = paneChat != null) { if (paneInfo) paneInfo = false else paneChat = null }
+                panes(Modifier)
             }
             composable(ARCHIVE) {
                 val vm = viewModel<ChatListViewModel>(

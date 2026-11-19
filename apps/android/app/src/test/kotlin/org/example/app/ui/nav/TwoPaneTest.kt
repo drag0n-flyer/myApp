@@ -57,6 +57,13 @@ class TwoPaneTest {
         rule.onNodeWithText("Select a chat").assertIsDisplayed()
     }
 
+    @Test fun aWideWindowHasARailAndNoBottomBar() {
+        launch()
+        // Four tabs, once each: the rail; a bottom bar would add a second set.
+        for (tab in listOf("Contacts", "Calls", "Settings")) assertEquals(1, count(tab), tab)
+        rule.onNode(androidx.compose.ui.test.isSelected() and hasText("Chats")).assertExists()
+    }
+
     @Test fun openingAChatShowsItBesideTheListAndKeepsTheListVisible() {
         launch()
         rule.onNodeWithText("Riya").performClick()

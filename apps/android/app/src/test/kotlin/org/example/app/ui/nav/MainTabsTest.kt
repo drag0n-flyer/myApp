@@ -55,4 +55,19 @@ class MainTabsTest {
             assertTrue(unlabeled.isEmpty(), "unlabelled clickable on ${label(tab)}: $unlabeled")
         }
     }
+
+    private val isRail = SemanticsMatcher("is a rail tab") { it.config.getOrNull(SemanticsProperties.Role) == Role.Tab }
+
+    @Test
+    fun railModeShowsTheSameTabsAndSelectsOnClick() {
+        rule.setContent { AppTheme { MainTabs(rail = true, detail = { androidx.compose.material3.Text("Detail pane") }) } }
+        val names = rule.onAllNodes(isRail).fetchSemanticsNodes()
+            .map { node -> node.config.getOrNull(SemanticsProperties.Text)?.joinToString { it.text } }
+        assertEquals(listOf("Contacts", "Calls", "Chats", "Settings"), names)
+        rule.onNode(isRail and hasText("Chats")).assertIsSelected()
+        rule.onNode(hasText("Detail pane")).assertExists()
+        rule.onNode(isRail and hasText("Settings")).performClick()
+        rule.waitForIdle()
+        rule.onNode(isRail and hasText("Settings")).assertIsSelected()
+    }
 }
