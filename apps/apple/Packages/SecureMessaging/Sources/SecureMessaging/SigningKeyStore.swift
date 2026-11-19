@@ -43,7 +43,7 @@ public enum KeychainAccess {
         guard let group else { return nil }
         var q: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "org.example.app.keychain-probe",
+            kSecAttrService as String: "keychain-access-probe",
             kSecAttrAccount as String: "probe",
             kSecAttrAccessGroup as String: group,
             kSecAttrSynchronizable as String: false,
