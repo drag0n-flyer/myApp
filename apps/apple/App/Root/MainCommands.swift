@@ -30,6 +30,12 @@ struct MainCommands: Commands {
         CommandGroup(after: .appSettings) {
             item(.lockNow, title: "Lock Now", symbol: "lock")
         }
+        CommandGroup(before: .toolbar) {
+            item(.showChats, title: "Chats", symbol: "bubble.left.and.bubble.right")
+            item(.showCalls, title: "Calls", symbol: "phone")
+            item(.showContacts, title: "Contacts", symbol: "person.2")
+            Divider()
+        }
         CommandMenu("Chat") {
             item(.nextChat, title: "Next Chat", symbol: "chevron.down")
             item(.previousChat, title: "Previous Chat", symbol: "chevron.up")

@@ -2831,6 +2831,17 @@
         }
       }
     },
+    "Choose a chat from the list, or start a new one with ⌘N." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose a chat from the list, or start a new one with ⌘N."
+          }
+        }
+      }
+    },
     "Select a chat" : {
       "extractionState" : "manual",
       "localizations" : {

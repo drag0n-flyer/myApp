@@ -16,17 +16,21 @@ public struct MainCommandShortcut: Hashable, Sendable {
     }
 }
 
+/// A section of the Mac sidebar that a menu command can jump to.
+public enum MainSection: Sendable { case chats, calls, contacts }
+
 /// The Mac menu commands of the main window (Settings, ⌘, is the system's own).
 ///
 /// One rule decides whether each is usable. Every command that shows or changes chat content is off while the app is
 /// locked or signed out, so a shortcut pressed behind the lock cover does nothing.
 public enum MainCommand: CaseIterable, Sendable {
     case newChat, search, nextChat, previousChat, chatInfo, toggleMute, archive, lockNow
+    case showChats, showCalls, showContacts
 
     public func isEnabled(locked: Bool, signedIn: Bool, hasOpenChat: Bool, lockOn: Bool) -> Bool {
         guard signedIn, !locked else { return false }
         switch self {
-        case .newChat, .search, .nextChat, .previousChat: return true
+        case .newChat, .search, .nextChat, .previousChat, .showChats, .showCalls, .showContacts: return true
         case .chatInfo, .toggleMute, .archive: return hasOpenChat
         case .lockNow: return lockOn
         }
@@ -42,6 +46,19 @@ public enum MainCommand: CaseIterable, Sendable {
         case .toggleMute: MainCommandShortcut(key: "m", modifiers: [.command, .shift])
         case .archive: MainCommandShortcut(key: "a", modifiers: [.control, .command])
         case .lockNow: MainCommandShortcut(key: "l", modifiers: [.control, .command])
+        case .showChats: MainCommandShortcut(key: "1", modifiers: [.command])
+        case .showCalls: MainCommandShortcut(key: "2", modifiers: [.command])
+        case .showContacts: MainCommandShortcut(key: "3", modifiers: [.command])
+        }
+    }
+
+    /// The sidebar section this command shows, if it is one of the three section commands.
+    public var section: MainSection? {
+        switch self {
+        case .showChats: .chats
+        case .showCalls: .calls
+        case .showContacts: .contacts
+        default: nil
         }
     }
 }
