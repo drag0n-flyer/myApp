@@ -77,6 +77,11 @@ struct ContactsContent: View {
                 .listRowSeparator(.hidden)
                 .accessibilityIdentifier("contacts.empty")
             }
+            if !model.contacts.isEmpty, !query.isEmpty, sections.isEmpty {
+                ContentUnavailableView.search(text: query)
+                    .frame(maxWidth: .infinity)
+                    .listRowSeparator(.hidden)
+            }
             ForEach(sections, id: \.letter) { section in
                 Section(section.letter) {
                     ForEach(section.people) { person in
@@ -87,9 +92,15 @@ struct ContactsContent: View {
                                     Text(person.displayName).foregroundStyle(.primary).lineLimit(1)
                                     Text("@\(person.username)").font(.caption).foregroundStyle(.secondary)
                                 }
+                                Spacer(minLength: 0)
                             }
+                            .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(Text(person.displayName))
+                        .accessibilityValue(Text("@\(person.username)"))
+                        .accessibilityAddTraits(.isButton)
                         .accessibilityIdentifier("contacts.row.\(person.id)")
                     }
                 }

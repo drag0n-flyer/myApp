@@ -29,9 +29,13 @@ struct ChatInfoView: View {
                         Avatar(name: contact.displayName, colorKey: contact.id, size: 84)
                         Text(contact.displayName).font(.title2.weight(.semibold)).multilineTextAlignment(.center)
                         Text("@\(contact.username)").foregroundStyle(.secondary)
-                        HStack(spacing: 12) {
+                        HStack(spacing: 10) {
                             action("Audio", "phone") { model.startCall(contactID: contact.id, video: false) }
                             action("Video", "video") { model.startCall(contactID: contact.id, video: true) }
+                            action(chat.muted ? "Unmute" : "Mute", chat.muted ? "bell.slash.fill" : "bell.slash") {
+                                model.setMuted(chatID, !chat.muted)
+                            }
+                            .accessibilityIdentifier("chatinfo.mute")
                             action("Search", "magnifyingglass") {
                                 // Back to the chat, which opens its own search field.
                                 model.chatSearchRequest = chatID
@@ -114,6 +118,7 @@ struct ChatInfoView: View {
                 Text(title).font(.caption)
             }
             .frame(minWidth: 64, minHeight: 52)
+            .contentShape(RoundedRectangle(cornerRadius: 14))
             .glassBackground(in: RoundedRectangle(cornerRadius: 14))
         }
         .buttonStyle(.plain)
