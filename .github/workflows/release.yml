@@ -1,0 +1,87 @@
+# Release: pushing a version tag (v1.2.3) builds the Android APK, the Mac app and the server
+# binaries, then publishes a GitHub Release with them attached. The iPhone app needs the
+# owner's signing, so it goes out through ios-testflight.yml, started by hand.
+
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  android:
+    uses: ./.github/workflows/android-build.yml
+    with:
+      server_host: chat.shimul.me
+
+  mac:
+    uses: ./.github/workflows/mac-build.yml
+    with:
+      server_host: chat.shimul.me
+
+  server:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: server/go.sum
+      - name: Build the server binaries
+        working-directory: server
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/out"
+          for arch in amd64 arm64; do
+            for cmd in appserver pushgw; do
+              GOOS=linux GOARCH=$arch go build -trimpath -ldflags='-s -w' -o "$RUNNER_TEMP/out/$cmd-linux-$arch" ./cmd/$cmd
+            done
+          done
+          ls -la "$RUNNER_TEMP/out"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server
+          path: ${{ runner.temp }}/out/
+          retention-days: 14
+          if-no-files-found: error
+
+  publish:
+    needs: [android, mac, server]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Name the files after the version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir files
+          mv dist/App-android/app-debug.apk "files/App-$TAG-android.apk"
+          mv dist/App-mac/App-mac.zip "files/App-$TAG-mac.zip"
+          for f in dist/server/*; do mv "$f" "files/$(basename "$f")-$TAG"; done
+          (cd files && sha256sum * > SHA256SUMS)
+          ls -la files
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # A test build (debug-signed Android, ad-hoc Mac), so it is marked a pre-release.
+          gh release create "$TAG" files/* --repo "$GITHUB_REPOSITORY" --title "$TAG" --generate-notes --prerelease

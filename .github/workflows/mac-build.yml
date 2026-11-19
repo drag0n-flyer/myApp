@@ -11,12 +11,20 @@ on:
         description: Server the app connects to by default
         default: chat.shimul.me
         required: true
+  # release.yml calls this for a version tag.
+  workflow_call:
+    inputs:
+      server_host:
+        description: Server the app connects to by default
+        type: string
+        default: chat.shimul.me
+        required: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: mac-build
+  group: mac-build-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
