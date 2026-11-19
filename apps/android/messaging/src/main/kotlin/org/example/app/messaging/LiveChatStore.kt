@@ -919,6 +919,8 @@ class LiveChatStore(
         }
     }
 
+    private class UploadRefused : Exception()
+
     /**
      * Prepares (unless a kept prepared file is there), uploads, then in one transaction: the final envelope, the outbox
      * row and the sender's own attachment record. A failure marks the message `failed` and keeps the files; a message
@@ -979,6 +981,8 @@ class LiveChatStore(
         val queued = try {
             repo.transaction {
                 // The caption is read again from the row now: an edit made while the upload ran is the one that is sent.
+                // Removed from the group (or it left) while the upload ran: nothing is queued; the message fails, the blob is not referenced.
+                if (isReadOnlyGroup(pending.chatId)) throw UploadRefused()
                 val row = repo.message(id)
                 val finalCaption = if (row != null) captionOf(row.envelope) else caption
                 val envelope = envelopeFor(kind, id, at, att, prepared, ttl, finalCaption)

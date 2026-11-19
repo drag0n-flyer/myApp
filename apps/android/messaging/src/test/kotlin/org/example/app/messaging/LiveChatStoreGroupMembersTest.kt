@@ -86,4 +86,49 @@ class LiveChatStoreGroupMembersTest {
         bob.awaitWrites()
         assertTrue(bobRepo.chat(chat) != null, "still a member: not deleted")
     }
+
+    @Test
+    fun anAttachmentUploadingWhenIAmRemovedIsNeverSentAndTheMessageFails() = runTest {
+        val w = GroupWorld.trio()
+        val ana = store(w.device("ana1"))
+        val chat = ana.createGroup(listOf("acc-bob", "acc-cat"), "Book club", null).chatId
+        ana.settle()
+        val bobDev = w.device("bob1")
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val uploading = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val api = object : org.example.app.contracts.DeliveryApi by bobDev.api {
+            override suspend fun uploadAttachment(bytes: java.io.InputStream, length: Long): org.example.app.contracts.AttachmentRef {
+                bytes.readBytes()
+                uploading.complete(Unit)
+                gate.await()
+                return org.example.app.contracts.AttachmentRef("up1", java.time.Instant.EPOCH)
+            }
+        }
+        val bob = LiveChatStore(
+            device = bobDev.me, mls = bobDev.mls, server = api, repo = bobDev.repo, lock = bobDev.lock, clock = bobDev.clock, conversations = bobDev.manager,
+            inbox = bobDev.processor, membership = bobDev.membership, sealer = bobDev.sealer(), escrow = bobDev.escrow,
+            readReceiptsEnabled = { true }, maxAttachmentBytes = 1234L,
+            dirs = MediaDirs(tmp("blob"), tmp("open"), tmp("temp")),
+            social = object : SocialPort {
+                override suspend fun lookUpUser(username: String) = null
+                override suspend fun block(accountId: String) = Unit
+                override suspend fun unblock(accountId: String) = Unit
+                override suspend fun report(accountId: String, conversationId: String?, messages: List<ReportedLine>) = Unit
+            },
+            scope = scope,
+            mediaPreparer = MediaPreparer { path, _ -> PreparedMedia(File(path), 0, 0, null, 0.0, name = File(path).name) },
+        )
+        bob.syncInbox(); bob.settle()
+        val src = File(tmp("src"), "notes.txt").also { it.writeText("hello there") }
+        bob.sendAttachment(src.path, org.example.app.core.settings.MediaKind.File, chat)
+        kotlinx.coroutines.withContext(Dispatchers.Default) { kotlinx.coroutines.withTimeout(10_000) { uploading.await() } }
+        bob.leaveGroup(chat) // removed while the upload runs
+        val before = w.server.messages.size
+        gate.complete(Unit)
+        bob.settle()
+        val mine = bobDev.repo.messages(chat, null, 50).single { it.senderAccount == bobDev.me.accountId }
+        assertEquals("failed", mine.status)
+        assertEquals(before, w.server.messages.size, "nothing was sent after the removal")
+        assertEquals(null, bobDev.repo.attachmentForMessage(mine.id), "the uploaded blob is not referenced")
+    }
 }

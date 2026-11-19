@@ -621,6 +621,22 @@ class AppGraphTest {
     }
 
     @Test
+    fun aFullWipeResetsEveryPrivacySwitchForTheNextAccount() = runBlocking {
+        val (graph, _) = opened()
+        graph.settingsStore.update {
+            it.copy(
+                readReceipts = false, typingIndicator = false, onlineAndLastSeen = false, linkPreviews = true,
+                findByUsername = false, findByEmail = true, appLock = true, lockAfterSeconds = 0,
+                ipHiding = org.example.app.core.settings.IPHiding.Always,
+            )
+        }
+        graph.wipeAfterRevocation()
+        assertEquals(org.example.app.core.settings.UserSettings.initial(graph.serverPolicy), graph.settingsStore.settings.value)
+        val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+        assertEquals(org.example.app.core.settings.UserSettings.initial(graph.serverPolicy), org.example.app.ui.settings.SettingsStore(prefs).settings.value)
+    }
+
+    @Test
     fun aFullWipeResetsTheSettingsForTheNextAccount() = runBlocking {
         val (graph, _) = opened()
         graph.settingsStore.update { it.copy(readReceipts = false, findByEmail = true) }
