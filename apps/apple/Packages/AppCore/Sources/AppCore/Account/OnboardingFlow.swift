@@ -62,7 +62,11 @@ public struct OnboardingFlow: Sendable {
 
     public mutating func inviteAccepted() { advance(from: .inviteCode, to: .createAccount) }
     public mutating func accountSubmitted() { advance(from: .createAccount, to: .verifyEmail) }
-    public mutating func emailVerified() { advance(from: .verifyEmail, to: .createPasskey) }
+    /// `passkeysSupported` is `AccountService.supportsPasskeys`. Without passkeys the sign-up was finished
+    /// with the email code, so the passkey step is skipped.
+    public mutating func emailVerified(passkeysSupported: Bool = true) {
+        advance(from: .verifyEmail, to: passkeysSupported ? .createPasskey : .permissions)
+    }
     public mutating func passkeyCreated() { advance(from: .createPasskey, to: .permissions) }
     public mutating func permissionsHandled() { advance(from: .permissions, to: .done) }
 
@@ -75,6 +79,14 @@ public struct OnboardingFlow: Sendable {
     public mutating func recovered() {
         guard step == .lostDevice else { return }
         go(.done)
+    }
+
+    /// The sign-up expired on the server: back to Create account (the view keeps the fields).
+    public mutating func startSignUpAgain() {
+        guard step == .verifyEmail || step == .createPasskey,
+              let i = history.lastIndex(of: .createAccount) else { return }
+        history.removeSubrange(i...)
+        step = .createAccount
     }
 
     public mutating func back() {

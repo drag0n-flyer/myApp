@@ -80,3 +80,43 @@ import Testing
     #expect(await a.checkUsername("ab") == .invalid)
     #expect(await a.checkUsername("Upper") == .invalid)
 }
+
+@Test func noPasskeySkipsPasskeyStep() {
+    var f = OnboardingFlow(platform: .iPhone)
+    f.getStarted()
+    f.choose(.address("chat.example.org"), requiresInvite: false)
+    f.accountSubmitted()
+    f.emailVerified(passkeysSupported: false)
+    #expect(f.step == .permissions)
+    f.permissionsHandled()
+    #expect(f.step == .done)
+}
+
+@Test func passkeySupportedGoesToPasskeyStep() {
+    var f = OnboardingFlow(platform: .iPhone)
+    f.getStarted()
+    f.choose(.address("chat.example.org"), requiresInvite: false)
+    f.accountSubmitted()
+    f.emailVerified(passkeysSupported: true)
+    #expect(f.step == .createPasskey)
+}
+
+@Test func startAgainReturnsToCreateAccount() {
+    var f = OnboardingFlow(platform: .iPhone)
+    f.getStarted()
+    f.choose(.defaultServer, requiresInvite: true)
+    f.inviteAccepted()
+    f.accountSubmitted()
+    f.emailVerified()
+    #expect(f.step == .createPasskey)
+    f.startSignUpAgain()
+    #expect(f.step == .createAccount)
+    f.back()
+    #expect(f.step == .inviteCode)
+}
+
+@Test func startAgainOutsideSignUpDoesNothing() {
+    var f = OnboardingFlow(platform: .iPhone)
+    f.startSignUpAgain()
+    #expect(f.step == .welcome)
+}

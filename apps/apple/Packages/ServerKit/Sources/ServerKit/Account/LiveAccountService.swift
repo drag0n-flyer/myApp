@@ -154,7 +154,7 @@ public final class LiveAccountService: AccountService {
                 let options = try await c.signupPasskeyOptions(signupID: signupID)
                 credential = try await register(options)
             } catch {
-                throw Self.map(error)
+                throw Self.map(error, signup: true)
             }
         }
         do throws(ServerError) {
@@ -164,7 +164,7 @@ public final class LiveAccountService: AccountService {
             self.signupID = nil
             self.inviteCode = nil
         } catch {
-            throw Self.map(error)
+            throw Self.map(error, signup: true)
         }
         // The server's signup/start takes no display name yet: set it now that the session exists.
         // A failure here does not fail the sign-up.
@@ -461,8 +461,9 @@ public final class LiveAccountService: AccountService {
 
     private static func accountCode(_ e: AccountError) -> String { "account:\(e)" }
 
-    static func map(_ e: ServerError, link: Bool = false) -> AccountError {
+    static func map(_ e: ServerError, link: Bool = false, signup: Bool = false) -> AccountError {
         if e.code.hasPrefix("account:") { return fromAccountCode(e.code) }
+        if signup, ["not_found", "forbidden", "expired"].contains(e.code) { return .signupExpired }
         switch e.code {
         case "invite_required": return .inviteRequired
         case "invite_invalid": return .inviteInvalid

@@ -64,4 +64,16 @@ final class OnboardingTests: XCTestCase {
         XCTAssertTrue(app.textFields["account.username"].waitToExist())
         XCTAssertFalse(app.textFields["invite.field"].exists)
     }
+
+    func testBackButtonReturnsToPreviousStep() {
+        let app = XCUIApplication.launched(skipOnboarding: false)
+        XCTAssertFalse(app.element("onboarding.back").exists)   // the welcome step has no bar
+        app.element("welcome.start").tap()
+        app.element("join.default").tap()
+        XCTAssertTrue(app.element("invite.field").waitToExist())
+        app.buttons["onboarding.back"].tap()
+        XCTAssertTrue(app.element("join.default").waitToExist())
+        app.buttons["onboarding.back"].tap()
+        XCTAssertTrue(app.element("welcome.start").waitToExist())
+    }
 }

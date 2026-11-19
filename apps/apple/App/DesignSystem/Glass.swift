@@ -62,24 +62,3 @@ extension Color {
         #endif
     }
 }
-
-/// Round glass icon button used in toolbars and headers.
-struct GlassCircleButton: View {
-    let systemImage: String
-    let label: LocalizedStringKey
-    var size: CGFloat = 36
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.body.weight(.semibold))
-                .frame(width: size, height: size)
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.tint)
-        .glassBackground(in: Circle())
-        .accessibilityLabel(Text(label))
-    }
-}
