@@ -348,11 +348,11 @@ struct ChatView: View {
                 react: { needsOlderRefresh = true; model.react($0, to: message.id, in: chatID, followedBy: nextID(after: message.id, all: all, indexByID: indexByID)) },
                 isHighlighted: highlightID == message.id,
                 quoteTapped: { if let id = message.replyToID { jump = JumpRequest(messageID: id) } },
-                run: BubbleRun.at(indexByID[message.id] ?? -1, in: all),
                 senderName: ChatID.isGroup(chatID) && GroupLines.showsSender(at: indexByID[message.id] ?? -1, in: all, me: model.me.id)
                     ? model.memberName(message.senderID) : nil,
                 showInfo: ChatID.isGroup(chatID) && mine && message.status != .sending && message.status != .failed
-                    ? { infoTarget = message } : nil
+                    ? { infoTarget = message } : nil,
+                run: BubbleRun.at(indexByID[message.id] ?? -1, in: all)
             )
             // A new run (another sender, or a pause) gets a little air; joined bubbles stay close.
             .padding(.top, BubbleRun.at(indexByID[message.id] ?? -1, in: all).joinsAbove ? 0 : 6)
