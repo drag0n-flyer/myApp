@@ -4,7 +4,16 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -58,15 +67,15 @@ fun ContactsScreen(
             if (inviteUrl != null) item {
                 ListItem(
                     modifier = Modifier.clickable(onClickLabel = stringResource(R.string.contacts_invite), role = Role.Button) { onInvite(inviteUrl) },
-                    leadingContent = { Icon(painterResource(R.drawable.ic_contacts), contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
-                    headlineContent = { Text(stringResource(R.string.contacts_invite), color = MaterialTheme.colorScheme.primary) },
+                    leadingContent = { ActionCircle(R.drawable.ic_share) },
+                    headlineContent = { Text(stringResource(R.string.contacts_invite), style = MaterialTheme.typography.titleMedium) },
                 )
             }
             item {
                 ListItem(
                     modifier = Modifier.clickable(role = Role.Button, onClick = onAddContact),
-                    leadingContent = { Icon(painterResource(R.drawable.ic_add), contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
-                    headlineContent = { Text(stringResource(R.string.contacts_add), color = MaterialTheme.colorScheme.primary) },
+                    leadingContent = { ActionCircle(R.drawable.ic_add) },
+                    headlineContent = { Text(stringResource(R.string.contacts_add), style = MaterialTheme.typography.titleMedium) },
                 )
             }
             if (sections.isEmpty()) item(key = "empty") {
@@ -84,10 +93,19 @@ fun ContactsScreen(
                     ListItem(
                         modifier = Modifier.clickable(role = Role.Button) { onOpenChat(store.ensureChat(person.id)) },
                         leadingContent = { Avatar(person.displayName, colorKey = person.id) },
-                        headlineContent = { Text(person.displayName, maxLines = 1) },
+                        headlineContent = { Text(person.displayName, maxLines = 1, style = MaterialTheme.typography.titleMedium) },
                         supportingContent = { Text(usernameText(person.username)) },
                     )
                 }
+            }
+            if (contacts.isNotEmpty()) item(key = "count") {
+                Text(
+                    pluralStringResource(R.plurals.contacts_count, contacts.size, contacts.size),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                )
             }
         }
     }
@@ -110,4 +128,12 @@ internal fun sectionLetter(name: String, locale: java.util.Locale): String {
         if (stripped.isEmpty()) first else stripped.codePointAt(0)
     } else first
     return String(Character.toChars(base)).uppercase(locale)
+}
+
+/** The round tinted icon of the Invite and Add rows; it matches the size of a contact's photo. */
+@Composable
+private fun ActionCircle(@androidx.annotation.DrawableRes icon: Int) {
+    Box(Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
+        Icon(painterResource(icon), contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+    }
 }

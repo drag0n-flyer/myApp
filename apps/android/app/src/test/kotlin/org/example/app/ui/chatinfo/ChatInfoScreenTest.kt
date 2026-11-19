@@ -94,4 +94,15 @@ class ChatInfoScreenTest {
         rule.onNodeWithText("Cancel").performClick()
         assertTrue(store.blockedIds.value.isEmpty())
     }
+
+    @Test
+    fun actionTilesMuteAndUnmute() {
+        val store = storeWith(messages)
+        launch(store)
+        rule.onNodeWithText("Audio").assertIsDisplayed()
+        rule.onNodeWithText("Search").assertIsDisplayed()
+        rule.onNodeWithText("Mute").performClick()
+        assertTrue("chat-riya" in store.mutedChatIds.value)
+        rule.onNodeWithText("Unmute").assertIsDisplayed()
+    }
 }

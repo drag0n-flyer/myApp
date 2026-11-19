@@ -35,6 +35,8 @@ class ContactsScreensTest {
         }
         rule.onNodeWithText("Invite people").assertIsDisplayed()
         rule.onNodeWithText("Add contact").assertIsDisplayed()
+        val total = store().contacts.value.size
+        rule.onNodeWithText("$total contacts").assertIsDisplayed()
         rule.onNodeWithText("Riya").performClick()
         assertEquals(1, opened.size)
     }
