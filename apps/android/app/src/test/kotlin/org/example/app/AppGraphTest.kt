@@ -309,7 +309,7 @@ class AppGraphTest {
     fun killAfterMarkerResumesWipe() = runBlocking {
         val (old, session) = opened()
         marker.writeText("full")
-        session.database.close() // the process dies; the next one starts from disk
+        session.close() // the process dies; the next one starts from disk
         val graph = AppGraph(context, sampleData = false, scope = scope, platform = platform())
         assertEquals(AccountState.SignedOut, graph.accountState)
         assertNull(graph.openSession())
@@ -324,7 +324,7 @@ class AppGraphTest {
     fun pendingWipeRunsBeforeSignIn() = runBlocking {
         val (_, session) = opened()
         marker.writeText("full")
-        session.database.close()
+        session.close()
         val graph = AppGraph(context, sampleData = false, scope = scope, platform = platform())
         runCatching { graph.accountService.connect("chat.example.org") }
         assertAllGone()
@@ -451,7 +451,7 @@ class AppGraphTest {
     @Test
     fun anotherDevicesDataIsWipedBeforeOpening() = runBlocking {
         val (_, session) = opened()
-        session.database.close()
+        session.close()
         saveSession(device = "dev-2")
         val graph = AppGraph(context, sampleData = false, scope = scope, platform = platform())
         val fresh = assertNotNull(graph.openSession())
@@ -463,7 +463,7 @@ class AppGraphTest {
     fun aDifferentAccountSigningInAfterADataWipeGetsDefaultSettings() = runBlocking {
         val (graph, session) = opened()
         graph.settingsStore.update { it.copy(readReceipts = false, ipHiding = org.example.app.core.settings.IPHiding.Always) }
-        session.database.close()
+        session.close()
         saveSession(device = "dev-2")
         val next = AppGraph(context, sampleData = false, scope = scope, platform = platform())
         assertNotNull(next.openSession())
@@ -475,7 +475,7 @@ class AppGraphTest {
     fun theSameAccountSigningBackInKeepsItsSettings() = runBlocking {
         val (graph, session) = opened()
         graph.settingsStore.update { it.copy(readReceipts = false) }
-        session.database.close()
+        session.close()
         val next = AppGraph(context, sampleData = false, scope = scope, platform = platform())
         assertNotNull(next.openSession())
         assertEquals(false, next.settingsStore.settings.value.readReceipts)
@@ -507,7 +507,7 @@ class AppGraphTest {
     @Test
     fun concurrentOpensAfterDeviceSwitchLeaveOneSession() = runBlocking {
         val (_, old) = opened()
-        old.database.close()
+        old.close()
         saveSession(device = "dev-2")
         val graph = AppGraph(context, sampleData = false, scope = scope, platform = platform())
         val opens = List(4) { async(Dispatchers.IO) { graph.openSession() } }.awaitAll()
@@ -528,7 +528,7 @@ class AppGraphTest {
     @Test
     fun openDuringTheSwitchWipeWaitsForTheSession() = runBlocking {
         val (_, old) = opened()
-        old.database.close()
+        old.close()
         saveSession(device = "dev-2")
         val graph = AppGraph(context, sampleData = false, scope = scope, platform = platform())
         var second: kotlinx.coroutines.Deferred<org.example.app.live.LiveSession?>? = null
@@ -664,7 +664,7 @@ class AppGraphTest {
     fun aWipeResumedAtTheNextLaunchResetsTheSettings() = runBlocking {
         val (graph, session) = opened()
         graph.settingsStore.update { it.copy(readReceipts = false) }
-        session.database.close()
+        session.close()
         marker.writeText("full") // a kill left the wipe pending
         val next = AppGraph(context, sampleData = false, scope = scope, platform = platform())
         next.finishPendingWipe()
