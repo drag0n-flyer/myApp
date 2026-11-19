@@ -54,12 +54,16 @@ final class MacLayoutTests: XCTestCase {
     func testMacSectionShortcuts() {
         let app = XCUIApplication.launched()
         XCTAssertTrue(app.element("mac.sidebar.chats").waitToExist())
+        // Each section is checked by its content: the sidebar's selected state is not reliably exposed.
+        let callRow = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'calls.row.'")).firstMatch
         app.typeKey("2", modifierFlags: .command)
-        XCTAssertTrue(app.element("mac.sidebar.calls").isSelected)
+        XCTAssertTrue(callRow.waitForExistence(timeout: 5))
         app.typeKey("3", modifierFlags: .command)
-        XCTAssertTrue(app.element("mac.sidebar.contacts").isSelected)
+        XCTAssertTrue(app.element("contacts.invite").waitToExist())
         app.typeKey("1", modifierFlags: .command)
-        XCTAssertTrue(app.element("mac.sidebar.chats").isSelected)
+        XCTAssertTrue(app.element("contacts.invite").waitForNonExistence(timeout: 5))
+        XCTAssertFalse(callRow.exists)
     }
 
     /// ⌃Tab opens the next chat, ⌃⇧Tab the previous one.
