@@ -105,6 +105,7 @@ struct MessageBubbleView: View {
             }
             .animation(.easeInOut(duration: 0.3), value: isHighlighted)
             .contextMenu { menu }
+            .swipeToReply(enabled: actions.contains(.reply)) { perform(.reply) }
             .overlay(alignment: .bottomLeading) {
                 if !message.reactions.isEmpty {
                     Text(message.reactions.joined())
