@@ -214,6 +214,55 @@ private func err(_ code: String) -> String { #"{"error":{"code":"\#(code)","mess
         #expect(r.store.current?.token == "t1")
     }
 
+    @Test(arguments: [(404, "not_found"), (403, "forbidden"), (410, "expired")])
+    func finishMapsUnusableSignUpToSignupExpired(status: Int, code: String) async throws {
+        let r = Rig()
+        await r.t.respond("POST", "/v1/signup/start", status: 200, json: #"{"signupID":"s1"}"#)
+        await r.t.respond("POST", "/v1/signup/passkey/options", status: status, json: err(code))
+        try await r.service.startSignUp(displayName: "", username: "ana", email: "ana@example.org")
+        await #expect(throws: AccountError.signupExpired) { try await r.service.finishSignUp() }
+        #expect(!r.service.isSignedIn)
+    }
+
+    @Test(arguments: [(404, "not_found"), (403, "forbidden"), (410, "expired")])
+    func emailCodeFinishMapsUnusableSignUpToSignupExpired(status: Int, code: String) async throws {
+        let r = Rig()
+        await r.t.respond("POST", "/v1/signup/start", status: 200, json: #"{"signupID":"s1"}"#)
+        await r.t.respond("POST", "/v1/signup/finish", status: status, json: err(code))
+        try await r.service.startSignUp(displayName: "", username: "ana", email: "ana@example.org")
+        await #expect(throws: AccountError.signupExpired) { try await r.service.finishSignUpWithEmailCode() }
+    }
+
+    @Test func otherCallsKeepTheirMapping() async throws {
+        let r = Rig()
+        await r.t.respond("POST", "/v1/signup/start", status: 200, json: #"{"signupID":"s1"}"#)
+        await r.t.respond("POST", "/v1/signup/verify", status: 410, json: err("expired"))
+        try await r.service.startSignUp(displayName: "", username: "ana", email: "ana@example.org")
+        await #expect(throws: AccountError.codeExpired) { try await r.service.verifyEmail(code: "123456") }
+        await r.t.respond("POST", "/v1/signup/verify", status: 404, json: err("not_found"))
+        await #expect(throws: AccountError.server) { try await r.service.verifyEmail(code: "123456") }
+        await r.t.respond("POST", "/v1/signup/finish", status: 500, json: err("internal"))
+        await #expect(throws: AccountError.server) { try await r.service.finishSignUpWithEmailCode() }
+    }
+
+    @Test func noPasskeyHostSignsUpWithEmailCodeAfterVerify() async throws {
+        let r = Rig(host: "other.example")
+        await r.t.respond("POST", "/v1/signup/start", status: 200, json: #"{"signupID":"s1"}"#)
+        await r.t.respond("POST", "/v1/signup/verify", status: 200, json: "{}")
+        await r.t.respond("POST", "/v1/signup/finish", status: 200, json: sessionJSON)
+        #expect(!r.service.supportsPasskeys)
+        try await r.service.startSignUp(displayName: "", username: "ana", email: "ana@example.org")
+        try await r.service.verifyEmail(code: "123456")
+        try await r.service.finishSignUpWithEmailCode()
+        #expect(await r.passkey.registered == 0)
+        #expect(r.service.isSignedIn)
+        var f = OnboardingFlow(platform: .iPhone)
+        f.getStarted(); f.choose(.address("other.example"), requiresInvite: false)
+        f.accountSubmitted()
+        f.emailVerified(passkeysSupported: r.service.supportsPasskeys)
+        #expect(f.step == .permissions)
+    }
+
     @Test func emailCodeSignUpNeverRegistersPasskey() async throws {
         let r = Rig()
         await r.t.respond("POST", "/v1/signup/start", status: 200, json: #"{"signupID":"s1"}"#)

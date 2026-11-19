@@ -14,6 +14,8 @@ public enum AccountError: Error, Equatable, Sendable {
     case inviteRequired, inviteInvalid, usernameTaken, invalidUsername, invalidEmail
     case codeInvalid, codeExpired, tooManyAttempts(retryAfterSeconds: Int?)
     case linkExpired, wrongServer, passkeyUnavailable, cancelled, network, server
+    /// The sign-up is unknown, unverified, used up or timed out: the person starts it again.
+    case signupExpired
     /// The approving device could not confirm with Face ID, Touch ID or the passcode.
     case biometricsUnavailable
 }

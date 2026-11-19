@@ -28,27 +28,57 @@ struct WelcomeView: View {
                     .padding(.top, 20)
                 }
                 .padding(.horizontal, 24)
+                .frame(maxWidth: onboardingColumnWidth)
+                .frame(maxWidth: .infinity)
             }
+            actions
+                .padding(.horizontal, 20)
+                .padding(.bottom, 12)
+                .frame(maxWidth: onboardingColumnWidth)
+        }
+        .frame(maxWidth: .infinity)
+        #if os(macOS)
+        .navigationTitle(AppBrand.name)
+        #endif
+    }
+
+    @ViewBuilder private var actions: some View {
+        if model.onboarding.canCreateAccount {
+            #if os(macOS)
+            HStack(spacing: 12) {
+                Button("I already have an account") { model.onboarding.alreadyHaveAccount() }
+                    .controlSize(.large)
+                    .accessibilityIdentifier("welcome.haveaccount")
+                Button("Get started") { model.onboarding.getStarted() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("welcome.start")
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            #else
             VStack(spacing: 8) {
-                if model.onboarding.canCreateAccount {
-                    Button("Get started") { model.onboarding.getStarted() }
-                        .buttonStyle(PrimaryButtonStyle())
-                        .accessibilityIdentifier("welcome.start")
-                    Button("I already have an account") { model.onboarding.alreadyHaveAccount() }
-                        .font(.headline)
-                        .frame(minHeight: 44)
-                        .accessibilityIdentifier("welcome.haveaccount")
-                } else {
-                    Button("Link to your iPhone") { model.onboarding.alreadyHaveAccount() }
-                        .buttonStyle(PrimaryButtonStyle())
-                        .accessibilityIdentifier("welcome.haveaccount")
-                    Text("Create your account in \(AppBrand.name) on your iPhone first.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
+                Button("Get started") { model.onboarding.getStarted() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .buttonSizing(.flexible)
+                    .accessibilityIdentifier("welcome.start")
+                Button("I already have an account") { model.onboarding.alreadyHaveAccount() }
+                    .controlSize(.large)
+                    .accessibilityIdentifier("welcome.haveaccount")
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 12)
+            #endif
+        } else {
+            VStack(spacing: 8) {
+                Button("Link to your iPhone") { model.onboarding.alreadyHaveAccount() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .accessibilityIdentifier("welcome.haveaccount")
+                Text("Create your account in \(AppBrand.name) on your iPhone first.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 

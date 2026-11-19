@@ -40,11 +40,13 @@ struct JoinServerView: View {
                     askingAddress = true
                 }
                 if badLink {
-                    Text("That isn't an invite link.").font(.footnote).foregroundStyle(.red)
+                    Label("That isn't an invite link.", systemImage: "exclamationmark.triangle.fill")
+                        .font(.footnote)
+                        .foregroundStyle(.red)
                 }
                 AccountErrorText(error: error)
             }
-        } buttons: {
+        } primary: {
             EmptyView()
         }
         .onAppear {

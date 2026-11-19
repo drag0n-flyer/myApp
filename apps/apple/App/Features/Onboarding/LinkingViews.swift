@@ -46,26 +46,22 @@ struct LinkDeviceView: View {
                 .accessibilityLabel("Linking QR code")
                 .accessibilityIdentifier("link.qr")
             AccountErrorText(error: error)
-        } buttons: {
+        } primary: {
             if model.isSampleData {
                 // Sample build: stands in for the iPhone confirming the scan.
                 Button("I scanned it") { model.onboarding.linked() }
-                    .buttonStyle(PrimaryButtonStyle())
                     .accessibilityIdentifier("link.done")
             } else if error != nil, model.account.linkSavePending {
                 // Approved, but this device's sign-in wasn't saved: retry the save, never a new code.
                 Button("Try again") { attempt += 1 }
-                    .buttonStyle(PrimaryButtonStyle())
                     .accessibilityIdentifier("link.retry")
             } else if error == .linkExpired {
                 Button("Show new code") { attempt += 1 }
-                    .buttonStyle(PrimaryButtonStyle())
                     .accessibilityIdentifier("link.newcode")
             }
+        } secondary: {
             if model.onboarding.canCreateAccount {
                 Button("I don't have my old device") { model.onboarding.noOldDevice() }
-                    .font(.headline)
-                    .frame(minHeight: 44)
                     .accessibilityIdentifier("link.nodevice")
             }
         }
@@ -118,72 +114,95 @@ struct LinkDeviceView: View {
 
 /// Sign in without the old device: passkey, or email and code. History starts empty.
 struct LostDeviceView: View {
+    private enum Field { case email, code }
+
     let model: AppModel
     @State private var email = ""
     @State private var codeSent = false
     @State private var code = ""
     @State private var error: AccountError?
+    @State private var busy = false
+    @FocusState private var focus: Field?
+
+    private var canSubmit: Bool { email.contains("@") && (!codeSent || code.count == 6) && !busy }
 
     var body: some View {
-        OnboardingPage(title: "Sign in on a new phone",
-                       message: "Your account comes back, but old messages can only be restored from a backup.") {
+        OnboardingFormPage(title: model.account.supportsPasskeys ? "Sign in on a new device" : "Sign in with an email code",
+                           message: "Your account comes back, but old messages can only be restored from a backup.") {
             if model.account.supportsPasskeys {
-                Button("Sign in with passkey", systemImage: "person.badge.key") {
-                    Task {
-                        do throws(AccountError) {
-                            try await model.account.signInWithPasskey()
-                            await model.didSignIn()
-                            model.onboarding.recovered()
-                        } catch { self.error = error }
-                    }
+                Section {
+                    Button("Sign in with passkey", systemImage: "person.badge.key") { signInWithPasskey() }
+                        .disabled(busy)
+                        .accessibilityIdentifier("lost.passkey")
+                } footer: {
+                    Text("Or use your email")
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.large)
-                .frame(maxWidth: .infinity)
-                .accessibilityIdentifier("lost.passkey")
-                Text("Or use your email").font(.caption).foregroundStyle(.secondary).padding(.top, 8)
             }
-            OnboardingField(label: "Email") {
-                TextField("you@example.com", text: $email)
+            Section {
+                TextField("Email", text: $email, prompt: Text("you@example.com"))
                     .textContentType(.emailAddress)
                     .autocorrectionDisabled()
                     #if os(iOS)
                     .keyboardType(.emailAddress)
                     .textInputAutocapitalization(.never)
                     #endif
+                    .focused($focus, equals: .email)
+                    .submitLabel(codeSent ? .next : .send)
+                    .onSubmit { if codeSent { focus = .code } else if canSubmit { submit() } }
                     .accessibilityIdentifier("lost.email")
-            }
-            if codeSent {
-                OnboardingField(label: "Code") {
-                    TextField("123456", text: $code)
+                if codeSent {
+                    TextField("Code", text: $code, prompt: Text("123456"))
                         .textContentType(.oneTimeCode)
+                        #if os(iOS)
+                        .keyboardType(.numberPad)
+                        #endif
+                        .focused($focus, equals: .code)
+                        .submitLabel(.done)
+                        .onSubmit { if canSubmit { submit() } }
                         .accessibilityIdentifier("lost.code")
                 }
+            } footer: {
+                AccountErrorText(error: error)
             }
-            AccountErrorText(error: error)
-        } buttons: {
-            Button(codeSent ? "Sign in" : "Send code") {
-                Task {
-                    do throws(AccountError) {
-                        if codeSent {
-                            try await model.account.recover(email: email, code: code)
-                            if model.account.supportsPasskeys {
-                                // Adding a passkey is optional: cancelling (or failing) carries on signed in.
-                                do throws(AccountError) { try await model.account.addPasskey() } catch {}
-                            }
-                            await model.didSignIn()
-                            model.onboarding.recovered()
-                        } else {
-                            try await model.account.sendRecoveryCode(to: email)
-                            codeSent = true
-                            error = nil
-                        }
-                    } catch { self.error = error }
+        } primary: {
+            Button(action: submit) { BusyLabel(title: codeSent ? "Sign in" : "Send code", busy: busy) }
+                .disabled(!canSubmit)
+                .accessibilityIdentifier("lost.submit")
+        }
+    }
+
+    private func signInWithPasskey() {
+        busy = true
+        Task {
+            defer { busy = false }
+            do throws(AccountError) {
+                try await model.account.signInWithPasskey()
+                await model.didSignIn()
+                model.onboarding.recovered()
+            } catch { self.error = error }
+        }
+    }
+
+    private func submit() {
+        busy = true
+        Task {
+            defer { busy = false }
+            do throws(AccountError) {
+                if codeSent {
+                    try await model.account.recover(email: email, code: code)
+                    if model.account.supportsPasskeys {
+                        // Adding a passkey is optional: cancelling (or failing) carries on signed in.
+                        do throws(AccountError) { try await model.account.addPasskey() } catch {}
+                    }
+                    await model.didSignIn()
+                    model.onboarding.recovered()
+                } else {
+                    try await model.account.sendRecoveryCode(to: email)
+                    codeSent = true
+                    error = nil
+                    focus = .code
                 }
-            }
-            .buttonStyle(PrimaryButtonStyle())
-            .disabled(!email.contains("@") || (codeSent && code.count != 6))
-            .accessibilityIdentifier("lost.submit")
+            } catch { self.error = error }
         }
     }
 }

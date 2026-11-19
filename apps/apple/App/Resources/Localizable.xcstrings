@@ -356,6 +356,17 @@
         }
       }
     },
+    "123456" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "123456"
+          }
+        }
+      }
+    },
     "5 minutes" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -587,6 +598,28 @@
         }
       }
     },
+    "Back" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Back"
+          }
+        }
+      }
+    },
+    "BETA-0000" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "BETA-0000"
+          }
+        }
+      }
+    },
     "Call info" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -803,6 +836,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Choose photo"
+          }
+        }
+      }
+    },
+    "Code" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Code"
           }
         }
       }
@@ -1357,6 +1401,17 @@
         }
       }
     },
+    "Email" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Email"
+          }
+        }
+      }
+    },
     "Enter a valid email address." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1540,6 +1595,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Info"
+          }
+        }
+      }
+    },
+    "Invite code" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Invite code"
           }
         }
       }
@@ -1907,6 +1973,17 @@
         }
       }
     },
+    "Name" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Name"
+          }
+        }
+      }
+    },
     "New chat" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2094,6 +2171,17 @@
         }
       }
     },
+    "No password to remember. Your passkey is saved in iCloud Keychain, so your other Apple devices can sign in too." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No password to remember. Your passkey is saved in iCloud Keychain, so your other Apple devices can sign in too."
+          }
+        }
+      }
+    },
     "No results" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2237,6 +2325,17 @@
         }
       }
     },
+    "Or use your email" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Or use your email"
+          }
+        }
+      }
+    },
     "Others can see when you are typing. If you turn this off, you won't see it for others either." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2270,24 +2369,13 @@
         }
       }
     },
-    "Passkeys aren't available on this server. Use an email code instead." : {
+    "Passkeys can't be used here. Use an email code instead." : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Passkeys aren't available on this server. Use an email code instead."
-          }
-        }
-      }
-    },
-    "Passkeys aren't available on this server. You'll sign in with an email code instead." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Passkeys aren't available on this server. You'll sign in with an email code instead."
+            "value" : "Passkeys can't be used here. Use an email code instead."
           }
         }
       }
@@ -2897,6 +2985,28 @@
         }
       }
     },
+    "Sign in on a new device" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sign in on a new device"
+          }
+        }
+      }
+    },
+    "Sign in with an email code" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sign in with an email code"
+          }
+        }
+      }
+    },
     "Sign out" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2981,6 +3091,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Sound lost"
+          }
+        }
+      }
+    },
+    "Start again" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start again"
           }
         }
       }
@@ -3304,6 +3425,17 @@
         }
       }
     },
+    "This sign-up has expired. Start again." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This sign-up has expired. Start again."
+          }
+        }
+      }
+    },
     "This video is too big to send." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3575,6 +3707,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Use your email"
+          }
+        }
+      }
+    },
+    "Username" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Username"
           }
         }
       }
@@ -3920,6 +4063,17 @@
         }
       }
     },
+    "you@example.com" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "you@example.com"
+          }
+        }
+      }
+    },
     "Your chats couldn't be opened" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3964,6 +4118,17 @@
         }
       }
     },
+    "Your Name" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your Name"
+          }
+        }
+      }
+    },
     "Your profile photo" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -3982,6 +4147,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Your video"
+          }
+        }
+      }
+    },
+    "yourname" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "yourname"
           }
         }
       }

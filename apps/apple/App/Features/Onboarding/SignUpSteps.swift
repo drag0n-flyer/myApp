@@ -9,19 +9,22 @@ struct InviteCodeView: View {
     @State private var error: AccountError?
     @State private var checking = false
 
+    private var canSubmit: Bool { !code.trimmingCharacters(in: .whitespaces).isEmpty && !checking }
+
     var body: some View {
-        OnboardingPage(title: "Invite code", message: "The \(AppBrand.name) server is invite-only during the beta.") {
-            OnboardingField(label: "Invite code") {
-                TextField("BETA-0000", text: $code)
+        OnboardingFormPage(title: "Invite code", message: "The \(AppBrand.name) server is invite-only during the beta.") {
+            Section {
+                TextField("Invite code", text: $code, prompt: Text("BETA-0000"))
                     .autocorrectionDisabled()
+                    .submitLabel(.continue)
                     .accessibilityIdentifier("invite.field")
-                    .onSubmit(submit)
+                    .onSubmit { if canSubmit { submit() } }
+            } footer: {
+                AccountErrorText(error: error)
             }
-            AccountErrorText(error: error)
-        } buttons: {
-            Button("Continue", action: submit)
-                .buttonStyle(PrimaryButtonStyle())
-                .disabled(code.trimmingCharacters(in: .whitespaces).isEmpty || checking)
+        } primary: {
+            Button(action: submit) { BusyLabel(title: "Continue", busy: checking) }
+                .disabled(!canSubmit)
                 .accessibilityIdentifier("invite.submit")
         }
     }
@@ -41,12 +44,14 @@ struct InviteCodeView: View {
 }
 
 struct CreateAccountView: View {
+    private enum Field { case name, username, email }
+
     let model: AppModel
-    @State private var name = ""
-    @State private var username = ""
-    @State private var email = ""
+    @Bindable var draft: SignUpDraft
     @State private var check: UsernameCheck?
     @State private var error: AccountError?
+    @State private var busy = false
+    @FocusState private var focus: Field?
 
     private var serverName: String {
         switch model.onboarding.server {
@@ -57,75 +62,98 @@ struct CreateAccountView: View {
     }
 
     private var canContinue: Bool {
-        !name.trimmingCharacters(in: .whitespaces).isEmpty && check == .available && email.contains("@") && email.contains(".")
+        !draft.name.trimmingCharacters(in: .whitespaces).isEmpty && check == .available
+            && draft.email.contains("@") && draft.email.contains(".") && !busy
     }
 
     var body: some View {
-        OnboardingPage(title: "Create your account") {
-            Label {
-                Text("Joining \(Text(serverName).bold())")
-            } icon: {
-                Circle().fill(.green).frame(width: 8, height: 8)
+        OnboardingFormPage(title: "Create your account") {
+            Section {
+                Label {
+                    Text("Joining \(Text(serverName).bold())")
+                } icon: {
+                    Circle().fill(.green).frame(width: 8, height: 8)
+                }
+                .font(.footnote)
+                .foregroundStyle(.secondary)
             }
-            .font(.footnote)
-            .foregroundStyle(.secondary)
 
-            OnboardingField(label: "Name") {
-                TextField("Your Name", text: $name)
+            Section {
+                TextField("Name", text: $draft.name, prompt: Text("Your Name"))
                     .textContentType(.name)
+                    .focused($focus, equals: .name)
+                    .submitLabel(.next)
+                    .onSubmit { focus = .username }
                     .accessibilityIdentifier("account.name")
+            } footer: {
+                Text("Shown to people you chat with.")
             }
-            Text("Shown to people you chat with.").font(.caption).foregroundStyle(.secondary)
 
-            OnboardingField(label: "Username") {
-                TextField("yourname", text: $username)
+            Section {
+                TextField("Username", text: $draft.username, prompt: Text("yourname"))
                     .textContentType(.username)
                     .autocorrectionDisabled()
                     #if os(iOS)
                     .textInputAutocapitalization(.never)
                     #endif
+                    .focused($focus, equals: .username)
+                    .submitLabel(.next)
+                    .onSubmit { focus = .email }
                     .accessibilityIdentifier("account.username")
-            }
-            if let check {
-                Text(statusText(check))
-                    .font(.caption)
-                    .foregroundStyle(check == .available ? Color.green : Color.red)
-                    .accessibilityIdentifier("account.username.status")
+            } footer: {
+                if let check {
+                    if check == .available {
+                        Text(statusText(check))
+                            .foregroundStyle(.green)
+                            .accessibilityIdentifier("account.username.status")
+                    } else {
+                        Label(statusText(check), systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.red)
+                            .accessibilityIdentifier("account.username.status")
+                    }
+                }
             }
 
-            OnboardingField(label: "Email") {
-                TextField("you@example.com", text: $email)
+            Section {
+                TextField("Email", text: $draft.email, prompt: Text("you@example.com"))
                     .textContentType(.emailAddress)
                     .autocorrectionDisabled()
                     #if os(iOS)
                     .keyboardType(.emailAddress)
                     .textInputAutocapitalization(.never)
                     #endif
+                    .focused($focus, equals: .email)
+                    .submitLabel(.continue)
+                    .onSubmit { if canContinue { submit() } }
                     .accessibilityIdentifier("account.email")
-            }
-            Text("Only used to recover your account. Nobody can find you by email unless you turn it on.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            AccountErrorText(error: error)
-        } buttons: {
-            Button("Continue") {
-                Task {
-                    do throws(AccountError) {
-                        try await model.account.startSignUp(displayName: name, username: username, email: email)
-                        error = nil
-                        model.onboarding.accountSubmitted()
-                    } catch { self.error = error }
+            } footer: {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Only used to recover your account. Nobody can find you by email unless you turn it on.")
+                    AccountErrorText(error: error)
                 }
             }
-            .buttonStyle(PrimaryButtonStyle())
-            .disabled(!canContinue)
-            .accessibilityIdentifier("account.continue")
+        } primary: {
+            Button(action: submit) { BusyLabel(title: "Continue", busy: busy) }
+                .disabled(!canContinue)
+                .accessibilityIdentifier("account.continue")
         }
-        .task(id: username) {
-            guard !username.isEmpty else { check = nil; return }
+        .task(id: draft.username) {
+            guard !draft.username.isEmpty else { check = nil; return }
             try? await Task.sleep(for: .milliseconds(300))
             guard !Task.isCancelled else { return }
-            check = await model.account.checkUsername(username)
+            check = await model.account.checkUsername(draft.username)
+        }
+    }
+
+    private func submit() {
+        busy = true
+        Task {
+            defer { busy = false }
+            do throws(AccountError) {
+                try await model.account.startSignUp(displayName: draft.name, username: draft.username, email: draft.email)
+                error = nil
+                model.onboarding.accountSubmitted()
+            } catch { self.error = error }
         }
     }
 
@@ -143,34 +171,57 @@ struct VerifyEmailView: View {
     let model: AppModel
     @State private var code = ""
     @State private var error: AccountError?
+    @State private var busy = false
+    /// The code was accepted: a retry after a later failure only repeats the finish, never the code.
+    @State private var verified = false
 
     var body: some View {
-        OnboardingPage(title: "Check your email", message: "Enter the 6-digit code we sent you.") {
-            OnboardingField(label: "Code") {
-                TextField("123456", text: $code)
+        OnboardingFormPage(title: "Check your email", message: "Enter the 6-digit code we sent you.") {
+            Section {
+                TextField("Code", text: $code, prompt: Text("123456"))
                     .textContentType(.oneTimeCode)
                     .font(.title2.monospacedDigit())
                     #if os(iOS)
                     .keyboardType(.numberPad)
                     #endif
+                    .submitLabel(.done)
+                    .onSubmit { if code.count == 6 { verify() } }
                     .accessibilityIdentifier("verify.field")
+            } footer: {
+                AccountErrorText(error: error)
             }
-            AccountErrorText(error: error)
-        } buttons: {
-            Button("Verify", action: verify)
-                .buttonStyle(PrimaryButtonStyle())
-                .disabled(code.count != 6)
-                .accessibilityIdentifier("verify.submit")
+        } primary: {
+            if error == .signupExpired {
+                Button("Start again") { model.onboarding.startSignUpAgain() }
+                    .accessibilityIdentifier("onboarding.startAgain")
+            } else {
+                Button(action: verify) { BusyLabel(title: "Verify", busy: busy) }
+                    .disabled(code.count != 6 || busy)
+                    .accessibilityIdentifier("verify.submit")
+            }
         }
         .onChange(of: code) { _, new in if new.count == 6 { verify() } }
     }
 
+    /// Without passkeys for this server the sign-up finishes here with the email code, and the
+    /// passkey step is skipped.
     private func verify() {
+        guard !busy else { return }
+        busy = true
         Task {
+            defer { busy = false }
             do throws(AccountError) {
-                try await model.account.verifyEmail(code: code)
+                if !verified {
+                    try await model.account.verifyEmail(code: code)
+                    verified = true
+                }
+                let passkeys = model.account.supportsPasskeys
+                if !passkeys {
+                    try await model.account.finishSignUpWithEmailCode()
+                    await model.didSignIn()
+                }
                 error = nil
-                model.onboarding.emailVerified()
+                model.onboarding.emailVerified(passkeysSupported: passkeys)
             } catch { self.error = error }
         }
     }
@@ -191,8 +242,8 @@ struct PasskeyView: View {
 
     var body: some View {
         OnboardingPage(title: title, message: model.account.supportsPasskeys
-                       ? "No password to remember. Your passkey is saved in iCloud Keychain, so a new phone can sign in too."
-                       : "Passkeys aren't available on this server. You'll sign in with an email code instead.") {
+                       ? "No password to remember. Your passkey is saved in iCloud Keychain, so your other Apple devices can sign in too."
+                       : "Passkeys can't be used here. Use an email code instead.") {
             Image(systemName: "person.badge.key.fill")
                 .font(.system(size: 72))
                 .foregroundStyle(.tint)
@@ -200,25 +251,27 @@ struct PasskeyView: View {
                 .padding(.vertical, 24)
                 .accessibilityHidden(true)
             AccountErrorText(error: error)
-        } buttons: {
+        } primary: {
             // On `.cancelled` the person stays on this screen.
-            if model.account.supportsPasskeys {
-                Button("Create passkey") { finish(withPasskey: true) }
-                    .buttonStyle(PrimaryButtonStyle())
+            if error == .signupExpired {
+                Button("Start again") { model.onboarding.startSignUpAgain() }
+                    .accessibilityIdentifier("onboarding.startAgain")
+            } else if model.account.supportsPasskeys {
+                Button { finish(withPasskey: true) } label: { BusyLabel(title: "Create passkey", busy: busy) }
                     .disabled(busy)
                     .accessibilityIdentifier("passkey.create")
-                // Finishes sign-up without a passkey; later sign-in uses an email code.
+            } else {
+                Button { finish(withPasskey: false) } label: { BusyLabel(title: "Continue", busy: busy) }
+                    .disabled(busy)
+                    .accessibilityIdentifier("passkey.create")
+            }
+        } secondary: {
+            // Finishes sign-up without a passkey; later sign-in uses an email code.
+            if error != .signupExpired, model.account.supportsPasskeys {
                 Button("Use an email code instead") { finish(withPasskey: false) }
-                    .font(.headline)
-                    .frame(minHeight: 44)
                     .disabled(busy)
                     .accessibilityHint(Text("Signs in with a code sent to your email instead of a passkey."))
                     .accessibilityIdentifier("passkey.emailInstead")
-            } else {
-                Button("Continue") { finish(withPasskey: false) }
-                    .buttonStyle(PrimaryButtonStyle())
-                    .disabled(busy)
-                    .accessibilityIdentifier("passkey.create")
             }
         }
     }
@@ -248,7 +301,7 @@ struct PermissionsView: View {
         OnboardingPage(title: "Two quick permissions") {
             reason("bell.badge", "Notifications", "So you know when someone messages or calls you.")
             reason("mic", "Microphone", "So people can hear you on calls.")
-        } buttons: {
+        } primary: {
             Button("Continue") {
                 Task {
                     if !model.isUITesting {
@@ -259,7 +312,6 @@ struct PermissionsView: View {
                     model.onboarding.permissionsHandled()
                 }
             }
-            .buttonStyle(PrimaryButtonStyle())
             .accessibilityIdentifier("permissions.continue")
         }
     }

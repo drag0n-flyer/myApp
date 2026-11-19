@@ -20,7 +20,8 @@ extension AccountError {
             }
         case .linkExpired: String(localized: "This code has expired. Start again on the new device.")
         case .wrongServer: String(localized: "This code is for a different server.")
-        case .passkeyUnavailable: String(localized: "Passkeys aren't available on this server. Use an email code instead.")
+        case .passkeyUnavailable: String(localized: "Passkeys can't be used here. Use an email code instead.")
+        case .signupExpired: String(localized: "This sign-up has expired. Start again.")
         case .cancelled: nil
         case .network: String(localized: "Can't reach the server. Check your connection and try again.")
         case .server: String(localized: "Something went wrong on the server. Try again later.")
@@ -29,13 +30,13 @@ extension AccountError {
     }
 }
 
-/// Error text under a field, in red.
+/// Error text in the system error style, with an icon. Put it in a section footer or above the primary button.
 struct AccountErrorText: View {
     let error: AccountError?
 
     var body: some View {
         if let text = error?.message {
-            Text(text)
+            Label(text, systemImage: "exclamationmark.triangle.fill")
                 .font(.footnote)
                 .foregroundStyle(.red)
                 .accessibilityIdentifier("onboarding.error")
