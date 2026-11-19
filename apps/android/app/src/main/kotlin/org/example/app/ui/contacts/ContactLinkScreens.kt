@@ -93,6 +93,10 @@ fun MyQrScreen(username: String, serverHost: String, onBack: () -> Unit, modifie
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            if (username.isBlank()) {
+                Text(stringResource(R.string.my_qr_needs_username), style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center)
+                return@Column
+            }
             QrImage(link, stringResource(R.string.my_qr_description), size = 260.dp)
             Text(usernameText(username), style = MaterialTheme.typography.titleLarge)
             Text(

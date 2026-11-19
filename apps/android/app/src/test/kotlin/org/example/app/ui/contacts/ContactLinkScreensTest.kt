@@ -39,6 +39,13 @@ class ContactLinkScreensTest {
         rule.onNodeWithText("Share").assertIsDisplayed()
     }
 
+    @Test fun myQrWithoutAUsernameAsksToChooseOneAndOffersNoShare() {
+        rule.setContent { AppTheme { MyQrScreen("", "home.example.org", onBack = {}) } }
+        rule.onNodeWithText("Choose a username first, then your code and link will be here.").assertIsDisplayed()
+        rule.onNodeWithContentDescription("Your QR code. Someone who scans it can add you.").assertDoesNotExist()
+        rule.onNodeWithText("Share").assertDoesNotExist()
+    }
+
     @Test fun theCodeCarriesTheUserLink() {
         val pixels = QrCodes.render("https://home.example.org/u/neha")
         assertEquals("https://home.example.org/u/neha", QrCodes.decode(pixels.pixels, pixels.size, pixels.size))

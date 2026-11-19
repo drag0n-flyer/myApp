@@ -349,6 +349,7 @@
     <string name="my_qr_description">Your QR code. Someone who scans it can add you.</string>
     <string name="my_qr_footer">Anyone who scans this code can add you as a contact.</string>
     <string name="my_qr_share">Share</string>
+    <string name="my_qr_needs_username">Choose a username first, then your code and link will be here.</string>
     <string name="scan_link_title">Scan QR code</string>
     <string name="link_confirm_message">Add %1$s to your contacts?</string>
     <string name="link_confirm_unknown">Couldn\'t add this person. Try again.</string>
