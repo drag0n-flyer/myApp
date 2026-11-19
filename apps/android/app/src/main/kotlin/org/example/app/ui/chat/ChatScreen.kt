@@ -505,6 +505,7 @@ fun ChatScreen(
                                 media = mediaHost,
                                 runFirst = runs[message.id]?.first ?: true,
                                 runLast = runs[message.id]?.last ?: true,
+                                onSwipeReply = if (MessageAction.Reply in actions) ({ perform(MessageAction.Reply, message.id) }) else null,
                             )
                         }
                     }

@@ -33,7 +33,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -86,6 +88,8 @@ fun MessageBubble(
     /** First and last bubble of a run by one sender: only the last has the tail corner, the first has more space above. */
     runFirst: Boolean = true,
     runLast: Boolean = true,
+    /** Reply to this message (swipe toward the trailing side, or the "Reply" accessibility action); null where Reply does not apply. */
+    onSwipeReply: (() -> Unit)? = null,
 ) {
     val content = message.content
     if (content is MessageContent.System) {
@@ -108,7 +112,10 @@ fun MessageBubble(
     val press = if (onLongPress == null) Modifier else Modifier
         .pointerInput(onLongPress) { detectTapGestures(onLongPress = { onLongPress() }) }
         .semantics { onLongClick(optionsLabel) { onLongPress(); true } }
-    Row(modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = if (runFirst) 4.dp else 0.dp, bottom = if (message.reactions.isNotEmpty()) 12.dp else 0.dp), horizontalArrangement = if (isOwn) Arrangement.End else Arrangement.Start) {
+    val replyLabel = stringResource(R.string.chat_action_reply)
+    val replyAction = if (onSwipeReply == null) Modifier else Modifier.semantics { customActions = listOf(CustomAccessibilityAction(replyLabel) { onSwipeReply(); true }) }
+    SwipeToReply(onSwipeReply, modifier.fillMaxWidth()) {
+    Row(Modifier.fillMaxWidth().then(replyAction).padding(start = 12.dp, end = 12.dp, top = if (runFirst) 4.dp else 0.dp, bottom = if (message.reactions.isNotEmpty()) 12.dp else 0.dp), horizontalArrangement = if (isOwn) Arrangement.End else Arrangement.Start) {
         Column {
         if (senderName != null && !isOwn) SenderLine(senderName, message.senderId)
         Box {
@@ -151,6 +158,7 @@ fun MessageBubble(
             menu()
         }
         }
+    }
     }
 }
 
