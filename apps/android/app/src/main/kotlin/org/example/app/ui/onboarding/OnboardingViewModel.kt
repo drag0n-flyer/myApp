@@ -39,6 +39,8 @@ data class OnboardingUiState(
     /** Linked, but no contact list arrived: the screen says "Contacts weren't copied". */
     val contactsNotCopied: Boolean = false,
     val recoveryCodeSent: Boolean = false,
+    /** Typed on Create account; shown again after Back or "Start again". */
+    val draft: SignUpDraft = SignUpDraft(),
 )
 
 /**
@@ -149,7 +151,12 @@ class OnboardingViewModel(
         }
     }
 
-    fun submitAccount(name: String, username: String, email: String) = run {
+    fun submitAccount(name: String, username: String, email: String) {
+        _state.update { it.copy(draft = SignUpDraft(name, username, email)) }
+        startSignUp(name, username, email)
+    }
+
+    private fun startSignUp(name: String, username: String, email: String) = run {
         service.startSignUp(name.trim(), username, email.trim())
         flow.accountSubmitted()
     }
@@ -157,6 +164,18 @@ class OnboardingViewModel(
     fun verifyEmail(code: String) = run {
         service.verifyEmail(code)
         flow.emailVerified()
+        // No passkey for this server or phone: the email code is the sign-in, so skip the passkey step.
+        if (!service.supportsPasskeys) {
+            service.finishSignUpWithEmailCode()
+            flow.passkeyCreated()
+        }
+    }
+
+    /** "Start again" after [AccountError.SignupExpired]: back to Create account with the typed details kept. */
+    fun startAgain() {
+        flow.restartSignUp()
+        publish { it.copy(error = null, usernameCheck = null) }
+        checkUsername(_state.value.draft.username)
     }
 
     fun createPasskey() = run {

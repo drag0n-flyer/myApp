@@ -25,6 +25,8 @@ sealed class AccountError : Exception() {
     data object CodeExpired : AccountError()
     data class TooManyAttempts(val retryAfterSeconds: Int?) : AccountError()
     data object LinkExpired : AccountError()
+    /** The sign-up is unknown, unverified, used up or timed out: the person starts it again. */
+    data object SignupExpired : AccountError()
     data object WrongServer : AccountError()
     /** The typed server address breaks the rules in [ServerAddress]. */
     data object InvalidServerAddress : AccountError()

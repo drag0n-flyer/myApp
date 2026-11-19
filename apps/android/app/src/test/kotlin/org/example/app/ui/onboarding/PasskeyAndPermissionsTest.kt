@@ -32,7 +32,7 @@ class PasskeyAndPermissionsTest {
     fun unsupportedServerExplainsEmailCode() {
         rule.setContent { AppTheme { PasskeyScreen(false, null, false, {}, {}) } }
         rule.onNodeWithText("Create passkey").assertDoesNotExist()
-        rule.onNodeWithText("Passkeys aren't available on this server. You'll sign in with an email code instead.").assertExists()
+        rule.onNodeWithText("Passkeys can't be used here. Use an email code instead.").assertExists()
     }
 
     @Test

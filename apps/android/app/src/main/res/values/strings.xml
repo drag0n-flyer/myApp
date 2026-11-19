@@ -218,8 +218,8 @@
     <string name="ob_verify">Verify</string>
 
     <string name="ob_passkey_title">Use your screen lock to sign in</string>
-    <string name="ob_passkey_message">No password to remember. Your passkey is saved to your Google account, so a new phone can sign in too.</string>
-    <string name="ob_passkey_unavailable">Passkeys aren\'t available on this server. You\'ll sign in with an email code instead.</string>
+    <string name="ob_passkey_message">No password to remember. Your passkey is saved to your Google account, so a new device can sign in too.</string>
+    <string name="ob_passkey_unavailable">Passkeys can\'t be used here. Use an email code instead.</string>
     <string name="ob_passkey_create">Create passkey</string>
     <string name="ob_passkey_email_instead">Use an email code instead</string>
 
@@ -259,7 +259,7 @@
     <string name="platform_android">Android</string>
     <string name="platform_other">Other device</string>
 
-    <string name="lost_title">Sign in on a new phone</string>
+    <string name="lost_title">Sign in on a new device</string>
     <string name="lost_message">Your account comes back, but old messages can only be restored from a backup.</string>
     <string name="lost_passkey">Sign in with passkey</string>
     <string name="lost_or_email">Or use your email</string>
@@ -277,10 +277,12 @@
     <string name="err_code_expired">That code has expired. Ask for a new one.</string>
     <string name="err_too_many_minutes">Too many tries. Try again in %1$d min.</string>
     <string name="err_too_many">Too many tries. Try again later.</string>
+    <string name="err_signup_expired">This sign-up has expired. Start again.</string>
+    <string name="ob_start_again">Start again</string>
     <string name="err_link_expired">This code has expired. Start again on the new device.</string>
     <string name="err_invalid_address">That isn\'t a valid server address. Use a name like chat.example.org, with an optional port.</string>
     <string name="err_wrong_server">This code is for a different server.</string>
-    <string name="err_passkey_unavailable">Passkeys aren\'t available on this server. Use an email code instead.</string>
+    <string name="err_passkey_unavailable">Passkeys can\'t be used here. Use an email code instead.</string>
     <string name="err_passkey_temporary">Something went wrong with your passkey. Please try again.</string>
     <string name="err_biometrics">Couldn\'t confirm it\'s you. Check your fingerprint or face and try again.</string>
     <string name="err_network">Can\'t reach the server. Check your connection and try again.</string>

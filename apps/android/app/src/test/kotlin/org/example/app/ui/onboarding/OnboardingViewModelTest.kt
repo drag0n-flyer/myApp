@@ -300,4 +300,48 @@ class OnboardingViewModelTest {
         assertEquals(AccountError.LinkExpired, vm.state.value.error)
         assertNull(vm.state.value.request)
     }
+
+    private class NoPasskeys(val inner: SampleAccountService = SampleAccountService()) : AccountService by inner {
+        override val supportsPasskeys: Boolean get() = false
+    }
+
+    private class Expiring(val inner: SampleAccountService = SampleAccountService()) : AccountService by inner {
+        override suspend fun finishSignUp() { throw AccountError.SignupExpired }
+    }
+
+    @Test
+    fun signupExpiredReturnsToCreateAccountWithFieldsKept() {
+        val vm = OnboardingViewModel(Expiring())
+        vm.getStarted(); vm.chooseDefaultServer(); vm.submitInvite(SampleAccountService.SAMPLE_INVITE_CODE)
+        vm.submitAccount("Asha Rao", "asha", "asha@example.com")
+        vm.verifyEmail(SampleAccountService.SAMPLE_EMAIL_CODE)
+        vm.createPasskey()
+        assertEquals(AccountError.SignupExpired, vm.state.value.error)
+        assertEquals(OnboardingStep.CreatePasskey, vm.state.value.step)
+        vm.startAgain()
+        assertEquals(OnboardingStep.CreateAccount, vm.state.value.step)
+        assertNull(vm.state.value.error)
+        assertEquals(Triple("Asha Rao", "asha", "asha@example.com"), vm.state.value.draft.let { Triple(it.name, it.username, it.email) })
+    }
+
+    @Test
+    fun withoutPasskeySupportVerifyEmailFinishesAndGoesToPermissions() {
+        val service = NoPasskeys()
+        val vm = OnboardingViewModel(service)
+        vm.getStarted(); vm.chooseDefaultServer(); vm.submitInvite(SampleAccountService.SAMPLE_INVITE_CODE)
+        vm.submitAccount("Asha", "asha", "asha@example.com")
+        vm.verifyEmail(SampleAccountService.SAMPLE_EMAIL_CODE)
+        assertEquals(OnboardingStep.Permissions, vm.state.value.step)
+        assertTrue(service.isSignedIn)
+        assertEquals(false, service.inner.passkeyRegistered)
+    }
+
+    @Test
+    fun withPasskeySupportVerifyEmailStillShowsThePasskeyStep() {
+        val vm = OnboardingViewModel(SampleAccountService())
+        vm.getStarted(); vm.chooseDefaultServer(); vm.submitInvite(SampleAccountService.SAMPLE_INVITE_CODE)
+        vm.submitAccount("Asha", "asha", "asha@example.com")
+        vm.verifyEmail(SampleAccountService.SAMPLE_EMAIL_CODE)
+        assertEquals(OnboardingStep.CreatePasskey, vm.state.value.step)
+    }
 }

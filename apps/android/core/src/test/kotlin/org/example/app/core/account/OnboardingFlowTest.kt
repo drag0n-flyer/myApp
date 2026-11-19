@@ -8,6 +8,24 @@ import kotlin.test.assertTrue
 class OnboardingFlowTest {
     private val invite = InviteLink("home.example.org", "ABCDE-FGH23")
 
+    @Test fun restartSignUpReturnsToCreateAccountFromLaterSteps() {
+        val flow = OnboardingFlow(DevicePlatform.Android)
+        flow.getStarted()
+        flow.choose(ServerChoice.Invite(invite), requiresInvite = false)
+        flow.accountSubmitted(); flow.emailVerified()
+        assertEquals(OnboardingStep.CreatePasskey, flow.step)
+        flow.restartSignUp()
+        assertEquals(OnboardingStep.CreateAccount, flow.step)
+        flow.back()
+        assertEquals(OnboardingStep.JoinServer, flow.step)
+    }
+
+    @Test fun restartSignUpDoesNothingOutsideSignUp() {
+        val flow = OnboardingFlow(DevicePlatform.Android)
+        flow.restartSignUp()
+        assertEquals(OnboardingStep.Welcome, flow.step)
+    }
+
     @Test fun androidCanCreateAnAccount() {
         assertTrue(OnboardingFlow(DevicePlatform.Android).canCreateAccount)
         assertTrue(OnboardingFlow(DevicePlatform.IPhone).canCreateAccount)
