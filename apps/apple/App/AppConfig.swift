@@ -1,5 +1,6 @@
 import Foundation
 import Messaging
+import SecureMessaging
 import ServerKit
 
 /// Build settings the project writes into Info.plist (`project.yml`).
@@ -25,7 +26,8 @@ struct AppConfig {
             pushGatewayURL: string("PushGatewayURL"),
             pushGatewayKey: Base64URLData(encoded: string("PushGatewayKey")).map(\.data).flatMap { $0.count == 32 ? $0 : nil },
             apnsEnvironment: string("APNSEnvironment").isEmpty ? "sandbox" : string("APNSEnvironment"),
-            keychainAccessGroup: group.isEmpty ? nil : group
+            // An unsigned build cannot use the shared group: it falls back to its own (KeychainAccess).
+            keychainAccessGroup: group.isEmpty ? nil : KeychainAccess.usableGroup(group)
         )
     }
 }

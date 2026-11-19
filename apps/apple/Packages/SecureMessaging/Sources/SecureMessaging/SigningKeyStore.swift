@@ -30,6 +30,35 @@ enum SigningKeyEncoding {
     }
 }
 
+#if canImport(Security)
+/// Whether this process may use a Keychain access group. A build without a team signature (the
+/// unsigned Mac and iPhone downloads, or an iPhone app re-signed by a sideloading tool) has no
+/// `keychain-access-groups` entitlement, so every item in the shared group fails with
+/// errSecMissingEntitlement. Those builds keep their items in the app's own default group instead
+/// (and on the Mac in the login keychain); they have no notification extension to share with.
+public enum KeychainAccess {
+    /// `group` when this process is entitled to it, else `nil`. Only a missing entitlement turns the
+    /// group off; any other answer (a locked Keychain, say) keeps it.
+    public static func usableGroup(_ group: String?) -> String? {
+        guard let group else { return nil }
+        var q: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "org.example.app.keychain-probe",
+            kSecAttrAccount as String: "probe",
+            kSecAttrAccessGroup as String: group,
+            kSecAttrSynchronizable as String: false,
+        ]
+        #if os(macOS)
+        q[kSecUseDataProtectionKeychain as String] = true
+        #endif
+        let status = SecItemAdd(q.merging([kSecValueData as String: Data([1])]) { $1 } as CFDictionary, nil)
+        if status == errSecMissingEntitlement { return nil }
+        if status == errSecSuccess || status == errSecDuplicateItem { SecItemDelete(q as CFDictionary) }
+        return group
+    }
+}
+#endif
+
 /// The Info.plist key that names the shared Keychain access group. It is required: without it
 /// each process would use its own default group, and the notification extension could not read
 /// the app's signing key (it would make a different one).
@@ -89,10 +118,12 @@ public struct KeychainSigningKeyStore: SigningKeyStore {
             kSecAttrAccount as String: identity,
             kSecAttrSynchronizable as String: false,
         ]
-        #if os(macOS)
-        query[kSecUseDataProtectionKeychain as String] = true   // the iOS-style keychain, with access groups
-        #endif
-        if let accessGroup { query[kSecAttrAccessGroup as String] = accessGroup }
+        if let accessGroup {
+            query[kSecAttrAccessGroup as String] = accessGroup
+            #if os(macOS)
+            query[kSecUseDataProtectionKeychain as String] = true   // the iOS-style keychain, with access groups
+            #endif
+        }
         return query
     }
 

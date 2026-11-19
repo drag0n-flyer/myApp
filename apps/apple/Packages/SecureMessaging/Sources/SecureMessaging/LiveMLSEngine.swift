@@ -191,6 +191,6 @@ public func makeMLSEngine(identity: String, storage: URL) throws -> MLSEngine {
     let group = try KeychainAccessGroupConfig.resolve(
         Bundle.main.object(forInfoDictionaryKey: KeychainAccessGroupConfig.infoKey))
     return try LiveMLSEngine(
-        identity: identity, storage: storage, keys: KeychainSigningKeyStore(accessGroup: group))
+        identity: identity, storage: storage, keys: KeychainSigningKeyStore(accessGroup: KeychainAccess.usableGroup(group)))
 }
 #endif
