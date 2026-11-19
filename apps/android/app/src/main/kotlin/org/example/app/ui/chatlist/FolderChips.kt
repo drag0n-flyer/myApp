@@ -1,6 +1,7 @@
 package org.example.app.ui.chatlist
 
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -15,7 +16,7 @@ import org.example.app.core.chats.ChatFolder
 
 @Composable
 fun FolderChips(chips: List<FolderChip>, selectedId: String, onSelect: (String) -> Unit, modifier: Modifier = Modifier) {
-    LazyRow(modifier, contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    LazyRow(modifier.padding(vertical = 4.dp), contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         items(chips, key = { it.folder.id }) { chip ->
             val label = when (chip.folder.kind) {
                 ChatFolder.Kind.All -> stringResource(R.string.folder_all)

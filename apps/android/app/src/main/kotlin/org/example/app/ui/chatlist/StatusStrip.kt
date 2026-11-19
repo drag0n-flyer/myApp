@@ -36,16 +36,16 @@ fun StatusStrip(host: String, modeKey: String, status: ConnectionStatus = Connec
         ConnectionStatus.Offline -> stringResource(R.string.status_offline)
     }
     val dot = if (status == ConnectionStatus.Connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
-    Surface(modifier.fillMaxWidth().padding(horizontal = 16.dp), shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surfaceContainer) {
+    Surface(modifier.fillMaxWidth().padding(horizontal = 16.dp), shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainer) {
         Row(
-            Modifier.padding(horizontal = 12.dp, vertical = 6.dp).semantics(mergeDescendants = true) { contentDescription = label },
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp).semantics(mergeDescendants = true) { contentDescription = label },
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Box(Modifier.size(8.dp).background(dot, CircleShape).clearAndSetSemantics {})
             if (status == ConnectionStatus.Connected) {
-                Text(host, style = MaterialTheme.typography.labelMedium)
-                Text("· $mode", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(host, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f), maxLines = 1)
+                Text("· $mode", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, maxLines = 1)
             } else {
                 Text(label, style = MaterialTheme.typography.labelMedium)
             }

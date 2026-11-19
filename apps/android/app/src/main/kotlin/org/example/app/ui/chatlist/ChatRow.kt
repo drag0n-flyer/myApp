@@ -10,8 +10,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Badge
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -41,11 +44,13 @@ import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import org.example.app.R
+import org.example.app.core.chats.MessagePreview
 import org.example.app.ui.Avatar
 import org.example.app.ui.previewText
 import org.example.app.ui.shortTime
@@ -58,6 +63,22 @@ class ChatRowActions(
     val markRead: (chatId: String) -> Unit,
     val onPinRefused: () -> Unit,
 )
+
+/** The small icon before a call, voice or photo preview; [alert] draws it in the error colour (a missed call). */
+data class PreviewGlyph(val icon: Int, val alert: Boolean)
+
+internal fun previewGlyph(preview: MessagePreview?): PreviewGlyph? {
+    val key = (preview as? MessagePreview.Resource)?.key ?: return null
+    return when (key) {
+        "preview_voice" -> PreviewGlyph(R.drawable.ic_mic, false)
+        "preview_photo" -> PreviewGlyph(R.drawable.ic_image, false)
+        "preview_missed_audio_call" -> PreviewGlyph(R.drawable.ic_call, true)
+        "preview_missed_video_call" -> PreviewGlyph(R.drawable.ic_videocam, true)
+        "preview_audio_call" -> PreviewGlyph(R.drawable.ic_call, false)
+        "preview_video_call" -> PreviewGlyph(R.drawable.ic_videocam, false)
+        else -> null
+    }
+}
 
 /** One chat row: name, last message or draft, time, pin and muted icons, unread count. */
 @OptIn(ExperimentalFoundationApi::class)
@@ -79,11 +100,18 @@ fun ChatRow(
     } else {
         modifier.combinedClickable(role = Role.Button, onClick = onClick, onLongClick = onLongClick)
     }
+    val unread = row.unreadCount > 0
+    Column {
     ListItem(
         modifier = if (selected == null) clickable else clickable.semantics { this.selected = selected },
         colors = if (selected == true) ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.secondaryContainer) else ListItemDefaults.colors(),
-        leadingContent = { Avatar(row.name.ifEmpty { stringResource(R.string.group_untitled) }, colorKey = row.colorKey) },
-        headlineContent = { Text(row.name.ifEmpty { stringResource(R.string.group_untitled) }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        leadingContent = { Avatar(row.name.ifEmpty { stringResource(R.string.group_untitled) }, size = 52.dp, colorKey = row.colorKey) },
+        headlineContent = {
+            Text(
+                row.name.ifEmpty { stringResource(R.string.group_untitled) }, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
+            )
+        },
         supportingContent = {
             val draft = row.draft
             if (row.typing) {
@@ -106,7 +134,22 @@ fun ChatRow(
                     maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
             } else {
-                Text(preview, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val glyph = previewGlyph(row.preview)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (glyph != null) {
+                        Icon(
+                            painterResource(glyph.icon), contentDescription = null, modifier = Modifier.size(16.dp),
+                            tint = if (glyph.alert) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.width(4.dp))
+                    }
+                    Text(
+                        preview, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        color = if (glyph?.alert == true) MaterialTheme.colorScheme.error
+                        else if (unread) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = if (unread) FontWeight.Medium else null,
+                    )
+                }
             }
         },
         trailingContent = {
@@ -124,7 +167,12 @@ fun ChatRow(
                             modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    row.time?.let { Text(shortTime(it), style = MaterialTheme.typography.labelSmall) }
+                    row.time?.let {
+                        Text(
+                            shortTime(it), style = MaterialTheme.typography.labelSmall,
+                            color = if (unread && !row.muted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
                 if (row.unreadCount > 0) {
                     UnreadBadge(row.unreadCount, muted = row.muted)
@@ -132,6 +180,9 @@ fun ChatRow(
             }
         },
     )
+    // A hairline that starts after the photo, as in the mockup.
+    HorizontalDivider(Modifier.padding(start = 84.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+    }
 }
 
 /** The unread count. A muted chat's count is neutral, not the accent colour. */
