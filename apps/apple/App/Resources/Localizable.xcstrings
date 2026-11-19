@@ -2193,6 +2193,17 @@
         }
       }
     },
+    "Nothing unread" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nothing unread"
+          }
+        }
+      }
+    },
     "Not available on this device yet" : {
       "extractionState" : "manual",
       "localizations" : {
