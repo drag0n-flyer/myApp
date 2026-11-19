@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "magic": "APPARCH1",
+  "chunkSize": 1048576,
+  "keyHex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+  "noncePrefixHex": "a0a1a2a3a4a5a6",
+  "plaintextSeed": "i mod 251",
+  "cases": [
+    {
+      "name": "empty",
+      "plaintextLength": 0,
+      "ciphertextLength": 36,
+      "ciphertextSha256Hex": "87d8a81095ff9cfc98a401bb2f76c2f1ce5923e5e5a0c2b6901ddf071bfcbe13",
+      "ciphertextHex": "415050415243483101a0a1a2a3a4a5a6000000107ef09a6cf2590324c723cac9f3fac203"
+    },
+    {
+      "name": "one byte",
+      "plaintextLength": 1,
+      "ciphertextLength": 37,
+      "ciphertextSha256Hex": "91fabc450a045c30b6edfcccadcd6eb73628f4818e89651c15ef2ca049d41d89",
+      "ciphertextHex": "415050415243483101a0a1a2a3a4a5a6000000115fb303ec186af5f616e7d01c79783db190"
+    },
+    {
+      "name": "exactly one chunk",
+      "plaintextLength": 1048576,
+      "ciphertextLength": 1048612,
+      "ciphertextSha256Hex": "ac4609588c83446d016d9fbd94ed09f86917fadf771945bce5c140424ea5976c"
+    },
+    {
+      "name": "one chunk and one byte",
+      "plaintextLength": 1048577,
+      "ciphertextLength": 1048633,
+      "ciphertextSha256Hex": "064ae8bde72cb7915fd2f337cb2a6fe130c796bbfad0a3ae56e350dbd35e2bbb"
+    }
+  ],
+  "negative": [
+    {
+      "name": "missing final chunk",
+      "case": "one chunk and one byte",
+      "op": "dropLastRecord"
+    },
+    {
+      "name": "reordered chunks",
+      "case": "one chunk and one byte",
+      "op": "swapRecords",
+      "b": 1
+    },
+    {
+      "name": "flipped bit in first chunk",
+      "case": "one chunk and one byte",
+      "op": "flipBit",
+      "a": 100,
+      "b": 3
+    },
+    {
+      "name": "flipped bit in final chunk tag",
+      "case": "one byte",
+      "op": "flipBit",
+      "a": 21
+    },
+    {
+      "name": "flipped bit in header",
+      "case": "one byte",
+      "op": "flipBit",
+      "a": 9
+    },
+    {
+      "name": "extra byte after final chunk",
+      "case": "one byte",
+      "op": "appendHex",
+      "hex": "00"
+    },
+    {
+      "name": "extra record after final chunk",
+      "case": "one byte",
+      "op": "appendHex",
+      "hex": "0000001000000000000000000000000000000000"
+    },
+    {
+      "name": "no final chunk (header only)",
+      "case": "empty",
+      "op": "dropLastRecord"
+    },
+    {
+      "name": "no bytes at all",
+      "case": "empty",
+      "op": "emptyInput"
+    },
+    {
+      "name": "wrong key",
+      "case": "one chunk and one byte",
+      "op": "none",
+      "keyHex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3e"
+    }
+  ]
+}
