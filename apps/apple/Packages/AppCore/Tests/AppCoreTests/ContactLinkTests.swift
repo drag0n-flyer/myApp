@@ -23,6 +23,14 @@ import Testing
         #expect(ContactLink.parse(URL(string: "https://chat.example.org/u/alice")!, serverHost: "Chat.Example.Org") == .user("alice"))
     }
 
+    @Test func defaultPortIsNoPort() {
+        #expect(parse("https://chat.example.org:443/u/alice") == .user("alice"))
+        #expect(ContactLink.parse(URL(string: "https://chat.example.org/u/alice")!, serverHost: "chat.example.org:443") == .user("alice"))
+        #expect(parse("https://chat.example.org:8443/u/alice") == .otherServer)
+        #expect(ContactLink.parse(URL(string: "https://chat.example.org:8443/u/alice")!, serverHost: "chat.example.org:8443") == .user("alice"))
+        #expect(ContactLink.parse(URL(string: "https://chat.example.org/u/alice")!, serverHost: "chat.example.org:8443") == .otherServer)
+    }
+
     @Test func otherHost() {
         #expect(parse("https://evil.example.com/u/alice") == .otherServer)
         #expect(parse("https://evil.example.com/c/\(token)") == .otherServer)

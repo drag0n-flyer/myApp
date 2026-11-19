@@ -24,7 +24,11 @@ public enum ContactLink: Equatable, Sendable, CustomStringConvertible, CustomDeb
         case "c" where isToken(parts[2]): link = .invite(parts[2])
         default: return .notALink
         }
-        return host.lowercased() == serverHost.lowercased() ? link : .otherServer
+        // The port counts, except the https default (443), which is the same as none.
+        let authority = url.port.map { $0 == 443 ? host : "\(host):\($0)" } ?? host
+        var mine = serverHost.trimmingCharacters(in: .whitespaces).lowercased()
+        if mine.hasSuffix(":443") { mine.removeLast(4) }
+        return authority.lowercased() == mine ? link : .otherServer
     }
 
     /// `https://<host>/u/<username>`, or `nil` for a name the rule refuses.

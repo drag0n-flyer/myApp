@@ -479,8 +479,8 @@ public actor InboxProcessor {
         }
     }
 
-    /// A Welcome that cannot be joined is parked with a `joinFailed` placeholder, so the user sees the chat the peer
-    /// believes exists. Any other item gets an undecryptable placeholder in its conversation, or is parked when
+    /// A Welcome that cannot be joined is parked, and a one-to-one one also gets a `joinFailed` placeholder, so the user
+    /// sees the chat the peer believes exists; a group Welcome is only parked. Any other item gets an undecryptable placeholder in its conversation, or is parked when
     /// that conversation is not known. Runs inside the caller's transaction.
     private func placeholderOrPark(_ raw: RawInboxRecord, reason: String, group: Bool = false) throws {
         if raw.kind == "welcome" {
