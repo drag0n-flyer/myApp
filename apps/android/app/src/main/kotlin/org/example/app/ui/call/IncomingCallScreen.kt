@@ -42,6 +42,7 @@ fun IncomingCallScreen(viewModel: CallViewModel, modifier: Modifier = Modifier) 
         onAnswer = { viewModel.answer(current.isVideoCall) },
         modifier = modifier,
         colorKey = current.contactId,
+        isVideo = current.isVideoCall,
     )
 }
 
@@ -50,7 +51,7 @@ fun IncomingCallScreen(viewModel: CallViewModel, modifier: Modifier = Modifier) 
  * of the iPhone's CallKit screen).
  */
 @Composable
-fun IncomingCallContent(name: String, onDecline: () -> Unit, onAnswer: () -> Unit, modifier: Modifier = Modifier, colorKey: String? = null) {
+fun IncomingCallContent(name: String, onDecline: () -> Unit, onAnswer: () -> Unit, modifier: Modifier = Modifier, colorKey: String? = null, isVideo: Boolean = false) {
     CallTheme {
         CallBackHandler(onMinimise = null)
         Box(modifier.fillMaxSize().background(Backdrop).consumeTouches()) {
@@ -61,13 +62,13 @@ fun IncomingCallContent(name: String, onDecline: () -> Unit, onAnswer: () -> Uni
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    Avatar(name, size = 110.dp, modifier = Modifier.padding(bottom = 8.dp), colorKey = colorKey)
+                    Avatar(name, size = 128.dp, modifier = Modifier.padding(bottom = 8.dp), colorKey = colorKey)
                     Text(name, style = MaterialTheme.typography.headlineMedium, color = Color.White, textAlign = TextAlign.Center)
-                    Text(stringResource(R.string.call_incoming), style = MaterialTheme.typography.titleMedium, color = Color.White.copy(alpha = 0.7f))
+                    Text(stringResource(if (isVideo) R.string.call_incoming_video else R.string.call_incoming), style = MaterialTheme.typography.titleMedium, color = Color.White.copy(alpha = 0.7f))
                 }
             }
-            val decline: @Composable () -> Unit = { CallControl(stringResource(R.string.call_decline), R.drawable.ic_call_end, tint = EndRed, onClick = onDecline) }
-            val answer: @Composable () -> Unit = { CallControl(stringResource(R.string.call_answer), R.drawable.ic_call, tint = AnswerGreen, onClick = onAnswer) }
+            val decline: @Composable () -> Unit = { CallControl(stringResource(R.string.call_decline), R.drawable.ic_call_end, tint = EndRed, onClick = onDecline, buttonSize = 72.dp) }
+            val answer: @Composable () -> Unit = { CallControl(stringResource(R.string.call_answer), if (isVideo) R.drawable.ic_videocam else R.drawable.ic_call, tint = AnswerGreen, onClick = onAnswer, buttonSize = 72.dp) }
             if (landscape) {
                 // The two buttons sit along the short edge, beside the name.
                 Row(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(24.dp), verticalAlignment = Alignment.CenterVertically) {

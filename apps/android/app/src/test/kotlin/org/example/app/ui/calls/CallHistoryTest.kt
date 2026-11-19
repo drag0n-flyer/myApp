@@ -68,6 +68,12 @@ class CallHistoryTest {
     }
 
     @Test
+    fun rowShowsDirectionAndTimeOnOneLine() {
+        launch()
+        rule.onNode(androidx.compose.ui.test.hasText("Missed audio call · ", substring = true)).assertIsDisplayed()
+    }
+
+    @Test
     fun callBackButtonStartsACall() {
         launch()
         rule.onNodeWithContentDescription("Call Dev").performClick()

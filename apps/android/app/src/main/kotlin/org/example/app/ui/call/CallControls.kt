@@ -106,6 +106,7 @@ fun CallControl(
     modifier: Modifier = Modifier,
     isOn: Boolean = false,
     tint: Color? = null,
+    buttonSize: androidx.compose.ui.unit.Dp = 52.dp,
 ) {
     val fill = tint ?: if (isOn) Color.White else Color.White.copy(alpha = 0.18f)
     val content = if (tint == null && isOn) Color.Black else Color.White
@@ -123,7 +124,7 @@ fun CallControl(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Box(Modifier.size(52.dp).background(fill, CircleShape), contentAlignment = Alignment.Center) {
+        Box(Modifier.size(buttonSize).background(fill, CircleShape), contentAlignment = Alignment.Center) {
             Icon(painterResource(icon), contentDescription = null, tint = content)
         }
         Text(label, style = MaterialTheme.typography.labelSmall, color = Color.White)
