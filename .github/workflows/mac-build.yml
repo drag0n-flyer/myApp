@@ -49,14 +49,15 @@ jobs:
           brew install xcodegen
           xcodegen generate --spec apps/apple/project.yml
 
-      # The hardened runtime would refuse the ad-hoc signed libraries.
+      # The hardened runtime would refuse the ad-hoc signed libraries. PASSKEY_DOMAINS=none: without
+      # its entitlements the app cannot use passkeys, so it goes straight to the email code.
       - name: Build the app
         env:
           SERVER_HOST: ${{ inputs.server_host }}
         run: |
           xcodebuild -project apps/apple/App.xcodeproj -scheme AppMac -configuration Release \
             -destination 'generic/platform=macOS' -derivedDataPath "$RUNNER_TEMP/dd" \
-            DEFAULT_SERVER_HOST="$SERVER_HOST" PASSKEY_DOMAINS="$SERVER_HOST" \
+            DEFAULT_SERVER_HOST="$SERVER_HOST" PASSKEY_DOMAINS=none \
             CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGN_ENTITLEMENTS= \
             ENABLE_HARDENED_RUNTIME=NO build
 

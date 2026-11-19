@@ -1,6 +1,6 @@
-# Release: pushing a version tag (v1.2.3) builds the Android APK, the Mac app and the server
-# binaries, then publishes a GitHub Release with them attached. The iPhone app needs the
-# owner's signing, so it goes out through ios-testflight.yml, started by hand.
+# Release: pushing a version tag (v1.2.3) builds the Android APK, the unsigned iPhone .ipa, the
+# Mac app and the server binaries, then publishes a GitHub Release with them attached. The
+# signed iPhone app goes out through ios-testflight.yml, started by hand.
 
 name: release
 
@@ -18,6 +18,11 @@ concurrency:
 jobs:
   android:
     uses: ./.github/workflows/android-build.yml
+    with:
+      server_host: chat.shimul.me
+
+  ios:
+    uses: ./.github/workflows/ios-build.yml
     with:
       server_host: chat.shimul.me
 
@@ -58,7 +63,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: [android, mac, server]
+    needs: [android, ios, mac, server]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -74,6 +79,7 @@ jobs:
           set -euo pipefail
           mkdir files
           mv dist/App-android/app-debug.apk "files/App-$TAG-android.apk"
+          mv dist/App-ios/App-ios.ipa "files/App-$TAG-ios-unsigned.ipa"
           mv dist/App-mac/App-mac.zip "files/App-$TAG-mac.zip"
           for f in dist/server/*; do mv "$f" "files/$(basename "$f")-$TAG"; done
           (cd files && sha256sum * > SHA256SUMS)
@@ -83,5 +89,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          # A test build (debug-signed Android, ad-hoc Mac), so it is marked a pre-release.
+          # A test build (debug-signed Android, unsigned iPhone, ad-hoc Mac), so it is marked a pre-release.
           gh release create "$TAG" files/* --repo "$GITHUB_REPOSITORY" --title "$TAG" --generate-notes --prerelease

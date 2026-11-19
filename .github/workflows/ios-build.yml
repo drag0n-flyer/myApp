@@ -1,0 +1,82 @@
+# iPhone test build: an unsigned .ipa for the owner to sign onto their own iPhone (for example
+# with Sideloadly or AltStore and an Apple ID). Manually started, and run by release.yml.
+# Unsigned, so iOS gives it no app group, keychain group, push or passkeys; sign-in uses the
+# email code. TestFlight (ios-testflight.yml) is the signed route.
+
+name: ios-build
+
+on:
+  workflow_dispatch:
+    inputs:
+      server_host:
+        description: Server the app connects to by default
+        default: chat.shimul.me
+        required: true
+  # release.yml calls this for a version tag.
+  workflow_call:
+    inputs:
+      server_host:
+        description: Server the app connects to by default
+        type: string
+        default: chat.shimul.me
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-build-${{ github.event_name }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Not committed. Without it the app builds but has no messaging engine.
+      - name: Build the MLS engine
+        working-directory: apps/apple/Packages/SecureMessaging
+        run: scripts/build-mlsffi.sh
+
+      - name: Fetch the noise model
+        run: apps/apple/Packages/CallMedia/scripts/fetch-rnnoise-model.sh
+
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate --spec apps/apple/project.yml
+
+      # PASSKEY_DOMAINS=none: an unsigned app cannot use passkeys, so it goes straight to the email code.
+      - name: Build the app
+        env:
+          SERVER_HOST: ${{ inputs.server_host }}
+        run: |
+          set -euo pipefail
+          [[ "$SERVER_HOST" =~ ^[A-Za-z0-9.-]+$ ]] || { echo "::error::Bad server name"; exit 1; }
+          xcodebuild -project apps/apple/App.xcodeproj -scheme AppiOS -configuration Release \
+            -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/dd" \
+            DEFAULT_SERVER_HOST="$SERVER_HOST" PASSKEY_DOMAINS=none \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= CODE_SIGN_ENTITLEMENTS= \
+            build
+
+      - name: Package the .ipa
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/dd/Build/Products/Release-iphoneos/App.app"
+          lipo -archs "$APP/App"
+          /usr/libexec/PlistBuddy -c 'Print :DefaultServerHost' "$APP/Info.plist"
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/"
+          (cd "$RUNNER_TEMP/ipa" && zip -qry "$RUNNER_TEMP/App-ios.ipa" Payload)
+          ls -la "$RUNNER_TEMP/App-ios.ipa"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: App-ios
+          path: ${{ runner.temp }}/App-ios.ipa
+          retention-days: 14
+          if-no-files-found: error
