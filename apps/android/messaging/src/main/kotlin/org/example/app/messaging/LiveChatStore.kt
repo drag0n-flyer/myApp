@@ -18,6 +18,8 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.example.app.core.chats.LinkPreviewRule
+import org.example.app.core.chats.PollOption
+import org.example.app.core.chats.PollRules
 import org.example.app.core.chats.SendPlan
 import org.example.app.core.chats.UploadCancel
 import kotlinx.coroutines.CompletableDeferred
@@ -423,6 +425,7 @@ class LiveChatStore(
                 attachment = if (plain) repo.attachmentForMessage(record.id) else null,
                 reactions = if (plain && !record.deleted) repo.reactions(record.id) else emptyList(),
                 showRead = show,
+                votes = { repo.pollVotes(it) }, me = device.accountId,
                 displayName = { account -> personName(account) },
                 groupStatus = if (plain) groupTick(record, members, receiptsByMessage) else null,
             )
@@ -1211,6 +1214,26 @@ class LiveChatStore(
         val chosen = if (mine == emoji) "" else emoji
         repo.setReaction(messageId, device.accountId, chosen)
         sendControl(chatId) { id, at -> ContentEnvelope.React(id, at, messageId, chosen) }
+    }
+
+    override fun sendPoll(question: String, options: List<PollOption>, multi: Boolean, chatId: String) {
+        if (!PollRules.valid(question, options)) return
+        write {
+            if (!sendableChat(chatId)) return@write
+            outbox.enqueue(ContentEnvelope.Poll(freshId(), nowMs(), question, options, multi), chatId)
+            bumpActivity(chatId, nowMs())
+            requestFlush()
+        }
+    }
+
+    override fun vote(pollId: String, chatId: String, optionIds: List<String>) = write {
+        val record = repo.message(pollId) ?: return@write
+        if (record.chatId != chatId || record.deleted || record.undecryptable) return@write
+        val poll = ContentCodec.decode(record.envelope) as? ContentEnvelope.Poll ?: return@write
+        val ids = PollRules.normalize(poll.options, poll.multi, optionIds)
+        val at = nowMs()
+        repo.setPollVote(pollId, device.accountId, chatId, ids, at)
+        sendControl(chatId) { id, _ -> ContentEnvelope.PollVote(id, at, pollId, ids) }
     }
 
     override fun edit(messageId: String, chatId: String, text: String) = write {

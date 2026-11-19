@@ -28,7 +28,9 @@ object MessageActions {
         return buildList {
             add(MessageAction.Reply)
             add(MessageAction.React)
-            if (text) {
+            if (content is MessageContent.Poll) {
+                // Nothing to copy, forward or edit: a poll can be replied to, reacted to and deleted.
+            } else if (text) {
                 add(MessageAction.Copy)
                 add(MessageAction.Forward)
                 if (isMine) add(MessageAction.Edit)

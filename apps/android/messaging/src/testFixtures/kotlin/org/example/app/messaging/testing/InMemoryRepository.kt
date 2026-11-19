@@ -5,6 +5,7 @@ import org.example.app.messaging.ports.CallRecord
 import org.example.app.messaging.ports.ChatKind
 import org.example.app.messaging.ports.ChatRecord
 import org.example.app.messaging.ports.GroupMemberRecord
+import org.example.app.messaging.ports.PollVoteRecord
 import org.example.app.messaging.ports.GroupStoreRules
 import org.example.app.messaging.ports.MyState
 import org.example.app.messaging.ports.ReceiptRecord
@@ -51,13 +52,14 @@ class InMemoryRepository : Repository {
         val profiles: MutableMap<String, ProfileRecord> = linkedMapOf(),
         val groupMembers: MutableMap<String, List<GroupMemberRecord>> = linkedMapOf(),
         val receipts: MutableMap<Triple<String, String, String>, ReceiptRecord> = linkedMapOf(),
+        val pollVotes: MutableMap<Pair<String, String>, PollVoteRecord> = linkedMapOf(),
     ) {
         fun copy(): State = State(
             LinkedHashMap(contacts), LinkedHashMap(chats), LinkedHashMap(drafts), java.util.TreeMap(conversations), LinkedHashMap(members),
             LinkedHashMap(safety), LinkedHashMap(messages), LinkedHashMap(reactions), LinkedHashMap(attachments),
             LinkedHashMap(outbox), java.util.TreeMap(raw), LinkedHashMap(processed), LinkedHashMap(folders),
             LinkedHashMap(folderChats), LinkedHashMap(blocked), ArrayList(calls), java.util.TreeMap(kv), LinkedHashMap(profiles),
-            LinkedHashMap(groupMembers), LinkedHashMap(receipts),
+            LinkedHashMap(groupMembers), LinkedHashMap(receipts), LinkedHashMap(pollVotes),
         )
     }
 
@@ -167,6 +169,7 @@ class InMemoryRepository : Repository {
         val msgs = s.messages.values.filter { it.chatId == id }.map { it.id }.toSet()
         msgs.forEach { s.messages.remove(it) }
         s.reactions.keys.removeAll { it.first in msgs }
+        s.pollVotes.keys.removeAll { s.pollVotes[it]?.chatId == id }
         s.attachments.values.removeAll { it.messageId in msgs }
         s.outbox.values.removeAll { it.chatId == id }
         s.safety.remove(id)
@@ -310,6 +313,12 @@ class InMemoryRepository : Repository {
         else s.reactions[messageId to accountId] = ReactionRecord(messageId, accountId, emoji)
         Unit
     }
+    override fun setPollVote(pollId: String, accountId: String, chatId: String, optionIds: List<String>, at: Long) = tx {
+        val old = s.pollVotes[pollId to accountId]
+        if (old == null || old.at < at) s.pollVotes[pollId to accountId] = PollVoteRecord(pollId, accountId, chatId, optionIds, at)
+        Unit
+    }
+    override fun pollVotes(pollId: String) = tx { s.pollVotes.values.filter { it.pollId == pollId }.sortedWith(compareBy({ it.at }, { it.accountId })) }
     override fun reactions(messageId: String) = tx { s.reactions.values.filter { it.messageId == messageId }.sortedBy { it.accountId } }
     override fun search(query: String, limit: Int) = tx {
         val q = query.lowercase()

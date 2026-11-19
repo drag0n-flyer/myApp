@@ -107,6 +107,7 @@ class Outbox(
             is ContentEnvelope.Text -> limited.t to limited.r
             is ContentEnvelope.Photo -> limited.c.orEmpty() to limited.r
             is ContentEnvelope.Voice -> "" to limited.r
+            is ContentEnvelope.Poll -> (listOf(limited.question) + limited.options.map { it.text }).joinToString(" ") to null
             is ContentEnvelope.File -> listOfNotNull(limited.name, limited.c).joinToString(" ") to limited.r
             else -> "" to null
         }

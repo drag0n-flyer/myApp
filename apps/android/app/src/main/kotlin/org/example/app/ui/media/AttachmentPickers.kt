@@ -36,7 +36,7 @@ import org.example.app.media.VoicePrep
 import org.example.app.media.VoiceRecorder
 
 /** The rows of the attach sheet. */
-enum class AttachChoice { Photo, Camera, File }
+enum class AttachChoice { Photo, Camera, File, Poll }
 
 /**
  * The three ways to add something to a message. [start] opens the system's own screen for each: the photo picker, the
@@ -140,6 +140,8 @@ fun rememberAttachmentPickers(
                 when (choice) {
                     AttachChoice.Photo -> expectReturn().also { photo.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) }
                     AttachChoice.File -> expectReturn().also { document.launch(arrayOf("*/*")) }
+                    // Not a system picker: the chat screen opens its own poll sheet.
+                    AttachChoice.Poll -> Unit
                     AttachChoice.Camera ->
                         if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
                             startCamera()

@@ -20,6 +20,7 @@ import org.example.app.messaging.ports.OutboxRecord
 import org.example.app.messaging.ports.RawInboxRecord
 import org.example.app.core.people.ProfileMerge
 import org.example.app.messaging.ports.ProfileRecord
+import org.example.app.messaging.ports.PollVoteRecord
 import org.example.app.messaging.ports.ReactionRecord
 import org.example.app.messaging.ports.Repository
 import org.example.app.messaging.ports.SafetyRecord
@@ -280,6 +281,17 @@ class RoomRepository(
         if (emoji.isEmpty()) messages.removeReaction(messageId, accountId)
         else messages.setReaction(ReactionEntity(messageId, accountId, emoji))
     }
+    override fun setPollVote(pollId: String, accountId: String, chatId: String, optionIds: List<String>, at: Long) {
+        transaction {
+            val old = chats.pollVoteAt(pollId, accountId)
+            if (old == null || old < at) chats.putPollVote(PollVoteEntity(pollId, accountId, chatId, optionIds.joinToString("\u001F"), at))
+        }
+    }
+
+    override fun pollVotes(pollId: String) = chats.pollVotes(pollId).map {
+        PollVoteRecord(it.pollId, it.accountId, it.chatId, if (it.optionIds.isEmpty()) emptyList() else it.optionIds.split('\u001F'), it.at)
+    }
+
     override fun reactions(messageId: String) = messages.reactions(messageId).map { ReactionRecord(it.messageId, it.accountId, it.emoji) }
 
     override fun search(query: String, limit: Int): List<SearchHit> {

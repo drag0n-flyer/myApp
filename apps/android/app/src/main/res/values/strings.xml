@@ -99,6 +99,26 @@
     <string name="attach_photo">Photo</string>
     <string name="attach_camera">Camera</string>
     <string name="attach_file">File</string>
+    <string name="attach_poll">Poll</string>
+    <string name="preview_poll">Poll: %1$s</string>
+    <string name="poll_new_title">New poll</string>
+    <string name="poll_question_label">Question</string>
+    <string name="poll_option_label">Option %1$d</string>
+    <string name="poll_add_option">Add option</string>
+    <string name="poll_remove_option">Remove option %1$d</string>
+    <string name="poll_allow_multiple">Allow multiple answers</string>
+    <string name="poll_send">Send poll</string>
+    <string name="poll_hint_single">Select one</string>
+    <string name="poll_hint_multiple">Select one or more</string>
+    <string name="poll_view_votes">View votes</string>
+    <string name="poll_votes_title">Votes</string>
+    <string name="poll_no_votes_yet">No votes yet</string>
+    <string name="poll_voters_none">No one</string>
+    <plurals name="poll_total_votes">
+        <item quantity="one">%d vote</item>
+        <item quantity="other">%d votes</item>
+    </plurals>
+    <string name="poll_option_description">%1$s, %2$s, %3$d%%</string>
     <string name="record_voice">Record voice message</string>
     <string name="send">Send</string>
     <string name="download">Download</string>

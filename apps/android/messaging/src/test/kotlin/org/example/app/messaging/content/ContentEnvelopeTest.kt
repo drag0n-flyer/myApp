@@ -24,7 +24,7 @@ class ContentEnvelopeTest {
     @Test
     fun decodesEverySwiftContentFixture() {
         val all = cases()
-        assertEquals(15, all.size)
+        assertEquals(19, all.size)
         for ((name, text) in all) {
             val env = ContentCodec.decode(text.encodeToByteArray())
             assertTrue(env !is ContentEnvelope.Unknown, "$name decoded as Unknown")

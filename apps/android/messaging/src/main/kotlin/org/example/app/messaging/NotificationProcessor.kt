@@ -42,6 +42,7 @@ data class NotificationStrings(
     val photo: String = "Photo",
     val voiceMessage: String = "Voice message",
     val file: String = "File",
+    val poll: String = "Poll",
     val unsupported: String = "Update ${AppBrand.NAME} to see this message",
     /** A group message's body: the sender's name, then the text. */
     val groupLine: String = "%1\$s: %2\$s",
@@ -180,6 +181,7 @@ class NotificationProcessor(
     private fun preview(message: MessageRecord): String = when (val e = ContentCodec.decode(message.envelope)) {
         is ContentEnvelope.Text -> TextLimit.truncate(MessageFormat.plain(e.t), PREVIEW_LIMIT)
         is ContentEnvelope.Photo -> strings.photo
+        is ContentEnvelope.Poll -> TextLimit.truncate("${strings.poll}: ${e.question}", PREVIEW_LIMIT)
         is ContentEnvelope.Voice -> strings.voiceMessage
         is ContentEnvelope.File -> if (e.name.isEmpty()) strings.file else TextLimit.truncate(e.name, PREVIEW_LIMIT)
         else -> strings.unsupported

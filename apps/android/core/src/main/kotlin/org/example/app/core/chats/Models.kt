@@ -49,6 +49,8 @@ sealed interface MessageContent {
     data class Photo(val bytes: Long, val caption: String? = null) : MessageContent
     data class File(val name: String, val bytes: Long, val mime: String = "", val caption: String? = null) : MessageContent
     data class Call(val summary: CallSummary) : MessageContent
+    /** A poll with its votes as they stand now. */
+    data class Poll(val question: String, val options: List<PollOption>, val multi: Boolean, val tally: PollTally = PollTally.Empty) : MessageContent
     /** The sender deleted it. */
     data object Deleted : MessageContent
     /** Unknown kind or newer format: "Update [App] to see this message". */
@@ -120,6 +122,7 @@ data class Message(
             is MessageContent.Text -> MessagePreview.Text(MessageFormat.plain(c.text))
             is MessageContent.Voice -> MessagePreview.Resource("preview_voice", listOf(clock(c.duration)))
             is MessageContent.Photo -> MessagePreview.Resource("preview_photo")
+            is MessageContent.Poll -> MessagePreview.Resource("preview_poll", listOf(c.question))
             is MessageContent.File -> MessagePreview.Text(SafeFileName.of(c.name, "file"))
             is MessageContent.Call -> when (val s = c.summary) {
                 CallSummary.MissedAudio -> MessagePreview.Resource("preview_missed_audio_call")

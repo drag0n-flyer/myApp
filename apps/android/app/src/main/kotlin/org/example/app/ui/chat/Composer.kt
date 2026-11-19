@@ -172,6 +172,7 @@ fun Composer(
                 AttachRow(R.string.attach_photo, R.drawable.ic_image) { sheet = false; onAttach(AttachChoice.Photo) }
                 if (showCamera) AttachRow(R.string.attach_camera, R.drawable.ic_camera) { sheet = false; onAttach(AttachChoice.Camera) }
                 AttachRow(R.string.attach_file, R.drawable.ic_file) { sheet = false; onAttach(AttachChoice.File) }
+                AttachRow(R.string.attach_poll, R.drawable.ic_poll) { sheet = false; onAttach(AttachChoice.Poll) }
             }
         }
     }
