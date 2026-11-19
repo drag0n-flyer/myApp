@@ -49,7 +49,8 @@ async function loadSession() {
 // which must not keep the session alive. It throws ApiError for any other failure.
 export async function api(method, path, body, opts) {
   const headers = { Accept: "application/json" };
-  if (method !== "GET" && csrf === null && !path.startsWith("/admin/api/login")) {
+  const signedOut = path.startsWith("/admin/api/login") || path === "/admin/api/setup";
+  if (method !== "GET" && csrf === null && !signedOut) {
     await loadSession();
   }
   if (csrf !== null) headers["X-CSRF-Token"] = csrf;

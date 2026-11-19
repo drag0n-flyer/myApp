@@ -10,10 +10,8 @@ let query = "";
 
 function render() {
   clear(list);
-  if (query === "") {
-    list.appendChild(el("p", {}, "Type the start of a username and choose Search."));
-  } else if (rows.length === 0) {
-    list.appendChild(el("p", {}, "No account starts with “" + query + "”."));
+  if (rows.length === 0) {
+    list.appendChild(el("p", {}, query === "" ? "No accounts yet." : "No account starts with “" + query + "”."));
   } else {
     const body = rows.map((a) => [
       el("a", { href: "account.html?id=" + encodeURIComponent(a.id) }, a.username),
@@ -28,7 +26,8 @@ function render() {
 }
 
 async function load(append) {
-  const params = new URLSearchParams({ q: query });
+  const params = new URLSearchParams();
+  if (query !== "") params.set("q", query);
   if (append && next) params.set("after", next);
   try {
     const data = await api("GET", "/admin/api/accounts?" + params.toString());
@@ -44,12 +43,6 @@ document.getElementById("search-form").addEventListener("submit", (event) => {
   event.preventDefault();
   notice("");
   query = input.value.trim().toLowerCase();
-  if (query === "") {
-    rows = [];
-    next = null;
-    render();
-    return;
-  }
   load(false);
 });
 
@@ -59,4 +52,4 @@ await ready;
 if (new URLSearchParams(window.location.search).get("deleted") === "1") {
   notice("Account deleted.");
 }
-render();
+await load(false);

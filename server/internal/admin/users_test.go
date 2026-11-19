@@ -497,6 +497,23 @@ func TestAuditShowsWhichAdminActed(t *testing.T) {
 	}
 }
 
+// First-visit setup has no session yet, so api() must not fetch one (a 401
+// there sends the browser back to the login page before the POST is sent).
+// The Accounts page lists every account when it opens, before any search.
+func TestPagesWorkWithoutASessionOrSearch(t *testing.T) {
+	files := embeddedFiles(t)
+	if !strings.Contains(files["static/common.js"], `path === "/admin/api/setup"`) {
+		t.Error("common.js loads a session before POST /admin/api/setup")
+	}
+	accounts := files["static/accounts.js"]
+	if !strings.HasSuffix(strings.TrimSpace(accounts), "await load(false);") {
+		t.Error("accounts.js does not load the list when the page opens")
+	}
+	if !strings.Contains(accounts, `if (query !== "") params.set("q", query);`) {
+		t.Error("accounts.js sends an empty q, which the API rejects")
+	}
+}
+
 // The pages must call the API the way the tests above assume.
 func TestAccountPagesUseTheAPI(t *testing.T) {
 	files := embeddedFiles(t)
