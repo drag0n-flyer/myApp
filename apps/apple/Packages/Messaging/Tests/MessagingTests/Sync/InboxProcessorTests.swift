@@ -251,18 +251,18 @@ private func raw(_ conv: ConversationRecord, cursor: Int64 = 900, kind: String =
     @Test func pollVotesWaitForThePollAndLatestWins() async throws {
         let rig = try await Rig.make()
         let record = try await startChat(rig)
-        let ana = Side(rig.ana1)
+        let bob = Side(rig.bob1)
         let poll = Poll(question: "Lunch?", options: [PollOption(id: "a", text: "Pizza"), PollOption(id: "b", text: "Sushi")], multi: false)
         // The vote comes first, then the poll, then a changed vote.
-        try await send(rig.bob1, record, .pollVote(pollID: "p1", optionIDs: ["a"]), id: "v1")
-        _ = try await ana.processor.syncOnce()
-        #expect(try ana.deps.repo.message(id: "p1") == nil)
-        #expect(try ana.deps.repo.pollVotes(chatID: "acc-bob", messageID: "p1").map(\.optionIDs) == [["a"]])
-        try await send(rig.bob1, record, .poll(poll), id: "p1")
-        try await send(rig.bob1, record, .pollVote(pollID: "p1", optionIDs: ["b"]), id: "v2")
-        _ = try await ana.processor.syncOnce()
-        #expect(try ana.deps.repo.message(id: "p1") != nil)
-        #expect(try ana.deps.repo.pollVotes(chatID: "acc-bob", messageID: "p1").map(\.optionIDs) == [["b"]])
+        try await send(rig.ana1, record, .pollVote(pollID: "p1", optionIDs: ["a"]), id: "v1")
+        _ = try await bob.processor.syncOnce()
+        #expect(try bob.deps.repo.message(id: "p1") == nil)
+        #expect(try bob.deps.repo.pollVotes(chatID: "acc-ana", messageID: "p1").map(\.optionIDs) == [["a"]])
+        try await send(rig.ana1, record, .poll(poll), id: "p1")
+        try await send(rig.ana1, record, .pollVote(pollID: "p1", optionIDs: ["b"]), id: "v2")
+        _ = try await bob.processor.syncOnce()
+        #expect(try bob.deps.repo.message(id: "p1") != nil)
+        #expect(try bob.deps.repo.pollVotes(chatID: "acc-ana", messageID: "p1").map(\.optionIDs) == [["b"]])
     }
 
     @Test func deliveredReceiptPerConversation() async throws {

@@ -95,14 +95,14 @@ private let expected: [String: ContentEnvelope.Body] = [
 
 @Suite("TestEnvelopeForwardCompat") struct TestEnvelopeForwardCompat {
     @Test func unknownKind() {
-        let env = ContentEnvelope.decode(Data(#"{"v":1,"id":"x","at":1,"k":"poll"}"#.utf8))
-        #expect(env.body == .unsupported(kind: "poll"))
+        let env = ContentEnvelope.decode(Data(#"{"v":1,"id":"x","at":1,"k":"sticker"}"#.utf8))
+        #expect(env.body == .unsupported(kind: "sticker"))
         #expect(env.id == "x" && env.at == 1)
     }
 
     @Test func unknownKindWithOddFieldTypes() {
-        let env = ContentEnvelope.decode(Data(#"{"v":1,"id":"x","at":1,"k":"poll","t":5,"a":[1]}"#.utf8))
-        #expect(env.body == .unsupported(kind: "poll"))
+        let env = ContentEnvelope.decode(Data(#"{"v":1,"id":"x","at":1,"k":"sticker","t":5,"a":[1]}"#.utf8))
+        #expect(env.body == .unsupported(kind: "sticker"))
     }
 
     @Test func newerVersion() {
