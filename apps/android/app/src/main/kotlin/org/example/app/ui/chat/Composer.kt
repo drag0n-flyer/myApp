@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.Icon
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
@@ -148,13 +149,16 @@ fun Composer(
                     enabled = enabled,
                     placeholder = { Text(stringResource(if (enabled) R.string.message_hint else R.string.sending_paused_hint)) },
                     maxLines = 5,
-                    colors = TextFieldDefaults.colors(focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent),
+                    colors = TextFieldDefaults.colors(
+                        focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent, disabledIndicatorColor = Color.Transparent,
+                        focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh, unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    ),
                     shape = RoundedCornerShape(24.dp),
                     modifier = Modifier.weight(1f),
                 )
             }
             if (text.isNotBlank() || allowBlankSend) {
-                IconButton(onClick = { onSend(text) }, enabled = enabled) {
+                FilledIconButton(onClick = { onSend(text) }, enabled = enabled) {
                     Icon(painterResource(R.drawable.ic_send), contentDescription = stringResource(R.string.send))
                 }
             } else {
