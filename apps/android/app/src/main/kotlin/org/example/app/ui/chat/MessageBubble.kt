@@ -10,8 +10,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
@@ -77,6 +83,9 @@ fun MessageBubble(
     /** A group message from a person I blocked: shown as one line with "Show" until the person asks to see it. */
     collapsed: Boolean = false,
     onShowCollapsed: () -> Unit = {},
+    /** First and last bubble of a run by one sender: only the last has the tail corner, the first has more space above. */
+    runFirst: Boolean = true,
+    runLast: Boolean = true,
 ) {
     val content = message.content
     if (content is MessageContent.System) {
@@ -93,12 +102,13 @@ fun MessageBubble(
     val other = MaterialTheme.colorScheme.surfaceContainerHigh
     val base = if (isOwn) own else other
     val fill by animateColorAsState(if (highlighted) MaterialTheme.colorScheme.tertiaryContainer else base, label = "highlight")
-    val shape = RoundedCornerShape(18.dp, 18.dp, if (isOwn) 4.dp else 18.dp, if (isOwn) 18.dp else 4.dp)
+    val tail = if (runLast) 4.dp else 18.dp
+    val shape = RoundedCornerShape(18.dp, 18.dp, if (isOwn) tail else 18.dp, if (isOwn) 18.dp else tail)
     val optionsLabel = stringResource(R.string.chat_message_options)
     val press = if (onLongPress == null) Modifier else Modifier
         .pointerInput(onLongPress) { detectTapGestures(onLongPress = { onLongPress() }) }
         .semantics { onLongClick(optionsLabel) { onLongPress(); true } }
-    Row(modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp), horizontalArrangement = if (isOwn) Arrangement.End else Arrangement.Start) {
+    Row(modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = if (runFirst) 4.dp else 0.dp, bottom = if (message.reactions.isNotEmpty()) 12.dp else 0.dp), horizontalArrangement = if (isOwn) Arrangement.End else Arrangement.Start) {
         Column {
         if (senderName != null && !isOwn) SenderLine(senderName, message.senderId)
         Box {
@@ -108,7 +118,6 @@ fun MessageBubble(
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     if (message.replyToId != null) ReplyQuote(replyTo, replyAuthor, onQuoteClick)
                     Body(message, autoDownloads, onDownload, media)
-                    if (message.reactions.isNotEmpty()) Text(message.reactions.joinToString(" "))
                     Row(Modifier.align(Alignment.End), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         if (message.editedAt != null) Text(stringResource(R.string.edited), style = MaterialTheme.typography.labelSmall)
                         // A photo, file or voice message that is still on its way says so in words, with the clock mark after it.
@@ -128,6 +137,15 @@ fun MessageBubble(
                             TextButton(onClick = onRetry) { Text(stringResource(R.string.chat_try_again)) }
                         }
                     }
+                }
+            }
+            // Reactions sit on the lower edge of the bubble as a small chip, like a sticker.
+            if (message.reactions.isNotEmpty()) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceContainerLowest, shadowElevation = 2.dp,
+                    modifier = Modifier.align(if (isOwn) Alignment.BottomEnd else Alignment.BottomStart).offset(x = if (isOwn) (-8).dp else 8.dp, y = 12.dp),
+                ) {
+                    Text(message.reactions.joinToString(" "), Modifier.padding(horizontal = 6.dp, vertical = 1.dp), style = MaterialTheme.typography.labelLarge)
                 }
             }
             menu()
@@ -173,11 +191,13 @@ private fun ReplyQuote(reply: Message?, author: String?, onClick: () -> Unit) {
     val text = if (reply != null) previewText(reply.preview) else stringResource(R.string.chat_original_message)
     val description = if (reply != null) stringResource(R.string.reply_to, author ?: stringResource(R.string.you)) + ": " + text else text
     Row(
-        Modifier.clickable(role = Role.Button, onClick = onClick).semantics(mergeDescendants = true) { contentDescription = description },
+        Modifier.clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+            .height(IntrinsicSize.Min).clickable(role = Role.Button, onClick = onClick)
+            .semantics(mergeDescendants = true) { contentDescription = description },
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Box(Modifier.size(width = 3.dp, height = 32.dp).background(MaterialTheme.colorScheme.primary))
-        Text(text, maxLines = 2, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Box(Modifier.width(3.dp).fillMaxHeight().background(MaterialTheme.colorScheme.primary))
+        Text(text, Modifier.padding(end = 8.dp, top = 4.dp, bottom = 4.dp), maxLines = 2, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

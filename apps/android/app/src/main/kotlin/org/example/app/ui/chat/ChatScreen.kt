@@ -138,6 +138,7 @@ fun ChatScreen(
     val blockedNow by viewModel.blockedIds.collectAsStateWithLifecycle()
     val someone = stringResource(R.string.group_someone)
     fun nameOfMember(id: String) = viewModel.senderName(id) ?: someone
+    val runs = remember(rowsNewestFirst) { BubbleRuns.positions(rowsNewestFirst.asReversed()) }
     val senderLines = remember(rowsNewestFirst, isGroup) { if (isGroup) GroupRuns.senderLineIds(rowsNewestFirst.asReversed(), myId) else emptySet() }
     var shownBlocked by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
     var infoFor by rememberSaveable { mutableStateOf<String?>(null) }
@@ -502,6 +503,8 @@ fun ChatScreen(
                                 onRetry = { viewModel.retry(message.id) },
                                 highlighted = highlighted == message.id,
                                 media = mediaHost,
+                                runFirst = runs[message.id]?.first ?: true,
+                                runLast = runs[message.id]?.last ?: true,
                             )
                         }
                     }
