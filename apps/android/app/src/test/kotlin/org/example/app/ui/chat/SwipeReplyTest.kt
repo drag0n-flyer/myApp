@@ -58,6 +58,13 @@ class SwipeReplyTest {
     }
 
     @Test
+    fun releasingBetweenTheThresholdAndTheMaximumStillReplies() {
+        launch(listOf(m(1, text = "hello there")))
+        rule.onNodeWithText("hello there").performTouchInput { swipeRight(startX = centerX, endX = centerX + 52f) }
+        rule.onNodeWithText("Replying to Riya").assertIsDisplayed()
+    }
+
+    @Test
     fun aShortSwipeSpringsBackAndDoesNothing() {
         launch(listOf(m(1, text = "hello there")))
         rule.onNodeWithText("hello there").performTouchInput { swipeRight(startX = centerX, endX = centerX + 30f) }

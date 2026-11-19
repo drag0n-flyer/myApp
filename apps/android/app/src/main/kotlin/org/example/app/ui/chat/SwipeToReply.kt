@@ -31,10 +31,11 @@ import kotlinx.coroutines.launch
 import org.example.app.R
 
 private val SwipeMax = 64.dp
+private val SwipeThreshold = 48.dp
 
 /**
  * Drag the content toward the trailing side (mirrored in right-to-left) up to 64dp; a reply arrow fades in behind it.
- * Letting go past the threshold calls [onReply] once, with one haptic tick when the threshold is crossed; short of it the
+ * Letting go past 48dp calls [onReply] once, with one haptic tick when the threshold is crossed; short of it the
  * content springs back. Only horizontal drags are claimed, so the list keeps scrolling. With a null [onReply] it does nothing.
  */
 @Composable
@@ -45,13 +46,14 @@ fun SwipeToReply(onReply: (() -> Unit)?, modifier: Modifier = Modifier, content:
     }
     val density = LocalDensity.current
     val max = with(density) { SwipeMax.toPx() }
+    val threshold = with(density) { SwipeThreshold.toPx() }
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val sign = if (rtl) -1f else 1f
     val offset = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
     val reply by rememberUpdatedState(onReply)
-    Box(modifier.pointerInput(max, sign) {
+    Box(modifier.pointerInput(max, threshold, sign) {
         var armed = false
         var pos = 0f
         detectHorizontalDragGestures(
@@ -67,7 +69,7 @@ fun SwipeToReply(onReply: (() -> Unit)?, modifier: Modifier = Modifier, content:
             pos = next
             // The sign is folded in, so "toward trailing" is positive and dragging the other way never moves the bubble.
             scope.launch { offset.snapTo(next) }
-            val now = next >= max
+            val now = next >= threshold
             if (now && !armed) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
             armed = now
         }
