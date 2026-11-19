@@ -38,9 +38,26 @@ struct LiveMessaging {
     /// The shared database (the app keeps the time each contact was last witnessed in its key-value store).
     let repo: Repository
 
-    /// The app-group container, or nil when the group is not available.
-    static var container: URL? {
-        MessagingLocations.appGroupID.flatMap { FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: $0) }
+    /// The app-group container, or nil when no folder can be made. A build without a team signature (the
+    /// unsigned Mac and iPhone downloads) has no app group: the shared container is missing or cannot be
+    /// written, so it keeps its data in its own Application Support folder instead. Those builds have no
+    /// notification extension to share with. The same test as the Keychain decides (`KeychainAccess`), so
+    /// a signed build never moves its data.
+    static let container: URL? = {
+        let fm = FileManager.default
+        let group = MessagingLocations.appGroupID.flatMap { fm.containerURL(forSecurityApplicationGroupIdentifier: $0) }
+        if !isUnsigned { return group }
+        guard let support = try? fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        else { return nil }
+        let own = support.appendingPathComponent(Bundle.main.bundleIdentifier ?? "App", isDirectory: true)
+        return (try? fm.createDirectory(at: own, withIntermediateDirectories: true)) != nil ? own : nil
+    }()
+
+    /// True when this build is not entitled to the shared Keychain group, i.e. it has no team signature.
+    private static var isUnsigned: Bool {
+        guard let group = Bundle.main.object(forInfoDictionaryKey: MessagingLocations.keychainAccessGroupInfoKey) as? String,
+              !group.isEmpty else { return false }
+        return KeychainAccess.usableGroup(group) == nil
     }
 
     /// MERGE(I1): deletes this account's MLS signing key from the keychain (the wipe ruling). M5's
