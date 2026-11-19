@@ -39,7 +39,8 @@ enum ProfileImageCache {
         guard ProfilePhotoRule.isAcceptable(data) else { return nil }
         if let hit = cached(for: data) { return hit }
         let started = generation
-        let decoded = await Task.detached(priority: .userInitiated) { decode(data, maxPixels: maxPixels) }.value
+        let limit = maxPixels // read here: the detached task is not on the main actor
+        let decoded = await Task.detached(priority: .userInitiated) { decode(data, maxPixels: limit) }.value
         guard let decoded else { return nil }
         if started == generation { cache.setObject(decoded.cgImage, forKey: data as NSData) }
         return Image(decorative: decoded.cgImage, scale: 1)
