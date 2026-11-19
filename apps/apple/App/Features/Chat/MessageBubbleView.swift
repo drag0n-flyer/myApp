@@ -30,6 +30,9 @@ struct MessageBubbleView: View {
     var senderName: String?
     /// A group chat, my message: opens Message info.
     var showInfo: (() -> Void)?
+    /// Where this bubble sits in a run from one sender: joined bubbles sit closer and only the last keeps the tail.
+    var run = BubbleRun(joinsAbove: false, joinsBelow: false)
+    @Environment(\.colorScheme) private var colorScheme
     /// A blocked member's message is collapsed until the person shows it (this device, this screen only).
     @State private var revealed = false
 
@@ -53,7 +56,8 @@ struct MessageBubbleView: View {
     private func senderHeader(_ name: String) -> some View {
         HStack(spacing: 6) {
             Avatar(name: name, colorKey: message.senderID, size: 22)
-            Text(name).font(.caption.weight(.semibold)).foregroundStyle(.secondary).lineLimit(1)
+            Text(name).font(.caption.weight(.semibold))
+                .foregroundStyle(Color.avatarTile(for: message.senderID, dark: colorScheme == .dark)).lineLimit(1)
         }
         .padding(.leading, 4)
         .accessibilityElement(children: .combine)
@@ -114,6 +118,8 @@ struct MessageBubbleView: View {
                 }
             }
             .padding(.bottom, message.reactions.isEmpty ? 0 : 10)
+            // A wide Mac window keeps bubbles at a readable width.
+            .frame(maxWidth: 560, alignment: isMine ? .trailing : .leading)
             if !isMine { Spacer(minLength: 60) }
         }
     }
@@ -129,9 +135,12 @@ struct MessageBubbleView: View {
     }
 
     private var bubbleShape: UnevenRoundedRectangle {
-        UnevenRoundedRectangle(
-            topLeadingRadius: 18, bottomLeadingRadius: isMine ? 18 : 6,
-            bottomTrailingRadius: isMine ? 6 : 18, topTrailingRadius: 18)
+        // Tail side: tight where bubbles join, squarer at the end of a run. The other side stays round.
+        let tailTop: CGFloat = run.joinsAbove ? 6 : 18
+        let tailBottom: CGFloat = run.joinsBelow ? 6 : 4
+        return UnevenRoundedRectangle(
+            topLeadingRadius: isMine ? 18 : tailTop, bottomLeadingRadius: isMine ? 18 : tailBottom,
+            bottomTrailingRadius: isMine ? tailBottom : 18, topTrailingRadius: isMine ? tailTop : 18)
     }
 
     /// The quoted message; tapping it jumps to the original. When the original is not loaded the quote still shows.
@@ -352,7 +361,8 @@ private struct MetaLine: View {
             }
             Text(message.sentAt, format: .dateTime.hour().minute())
             if isMine, message.status != .failed {
-                Image(systemName: statusSymbol)
+                statusMark
+                    .accessibilityElement(children: .ignore)
                     .accessibilityLabel(statusLabel)
             }
         }
@@ -367,13 +377,21 @@ private struct MetaLine: View {
         return "This file is too big to send."
     }
 
-    /// Sent: a check. Delivered: an outline check circle. Read: a filled one.
-    private var statusSymbol: String {
+    /// Sent: one check. Delivered: two checks. Read: two checks at full strength (spec 6.2).
+    @ViewBuilder
+    private var statusMark: some View {
         switch message.status {
-        case .sending: "clock"
-        case .sent, .failed: "checkmark"
-        case .delivered: "checkmark.circle"
-        case .read: "checkmark.circle.fill"
+        case .sending:
+            Image(systemName: "clock")
+        case .sent, .failed:
+            Image(systemName: "checkmark")
+        case .delivered, .read:
+            HStack(spacing: -7) {
+                Image(systemName: "checkmark")
+                Image(systemName: "checkmark")
+            }
+            .fontWeight(message.status == .read ? .heavy : .regular)
+            .opacity(message.status == .read ? 1 : 0.8)
         }
     }
 
