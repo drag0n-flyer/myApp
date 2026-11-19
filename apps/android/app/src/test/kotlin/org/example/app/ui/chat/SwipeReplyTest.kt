@@ -10,6 +10,7 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeDown
 import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.swipeRight
+import androidx.compose.ui.unit.dp
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import kotlinx.coroutines.Dispatchers
@@ -60,7 +61,7 @@ class SwipeReplyTest {
     @Test
     fun releasingBetweenTheThresholdAndTheMaximumStillReplies() {
         launch(listOf(m(1, text = "hello there")))
-        rule.onNodeWithText("hello there").performTouchInput { swipeRight(startX = centerX, endX = centerX + 52f) }
+        rule.onNodeWithText("hello there").performTouchInput { swipeRight(startX = centerX, endX = centerX + 52.dp.toPx() + viewConfiguration.touchSlop) }
         rule.onNodeWithText("Replying to Riya").assertIsDisplayed()
     }
 
