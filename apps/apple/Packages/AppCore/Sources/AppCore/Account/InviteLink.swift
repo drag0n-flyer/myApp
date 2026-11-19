@@ -1,6 +1,6 @@
 import Foundation
 
-/// `https://<host>/invite/<code>`: which server to join and the invite code to use.
+/// `https://<host>[:port]/invite/<code>`: which server to join and the invite code to use.
 public struct InviteLink: Equatable, Sendable {
     public var host: String
     public var code: String
@@ -17,6 +17,6 @@ public struct InviteLink: Equatable, Sendable {
         let code = String(parts[1])
         let allowed = code.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") }
         guard (6...32).contains(code.count), allowed else { return nil }
-        return InviteLink(host: host, code: code)
+        return InviteLink(host: url.port.map { $0 == 443 ? host : "\(host):\($0)" } ?? host, code: code)
     }
 }

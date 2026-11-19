@@ -135,7 +135,8 @@ public struct IncomingHandler: Sendable {
     /// A Welcome whose chat could not be set up (a permanent failure): one placeholder row (`joinFailed`, ID
     /// `join-failed-<cursor>`, `undecryptable = 1`) in the chat of the account the server names as the sender,
     /// created as a request when it is not a contact. Nothing for a Welcome the server says I sent. The item
-    /// itself is `park`ed by the caller.
+    /// itself is `park`ed by the caller. Not used for a group Welcome (the caller only parks it), nor for a refused
+    /// lookup of the conversation (parked with nothing shown).
     public func storeJoinFailed(for raw: RawInboxRecord, db: Repository) throws {
         let chatID = raw.senderAccount
         guard chatID != me.accountID, !chatID.isEmpty else { return }
@@ -282,7 +283,7 @@ public struct IncomingHandler: Sendable {
     }
 
     /// A `group` envelope sets the name and photo when an owner or admin of the stored member list sent it and its version
-    /// is higher than the stored one (`GroupMerge`). Anything else, a bad name, or a photo under 4 or over 24,576 bytes
+    /// is higher than the stored one (`GroupMerge`). Anything else, a bad name, or a photo that fails `ProfilePhotoRule`
     /// changes nothing. A chat that is not a group this account is still in is left alone.
     private func applyGroup(name: String, photo: Data?, ver: Int, from account: String, conversation: ConversationRecord, db: Repository) throws {
         guard ChatID.isGroup(conversation.chatID), let chat = try db.chat(id: conversation.chatID), chat.kind == "group",

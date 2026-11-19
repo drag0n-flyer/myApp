@@ -31,7 +31,7 @@ struct Avatar: View {
     private static let exposedForTests = ProcessInfo.processInfo.arguments.contains("-uiTesting")
 
     var body: some View {
-        if let key = colorKey, let data = profilePhoto(key), let image = ProfileImageCache.image(for: data) {
+        ProfilePhotoImage(data: colorKey.flatMap { profilePhoto($0) }) { image in
             image
                 .resizable()
                 .scaledToFill()
@@ -39,7 +39,7 @@ struct Avatar: View {
                 .clipShape(Circle())
                 .accessibilityIdentifier("avatar.photo")
                 .accessibilityHidden(!Self.exposedForTests)
-        } else {
+        } fallback: {
             Circle()
                 .fill(Color.avatarTile(for: colorKey, dark: colorScheme == .dark))
                 .frame(width: size, height: size)

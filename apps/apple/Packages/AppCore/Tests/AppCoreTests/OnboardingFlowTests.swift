@@ -65,6 +65,8 @@ import Testing
 
 @Test func parseInvite() {
     #expect(InviteLink.parse(URL(string: "https://chat.example.org/invite/BETA-2026")!) == .init(host: "chat.example.org", code: "BETA-2026"))
+    #expect(InviteLink.parse(URL(string: "https://chat.example.org:443/invite/BETA-2026")!) == .init(host: "chat.example.org", code: "BETA-2026"))
+    #expect(InviteLink.parse(URL(string: "https://chat.example.org:8443/invite/BETA-2026")!) == .init(host: "chat.example.org:8443", code: "BETA-2026"))
     #expect(InviteLink.parse(URL(string: "https://chat.example.org/other/x")!) == nil)
     #expect(InviteLink.parse(URL(string: "http://chat.example.org/invite/BETA-2026")!) == nil)
     #expect(InviteLink.parse(URL(string: "https://chat.example.org/invite/abc")!) == nil)

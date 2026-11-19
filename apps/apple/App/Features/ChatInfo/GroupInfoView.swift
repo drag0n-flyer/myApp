@@ -308,7 +308,7 @@ struct GroupPhotoView: View {
     var size: CGFloat = 46
 
     var body: some View {
-        if let photo = GroupScreenRules.displayablePhoto(photo), let image = ProfileImageCache.image(for: photo) {
+        ProfilePhotoImage(data: GroupScreenRules.displayablePhoto(photo)) { image in
             image
                 .resizable()
                 .scaledToFill()
@@ -316,7 +316,7 @@ struct GroupPhotoView: View {
                 .clipShape(Circle())
                 .accessibilityLabel(Text("Group photo"))
                 .accessibilityIdentifier("groupinfo.photo")
-        } else {
+        } fallback: {
             Image(systemName: "person.3.fill")
                 .font(.system(size: size * 0.38))
                 .foregroundStyle(.white)
