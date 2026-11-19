@@ -26,7 +26,8 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
-import androidx.compose.material3.LargeTopAppBar
+import androidx.compose.material3.TopAppBar
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -61,14 +62,15 @@ fun ChatListScreen(
     selectedChatId: String? = null,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    val scroll = TopAppBarDefaults.enterAlwaysScrollBehavior()
     val snackbar = remember { SnackbarHostState() }
     val actions = rememberChatRowActions(viewModel, snackbar)
     var menuOpen by rememberSaveable { mutableStateOf(false) }
     Scaffold(
         modifier = modifier.nestedScroll(scroll.nestedScrollConnection),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
-            LargeTopAppBar(
+            TopAppBar(
                 title = { Text(stringResource(R.string.tab_chats)) },
                 actions = {
                     IconButton(onClick = onSearch) {

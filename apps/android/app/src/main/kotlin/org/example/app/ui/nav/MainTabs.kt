@@ -3,6 +3,9 @@ package org.example.app.ui.nav
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.unit.dp
@@ -74,7 +77,7 @@ fun MainTabs(
                 Spacer(Modifier.weight(1f))
             }
             VerticalDivider()
-            host(Modifier.width(PaneLayout.LIST_PANE_DP.dp).fillMaxHeight())
+            host(Modifier.width(PaneLayout.LIST_PANE_DP.dp).fillMaxHeight().windowInsetsPadding(WindowInsets.navigationBars))
             if (detail != null) {
                 VerticalDivider()
                 Box(Modifier.weight(1f).fillMaxHeight()) { detail() }
@@ -85,6 +88,7 @@ fun MainTabs(
 
     Scaffold(
         modifier = modifier,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
             NavigationBar {
                 for (tab in tabs) {

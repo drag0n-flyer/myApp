@@ -53,7 +53,7 @@ import org.example.app.R
 import org.example.app.core.chats.MessagePreview
 import org.example.app.ui.Avatar
 import org.example.app.ui.previewText
-import org.example.app.ui.shortTime
+import org.example.app.ui.relativeTimeText
 
 /** What a chat row can do. [setPinned] returns false when the limit of five is reached. */
 class ChatRowActions(
@@ -169,7 +169,7 @@ fun ChatRow(
                     }
                     row.time?.let {
                         Text(
-                            shortTime(it), style = MaterialTheme.typography.labelSmall,
+                            relativeTimeText(it), style = MaterialTheme.typography.labelSmall,
                             color = if (unread && !row.muted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
