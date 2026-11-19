@@ -224,7 +224,7 @@ class LiveAccountService(
 
     override suspend fun finishSignUpWithEmailCode() = finishSignUp(withPasskey = false)
 
-    private suspend fun finishSignUp(withPasskey: Boolean) = accountCall {
+    private suspend fun finishSignUp(withPasskey: Boolean) = accountCall(signup = true) {
         val id = signupId ?: throw AccountError.Server
         val api = IdentityApi(ready())
         val credential = if (withPasskey && passkeysOk) {

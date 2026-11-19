@@ -6,8 +6,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.TopAppBar
+import androidx.compose.ui.res.painterResource
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -22,6 +28,7 @@ import org.example.app.core.account.OnboardingStep
 import org.example.app.ui.qr.PermissionedQrScanner
 
 /** Shows the screen for the view model's current step; [onFinished] runs once the account is ready. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OnboardingHost(vm: OnboardingViewModel, onFinished: () -> Unit) {
     val state by vm.state.collectAsStateWithLifecycle()
@@ -31,25 +38,38 @@ fun OnboardingHost(vm: OnboardingViewModel, onFinished: () -> Unit) {
     // Opening the screen again (rotation) keeps the code that is already there.
     LaunchedEffect(state.step) { if (state.step == OnboardingStep.LinkDevice) vm.ensureLinking() }
 
-    Scaffold(Modifier.fillMaxSize()) { padding ->
-        val page = Modifier.padding(padding).safeDrawingPadding()
+    val hasBar = state.step != OnboardingStep.Welcome && state.step != OnboardingStep.Done
+    Scaffold(
+        Modifier.fillMaxSize(),
+        topBar = {
+            if (hasBar) {
+                TopAppBar(
+                    title = {},
+                    navigationIcon = {
+                        IconButton(onClick = vm::back) { Icon(painterResource(R.drawable.ic_back), contentDescription = stringResource(R.string.back)) }
+                    },
+                )
+            }
+        },
+    ) { padding ->
+        val page = Modifier.padding(padding).consumeWindowInsets(padding).imePadding()
         Box(page) {
             when (state.step) {
                 OnboardingStep.Welcome -> WelcomeScreen(state.canCreateAccount, vm::getStarted, vm::alreadyHaveAccount)
                 OnboardingStep.JoinServer -> JoinServerScreen(state.error, vm::chooseDefaultServer, vm::chooseInviteText, vm::chooseAddress)
                 OnboardingStep.InviteCode -> InviteCodeScreen(state.error, state.busy, vm::submitInvite)
                 OnboardingStep.CreateAccount -> CreateAccountScreen(
-                    state.serverHost, state.usernameCheck, state.error, state.busy, vm::checkUsername, vm::submitAccount,
+                    state.serverHost, state.usernameCheck, state.error, state.busy, vm::checkUsername, vm::submitAccount, state.draft,
                 )
-                OnboardingStep.VerifyEmail -> VerifyEmailScreen(state.error, state.busy, vm::verifyEmail)
-                OnboardingStep.CreatePasskey -> PasskeyScreen(state.supportsPasskeys, state.error, state.busy, vm::createPasskey, vm::useEmailCodeInstead)
+                OnboardingStep.VerifyEmail -> VerifyEmailScreen(state.error, state.busy, vm::startAgain, vm::verifyEmail)
+                OnboardingStep.CreatePasskey -> PasskeyScreen(state.supportsPasskeys, state.error, state.busy, vm::createPasskey, vm::useEmailCodeInstead, vm::startAgain)
                 OnboardingStep.Permissions -> PermissionsStep(vm::permissionsHandled)
                 OnboardingStep.LinkDevice -> LinkDeviceScreen(
                     state.serverHost, state.linkCode, state.linkExpired, state.error, state.canCreateAccount,
                     onNewCode = vm::startLinking, onChangeServer = vm::changeLinkServer, onNoOldDevice = vm::noOldDevice,
                 )
                 OnboardingStep.LostDevice -> LostDeviceScreen(
-                    state.recoveryCodeSent, state.error, state.busy, vm::signInWithPasskey, vm::sendRecoveryCode, vm::recover,
+                    state.recoveryCodeSent, state.error, state.busy, vm::signInWithPasskey, vm::sendRecoveryCode, vm::recover, state.supportsPasskeys,
                 )
                 OnboardingStep.Done -> {}
             }

@@ -47,6 +47,12 @@ class OnboardingFlow(val platform: DevicePlatform) {
     fun accountSubmitted() = advance(OnboardingStep.CreateAccount, OnboardingStep.VerifyEmail)
     fun emailVerified() = advance(OnboardingStep.VerifyEmail, OnboardingStep.CreatePasskey)
     fun passkeyCreated() = advance(OnboardingStep.CreatePasskey, OnboardingStep.Permissions)
+    /** A sign-up that can no longer finish: back to Create account, ready to be submitted again. */
+    fun restartSignUp() {
+        if (step != OnboardingStep.VerifyEmail && step != OnboardingStep.CreatePasskey) return
+        while (step != OnboardingStep.CreateAccount) step = history.removeLastOrNull() ?: return
+    }
+
     fun permissionsHandled() = advance(OnboardingStep.Permissions, OnboardingStep.Done)
 
     fun linked() {

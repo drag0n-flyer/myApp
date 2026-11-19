@@ -1,7 +1,11 @@
 package org.example.app.ui.onboarding
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.OutlinedTextField
@@ -27,6 +31,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.res.painterResource
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -39,7 +47,10 @@ import androidx.compose.ui.unit.dp
 import org.example.app.R
 import org.example.app.core.account.AccountError
 
-/** A scrolling page with a title, an optional message, content and a footer for the main button. */
+/** Widest the onboarding content grows, so tablets and foldables don't stretch it. */
+val ONBOARDING_MAX_WIDTH = 460.dp
+
+/** A scrolling page with a title, an optional message, content and a footer for the main button, in a centred column. */
 @Composable
 fun OnboardingPage(
     title: String,
@@ -48,16 +59,18 @@ fun OnboardingPage(
     footer: @Composable ColumnScope.() -> Unit = {},
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    Column(modifier.fillMaxSize()) {
-        Column(
-            Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text(title, style = MaterialTheme.typography.headlineMedium)
-            if (message != null) Text(message, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            content()
+    Box(modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        Column(Modifier.widthIn(max = ONBOARDING_MAX_WIDTH).fillMaxSize()) {
+            Column(
+                Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                if (message != null) Text(message, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                content()
+            }
+            Column(Modifier.imePadding().padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { footer() }
         }
-        Column(Modifier.padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { footer() }
     }
 }
 
@@ -65,7 +78,7 @@ fun OnboardingPage(
 @Composable
 fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, busy: Boolean = false) {
     Button(onClick, modifier.fillMaxWidth().heightIn(min = 48.dp), enabled = enabled && !busy) {
-        if (busy) CircularProgressIndicator(Modifier.padding(end = 8.dp), strokeWidth = 2.dp)
+        if (busy) CircularProgressIndicator(Modifier.padding(end = 8.dp).size(18.dp), strokeWidth = 2.dp, color = LocalContentColor.current)
         Text(text)
     }
 }
@@ -83,6 +96,7 @@ fun accountErrorText(error: AccountError): String = when (error) {
     is AccountError.TooManyAttempts ->
         error.retryAfterSeconds?.let { stringResource(R.string.err_too_many_minutes, (it + 59) / 60) } ?: stringResource(R.string.err_too_many)
     AccountError.LinkExpired -> stringResource(R.string.err_link_expired)
+    AccountError.SignupExpired -> stringResource(R.string.err_signup_expired)
     AccountError.InvalidServerAddress -> stringResource(R.string.err_invalid_address)
     AccountError.WrongServer -> stringResource(R.string.err_wrong_server)
     AccountError.PasskeyUnavailable -> stringResource(R.string.err_passkey_unavailable)
@@ -92,16 +106,29 @@ fun accountErrorText(error: AccountError): String = when (error) {
     AccountError.Server, AccountError.Cancelled -> stringResource(R.string.err_server)
 }
 
+/** An error in the system error style with an icon, announced to TalkBack when it appears. */
 @Composable
 fun AccountErrorText(error: AccountError?, modifier: Modifier = Modifier) {
     if (error == null || error == AccountError.Cancelled) return
-    Text(
-        accountErrorText(error),
-        modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.error,
-    )
+    Row(
+        modifier.fillMaxWidth().semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite },
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(painterResource(R.drawable.ic_warning), contentDescription = null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.error)
+        Text(accountErrorText(error), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
+    }
 }
+
+/** Errors that belong to a typed field and show under it instead of above the button. */
+fun AccountError?.isEmailFieldError() = this == AccountError.InvalidEmail
+fun AccountError?.isUsernameFieldError() = this == AccountError.InvalidUsername || this == AccountError.UsernameTaken
+fun AccountError?.isCodeFieldError() =
+    this == AccountError.CodeInvalid || this == AccountError.CodeExpired || this is AccountError.TooManyAttempts
+
+/** The page's primary action when the sign-up can no longer finish: starts it again with the typed details kept. */
+@Composable
+fun StartAgainButton(onStartAgain: () -> Unit) = PrimaryButton(stringResource(R.string.ob_start_again), onStartAgain)
 
 /** An address or link field that opens under the options, with its own confirm and cancel. Focused on open; Done confirms. */
 @Composable

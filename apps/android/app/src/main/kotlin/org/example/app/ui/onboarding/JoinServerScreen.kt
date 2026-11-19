@@ -11,16 +11,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -47,7 +44,6 @@ private enum class Ask { None, Link, Address }
  * other ways in. [onInviteText] gets pasted or scanned text and says whether it was an invite.
  * [scanner] shows the camera; it is composed only while the scan view is open.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun JoinServerScreen(
     error: AccountError?,
@@ -61,17 +57,15 @@ fun JoinServerScreen(
     var notInvite by rememberSaveable { mutableStateOf(false) }
 
     if (scanning) {
-        Scaffold(topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.ob_scan_invite)) },
-                actions = { TextButton({ scanning = false }) { Text(stringResource(R.string.cancel)) } },
-            )
-        }) { padding ->
-            Column(Modifier.fillMaxSize().padding(padding)) {
-                scanner { text ->
-                    scanning = false
-                    notInvite = !onInviteText(text)
-                }
+        // The host's back bar stays above; this view has its own title row so there is only one bar.
+        Column(Modifier.fillMaxSize()) {
+            Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(stringResource(R.string.ob_scan_invite), Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
+                TextButton({ scanning = false }) { Text(stringResource(R.string.cancel)) }
+            }
+            scanner { text ->
+                scanning = false
+                notInvite = !onInviteText(text)
             }
         }
         return
