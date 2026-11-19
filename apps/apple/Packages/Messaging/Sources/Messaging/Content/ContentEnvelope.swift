@@ -29,6 +29,8 @@ public struct ContentEnvelope: Codable, Sendable, Equatable {
         case edit(target: String, text: String)
         case delete(target: String)
         case react(target: String, emoji: String)
+        case poll(Poll)
+        case pollVote(pollID: String, optionIDs: [String])
         case receipt(ReceiptKind, ids: [String])
         case callSignal(CallSignalPayload)
         case mode(String)
@@ -117,7 +119,7 @@ public struct ContentEnvelope: Codable, Sendable, Equatable {
 
     private static let knownKinds: Set<String> = [
         "text", "photo", "voice", "file", "edit", "delete", "react", "receipt", "callsig", "mode",
-        "typing", "presence", "timer", "profile", "group",
+        "typing", "presence", "timer", "profile", "group", "poll", "pollVote",
     ]
     /// Kinds whose bad field values are reported under their own name.
     private static let invalidKinds: Set<String> = ["mode", "receipt", "typing", "presence", "timer", "profile", "group"]
@@ -157,6 +159,11 @@ public struct ContentEnvelope: Codable, Sendable, Equatable {
         var ttl: Lenient<Int>?
         var c: Lenient<String>?
         var lp: Lenient<LinkPreview.Wire>?
+        var question: String?
+        var options: [PollOption]?
+        var multi: Bool?
+        var pollID: String?
+        var optionIDs: [String]?
 
         init(_ env: ContentEnvelope) {
             v = env.v; id = env.id; at = env.at; k = ""
@@ -175,6 +182,8 @@ public struct ContentEnvelope: Codable, Sendable, Equatable {
             case .delete(let target): k = "delete"; self.target = target
             case .react(let target, let emoji): k = "react"; self.target = target; e = emoji
             case .receipt(let kind, let ids): k = "receipt"; s = kind.rawValue; self.ids = ids
+            case .poll(let poll): k = "poll"; question = poll.question; options = poll.options; multi = poll.multi
+            case .pollVote(let target, let ids): k = "pollVote"; pollID = target; optionIDs = ids
             case .callSignal(let payload): k = "callsig"; p = payload
             case .mode(let mode): k = "mode"; m = mode
             case .typing(let isOn): k = "typing"; on = Lenient(isOn)
@@ -211,6 +220,13 @@ public struct ContentEnvelope: Codable, Sendable, Equatable {
             case "receipt":
                 guard let s, let kind = ReceiptKind(rawValue: s), let ids else { return nil }
                 return .receipt(kind, ids: ids)
+            case "poll":
+                guard let question, let options, let multi else { return nil }
+                let poll = Poll(question: question, options: options, multi: multi)
+                return poll.isValid ? .poll(poll) : nil
+            case "pollVote":
+                guard let pollID, !pollID.isEmpty, let optionIDs else { return nil }
+                return .pollVote(pollID: pollID, optionIDs: optionIDs)
             case "callsig": return p.map { .callSignal($0) }
             case "mode":
                 guard let m, m == "e2ee" || m == "server_readable" else { return nil }

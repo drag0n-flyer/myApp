@@ -36,6 +36,8 @@ public enum MessageContent: Hashable, Codable, Sendable {
     case photo(bytes: Int64)
     case file(name: String, bytes: Int64)
     case call(CallSummary)
+    /// A poll with the votes known for it.
+    case poll(PollContent)
     /// The sender deleted it (Design: content table `delete`).
     case deleted
     /// Unknown kind or newer format: "Update [App] to see this message".
@@ -227,6 +229,7 @@ public struct Message: Identifiable, Hashable, Codable, Sendable {
         case .call(.missedVideo): "Missed video call"
         case .call(.audio(let duration)): "Audio call · \(Self.minutes(duration)) min"
         case .call(.video(let duration)): "Video call · \(Self.minutes(duration)) min"
+        case .poll(let content): "Poll: \(content.poll.question)"
         case .deleted: "This message was deleted"
         case .unsupported: "Update [App] to see this message"
         case .system(let event): event.text

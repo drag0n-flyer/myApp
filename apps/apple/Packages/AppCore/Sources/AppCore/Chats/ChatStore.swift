@@ -60,6 +60,10 @@ public protocol ChatStore: PeopleStore, GroupStore, GroupMessageStore {
     /// Sends a message that gave up (`DeliveryStatus.failed`) again.
     func retrySend(messageID: String)
     func react(_ emoji: String, to messageID: String, in chatID: String)
+    /// Sends a poll (it must be valid) as a message of its own.
+    func sendPoll(_ poll: Poll, in chatID: String)
+    /// Sets my answer to a poll message: the option IDs I pick, none to take my answer back.
+    func votePoll(messageID: String, optionIDs: [String], in chatID: String)
     func edit(messageID: String, in chatID: String, text: String)
     func delete(messageID: String, in chatID: String)
     func download(messageID: String, in chatID: String)
@@ -172,6 +176,10 @@ extension PeopleStore {
 }
 
 extension ChatStore {
+    /// A store without polls sends nothing.
+    public func sendPoll(_ poll: Poll, in chatID: String) {}
+    public func votePoll(messageID: String, optionIDs: [String], in chatID: String) {}
+
     /// For stores without a database: a snapshot of the chat's messages taken now.
     public func attachmentPager(for chatID: String) -> AttachmentPager {
         let newestFirst = Array(messages(in: chatID, before: nil, limit: 100_000).filter { ChatMedia.kind(of: $0) != nil }.reversed())

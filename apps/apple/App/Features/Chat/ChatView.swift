@@ -99,6 +99,7 @@ struct ChatView: View {
                             ComposerView(text: $draft, send: { send(chat) }, sendSample: sendSample,
                                          sendAttachment: { model.sendAttachment($0, in: chatID) },
                                          sendMedia: { model.sendMedia($0, caption: $1, in: chatID) },
+                                         sendPoll: { model.sendPoll($0, in: chatID) },
                                          attachmentLimit: model.attachmentLimitBytes,
                                          sampleMedia: model.isSampleData,
                                          replyingTo: replyingTo,
@@ -346,6 +347,8 @@ struct ChatView: View {
                 actions: MessageActions.available(for: message, isMine: mine),
                 perform: { perform($0, on: message, all: all, indexByID: indexByID) },
                 react: { needsOlderRefresh = true; model.react($0, to: message.id, in: chatID, followedBy: nextID(after: message.id, all: all, indexByID: indexByID)) },
+                myID: model.me.id,
+                votePoll: { model.votePoll($0, messageID: message.id, in: chatID) },
                 isHighlighted: highlightID == message.id,
                 quoteTapped: { if let id = message.replyToID { jump = JumpRequest(messageID: id) } },
                 senderName: ChatID.isGroup(chatID) && GroupLines.showsSender(at: indexByID[message.id] ?? -1, in: all, me: model.me.id)

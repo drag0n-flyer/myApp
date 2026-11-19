@@ -246,6 +246,15 @@ public struct IncomingHandler: Sendable {
             guard let message = try db.message(id: target), message.chatID == chatID, !message.deleted else { return .ignored }
             try db.setReaction(messageID: message.id, accountID: account, emoji: emoji)
             return .ignored
+        case .poll(let poll):
+            return try store(folded: fold(poll.question))
+        case .pollVote(let pollID, let optionIDs):
+            // Kept even when the poll has not arrived yet; what it names is checked against the poll when it is shown.
+            let ids = optionIDs.filter { (1...Poll.maxOptionID).contains($0.count) }.prefix(Poll.optionCount.upperBound)
+            if let message = try db.message(id: pollID), message.chatID != chatID { return .ignored }
+            try db.setPollVote(chatID: chatID, messageID: pollID, accountID: account, optionIDs: Array(ids),
+                               at: Date(timeIntervalSince1970: Double(envelope.at) / 1000))
+            return .ignored
         case .receipt(let kind, let ids):
             try applyReceipt(kind, ids: ids, from: account, chatID: chatID, db: db)
             return .ignored

@@ -16,6 +16,8 @@ struct ComposerView: View {
     var sendAttachment: ((ComposerAttachment) -> Void)?
     /// Photos and videos from the preview screen, with the caption.
     var sendMedia: (([OutgoingMedia], String) -> Void)?
+    /// Sends a poll made in the poll sheet.
+    var sendPoll: ((Poll) -> Void)?
     /// The largest video that can be sent.
     var attachmentLimit = SendPlan.defaultLimitBytes
     /// Sample data has no photo library: Photo opens the preview with a stand-in picture.
@@ -45,6 +47,7 @@ struct ComposerView: View {
     @Environment(\.layoutDirection) private var layoutDirection
     @State private var showPhotos = false
     @State private var showFiles = false
+    @State private var showPollSheet = false
     @State private var photoItems: [PhotosPickerItem] = []
     /// Photos and videos on the preview screen; nothing is handed to the engine before Send.
     @State private var draftMedia: [DraftMedia] = []
@@ -142,6 +145,10 @@ struct ComposerView: View {
                 Button("File", systemImage: "doc") {
                     if sendAttachment == nil { sendSample(.file(name: "Notes.pdf", bytes: 180_000)) } else { showFiles = true }
                 }
+                if sendPoll != nil {
+                    Button("Poll", systemImage: "chart.bar") { showPollSheet = true }
+                        .accessibilityIdentifier("composer.poll")
+                }
             } label: {
                 Image(systemName: "plus")
                     .font(.title3.weight(.medium))
@@ -152,6 +159,9 @@ struct ComposerView: View {
             .expectsReturn(when: pickerOpen)
             .photosPicker(isPresented: $showPhotos, selection: $photoItems, maxSelectionCount: SendPlan.maxItems,
                           matching: .any(of: [.images, .videos]))
+            .sheet(isPresented: $showPollSheet) {
+                PollComposerView { poll in sendPoll?(poll) }
+            }
             .fileImporter(isPresented: $showFiles, allowedContentTypes: [.item]) { result in
                 guard case .success(let url) = result else { return }
                 importFile(url)

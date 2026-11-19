@@ -34,6 +34,10 @@ private let expected: [String: ContentEnvelope.Body] = [
     "callsig": .callSignal(callPayload),
     "mode": .mode("e2ee"),
     "mode_server_readable": .mode("server_readable"),
+    "poll": .poll(Poll(question: "Lunch?", options: [PollOption(id: "a", text: "Pizza"), PollOption(id: "b", text: "Sushi")], multi: true)),
+    "poll_single": .poll(Poll(question: "Lunch?", options: [PollOption(id: "a", text: "Pizza"), PollOption(id: "b", text: "Sushi")], multi: false)),
+    "poll_vote": .pollVote(pollID: "t1", optionIDs: ["a", "b"]),
+    "poll_vote_retract": .pollVote(pollID: "t1", optionIDs: []),
 ]
 
 @Suite("TestEnvelopeVectors") struct TestEnvelopeVectors {
@@ -57,6 +61,24 @@ private let expected: [String: ContentEnvelope.Body] = [
         #expect(p == callPayload)
         #expect(p.candidate != nil && p.ceiling == .balanced && p.videoOn == false && p.video == true)
         #expect(env.encoded() == Data(json.utf8))
+    }
+}
+
+@Suite("TestPollEnvelope") struct TestPollEnvelope {
+    @Test func invalidPollsAreUnsupportedAndOldClientsStillDegrade() {
+        func decode(_ json: String) -> ContentEnvelope.Body { ContentEnvelope.decode(Data(json.utf8)).body }
+        let head = #"{"at":1,"id":"x","v":1,"#
+        // Fewer than two options.
+        #expect(decode(head + #""k":"poll","multi":false,"options":[{"id":"a","text":"A"}],"question":"Q"}"#) == .unsupported(kind: "invalid"))
+        // Repeated option ids.
+        #expect(decode(head + #""k":"poll","multi":false,"options":[{"id":"a","text":"A"},{"id":"a","text":"B"}],"question":"Q"}"#) == .unsupported(kind: "invalid"))
+        // Missing multi, empty question.
+        #expect(decode(head + #""k":"poll","options":[{"id":"a","text":"A"},{"id":"b","text":"B"}],"question":"Q"}"#) == .unsupported(kind: "invalid"))
+        #expect(decode(head + #""k":"poll","multi":false,"options":[{"id":"a","text":"A"},{"id":"b","text":"B"}],"question":""}"#) == .unsupported(kind: "invalid"))
+        // A vote without a poll ID.
+        #expect(decode(head + #""k":"pollVote","optionIDs":["a"]}"#) == .unsupported(kind: "invalid"))
+        // An unknown kind next to the new ones.
+        #expect(decode(head + #""k":"pollX"}"#) == .unsupported(kind: "pollX"))
     }
 }
 
