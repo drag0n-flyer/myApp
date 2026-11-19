@@ -49,6 +49,11 @@ class CallLandscapeTest {
         assertTrue(mute.left.value > 400f, "at the end: $mute")
     }
 
+    @Test fun anIncomingVideoCallSaysSo() {
+        rule.setContent { AppTheme { IncomingCallContent("Riya", onDecline = {}, onAnswer = {}, isVideo = true) } }
+        rule.onNodeWithText("Incoming video call").assertIsDisplayed()
+    }
+
     @Test fun anIncomingCallKeepsBothButtonsBesideTheName() {
         rule.setContent { AppTheme { IncomingCallContent("Riya", onDecline = {}, onAnswer = {}) } }
         rule.waitForIdle()

@@ -24,6 +24,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -101,7 +103,7 @@ fun CallHistoryScreen(
             if (shown.isEmpty()) {
                 item(key = "empty") {
                     Box(Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) {
-                        Text(stringResource(R.string.calls_empty), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(if (missedOnly) R.string.calls_empty_missed else R.string.calls_empty), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -119,27 +121,31 @@ private fun CallRow(record: CallRecord, onCall: (String, Boolean) -> Unit) {
         record.isOutgoing -> stringResource(R.string.calls_outgoing)
         else -> stringResource(R.string.calls_incoming)
     }
+    val time = shortTime(record.at)
     ListItem(
-        leadingContent = { Avatar(record.name, size = 40.dp, colorKey = record.contactId) },
-        headlineContent = { Text(record.name, color = color, maxLines = 1) },
+        leadingContent = { Avatar(record.name, size = 48.dp, colorKey = record.contactId) },
+        headlineContent = { Text(record.name, color = color, maxLines = 1, style = MaterialTheme.typography.titleMedium) },
         supportingContent = {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(Modifier.semantics(mergeDescendants = true) {}, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                // Incoming points down-left, outgoing up-right; missed is red.
                 Icon(
-                    painterResource(if (record.isVideo) R.drawable.ic_videocam else R.drawable.ic_call),
-                    contentDescription = null, modifier = Modifier.size(14.dp), tint = color,
+                    painterResource(if (record.isOutgoing) R.drawable.ic_arrow_up else R.drawable.ic_arrow_down),
+                    contentDescription = null, modifier = Modifier.size(14.dp).rotate(45f),
+                    tint = if (record.isMissed) color else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Text(direction, color = if (record.isMissed) color else MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "$direction · $time", color = if (record.isMissed) color else MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium, maxLines = 1,
+                )
             }
         },
         trailingContent = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(shortTime(record.at), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                IconButton(onClick = { onCall(record.contactId, record.isVideo) }) {
-                    Icon(
-                        painterResource(if (record.isVideo) R.drawable.ic_videocam else R.drawable.ic_call),
-                        contentDescription = stringResource(R.string.calls_call_back, record.name),
-                    )
-                }
+            IconButton(onClick = { onCall(record.contactId, record.isVideo) }) {
+                Icon(
+                    painterResource(if (record.isVideo) R.drawable.ic_videocam else R.drawable.ic_call),
+                    contentDescription = stringResource(R.string.calls_call_back, record.name),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
             }
         },
     )

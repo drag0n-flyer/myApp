@@ -292,6 +292,7 @@
     <string name="call_connecting">Connecting…</string>
     <string name="call_ringing">Ringing…</string>
     <string name="call_incoming">Incoming call</string>
+    <string name="call_incoming_video">Incoming video call</string>
     <string name="call_ended">Call ended</string>
     <string name="call_declined">Call declined</string>
     <string name="call_no_answer">No answer</string>
@@ -329,6 +330,7 @@
     <string name="calls_filter_all">All</string>
     <string name="calls_filter_missed">Missed</string>
     <string name="calls_empty">No calls</string>
+    <string name="calls_empty_missed">No missed calls</string>
     <string name="calls_incoming">Incoming</string>
     <string name="calls_outgoing">Outgoing</string>
     <string name="calls_call_back">Call %1$s</string>
