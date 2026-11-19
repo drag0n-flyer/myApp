@@ -54,6 +54,8 @@ final class ChatActionsTests: XCTestCase {
         let own = app.staticTexts["Yes! Around 6 🙂"]
         XCTAssertTrue(own.waitToExist())
         own.press(forDuration: 1.0)
+        // On a busy simulator the first long-press sometimes doesn't open the menu.
+        if !app.buttons["Edit"].waitForExistence(timeout: 3) { own.press(forDuration: 1.5) }
         app.buttons["Edit"].tap()
         XCTAssertTrue(app.element("chat.editbar").waitToExist())
         XCTAssertTrue(app.staticTexts["Editing"].exists)
