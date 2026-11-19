@@ -212,13 +212,6 @@ struct ChatListContent: View {
 
     var body: some View {
         List {
-            VStack(alignment: .leading, spacing: 8) {
-                FolderChipsView(model: model)
-                StatusStripView(host: model.server.host, modeLabel: model.stripLabel, status: model.connectionStatus)
-            }
-            .listRowSeparator(.hidden)
-            .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
-
             if let title = model.messageRequestsRowTitle {
                 Button { open(.requests) } label: {
                     Label(title, systemImage: "tray")
@@ -250,18 +243,48 @@ struct ChatListContent: View {
                 .accessibilityIdentifier("chatlist.empty")
             }
 
-            ForEach(model.chats(in: model.selectedFolder, matching: model.chatListQuery)) { chat in
+            let visible = model.chats(in: model.selectedFolder, matching: model.chatListQuery)
+            if visible.isEmpty, !model.chats(in: .all).isEmpty {
+                Group {
+                    if !model.chatListQuery.isEmpty {
+                        ContentUnavailableView.search(text: model.chatListQuery)
+                    } else if model.selectedFolder.id == ChatFolder.unread.id {
+                        ContentUnavailableView("Nothing unread", systemImage: "checkmark.message")
+                    } else {
+                        ContentUnavailableView("No results", systemImage: "tray")
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .listRowSeparator(.hidden)
+                .accessibilityIdentifier("chatlist.filter.empty")
+            }
+
+            ForEach(visible) { chat in
                 Button { open(.chat(id: chat.id)) } label: {
                     ChatRowView(chat: chat, name: model.chatName(chat), isTyping: model.isTyping(chatID: chat.id),
                                     typingText: model.groupTypingText(chatID: chat.id), previewSender: model.previewSenderName(chat))
                 }
                 .buttonStyle(.plain)
+                // The separator starts at the text, not under the photo (mockup 01).
+                .alignmentGuide(.listRowSeparatorLeading) { $0[.leading] + 57 }
+                .listRowInsets(EdgeInsets(top: 3, leading: 14, bottom: 3, trailing: 14))
                 .modifier(ChatRowActions(chat: chat, model: model, inArchive: chat.archived, pinLimit: { showingPinLimit = true }))
                 .listRowBackground(selectedChatID == chat.id ? Color.accentColor.opacity(0.15) : nil)
                 .accessibilityIdentifier("chatlist.row.\(chat.id)")
             }
         }
         .listStyle(.plain)
+        // Chips and status strip stay under the title while the chats scroll beneath them (mockup 01).
+        .safeAreaInset(edge: .top, spacing: 0) {
+            VStack(alignment: .leading, spacing: 8) {
+                FolderChipsView(model: model)
+                StatusStripView(host: model.server.host, modeLabel: model.stripLabel, status: model.connectionStatus)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.bar)
+        }
         .alert("You can pin up to 5 chats.", isPresented: $showingPinLimit) {
             Button("OK", role: .cancel) {}
         }
