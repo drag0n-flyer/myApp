@@ -19,7 +19,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LargeTopAppBar
+import androidx.compose.material3.TopAppBar
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -58,10 +59,11 @@ fun ContactsScreen(
         contacts.sortedWith(compareBy(collator) { it.displayName }).groupBy { sectionLetter(it.displayName, locale) }
             .toSortedMap(compareBy<String> { it == "#" }.thenComparing(collator))
     }
-    val scroll = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    val scroll = TopAppBarDefaults.enterAlwaysScrollBehavior()
     Scaffold(
         modifier = modifier.nestedScroll(scroll.nestedScrollConnection),
-        topBar = { LargeTopAppBar(title = { Text(stringResource(R.string.tab_contacts)) }, scrollBehavior = scroll) },
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        topBar = { TopAppBar(title = { Text(stringResource(R.string.tab_contacts)) }, scrollBehavior = scroll) },
     ) { padding ->
         LazyColumn(Modifier.padding(padding)) {
             if (inviteUrl != null) item {

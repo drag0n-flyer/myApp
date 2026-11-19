@@ -20,6 +20,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -43,7 +46,7 @@ import org.example.app.core.chats.Chat
 import org.example.app.core.chats.ChatStore
 import org.example.app.core.chats.MessageContent
 import org.example.app.ui.Avatar
-import org.example.app.ui.shortTime
+import org.example.app.ui.relativeTimeText
 
 /** One line of call history, taken from the call messages in chats. */
 data class CallRecord(
@@ -92,7 +95,12 @@ fun CallHistoryScreen(
     val records by viewModel.records.collectAsStateWithLifecycle()
     val missedOnly by viewModel.missedOnly.collectAsStateWithLifecycle()
     val shown = if (missedOnly) records.filter { it.isMissed } else records
-    Scaffold(modifier, topBar = { TopAppBar(title = { Text(stringResource(R.string.tab_calls)) }) }) { padding ->
+    val scroll = TopAppBarDefaults.enterAlwaysScrollBehavior()
+    Scaffold(
+        modifier.nestedScroll(scroll.nestedScrollConnection),
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        topBar = { TopAppBar(title = { Text(stringResource(R.string.tab_calls)) }, scrollBehavior = scroll) },
+    ) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(bottom = 16.dp)) {
             item(key = "chips") {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -121,7 +129,7 @@ private fun CallRow(record: CallRecord, onCall: (String, Boolean) -> Unit) {
         record.isOutgoing -> stringResource(R.string.calls_outgoing)
         else -> stringResource(R.string.calls_incoming)
     }
-    val time = shortTime(record.at)
+    val time = relativeTimeText(record.at)
     ListItem(
         leadingContent = { Avatar(record.name, size = 48.dp, colorKey = record.contactId) },
         headlineContent = { Text(record.name, color = color, maxLines = 1, style = MaterialTheme.typography.titleMedium) },
