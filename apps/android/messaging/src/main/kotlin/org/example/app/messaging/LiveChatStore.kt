@@ -233,6 +233,9 @@ class LiveChatStore(
         outbox.enqueueControl(chatId) { id, at -> ContentEnvelope.Profile(id, at, name, photo, ver) }
     }
 
+    // Declared before the first `init` block: a flush can start while the store is still being built, and it calls this.
+    private val groupCreator = org.example.app.messaging.sync.GroupCreator(conversations, repo, outbox, ownProfile = { id, at -> profileSender.envelope(id, at) })
+
     private val _blocked = MutableStateFlow<Set<String>>(emptySet())
     private val _reported = MutableStateFlow<Set<String>>(emptySet())
     override val contacts: StateFlow<List<Contact>> = _contacts.asStateFlow()
@@ -1424,7 +1427,6 @@ class LiveChatStore(
         return contactOf(row)
     }
 
-    private val groupCreator = org.example.app.messaging.sync.GroupCreator(conversations, repo, outbox, ownProfile = { id, at -> profileSender.envelope(id, at) })
     private val groupSync = org.example.app.messaging.sync.GroupSync(device, mls, server, repo, lock, clock, conversations, outbox, syncOnce = { inbox.sync() })
     private val groupAdmin = org.example.app.messaging.sync.GroupAdmin(device, server, repo, storeClock, groupSync, outbox)
 
