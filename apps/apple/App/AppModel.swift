@@ -148,6 +148,8 @@ final class AppModel {
     /// Menu commands ask the root for something by counting up; the root watches the number (see `AppModel+Commands`).
     var newChatRequests = 0
     var listSearchRequests = 0
+    /// Mac menu (⌘1–⌘3): the sidebar section to show; MacRootView acts on it and clears it.
+    var requestedSection: MainSection?
     var chatInfoRequests = 0
     var closeChatRequests = 0
     private(set) var activeCall: CallState?

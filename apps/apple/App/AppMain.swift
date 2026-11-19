@@ -58,7 +58,14 @@ struct AppMain: App {
                 .modifier(LockSceneDriver(lock: model.lock))
                 .onOpenURL { model.handle(url: $0) }
                 .onAppear { AppDelegate.model = model }
+                #if os(macOS)
+                // Fits a 1024x768 screen with the Dock: the window is 600 tall, so its bottom edge stays above y=690.
+                .frame(minWidth: 760, minHeight: 480)
+                #endif
         }
+        #if os(macOS)
+        .defaultSize(width: 980, height: 600)
+        #endif
         .onChange(of: scenePhase) { _, phase in model.scenePhaseChanged(phase) }
         #if os(macOS)
         .commands { MainCommands(model: model) }

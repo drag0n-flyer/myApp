@@ -41,6 +41,8 @@ extension AppModel {
             }
         case .lockNow:
             lock.lockNow()
+        case .showChats, .showCalls, .showContacts:
+            requestedSection = command.section
         }
     }
 

@@ -40,6 +40,39 @@ final class MacLayoutTests: XCTestCase {
         waitForExpectations(timeout: 5)
     }
 
+    /// With no chat open the detail shows the empty state; the window fits a 1024x768 screen with the Dock.
+    func testMacEmptyDetailAndWindowFitsSmallScreen() {
+        let app = XCUIApplication.launched()
+        XCTAssertTrue(app.element("mac.sidebar.chats").waitToExist())
+        XCTAssertTrue(app.element("mac.detail.empty").exists)
+        let frame = app.windows.firstMatch.frame
+        XCTAssertLessThanOrEqual(frame.maxY, 690 + 24)   // y is measured from the screen top, menu bar included
+        XCTAssertLessThanOrEqual(frame.height, 640)
+    }
+
+    /// ⌘2 and ⌘3 jump to Calls and Contacts, ⌘1 back to Chats.
+    func testMacSectionShortcuts() {
+        let app = XCUIApplication.launched()
+        XCTAssertTrue(app.element("mac.sidebar.chats").waitToExist())
+        app.typeKey("2", modifierFlags: .command)
+        XCTAssertTrue(app.element("mac.sidebar.calls").isSelected)
+        app.typeKey("3", modifierFlags: .command)
+        XCTAssertTrue(app.element("mac.sidebar.contacts").isSelected)
+        app.typeKey("1", modifierFlags: .command)
+        XCTAssertTrue(app.element("mac.sidebar.chats").isSelected)
+    }
+
+    /// ⌃Tab opens the next chat, ⌃⇧Tab the previous one.
+    func testMacNextAndPreviousChatShortcuts() {
+        let app = XCUIApplication.launched()
+        XCTAssertTrue(app.element("mac.sidebar.chats").waitToExist())
+        app.typeKey("\t", modifierFlags: .control)
+        XCTAssertTrue(app.element("chat.composer.field").waitToExist())
+        XCTAssertFalse(app.element("mac.detail.empty").exists)
+        app.typeKey("\t", modifierFlags: [.control, .shift])
+        XCTAssertTrue(app.element("chat.composer.field").waitToExist())
+    }
+
     func testMacOnboardingOffersStartAndLink() {
         let app = XCUIApplication.launched(skipOnboarding: false)
         XCTAssertTrue(app.element("welcome.haveaccount").waitToExist())

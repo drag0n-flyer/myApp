@@ -64,6 +64,15 @@ struct MacRootView: View {
         // Menu commands (MainCommands): the model counts up, this view acts. The lock cover removes this view, so
         // nothing here runs while locked, and the model checks the rule again before it counts.
         .onChange(of: selectedChatID) { _, id in model.onScreenChatID = id }
+        .onChange(of: model.requestedSection) { _, section in
+            guard let section else { return }
+            switch section {
+            case .chats: sidebar = .folder(model.selectedFolder.id)
+            case .calls: sidebar = .calls
+            case .contacts: sidebar = .contacts
+            }
+            model.requestedSection = nil
+        }
         .onChange(of: model.newChatRequests) { _, _ in showingNewChat = true }
         .onChange(of: model.listSearchRequests) { _, _ in
             sidebar = .folder(model.selectedFolder.id)
@@ -97,7 +106,7 @@ struct MacRootView: View {
         }
         .animation(.default, value: model.incomingCaller)
         .toolbar {
-            ToolbarItem {
+            ToolbarItem(placement: .primaryAction) {
                 Button("New chat", systemImage: "square.and.pencil") { showingNewChat = true }
                     .accessibilityLabel("New chat")
                     .accessibilityIdentifier("mac.newchat")
@@ -145,7 +154,9 @@ struct MacRootView: View {
             ChatView(chatID: id, model: model) { detailPath.append($0) }
                 .id(id)
         } else {
-            ContentUnavailableView("Select a chat", systemImage: "bubble.left.and.bubble.right")
+            ContentUnavailableView("Select a chat", systemImage: "bubble.left.and.bubble.right",
+                                   description: Text("Choose a chat from the list, or start a new one with ⌘N."))
+                .accessibilityIdentifier("mac.detail.empty")
         }
     }
 

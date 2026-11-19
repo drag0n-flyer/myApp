@@ -50,6 +50,15 @@ private func enabled(_ c: MainCommand, locked: Bool = false, signedIn: Bool = tr
     #expect(MainCommand.lockNow.shortcut == MainCommandShortcut(key: "l", modifiers: [.control, .command]))
 }
 
+@Test func sectionShortcutsAreCommandDigits() {
+    #expect(MainCommand.showChats.shortcut == MainCommandShortcut(key: "1", modifiers: [.command]))
+    #expect(MainCommand.showCalls.shortcut == MainCommandShortcut(key: "2", modifiers: [.command]))
+    #expect(MainCommand.showContacts.shortcut == MainCommandShortcut(key: "3", modifiers: [.command]))
+    #expect(MainCommand.showCalls.section == .calls)
+    #expect(MainCommand.newChat.section == nil)
+    for c in [MainCommand.showChats, .showCalls, .showContacts] { #expect(enabled(c, open: false)) }
+}
+
 @Test func everyShortcutIsDistinct() {
     let all = MainCommand.allCases.map(\.shortcut)
     #expect(Set(all).count == all.count)
