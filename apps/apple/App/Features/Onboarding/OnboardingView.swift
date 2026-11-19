@@ -32,7 +32,7 @@ struct OnboardingView: View {
                 #endif
         }
         #if os(macOS)
-        .frame(minWidth: 560, minHeight: 600)
+        .frame(minWidth: 560, minHeight: 520)
         #endif
         .animation(.default, value: model.onboarding.step)
     }
@@ -104,7 +104,7 @@ private struct OnboardingActions<Primary: View, Secondary: View>: View {
             primary
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
-                .buttonSizing(.flexible)
+                .flexibleButtonWidth()
             secondary.controlSize(.large)
         }
         .padding(.horizontal, 20)
@@ -218,5 +218,17 @@ struct BusyLabel: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(title))
+    }
+}
+
+extension View {
+    /// Stretches a bordered button to the column's width where the system can (iOS 26 and later);
+    /// earlier systems keep the button sized to its label.
+    @ViewBuilder func flexibleButtonWidth() -> some View {
+        if #available(iOS 26.0, macOS 26.0, *) {
+            buttonSizing(.flexible)
+        } else {
+            frame(maxWidth: .infinity)
+        }
     }
 }
