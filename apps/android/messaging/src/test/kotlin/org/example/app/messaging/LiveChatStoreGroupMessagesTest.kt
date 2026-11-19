@@ -139,7 +139,7 @@ class LiveChatStoreGroupMessagesTest {
         val w = joined()
         val bob = w.device("bob1")
         val s = store(bob)
-        val sent = s.sendReturningId("hello", chatId)
+        val sent = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { s.sendReturningId("hello", chatId) } // real time: runTest would skip the store's wait at once
         assertTrue(sent != null, "a member's send to a group is queued")
         bob.repo.setMyState(chatId, org.example.app.messaging.ports.MyState.REMOVED)
         val before = bob.repo.messages(chatId, null, 50).size

@@ -125,12 +125,14 @@ class GroupCreator(
         }
     }
 
-    /** Finishes every group whose envelopes were not queued yet (run at start-up after the pending creates). Failures stay marked. */
+    /** Finishes every group whose envelopes were not queued yet (run at start-up after the pending creates, and by every flush). Failures stay marked. */
     suspend fun resumeInit() {
         for ((key, value) in repo.entries(INIT_PREFIX)) {
             if (value.isEmpty()) continue
             try {
-                finishInit(key.removePrefix(INIT_PREFIX))
+                // Not while a create runs: its marker is set before its own finishInit, and a second finishInit then
+                // would announce the mode and queue the group and profile envelopes twice, or ahead of the mode.
+                manager.creating.withLock { finishInit(key.removePrefix(INIT_PREFIX)) }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (_: Exception) {
