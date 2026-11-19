@@ -80,7 +80,7 @@ jobs:
           mkdir files
           mv dist/App-android/app-debug.apk "files/App-$TAG-android.apk"
           mv dist/App-ios/App-ios.ipa "files/App-$TAG-ios-unsigned.ipa"
-          mv dist/App-mac/App-mac.zip "files/App-$TAG-mac.zip"
+          mv dist/App-mac/App-mac.dmg "files/App-$TAG-mac.dmg"
           for f in dist/server/*; do mv "$f" "files/$(basename "$f")-$TAG"; done
           (cd files && sha256sum * > SHA256SUMS)
           ls -la files

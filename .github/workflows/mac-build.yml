@@ -68,12 +68,21 @@ jobs:
           codesign --verify --deep "$APP"
           /usr/libexec/PlistBuddy -c 'Print :DefaultServerHost' "$APP/Contents/Info.plist"
 
-      # ditto keeps the framework symlinks that a plain artifact upload would break.
-      - name: Package the app
-        run: ditto -c -k --keepParent "$RUNNER_TEMP/dd/Build/Products/Release/App.app" "$RUNNER_TEMP/App-mac.zip"
+      # A disk image with the app and an Applications shortcut: open it, drag the app across.
+      # hdiutil keeps the framework symlinks that a plain artifact upload would break.
+      - name: Package the app as a disk image
+        run: |
+          set -euo pipefail
+          STAGE="$RUNNER_TEMP/dmg"
+          mkdir -p "$STAGE"
+          ditto "$RUNNER_TEMP/dd/Build/Products/Release/App.app" "$STAGE/App.app"
+          ln -s /Applications "$STAGE/Applications"
+          hdiutil create -volname App -srcfolder "$STAGE" -fs HFS+ -format UDZO -ov "$RUNNER_TEMP/App-mac.dmg"
+          hdiutil verify "$RUNNER_TEMP/App-mac.dmg"
+          ls -la "$RUNNER_TEMP/App-mac.dmg"
 
       - uses: actions/upload-artifact@v4
         with:
           name: App-mac
-          path: ${{ runner.temp }}/App-mac.zip
+          path: ${{ runner.temp }}/App-mac.dmg
           retention-days: 14
